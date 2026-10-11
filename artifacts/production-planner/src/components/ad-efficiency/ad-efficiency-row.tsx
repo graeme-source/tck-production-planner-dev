@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import {
   adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, rollingSeries,
-  ROAS_BAND_WORDS, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
+  ROAS_BAND_WORDS, spendSourceLine, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
 } from "@/lib/ad-efficiency";
 import { yesterdayLondon, type RoasResult, type RoasWindow } from "@/lib/roas";
 import { BAND_HEADER_CLASS, BAND_TEXT_CLASS, type KpiBand } from "@/lib/station-kpi-bands";
@@ -189,16 +189,10 @@ export function AdEfficiencyRow() {
     };
   }, [days, windows, settings, trend.data, lastDay]);
 
-  const sourceLine = useMemo(() => {
-    const rows = sources.data?.days ?? [];
-    const meta = rows.filter((r) => r.source === "meta").length;
-    const manual = rows.filter((r) => r.source === "manual");
-    const parts = [`Ad spend counted: Meta ads${meta > 0 ? " (synced)" : ""}`];
-    if (manual.length > 0) {
-      parts.push(`${manual.length} day${manual.length === 1 ? "" : "s"} typed by hand (${manual.map((r) => dayLabel(r.date)).join(", ")})`);
-    }
-    return `${parts.join(" · ")}. Google Ads isn't connected, so its spend is not included.`;
-  }, [sources.data]);
+  const sourceLine = useMemo(
+    () => spendSourceLine(sources.data?.days ?? [], sources.data?.google?.firstDate ?? null),
+    [sources.data],
+  );
 
   const failed = trend.error || settingsQ.error;
 

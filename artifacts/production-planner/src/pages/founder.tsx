@@ -160,10 +160,16 @@ async function fetchAdSpendRange(from: string, to: string) {
     to: string;
     days: Array<{
       date: string;
+      /** The day's total: Meta + Google Ads. Null when a channel is missing. */
       amount: number | null;
+      /** The Meta channel's source — what the pencil edits. */
       source: "manual" | "meta" | null;
       syncedAt: string | null;
+      meta?: number | null;
+      google?: number | null;
+      missing?: "meta" | "google" | null;
     }>;
+    google?: { firstDate: string | null };
   }>;
 }
 
@@ -1010,18 +1016,29 @@ function FounderDashboard() {
         ? lastSync.timezone.warning
         : null;
 
-    // One day: say exactly where that day's figure came from.
+    // One day: say exactly where that day's figure came from. The total
+    // includes Google Ads when its script has sent the day; the pencil only
+    // ever edits the Meta part.
     if (editableDay) {
+      const googleNote = editableRow?.google != null
+        ? ` + Google Ads ${formatGBP(editableRow.google)}`
+        : "";
+      const googleWarning = editableRow?.missing === "google"
+        ? "No Google Ads figure for this day yet, so the total isn't complete."
+        : null;
       if (editableRow?.source === "manual") {
-        return { text: "Typed in by you — Meta won't overwrite it", warning };
+        return {
+          text: `${googleNote ? `Meta ${formatGBP(editableRow.meta ?? 0)} typed in by you` : "Typed in by you — Meta won't overwrite it"}${googleNote}`,
+          warning: googleWarning ?? warning,
+        };
       }
       if (editableRow?.source === "meta") {
         const when = editableRow.syncedAt
           ? `${formatDistanceToNow(new Date(editableRow.syncedAt))} ago`
           : "just now";
-        return { text: `From Meta, ${when}`, title: lastSync?.message, warning };
+        return { text: `From Meta, ${when}${googleNote}`, title: lastSync?.message, warning: googleWarning ?? warning };
       }
-      return { text: "No figure from Meta for this day yet", warning };
+      return { text: `No figure from Meta for this day yet${googleNote}`, warning };
     }
 
     // Several days: how much of the period we actually have, and how it got
@@ -1030,11 +1047,12 @@ function FounderDashboard() {
       return { text: `No ad spend recorded for these ${period.dayCount} days`, warning };
     }
     const typed = period.days.filter((d) => spendByDate.get(d)?.source === "manual").length;
-    const provenance = typed === 0
+    const withGoogle = period.days.some((d) => spendByDate.get(d)?.google != null) ? " + Google Ads" : "";
+    const provenance = (typed === 0
       ? "all from Meta"
       : typed === recordedDays
         ? "all typed in by you"
-        : `${typed} typed in by you`;
+        : `${typed} typed in by you`) + withGoogle;
     return {
       text: `${recordedDays} of ${period.dayCount} days recorded · ${provenance}`,
       warning: missingSpendDays > 0
@@ -1528,9 +1546,10 @@ function FounderDashboard() {
                     <>
                       {editableDay ? (
                         <button
-                          onClick={() => { setSpendInput(editableRow?.amount != null ? String(editableRow.amount) : ""); setEditingSpend(true); }}
+                          // The pencil edits the Meta part; Google Ads is added on top by the server.
+                          onClick={() => { const m = editableRow?.meta ?? editableRow?.amount; setSpendInput(m != null ? String(m) : ""); setEditingSpend(true); }}
                           className="group flex items-center gap-2 text-left"
-                          title="Enter this day's ad spend"
+                          title="Enter this day's Meta ad spend (Google Ads is added automatically)"
                         >
                           <span className={`text-2xl font-display font-bold ${periodSpendTotal == null ? "text-muted-foreground" : ""}`}>
                             {periodSpendTotal != null ? formatGBP(periodSpendTotal) : "Set…"}
