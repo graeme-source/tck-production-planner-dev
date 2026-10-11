@@ -16,6 +16,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { requireFounderArea } from "../middleware/founder-area-access";
+import { loadSpendDays } from "../lib/ad-spend-days";
 
 const router: IRouter = Router();
 router.use(requireFounderArea("founder.numbers"));
@@ -47,7 +48,8 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 // Spend for a span of days, for the rolling seven-day ROAS on the Numbers
-// page. Days with no figure recorded are simply absent from `days` — the
+// page — every channel (Meta + Google Ads) per day, plus each channel's own
+// figure. Days with no figure recorded are simply absent from `days` — the
 // caller must be able to tell "nothing recorded" from "recorded as £0",
 // because only the second one can honestly be divided by.
 const AD_SPEND_RANGE_QUERY = z.object({
@@ -67,24 +69,11 @@ router.get("/range", async (req: Request, res: Response) => {
     res.status(400).json({ error: `Range too long — ${AD_SPEND_RANGE_MAX_DAYS} days maximum` });
     return;
   }
-  const rows = await db.execute<{ spend_date: string | Date; amount: string; source: string; synced_at: Date | null }>(sql`
-    SELECT spend_date, amount, source, synced_at
-    FROM founder_ad_spend
-    WHERE spend_date >= ${from} AND spend_date <= ${to}
-    ORDER BY spend_date ASC
-  `);
-  res.json({
-    from,
-    to,
-    days: rows.rows.map((row) => ({
-      // spend_date is a DATE column; node-postgres may hand it back as a
-      // Date object depending on its parser, so normalise to YYYY-MM-DD.
-      date: typeof row.spend_date === "string" ? row.spend_date.slice(0, 10) : new Date(row.spend_date).toISOString().slice(0, 10),
-      amount: row.amount != null ? Number(row.amount) : null,
-      source: row.source ?? null,
-      syncedAt: row.synced_at ? new Date(row.synced_at).toISOString() : null,
-    })),
-  });
+  // Every channel, combined: amount is the day's TOTAL (Meta + Google Ads),
+  // null when a channel the day needs hasn't reported (lib/ad-spend-channels.ts).
+  // source / syncedAt stay the Meta channel's, which is what the pencil edits.
+  const { days, googleFirstDate } = await loadSpendDays(from, to);
+  res.json({ from, to, days, google: { firstDate: googleFirstDate } });
 });
 
 router.put("/", async (req: Request, res: Response) => {

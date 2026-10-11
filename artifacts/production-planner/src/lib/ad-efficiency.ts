@@ -284,3 +284,47 @@ export function recommend(input: {
 
   return { tone, headline, notes, softened };
 }
+
+// ── Which spend is counted ─────────────────────────────────────────────────
+// The line under the "What to do" card. Ad spend is Meta (synced or typed
+// by hand) plus Google Ads once its script has sent anything (the server
+// combines them: api-server lib/ad-spend-channels.ts). This only SAYS which
+// channels are in and flags gaps — the figures are already totals.
+
+export interface SpendSourceRow {
+  date: DayString;
+  /** The Meta channel's source: 'meta' (synced) or 'manual' (typed). */
+  source: string | null;
+  /** Which channel the day is missing, when its total is unknown. */
+  missing?: "meta" | "google" | null;
+}
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "5 Oct" from 2026-10-05. */
+export const shortDay = (d: DayString) => `${Number(d.slice(8, 10))} ${SHORT_MONTHS[Number(d.slice(5, 7)) - 1]}`;
+
+function dayList(days: DayString[], max = 5): string {
+  const shown = days.slice(0, max).map(shortDay).join(", ");
+  return days.length > max ? `${shown} and ${days.length - max} more` : shown;
+}
+
+/**
+ * One plain sentence: which channels the ROAS figures divide by.
+ * `googleFirstDate` is the first day Google Ads ever sent (null = never),
+ * so "Google Ads isn't connected" disappears as soon as it has.
+ */
+export function spendSourceLine(rows: SpendSourceRow[], googleFirstDate: DayString | null): string {
+  const synced = rows.some((r) => r.source === "meta");
+  const typed = rows.filter((r) => r.source === "manual").map((r) => r.date);
+  const parts = [`Ad spend counted: Meta ads${synced ? " (synced)" : ""}`];
+  if (typed.length > 0) parts.push(`${typed.length} Meta day${typed.length === 1 ? "" : "s"} typed by hand (${dayList(typed)})`);
+  if (googleFirstDate == null) {
+    return `${parts.join(" · ")}. Google Ads isn't connected, so its spend is not included.`;
+  }
+  parts.push(`Google Ads, from ${shortDay(googleFirstDate)}`);
+  const gaps = rows.filter((r) => r.missing === "google").map((r) => r.date);
+  const gapNote = gaps.length > 0
+    ? ` No Google Ads figure for ${dayList(gaps)} yet, so the ROAS for those days shows "—" until the script sends them.`
+    : "";
+  return `${parts.join(" · ")}.${gapNote}`;
+}

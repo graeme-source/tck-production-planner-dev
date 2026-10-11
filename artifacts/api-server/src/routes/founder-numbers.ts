@@ -24,6 +24,7 @@ import { sql } from "drizzle-orm";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { validateQuery } from "../middleware/validate";
 import { getOrdersByLondonDays } from "../services/shopify";
+import { loadSpendDays } from "../lib/ad-spend-days";
 import {
   buildTrendSeries, dayCountBetween, resolveGranularity, MAX_TREND_DAYS,
   type Granularity, type SpendDay, type TrendSeries,
@@ -64,17 +65,12 @@ function remember(key: string, data: TrendSeries): void {
   }
 }
 
+/** Every channel's spend per day (Meta + Google Ads) — the same combined
+ *  read as the ad-spend range endpoint, so the graphs, the ROAS cards and
+ *  the Order Analysis tile all divide by the same figure. */
 async function spendDays(from: string, to: string): Promise<SpendDay[]> {
-  const rows = await db.execute<{ spend_date: string | Date; amount: string | null }>(sql`
-    SELECT spend_date, amount FROM founder_ad_spend
-    WHERE spend_date >= ${from} AND spend_date <= ${to}
-    ORDER BY spend_date ASC
-  `);
-  return rows.rows.map(row => ({
-    // DATE column: node-postgres may return a Date — normalise to YYYY-MM-DD.
-    date: typeof row.spend_date === "string" ? row.spend_date.slice(0, 10) : new Date(row.spend_date).toISOString().slice(0, 10),
-    amount: row.amount != null ? Number(row.amount) : null,
-  }));
+  const { days } = await loadSpendDays(from, to);
+  return days.map(d => ({ date: d.date, amount: d.amount }));
 }
 
 router.get("/trend", validateQuery(trendQuery), async (_req: Request, res: Response) => {

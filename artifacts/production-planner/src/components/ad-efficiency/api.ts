@@ -5,8 +5,10 @@
  *    same new-customer revenue, total sales and ad spend as the Order
  *    Analysis tiles and graphs. Nothing new is calculated on the server.
  *  - Targets: GET/PATCH /api/ad-efficiency/settings (routes/ad-efficiency.ts).
- *  - Where each day's spend came from (Meta sync / typed by hand): the
- *    existing ad-spend range read, so the cards can say which channels are in.
+ *  - Where each day's spend came from (Meta sync / typed by hand / Google
+ *    Ads script): the existing ad-spend range read, so the cards can say
+ *    which channels are in.
+ *  - The Google Ads script link (founder only): /api/google-ads-link.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AdEfficiencySettings } from "@/lib/ad-efficiency";
@@ -54,15 +56,69 @@ export function useSaveAdEfficiencySettings() {
 
 export interface SpendSourceDay {
   date: string;
+  /** The day's TOTAL (Meta + Google Ads); null when a channel is missing. */
   amount: number | null;
-  /** 'meta' (synced) or 'manual' (typed on the Numbers panel). */
+  /** The Meta channel: 'meta' (synced) or 'manual' (typed on the Numbers panel). */
   source: string | null;
+  meta?: number | null;
+  google?: number | null;
+  missing?: "meta" | "google" | null;
 }
 
 export function useSpendSources(from: string, to: string) {
-  return useQuery<{ days: SpendSourceDay[] }>({
+  return useQuery<{ days: SpendSourceDay[]; google?: { firstDate: string | null } }>({
     queryKey: ["ad-efficiency-spend-sources", from, to],
     queryFn: () => request(`/api/founder-focus/ad-spend/range?${new URLSearchParams({ from, to })}`),
     staleTime: 5 * 60_000,
+  });
+}
+
+// ── Google Ads script link (founder only) ──────────────────────────────────
+
+export interface GoogleAdsLinkStatus {
+  hasKey: boolean;
+  keyHint: string | null;
+  keyCreatedAt: string | null;
+  keyCreatedByName: string | null;
+  lastReceivedAt: string | null;
+  lastDayCount: number | null;
+  lastFrom: string | null;
+  lastTo: string | null;
+  lastAccountId: string | null;
+  lastTimeZone: string | null;
+  timeZoneWarning: string | null;
+  firstDate: string | null;
+  daysStored: number;
+  ingestPath: string;
+  maxDaysPerSend: number;
+  script: string;
+  placeholders: { url: string; key: string };
+}
+
+export const GOOGLE_ADS_LINK_KEY = ["google-ads-link"] as const;
+
+export function useGoogleAdsLink() {
+  return useQuery<GoogleAdsLinkStatus>({
+    queryKey: GOOGLE_ADS_LINK_KEY,
+    queryFn: () => request<GoogleAdsLinkStatus>("/api/google-ads-link"),
+    staleTime: 60_000,
+  });
+}
+
+/** Make a key (replacing any old one). This response is the only time the key is seen. */
+export function useMakeGoogleAdsKey() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<GoogleAdsLinkStatus & { key: string }>("/api/google-ads-link/key", { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: ({ key: _key, ...status }) => qc.setQueryData(GOOGLE_ADS_LINK_KEY, status),
+  });
+}
+
+/** Turn the link off: the script's next run gets a "wrong key" refusal. */
+export function useTurnOffGoogleAds() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<GoogleAdsLinkStatus>("/api/google-ads-link/key", { method: "DELETE" }),
+    onSuccess: (status) => qc.setQueryData(GOOGLE_ADS_LINK_KEY, status),
   });
 }

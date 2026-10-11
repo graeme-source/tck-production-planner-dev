@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, rollingSeries,
-  windowOf, zeroSpendDays, type AdDay, type AdEfficiencySettings,
+  spendSourceLine, windowOf, zeroSpendDays, type AdDay, type AdEfficiencySettings,
 } from "./ad-efficiency";
 import { addDays } from "./roas";
 
@@ -239,5 +239,34 @@ describe("what to do", () => {
     const wide = { ...SETTINGS, holdBandPct: 20, raiseSpendMinPct: 5, raiseSpendMaxPct: 15 };
     expect(recommend({ days: sheetDays(), windows: w, settings: wide }).tone).toBe("hold"); // 240 < 252
     expect(recommend({ days: at(270), windows: w, settings: wide }).headline).toContain("~5–15%");
+  });
+});
+
+describe("spendSourceLine — which ad spend the cards count", () => {
+  it("before Google Ads has sent anything, says it isn't included", () => {
+    const line = spendSourceLine([
+      { date: "2026-10-09", source: "meta" },
+      { date: "2026-10-10", source: "manual" },
+    ], null);
+    expect(line).toBe("Ad spend counted: Meta ads (synced) · 1 Meta day typed by hand (10 Oct). Google Ads isn't connected, so its spend is not included.");
+  });
+
+  it("once Google has data, the 'isn't connected' note disappears and Google is named with its first day", () => {
+    const line = spendSourceLine([{ date: "2026-10-09", source: "meta" }], "2026-09-11");
+    expect(line).not.toMatch(/isn't connected/);
+    expect(line).toBe("Ad spend counted: Meta ads (synced) · Google Ads, from 11 Sep.");
+  });
+
+  it("flags days the Google script hasn't sent", () => {
+    const line = spendSourceLine([
+      { date: "2026-10-09", source: "manual", missing: null },
+      { date: "2026-10-10", source: "manual", missing: "google" },
+    ], "2026-10-01");
+    expect(line).toMatch(/No Google Ads figure for 10 Oct yet/);
+  });
+
+  it("keeps a long list of typed days short", () => {
+    const rows = Array.from({ length: 8 }, (_, i) => ({ date: `2026-10-0${i + 1}`, source: "manual" }));
+    expect(spendSourceLine(rows, null)).toMatch(/8 Meta days typed by hand \(1 Oct, 2 Oct, 3 Oct, 4 Oct, 5 Oct and 3 more\)/);
   });
 });
