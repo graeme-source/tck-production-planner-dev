@@ -9,13 +9,13 @@
  * Hammersley rule. Maths: lib/ad-efficiency.ts (pure, tested). Figures:
  * the Numbers trend series by the day — the same data as Order Analysis.
  */
-import { useId, useMemo } from "react";
+import { useId, useMemo, useState } from "react";
 import { ArrowDownRight, ArrowUpRight, HelpCircle, Megaphone, Minus } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import {
-  adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, rollingSeries,
+  adWindows, earliestDayNeeded, measureWindow, recommend, roasBand, rollingSeries,
   ROAS_BAND_WORDS, spendSourceLine, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
 } from "@/lib/ad-efficiency";
 import { yesterdayLondon, type RoasResult, type RoasWindow } from "@/lib/roas";
@@ -48,12 +48,36 @@ const SPARK_CLASS: Record<KpiBand, string> = {
   neutral: "text-stone-400",
 };
 
+/** "Wed 8 Oct" for the scrub read-out. */
+function scrubDayLabel(d: string): string {
+  const dt = new Date(`${d}T12:00:00Z`);
+  return dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
+}
+
 /** Hex per band for the line's colour bands (same colours as SPARK_CLASS). */
 const SPARK_HEX = { green: "#7cb342", amber: "#eab308", red: "#e11d48" } as const;
 
 function Sparkline({ points, target, band, caption, amberWidthPct }: { points: SparkPoint[]; target: number; band: KpiBand; caption: string; amberWidthPct: number }) {
   const W = 300;
   const H = 56;
+  // Hooks first — before the "not enough days" early return.
+  const gradId = useId().replace(/:/g, "");
+  // Scrub to read any day (Graeme, 2026-10-11): drag a finger along the line
+  // or hover/click with a mouse — the nearest day shows its date and figure.
+  const [hover, setHover] = useState<number | null>(null);
+  const pick = (e: React.PointerEvent<SVGSVGElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - r.left) / (r.width || 1)));
+    let i = Math.round(frac * (points.length - 1));
+    // Snap to the nearest day that has a figure.
+    if (points[i]?.percent == null) {
+      for (let d = 1; d < points.length; d++) {
+        if (points[i - d]?.percent != null) { i = i - d; break; }
+        if (points[i + d]?.percent != null) { i = i + d; break; }
+      }
+    }
+    setHover(points[i]?.percent != null ? i : null);
+  };
   const values = points.map((p) => p.percent).filter((v): v is number => v != null);
   if (values.length < 2) {
     return <p className="text-xs text-muted-foreground h-14 flex items-center">Not enough days for a trend yet</p>;
@@ -77,14 +101,24 @@ function Sparkline({ points, target, band, caption, amberWidthPct }: { points: S
   // the "just under" band, red below that. A hard-stop vertical gradient in
   // the chart's own coordinates, so each stretch of the line takes the colour
   // of its height.
-  const gradId = useId().replace(/:/g, "");
   const toOffset = (v: number) => Math.min(1, Math.max(0, y(v) / H));
   const targetOff = toOffset(target);
   const amberOff = toOffset(target * (1 - amberWidthPct / 100));
   const dotBand = last.percent! >= target ? "green" : last.percent! >= target * (1 - amberWidthPct / 100) ? "amber" : "red";
   return (
     <figure className="space-y-1">
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className={cn("w-full h-14 overflow-visible", SPARK_CLASS[band])} role="img"
+      <div className="relative" data-no-swipe>
+      {hover != null && points[hover]?.percent != null && (
+        <div
+          className={cn("absolute -top-7 z-10 pointer-events-none whitespace-nowrap rounded-md bg-foreground text-background text-xs font-semibold px-2 py-0.5 tabular-nums",
+            hover / Math.max(1, points.length - 1) > 0.7 ? "-translate-x-full" : hover / Math.max(1, points.length - 1) < 0.3 ? "" : "-translate-x-1/2")}
+          style={{ left: `${(hover / Math.max(1, points.length - 1)) * 100}%` }}
+        >
+          {scrubDayLabel(points[hover]!.date)} · {Math.round(points[hover]!.percent!)}%
+        </div>
+      )}
+      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className={cn("w-full h-14 overflow-visible cursor-crosshair touch-pan-y", SPARK_CLASS[band])} role="img"
+        onPointerDown={pick} onPointerMove={pick} onPointerLeave={(e) => { if (e.pointerType === "mouse") setHover(null); }}
         aria-label={`${caption}: from ${values[0]}% to ${values[values.length - 1]}%, target ${target}%`}>
         <defs>
           <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={0} y1={0} x2={0} y2={H}>
@@ -101,7 +135,14 @@ function Sparkline({ points, target, band, caption, amberWidthPct }: { points: S
           <polyline key={i} points={s} fill="none" stroke={`url(#${gradId})`} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         ))}
         <circle cx={x(lastIdx)} cy={y(last.percent!)} r={3.5} fill={SPARK_HEX[dotBand]} />
+        {hover != null && points[hover]?.percent != null && (
+          <>
+            <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} className="stroke-foreground/40" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <circle cx={x(hover)} cy={y(points[hover]!.percent!)} r={4} className="fill-background" stroke="currentColor" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+          </>
+        )}
       </svg>
+      </div>
       <figcaption className="text-xs text-muted-foreground flex justify-between gap-2">
         <span>{caption}</span>
         <span className="whitespace-nowrap">- - target</span>
@@ -202,10 +243,11 @@ export function AdEfficiencyRow() {
     if (!settings || !trend.data) return null;
     return {
       last7: measureWindow(days, windows.last7, "newCustomer"),
-      mtd: measureWindow(days, windows.monthToDate, "newCustomer"),
+      // Rolling 30 days, not month-to-date (Graeme, 2026-10-11).
+      nc30: measureWindow(days, windows.last30, "newCustomer"),
       total30: measureWindow(days, windows.last30, "total"),
       spark7: rollingSeries(days, "newCustomer", 7, lastDay),
-      sparkMtd: monthToDateSeries(days, "newCustomer", lastDay),
+      sparkNc30: rollingSeries(days, "newCustomer", 30, lastDay),
       spark30: rollingSeries(days, "total", 30, lastDay),
       advice: recommend({ days, windows, settings }),
     };
@@ -250,14 +292,14 @@ export function AdEfficiencyRow() {
               revenueLabel="New customers"
             />
             <RoasCard
-              title="New customer ROAS this month"
-              qualifier="This month"
-              result={view.mtd}
+              title="30-day new customer ROAS"
+              qualifier="Last 30 days"
+              result={view.nc30}
               target={settings.ncRoasMtdTargetPct}
               settings={settings}
-              spark={view.sparkMtd}
-              sparkCaption="Month so far, day by day"
-              window={windows.monthToDate}
+              spark={view.sparkNc30}
+              sparkCaption="Rolling 30-day, last 30 days"
+              window={windows.last30}
               revenueLabel="New customers"
             />
             <RoasCard

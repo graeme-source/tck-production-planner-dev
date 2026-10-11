@@ -36,7 +36,7 @@ const GROUPS: Array<{ title: string; fields: FieldSpec[] }> = [
     title: "Targets",
     fields: [
       { field: "ncRoas7dTargetPct", label: "New customer ROAS — last 7 days", hint: "The number you steer ad spend by.", unit: "%", min: 1, max: 10000 },
-      { field: "ncRoasMtdTargetPct", label: "New customer ROAS — this month", hint: "Month so far, complete days.", unit: "%", min: 1, max: 10000 },
+      { field: "ncRoasMtdTargetPct", label: "New customer ROAS — last 30 days", hint: "Rolling 30 days, complete days.", unit: "%", min: 1, max: 10000 },
       { field: "totalRoas30dTargetPct", label: "ROAS on total sales — last 30 days", hint: "All sales ÷ ad spend.", unit: "%", min: 1, max: 10000 },
     ],
   },
