@@ -47,6 +47,7 @@ import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import type { TrendMetricId } from "@/lib/sales-trend-view";
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
+import { AdEfficiencyRow } from "@/components/ad-efficiency/ad-efficiency-row";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1103,6 +1104,9 @@ function FounderDashboard() {
       refetchAdSpend(),
       queryClient.invalidateQueries({ queryKey: ["tag-summary"] }),
       queryClient.invalidateQueries({ queryKey: ["founder-custom-panels"] }),
+      // The At a Glance ROAS cards read the daily trend series + spend sources.
+      queryClient.invalidateQueries({ queryKey: ["founder-numbers-trend"] }),
+      queryClient.invalidateQueries({ queryKey: ["ad-efficiency-spend-sources"] }),
     ]);
   }, [refetchMonth, refetchPeriod, refetchOrderTypes, refetchConversion, refetchAdSpend, queryClient]);
 
@@ -1323,6 +1327,10 @@ function FounderDashboard() {
             error={!!monthError}
           />
         </div>
+        {/* Advertising efficiency (Graeme, 2026-10-11): new-customer ROAS
+            7-day and this month, ROAS on total sales 30-day, against his
+            targets, with the "What to do" line. */}
+        <AdEfficiencyRow />
       </section>
 
       {/* ── Order Analysis — ONE period drives every tile ──────────────────
