@@ -122,6 +122,8 @@ import testBoxShopifyRouter from "./test-box-shopify";
 import testBoxProductionRouter from "./test-box-production";
 import founderNumbersRouter from "./founder-numbers";
 import adEfficiencyRouter from "./ad-efficiency";
+import googleAdsIngestRouter from "./google-ads-ingest";
+import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
 import featuresRouter from "./features";
@@ -149,6 +151,10 @@ router.use(storageRouter);
 // public: the router's own first middleware demands the ISSUE_PIPELINE_TOKEN
 // bearer on every path (503 when the env var is unset).
 router.use("/issue-pipeline/machine", issuePipelineMachineRouter);
+// Google Ads daily spend IN, from a Google Ads Script (no cookie). NOT
+// public: the router demands the founder-made key (sha256-checked against
+// ad_spend_ingest_links) on every request, and rate-limits itself.
+router.use("/ad-spend/google-ads", googleAdsIngestRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
@@ -334,6 +340,9 @@ router.use("/founder-numbers", founderNumbersRouter);
 // At a Glance ROAS card targets (Numbers): read by founder.numbers grantees,
 // changed by the founder only — guarded inside.
 router.use("/ad-efficiency", adEfficiencyRouter);
+// The Google Ads script link — make / turn off its key, see what it last
+// sent. Founder only (requireFounder inside).
+router.use("/google-ads-link", googleAdsLinkRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 // Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
