@@ -1185,14 +1185,10 @@ function FounderDashboard() {
       <FounderNav />
       <PageHeader
         title="Numbers"
-        description="Sales KPIs and order breakdown."
         action={
           <div className="flex items-center gap-3">
-            {latestDataUpdate && (
-              <span className="text-xs text-muted-foreground hidden sm:inline">
-                Last updated {formatDistanceToNow(latestDataUpdate, { addSuffix: true })}
-              </span>
-            )}
+            {/* No subtitle or "Last updated" (Graeme, 2026-10-11: "just making
+                the screen look busy"). */}
             <button
               onClick={() => { founderRefresh.triggerSpin(); handleRefresh(); }}
               disabled={isAnyFetching}
