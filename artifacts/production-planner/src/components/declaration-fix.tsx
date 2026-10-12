@@ -4,7 +4,7 @@
  * them?"). Every ingredient a deck check names is a button; it opens THAT
  * ingredient's full edit dialog — the same one Inventory uses — with the
  * Label Declaration field showing and focused. Saving re-runs every check
- * that depends on it (label page, recipe deck, Product Hub, sub-recipe
+ * that depends on it (label page, recipe deck, Product Labels deck tab, sub-recipe
  * page) without a reload.
  *
  * A bare component list is wrapped under the ingredient's name by the

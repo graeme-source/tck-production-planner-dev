@@ -13,7 +13,7 @@
  *                         a big "Put on the menu".
  *   RecipeArchiveFooter   foot of Edit Recipe: the stage and the moves.
  *   RecipeDraftBadge      the small "Draft" pill used wherever a draft is
- *                         listed beside menu recipes (Product Hub, test boxes).
+ *                         listed beside menu recipes (Product Labels, test boxes).
  *   useRecipeArchiveActions  archive / restore / draft / publish mutations
  *                         (React Query) that refresh every recipe list and
  *                         picker afterwards; each move toasts with Undo.
@@ -153,7 +153,7 @@ export function useRecipeArchiveActions() {
 }
 
 /** The small "Draft" pill shown wherever a draft is listed beside menu
- *  recipes (Product Hub, test boxes, Edit Recipe). */
+ *  recipes (Product Labels, test boxes, Edit Recipe). */
 export function RecipeDraftBadge({ className = "" }: { className?: string }) {
   return (
     <span className={`inline-flex items-center gap-1 shrink-0 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-xs font-semibold text-amber-900 dark:text-amber-100 ${className}`}>

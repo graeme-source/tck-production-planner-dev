@@ -232,7 +232,7 @@ router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, r
 
 // Data-health worklist: every ingredient used by any recipe (directly or
 // through nested sub-recipes) that is missing a label declaration or any
-// per-100g nutritional value. Powers the Product Hub "Data Health" tab's
+// per-100g nutritional value. Powers the Product Labels "Data health" tab's
 // backdating review queue. Declared before "/:id" so the path isn't
 // swallowed by the id route.
 router.get("/data-health", async (_req, res) => {

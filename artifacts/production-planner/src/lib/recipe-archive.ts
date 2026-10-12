@@ -18,7 +18,7 @@
  *                         on the menu only. Pass the ids already chosen as
  *                         `keepIds` so a saved selection never goes blank.
  *   notArchivedRecipes()  development tools where a draft must be usable
- *                         (Product Hub decks/nutrition/labels, Recipe P&L,
+ *                         (Product Labels decks/nutrition/labels, Recipe P&L,
  *                         test boxes): on the menu + drafts — label drafts.
  *   draftRecipes() / archivedRecipes()  the Recipes page's other two views.
  */
@@ -57,7 +57,7 @@ export function activeRecipes<T extends ArchivableRecipe>(list: readonly T[] | n
 }
 
 /** On the menu + drafts: for the places a draft is developed and trialled
- *  (Product Hub, Recipe P&L, test boxes). Label the drafts. */
+ *  (Product Labels, Recipe P&L, test boxes). Label the drafts. */
 export function notArchivedRecipes<T extends ArchivableRecipe>(list: readonly T[] | null | undefined, keepIds?: Iterable<number | null | undefined>): T[] {
   const keep = keepSet(keepIds);
   return (list ?? []).filter(r => !isArchived(r) || keep.has(r.id));

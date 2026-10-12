@@ -54,7 +54,7 @@ describe("recipe stages: draft → on the menu → archived (migration 0142)", (
     expect(activeRecipes(mixed, [4]).map(r => r.id)).toEqual([1, 3, 4]);
     expect(activeRecipes(mixed, [5, null]).map(r => r.id)).toEqual([1, 3, 5]);
   });
-  it("development tools (test boxes, Product Hub, P&L) include drafts but never archived", () => {
+  it("development tools (test boxes, Product Labels, P&L) include drafts but never archived", () => {
     expect(notArchivedRecipes(mixed).map(r => r.id)).toEqual([1, 3, 4]);
     expect(notArchivedRecipes(mixed, [2]).map(r => r.id)).toEqual([1, 2, 3, 4]);
   });

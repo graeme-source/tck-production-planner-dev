@@ -2070,7 +2070,7 @@ function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: numb
   // Label Live (the back-label printing software) renders <b> tags, so this
   // variant keeps the allergen emphasis: the server marks every allergen as
   // **X** in deckText, which goes onto the clipboard as <b>X</b>. Mirrors
-  // the same button on the Product Hub deck panel.
+  // the same button on the Product Labels ingredient deck tab.
   const copyForLabelLive = () => {
     if (!data) return;
     const tagged = data.deckText.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
