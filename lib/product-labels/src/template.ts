@@ -238,8 +238,11 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // in plain Barlow beside the dates and barcode (11 only fits Semi
     // Condensed); a long deck still shrinks — biggest first, so it squeezes
     // down to the allergen note's 9 pt before that gets any smaller.
-    storage: field({ maxPt: 10.5 }),
-    dates: field({ weight: 700, bold: true, maxPt: 10 }),
+    // Storage and dates prefer Barlow Semi Condensed now the left column is
+    // narrower (Graeme, 2026-10-12: "we can afford to make those storage
+    // instructions a bit narrower").
+    storage: field({ maxPt: 10.5, width: "semi-condensed" }),
+    dates: field({ weight: 700, bold: true, maxPt: 10, width: "semi-condensed" }),
     ingredients: field({ maxPt: 11 }),
     allergenInfo: field({ maxPt: 9 }),
     address: field({ maxPt: 8 }),
@@ -259,7 +262,10 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
       "[**OVEN** {ovenTemp}°C[ ({fanTemp}°C fan)]: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]",
     ],
     storageHeading: "STORAGE INSTRUCTIONS:",
-    storage: "If chilled, keep me below 5°C. If frozen, keep below -18°C. If you decide to freeze me, please do so immediately, fully defrost in a fridge before cooking and eat within 24 hours of defrosting.",
+    // Every fact of the old wording, shorter (2026-10-12): chilled below
+    // 5 °C; frozen below -18 °C; freeze immediately; defrost fully in the
+    // fridge before cooking; eat within 24 hours of defrosting.
+    storage: "Keep chilled below 5°C, or freeze immediately and keep below -18°C. Defrost fully in the fridge before cooking and eat within 24 hours of defrosting.",
     chilledLabel: "IF CHILLED USE BY:",
     frozenLabel: "IF FROZEN USE BY:",
     batchLabel: "BATCH NUMBER:",

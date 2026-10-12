@@ -87,6 +87,21 @@ describe("divider rule settings", () => {
   });
 });
 
+describe("storage wording (shortened 2026-10-12)", () => {
+  it("still says every fact the old wording did", () => {
+    const s = DEFAULT_TEMPLATE.text.storage;
+    for (const fact of ["chilled below 5°C", "freeze immediately", "below -18°C", "Defrost fully in the fridge before cooking", "within 24 hours of defrosting"]) {
+      expect(s).toContain(fact);
+    }
+  });
+  it("storage and dates prefer Semi Condensed, never Condensed", () => {
+    for (const k of ["storage", "dates"] as const) {
+      expect(DEFAULT_TEMPLATE.fields[k].width).toBe("semi-condensed");
+      expect(DEFAULT_TEMPLATE.fields[k].narrowest).toBe("semi-condensed");
+    }
+  });
+});
+
 describe("readability defaults (2026-10-12)", () => {
   it("body text a touch smaller with more space between blocks", () => {
     const f = DEFAULT_TEMPLATE.fields;
