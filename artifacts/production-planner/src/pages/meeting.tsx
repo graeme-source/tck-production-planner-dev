@@ -35,7 +35,8 @@ import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
 import { packDayName, packDayNameCap } from "@/lib/pack-day";
 import { resetScrollWithin } from "@/lib/scroll";
-import { planSlideProductionTotals } from "@/lib/meeting-plan-totals";
+import { planSlideProductionTotals, planSlideScope } from "@/lib/meeting-plan-totals";
+import { mainKitchenItems } from "@workspace/production-schedule";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
@@ -1982,10 +1983,10 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "stretches": return <StretchesPanel />;
     case "yesterday_kpis": return <YesterdayKpisSlide data={data} slide={slide} />;
     case "station_assignments": return <StationAssignmentsSlide trialWelcome={data.meeting?.trialWelcome ?? null} dayNumbers={data.dayNumbers ?? null} />;
-    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact />;
+    case "order_of_production": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact mainKitchenOnly />;
     case "local_delivery": return <LocalDeliverySlide data={data} slide={slide} />;
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
-    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact />;
+    case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact mainKitchenOnly />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
     case "system_updates": return <SystemUpdatesSlide slide={slide} subIndex={subIndex} reportSubCount={reportSubCount} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
@@ -2215,7 +2216,7 @@ function SortableProductionRow({ id, disabled, children }: {
  *                  where the fridge actually lands by close of play. */
 export type PackStockMode = "actual" | "predicted";
 
-export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false, compact = false }: {
+export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "actual", stickyTotals = false, compact = false, mainKitchenOnly = false }: {
   data: DashboardData;
   slide: MeetingSlide;
   isPreviewing: boolean;
@@ -2228,6 +2229,10 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
    *  slide, so drop the in-body title, the lead paragraph and the legend,
    *  and tighten every row — the whole table should fit one screen. */
   compact?: boolean;
+  /** Morning meeting: leave the separate fried chicken facility out of the
+   *  rows, the stock totals and the oversell warning (Graeme, 2026-10-12 —
+   *  its team doesn't attend). The Pack Report keeps every line. */
+  mainKitchenOnly?: boolean;
 }) {
   // In a live meeting the pack is today's; in a preview of tomorrow's
   // meeting it's tomorrow's. Matches the old Short-on-pack behaviour.
@@ -2259,7 +2264,11 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // Optimistic order so the row lands where it was dropped instead of
   // snapping back while the save + refetch round-trips.
   const [orderOverride, setOrderOverride] = useState<number[] | null>(null);
-  const baseItems = effectivePlan.items;
+  // The meeting shows the main kitchen only; the Pack Report shows every line.
+  const baseItems = useMemo(
+    () => planSlideScope(effectivePlan.items, [], mainKitchenOnly).items,
+    [effectivePlan.items, mainKitchenOnly],
+  );
   const orderedItems = useMemo(() => {
     if (!orderOverride) return baseItems;
     const byId = new Map(baseItems.map(it => [it.itemId, it]));
@@ -2363,7 +2372,8 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // the day progresses. Surplus +ve = enough, -ve = short.
   const calcById = new Map<number, NonNullable<ProductionPlanRow["stock"]>>();
   const calcRowById = new Map<number, CalcRecipeRow>();
-  for (const r of calc?.recipes ?? []) calcRowById.set(r.recipeId, r);
+  const calcRecipes = planSlideScope([], calc?.recipes ?? [], mainKitchenOnly).calcRecipes;
+  for (const r of calcRecipes) calcRowById.set(r.recipeId, r);
 
   // Packs the effective plan adds per recipe, net of 8-pack bags. Mac plans
   // store packs in batchesTarget directly (packsPerBatch = 1); calzones
@@ -2379,12 +2389,12 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     return Math.max(0, Math.round((it.batchesTarget ?? 0) * ppb - bags * bagEquiv));
   };
   const plannedPacksById = new Map<number, number>();
-  for (const it of effectivePlan.items) {
+  for (const it of baseItems) {
     const p = packsFor(it);
     if (p != null) plannedPacksById.set(it.recipeId, p);
   }
 
-  for (const r of calc?.recipes ?? []) {
+  for (const r of calcRecipes) {
     // "actual" is deliberately the default: the team reads this table to answer
     // "can I pack the rest of the dispatch from what's in the fridge right
     // now". The predicted view answers a different question — where we'll
@@ -2426,7 +2436,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     calcById.set(r.recipeId, { have, need, surplus, tone, cover, prodTone });
   }
 
-  const plannedIds = new Set(effectivePlan.items.map(it => it.recipeId));
+  const plannedIds = new Set(baseItems.map(it => it.recipeId));
 
   // 1) Everything being made on the effective day, in production order.
   const plannedRows: ProductionPlanRow[] = orderedItems.map((it, i) => {
@@ -2459,7 +2469,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
   // out. Show every core recipe with stock on hand or packs going out; only
   // genuinely dormant ones (nothing in the fridge, nothing to dispatch) stay
   // hidden to keep the table tight. Worst position first.
-  const notPlanned: ProductionPlanRow[] = (calc?.recipes ?? [])
+  const notPlanned: ProductionPlanRow[] = calcRecipes
     .filter(r => r.isCoreMenu && !plannedIds.has(r.recipeId))
     .map(r => ({
       recipeId: r.recipeId,
@@ -2552,7 +2562,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
         </div>
       )}
 
-      {isLoading && effectivePlan.items.length === 0 ? (
+      {isLoading && baseItems.length === 0 ? (
         <div className="glass-panel rounded-2xl p-6 flex justify-center">
           <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
         </div>
@@ -2806,7 +2816,8 @@ function LocalDeliverySlide({ data, slide }: { data: DashboardData; slide: Meeti
 }
 
 function BagOrdersSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
-  const bagRows = (data.todayPlan.items ?? [])
+  // Main kitchen only — fried chicken isn't part of the meeting.
+  const bagRows = mainKitchenItems(data.todayPlan.items ?? [])
     .filter(it => (it.eightPackBagCount ?? 0) > 0);
   const totalBags = bagRows.reduce((s, r) => s + (r.eightPackBagCount ?? 0), 0);
 
@@ -2856,6 +2867,7 @@ interface CalcRecipeRow {
   recipeName: string;
   color: string | null;
   isCoreMenu: boolean;
+  recipeCategory?: string | null;
   // Recipe yield: how many 2-packs one batch makes (portionsPerBatch /
   // packSize — 5 for a standard calzone recipe, 1 for mac cheese, whose
   // plans therefore store packs directly in batchesTarget).
