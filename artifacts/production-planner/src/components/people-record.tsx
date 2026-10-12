@@ -3,24 +3,25 @@
  * (Graeme, 2026-09-25): who they are, their attendance over the last 12
  * months against the policy triggers, holiday and contract from Planday,
  * and ONE timeline of absences (each with its return-to-work form), lates,
- * forms, meetings and reviews, notes and feedback. Start a return-to-work
- * form, book a meeting or write a note from the big buttons at the top.
+ * forms, reviews and their write-ups. Start a return-to-work form or book a
+ * review from the big buttons at the top — ONE "Book a review", classified
+ * (Graeme, 2026-10-12), never a different button per kind.
  *
- * Reuses rather than rewrites: the review cards and composers come from
- * components/employee-reviews.tsx, the return-to-work form from
+ * Reuses rather than rewrites: the review cards and write-up come from
+ * components/people/review-notes.tsx, the return-to-work form from
  * components/rtw-form-editor.tsx. Data: /api/people/:id (attendance +
  * forms), /api/person-documents/person/:id (documents filed on the record
  * + their onboarding uploads, founder-only ones left out by the server for
- * anyone else), /api/employee-reviews/:id (meetings + notes, private-note rules
- * applied on the server), /api/people/:id/employment (Planday, loaded on its
+ * anyone else), /api/people-reviews/person/:id (reviews = classified record
+ * entries + their write-ups, private-note rules applied on the server), /api/people/:id/employment (Planday, loaded on its
  * own so a slow or failed Planday never holds up the rest of the page).
  */
 import { useMemo, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
-  HeartPulse, Loader2, Lock, PenLine, Plus, RefreshCw, Sun, Target, History, ClipboardList,
+  CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
+  HeartPulse, Loader2, Lock, PenLine, RefreshCw, Sun, Target, History, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -29,9 +30,9 @@ import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-
 import { UserAvatar } from "@/components/user-avatar";
 import { PeopleModal } from "@/components/people-modal";
 import { FormEditor, type RtwForm } from "@/components/rtw-form-editor";
-import {
-  api as reviewsApi, MeetingCard, NoteCard, AgreedObjective, BookMeeting, WriteNote, type Record_ as ReviewRecord,
-} from "@/components/employee-reviews";
+import { ReviewTimelineCard, ReviewNoteCard, AgreedObjectiveCard } from "@/components/people/review-notes";
+import { BookReviewForm } from "@/components/people/book-review";
+import { useRefreshEntries } from "@/components/people/reviews-api";
 import { groupRecordNotes, currentObjectives } from "@/lib/employee-record-grouping";
 import {
   buildPersonTimeline, filterTimeline, timelineCounts, withinWindow, lengthOfService, spellsWithoutForm,
@@ -58,6 +59,8 @@ import { PersonEmergencyContactPanel } from "@/components/emergency-contacts/per
 import { PeopleSheet } from "@/components/people-sheet";
 import { RecordPanel, RecordTimelineCard, useRecordFacts } from "@/components/people/record-panel";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
+import { PolicyTriggerBanner } from "@/components/people/policy-trigger-banner";
+import { needsPolicyReview, type PolicyReviewRef } from "@workspace/people-reviews";
 import { defaultHoursRange } from "@/components/hours-range-picker";
 import type { PersonHoursResponse } from "@/lib/hours-worked-view";
 import {
@@ -451,7 +454,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const today = todayIso();
   const [from, setFrom] = useState<string | null>(null); // null = the default 12 months
   const [filter, setFilter] = useState<TimelineFilter>("all");
-  const [modal, setModal] = useState<null | "rtw" | "book" | "note">(null);
+  const [modal, setModal] = useState<null | "rtw" | "book">(null);
   const [openForm, setOpenForm] = useState<RtwForm | null>(null);
   // Contracts — founder/HR accounts only (they carry pay); the server says
   // whether to ask at all, and re-checks every request.
@@ -492,13 +495,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
     // person's record while this one loads.
     placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === userId ? prev : undefined),
   });
-  const reviewsKey = ["employee-review-record", String(userId)];
-  const reviews = useQuery<ReviewRecord>({
-    queryKey: reviewsKey,
-    queryFn: () => reviewsApi<ReviewRecord>(`/employee-reviews/${userId}`),
-    enabled: ready,
-    retry: peopleRetry,
-  });
+  const refreshEntries = useRefreshEntries(userId);
 
   // Same query (and cache) as the Employment panel — for the start date when
   // the app has no contract on file for them.
@@ -512,14 +509,12 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
 
   const refreshAll = () => {
     void queryClient.invalidateQueries({ queryKey: ["people-record", userId] });
-    void queryClient.invalidateQueries({ queryKey: reviewsKey });
     void queryClient.invalidateQueries({ queryKey: ["people-list"] });
     void queryClient.invalidateQueries({ queryKey: ["rtw-mine"] });
   };
-  const refreshReviews = () => {
-    void queryClient.invalidateQueries({ queryKey: reviewsKey });
-    void queryClient.invalidateQueries({ queryKey: ["people-list"] });
-  };
+  // A review booked, held, cancelled or written up: its entries, the badges,
+  // the list and the policy trigger banner (useRefreshEntries does all four).
+  const refreshReviews = refreshEntries;
 
   const openFormById = async (id: number) => {
     try {
@@ -544,12 +539,20 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const data = record.data;
   const windowFrom = data?.window.from ?? minusMonths(today, 12);
 
+  // Reviews are classified record entries (migration 0178). For the
+  // timeline each one is a "meeting" card; for "What we agreed" its
+  // write-up's open objectives, latest review first (same grouping rules as
+  // before, keyed by entry).
+  const reviewCards = useMemo(() => (recordEntries.data?.entries ?? []).map(entry => ({
+    id: entry.id, scheduledFor: entry.meetingDate ?? entry.entryDate, heldAt: entry.heldAt, createdAt: entry.createdAt, entry,
+  })), [recordEntries.data]);
   const grouped = useMemo(() => {
-    const r = reviews.data;
+    const r = recordEntries.data;
     if (!r) return null;
-    const g = groupRecordNotes(r.notes, new Set(r.meetings.map(m => m.id)));
-    return { ...g, agreedNow: currentObjectives(g.openObjectives, r.meetings) };
-  }, [reviews.data]);
+    const notes = [...r.entries.flatMap(e => e.writeUp), ...r.looseNotes].map(n => ({ ...n, meetingId: n.entryId }));
+    const g = groupRecordNotes(notes, new Set(r.entries.map(e => e.id)));
+    return { ...g, agreedNow: currentObjectives(g.openObjectives, reviewCards) };
+  }, [recordEntries.data, reviewCards]);
 
   const timeline = useMemo(() => {
     if (!data) return [];
@@ -557,20 +560,24 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       spells: data.spells,
       lates: data.lates,
       forms: data.forms,
-      meetings: reviews.data?.meetings ?? [],
-      looseNotes: grouped?.unattached ?? [],
+      meetings: reviewCards,
+      looseNotes: recordEntries.data?.looseNotes ?? [],
       contracts: canContracts && contracts.data
         ? contractHistory(contracts.data.issued, contracts.data.uploaded).map(entry => ({ key: entry.key, date: entry.date, entry }))
         : [],
       documents: documents.data
         ? documentEntries(documents.data.documents, documents.data.onboarding).map(entry => ({ key: entry.key, date: entry.date, entry }))
         : [],
-      reviews: recordEntries.facts?.events.map(event => ({ key: event.key, date: event.date, event })) ?? [],
+      // The entries themselves are cards above; these are the moments in
+      // their life — a warning expiring, a review closed, a reclassification.
+      reviews: (recordEntries.facts?.events ?? [])
+        .filter(event => event.kind !== "entry" && event.kind !== "meeting")
+        .map(event => ({ key: event.key, date: event.date, event })),
     });
     return withinWindow(all, windowFrom);
-  }, [data, reviews.data, grouped, windowFrom, canContracts, contracts.data, documents.data, recordEntries.facts]);
+  }, [data, reviewCards, recordEntries.data, windowFrom, canContracts, contracts.data, documents.data, recordEntries.facts]);
 
-  const lockedError = [record.error, reviews.error, documents.error].find(e => e instanceof PeopleLockedError) as PeopleLockedError | undefined;
+  const lockedError = [record.error, recordEntries.error, documents.error].find(e => e instanceof PeopleLockedError) as PeopleLockedError | undefined;
   if (lockedError) return <PeopleLockedCard error={lockedError} />;
 
   if (!ready || (record.isLoading && !data)) {
@@ -591,20 +598,15 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   // otherwise — the server refuses the writes regardless.
   const canWrite = p.canWrite !== false;
   const s = data.summary;
-  const canManage = reviews.data?.canManage ?? false;
+  // Reviews load only for the founder / People access, never on your own
+  // record (the server answers 404 otherwise), so loaded + canWrite = may book.
+  const canManage = recordEntries.data != null && canWrite;
+  const viewerId = recordEntries.data?.viewerId ?? currentUserId;
   const startDate = p.contractStartDate
     ?? (employment.data?.status === "ok" ? employment.data.employment.hiredFrom : null);
   const service = lengthOfService(startDate, today);
   const counts = timelineCounts(timeline);
   const visible = filterTimeline(timeline, filter);
-  const byMeeting = grouped?.byMeeting ?? new Map();
-  const meetingCardProps = {
-    canManage,
-    currentUserId,
-    subjectId: p.id,
-    subjectName: p.name,
-    onChanged: refreshReviews,
-  };
   const formsNeeded = data.spells.filter(x => x.formState === "needed").length;
 
   // The side panels, in the order they're asked about most. Contracts only
@@ -612,6 +614,19 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   // something is open.
   const agreedNow = grouped?.agreedNow ?? [];
   const showRecord = recordEntries.data != null || (recordEntries.isLoading && ready);
+  // The review a policy trigger line names: scroll to its card in the
+  // timeline, or (older than the window shown) open it in the record panel.
+  const openPolicyReview = (r: PolicyReviewRef) => {
+    if (!showRecord) return;
+    setFilter("all");
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`person-meeting-${r.id}`);
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "start" }); return; }
+      setOpenEntry(r.id);
+      setSection("record");
+    });
+  };
+  const openEntryInPanel = (id: number) => { setOpenEntry(id); setSection("record"); };
   const sections: Array<{ key: RecordSection; summary: SectionSummary }> = [
     ...(showRecord ? [{ key: "record" as const, summary: recordEntriesSummary(recordEntries.facts?.summary, recordEntries.isLoading, !!recordEntries.error) }] : []),
     { key: "hours", summary: hoursSummary(hours.data, hours.isLoading || !ready) },
@@ -664,19 +679,17 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             <Lock className="w-5 h-5 shrink-0" /> {p.readOnlyNote}
           </p>
         )}
-        <div className="grid gap-3 @sm/main:grid-cols-2 @3xl/main:grid-cols-3">
+        {/* ONE button for every kind of review — classified as it's booked,
+            and re-classifiable afterwards (Graeme, 2026-10-12). */}
+        <div className="grid gap-3 @sm/main:grid-cols-2">
           <button onClick={() => setModal("rtw")}
-            className={cn("@sm/main:col-span-2 @3xl/main:col-span-1 min-h-14 px-3 py-2 rounded-2xl text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
+            className={cn("min-h-14 px-3 py-2 rounded-2xl text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
               formsNeeded > 0 ? "bg-amber-600 text-white hover:bg-amber-700" : "border-2 border-border hover:bg-secondary/50")}>
             <HeartPulse className="w-6 h-6 shrink-0" /> Return-to-work form{formsNeeded > 0 ? ` (${formsNeeded})` : ""}
           </button>
           <button onClick={() => setModal("book")} disabled={!canManage}
             className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
-            <CalendarDays className="w-6 h-6 shrink-0" /> Book a meeting / review
-          </button>
-          <button onClick={() => setModal("note")} disabled={!canManage}
-            className="min-h-14 px-3 py-2 rounded-2xl border-2 border-border text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
-            <Plus className="w-6 h-6 shrink-0" /> Write a note
+            <CalendarDays className="w-6 h-6 shrink-0" /> Book a review
           </button>
         </div>
       </section>
@@ -695,22 +708,17 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         ) : (
           <>
             <div className="grid gap-3 grid-cols-2 @2xl/main:grid-cols-4">
-              <Tile label="Sickness instances" value={s.sickInstances} sub={`Trigger at ${s.policy.sickInstances}`} alert={s.triggers.sickness} />
+              <Tile label="Sickness instances" value={s.sickInstances} sub={`Trigger at ${s.policy.sickInstances}`} alert={needsPolicyReview(data.triggerReview?.sickness)} />
               <Tile label="Sick days" value={s.sickDays} />
-              <Tile label="Lates" value={s.lates} sub={`Trigger at ${s.policy.lates}`} alert={s.triggers.lates} />
+              <Tile label="Lates" value={s.lates} sub={`Trigger at ${s.policy.lates}`} alert={needsPolicyReview(data.triggerReview?.lates)} />
               <Tile label="Other absence" value={s.otherAbsenceDays} sub={`day${s.otherAbsenceDays === 1 ? "" : "s"} — Absent, dependants' or emergency leave`} />
             </div>
-            {(s.triggers.sickness || s.triggers.lates) && (
-              <div className="rounded-2xl border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/30 p-4 flex items-center gap-3 flex-wrap">
-                <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0" />
-                <p className="flex-1 min-w-0 text-base font-semibold text-rose-900 dark:text-rose-200">
-                  Policy trigger reached — {s.triggers.sickness ? `${s.sickInstances} sickness instances` : ""}{s.triggers.sickness && s.triggers.lates ? " and " : ""}{s.triggers.lates ? `${s.lates} lates` : ""} in 12 months. The policy calls for a review meeting.
-                </p>
-                {canManage && (
-                  <button onClick={() => setModal("book")} className="h-12 px-4 rounded-xl bg-rose-600 text-white font-bold">Book a review</button>
-                )}
-              </div>
-            )}
+            {/* Each trigger: red while a review is still needed (due / due
+                again); calm once one is booked or held (Graeme, 2026-10-12). */}
+            {([data.triggerReview?.sickness, data.triggerReview?.lates] as const).map(t => t && (
+              <PolicyTriggerBanner key={t.kind} status={t} months={s.policy.months} canManage={canManage}
+                onBook={() => setModal("book")} onOpenReview={openPolicyReview} />
+            ))}
             <p className="text-sm text-muted-foreground">
               {fmtDay(s.windowStart, true)} to today. Policy: {s.policy.sickInstances} sickness instances or {s.policy.lates} lates in a rolling {s.policy.months} months → review meeting.
               {data.attendance.stale && " Couldn't reach Planday just now — showing attendance as last synced."}
@@ -741,8 +749,8 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             </button>
           ))}
         </div>
-        {reviews.error && !(reviews.error instanceof PeopleLockedError) && (
-          <p className="text-base text-destructive">Couldn't load meetings and notes: {reviews.error instanceof Error ? reviews.error.message : "try again"}</p>
+        {canWrite && recordEntries.error && !(recordEntries.error instanceof PeopleLockedError) && (
+          <p className="text-base text-destructive">Couldn't load reviews: {recordEntries.error instanceof Error ? recordEntries.error.message : "try again"}</p>
         )}
 
         {visible.length === 0 ? (
@@ -768,14 +776,20 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           }
           if (e.kind === "form") return <FormEntryCard key={e.key} form={e.form} onOpen={id => void openFormById(id)} />;
           if (e.kind === "meeting") {
-            return <MeetingCard key={e.key} meeting={e.meeting} notes={byMeeting.get(e.meeting.id) ?? []} {...meetingCardProps} />;
+            return (
+              <div key={e.key} id={`person-meeting-${e.meeting.id}`} className="scroll-mt-4">
+                <ReviewTimelineCard entry={e.meeting.entry} classifications={recordEntries.data?.classifications ?? []}
+                  stages={recordEntries.data?.stages ?? []} viewerId={viewerId} canWrite={canManage} personName={p.name}
+                  onOpen={() => openEntryInPanel(e.meeting.id)} onChanged={refreshReviews} />
+              </div>
+            );
           }
           if (e.kind === "contract") return <ContractEntryCard key={e.key} entry={e.contract.entry} onOpen={setOpenContract} />;
           if (e.kind === "document") return <DocumentEntryCard key={e.key} entry={e.document.entry} onOpen={setOpenDocument} />;
           if (e.kind === "review") {
-            return <RecordTimelineCard key={e.key} event={e.review.event} onOpen={id => { setOpenEntry(id); setSection("record"); }} />;
+            return <RecordTimelineCard key={e.key} event={e.review.event} onOpen={openEntryInPanel} />;
           }
-          return <NoteCard key={e.key} note={e.note} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />;
+          return <ReviewNoteCard key={e.key} note={e.note} viewerId={viewerId} canWrite={canManage} personName={p.name} onChanged={refreshReviews} />;
         })}
 
         <button
@@ -789,7 +803,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       </section>
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-        <Lock className="w-3.5 h-3.5" /> Private — People access only. Notes stay private to whoever wrote them until shared.
+        <Lock className="w-3.5 h-3.5" /> Private — People access only. Write-ups stay private to whoever wrote them until shared.
       </p>
       </div>
 
@@ -836,7 +850,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
               {agreedNow.length === 0 ? (
                 <p className="text-base text-muted-foreground py-2">Nothing agreed is open right now.</p>
               ) : agreedNow.map(n => (
-                <AgreedObjective key={n.id} note={n} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />
+                <AgreedObjectiveCard key={n.id} note={n} viewerId={viewerId} canWrite={canManage} onChanged={refreshReviews} />
               ))}
             </section>
           )}
@@ -847,14 +861,11 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         <RtwStartModal userId={p.id} name={p.name} spells={data.spells} onClose={() => setModal(null)}
           onOpened={form => { setModal(null); setOpenForm(form); refreshAll(); }} />
       )}
-      {modal === "book" && (
-        <PeopleModal title={`Book a meeting — ${p.name}`} onClose={() => setModal(null)}>
-          <BookMeeting subjectId={p.id} onDone={() => { setModal(null); refreshReviews(); }} onCancel={() => setModal(null)} />
-        </PeopleModal>
-      )}
-      {modal === "note" && (
-        <PeopleModal title={`Write a note — ${p.name}`} onClose={() => setModal(null)}>
-          <WriteNote subjectId={p.id} subjectName={p.name} onDone={() => { setModal(null); refreshReviews(); }} onCancel={() => setModal(null)} />
+      {modal === "book" && recordEntries.data && (
+        <PeopleModal title={`Book a review — ${p.name}`} onClose={() => setModal(null)} wide>
+          {/* Then the review opens, to write it up or change anything. */}
+          <BookReviewForm data={recordEntries.data} onCancel={() => setModal(null)}
+            onCreated={id => { setModal(null); refreshReviews(); openEntryInPanel(id); }} />
         </PeopleModal>
       )}
       {addingContract && (

@@ -1,6 +1,7 @@
 /** Response shapes of /api/people (artifacts/api-server/src/routes/people.ts). */
 import type { TimelineSpell, TimelineLate } from "@/lib/person-timeline";
 import type { RtwForm } from "@/components/rtw-form-editor";
+import type { PolicyTriggerReview } from "@workspace/people-reviews";
 
 export interface PeoplePolicy { sickInstances: number; lates: number; months: number }
 
@@ -20,6 +21,9 @@ export interface PersonCard extends PersonBasics {
   formsNeeded: number;
   awayNow: boolean;
   triggers: { sickness: boolean; lates: boolean };
+  /** Where each trigger stands (due / booked / handled / due again) —
+   *  only due and due again need anyone to act. */
+  triggerReview: PolicyTriggerReview;
   sickInstances: number;
   lates: number;
   nextMeeting: { date: string; kind: string; title: string | null } | null;
@@ -64,6 +68,7 @@ export interface PersonRecordResponse {
   lates: TimelineLate[];
   forms: RtwForm[];
   summary: AttendanceSummary;
+  triggerReview: PolicyTriggerReview;
   attendance: { syncedAt: string | null; stale: boolean; linked: boolean };
 }
 

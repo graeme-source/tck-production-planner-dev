@@ -49,7 +49,9 @@ type Layer = { route?: { path: string; methods: Record<string, boolean>; stack: 
  */
 const ROUTERS: Record<string, { load: () => Promise<{ default: unknown }>; notRecordWrites: Record<string, string> }> = {
   "people.ts": { load: () => import("../routes/people"), notRecordWrites: {} },
+  // Read-only since migration 0178 (your own record); reviews are written through people-reviews.ts.
   "employee-reviews.ts": { load: () => import("../routes/employee-reviews"), notRecordWrites: {} },
+  "people-review-notes.ts": { load: () => import("../routes/people-review-notes"), notRecordWrites: {} },
   "person-documents.ts": { load: () => import("../routes/person-documents"), notRecordWrites: {} },
   "return-to-work.ts": { load: () => import("../routes/return-to-work"), notRecordWrites: {} },
   "uploaded-contracts.ts": { load: () => import("../routes/uploaded-contracts"), notRecordWrites: {} },
@@ -92,6 +94,9 @@ const ROUTERS: Record<string, { load: () => Promise<{ default: unknown }>; notRe
   },
 };
 
+/** Routers with no write routes at all (checked, so a write added later must be guarded). */
+const READ_ONLY = new Set(["people-hours.ts", "employee-reviews.ts"]);
+
 /** The self-service routes, and the kind each one is. Anything else is editors only. */
 const SELF_SERVICE_ROUTES: Record<string, string> = {
   "staff-emergency-contacts.ts PUT /me": "own_emergency_contact",
@@ -122,9 +127,9 @@ describe("every employment-record write route carries the guard", () => {
   for (const [file, spec] of Object.entries(ROUTERS)) {
     it(file, async () => {
       const { default: router } = await spec.load();
-      // Hours worked is read-only today; every other file really has writes
+      // Hours worked and your own review record are read-only today; every other file really has writes
       // (so an import that silently found nothing can't pass).
-      if (file === "people-hours.ts") expect(writeRoutes(router)).toEqual([]);
+      if (READ_ONLY.has(file)) expect(writeRoutes(router)).toEqual([]);
       else expect(writeRoutes(router).length).toBeGreaterThan(0);
       for (const r of writeRoutes(router)) {
         const guard = r.handles.find(isEmploymentRecordWriteGuard);

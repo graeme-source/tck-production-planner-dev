@@ -660,9 +660,9 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   // Section headings — one shared style at a FIXED size (level 0 = its
   // biggest, never narrowed), placed first at the top of each column; their
   // height is reserved and only the text underneath shrinks to fit.
-  // 0.5 mm (was 0.8): the heading belongs to the text under it, and the
-  // bigger headings need the room (2026-10-12).
-  const headingGap = d(0.5);
+  // 1 mm: at 0.5 mm the heading almost touched the text under it — closer
+  // than the body lines are to each other (Graeme, 2026-10-12).
+  const headingGap = d(1);
   const headingBoxes: Rect[] = [];
   const headingRuns: PlacedRun[] = [];
   let headingTrial: Trial | null = null;

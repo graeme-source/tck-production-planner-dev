@@ -7,7 +7,7 @@
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
-  Classification, EntryStatus, FitForWork, LetterStatus, LetterTemplate, MeetingType, ProbationOutcome, Rating,
+  Classification, EntryStatus, FitForWork, LetterStatus, LetterTemplate, MeetingStatus, MeetingType, NoteKind, ProbationOutcome, Rating,
   ReviewBadge, Stage,
 } from "@workspace/people-reviews";
 import { peopleFetch, peopleRetry } from "@/hooks/use-people-gate";
@@ -29,6 +29,23 @@ export interface RecordLetter {
   readAt: string | null;
   acknowledgedAt: string | null;
   createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** One part of a review's write-up — private to its author until shared. */
+export interface ReviewNote {
+  id: number;
+  entryId: number | null;
+  kind: NoteKind;
+  title: string | null;
+  body: string;
+  visibility: "private" | "shared";
+  sharedAt: string | null;
+  dueDate: string | null;
+  doneAt: string | null;
+  authorId: number | null;
+  authorName: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -59,6 +76,9 @@ export interface RecordEntry {
   probationOutcome: ProbationOutcome | null;
   probationNewEnd: string | null;
   fitForWork: FitForWork | null;
+  /** The review itself (migration 0178): booked | held | cancelled; null = no meeting. */
+  meetingStatus: MeetingStatus | null;
+  heldAt: string | null;
   meetingType: MeetingType | null;
   meetingDate: string | null;
   meetingTime: string | null;
@@ -69,6 +89,8 @@ export interface RecordEntry {
   updatedAt: string;
   history: Array<{ action: string; detail: string | null; at: string; by: string | null }>;
   letters: RecordLetter[];
+  /** Its write-up, already filtered by the server to what this viewer may read. */
+  writeUp: ReviewNote[];
 }
 
 export interface RecordAttendance {
@@ -92,6 +114,8 @@ export interface PersonRecordEntries {
   entries: RecordEntry[];
   probation: ProbationFact | null;
   periodMonths: number[];
+  /** Old diary notes that were never part of a meeting (migration 0178). */
+  looseNotes: ReviewNote[];
 }
 
 export interface ProbationFact { userId: number; startDate: string; endDate: string; outcome: "passed" | "not_passed" | null; derived: boolean }
@@ -142,12 +166,20 @@ export function recordSend<T = unknown>(method: "POST" | "PATCH", path: string, 
   return api<T>(`/people-reviews${path}`, { method, body: JSON.stringify(body) });
 }
 
+/** DELETE on the record API (a review note is hidden, never hard-deleted). */
+export function recordDelete(path: string): Promise<void> {
+  return api<void>(`/people-reviews${path}`, { method: "DELETE" });
+}
+
 /** Refresh what entries feed: the person's entries, the list badges. */
 export function useRefreshEntries(userId: number) {
   const qc = useQueryClient();
   return () => {
     void qc.invalidateQueries({ queryKey: personEntriesKey(userId) });
     void qc.invalidateQueries({ queryKey: recordBadgesKey });
+    // A Timekeeping / Attendance entry can answer a policy trigger.
+    void qc.invalidateQueries({ queryKey: ["people-record", userId] });
+    void qc.invalidateQueries({ queryKey: ["people-list"] });
   };
 }
 

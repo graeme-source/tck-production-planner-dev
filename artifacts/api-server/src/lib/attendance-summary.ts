@@ -13,6 +13,7 @@
  */
 import { isLateName, isSickName, needsReturnToWorkForm, sickRuns } from "../services/attendance-classify";
 import { absenceRuns, isWorkedShift, type ClassifiedShift } from "./absence-spells";
+import { policyTriggerStatus, type PolicyReviewFact, type PolicyTriggerReview } from "@workspace/people-reviews";
 
 export const ATTENDANCE_POLICY = {
   /** Sickness instances in the window that trigger a review. */
@@ -50,6 +51,13 @@ export interface AttendanceSummary {
     sickness: boolean;
     lates: boolean;
   };
+  /** The day of each instance in the window — each sickness instance's
+   *  first day, each late shift — so the trigger's state (reached when,
+   *  reviewed since?) can be worked out: lib/people-reviews policy-trigger. */
+  instanceDates: {
+    sickness: string[];
+    lates: string[];
+  };
   policy: typeof ATTENDANCE_POLICY;
 }
 
@@ -62,17 +70,19 @@ export function summariseAttendance(shifts: readonly ClassifiedShift[], todayIso
 
   const sickDates: string[] = [];
   const worked: string[] = [];
-  let lates = 0; // per late shift, as the Employee Records report counts them
+  const lateDates: string[] = []; // per late shift, as the Employee Records report counts them
   const otherAbsence: ClassifiedShift[] = [];
   for (const s of inWindow) {
     const d = s.date.slice(0, 10);
     if (s.typeName != null && isSickName(s.typeName)) sickDates.push(d);
     else if (s.typeName != null && needsReturnToWorkForm(s.typeName)) otherAbsence.push(s);
-    if (s.typeName != null && isLateName(s.typeName)) lates += 1;
+    if (s.typeName != null && isLateName(s.typeName)) lateDates.push(d);
     if (isWorkedShift(s)) worked.push(d);
   }
 
-  const sickInstances = sickRuns(sickDates, worked).length;
+  const runs = sickRuns(sickDates, worked);
+  const sickInstances = runs.length;
+  const lates = lateDates.length;
   const otherDays = new Set(otherAbsence.map(s => s.date.slice(0, 10))).size;
   // Other-absence spells: the same run rule, over the non-sick days only.
   const otherSpells = absenceRuns([...otherAbsence, ...worked.map(date => ({ date, typeName: null }))]).length;
@@ -89,6 +99,22 @@ export function summariseAttendance(shifts: readonly ClassifiedShift[], todayIso
       sickness: sickInstances >= ATTENDANCE_POLICY.sickInstances,
       lates: lates >= ATTENDANCE_POLICY.lates,
     },
+    instanceDates: {
+      sickness: runs.map(r => r.start),
+      lates: [...lateDates].sort(),
+    },
     policy: ATTENDANCE_POLICY,
+  };
+}
+
+/** Where each trigger stands given the reviews since (due / booked /
+ *  handled / due again) — the shared rule in @workspace/people-reviews. */
+export function policyTriggerReview(
+  s: Pick<AttendanceSummary, "instanceDates" | "policy">,
+  reviews: readonly PolicyReviewFact[],
+): PolicyTriggerReview {
+  return {
+    sickness: policyTriggerStatus("sickness", { threshold: s.policy.sickInstances, instanceDates: s.instanceDates.sickness, reviews }),
+    lates: policyTriggerStatus("lates", { threshold: s.policy.lates, instanceDates: s.instanceDates.lates, reviews }),
   };
 }
