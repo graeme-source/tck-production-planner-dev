@@ -7,7 +7,7 @@
  *   GET /recipes/:id/versions                       every version, newest first
  *   GET /recipes/:id/versions/:versionNo/proof      PNG of that version
  *   GET /recipes/:id/versions/:versionNo/pdf        one-page archive PDF,
- *                                                   stamped NOT FOR PRINTING
+ *                                                   stamped "ARCHIVE vN — NOT FOR PRINTING"
  *
  * Read-only and open to everyone signed in (labels are). Every publish is
  * already stored in full in product_label_versions (routes/product-labels.ts
@@ -92,7 +92,7 @@ router.get("/recipes/:id/versions/:versionNo/pdf", async (req: Request, res: Res
     if (!r) return;
     // Stamped across the label (as test prints are) so an archive copy can
     // never be printed and stuck on a pack by mistake.
-    stampTest(r.proof.bitmap, fonts(), archiveStampText(r.v.versionNo, r.day));
+    stampTest(r.proof.bitmap, fonts(), archiveStampText(r.v.versionNo));
     const page = normaliseTemplate(r.snapshot.template).page;
     const pdf = labelsPdf({
       bitmap: r.proof.bitmap, dpi: page.dpi, copies: 1,

@@ -76,7 +76,7 @@ describe("archive file name and stamp", () => {
     expect(slugify("***")).toBe("label");
   });
 
-  it("stamps the version and day, and says not for printing", () => {
-    expect(archiveStampText(3, "2026-10-12")).toBe("ARCHIVE v3 2026-10-12 — NOT FOR PRINTING");
+  it("stamps the version and says not for printing", () => {
+    expect(archiveStampText(3)).toBe("ARCHIVE v3 — NOT FOR PRINTING");
   });
 });

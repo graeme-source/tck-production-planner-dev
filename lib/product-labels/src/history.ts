@@ -110,7 +110,9 @@ export function archivePdfFilename(recipeName: string, versionNo: number, publis
   return `${slugify(recipeName)}-label-v${versionNo}-${publishedDay}.pdf`;
 }
 
-/** Stamped across an archived label so it can't pass for a printable one. */
-export function archiveStampText(versionNo: number, publishedDay: string): string {
-  return `ARCHIVE v${versionNo} ${publishedDay} — NOT FOR PRINTING`;
+/** Stamped across an archived label so it can't pass for a printable one.
+ *  Kept short so the diagonal stamp is big and bold; the publish date is in
+ *  the file name and the PDF title. */
+export function archiveStampText(versionNo: number): string {
+  return `ARCHIVE v${versionNo} — NOT FOR PRINTING`;
 }
