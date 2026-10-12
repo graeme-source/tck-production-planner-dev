@@ -32,6 +32,7 @@ import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { usePeopleReady, peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { usePeopleKeepAlive } from "@/hooks/use-people-keep-alive";
 import { useRecordBadges, type BadgeRow } from "@/components/people/reviews-api";
+import { needsPolicyReview } from "@workspace/people-reviews";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
 import { NeedsAttention } from "@/components/people/needs-attention";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
@@ -149,7 +150,11 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
           {people.map(p => {
             const review = badgeByUser.get(p.id);
             const status = personStatus(p);
-            const flagged = p.formsNeeded > 0 || p.triggers.sickness || p.triggers.lates;
+            // Only a trigger still needing a review nags — one already
+            // reviewed, or with a review booked, stays quiet (Graeme, 2026-10-12).
+            const sickDue = needsPolicyReview(p.triggerReview.sickness);
+            const latesDue = needsPolicyReview(p.triggerReview.lates);
+            const flagged = p.formsNeeded > 0 || sickDue || latesDue;
             return (
               <tr
                 key={p.id}
@@ -188,8 +193,8 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
                           Return-to-work form{p.formsNeeded > 1 ? ` (${p.formsNeeded})` : ""}
                         </Flag>
                       )}
-                      {p.triggers.sickness && <Flag tone="rose" icon={AlertTriangle}>{p.sickInstances} sickness instances</Flag>}
-                      {p.triggers.lates && <Flag tone="rose" icon={AlertTriangle}>{p.lates} lates</Flag>}
+                      {sickDue && <Flag tone="rose" icon={AlertTriangle}>{p.triggerReview.sickness?.state === "due_again" ? `${p.triggerReview.sickness.sinceReview} more sickness since review` : `${p.sickInstances} sickness instances`}</Flag>}
+                      {latesDue && <Flag tone="rose" icon={AlertTriangle}>{p.triggerReview.lates?.state === "due_again" ? `${p.triggerReview.lates.sinceReview} more lates since review` : `${p.lates} lates`}</Flag>}
                       {review && <ReviewStatusBadge badge={review.badge} liveWarningUntil={review.liveWarningUntil} size="sm" />}
                     </div>
                   ) : <span className="text-muted-foreground">—</span>}
