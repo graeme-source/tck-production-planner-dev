@@ -17,6 +17,13 @@
  *   PATCH /api/people-reviews/entries/:id             change any field (autosaved);
  *                                                     reclassifying keeps every value
  *   POST  /api/people-reviews/entries/:id/withdraw-warning  { reason }
+ *   …/entries/:id/write-up, /review-notes/:id         a review's write-up
+ *                                                     (routes/people-review-notes.ts)
+ *
+ * A REVIEW is an entry with a meeting status — booked, held or cancelled
+ * (migration 0178; Graeme, 2026-10-12: "one review that we then classify").
+ * Its classification, date, time and status all change from the same
+ * autosaving form; the ACAS meeting type is an optional detail on it.
  *
  * Access, the same as the most sensitive People sections:
  *   • index.ts mounts this behind requirePeopleUnlock (private People PIN
@@ -34,11 +41,12 @@
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
   db, usersTable, peopleRecordClassificationsTable, peopleReviewStagesTable, peopleRecordEntriesTable, peopleRecordAuditTable,
-  peopleLetterTemplatesTable, peopleLettersTable, personDocumentsTable, peopleHrSettingsTable,
+  peopleLetterTemplatesTable, peopleLettersTable, personDocumentsTable, peopleHrSettingsTable, peopleReviewNotesTable,
+  visibleNotes,
 } from "@workspace/db";
 import {
   FIELD_SETS, EVIDENCE_KINDS, STAGE_TYPES, RATINGS, PROBATION_OUTCOMES, FIT_FOR_WORK, ENTRY_STATUSES, MEETING_TYPES,
@@ -46,8 +54,8 @@ import {
   longestLiveWarning, entryWarning, recordTodo, planTodo, sortStages, sortClassifications, londonTodayIso,
   extendedEnd, extensionMessage, periodEnd, nextStage, attentionLine, PERIOD_MONTHS,
   MERGE_FIELDS, hrEmailIdentity, checkHrEmailSettings, templatesForEntry, letterMergeValues, fillTemplate, letterGaps, checkLetterAction, letterWaitingEmail,
-  effectiveStage,
-  type LetterTemplate, type LetterStatus, type FieldSet, type ProbationOutcome,
+  effectiveStage, MEETING_STATUSES, meetingStatusChange, meetingTodoDate,
+  type MeetingStatus, type LetterTemplate, type LetterStatus, type FieldSet, type ProbationOutcome,
   type Classification, type Stage, type StageType, type EvidenceKind, type EntryLike, type EntryStatus,
   type MeetingType, type TodoKind,
 } from "@workspace/people-reviews";
@@ -64,6 +72,7 @@ import { sendEmail, FROM_EMAIL } from "../lib/email";
 import {
   resyncAttentionSoon, attentionForViewer, loadProbations, attentionSettings, subjectsById,
 } from "../lib/hr-attention";
+import reviewNotesRouter from "./people-review-notes";
 
 const router: IRouter = Router();
 
@@ -103,6 +112,10 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
     fail(res, "access check", err, "Internal server error");
   }
 });
+
+// A review's write-up (feedback, objectives, notes) — its own file, behind
+// the same access check above.
+router.use(reviewNotesRouter);
 
 /** May this viewer open (and change) this person's record? The shared rule. */
 async function mayOpen(viewer: Viewer, subjectUserId: number): Promise<boolean> {
@@ -309,7 +322,7 @@ async function attendanceFacts(userId: number, today: string) {
 }
 
 /** History lines worth showing on an entry (not every autosave). */
-const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack"];
+const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack"];
 
 router.get("/person/:userId", async (req: Request, res: Response) => {
   const viewer = viewerOf(res);
@@ -337,6 +350,16 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         ? db.select().from(peopleLettersTable).where(inArray(peopleLettersTable.entryId, ids)).orderBy(asc(peopleLettersTable.createdAt))
         : Promise.resolve([] as Array<typeof peopleLettersTable.$inferSelect>),
     ]);
+    // The write-ups. Private notes are their author's alone — filtered HERE,
+    // before anything leaves the server (employee-review-visibility.ts).
+    // Everyone reaching this route has People access (or is Graeme).
+    const allNotes = await db.select().from(peopleReviewNotesTable)
+      .where(and(eq(peopleReviewNotesTable.userId, userId), isNull(peopleReviewNotesTable.deletedAt)))
+      .orderBy(asc(peopleReviewNotesTable.createdAt), asc(peopleReviewNotesTable.id));
+    const notes = visibleNotes(allNotes, { id: viewer.actor.id, role: viewer.role, hasPeopleAccess: true }, userId).map(n => ({
+      id: n.id, entryId: n.entryId, kind: n.kind, title: n.title, body: n.body, visibility: n.visibility, sharedAt: n.sharedAt,
+      dueDate: n.dueDate, doneAt: n.doneAt, authorId: n.authorId, authorName: n.authorName, createdAt: n.createdAt, updatedAt: n.updatedAt,
+    }));
     const [probation] = await loadProbations([userId]);
     await audit(db, viewer, { subjectUserId: userId, action: "view", detail: `${entries.length} entr${entries.length === 1 ? "y" : "ies"}` });
     res.json({
@@ -348,9 +371,10 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         stageId: e.stageId, warningExpiresOn: e.warningExpiresOn, warningWithdrawnAt: e.warningWithdrawnAt,
         warningWithdrawnReason: e.warningWithdrawnReason, rating: e.rating, payFrom: e.payFrom, payTo: e.payTo,
         payEffectiveOn: e.payEffectiveOn, probationOutcome: e.probationOutcome, probationNewEnd: e.probationNewEnd,
-        fitForWork: e.fitForWork, meetingType: e.meetingType, meetingDate: e.meetingDate, meetingTime: e.meetingTime,
+        fitForWork: e.fitForWork, meetingStatus: e.meetingStatus, heldAt: e.heldAt, meetingType: e.meetingType, meetingDate: e.meetingDate, meetingTime: e.meetingTime,
         meetingAttendees: e.meetingAttendees, meetingChecklist: e.meetingChecklist,
         createdByName: e.createdByName, createdAt: e.createdAt, updatedAt: e.updatedAt,
+        writeUp: notes.filter(n => n.entryId === e.id),
         history: history.filter(h => h.entryId === e.id).map(h => ({ action: h.action, detail: h.detail, at: h.at, by: h.by })),
         letters: letters.filter(l => l.entryId === e.id).map(l => ({
           id: l.id, templateId: l.templateId, title: l.title, body: l.body, status: l.status, signatoryName: l.signatoryName,
@@ -359,6 +383,8 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
           createdAt: l.createdAt, updatedAt: l.updatedAt,
         })),
       })),
+      // Old diary notes that were never part of a meeting (migration 0178).
+      looseNotes: notes.filter(n => n.entryId == null),
     });
   } catch (err) {
     fail(res, "person", err, "Couldn't load the record");
@@ -386,6 +412,7 @@ const EntryFields = z.object({
   probationOutcome: z.enum(PROBATION_OUTCOMES).nullable(),
   probationNewEnd: isoDate.nullable(),
   fitForWork: z.enum(FIT_FOR_WORK).nullable(),
+  meetingStatus: z.enum(MEETING_STATUSES).nullable(),
   meetingType: z.enum(MEETING_TYPES).nullable(),
   meetingDate: isoDate.nullable(),
   meetingTime: hhmm.nullable(),
@@ -495,6 +522,18 @@ async function applyChange(tx: Exec, viewer: Viewer, row: EntryRow, b: EntryPatc
       detail: b.status === "open" ? "Marked open — in review" : "Review closed" });
   }
 
+  // The review's status: booked → held → cancelled, any way round.
+  const prevStatus = (row.meetingStatus ?? null) as MeetingStatus | null;
+  const meetingStatus = (b.meetingStatus !== undefined ? b.meetingStatus : prevStatus) as MeetingStatus | null;
+  if (b.meetingStatus !== undefined && b.meetingStatus !== prevStatus) {
+    const change = meetingStatusChange(prevStatus, b.meetingStatus, row.heldAt);
+    set.meetingStatus = b.meetingStatus;
+    if (change.stampHeldAt) set.heldAt = new Date();
+    if (!ctx.created) {
+      await audit(tx, viewer, { subjectUserId: row.userId, entryId: row.id, action: "meeting_status", detail: change.message });
+    }
+  }
+
   // Meeting + its to-do; next review date + its to-do.
   const meetingType = (b.meetingType !== undefined ? b.meetingType : row.meetingType) as MeetingType | null;
   if (b.meetingType !== undefined) set.meetingType = b.meetingType;
@@ -504,14 +543,15 @@ async function applyChange(tx: Exec, viewer: Viewer, row: EntryRow, b: EntryPatc
     set.meetingChecklist = cleanChecklist(meetingType, b.meetingChecklist ?? row.meetingChecklist ?? []);
   }
   if (b.nextReviewDate !== undefined) set.nextReviewDate = b.nextReviewDate;
-  const touchesMeeting = b.meetingDate !== undefined || b.meetingTime !== undefined;
+  const touchesMeeting = b.meetingDate !== undefined || b.meetingTime !== undefined || set.meetingStatus !== undefined;
   if (touchesMeeting || b.nextReviewDate !== undefined) {
     const [subject] = await tx.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, row.userId));
     const name = subject?.name ?? "";
     if (touchesMeeting) {
+      // No to-do for a cancelled review; un-cancelling brings one back.
       set.meetingTodoId = await syncTodo(tx, viewer, "meeting", row, name,
-        { todoId: row.meetingTodoId, date: row.meetingDate, time: row.meetingTime },
-        { date: b.meetingDate !== undefined ? b.meetingDate : row.meetingDate, time: b.meetingTime !== undefined ? b.meetingTime : row.meetingTime });
+        { todoId: row.meetingTodoId, date: meetingTodoDate(prevStatus, row.meetingDate), time: row.meetingTime },
+        { date: meetingTodoDate(meetingStatus, b.meetingDate !== undefined ? b.meetingDate : row.meetingDate), time: b.meetingTime !== undefined ? b.meetingTime : row.meetingTime });
     }
     if (b.nextReviewDate !== undefined) {
       set.reviewTodoId = await syncTodo(tx, viewer, "review", row, name,
