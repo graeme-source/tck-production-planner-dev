@@ -25,18 +25,54 @@
  * A review dated on or after that day counts; one before it doesn't.
  *
  * Reviews come from the one place they're recorded since migration 0178
- * (one review, classified): the employment record. ANY review that isn't
- * cancelled counts, whatever its classification — "I booked a review, it
- * should recognise it" (Graeme, 2026-10-12) — and so does an entry with no
- * meeting whose classification shows attendance evidence (data, never a
- * name). The old meetings diary's reviews were moved in by 0178, so
- * Nozomi's review on 12 Oct still answers her trigger. The server turns
- * rows into PolicyReviewFact with entryReviewFact; everything else here is
- * pure.
+ * (one review, classified): the employment record. WHICH reviews answer a
+ * trigger (Graeme, 2026-10-12, after a maternity planning 1:1 was taken as
+ * the sickness review: "we need a way to choose what we're going to attach
+ * it to") is the entry's answers_trigger (migration 0183):
+ *
+ *   'sickness' | 'lates' | 'both'  answers that trigger, whatever it's about
+ *   'none'                         never answers a trigger
+ *   NULL (automatic)               only if its CLASSIFICATION shows
+ *                                  attendance evidence (data, never a
+ *                                  name): "timekeeping" → lates,
+ *                                  "attendance" → sickness and lates. A 1:1,
+ *                                  appraisal or any other review doesn't.
+ *
+ * Cancelled never counts. Booking from the trigger banner sets the link
+ * explicitly, so that review always counts. The server turns rows into
+ * PolicyReviewFact with entryReviewFact; everything else here is pure.
  */
-import { fmtDayIso } from "./index";
+import { fmtDayIso, combinedEvidence } from "./index";
+
+/** One classification's evidence, or every ticked one's (migration 0184). */
+type Evidence = string | null | ReadonlyArray<string | null>;
 
 export type PolicyTriggerKind = "sickness" | "lates";
+
+/** An entry's explicit link to the triggers (migration 0183). NULL on the
+ *  entry = automatic (by its classification's attendance evidence). */
+export const ANSWERS_TRIGGER = ["none", "sickness", "lates", "both"] as const;
+export type AnswersTrigger = (typeof ANSWERS_TRIGGER)[number];
+
+export const ANSWERS_TRIGGER_LABEL: Record<AnswersTrigger, string> = {
+  none: "No",
+  sickness: "Sickness",
+  lates: "Lates",
+  both: "Both",
+};
+
+/** The question on a review, wherever it's asked. */
+export const ANSWERS_TRIGGER_QUESTION = "Does this review deal with the attendance trigger?";
+
+/** The history line when the link changes. */
+export function answersTriggerMessage(v: AnswersTrigger | null): string {
+  switch (v) {
+    case null: return "Attendance trigger: automatic (from what it's about)";
+    case "none": return "Attendance trigger: doesn't deal with it";
+    case "both": return "Attendance trigger: deals with sickness and lates";
+    default: return `Attendance trigger: deals with ${v}`;
+  }
+}
 export type PolicyTriggerState = "due" | "booked" | "handled" | "due_again";
 
 export interface PolicyReviewRef {
@@ -127,28 +163,53 @@ export const NO_POLICY_TRIGGER: PolicyTriggerReview = { sickness: null, lates: n
 
 // ── Rows → facts ───────────────────────────────────────────────────────────
 
-/** An employment-record entry, as a review that can answer a trigger.
- *
- *  • A review (it has a meeting status) counts whatever its classification,
- *    for both triggers — unless it's cancelled, which never counts.
- *  • An entry with no meeting counts only if its classification shows
- *    attendance evidence: "timekeeping" deals with lates, "attendance" with
- *    sickness and lates (data on the classification, never its name).
- *
- *  Dated by its meeting, else the entry date; held once it's marked held or
- *  that day has come. */
+/** Which triggers an entry answers. The explicit link wins; NULL =
+ *  automatic, by the classification's attendance evidence (data on the
+ *  classification, never its name) — "timekeeping" deals with lates,
+ *  "attendance" with sickness and lates, anything else with neither. */
+// `evidence` may be the evidence of EVERY classification ticked on the entry
+// (0184): it answers automatically if ANY of them is attendance / timekeeping.
+export function triggersAnswered(answersTrigger: string | null | undefined, evidence: Evidence): PolicyTriggerKind[] {
+  switch (answersTrigger) {
+    case "none": return [];
+    case "sickness": return ["sickness"];
+    case "lates": return ["lates"];
+    case "both": return ["sickness", "lates"];
+  }
+  const ev = combinedEvidence(typeof evidence === "string" || evidence == null ? [evidence] : evidence);
+  if (ev === "timekeeping") return ["lates"];
+  if (ev === "attendance") return ["sickness", "lates"];
+  return [];
+}
+
+/** An employment-record entry, as a review that can answer a trigger (see
+ *  triggersAnswered for which). Cancelled never counts. Dated by its
+ *  meeting, else the entry date; held once it's marked held or that day
+ *  has come. */
 export function entryReviewFact(e: {
-  id: number; meetingStatus: string | null; evidence: string | null; meetingDate: string | null; entryDate: string;
+  id: number; meetingStatus: string | null; evidence: Evidence; meetingDate: string | null; entryDate: string;
+  answersTrigger: string | null;
 }, todayIso: string): PolicyReviewFact | null {
   if (e.meetingStatus === "cancelled") return null;
-  const covers: PolicyTriggerKind[] | null =
-    e.meetingStatus != null ? ["sickness", "lates"]
-      : e.evidence === "timekeeping" ? ["lates"]
-        : e.evidence === "attendance" ? ["sickness", "lates"]
-          : null;
-  if (!covers) return null;
+  const covers = triggersAnswered(e.answersTrigger, e.evidence);
+  if (covers.length === 0) return null;
   const date = (e.meetingDate ?? e.entryDate).slice(0, 10);
   return { source: "entry", id: e.id, date, held: e.meetingStatus === "held" || date <= todayIso, covers };
+}
+
+/** The link a review booked from a trigger banner starts with: that
+ *  trigger — or both, when the other one also still needs a review, so one
+ *  meeting answers both. */
+export function bookingLinkFor(kind: PolicyTriggerKind, review: PolicyTriggerReview | null | undefined): AnswersTrigger {
+  const other = kind === "sickness" ? review?.lates : review?.sickness;
+  return needsPolicyReview(other) ? "both" : kind;
+}
+
+/** Ask "does this review deal with the attendance trigger?" only when a
+ *  trigger has been reached in the window (due, booked, handled or due
+ *  again), or the entry already has a link set. */
+export function showTriggerChoice(review: PolicyTriggerReview | null | undefined, answersTrigger: string | null | undefined): boolean {
+  return answersTrigger != null || review?.sickness != null || review?.lates != null;
 }
 
 // ── Words ──────────────────────────────────────────────────────────────────

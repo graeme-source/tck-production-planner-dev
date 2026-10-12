@@ -25,6 +25,7 @@ import {
 } from "@workspace/people-reviews";
 import { canWriteEmploymentRecord, type RecordActor, type RecordSubject } from "./people-write-access";
 import { isFounderEmail } from "./founder-email";
+import { entryClassIdsSql } from "./entry-classifications";
 
 async function setting(key: string): Promise<string | null> {
   const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, key));
@@ -87,12 +88,11 @@ export async function loadAttentionItems(today = londonTodayIso()): Promise<Atte
     }>(sql`
       SELECT e.id, e.user_id, e.status, e.review_end::text, e.meeting_date::text, e.outcome,
              e.warning_expires_on::text, e.warning_withdrawn_at::text, s.type AS stage_type,
-             ('stage' = ANY(c.field_sets)) AS uses_stage, e.meeting_status,
+             EXISTS (SELECT 1 FROM people_record_classifications c WHERE c.id IN ${entryClassIdsSql("e")} AND 'stage' = ANY(c.field_sets)) AS uses_stage, e.meeting_status,
              (btrim(COALESCE(e.notes, '')) <> '') AS has_notes,
              (SELECT COUNT(*)::int FROM people_review_notes n WHERE n.entry_id = e.id AND n.deleted_at IS NULL) AS write_ups
         FROM people_record_entries e
         JOIN app_users u ON u.id = e.user_id AND u.is_active = TRUE
-        JOIN people_record_classifications c ON c.id = e.classification_id
         LEFT JOIN people_review_stages s ON s.id = e.stage_id
     `),
   ]);

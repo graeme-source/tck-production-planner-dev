@@ -21,7 +21,7 @@ import {
   CalendarDays, CheckCircle2, ChevronRight, Eye, EyeOff, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
 } from "lucide-react";
 import {
-  NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened,
+  NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened, entryClassLabels,
   type Classification, type Stage,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
@@ -426,7 +426,9 @@ export function ReviewTimelineCard({ entry, classifications, stages, viewerId, c
   onChanged: () => void;
 }) {
   const [busy, setBusy] = useState(false);
-  const label = classifications.find(c => c.id === entry.classificationId)?.label ?? "Record";
+  // Every classification ticked (0184), each its own chip.
+  const labels = entryClassLabels(entry, classifications);
+  const label = labels.join(" + ") || "Record";
   const level = entryLevel(entry, classifications, stages);
   const status = entry.meetingStatus;
   const setStatus = async (next: "held" | "cancelled") => {
@@ -444,7 +446,9 @@ export function ReviewTimelineCard({ entry, classifications, stages, viewerId, c
         <CalendarDays className="w-6 h-6 text-primary shrink-0 mt-0.5" />
         <span className="flex-1 min-w-0">
           <span className="flex flex-wrap gap-2 mb-1">
-            <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-200">{label}</span>
+            {(labels.length ? labels : [label]).map(l => (
+              <span key={l} className="text-sm font-bold px-2.5 py-1 rounded-lg bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-200">{l}</span>
+            ))}
             {status && (
               <span className={cn("text-sm font-bold px-2.5 py-1 rounded-lg",
                 status === "booked" ? "bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200"

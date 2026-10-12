@@ -60,7 +60,7 @@ import { PeopleSheet } from "@/components/people-sheet";
 import { RecordPanel, RecordTimelineCard, useRecordFacts } from "@/components/people/record-panel";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
 import { PolicyTriggerBanner } from "@/components/people/policy-trigger-banner";
-import { needsPolicyReview, type PolicyReviewRef } from "@workspace/people-reviews";
+import { needsPolicyReview, bookingLinkFor, type AnswersTrigger, type PolicyReviewRef } from "@workspace/people-reviews";
 import { defaultHoursRange } from "@/components/hours-range-picker";
 import type { PersonHoursResponse } from "@/lib/hours-worked-view";
 import {
@@ -455,6 +455,8 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const [from, setFrom] = useState<string | null>(null); // null = the default 12 months
   const [filter, setFilter] = useState<TimelineFilter>("all");
   const [modal, setModal] = useState<null | "rtw" | "book">(null);
+  // Booked from a trigger banner: the review starts linked to that trigger.
+  const [bookLink, setBookLink] = useState<AnswersTrigger | null>(null);
   const [openForm, setOpenForm] = useState<RtwForm | null>(null);
   // Contracts — founder/HR accounts only (they carry pay); the server says
   // whether to ask at all, and re-checks every request.
@@ -687,7 +689,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
               formsNeeded > 0 ? "bg-amber-600 text-white hover:bg-amber-700" : "border-2 border-border hover:bg-secondary/50")}>
             <HeartPulse className="w-6 h-6 shrink-0" /> Return-to-work form{formsNeeded > 0 ? ` (${formsNeeded})` : ""}
           </button>
-          <button onClick={() => setModal("book")} disabled={!canManage}
+          <button onClick={() => { setBookLink(null); setModal("book"); }} disabled={!canManage}
             className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
             <CalendarDays className="w-6 h-6 shrink-0" /> Schedule a meeting
           </button>
@@ -717,7 +719,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
                 again); calm once one is booked or held (Graeme, 2026-10-12). */}
             {([data.triggerReview?.sickness, data.triggerReview?.lates] as const).map(t => t && (
               <PolicyTriggerBanner key={t.kind} status={t} months={s.policy.months} canManage={canManage}
-                onBook={() => setModal("book")} onOpenReview={openPolicyReview} />
+                onBook={() => { setBookLink(bookingLinkFor(t.kind, data.triggerReview)); setModal("book"); }} onOpenReview={openPolicyReview} />
             ))}
             <p className="text-sm text-muted-foreground">
               {fmtDay(s.windowStart, true)} to today. Policy: {s.policy.sickInstances} sickness instances or {s.policy.lates} lates in a rolling {s.policy.months} months → review meeting.
@@ -864,7 +866,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       {modal === "book" && recordEntries.data && (
         <PeopleModal title={`Schedule a meeting — ${p.name}`} onClose={() => setModal(null)} wide>
           {/* Then the review opens, to write it up or change anything. */}
-          <BookReviewForm data={recordEntries.data} onCancel={() => setModal(null)}
+          <BookReviewForm data={recordEntries.data} answersTrigger={bookLink} onCancel={() => setModal(null)}
             onCreated={id => { setModal(null); refreshReviews(); openEntryInPanel(id); }} />
         </PeopleModal>
       )}

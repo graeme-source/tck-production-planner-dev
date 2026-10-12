@@ -32,13 +32,15 @@ import {
 } from "@workspace/db";
 import {
   meetingNotesRows, actionTodos, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
-  linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS,
+  linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS, answersTriggerMessage,
+  cleanClassIds, entryClassIds, entryClassification,
   type MeetingStatus, type Classification, type EvidenceKind,
 } from "@workspace/people-reviews";
 import { validate } from "../middleware/validate";
 import { employmentRecordWrite, fromRow, ownerOf, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { resyncAttentionSoon } from "../lib/hr-attention";
+import { loadEntryClassIds, setEntryClassifications } from "../lib/entry-classifications";
 import { ReadMeetingNotesBody, SaveMeetingNotesBody, type SaveMeetingNotes } from "../lib/meeting-notes-ai";
 import { draftMeetingNotes } from "../services/meeting-notes-reader";
 
@@ -133,11 +135,17 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
     const entry = await loadEntry(viewer, req.params["id"]);
     if (!entry) { res.status(404).json({ error: "No such meeting" }); return; }
     const classifications = await loadClassifications();
-    let to: Classification | undefined;
-    if (b.classificationId != null && b.classificationId !== entry.classificationId) {
-      to = classifications.find(c => c.id === b.classificationId && c.active);
-      if (!to) { res.status(400).json({ error: "No such classification" }); return; }
+    // What it's about — every classification ticked (0184), first = primary.
+    // Ones already on the entry may since have been retired; new ones must be active.
+    const before = entryClassIds({ classificationId: entry.classificationId, classificationIds: (await loadEntryClassIds(db, [entry.id])).get(entry.id) });
+    const wanted = b.classificationIds?.length ? cleanClassIds(b.classificationIds)
+      : b.classificationId != null ? [b.classificationId] : before;
+    if (wanted.length === 0 || wanted.some(id => !classifications.some(c => c.id === id && (c.active || before.includes(id))))) {
+      res.status(400).json({ error: "No such classification" }); return;
     }
+    const reclassified = wanted.join(",") !== before.join(",");
+    const from = entryClassification({ classificationId: before[0], classificationIds: before }, classifications);
+    const to: Classification | undefined = reclassified ? entryClassification({ classificationId: wanted[0], classificationIds: wanted }, classifications) : undefined;
     const subjectName = await personName(entry.userId);
     const rows = meetingNotesRows(b, { me: firstName(viewer.name), colleague: firstName(subjectName) });
     if (rows.length === 0) { res.status(400).json({ error: "There's nothing to save — add a summary or what was agreed." }); return; }
@@ -149,9 +157,17 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
       const set: Partial<typeof peopleRecordEntriesTable.$inferInsert> = { updatedAt: now };
       if (b.title.trim()) set.title = b.title.trim();
       if (to) {
-        set.classificationId = to.id;
-        await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "reclassify",
-          detail: reclassify(classifications.find(c => c.id === entry.classificationId), to).message });
+        await setEntryClassifications(tx, entry.id, wanted);
+        if ([...wanted].sort().join(",") !== [...before].sort().join(",")) {
+          await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "reclassify",
+            detail: reclassify(from, to).message });
+        }
+      }
+      // "Does this review deal with the attendance trigger?" — only when asked.
+      if (b.answersTrigger !== undefined && b.answersTrigger !== (entry.answersTrigger ?? null)) {
+        set.answersTrigger = b.answersTrigger;
+        await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "trigger_link",
+          detail: answersTriggerMessage(b.answersTrigger) });
       }
       // Notes from the meeting mean it happened.
       const prev = (entry.meetingStatus ?? null) as MeetingStatus | null;

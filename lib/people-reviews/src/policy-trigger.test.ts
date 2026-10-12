@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  entryReviewFact, needsPolicyReview, policyTriggerLine, policyTriggerStatus, triggerReachedOn,
+  bookingLinkFor, entryReviewFact, needsPolicyReview, policyTriggerLine, policyTriggerStatus, showTriggerChoice, triggerReachedOn, triggersAnswered,
   type PolicyReviewFact,
 } from "./policy-trigger";
 
@@ -79,47 +79,98 @@ describe("policyTriggerStatus", () => {
   });
 });
 
-describe("review sources (one review, classified — migration 0178)", () => {
+describe("review sources (one review, classified — 0178; explicit trigger link — 0183)", () => {
   const today = "2026-10-12";
-  const e = { id: 7, meetingStatus: "held" as string | null, evidence: null as string | null, meetingDate: "2026-10-12" as string | null, entryDate: "2026-10-01" };
+  const e = {
+    id: 7, meetingStatus: "held" as string | null, evidence: null as string | null, meetingDate: "2026-10-12" as string | null,
+    entryDate: "2026-10-01", answersTrigger: null as string | null,
+  };
+  const SICK = ["2026-01-05", "2026-03-02", "2026-05-04", "2026-08-03"];
+  const sickness = (reviews: PolicyReviewFact[]) => policyTriggerStatus("sickness", { threshold: 4, instanceDates: SICK, reviews });
 
-  it("any review that isn't cancelled counts, whatever its classification", () => {
-    expect(entryReviewFact(e, today)).toMatchObject({ source: "entry", id: 7, date: "2026-10-12", held: true, covers: ["sickness", "lates"] });
-    expect(entryReviewFact({ ...e, evidence: "timekeeping" }, today)?.covers).toEqual(["sickness", "lates"]);
-    expect(entryReviewFact({ ...e, meetingStatus: "cancelled" }, today)).toBeNull();
+  it("automatic (NULL): a review answers a trigger only through its classification's attendance evidence", () => {
+    expect(entryReviewFact(e, today)).toBeNull();
+    expect(entryReviewFact({ ...e, evidence: "timekeeping" }, today)).toMatchObject({ source: "entry", id: 7, date: "2026-10-12", held: true, covers: ["lates"] });
+    expect(entryReviewFact({ ...e, evidence: "attendance" }, today)?.covers).toEqual(["sickness", "lates"]);
+  });
+
+  it("regression (12 Oct 2026): a held 1:1 after the trigger was reached no longer answers it — until it's linked", () => {
+    // Trigger reached (4 sickness instances), then a maternity planning
+    // meeting classified as a 1:1 (no attendance evidence), held, link NULL.
+    const oneToOne = { ...e, id: 50, meetingDate: "2026-10-12", entryDate: "2026-10-12" };
+    const auto = entryReviewFact(oneToOne, today);
+    expect(auto).toBeNull();
+    expect(sickness(auto ? [auto] : [])?.state).toBe("due");
+    // The same review, linked to sickness → handled.
+    const linked = entryReviewFact({ ...oneToOne, answersTrigger: "sickness" }, today)!;
+    expect(sickness([linked])).toMatchObject({ state: "handled", lastReview: { id: 50, date: "2026-10-12" } });
+  });
+
+  it("explicit link: sickness / lates / both always answer; none never does, even with attendance evidence", () => {
+    expect(entryReviewFact({ ...e, answersTrigger: "sickness" }, today)?.covers).toEqual(["sickness"]);
+    expect(entryReviewFact({ ...e, answersTrigger: "lates", evidence: "attendance" }, today)?.covers).toEqual(["lates"]);
+    expect(entryReviewFact({ ...e, answersTrigger: "both" }, today)?.covers).toEqual(["sickness", "lates"]);
+    expect(entryReviewFact({ ...e, answersTrigger: "none", evidence: "attendance" }, today)).toBeNull();
+    expect(lates(LATES, [entryReviewFact({ ...e, answersTrigger: "sickness" }, today)!])?.state).toBe("due");
+  });
+
+  it("cancelled never counts, whatever the link", () => {
+    expect(entryReviewFact({ ...e, meetingStatus: "cancelled", answersTrigger: "both" }, today)).toBeNull();
     expect(entryReviewFact({ ...e, meetingStatus: "cancelled", evidence: "attendance" }, today)).toBeNull();
   });
 
   it("booked = not held until it's marked held or its day comes", () => {
-    expect(entryReviewFact({ ...e, meetingStatus: "booked", meetingDate: "2026-10-20" }, today)).toMatchObject({ held: false });
-    expect(entryReviewFact({ ...e, meetingStatus: "booked", meetingDate: "2026-10-12" }, today)).toMatchObject({ held: true });
-    expect(entryReviewFact({ ...e, meetingStatus: "held", meetingDate: "2026-10-20" }, today)).toMatchObject({ held: true });
+    const linked = { ...e, answersTrigger: "both" };
+    expect(entryReviewFact({ ...linked, meetingStatus: "booked", meetingDate: "2026-10-20" }, today)).toMatchObject({ held: false });
+    expect(entryReviewFact({ ...linked, meetingStatus: "booked", meetingDate: "2026-10-12" }, today)).toMatchObject({ held: true });
+    expect(entryReviewFact({ ...linked, meetingStatus: "held", meetingDate: "2026-10-20" }, today)).toMatchObject({ held: true });
   });
 
   it("dated by its meeting, else the entry date", () => {
-    expect(entryReviewFact({ ...e, meetingDate: null }, today)).toMatchObject({ date: "2026-10-01" });
+    expect(entryReviewFact({ ...e, answersTrigger: "both", meetingDate: null }, today)).toMatchObject({ date: "2026-10-01" });
   });
 
-  it("an entry with no meeting counts only through its classification's attendance evidence", () => {
+  it("an entry with no meeting counts through its classification's evidence, or its link", () => {
     const plain = { ...e, meetingStatus: null, meetingDate: null };
     expect(entryReviewFact(plain, today)).toBeNull();
     expect(entryReviewFact({ ...plain, evidence: "timekeeping" }, today)).toMatchObject({ covers: ["lates"], held: true });
     expect(entryReviewFact({ ...plain, evidence: "attendance" }, today)).toMatchObject({ covers: ["sickness", "lates"] });
+    expect(entryReviewFact({ ...plain, answersTrigger: "lates" }, today)).toMatchObject({ covers: ["lates"] });
   });
 
-  it("Nozomi after the migration: her old 'review' meeting (held 12 Oct) is now a Performance appraisal entry — still handled", () => {
-    // 0178 maps kind review -> Performance appraisal (no attendance evidence),
-    // meeting_status held, meeting_date 12 Oct.
-    const migrated = entryReviewFact({ id: 31, meetingStatus: "held", evidence: null, meetingDate: "2026-10-12", entryDate: "2026-10-12" }, today)!;
-    expect(lates(LATES, [migrated])).toMatchObject({ state: "handled", count: 8, lastReview: { source: "entry", id: 31, date: "2026-10-12" } });
-    expect(policyTriggerLine(lates(LATES, [migrated])!, 12)).toBe("Policy trigger reached (8 lates) — reviewed 12 Oct 2026");
-  });
-
-  it("a review booked after the day it was reached, any classification, is booked; cancelling it puts the trigger back to due", () => {
-    const booked = entryReviewFact({ id: 5, meetingStatus: "booked", evidence: null, meetingDate: "2026-10-26", entryDate: "2026-10-12" }, today)!;
+  it("a review booked from the banner (linked) is booked; cancelling it puts the trigger back to due", () => {
+    const booked = entryReviewFact({ ...e, id: 5, meetingStatus: "booked", meetingDate: "2026-10-26", entryDate: "2026-10-12", answersTrigger: "lates" }, today)!;
     expect(lates(LATES, [booked])?.state).toBe("booked");
-    const cancelled = entryReviewFact({ id: 5, meetingStatus: "cancelled", evidence: null, meetingDate: "2026-10-26", entryDate: "2026-10-12" }, today);
+    const cancelled = entryReviewFact({ ...e, id: 5, meetingStatus: "cancelled", meetingDate: "2026-10-26", entryDate: "2026-10-12", answersTrigger: "lates" }, today);
     expect(cancelled).toBeNull();
     expect(lates(LATES, [])?.state).toBe("due");
+  });
+});
+
+describe("triggersAnswered", () => {
+  it("link first, else evidence, else nothing", () => {
+    expect(triggersAnswered(null, null)).toEqual([]);
+    expect(triggersAnswered(undefined, "timekeeping")).toEqual(["lates"]);
+    expect(triggersAnswered("none", "timekeeping")).toEqual([]);
+    expect(triggersAnswered("both", null)).toEqual(["sickness", "lates"]);
+  });
+});
+
+describe("bookingLinkFor", () => {
+  const due = lates(LATES)!;
+  it("the banner's own trigger, or both when the other still needs a review", () => {
+    expect(bookingLinkFor("sickness", { sickness: null, lates: null })).toBe("sickness");
+    expect(bookingLinkFor("sickness", { sickness: null, lates: due })).toBe("both");
+    expect(bookingLinkFor("lates", { sickness: null, lates: due })).toBe("lates");
+    expect(bookingLinkFor("sickness", { sickness: null, lates: { ...due, state: "handled" } })).toBe("sickness");
+  });
+});
+
+describe("showTriggerChoice", () => {
+  it("only once a trigger is reached, or a link is already set", () => {
+    expect(showTriggerChoice({ sickness: null, lates: null }, null)).toBe(false);
+    expect(showTriggerChoice(null, null)).toBe(false);
+    expect(showTriggerChoice({ sickness: null, lates: { ...lates(LATES)!, state: "handled" } }, null)).toBe(true);
+    expect(showTriggerChoice({ sickness: null, lates: null }, "none")).toBe(true);
   });
 });

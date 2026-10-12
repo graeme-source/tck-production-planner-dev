@@ -24,6 +24,7 @@ import { db, usersTable, appSettingsTable, needsProbationPrompt, probationDueDat
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getPlandayEmployees } from "../services/planday";
+import { entryClassIdsSql } from "./entry-classifications";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 let timer: NodeJS.Timeout | null = null;
@@ -83,14 +84,14 @@ export async function runProbationPromptCycle(now = new Date()): Promise<Probati
 
   // Anyone with a probation review already on their record is in hand: a
   // record entry (migration 0178 — reviews are classified entries) whose
-  // classification uses the probation fields. Data on the classification,
+  // classification (any ticked one, 0184) uses the probation fields. Data on the classification,
   // never its name. Any status counts, as the old meetings check did.
   const linkedIds = sql.join(linked.map(s => sql`${s.id}`), sql`, `);
   const booked = await db.execute<{ user_id: number }>(sql`
     SELECT DISTINCT e.user_id
       FROM people_record_entries e
-      JOIN people_record_classifications c ON c.id = e.classification_id
-     WHERE 'probation' = ANY(c.field_sets) AND e.user_id IN (${linkedIds})
+     WHERE EXISTS (SELECT 1 FROM people_record_classifications c WHERE c.id IN ${entryClassIdsSql("e")} AND 'probation' = ANY(c.field_sets))
+       AND e.user_id IN (${linkedIds})
   `);
   const alreadyBooked = new Set(booked.rows.map(b => Number(b.user_id)));
 

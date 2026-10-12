@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, boolean, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, boolean, date, primaryKey } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
 // The employment record — classified entries (migration 0170). Rules + tests
@@ -75,6 +75,10 @@ export const peopleRecordEntriesTable = pgTable("people_record_entries", {
    *  no meeting, just on the record. meeting_type is an optional detail. */
   meetingStatus: text("meeting_status"),
   heldAt: timestamp("held_at"),
+  /** Which attendance trigger this review deals with (migration 0183):
+   *  sickness | lates | both | none. NULL = automatic, by the
+   *  classification's attendance evidence (policy-trigger.ts). */
+  answersTrigger: text("answers_trigger"),
   /** The old employee_meetings row this came from (0178), if any. */
   legacyMeetingId: integer("legacy_meeting_id"),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
@@ -82,6 +86,16 @@ export const peopleRecordEntriesTable = pgTable("people_record_entries", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+/** Every classification ticked on an entry (migration 0184); position 0 is
+ *  the primary, which people_record_entries.classification_id mirrors.
+ *  Written only through api-server lib/entry-classifications.ts. */
+export const peopleRecordEntryClassificationsTable = pgTable("people_record_entry_classifications", {
+  entryId: integer("entry_id").notNull().references(() => peopleRecordEntriesTable.id, { onDelete: "cascade" }),
+  classificationId: integer("classification_id").notNull().references(() => peopleRecordClassificationsTable.id),
+  position: integer("position").notNull().default(0),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.entryId, t.classificationId] })]);
 
 /** A review's write-up (migration 0178): feedback, objectives and notes,
  *  each PRIVATE to its author until shared with the employee. Who may read

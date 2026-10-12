@@ -19,7 +19,7 @@
  * be the one tool's fields — which a person then reads before saving.
  */
 import { z } from "zod";
-import { ACTION_OWNERS, MAX_NOTES_CHARS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
+import { ACTION_OWNERS, ANSWERS_TRIGGER, MAX_NOTES_CHARS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
 
 export const LIMITS = { title: 120, summary: 4000, what: 300, detail: 2000, ownerName: 80, items: 20 } as const;
 
@@ -203,6 +203,9 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD
 export const SaveMeetingNotesBody = z.object({
   title: z.string().trim().max(LIMITS.title),
   classificationId: z.number().int().positive().nullable(),
+  /** Every classification ticked in the check step, first = primary (0184).
+   *  Wins over classificationId when sent. */
+  classificationIds: z.array(z.number().int().positive()).min(1, "Tick at least one").max(12).optional(),
   summary: z.string().max(LIMITS.summary),
   agreements: z.array(z.object({
     what: z.string().max(LIMITS.what),
@@ -222,6 +225,9 @@ export const SaveMeetingNotesBody = z.object({
     url: z.string().max(2000).nullable(),
     text: z.string().min(1).max(MAX_NOTES_CHARS),
   }),
+  /** "Does this review deal with the attendance trigger?" (0183) — only
+   *  sent when it was asked; null = automatic. */
+  answersTrigger: z.enum(ANSWERS_TRIGGER).nullable().optional(),
 });
 export type SaveMeetingNotes = z.infer<typeof SaveMeetingNotesBody>;
 

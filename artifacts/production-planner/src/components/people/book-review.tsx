@@ -21,23 +21,28 @@
 import { useState } from "react";
 import { CalendarDays, ChevronDown } from "lucide-react";
 import {
-  sortClassifications, evidenceLine, startingMeetingStatus, fmtDayIso, defaultMeetingClassification, type MeetingStatus,
+  sortClassifications, evidenceLine, startingMeetingStatus, fmtDayIso, defaultMeetingClassification, entryClassification,
+  ANSWERS_TRIGGER_LABEL, type AnswersTrigger, type MeetingStatus,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { FieldLabel, PillButton } from "./review-fields";
+import { FieldLabel } from "./review-fields";
+import { ClassTicks } from "./class-ticks";
 import { recordSend, type PersonRecordEntries } from "./reviews-api";
 
 type When = "booked" | "held" | "none";
 
-export function BookReviewForm({ data, onCreated, onCancel }: {
+export function BookReviewForm({ data, onCreated, onCancel, answersTrigger = null }: {
   data: PersonRecordEntries;
+  /** Booked from a trigger banner: the review answers that trigger (0183). */
+  answersTrigger?: AnswersTrigger | null;
   onCreated: (id: number) => void;
   onCancel: () => void;
 }) {
   const classifications = sortClassifications(data.classifications).filter(c => c.active);
   const fallback = defaultMeetingClassification(classifications);
-  const [picked, setPicked] = useState<number | null>(null);
+  // Ticked classifications (0184); none ticked yet = the meetings default.
+  const [picked, setPicked] = useState<number[] | null>(null);
   const [date, setDate] = useState(data.today);
   const [time, setTime] = useState("");
   const [when, setWhen] = useState<When>("booked");
@@ -45,8 +50,9 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
   const [inReview, setInReview] = useState(false);
   const [more, setMore] = useState(false);
   const [busy, setBusy] = useState(false);
-  const classificationId = picked ?? fallback?.id ?? null;
-  const cls = classifications.find(c => c.id === classificationId);
+  const classIds = picked ?? (fallback ? [fallback.id] : []);
+  const classificationId = classIds[0] ?? null;
+  const cls = classificationId != null ? entryClassification({ classificationId, classificationIds: classIds }, classifications) : undefined;
   const evidence = picked != null ? evidenceLine(cls?.evidence ?? null, data.attendance) : null;
   const first = data.person.name.split(" ")[0];
   // A booked meeting on a day that's already gone is saved as held.
@@ -57,8 +63,9 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
     setBusy(true);
     try {
       const r = await recordSend<{ id: number }>("POST", `/person/${data.person.id}/entries`, {
-        classificationId, title: title.trim(), entryDate: date, status: inReview ? "open" : "closed",
+        classificationId, classificationIds: classIds, title: title.trim(), entryDate: date, status: inReview ? "open" : "closed",
         meetingStatus: status,
+        ...(answersTrigger ? { answersTrigger } : {}),
         ...(status ? { meetingDate: date, meetingTime: time || null } : {}),
       });
       onCreated(r.id);
@@ -90,6 +97,12 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
           </label>
         )}
       </div>
+      {answersTrigger && answersTrigger !== "none" && (
+        <p className="rounded-2xl bg-secondary/50 p-4 text-base">
+          <span className="font-bold">For the attendance trigger: </span>
+          this meeting will count as the {answersTrigger === "both" ? "sickness and lates" : ANSWERS_TRIGGER_LABEL[answersTrigger].toLowerCase()} review. You can change that in the meeting under More options.
+        </p>
+      )}
       {when === "booked" && status === "held" && date && (
         <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">{fmtDayIso(date)} has already gone, so it'll be saved as held.</p>
       )}
@@ -101,17 +114,8 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
 
       {more && (
         <div className="space-y-5 rounded-3xl border-2 border-border p-4">
-          <div className="space-y-1.5">
-            <FieldLabel>What's it about?</FieldLabel>
-            <p className="text-sm text-muted-foreground">
-              Only if you know already — otherwise it starts as {fallback ? `"${fallback.label}"` : "the first on the list"} and the AI suggests one from the notes.
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {classifications.map(c => (
-                <PillButton key={c.id} selected={classificationId === c.id} onClick={() => setPicked(c.id)}>{c.label}</PillButton>
-              ))}
-            </div>
-          </div>
+          <ClassTicks classifications={classifications} value={classIds} onChange={setPicked} label="What's it about?"
+            hint={<>Only if you know already — otherwise it starts as {fallback ? `"${fallback.label}"` : "the first on the list"} and the AI suggests one from the notes.</>} />
           {evidence && (
             <p className={cn("rounded-2xl p-4 text-base", evidence.triggered ? "bg-rose-50 dark:bg-rose-950/30" : "bg-secondary/50")}>
               <span className="font-bold">{evidence.triggered ? "Policy trigger reached. " : "From their attendance: "}</span>{evidence.text}
