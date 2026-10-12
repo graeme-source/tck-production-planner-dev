@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
+import type { PolicyTriggerStatus } from "@workspace/people-reviews";
 import { DEFAULT_PEOPLE_SORT, attentionCount, personStatus, sortPeopleRows, type PersonTableRow } from "./people-list-table";
 
 const person = (name: string, extra: Partial<PersonTableRow> = {}): PersonTableRow => ({
   name, jobTitle: null, isActive: true, awayNow: false, formsNeeded: 0,
-  triggers: { sickness: false, lates: false }, nextMeeting: null, ...extra,
+  triggerReview: { sickness: null, lates: null }, nextMeeting: null, ...extra,
 });
+const trig = (kind: PolicyTriggerStatus["kind"], state: PolicyTriggerStatus["state"]): PolicyTriggerStatus =>
+  ({ kind, state, count: 8, threshold: 6, reachedOn: "2026-08-03", lastReview: null, booked: null, sinceReview: 0 });
 
 describe("People table", () => {
   it("defaults to name A→Z", () => {
@@ -12,13 +15,18 @@ describe("People table", () => {
       .toEqual(["Ann", "Ben", "cara"]);
   });
   it("counts what needs attention, including an open review", () => {
-    const p = person("A", { formsNeeded: 2, triggers: { sickness: true, lates: false } });
+    const p = person("A", { formsNeeded: 2, triggerReview: { sickness: trig("sickness", "due"), lates: null } });
     expect(attentionCount(p, false)).toBe(3);
     expect(attentionCount(p, true)).toBe(4);
     expect(attentionCount(person("B"), false)).toBe(0);
   });
+  it("a trigger already reviewed or booked doesn't count; due again does", () => {
+    expect(attentionCount(person("Nozomi", { triggerReview: { sickness: null, lates: trig("lates", "handled") } }), false)).toBe(0);
+    expect(attentionCount(person("B", { triggerReview: { sickness: null, lates: trig("lates", "booked") } }), false)).toBe(0);
+    expect(attentionCount(person("C", { triggerReview: { sickness: null, lates: trig("lates", "due_again") } }), false)).toBe(1);
+  });
   it("sorts by attention most-first, nobody-to-chase at the bottom", () => {
-    const rows = [person("Calm"), person("Busy", { formsNeeded: 2 }), person("Review"), person("One", { triggers: { sickness: false, lates: true } })];
+    const rows = [person("Calm"), person("Busy", { formsNeeded: 2 }), person("Review"), person("One", { triggerReview: { sickness: null, lates: trig("lates", "due") } })];
     const out = sortPeopleRows(rows, { key: "attention", dir: "desc" }, p => p.name === "Review");
     expect(out.map(p => p.name)).toEqual(["Busy", "One", "Review", "Calm"]);
   });

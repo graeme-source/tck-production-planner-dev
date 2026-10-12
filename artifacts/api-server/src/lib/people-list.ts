@@ -9,6 +9,7 @@
  *
  * Pure — the route loads the rows; tests pin the rules.
  */
+import { needsPolicyReview, type PolicyTriggerReview } from "@workspace/people-reviews";
 
 export interface OutstandingSpell {
   start: string;
@@ -48,12 +49,15 @@ export interface PersonListFacts {
   name: string;
   isActive: boolean;
   formsNeeded: number;
-  triggers: { sickness: boolean; lates: boolean };
+  /** Where each policy trigger stands — reached but already reviewed (or a
+   *  review booked) doesn't need anyone to act. */
+  triggerReview: PolicyTriggerReview;
 }
 
-/** A card that needs someone to act: a form owed or a policy trigger hit. */
+/** A card that needs someone to act: a form owed, or a policy trigger hit
+ *  with no review since (or new instances since the last one). */
 export function personNeedsAction(p: PersonListFacts): boolean {
-  return p.formsNeeded > 0 || p.triggers.sickness || p.triggers.lates;
+  return p.formsNeeded > 0 || needsPolicyReview(p.triggerReview.sickness) || needsPolicyReview(p.triggerReview.lates);
 }
 
 /** Current staff before leavers; within each, people needing action first,
