@@ -387,8 +387,12 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const stepsTop = titleBox.y + titleBox.h + d(page.bandGapMm);
   const stepsH = d(page.stepsBandMm);
   const stepGap = d(page.columnGapMm);
-  const circleD = d(page.stepCircleMm);
-  const stepInset = circleD + d(1);
+  // Step-number circle: fixed (stepCircleMm), or — the default — as tall as
+  // the steps' text at the size they fit at, worked out in the fitting loop
+  // below. The text starts this far right of the circle's left edge.
+  const minAutoCircle = d(4);
+  const insetFor = (circle: number) => circle + d(page.stepCircleAuto ? 1.5 : 1);
+  let circleD = page.stepCircleAuto ? minAutoCircle : d(page.stepCircleMm);
   // Any number of steps (2 by default), widths worked out automatically: a
   // step written as whole lines (step 2's cooking lines, which never wrap)
   // gets exactly the width its longest line needs at the size being tried;
@@ -397,7 +401,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const nSteps = content.steps.length;
   const stepSpace = innerW - Math.max(0, nSteps - 1) * stepGap;
   const wholeStep = content.steps.map(ps => ps.some(p => p.some(r => r.text.includes(" "))));
-  const stepBoxesFor = (width: WidthVariant, sizeDots: number): Rect[] => {
+  const stepBoxesFor = (width: WidthVariant, sizeDots: number, stepInset: number): Rect[] => {
     const style = t.fields.steps;
     const need = content.steps.map((ps, i) =>
       wholeStep[i] ? stepInset + Math.max(0, ...ps.map(p => wrap([p], style, width, sizeDots, Infinity, m).lineRight[0] ?? 0)) + 1 : 0);
@@ -484,10 +488,26 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
         const width = cands[Math.min(w, cands.length - 1)];
         const effMin = Math.max(style.minPt, legalMinFor(style, width, m, page.smallPack));
         const sizeDots = ptToDots(sizeAt(style, level, effMin), dpi);
-        const boxes = stepBoxesFor(width, sizeDots);
-        const tr = trial(spec("steps", boxes, content.steps, stepInset), level, w, t, m);
+        // Auto circles: start small and grow to the text's height until the
+        // two agree (a bigger circle narrows the text, which can add a line,
+        // which makes the circle bigger…). Only ever grows, capped at the
+        // band, so it settles in a step or two. The trial kept is always the
+        // one laid out with the circle that's drawn — nothing can overlap.
+        let circle = page.stepCircleAuto ? minAutoCircle : d(page.stepCircleMm);
+        let boxes: Rect[] = [];
+        let tr!: Trial;
+        for (let i = 0; i < 6; i++) {
+          boxes = stepBoxesFor(width, sizeDots, insetFor(circle));
+          tr = trial(spec("steps", boxes, content.steps, insetFor(circle)), level, w, t, m);
+          if (!page.stepCircleAuto) break;
+          const want = Math.min(stepsH, Math.max(minAutoCircle, tr.height));
+          if (want <= circle + 0.5) break;
+          circle = want;
+        }
         chosen = tr;
         stepBoxes = boxes;
+        circleD = circle;
+        const stepInset = insetFor(circle);
         const narrowOk = boxes.every(b => b.w > stepInset);
         if (narrowOk && !tr.wraps.some(x => x.tooWide) && tr.height <= stepsH + 1e-6) { fits = true; break outer; }
         if (atFloor(tr.spec, level, w, t, m)) break outer;
@@ -518,7 +538,8 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const circles = stepBoxes.map(b => ({ cx: b.x + circleD / 2, cy: b.y + circleD / 2, r: circleD / 2 }));
   // Step numbers, white in the black circles.
   const numFace: Face = { width: "normal", weight: 700 };
-  const numSize = circleD * 0.7;
+  // A big bold number: cap height about half the circle.
+  const numSize = circleD * (page.stepCircleAuto ? 0.72 : 0.7);
   const numMet = m.metrics(numFace);
   const numberRuns: PlacedRun[] = circles.map((c, i) => {
     const w = m.advance(String(i + 1), numFace, numSize, 0);

@@ -166,8 +166,11 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Steps band" unit="mm" value={draft.page.stepsBandMm} step={0.5} min={2} max={60} onChange={v => v != null && setPage("stepsBandMm", v)} />
               <Num label="Gap between bands" unit="mm" value={draft.page.bandGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("bandGapMm", v)} />
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
-              <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
+              {!draft.page.stepCircleAuto && (
+                <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
+              )}
             </div>
+            <Toggle on={draft.page.stepCircleAuto} onChange={v => setPage("stepCircleAuto", v)} label="Step numbers as tall as the step text" />
             <div className="flex flex-wrap items-end gap-4">
               <Toggle on={draft.page.dividerOn} onChange={v => setPage("dividerOn", v)} label="Thin line under the cooking steps" />
               {draft.page.dividerOn && (

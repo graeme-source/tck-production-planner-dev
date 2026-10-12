@@ -82,6 +82,13 @@ export interface PageSettings {
   bandGapMm: number;
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
+  /** Step-number circles as tall as the step's text (cap top of the first
+   *  line to the bottom of the last — two lines = about the steps band),
+   *  worked out from the size the steps actually fit at (Graeme, 2026-10-12:
+   *  "make those 1 and 2 steps really obvious", like his original design).
+   *  Off = a fixed circle of stepCircleMm. */
+  stepCircleAuto: boolean;
+  /** The circle's size when stepCircleAuto is off. */
   stepCircleMm: number;
   /** Height of the barcode BARS (digits sit underneath). At least
    *  EAN13_MIN_BAR_HEIGHT_MM (12 mm); under GS1's recommended 18.3 mm the
@@ -196,7 +203,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // two lines up to ~10.5 pt), so the longest real deck (The Godfather)
     // still fits at the legal minimum in Semi Condensed.
     titleBandMm: 7, stepsBandMm: 8, bandGapMm: 3, fieldGapMm: 3,
-    stepCircleMm: 5.5,
+    stepCircleAuto: true, stepCircleMm: 5.5,
     // 0.25 mm = 2 dots at 203 dpi: a hairline that still prints solidly.
     dividerOn: true, dividerMm: 0.25,
     // Step widths are worked out automatically (layout.ts): a step written as
@@ -383,6 +390,8 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
       dividerOn: bool(p.dividerOn, D.page.dividerOn),
       dividerMm: num(p.dividerMm, D.page.dividerMm, 0.05, 2),
+      // Templates saved before it existed get the default (auto).
+      stepCircleAuto: bool(p.stepCircleAuto, D.page.stepCircleAuto),
       stepCircleMm: num(p.stepCircleMm, D.page.stepCircleMm, 2, 20),
       barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, EAN13_MIN_BAR_HEIGHT_MM, 60),
       barcodeSizePct: num(p.barcodeSizePct, D.page.barcodeSizePct, 80, 200),

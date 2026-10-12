@@ -46,6 +46,19 @@ describe("narrowest width (replaces allowNarrower)", () => {
   });
 });
 
+describe("step-number circle size", () => {
+  it("defaults to auto (as tall as the step text); older templates get auto too", () => {
+    expect(normaliseTemplate({}).page.stepCircleAuto).toBe(true);
+    const { stepCircleAuto: _a, ...oldPage } = DEFAULT_TEMPLATE.page;
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...oldPage, stepCircleMm: 5.5 } });
+    expect(t.page.stepCircleAuto).toBe(true);
+    expect(t.page.stepCircleMm).toBe(5.5); // kept for when auto is switched off
+  });
+  it("can be switched to a fixed size", () => {
+    expect(normaliseTemplate({ page: { stepCircleAuto: false } }).page.stepCircleAuto).toBe(false);
+  });
+});
+
 describe("divider rule settings", () => {
   it("defaults on, 0.25 mm — two dots at 203 dpi", () => {
     const t = normaliseTemplate({});
