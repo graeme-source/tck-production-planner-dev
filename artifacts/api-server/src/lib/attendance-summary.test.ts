@@ -72,7 +72,7 @@ describe("policyTriggerReview", () => {
   const eight = ["03", "04", "05", "06", "07", "08", "09"].map(m => sh(`2026-${m}-07`, "Arrived late")).concat(sh("2026-09-20", "Arrived late"));
   it("a review held after the trigger was reached, no lates since → handled", () => {
     const s = summariseAttendance(eight, TODAY);
-    const review = { source: "meeting" as const, id: 1, date: "2026-09-22", held: true, covers: ["sickness", "lates"] as const };
+    const review = { source: "entry" as const, id: 1, date: "2026-09-22", held: true, covers: ["sickness", "lates"] as const };
     expect(policyTriggerReview(s, [review])).toMatchObject({ sickness: null, lates: { state: "handled", count: 8, reachedOn: "2026-08-07" } });
     expect(policyTriggerReview(s, [])).toMatchObject({ lates: { state: "due" } });
   });

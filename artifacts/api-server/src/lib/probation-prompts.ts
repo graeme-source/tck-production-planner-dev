@@ -20,8 +20,8 @@
  * All the date arithmetic lives in @workspace/db (probation.ts) where it is
  * tested; this file is the plumbing around it.
  */
-import { db, usersTable, employeeMeetingsTable, appSettingsTable, needsProbationPrompt, probationDueDate, DEFAULT_PROBATION_MONTHS } from "@workspace/db";
-import { and, eq, inArray } from "drizzle-orm";
+import { db, usersTable, appSettingsTable, needsProbationPrompt, probationDueDate, DEFAULT_PROBATION_MONTHS } from "@workspace/db";
+import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getPlandayEmployees } from "../services/planday";
 
@@ -81,15 +81,18 @@ export async function runProbationPromptCycle(now = new Date()): Promise<Probati
   const hiredById = new Map<number, string | null | undefined>();
   for (const e of employees) hiredById.set(e.id, e.hiredDate);
 
-  // Anyone with a probation meeting already on their record is in hand.
-  const booked = await db
-    .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
-    .from(employeeMeetingsTable)
-    .where(and(
-      eq(employeeMeetingsTable.kind, "probation"),
-      inArray(employeeMeetingsTable.subjectUserId, linked.map(s => s.id)),
-    ));
-  const alreadyBooked = new Set(booked.map(b => b.subjectUserId));
+  // Anyone with a probation review already on their record is in hand: a
+  // record entry (migration 0178 — reviews are classified entries) whose
+  // classification uses the probation fields. Data on the classification,
+  // never its name. Any status counts, as the old meetings check did.
+  const linkedIds = sql.join(linked.map(s => sql`${s.id}`), sql`, `);
+  const booked = await db.execute<{ user_id: number }>(sql`
+    SELECT DISTINCT e.user_id
+      FROM people_record_entries e
+      JOIN people_record_classifications c ON c.id = e.classification_id
+     WHERE 'probation' = ANY(c.field_sets) AND e.user_id IN (${linkedIds})
+  `);
+  const alreadyBooked = new Set(booked.rows.map(b => Number(b.user_id)));
 
   const prompted: string[] = [];
   for (const person of linked) {
