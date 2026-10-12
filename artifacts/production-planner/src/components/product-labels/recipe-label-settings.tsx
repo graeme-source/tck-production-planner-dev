@@ -9,8 +9,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { Barcode, ChevronRight, Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
-import { COOKING_KEYS, PERIOD_UNITS, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
+import { COOKING_KEYS, PERIOD_UNITS, type CookingMode, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
 import { StepPreview } from "./step-preview";
+import { CookingSuggestion } from "./cooking-suggestion";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
@@ -62,13 +63,36 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
     setLoaded(true);
   }, [loaded, s]);
 
-  // What prints: this recipe's own number, else the standard; an appliance
-  // switched off is blank (its line drops) — same rule as the server.
+  // Customer cooking times: Suggested (the weight tier) or Manual (the boxes).
+  const ct = data.cookingTimes;
+  const [mode, setMode] = useState<CookingMode>(ct.mode);
+  const useSuggestion = mode === "suggested" && ct.tiersOn && ct.suggestion != null;
+
+  // What prints — same rule as the server (resolveCooking): Manual = this
+  // recipe's own number, else the standard; Suggested = the tier's times when
+  // the design has them switched on, else the standard; an appliance
+  // switched off is blank (its line drops).
   const resolvedCooking = Object.fromEntries(COOKING_KEYS.map(k => {
     const on = k.startsWith("airFryer") ? flags.airFryerOn : flags.ovenOn;
     const own = parseWhole(nums[k] ?? "", 400);
-    return [k, !on ? null : own ?? t.cooking[k]];
+    const value = useSuggestion ? ct.suggestion!.cooking[k] ?? t.cooking[k]
+      : mode === "manual" ? own ?? t.cooking[k]
+      : t.cooking[k];
+    return [k, !on ? null : value];
   })) as unknown as CookingValues;
+
+  const chooseMode = (m: CookingMode) => { setMode(m); save({ cookingMode: m }); };
+  /** Suggestion → the Manual boxes (then adjust by hand). */
+  const copySuggestion = () => {
+    if (!ct.suggestion) return;
+    const values = ct.suggestion.cooking;
+    setNums(Object.fromEntries(COOKING_KEYS.map(k => [k, values[k] == null ? "" : String(values[k])])));
+    setMode("manual");
+    save({ cookingMode: "manual", ...values });
+  };
+  const overCap = (key: keyof CookingValues, v: number | null | undefined) =>
+    v != null && ((key === "ovenMaxMinutes" || key === "ovenMinMinutes") ? ct.maxOvenMinutes != null && v > ct.maxOvenMinutes
+      : (key === "airFryerMaxMinutes" || key === "airFryerMinMinutes") ? ct.maxAirFryerMinutes != null && v > ct.maxAirFryerMinutes : false);
 
   const numField = (key: keyof RecipeLabel["settings"]["cooking"], label: string, unit: string, max: number, disabled: boolean) => {
     const text = nums[key] ?? "";
@@ -90,11 +114,15 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
               if (p !== undefined) save({ [key]: p });
             }}
             onBlur={() => void auto.flush()}
-            className={cn(inputCls, "w-24", parsed === undefined && "border-destructive")}
+            className={cn(inputCls, "w-24", (parsed === undefined || overCap(key, parsed)) && "border-destructive")}
           />
           <span className="text-muted-foreground">{unit}</span>
         </span>
-        <span className="text-xs text-muted-foreground">{text === "" ? (def == null ? "Blank — left off the label" : `Using the standard ${def}`) : "This recipe's own value"}</span>
+        <span className={cn("text-xs", overCap(key, parsed) ? "font-semibold text-destructive" : "text-muted-foreground")}>
+          {overCap(key, parsed)
+            ? `Over the longest cook we print (${key.startsWith("oven") ? ct.maxOvenMinutes : ct.maxAirFryerMinutes} min)`
+            : text === "" ? (def == null ? "Blank — left off the label" : `Using the standard ${def}`) : "This recipe's own value"}
+        </span>
       </label>
     );
   };
@@ -186,26 +214,49 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
       <div className="space-y-3">
         <h3 className="flex items-center gap-2 text-base font-bold"><Flame className="w-5 h-5 text-primary" /> Cooking instructions on the label</h3>
         <p className="text-sm text-muted-foreground">
-          Blank boxes use the standard values from the label design. A part with nothing in it drops out of the sentence.
+          Suggested works the times out from the recipe's weight per calzone and how much meat is in it. Manual uses the boxes below — blank boxes use the standard values from the label design, and a part with nothing in it drops out of the sentence.
           {data.recipe.factoryOvenTempC != null && (
             <> This is NOT the factory bake ({data.recipe.factoryOvenTempC}°C{data.recipe.factoryOvenTimeSeconds ? ` for ${Math.round(data.recipe.factoryOvenTimeSeconds / 60)} min` : ""}) — that's never printed.</>
           )}
         </p>
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Cooking times">
+          {([["suggested", "Suggested (by weight)"], ["manual", "Manual"]] as const).map(([m, label]) => (
+            <button
+              key={m}
+              type="button"
+              role="radio"
+              aria-checked={mode === m}
+              disabled={!canEdit}
+              onClick={() => chooseMode(m)}
+              className={cn(
+                "h-11 px-4 rounded-full border-2 text-sm font-bold transition-colors disabled:opacity-60",
+                mode === m ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <CookingSuggestion info={ct} mode={mode} canEdit={canEdit} onCopy={copySuggestion} />
         <div className="flex flex-wrap gap-2">
           {toggle("ovenOn", flags.ovenOn, "Oven")}
           {toggle("airFryerOn", flags.airFryerOn, "Air fryer")}
         </div>
-        <div className={cn("grid grid-cols-2 sm:grid-cols-4 gap-4", !flags.ovenOn && "opacity-50")}>
-          {numField("ovenTempC", "Oven", "°C", 400, !flags.ovenOn)}
-          {numField("fanTempC", "Fan oven", "°C", 400, !flags.ovenOn)}
-          {numField("ovenMinMinutes", "From", "min", 240, !flags.ovenOn)}
-          {numField("ovenMaxMinutes", "To", "min", 240, !flags.ovenOn)}
-        </div>
-        <div className={cn("grid grid-cols-2 sm:grid-cols-4 gap-4", !flags.airFryerOn && "opacity-50")}>
-          {numField("airFryerTempC", "Air fryer", "°C", 400, !flags.airFryerOn)}
-          {numField("airFryerMinMinutes", "From", "min", 240, !flags.airFryerOn)}
-          {numField("airFryerMaxMinutes", "To", "min", 240, !flags.airFryerOn)}
-        </div>
+        {mode === "manual" && (
+          <>
+            <div className={cn("grid grid-cols-2 sm:grid-cols-4 gap-4", !flags.ovenOn && "opacity-50")}>
+              {numField("ovenTempC", "Oven", "°C", 400, !flags.ovenOn)}
+              {numField("fanTempC", "Fan oven", "°C", 400, !flags.ovenOn)}
+              {numField("ovenMinMinutes", "From", "min", 240, !flags.ovenOn)}
+              {numField("ovenMaxMinutes", "To", "min", 240, !flags.ovenOn)}
+            </div>
+            <div className={cn("grid grid-cols-2 sm:grid-cols-4 gap-4", !flags.airFryerOn && "opacity-50")}>
+              {numField("airFryerTempC", "Air fryer", "°C", 400, !flags.airFryerOn)}
+              {numField("airFryerMinMinutes", "From", "min", 240, !flags.airFryerOn)}
+              {numField("airFryerMaxMinutes", "To", "min", 240, !flags.airFryerOn)}
+            </div>
+          </>
+        )}
         <StepPreview steps={data.current.snapshot.template.text.steps} cooking={resolvedCooking} />
       </div>
 

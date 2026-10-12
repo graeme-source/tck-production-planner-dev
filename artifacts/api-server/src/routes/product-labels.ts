@@ -223,11 +223,12 @@ function halves(c: CookingValues) {
 }
 
 /** The recipe page's "Cooking times" panel: the mode in force, the tier,
- *  why, and the times the suggestion would print. */
+ *  why, and the times the suggestion would print (both appliances — the page
+ *  blanks one that's switched off, as the label does). */
 function cookingPayload(current: CurrentLabel) {
   const t = current.template.template;
   const { profile, suggestion } = current.cooking;
-  const cooking = suggestion ? printedSuggestion(t, suggestion.cooking, current.settings) : null;
+  const cooking = suggestion ? printedSuggestion(t, suggestion.cooking) : null;
   return {
     mode: effectiveCookingMode(current.settings),
     modeChosen: current.settings.cookingMode ?? null,
