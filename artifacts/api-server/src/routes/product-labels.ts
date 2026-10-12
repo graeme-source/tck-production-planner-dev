@@ -4,6 +4,8 @@
  *   GET  /template                    the label design + legal minimums
  *   PUT  /template                    save it (manager/admin; autosaved)
  *   POST /template/preview            render a recipe with an UNSAVED design
+ *   POST /template/cooking-tiers      every calzone's weight, meat and tier under
+ *                                     a (possibly unsaved) design's cooking tiers
  *   GET  /recipes                     every recipe's label status
  *   GET  /recipes/:id                 live + current proof, status, changes
  *   PUT  /recipes/:id/settings        label name, overrides (manager/admin; autosaved) —
@@ -21,17 +23,19 @@ import { z } from "zod";
 import { db, pool, recipesTable, usersTable, productLabelTemplatesTable, productLabelSettingsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import {
-  resolveBonesWarning,
+  resolveBonesWarning, describeCookingTimes, effectiveCookingMode, halveRange, normaliseCookingTiers, resolveCooking,
+  DEFAULT_RECIPE_LABEL_SETTINGS, type CookingValues,
   decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
-  STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelSnapshot,
+  STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelSnapshot, type LabelTemplate,
 } from "@workspace/product-labels";
 import { encodePng } from "@workspace/product-labels/render";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { loadPackBarcodes } from "../lib/barcode-store";
+import { loadCookingData, recipeCookingSuggestion } from "../lib/label-cooking-profile";
 import { rawBody, validate } from "../middleware/validate";
 import {
   buildCurrentLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, loadAllLiveVersions,
-  loadLiveVersion, loadRecipe, loadTemplate, renderProof, sampleDates, type LoadedTemplate,
+  loadLiveVersion, loadRecipe, loadTemplate, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
 } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
@@ -185,6 +189,61 @@ router.post("/template/preview", requireManagerOrAdmin, validate(PreviewBody), a
   } catch (err) { fail(res, err, "POST /template/preview"); }
 });
 
+// Every calzone's tier under a design's cooking tiers — the design page's
+// "where each recipe lands" table, so the tiers can be checked before they're
+// switched on. Read-only; the settings are the unsaved draft.
+const CookingTiersBody = z.object({ settings: z.record(z.string(), z.unknown()) });
+
+router.post("/template/cooking-tiers", requireManagerOrAdmin, validate(CookingTiersBody), async (req, res) => {
+  try {
+    const template = normaliseTemplate(rawBody<{ settings: unknown }>(req).settings);
+    const data = await loadCookingData();
+    const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name, category: recipesTable.category, archivedAt: recipesTable.archivedAt, isDraft: recipesTable.isDraft })
+      .from(recipesTable).orderBy(recipesTable.name);
+    const out = [];
+    for (const r of recipes) {
+      if (r.archivedAt) continue;
+      const { profile, suggestion } = recipeCookingSuggestion(data, r.id, template.cookingTiers);
+      if (!suggestion) continue; // no dough — not a calzone
+      const cooking = printedSuggestion(template, suggestion.cooking);
+      out.push({ recipeId: r.id, name: r.name, category: r.category, isDraft: r.isDraft, profile, tierKey: suggestion.tierKey, tierName: suggestion.tierName, reason: suggestion.reason, cooking, halves: halves(cooking) });
+    }
+    res.json({ recipes: out });
+  } catch (err) { fail(res, err, "POST /template/cooking-tiers"); }
+});
+
+/** The times a suggestion would print with this design (blank tier values
+ *  = the design's standard ones, capped), whether or not the tiers are on. */
+function printedSuggestion(template: LabelTemplate, suggestion: CookingValues, settings = DEFAULT_RECIPE_LABEL_SETTINGS): CookingValues {
+  return resolveCooking({ ...template, cookingTiers: { ...template.cookingTiers, on: true } }, { ...settings, cookingMode: "suggested" }, suggestion);
+}
+
+function halves(c: CookingValues) {
+  return { oven: halveRange(c.ovenMinMinutes, c.ovenMaxMinutes), airFryer: halveRange(c.airFryerMinMinutes, c.airFryerMaxMinutes) };
+}
+
+/** The recipe page's "Cooking times" panel: the mode in force, the tier,
+ *  why, and the times the suggestion would print (both appliances — the page
+ *  blanks one that's switched off, as the label does). */
+function cookingPayload(current: CurrentLabel) {
+  const t = current.template.template;
+  const { profile, suggestion } = current.cooking;
+  const cooking = suggestion ? printedSuggestion(t, suggestion.cooking) : null;
+  return {
+    mode: effectiveCookingMode(current.settings),
+    modeChosen: current.settings.cookingMode ?? null,
+    tiersOn: t.cookingTiers.on,
+    maxOvenMinutes: t.cookingTiers.maxOvenMinutes,
+    maxAirFryerMinutes: t.cookingTiers.maxAirFryerMinutes,
+    profile,
+    suggestion: suggestion && cooking ? {
+      tierKey: suggestion.tierKey, tierName: suggestion.tierName,
+      reason: `${suggestion.reason} → ${describeCookingTimes(cooking)}`,
+      cooking, halves: halves(cooking),
+    } : null,
+  };
+}
+
 // ── Recipe list ────────────────────────────────────────────────────────────
 
 router.get("/recipes", async (_req, res) => {
@@ -193,10 +252,11 @@ router.get("/recipes", async (_req, res) => {
     const live = await loadAllLiveVersions();
     const templateCache = new Map<number | "default", LoadedTemplate>();
     const packBarcodes = await loadPackBarcodes();
+    const cookingData = await loadCookingData();
     const out = [];
     for (const r of recipes) {
       if (r.archivedAt && !live.has(r.id)) continue;
-      const current = await buildCurrentLabel(r, { templateCache, packBarcodes });
+      const current = await buildCurrentLabel(r, { templateCache, packBarcodes, cookingData });
       const lv = live.get(r.id);
       const checked = checkFit(current.snapshot);
       const status = decideStatus({
@@ -251,6 +311,8 @@ router.get("/recipes/:id", async (req, res) => {
         factoryOvenTempC: recipe.ovenTempC, factoryOvenTimeSeconds: recipe.ovenTimeSeconds,
       },
       settings: current.settings,
+      // Suggested (by weight) vs Manual, the tier and why (cooking-tiers.ts).
+      cookingTimes: cookingPayload(current),
       // What Automatic finds, and what prints — the page shows "On — contains
       // chicken (Chicken Thigh)" or "Off — no chicken found".
       bonesWarning: resolveBonesWarning(current.settings.warningOn, current.deck.deckText, current.template.template.boneRiskWords),
@@ -301,6 +363,8 @@ const SettingsBody = z.object({
   templateId: z.number().int().positive().nullable().optional(),
   // e.g. "500g"; blank = not set.
   netQuantity: z.string().max(40).nullable().optional(),
+  // Customer cooking times: weight-tier suggestion or this recipe's own values.
+  cookingMode: z.enum(["suggested", "manual"]).nullable().optional(),
   ovenTempC: nullableInt(400),
   fanTempC: nullableInt(400),
   ovenMinMinutes: nullableInt(240),
@@ -325,6 +389,7 @@ router.put("/recipes/:id/settings", requireManagerOrAdmin, validate(SettingsBody
     for (const k of ["ovenOn", "airFryerOn", "frozenOn"] as const) if (body[k] !== undefined) set[k] = body[k];
     if (body.warningOn !== undefined) set.warningOn = body.warningOn;
     if (body.netQuantity !== undefined) set.netQuantity = body.netQuantity?.trim() || null;
+    if (body.cookingMode !== undefined) set.cookingMode = body.cookingMode;
     if (body.templateId !== undefined) {
       if (body.templateId != null) {
         const [t] = await db.select({ id: productLabelTemplatesTable.id }).from(productLabelTemplatesTable).where(eq(productLabelTemplatesTable.id, body.templateId));

@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DeclarationIssue } from "@workspace/allergens";
 import type {
   FieldKey, FitProblem, LabelDates, LabelSnapshot, LabelStatus, LabelTemplate, Rect, RecipeLabelSettings,
-  SnapshotChange, WidthVariant, CookingValues, ShelfPeriod, BonesWarning,
+  SnapshotChange, WidthVariant, CookingValues, ShelfPeriod, BonesWarning, CookingMode, CookingProfile, HalvedRange,
 } from "@workspace/product-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -81,12 +81,44 @@ export interface LabelListRow {
   barcode: string | null;
 }
 
+/** The times a suggestion prints, and the halves either side of TURN OVER. */
+export interface SuggestedTimes {
+  tierKey: string;
+  tierName: string;
+  reason: string;
+  cooking: CookingValues;
+  halves: { oven: HalvedRange | null; airFryer: HalvedRange | null };
+}
+
+/** Suggested (by weight) vs Manual for one recipe (cooking-tiers.ts). */
+export interface CookingTimesInfo {
+  /** The mode in force; modeChosen null = not chosen (worked out). */
+  mode: CookingMode;
+  modeChosen: CookingMode | null;
+  /** The template's "suggest by weight" switch. Off = standard times print. */
+  tiersOn: boolean;
+  maxOvenMinutes: number | null;
+  maxAirFryerMinutes: number | null;
+  profile: CookingProfile;
+  /** Null = not a calzone (no dough or no filling). */
+  suggestion: SuggestedTimes | null;
+}
+
+export interface TierPreviewRow extends SuggestedTimes {
+  recipeId: number;
+  name: string;
+  category: string | null;
+  isDraft: boolean;
+  profile: CookingProfile;
+}
+
 export interface RecipeLabel {
   recipe: {
     id: number; name: string; packSize: string; shelfLifeDays: number | null; isDraft: boolean; archived: boolean;
     factoryOvenTempC: number | null; factoryOvenTimeSeconds: number | null;
   };
   settings: RecipeLabelSettings;
+  cookingTimes: CookingTimesInfo;
   /** The bones warning as it prints, and what Automatic finds. */
   bonesWarning: BonesWarning;
   /** The template's trigger words (for "no chicken found"). */

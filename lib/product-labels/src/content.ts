@@ -8,6 +8,7 @@ import type { LabelDates } from "./dates";
 import { formatLabelDate } from "./dates";
 import { checkEan13 } from "./ean13";
 import { collapseEqualRanges, cookingPlaceholderValues } from "./cooking";
+import { cookingOverCap } from "./cooking-tiers";
 import type { LabelSnapshot } from "./snapshot";
 import type { FieldKey } from "./template";
 import { fillTemplate, mayContainParagraph, mergeRuns, parseBold, type Paragraph } from "./text";
@@ -87,6 +88,9 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   if (c.airFryerMinMinutes != null && c.airFryerMaxMinutes != null && c.airFryerMinMinutes > c.airFryerMaxMinutes) {
     problems.push(`Air-fryer minutes run backwards (${c.airFryerMinMinutes}–${c.airFryerMaxMinutes}).`);
   }
+  // The longest cook we ever print (template cookingTiers; a snapshot
+  // published before it existed has none, so nothing is checked).
+  problems.push(...cookingOverCap(c, s.template.cookingTiers as LabelSnapshot["template"]["cookingTiers"] | undefined));
 
   const dateLine = (label: string, value: string): Paragraph => mergeRuns([...parseBold(label.trim()), { text: ` ${value}`, bold: false }]);
   const dateLines: Paragraph[] = [];

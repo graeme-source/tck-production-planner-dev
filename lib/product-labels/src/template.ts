@@ -13,6 +13,7 @@ import { mmToDots } from "@workspace/units";
 import type { BatchBasis, PeriodUnit, ShelfPeriod } from "./dates";
 import { PERIOD_UNITS } from "./dates";
 import { EAN13_MIN_BAR_HEIGHT_MM } from "./ean13";
+import { DEFAULT_COOKING_TIERS, normaliseCookingTiers, type CookingTiersConfig } from "./cooking-tiers";
 
 export type WidthVariant = "normal" | "semi-condensed" | "condensed";
 /** Widest first — the layout tries them in this order before going smaller. */
@@ -148,6 +149,11 @@ export interface LabelTemplate {
   fields: Record<FieldKey, FieldStyle>;
   text: TemplateText;
   cooking: CookingValues;
+  /** Suggested cooking times by weight per calzone (cooking-tiers.ts):
+   *  the tiers, their times and the longest cook ever printed. Off until a
+   *  manager switches it on. Like the standard cooking values, it only
+   *  matters through the resolved cooking in a snapshot. */
+  cookingTiers: CookingTiersConfig;
   /** Chilled use-by when neither the recipe's label nor its shelf life sets
    *  one (Graeme, 2026-10-10: calzone standard 13 days). */
   chilledDefault: ShelfPeriod | null;
@@ -303,6 +309,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     ovenTempC: 210, fanTempC: 190, ovenMinMinutes: 18, ovenMaxMinutes: 22,
     airFryerTempC: 180, airFryerMinMinutes: 16, airFryerMaxMinutes: 19,
   },
+  cookingTiers: DEFAULT_COOKING_TIERS,
   chilledDefault: { amount: 13, unit: "days" },
   frozenDefault: { amount: 6, unit: "months" },
   batchBasis: "production-day",
@@ -478,6 +485,8 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     fields,
     text,
     cooking,
+    // Templates saved before it existed get the default tiers, switched off.
+    cookingTiers: normaliseCookingTiers(r.cookingTiers),
     chilledDefault: "chilledDefault" in r ? normalisePeriod(r.chilledDefault) : D.chilledDefault,
     frozenDefault: "frozenDefault" in r ? normalisePeriod(r.frozenDefault) : D.frozenDefault,
     batchBasis: r.batchBasis === "print-day" ? "print-day" : r.batchBasis === "production-day" ? "production-day" : D.batchBasis,
@@ -527,6 +536,8 @@ export function friedChickenTemplate(): LabelTemplate {
     ovenTempC: 190, fanTempC: 170, ovenMinMinutes: 14, ovenMaxMinutes: 16,
     airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
   };
+  // Weight tiers are for calzones; fried chicken has its own times.
+  t.cookingTiers = { ...t.cookingTiers, on: false };
   // Three wrapping steps need a taller band than the calzone's two.
   t.page.stepsBandMm = 11;
   // Stored frozen — said unmistakably, without mentioning how it arrives.

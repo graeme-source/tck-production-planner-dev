@@ -12,6 +12,7 @@ export * from "./text";
 export * from "./snapshot";
 export * from "./content";
 export * from "./cooking";
+export * from "./cooking-tiers";
 export * from "./bones";
 export * from "./status";
 export * from "./print-record";

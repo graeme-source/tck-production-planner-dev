@@ -45,6 +45,10 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   // Net quantity printed above the barcode on templates that show it, e.g.
   // "500g". NULL = not set. Migration 0174.
   netQuantity: text("net_quantity"),
+  // Customer cooking times: 'suggested' (template weight tiers) / 'manual'
+  // (the values above); NULL = manual when any value is set, else
+  // suggested. Migration 0175.
+  cookingMode: text("cooking_mode"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   updatedByName: text("updated_by_name"),
 });
