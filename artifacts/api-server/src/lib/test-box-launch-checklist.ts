@@ -150,8 +150,8 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
   {
     key: "back-labels",
     title: () => "Create the back labels",
-    how: c => `A back label for each '${c.boxName}' recipe, from its ingredient deck, allergens and nutrition (Product Hub → Labels). Print and check them before the first production day.`,
-    link: () => ({ href: "/product-hub", label: "Open Product Hub" }),
+    how: c => `A back label for each '${c.boxName}' recipe, from its ingredient deck, allergens and nutrition (Product Labels). Print and check them before the first production day.`,
+    link: () => ({ href: "/labels", label: "Open Product Labels" }),
     from: "first-production", workingDaysBefore: 1, automated: false,
   },
   {

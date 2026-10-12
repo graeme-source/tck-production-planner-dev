@@ -241,7 +241,8 @@ describe("the launch checklist", () => {
     const labels = tasks.find(t => t.key === "launch:back-labels")!;
     const survey = tasks.find(t => t.key === "launch:survey")!;
     expect(labels.date).toBe("2026-10-14");
-    expect(labels.link).toBe("/product-hub");
+    expect(labels.link).toBe("/labels");
+    expect(labels.linkLabel).toBe("Open Product Labels");
     expect(survey.date).toBe("2026-10-20");
     expect(survey.linkLabel).toBe("Open Surveys");
     // No delivery yet → neither step exists.
