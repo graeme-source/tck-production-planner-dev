@@ -51,6 +51,7 @@ import stockControlRouter from "./stock-control";
 import eightPackStockRouter from "./eight-pack-stock";
 import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
+import improvementCreditWeightRouter from "./improvement-credit-weight";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
@@ -343,6 +344,8 @@ router.use("/ad-efficiency", adEfficiencyRouter);
 // The Google Ads script link — make / turn off its key, see what it last
 // sent. Founder only (requireFounder inside).
 router.use("/google-ads-link", googleAdsLinkRouter);
+// ×2 / ×3 credits on an improvement — founder only, guarded per route.
+router.use("/improvements", improvementCreditWeightRouter);
 router.use("/improvements", improvementsRouter);
 router.use("/andon", andonRouter);
 // Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
