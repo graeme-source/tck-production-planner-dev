@@ -21,7 +21,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, appSettingsTable, recipesTable, skuBarcodesTable, barcodeEventsTable, packingScanRejectionsTable, type SkuBarcode } from "@workspace/db";
 import {
   countOutcomes, decidePull, deriveLinkedVariants, describeClash, groupBarcode, gtinKey, identitiesFor, isDifferentInShopify,
-  kindLabel, checkGtin, planAssignment, planScanBarcodes, resolveOwnership, clubSpecialScan, isClubSpecialTitle, suggestF2fLinks,
+  kindLabel, checkGtin, planAssignment, planPackerBarcode, planScanBarcodes, resolveOwnership, clubSpecialScan, isClubSpecialTitle, suggestF2fLinks,
   type AlsoAccepts, type ClubSpecialScan, type CopyLink,
   type BarcodeHolder, type BarcodeMap, type Clash, type Holding, type Identity, type KnownCodes, type LinkKind, type LinkedVariant,
   type MappingRow, type Ownership, type PullCounts, type PullDecision, type Reuse,
@@ -572,6 +572,45 @@ export async function setSameProductAs(variantId: string, target: string | null,
     const targetName = target ? (s.identities.get(target)?.name ?? target) : null;
     await logEvent({ variantId, recipeId: target ? s.linkOf.get(target)?.recipeId ?? null : null, productName: variantName(row, variantId), action: "same-product", oldBarcode: row.barcode, newBarcode: row.barcode, result: "ok", message: targetName ? `marked the same product as ${targetName}` : "no longer marked the same product as another", actor }, tx);
   });
+}
+
+/** A packer at the bench sets the barcode of a product that has NONE, from
+ *  the code scanned off the pack after checking it by eye (Graeme, 12 Oct
+ *  2026). Never changes an existing barcode (manager-only, above) and never
+ *  takes a number another product holds — planPackerBarcode. Saved as set
+ *  by a person (source 'app'), so isCurrent keeps it; logged with who/when.
+ *  A linked recipe listing sets its whole group, like the Barcodes page. */
+export async function setPackerBarcode(variantId: string, input: string, actor: Actor, fallbackName: string | null): Promise<{ barcode: string; name: string }> {
+  let refusal: BarcodeRefused | null = null;
+  let result: { barcode: string; name: string } | null = null;
+  await db.transaction(async tx => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(20261011)`);
+    const s = await loadOwnership(tx);
+    const row = s.byVariant.get(variantId);
+    const name = s.identities.get(variantId)?.name ?? (row ? variantName(row, fallbackName ?? variantId) : fallbackName ?? `Shopify variant ${variantId}`);
+    if (s.clubSpecial.has(variantId)) {
+      refusal = new BarcodeRefused(409, `${name} scans with the current special's barcode, which is set on the Barcodes page. Please fetch a manager.`);
+      return;
+    }
+    const me = s.linkOf.get(variantId);
+    const ids = me ? s.links.filter(l => l.recipeId === me.recipeId && l.kind === me.kind).map(l => l.variantId) : [variantId];
+    // The barcode these listings already scan with (or hold, while current).
+    const existing = ids.map(id => s.ownership.barcodeOf.get(id) ?? (s.currentOf.get(id) !== false ? s.byVariant.get(id)?.barcode ?? null : null)).find(Boolean) ?? null;
+    const identityKey = s.identities.get(variantId)?.key ?? `v${variantId}`;
+    const plan = planPackerBarcode(input, { identityKey, name, existing }, holdersFrom(s, new Set(ids)));
+    if (!plan.ok) {
+      await logEvent({ variantId, recipeId: me?.recipeId ?? null, productName: name, action: "set", oldBarcode: row?.barcode ?? null, newBarcode: input.trim() || null, result: "refused", message: `packing bench: ${plan.reason}`, actor }, tx);
+      refusal = new BarcodeRefused(plan.why === "invalid" ? 422 : 409, plan.reason, { why: plan.why, ...(plan.product ? { product: plan.product } : {}) });
+      return; // commit the refusal log; nothing else changed
+    }
+    // A variant we've never stored yet gets its name, so the Barcodes page
+    // can show it before the hourly check fills the rest in.
+    const extra = !row && !me && fallbackName ? { productTitle: fallbackName } : {};
+    await assign(tx, s, ids, plan.digits, [], name, actor, me?.recipeId ?? null, "set", extra);
+    result = { barcode: plan.digits, name };
+  });
+  if (refusal) throw refusal;
+  return result!;
 }
 
 // ── Pull (one-time) and hourly check — Shopify is only READ ─────────────────

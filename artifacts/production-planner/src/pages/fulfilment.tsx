@@ -37,8 +37,9 @@ import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { StationMessagesBanner } from "@/components/station-messages";
-import { barcodeFor, decideScan, scanMessage, shouldRefreshOnMiss, type ScanDecision, type ScanLine } from "@workspace/barcodes";
+import { barcodeFor, canTickByHand, decideScan, scanMessage, shouldRefreshOnMiss, type ScanDecision, type ScanLine } from "@workspace/barcodes";
 import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
+import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1329,6 +1330,9 @@ export default function Fulfilment() {
   // with an `×N` badge, then track scan progress within that row.
   const [pickedCounts, setPickedCounts] = useState<Map<string, number>>(new Map());
   const [flashItem, setFlashItem] = useState<string | null>(null);
+  // The no-barcode line whose barcode the packer is setting (check by eye →
+  // scan the pack → confirm). See components/barcodes/packer-set-barcode.tsx.
+  const [settingBarcode, setSettingBarcode] = useState<{ key: string; orderId: number; variantId: string; name: string; imageUrl: string | null } | null>(null);
   const [flashWrong, setFlashWrong] = useState(false);
   // ── Reconcile mode: label-scan gate ──────────────────────────────────────
   // The packer must scan the printed APC label before picking anything, so a
@@ -1425,6 +1429,10 @@ export default function Fulfilment() {
     staleTime: 60_000,
   });
   const manualTickEnabled = manualTickConfig?.enabled !== false;
+  // A line with NO barcode may be ticked by hand only once the setting is
+  // known to be ON (Graeme, 12 Oct 2026) — never while it's still loading or
+  // failed to load. The server enforces the same at completion.
+  const noBarcodeTapAllowed = canTickByHand(manualTickConfig?.enabled === true);
 
   // Speak-customer-name kill switch — same pattern as manual-tick. Default
   // enabled so the spoken cross-check is on out of the box.
@@ -2337,7 +2345,13 @@ export default function Fulfilment() {
     playScanWrong();
     setFlashWrong(true);
     setTimeout(() => setFlashWrong(false), 600);
-    const message = scanMessage(decision);
+    let message = scanMessage(decision);
+    // An unknown code while a no-barcode line is still open is most likely
+    // that product — point the packer at the set-barcode steps.
+    if (decision.kind === "unknown-barcode" && !noBarcodeTapAllowed
+      && groupedItems.some(g => !g.barcode && g.variantId && (pickedCounts.get(g._groupKey) ?? 0) < g.totalQty)) {
+      message = `${message} If it's the product marked "No barcode on this product yet", tap "Set its barcode" on that line.`;
+    }
     setScanError(message);
     if (decision.kind === "tick") return;
     fetch(`${BARCODES_API}/scan-rejections`, {
@@ -2389,7 +2403,8 @@ export default function Fulfilment() {
       // The Calzone Club Special during a changeover: also the incoming special.
       alsoAccepts: g.variantId ? map?.alsoAccepts?.[g.variantId] : undefined,
     }));
-    const first = decideScan(code, linesFor(scanMap), scanMap?.known ?? {});
+    const scanOpts = { manualTick: noBarcodeTapAllowed };
+    const first = decideScan(code, linesFor(scanMap), scanMap?.known ?? {}, scanOpts);
     if (first.kind === "tick") {
       applyScanTick(first.key);
     } else if (shouldRefreshOnMiss(code, scanMapRefreshedAt.current, Date.now())) {
@@ -2399,7 +2414,7 @@ export default function Fulfilment() {
         // The packer may have moved on to the next order in the meantime —
         // never tick a line of an order the code wasn't scanned for.
         if (activeOrderIdRef.current !== orderAtScan) { playScanWrong(); return; }
-        const again = decideScan(code, linesFor(r.data ?? scanMap), (r.data ?? scanMap)?.known ?? {});
+        const again = decideScan(code, linesFor(r.data ?? scanMap), (r.data ?? scanMap)?.known ?? {}, scanOpts);
         if (again.kind === "tick") applyScanTick(again.key);
         else rejectScan(code, again);
       });
@@ -3694,22 +3709,27 @@ export default function Fulfilment() {
                   ? `${style.bg} ${style.border}`
                   : "bg-card border-border";
 
+            // Tapping a row ticks it by hand: only with "Allow manual tap to
+            // pick" on. A line with no barcode used to be tappable even with
+            // it off — it now gets the set-barcode steps instead (Graeme,
+            // 12 Oct 2026), and the server refuses to complete without them.
+            const tappable = item.barcode ? manualTickEnabled : noBarcodeTapAllowed;
+            const needsBarcode = !item.barcode && !noBarcodeTapAllowed && !isComplete;
+            const itemName = [item.title, item.variant_title].filter(Boolean).join(" — ");
             return (
+              <div key={item._groupKey}>
               <button
-                key={item._groupKey}
                 ref={el => {
                   if (el) itemRefs.current.set(item._groupKey, el);
                   else itemRefs.current.delete(item._groupKey);
                 }}
-                // A line with no barcode on record can't be scanned, so it is
-                // always tap-to-confirm (checked by eye), even when manual
-                // tapping is otherwise switched off.
-                onClick={manualTickEnabled || !item.barcode ? () => toggleItem(item._groupKey, item.totalQty) : undefined}
-                disabled={!manualTickEnabled && !!item.barcode}
-                title={manualTickEnabled || !item.barcode ? undefined : "Manual tap-to-pick is disabled — scan the barcode to mark this item picked."}
+                onClick={tappable ? () => toggleItem(item._groupKey, item.totalQty) : undefined}
+                disabled={!tappable}
+                title={tappable ? undefined : item.barcode ? "Manual tap-to-pick is disabled — scan the barcode to mark this item picked." : "No barcode yet — set it from the pack below."}
                 className={`w-full flex items-center gap-4 p-4 rounded-xl border-2 text-left transition-all ${rowClasses}
                   ${isFlashing ? "ring-4 ring-green-500 ring-offset-1" : ""}
-                  ${manualTickEnabled || !item.barcode ? "cursor-pointer" : "cursor-default"}
+                  ${tappable ? "cursor-pointer" : "cursor-default"}
+                  ${needsBarcode ? "rounded-b-none border-amber-400" : ""}
                 `}
               >
                 <div className={`w-10 h-10 rounded-full border-2 flex items-center justify-center flex-shrink-0 transition-colors
@@ -3754,7 +3774,7 @@ export default function Fulfilment() {
                   {item.sku && (
                     <p className="text-sm font-mono text-muted-foreground mt-1">{item.sku}</p>
                   )}
-                  {!item.barcode && !isComplete && (
+                  {!item.barcode && !isComplete && noBarcodeTapAllowed && (
                     <p className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200 text-sm font-bold">
                       <AlertCircle className="w-4 h-4" /> No barcode — check by eye and tap to confirm
                     </p>
@@ -3777,8 +3797,33 @@ export default function Fulfilment() {
                   </div>
                 )}
               </button>
+              {needsBarcode && (
+                <NoBarcodePanel
+                  name={itemName}
+                  canSet={!!item.variantId}
+                  onStart={() => item.variantId && activeOrder && setSettingBarcode({ key: item._groupKey, orderId: activeOrder.id, variantId: item.variantId, name: itemName, imageUrl: item.imageUrl })}
+                />
+              )}
+              </div>
             );
           })}
+          {settingBarcode && activeOrder?.id === settingBarcode.orderId && (
+            <SetBarcodeDialog
+              target={settingBarcode}
+              known={scanMap?.known ?? {}}
+              onClose={() => {
+                setSettingBarcode(null);
+                requestAnimationFrame(() => barcodeRef.current?.focus());
+              }}
+              onSet={() => {
+                const key = settingBarcode.key;
+                setSettingBarcode(null);
+                // Saved and in the live map — the pack in hand counts as scanned.
+                if (activeOrderIdRef.current === settingBarcode.orderId) applyScanTick(key);
+                requestAnimationFrame(() => barcodeRef.current?.focus());
+              }}
+            />
+          )}
         </div>
 
         {completionError && (

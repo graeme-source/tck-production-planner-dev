@@ -7,6 +7,7 @@ import { rescheduleDateWarnings } from "../services/apc-postcode-overrides";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { recordBookingRun, rescheduleRulesForOrder, appendIssueAction, type RescheduleRules } from "../lib/apc-booking-issues-db";
 import { loadOwnership, reconcileBarcodes, scanQueueBarcodes } from "../lib/barcode-store";
+import { MANUAL_TICK_KEY, isManualTickEnabled, checkPackedLines } from "../lib/packing-barcode-gate";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
 import { rescheduleEmailFor, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
@@ -548,6 +549,20 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
     return;
   }
   const { consignmentNumber, trackingUrl } = parsed.data;
+
+  // Same no-barcode gate as /orders/:id/complete.
+  if (!(await isManualTickEnabled())) {
+    const order = await getOrderById(orderId);
+    if (!order) {
+      res.status(502).json({ error: "Couldn't read this order from Shopify to check its barcodes — try again." });
+      return;
+    }
+    const gate = await checkPackedLines(order.line_items ?? []);
+    if (!gate.ok) {
+      res.status(409).json({ error: gate.message, code: "NO_BARCODE", lines: gate.lines });
+      return;
+    }
+  }
 
   try {
     const [existing] = await db
@@ -2533,6 +2548,23 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     }
   }
 
+  // With "Allow manual tap to pick" OFF, a line with no barcode can only
+  // have been ticked by hand — refuse until its barcode is set (packer scans
+  // it off the pack). Checked here, not just hidden on screen, so an old
+  // cached iPad can't ship one (Graeme, 12 Oct 2026).
+  if (!(await isManualTickEnabled())) {
+    if (!order) order = await getOrderById(orderId);
+    if (!order) {
+      res.status(502).json({ error: "Couldn't read this order from Shopify to check its barcodes — try again." });
+      return;
+    }
+    const gate = await checkPackedLines(order.line_items ?? []);
+    if (!gate.ok) {
+      res.status(409).json({ error: gate.message, code: "NO_BARCODE", lines: gate.lines });
+      return;
+    }
+  }
+
   // Order of operations is deliberate: Shopify fulfilment FIRST, stock
   // decrement only after Shopify confirms. If Shopify rejects the order
   // (no open fulfillment_orders, cancelled, etc.) we don't touch the
@@ -3078,7 +3110,7 @@ router.put("/pick-config", requireAdmin, async (req: Request, res: Response) => 
 // row (in addition to scanning). Some sites want to lock down to scan-only
 // to enforce the audit trail; others want manual tap as a fallback when a
 // barcode is missing/damaged. Defaults to enabled.
-const MANUAL_TICK_KEY = "fulfilment_manual_tick_enabled";
+// Key lives in lib/packing-barcode-gate.ts (the server enforces it at completion).
 
 // Packing bench checks — the first-two-per-box-size confirmations on the
 // picking screen. Both default ON; admins can switch either off in

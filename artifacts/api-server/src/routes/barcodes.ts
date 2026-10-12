@@ -8,6 +8,8 @@
  *   PUT  /recipes/:id/:kind              set a group's barcode; 409 asks to confirm a move (manager/admin)
  *   POST /variants/:variantId/use-shopify   take Shopify's barcode (manager/admin)
  *   PUT  /variants/:variantId/same-product  mark a listing the same product as another (admin)
+ *   POST /variants/:variantId/packer-set    packing bench: set the barcode of a product that has NONE,
+ *                                           scanned off the pack after a check by eye (packing access)
  *   GET  /overview                       every group, clashes, reused codes (manager/admin)
  *   POST /pull                           one-time pull / check now, dry run or real (admin) — READS Shopify
  *   GET  /scan-map                       live variant → barcode map for the packing screen
@@ -26,7 +28,7 @@ import { validate, validateQuery } from "../middleware/validate";
 import { requireFulfilmentAccess } from "../lib/fulfilment-access";
 import {
   BarcodeRefused, applyF2fLinks, f2fSuggestions, loadOwnership, loadEvents, loadGroups, loadOverview, loadScanRejections, logScanRejection, reconcileBarcodes, scanMap,
-  setGroupBarcode, setSameProductAs, useShopifyBarcode, type Actor,
+  setGroupBarcode, setPackerBarcode, setSameProductAs, useShopifyBarcode, type Actor,
 } from "../lib/barcode-store";
 
 const router: IRouter = Router();
@@ -95,6 +97,26 @@ router.put("/variants/:variantId/same-product", requireAdmin, validate(SameBody)
     await setSameProductAs(p.data.variantId, (req.body as z.infer<typeof SameBody>).sameAs, await actor(req));
     res.json({ ok: true });
   } catch (err) { fail(res, err, "PUT /variants/:id/same-product"); }
+});
+
+// Packing bench (Graeme, 12 Oct 2026): with ticking by hand switched off, a
+// product with no barcode gets one here — the packer checks the pack by eye,
+// scans it and confirms. Only when the product has none; a number another
+// product holds is refused (fetch a manager). Changing a barcode stays on
+// PUT /recipes/:id/:kind (manager/admin). Nothing is written to Shopify.
+const PackerSetBody = z.object({
+  barcode: z.string().min(1).max(40),
+  /** What the packer saw on screen — used only to name a variant we've never stored. */
+  productName: z.string().max(300).nullable().optional(),
+});
+
+router.post("/variants/:variantId/packer-set", requireFulfilmentAccess, validate(PackerSetBody), async (req, res) => {
+  const p = VariantParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Invalid variant id" }); return; }
+  const body = req.body as z.infer<typeof PackerSetBody>;
+  try {
+    res.json(await setPackerBarcode(p.data.variantId, body.barcode, await actor(req), body.productName ?? null));
+  } catch (err) { fail(res, err, "POST /variants/:id/packer-set"); }
 });
 
 router.get("/overview", requireManagerOrAdmin, async (_req, res) => {

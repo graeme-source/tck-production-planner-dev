@@ -10,8 +10,9 @@
  *   - A code that matches lines of two different products → refused, check.
  *   - Typed text (not digits) may tick a line by its exact SKU or exact
  *     title — a deliberate manual entry — unless that is ambiguous.
- *   - A line with no barcode on record is never ticked by a guess; the page
- *     shows "No barcode — check by eye and tap to confirm".
+ *   - A line with no barcode on record is never ticked by a guess. With the
+ *     manual setting off it can't be ticked by hand either: the packer
+ *     checks it by eye and scans the pack to SET its barcode (packer.ts).
  *
  * Barcodes come from the app's table via a live map the page refreshes
  * every few seconds and again immediately when a scan misses, so a barcode
@@ -58,7 +59,12 @@ export type ScanDecision =
 
 const isDigits = (s: string) => /^\d+$/.test(s);
 
-export function decideScan(input: string, lines: ScanLine[], known: KnownCodes): ScanDecision {
+/** `manualTick`: Settings → "Allow manual tap to pick". When it is off, a
+ *  typed SKU/title can never tick a line that has no barcode — typing it is
+ *  a hand check, and those lines must have their barcode set instead
+ *  (packer.ts). Lines with a barcode keep today's typed behaviour. */
+export function decideScan(input: string, lines: ScanLine[], known: KnownCodes, opts: { manualTick?: boolean } = {}): ScanDecision {
+  const manualTick = opts.manualTick ?? true;
   const raw = input.trim();
   if (!raw) return { kind: "no-match" };
   const compact = raw.replace(/[\s-]+/g, "");
@@ -91,7 +97,7 @@ export function decideScan(input: string, lines: ScanLine[], known: KnownCodes):
 
   // Typed by hand: exact SKU or exact title only.
   const lower = raw.toLowerCase();
-  const matches = lines.filter(l => l.remaining > 0 && (l.sku?.toLowerCase() === lower || (l.title ?? "").toLowerCase() === lower));
+  const matches = lines.filter(l => l.remaining > 0 && (manualTick || !!l.barcode) && (l.sku?.toLowerCase() === lower || (l.title ?? "").toLowerCase() === lower));
   const products = distinctProducts(matches);
   if (products.length > 1) return { kind: "ambiguous", products };
   if (matches.length) return { kind: "tick", key: matches[0].key };
