@@ -21,6 +21,7 @@ import { z } from "zod";
 import { db, pool, recipesTable, usersTable, productLabelTemplatesTable, productLabelSettingsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import {
+  resolveBonesWarning,
   decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
   STATUS_LABEL, WIDTH_ORDER, type LabelSnapshot,
 } from "@workspace/product-labels";
@@ -201,6 +202,10 @@ router.get("/recipes/:id", async (req, res) => {
         factoryOvenTempC: recipe.ovenTempC, factoryOvenTimeSeconds: recipe.ovenTimeSeconds,
       },
       settings: current.settings,
+      // What Automatic finds, and what prints — the page shows "On — contains
+      // chicken (Chicken Thigh)" or "Off — no chicken found".
+      bonesWarning: resolveBonesWarning(current.settings.warningOn, current.deck.deckText, current.template.template.boneRiskWords),
+      boneRiskWords: current.template.template.boneRiskWords,
       settingsUpdatedAt: current.settingsRow?.updatedAt ?? null,
       settingsUpdatedByName: current.settingsRow?.updatedByName ?? null,
       template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault },
@@ -238,7 +243,8 @@ const SettingsBody = z.object({
   labelName: z.string().max(200).nullable().optional(),
   ovenOn: z.boolean().optional(),
   airFryerOn: z.boolean().optional(),
-  warningOn: z.boolean().optional(),
+  // Bones warning: true / false = always on / off; null = Automatic.
+  warningOn: z.boolean().nullable().optional(),
   frozenOn: z.boolean().optional(),
   ovenTempC: nullableInt(400),
   fanTempC: nullableInt(400),
@@ -261,7 +267,8 @@ router.put("/recipes/:id/settings", requireManagerOrAdmin, validate(SettingsBody
     const who = await userName(req);
     const set: Partial<typeof productLabelSettingsTable.$inferInsert> = { updatedAt: new Date(), updatedByName: who.name };
     if (body.labelName !== undefined) set.labelName = body.labelName?.trim() || null;
-    for (const k of ["ovenOn", "airFryerOn", "warningOn", "frozenOn"] as const) if (body[k] !== undefined) set[k] = body[k];
+    for (const k of ["ovenOn", "airFryerOn", "frozenOn"] as const) if (body[k] !== undefined) set[k] = body[k];
+    if (body.warningOn !== undefined) set.warningOn = body.warningOn;
     for (const k of ["ovenTempC", "fanTempC", "ovenMinMinutes", "ovenMaxMinutes", "airFryerTempC", "airFryerMinMinutes", "airFryerMaxMinutes"] as const) {
       if (body[k] !== undefined) set[k] = body[k] ?? null;
     }

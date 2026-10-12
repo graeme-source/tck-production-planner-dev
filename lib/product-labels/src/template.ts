@@ -156,6 +156,10 @@ export interface LabelTemplate {
   batchBasis: BatchBasis;
   /** Bold the allergen list in the may-contain statement. */
   mayContainBoldList: boolean;
+  /** Words that switch the bones warning on for a recipe left on
+   *  Automatic: any of them anywhere in its ingredients (whole word, any
+   *  case — bones.ts). Empty = Automatic is always off. */
+  boneRiskWords: string[];
 }
 
 export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
@@ -270,6 +274,8 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   frozenDefault: { amount: 6, unit: "months" },
   batchBasis: "production-day",
   mayContainBoldList: true,
+  // Graeme, 2026-10-12: "anything with chicken in it" may have bones.
+  boneRiskWords: ["chicken"],
 };
 
 // ── Normalising stored settings ────────────────────────────────────────────
@@ -353,6 +359,23 @@ function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
 
 export const MAX_STEPS = 4;
 
+/** A word list: trimmed, blanks and repeats (any case) dropped, at most 50
+ *  words of 60 characters. Not a list = the default; an empty list stays
+ *  empty (Automatic then never switches the warning on). */
+function normaliseWords(v: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(v)) return [...fallback];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const w of v) {
+    if (typeof w !== "string") continue;
+    const word = w.trim().replace(/\s+/g, " ").slice(0, 60);
+    if (!word || seen.has(word.toLowerCase())) continue;
+    seen.add(word.toLowerCase());
+    out.push(word);
+  }
+  return out.slice(0, 50);
+}
+
 /** The steps list. Templates saved before it existed have step1/step2/step3
  *  — read in order, blank ones left out (a blank step isn't drawn). */
 function normaliseSteps(t: Record<string, unknown>): string[] {
@@ -411,5 +434,6 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     frozenDefault: "frozenDefault" in r ? normalisePeriod(r.frozenDefault) : D.frozenDefault,
     batchBasis: r.batchBasis === "print-day" ? "print-day" : r.batchBasis === "production-day" ? "production-day" : D.batchBasis,
     mayContainBoldList: bool(r.mayContainBoldList, D.mayContainBoldList),
+    boneRiskWords: normaliseWords(r.boneRiskWords, D.boneRiskWords),
   };
 }
