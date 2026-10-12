@@ -6,7 +6,9 @@ import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, parseISO } from "date-fns";
-import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle, ShieldAlert } from "lucide-react";
+import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle, ShieldAlert, Calculator } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
+import { BundleCalculator } from "@/components/bundle-calculator";
 import { cn } from "@/lib/utils";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
 import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
@@ -71,6 +73,12 @@ export default function FounderSales() {
   // upcoming emails wait for them. Tommy never sees this banner.
   const needed = useApprovalsNeeded(canSales && canApproveEmails);
   const [reviewSignal, setReviewSignal] = useState(0);
+  // The bundle calculator's API (/api/bundles) is managers and admins only,
+  // so a Sales & Marketing grantee on the viewer role doesn't get a section
+  // that can only fail.
+  const { state } = useAuth();
+  const role = state.status === "authenticated" ? state.user.role : "viewer";
+  const canBundles = role === "admin" || role === "manager";
 
   const { data, isLoading } = useQuery<Pulse>({
     queryKey: ["founder-sales-pulse"],
@@ -136,6 +144,21 @@ export default function FounderSales() {
         <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
       </div>
       <MarketingCalendar reviewSignal={reviewSignal} />
+
+      {/* Bundle calculator — moved here from the old Product Hub (Graeme,
+          12 Oct 2026): pricing bundles is a sales job. Full width under the
+          calendar, in the same card style as the rest of the page. */}
+      {canBundles && (
+        <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
+          <div>
+            <h2 className="text-sm font-semibold flex items-center gap-2">
+              <Calculator className="w-4 h-4 text-primary" /> Bundle calculator
+            </h2>
+            <p className="text-sm text-muted-foreground mt-1">Build a bundle from recipes and extras, and see its cost, margin and shipping at a price.</p>
+          </div>
+          <BundleCalculator />
+        </section>
+      )}
     </div>
   );
 }
