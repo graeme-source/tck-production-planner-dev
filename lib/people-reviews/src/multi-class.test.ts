@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import {
   SEED_STAGES, SEED_CLASSIFICATIONS, type Stage, type Classification, type EntryLike, type TimelineEntry,
-  entryClassIds, cleanClassIds, combinedEvidence, entryClassification, entryClassLabels,
+  entryClassIds, cleanClassIds, combinedEvidence, entryClassification, entryClassLabels, toggleClassId,
   effectiveStage, usesField, entryHeadline, entryLevel, filterEntries, classificationCounts, recordTimelineEvents, templatesForEntry,
   type LetterTemplate,
 } from "./index";
@@ -30,6 +30,11 @@ describe("the ticked set", () => {
   });
   it("cleanClassIds keeps the ticking order and drops junk", () => {
     expect(cleanClassIds([5, 3, 5, 0, -1, 2.5])).toEqual([5, 3]);
+  });
+  it("ticking: adds at the end, unticks, never empties", () => {
+    expect(toggleClassId([4], 5)).toEqual([4, 5]);
+    expect(toggleClassId([4, 5], 4)).toEqual([5]); // 5 becomes the primary
+    expect(toggleClassId([4], 4)).toEqual([4]);
   });
   it("labels for the chips", () => {
     expect(entryClassLabels({ classificationId: id("Attendance"), classificationIds: [id("Timekeeping")] }, classes)).toEqual(["Attendance", "Timekeeping"]);

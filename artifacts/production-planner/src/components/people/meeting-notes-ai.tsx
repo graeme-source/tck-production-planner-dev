@@ -27,18 +27,23 @@ import {
 } from "lucide-react";
 import {
   sortClassifications, whatHappenedText, linkOnly, linkPastedMessage, ACTION_OWNERS, MAX_NOTES_CHARS,
-  ANSWERS_TRIGGER, ANSWERS_TRIGGER_LABEL, ANSWERS_TRIGGER_QUESTION, needsPolicyReview,
+  ANSWERS_TRIGGER, ANSWERS_TRIGGER_LABEL, ANSWERS_TRIGGER_QUESTION, needsPolicyReview, entryClassIds, entryClassification,
   type ActionOwner, type MeetingNotesDraft, type AnswersTrigger,
 } from "@workspace/people-reviews";
 import { TRIGGER_HINT } from "./trigger-link";
+import { ClassTicks } from "./class-ticks";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { DictateButton } from "@/components/dictate-button";
-import { ChoiceButton, FieldLabel, PillButton } from "./review-fields";
+import { ChoiceButton, FieldLabel } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 
 type Action = MeetingNotesDraft["actions"][number] & { todo: boolean };
-interface Draft extends Omit<MeetingNotesDraft, "actions"> { actions: Action[] }
+interface Draft extends Omit<MeetingNotesDraft, "actions"> {
+  actions: Action[];
+  /** Ticked in the check step (0184); unset = the suggestion, else as it is. */
+  classificationIds?: number[];
+}
 interface Source { kind: "url" | "text"; url: string | null; text: string }
 interface ReadResult { draft: MeetingNotesDraft; repaired: string[]; source: Source }
 
@@ -82,7 +87,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
     || needsPolicyReview(data.triggerReview?.sickness) || needsPolicyReview(data.triggerReview?.lates);
   const [link, setLink] = useState<AnswersTrigger | null>(entry.answersTrigger);
   const existing = whatHappenedText(entry);
-  const classifications = sortClassifications(data.classifications).filter(c => c.active || c.id === entry.classificationId);
+  const classifications = sortClassifications(data.classifications).filter(c => c.active || entryClassIds(entry).includes(c.id));
 
   // Keep the work in memory as it changes.
   useEffect(() => {
@@ -116,7 +121,9 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
 
   const save = useMutation({
     mutationFn: (d: Draft) => recordSend<{ created: number; todos: number }>("POST", `/entries/${entry.id}/meeting-notes`, {
-      title: d.title, classificationId: d.classificationId, summary: d.summary,
+      title: d.title, classificationId: d.classificationId,
+      classificationIds: d.classificationIds ?? (d.classificationId != null ? [d.classificationId] : entryClassIds(entry)),
+      summary: d.summary,
       agreements: d.agreements.map(a => ({ what: a.what, detail: a.detail || null, date: a.date || null })),
       actions: d.actions.map(a => ({ what: a.what, owner: a.owner, ownerName: a.owner === "other" ? (a.ownerName || null) : null, date: a.date || null, todo: a.owner === "me" && a.todo })),
       source,
@@ -191,7 +198,10 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
 
   // ── Step 2: check the draft, then save ───────────────────────────────────
   const suggested = classifications.find(c => c.id === draft.classificationId);
-  const current = classifications.find(c => c.id === entry.classificationId);
+  const nowTicked = entryClassIds(entry);
+  const current = entryClassification(entry, classifications);
+  // Starts as the AI's suggestion (replacing the meetings default), else as it is now.
+  const draftTicks = draft.classificationIds ?? (draft.classificationId != null ? [draft.classificationId] : nowTicked);
   return (
     <div className="rounded-3xl border-2 border-primary/50 bg-card p-4 space-y-5">
       <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800 px-4 py-3 flex items-center gap-3" role="status">
@@ -208,18 +218,9 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
         <input value={draft.title} onChange={e => set({ title: e.target.value })} maxLength={120} className={cn(input, "h-14 font-bold")} />
       </label>
 
-      <div className="space-y-1.5">
-        <FieldLabel>What's it about?</FieldLabel>
-        <p className="text-sm text-muted-foreground">
-          {suggested ? `The AI suggests "${suggested.label}".` : "The AI didn't suggest one."} Now: {current?.label ?? "—"}. Tap to change, or leave it.
-        </p>
-        <div className="flex flex-wrap gap-2">
-          {classifications.filter(c => c.active).map(c => (
-            <PillButton key={c.id} selected={(draft.classificationId ?? entry.classificationId) === c.id}
-              onClick={() => set({ classificationId: c.id })}>{c.label}</PillButton>
-          ))}
-        </div>
-      </div>
+      <ClassTicks classifications={classifications.filter(c => c.active || nowTicked.includes(c.id))} value={draftTicks}
+        onChange={ids => set({ classificationIds: ids })} label="What's it about?"
+        hint={<>{suggested ? `The AI suggests "${suggested.label}".` : "The AI didn't suggest one."} Now: {current?.label ?? "—"}. Tick all that fit, or leave it.</>} />
 
       {askTrigger && (
         <div className="space-y-1.5">

@@ -14,7 +14,7 @@ import { useSearch } from "wouter";
 import { CalendarDays, ChevronRight, FileText, Loader2, Lock, Settings2 } from "lucide-react";
 import {
   reviewBadge, longestLiveWarning, entryWarning, entryHeadline, entryLevel, warningStatusLabel, classificationCounts, MEETING_STATUS_LABEL,
-  filterEntries, fmtDayIso, recordTimelineEvents, MEETING_TYPE_LABEL, whatHappened, type RecordEvent,
+  filterEntries, fmtDayIso, recordTimelineEvents, MEETING_TYPE_LABEL, whatHappened, entryClassification, entryClassLabels, type RecordEvent,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { PeopleModal } from "@/components/people-modal";
@@ -107,7 +107,8 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
   const chips = classificationCounts(data.entries, data.classifications);
   const shown = filterEntries(data.entries, filter);
   const open = data.entries.find(e => e.id === openId) ?? null;
-  const clsLabel = (id: number) => data.classifications.find(c => c.id === id)?.label ?? "Record";
+  // Every classification ticked on an entry (0184), primary first.
+  const clsLabel = (e: RecordEntry) => entryClassification(e, data.classifications)?.label ?? "Record";
 
   return (
     <div className="space-y-4">
@@ -143,11 +144,14 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
             className={cn("w-full text-left rounded-3xl border-2 bg-card p-4 space-y-2 hover:border-primary/50 active:scale-[0.995]",
               level === "formal" ? "border-rose-300 dark:border-rose-800" : level === "informal" ? "border-violet-300 dark:border-violet-800" : "border-border")}>
             <span className="flex items-center gap-2">
-              <span className="flex-1 min-w-0 text-sm font-bold text-muted-foreground">{fmtDayIso(e.entryDate)} · {clsLabel(e.classificationId)}</span>
+              <span className="flex-1 min-w-0 text-sm font-bold text-muted-foreground">{fmtDayIso(e.entryDate)}</span>
               <ChevronRight className="w-5 h-5 text-muted-foreground" />
             </span>
             <span className="block text-xl font-bold leading-snug">{e.title || <span className="italic text-muted-foreground">No summary yet</span>}</span>
             <span className="flex flex-wrap gap-2">
+              {entryClassLabels(e, data.classifications).map(l => (
+                <span key={l} className="text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary text-foreground">{l}</span>
+              ))}
               {level !== "none" && (
                 <span className={cn("text-sm font-bold px-2.5 py-1 rounded-lg", level === "formal"
                   ? "bg-rose-100 text-rose-900 dark:bg-rose-950/50 dark:text-rose-200" : "bg-violet-100 text-violet-900 dark:bg-violet-950/50 dark:text-violet-200")}>
@@ -188,7 +192,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
         </PeopleModal>
       )}
       {open && (
-        <PeopleModal title={`${clsLabel(open.classificationId)} — ${person.name}`} onClose={() => { setOpen(null); refresh(); }} wide>
+        <PeopleModal title={`${clsLabel(open)} — ${person.name}`} onClose={() => { setOpen(null); refresh(); }} wide>
           <EntryEditor key={open.id} entry={open} data={data} onChanged={refresh} person={person} />
         </PeopleModal>
       )}

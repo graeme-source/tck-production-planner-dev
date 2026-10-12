@@ -251,6 +251,13 @@ export function cleanClassIds(raw: readonly number[]): number[] {
   return [...new Set(raw.filter(n => Number.isInteger(n) && n > 0))];
 }
 
+/** Tick or untick one in a picker: ticking adds at the end (so the first
+ *  ticked stays the primary), and the last one can't be unticked. */
+export function toggleClassId(ids: readonly number[], id: number): number[] {
+  if (ids.includes(id)) return ids.length > 1 ? ids.filter(x => x !== id) : [...ids];
+  return [...ids, id];
+}
+
 /** Attendance covers sickness and lates, so it outranks timekeeping. */
 export function combinedEvidence(list: ReadonlyArray<string | null | undefined>): EvidenceKind | null {
   if (list.includes("attendance")) return "attendance";

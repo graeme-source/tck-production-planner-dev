@@ -54,6 +54,8 @@ export interface RecordEntry {
   id: number;
   userId: number;
   classificationId: number;
+  /** Every classification ticked, primary first (migration 0184). */
+  classificationIds: number[];
   entryDate: string;
   title: string;
   notes: string | null;

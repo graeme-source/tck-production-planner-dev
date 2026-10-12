@@ -24,7 +24,7 @@ import { useState } from "react";
 import { AlertTriangle, CalendarDays, ChevronDown, History, Info, Undo2 } from "lucide-react";
 import {
   usesField, entryWarning, periodEnd, PERIOD_MONTHS, warningStatusLabel, evidenceLine, meetingChecklist, isFormalHearing, fmtDayIso,
-  sortClassifications, sortStages, showTriggerChoice, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
+  sortClassifications, sortStages, showTriggerChoice, entryClassification, entryClassIds, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
   FIT_FOR_WORK_LABEL, FIT_FOR_WORK, MEETING_TYPE_LABEL, MEETING_TYPES, MEETING_STATUSES, MEETING_STATUS_LABEL, isReview as entryIsReview,
   type Classification, type MeetingType, type MeetingStatus,
 } from "@workspace/people-reviews";
@@ -35,6 +35,7 @@ import { recordSend, type PersonRecordEntries, type RecordEntry } from "./review
 import { LettersBlock } from "./letter-editor";
 import { WhatHappened } from "./what-happened";
 import { TriggerLinkField } from "./trigger-link";
+import { AutoClassTicks } from "./class-ticks";
 
 type Patch = Partial<Omit<RecordEntry, "id" | "history" | "letters" | "writeUp" | "heldAt">>;
 
@@ -58,7 +59,9 @@ export function EntryEditor({ entry, data, onChanged, person }: {
   const saveAndRefresh = async (p: Patch) => { await save(p); onChanged(); };
 
   const classifications = sortClassifications(data.classifications);
-  const cls = classifications.find(c => c.id === entry.classificationId);
+  // Every ticked classification merged (0184): its field sets, evidence, label.
+  const cls = entryClassification(entry, classifications);
+  const ticked = entryClassIds(entry);
   const stages = sortStages(data.stages).filter(s => s.active || s.id === entry.stageId);
   const stage = entry.stageId != null ? data.stages.find(s => s.id === entry.stageId) ?? null : null;
   const warning = entryWarning(entry, data.classifications, data.stages);
@@ -74,9 +77,7 @@ export function EntryEditor({ entry, data, onChanged, person }: {
     if (f === "probation") return entry.probationOutcome != null;
     return entry.fitForWork != null;
   });
-  const classOptions = classifications
-    .filter(c => c.active || c.id === entry.classificationId)
-    .map((c: Classification) => ({ value: c.id, label: c.label }));
+  const classOptions = classifications.filter((c: Classification) => c.active || ticked.includes(c.id));
   // A meeting's extras sit under More options — opened by itself when
   // something in there is already in use, so nothing filled in is hidden.
   const extrasInUse = entry.status === "open" || entry.answersTrigger != null || entry.stageId != null || !!entry.meetingType || !!entry.meetingAttendees
@@ -86,8 +87,8 @@ export function EntryEditor({ entry, data, onChanged, person }: {
 
   const classificationField = (
     <>
-      <AutoChoice label="What it's about — change it any time" value={entry.classificationId} options={classOptions} pills
-        onSave={v => saveAndRefresh({ classificationId: v as number })} />
+      <AutoClassTicks label="What it's about — tick all that fit, change any time" classifications={classOptions} initial={ticked}
+        onSave={ids => saveAndRefresh({ classificationIds: ids })} />
       {hidden.length > 0 && (
         <p className="text-sm text-muted-foreground flex items-start gap-2">
           <Info className="w-4 h-4 shrink-0 mt-0.5" />
