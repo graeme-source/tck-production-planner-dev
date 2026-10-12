@@ -12,6 +12,8 @@ import { areasForChange, FIELD_LABEL, wordDiff, type SnapshotChange } from "@wor
 import { cn } from "@/lib/utils";
 import { api, fmtDateTime, useInvalidateLabels, type RecipeLabel } from "./api";
 import { ProofImage, type Area } from "./proof-image";
+import { DeclarationFixButtons } from "@/components/declaration-fix";
+import { otherBlockers } from "@/lib/declaration-fix";
 
 export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: () => void }) {
   const invalidate = useInvalidateLabels();
@@ -23,6 +25,10 @@ export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: (
   const cur = data.current.proof;
   const highlight: Area[] = [...new Set(data.changes.flatMap(c => areasForChange(c.key)))];
   const allBlockers = blockers.length ? blockers : data.blockers;
+  // Declaration problems show as fix buttons, not text (the server's 422
+  // after a refused publish has only text, so that list shows as it is).
+  const fixIssues = blockers.length ? [] : (data.deckIssues ?? []);
+  const shownBlockers = blockers.length ? blockers : otherBlockers(data.blockers, data.deckBlockers, data.deckIssues);
   const fits = cur.fits;
   const smallest = cur.fields.reduce((m, f) => (f.sizePt < m.sizePt ? f : m), cur.fields[0]);
   const canPublish = fits && allBlockers.length === 0 && ticked && !busy;
@@ -85,11 +91,13 @@ export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: (
             {fits ? (
               <p>Everything fits. Smallest text: {FIELD_LABEL[smallest.key]} at {smallest.sizePt} pt, x-height {smallest.xHeightMm} mm (the law's minimum works out at {smallest.legalMinPt} pt in this font). No field is below its minimum.</p>
             ) : <p className="font-semibold text-rose-700 dark:text-rose-400">DOESN'T FIT — it can't go live like this.</p>}
-            {allBlockers.length > 0 && (
+            {shownBlockers.length > 0 && (
               <ul className="list-disc pl-6 space-y-1 text-rose-800 dark:text-rose-300">
-                {allBlockers.map(b => <li key={b}>{b}</li>)}
+                {shownBlockers.map(b => <li key={b}>{b}</li>)}
               </ul>
             )}
+            {/* Each named ingredient opens its edit dialog; saving re-runs this check. */}
+            <DeclarationFixButtons issues={fixIssues} tone="rose" className="text-rose-800 dark:text-rose-300" />
           </section>
 
           {/* What changed */}

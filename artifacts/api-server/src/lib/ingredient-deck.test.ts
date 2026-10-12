@@ -86,3 +86,32 @@ describe("QUID placement", () => {
     expect(withQuid("Water, Salt", 2)).toBe("Water, Salt (2%)");
   });
 });
+
+describe("sub-recipe grouping decisions (shown on the sub-recipe page, 2026-10-12)", () => {
+  const { subRecipeDecisions } = buildDeck(direct, [dough, tomatoBase, burgerSauce]);
+  const byId = (id: number) => subRecipeDecisions.find(d => d.subRecipeId === id)!;
+
+  it("keeps a sub-recipe of 25% or more bracketed under its name, and says how it prints", () => {
+    const d = byId(1);
+    expect(d.asCompound).toBe(true);
+    expect(d.reason).toBe("share");
+    expect(d.percentage).toBeGreaterThanOrEqual(25);
+    expect(d.printedAs).toBe("Calzone Dough (00 Flour (**WHEAT**), Water, Salt)");
+  });
+
+  it("breaks up a small sub-recipe and lists what it contributes, heaviest first", () => {
+    const d = byId(2);
+    expect(d.asCompound).toBe(false);
+    expect(d.reason).toBe("under-threshold");
+    expect(d.percentage).toBeLessThan(25);
+    expect(d.printedAs).toBe("Tomatoes, Water, Salt");
+  });
+
+  it("keeps a QUID sub-recipe bracketed whatever its share", () => {
+    const { subRecipeDecisions: ds } = buildDeck(direct, [dough, { ...tomatoBase, isQuid: true }]);
+    const d = ds.find(x => x.subRecipeId === 2)!;
+    expect(d.asCompound).toBe(true);
+    expect(d.reason).toBe("quid");
+    expect(d.printedAs.startsWith("Tomato Base (")).toBe(true);
+  });
+});

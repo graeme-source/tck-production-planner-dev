@@ -16,6 +16,8 @@ import { PublishDialog, ChangeRow } from "@/components/product-labels/publish-di
 import { RecipeLabelSettings } from "@/components/product-labels/recipe-label-settings";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
 import { useFounderArea } from "@/hooks/use-founder-area";
+import { DeclarationFixButtons } from "@/components/declaration-fix";
+import { otherBlockers } from "@/lib/declaration-fix";
 
 export default function ProductLabelRecipePage() {
   const [, params] = useRoute("/labels/:id");
@@ -81,7 +83,10 @@ export default function ProductLabelRecipePage() {
         {data.blockers.length > 0 && !data.matchesLive && (
           <div className="rounded-xl bg-card/80 text-foreground p-3">
             <p className="font-semibold">To fix before it can go live:</p>
-            <ul className="list-disc pl-6 space-y-1">{data.blockers.map(b => <li key={b}>{b}</li>)}</ul>
+            {otherBlockers(data.blockers, data.deckBlockers, data.deckIssues).length > 0 && (
+              <ul className="list-disc pl-6 space-y-1">{otherBlockers(data.blockers, data.deckBlockers, data.deckIssues).map(b => <li key={b}>{b}</li>)}</ul>
+            )}
+            <DeclarationFixButtons issues={data.deckIssues ?? []} className="mt-2" />
           </div>
         )}
         {data.warnings.length > 0 && (

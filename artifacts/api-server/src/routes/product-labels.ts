@@ -209,6 +209,11 @@ router.get("/recipes/:id", async (req, res) => {
       matchesLive,
       changes: matchesLive ? [] : changesSinceLive(lv, current.snapshot),
       blockers,
+      // The deck lines of `blockers`, and the ingredient behind each, so the
+      // page can make every named ingredient a button that opens its edit
+      // dialog (2026-10-12).
+      deckBlockers: deckBlockers(current.deck),
+      deckIssues: current.deck.declarationIssues,
       warnings: [
         ...deckWarnings(current.deck),
         ...(current.barcodeMixed ? ["This recipe's Shopify listings have different barcodes, so no barcode is printed — set one on the recipe page."] : []),

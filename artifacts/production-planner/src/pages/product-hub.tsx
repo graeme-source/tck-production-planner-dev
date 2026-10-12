@@ -14,6 +14,7 @@ import { IngredientFormDialog } from "@/components/ingredient-form-dialog";
 import { buildIngredientPayload, type IngredientFormValues } from "@/lib/ingredient-form";
 import { isDraftRecipe, notArchivedRecipes } from "@/lib/recipe-archive";
 import { RecipeDraftBadge } from "@/components/recipe-archive";
+import { DeclarationFixButtons, type DeclarationIssue } from "@/components/declaration-fix";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -53,6 +54,8 @@ type DeckData = {
   // Compound ingredients whose declaration lists components without naming the
   // ingredient itself — e.g. "Pork, Salt" instead of "Chorizo (Pork, Salt)".
   unwrappedDeclarations?: string[];
+  // Both of the above with the ingredient behind each, for the fix buttons.
+  declarationIssues?: DeclarationIssue[];
   ingredients: {
     type?: "ingredient" | "compound";
     name: string;
@@ -215,6 +218,9 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
     }
   }
 
+  // Bumped after a declaration is fixed from the buttons below, so the
+  // deck (and the push button's readiness) re-runs without a reload.
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     setLoading(true);
     setError(null);
@@ -223,7 +229,7 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
       .then(d => { if (d.error) throw new Error(d.error); setData(d); })
       .catch(e => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-  }, [recipe.id]);
+  }, [recipe.id, reload]);
 
   const copyDeck = () => {
     if (!data) return;
@@ -332,7 +338,16 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
         </div>
       )}
 
-      {data.missingDeclarations && data.missingDeclarations.length > 0 && (
+      {data.declarationIssues && data.declarationIssues.length > 0 && (
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1">
+            <AlertTriangle className="w-4 h-4" /> Fix these before pushing to Shopify
+          </p>
+          <DeclarationFixButtons issues={data.declarationIssues} onFixed={() => { setPushState({ phase: "idle" }); setReload(n => n + 1); }} className="text-xs text-amber-800 dark:text-amber-200" />
+        </div>
+      )}
+
+      {!data.declarationIssues && data.missingDeclarations && data.missingDeclarations.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1">
             <AlertTriangle className="w-4 h-4" /> Missing label declarations
@@ -341,7 +356,7 @@ function DeckPanel({ recipe }: { recipe: RecipeItem }) {
         </div>
       )}
 
-      {data.unwrappedDeclarations && data.unwrappedDeclarations.length > 0 && (
+      {!data.declarationIssues && data.unwrappedDeclarations && data.unwrappedDeclarations.length > 0 && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1">
             <AlertTriangle className="w-4 h-4" /> Compound ingredients not named
@@ -477,6 +492,7 @@ function LabelPreviewPanel({ recipe }: { recipe: RecipeItem }) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const labelRef = useRef<HTMLDivElement>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
     setLoading(true);
@@ -493,7 +509,7 @@ function LabelPreviewPanel({ recipe }: { recipe: RecipeItem }) {
       })
       .catch(e => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
-  }, [recipe.id]);
+  }, [recipe.id, reload]);
 
   const copyAll = () => {
     if (!labelRef.current) return;
@@ -600,9 +616,11 @@ function LabelPreviewPanel({ recipe }: { recipe: RecipeItem }) {
       {(!deckData.isComplete || !nutritionalsData.completeness.isComplete) && (
         <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Incomplete Data</p>
-          {deckData.missingDeclarations && deckData.missingDeclarations.length > 0 && (
-            <p className="text-xs text-amber-700 dark:text-amber-300">Missing label declarations: {deckData.missingDeclarations.join(", ")}</p>
-          )}
+          {deckData.declarationIssues
+            ? <DeclarationFixButtons issues={deckData.declarationIssues} onFixed={() => setReload(n => n + 1)} className="text-xs text-amber-800 dark:text-amber-200" />
+            : deckData.missingDeclarations && deckData.missingDeclarations.length > 0 && (
+              <p className="text-xs text-amber-700 dark:text-amber-300">Missing label declarations: {deckData.missingDeclarations.join(", ")}</p>
+            )}
           {nutritionalsData.completeness.missingNutritionals.length > 0 && (
             <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {nutritionalsData.completeness.missingNutritionals.join(", ")}</p>
           )}
