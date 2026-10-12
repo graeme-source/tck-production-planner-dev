@@ -20,7 +20,7 @@
  * logged-in iPad), not again on every hop back to the list. Every request
  * behind it is enforced on the server: People access + private PIN.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useRoute, useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck, Clock3, FileSignature } from "lucide-react";
@@ -30,6 +30,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { usePeopleReady, peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
+import { usePeopleKeepAlive } from "@/hooks/use-people-keep-alive";
+import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { UserAvatar } from "@/components/user-avatar";
 import { PersonRecord } from "@/components/people-record";
 import { PeopleLockedCard } from "@/components/people-locked-card";
@@ -44,6 +46,17 @@ export default function PeopleSection() {
   const [onJobTitles] = useRoute("/people/job-titles");
   useSensitivePinGate({ enabled: isPeople, includeAdmins: true, fresh: true, entryKey: "people", scope: "people" });
   const ready = usePeopleReady(isPeople);
+  // Typing keeps the PIN lock open; a write refused by the lock asks for the
+  // PIN at once instead of a dead red message (Graeme, 2026-10-12).
+  usePeopleKeepAlive(ready);
+  const { requireSensitivePin } = useAuth();
+  const askPinRef = useRef(requireSensitivePin);
+  askPinRef.current = requireSensitivePin;
+  useEffect(() => {
+    const ask = () => askPinRef.current({ includeAdmins: true, scope: "people" });
+    window.addEventListener(PEOPLE_PIN_NEEDED_EVENT, ask);
+    return () => window.removeEventListener(PEOPLE_PIN_NEEDED_EVENT, ask);
+  }, []);
 
   if (state.status !== "authenticated") {
     return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
