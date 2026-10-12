@@ -5,7 +5,7 @@ import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, Plus, Minus, CheckCircle2, RotateCcw, Timer, Droplets, Scale,
   PackageSearch, ChevronRight, Layers, ClipboardList, Check, Package,
@@ -20,8 +20,8 @@ import { BreakTracker } from "../shared/break-tracker";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { PrepDateBanner, PrepDraftBanner, toastDraftBlocked } from "../shared/prep-helpers";
 import { getStationCount, compareItemsForDisplay, mainKitchenStationItems } from "../shared/constants";
-import { deriveDoughMixStatus, applyDoughMixChange, type DoughMixChange } from "@/lib/dough-mix-status";
-import { doughMixProgressKey, fetchDoughMixProgress, type DoughMixProgressResponse } from "@/hooks/use-dough-mix-progress";
+import { deriveDoughMixStatus } from "@/lib/dough-mix-status";
+import { useDoughMixProgress, sameDayDoughKey, type MixSaveState } from "@/hooks/use-dough-mix-progress";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Dough Prep Station
@@ -102,8 +102,6 @@ interface DoughPrepData {
   };
 }
 
-type MixSaveState = "idle" | "saving" | "saved" | "error";
-
 export function useDoughPrepData(planId: number, mode?: "current") {
   const [data, setData] = useState<DoughPrepData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -137,172 +135,198 @@ export function useDoughPrepData(planId: number, mode?: "current") {
 
 type DoughView = "mixing" | "balling" | "overview";
 
+/** "Saving…" / "Saved" / "Not saved — retry" — the visible save state for
+ *  mix ticks, on both the day-before and the same-day dough. */
+function MixSaveBadge({ state, onRetry }: { state: MixSaveState; onRetry?: () => void }) {
+  if (state === "saving") {
+    return <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Saving…</span>;
+  }
+  if (state === "saved") {
+    return <span className="inline-flex items-center gap-1 text-sm text-emerald-700 dark:text-emerald-300"><Check className="w-3.5 h-3.5" />Saved</span>;
+  }
+  if (state === "error") {
+    return (
+      <button
+        onClick={onRetry}
+        className="inline-flex items-center gap-1 text-sm font-semibold text-red-700 dark:text-red-300 underline"
+      >
+        <RotateCcw className="w-3.5 h-3.5" />Not saved — retry
+      </button>
+    );
+  }
+  return null;
+}
+
 /** Same-day dough (cinnamon bun dough): its own amber card per dough type,
  *  mixed TODAY for today's bake — kept fully separate from the day-before
  *  dough maths. The mix flow mirrors the calzone one — same tick-off rows,
  *  same complete button, same mix chips — so the bench works one way. */
 function SameDayDoughSection({ groups, isOnBreak = false }: { groups: NonNullable<DoughPrepData["sameDayDough"]>; isOnBreak?: boolean }) {
-  // Per group+mix tick state, in memory — exactly like the calzone mixing
-  // view's checkedIngredients/completedMixes.
-  const [activeMixBySub, setActiveMixBySub] = useState<Record<number, number>>({});
-  const [ticked, setTicked] = useState<Record<string, Set<string>>>({});
-  const [doneMixes, setDoneMixes] = useState<Set<string>>(new Set());
-
   if (!groups || groups.length === 0) return null;
+  return (
+    <>
+      {groups.map(g => <SameDayDoughGroup key={`${g.planId}:${g.subRecipeId}`} group={g} isOnBreak={isOnBreak} />)}
+    </>
+  );
+}
 
-  const mixKey = (subRecipeId: number, mixNo: number) => `${subRecipeId}:${mixNo}`;
-  const toggle = (subRecipeId: number, mixNo: number, ingKey: string) => {
-    const key = mixKey(subRecipeId, mixNo);
-    setTicked(prev => {
-      const next = { ...prev };
-      const set = new Set(next[key] ?? []);
-      if (set.has(ingKey)) set.delete(ingKey); else set.add(ingKey);
-      next[key] = set;
-      return next;
-    });
+/** One same-day dough. Ticks and "Mix complete" are saved per plan + dough
+ *  (dough_key 'same_day:<subRecipeId>', migration 0177), so a reload or a
+ *  second iPad shows the same — they used to live only in memory. There are
+ *  no balls for this dough, so nothing is estimated: only saved taps count. */
+function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPrepData["sameDayDough"]>[number]; isOnBreak: boolean }) {
+  const mixCount = Math.max(1, g.mixCount);
+  const progress = useDoughMixProgress(g.planId, { dough: sameDayDoughKey(g.subRecipeId), enabled: true });
+  const status = deriveDoughMixStatus({ mixCount, saved: progress.data?.mixes, ballsRecorded: 0, ballsNeeded: 0 });
+  const [chosenMix, setChosenMix] = useState<number | null>(null);
+  // Until someone taps a chip, show the first mix not yet done.
+  const firstUndone = Array.from({ length: mixCount }, (_, i) => i + 1).find(n => !status.completedMixes.has(n)) ?? mixCount;
+  const activeMix = Math.min(chosenMix ?? firstUndone, mixCount);
+  const checkedForMix = status.ticksByMix[activeMix] ?? new Set<string>();
+  const isMixComplete = status.completedMixes.has(activeMix);
+  const ingKeyOf = (ing: { ingredientId: number | null }, i: number) => String(ing.ingredientId ?? `x-${i}`);
+  const allChecked = g.ingredients.length > 0 && g.ingredients.every((ing, i) => checkedForMix.has(ingKeyOf(ing, i)));
+  const doneCount = status.completedMixes.size;
+
+  const toggle = (ingKey: string) => {
+    if (isOnBreak || isMixComplete) return;
+    progress.save({ action: "tick", mixNo: activeMix, ingredientKey: ingKey, ticked: !checkedForMix.has(ingKey) });
+  };
+  const complete = () => {
+    if (isOnBreak) return;
+    progress.save({ action: "complete", mixNo: activeMix, completed: true });
+    if (activeMix < mixCount) setChosenMix(activeMix + 1);
   };
 
   return (
-    <>
-      {groups.map(g => {
-        const mixCount = Math.max(1, g.mixCount);
-        const activeMix = Math.min(activeMixBySub[g.subRecipeId] ?? 1, mixCount);
-        const key = mixKey(g.subRecipeId, activeMix);
-        const checkedForMix = ticked[key] ?? new Set<string>();
-        const isMixComplete = doneMixes.has(key);
-        const allChecked = g.ingredients.length > 0 && g.ingredients.every((ing, i) => checkedForMix.has(String(ing.ingredientId ?? `x-${i}`)));
-        const doneCount = Array.from({ length: mixCount }, (_, i) => mixKey(g.subRecipeId, i + 1)).filter(k => doneMixes.has(k)).length;
-
-        return (
-          <div key={g.subRecipeId} className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 rounded-xl p-4 space-y-3">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div>
-                <h2 className="font-semibold text-lg">
-                  {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span>
-                </h2>
-                <p className="text-sm text-muted-foreground">
-                  For today's bake ({g.planName}). Mix on the production day — not the day before.
-                </p>
-              </div>
-              <div className="text-right">
-                <div className="text-2xl font-bold font-display">{g.totalDoughKg.toFixed(2)} kg</div>
-                <div className="text-xs text-muted-foreground">
-                  {mixCount > 1 ? `${doneCount} of ${mixCount} mixes done` : isMixComplete ? "Mix complete ✓" : "1 mix"}
-                </div>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              {g.recipes.map(r => (
-                <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
-                  <span className="font-medium">{r.recipeName}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {formatBatches(r.batchesTarget)} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
-                    {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-
-            {mixCount > 1 && (
-              <div className="flex items-center gap-2">
-                {Array.from({ length: mixCount }, (_, i) => i + 1).map(n => {
-                  const nDone = doneMixes.has(mixKey(g.subRecipeId, n));
-                  return (
-                    <button
-                      key={n}
-                      onClick={() => setActiveMixBySub(prev => ({ ...prev, [g.subRecipeId]: n }))}
-                      className={cn(
-                        "w-11 h-11 rounded-full font-bold text-lg transition-all",
-                        nDone
-                          ? "bg-emerald-500 text-white"
-                          : n === activeMix
-                            ? "bg-amber-500 text-white"
-                            : "bg-secondary text-muted-foreground hover:text-foreground",
-                      )}
-                    >
-                      {n}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-
-            {/* Tick-off rows — same shape as the calzone Mix view so the
-                bench works identically on either dough. */}
-            <div className={cn(
-              "rounded-xl border-2 overflow-hidden bg-card",
-              isMixComplete ? "border-emerald-300 dark:border-emerald-700" : "border-amber-400/60",
-            )}>
-              <div className={cn(
-                "px-5 py-3 flex items-center justify-between",
-                isMixComplete ? "bg-emerald-100/50 dark:bg-emerald-900/20" : "bg-amber-100/50 dark:bg-amber-900/20",
-              )}>
-                <div>
-                  <h3 className="font-display text-xl font-bold">{mixCount > 1 ? `Mix ${activeMix}` : "Mix"}</h3>
-                  <p className="text-sm text-muted-foreground">
-                    {isMixComplete ? "All ingredients added" : `${checkedForMix.size} of ${g.ingredients.length} ingredients added`}
-                  </p>
-                </div>
-                {isMixComplete && <CheckCircle2 className="w-7 h-7 text-emerald-500" />}
-              </div>
-
-              <div className="divide-y divide-border/40">
-                {g.ingredients.map((ing, i) => {
-                  const ingKey = String(ing.ingredientId ?? `x-${i}`);
-                  const isChecked = checkedForMix.has(ingKey) || isMixComplete;
-                  return (
-                    <button
-                      key={ingKey}
-                      onClick={() => !isMixComplete && toggle(g.subRecipeId, activeMix, ingKey)}
-                      disabled={isOnBreak || isMixComplete}
-                      className={cn(
-                        "w-full flex items-center gap-4 px-5 py-3.5 text-left transition-all",
-                        isChecked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : "hover:bg-secondary/30",
-                        isOnBreak && "opacity-50",
-                      )}
-                    >
-                      <div className={cn(
-                        "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-all border-2",
-                        isChecked ? "bg-emerald-500 border-emerald-500 text-white" : "border-border bg-background",
-                      )}>
-                        {isChecked && <Check className="w-5 h-5" />}
-                      </div>
-                      <p className={cn("flex-1 min-w-0 font-semibold text-2xl", isChecked && "line-through text-muted-foreground")}>
-                        {ing.ingredientName}
-                      </p>
-                      <p className={cn(
-                        "text-2xl font-semibold tabular-nums flex-shrink-0",
-                        isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground",
-                      )}>
-                        {fmtDoughQty(mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit, ing.ingredientName)}
-                      </p>
-                    </button>
-                  );
-                })}
-              </div>
-
-              {!isMixComplete && (
-                <div className="px-5 py-3 border-t border-border/40">
-                  <button
-                    onClick={() => setDoneMixes(prev => new Set(prev).add(key))}
-                    disabled={!allChecked || isOnBreak}
-                    className={cn(
-                      "w-full py-3.5 rounded-xl text-lg font-bold transition-all",
-                      allChecked && !isOnBreak
-                        ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20"
-                        : "bg-secondary text-muted-foreground cursor-not-allowed",
-                    )}
-                  >
-                    {allChecked ? `✓ ${mixCount > 1 ? `Mix ${activeMix} ` : "Mix "}Complete` : "Add all ingredients to continue"}
-                  </button>
-                </div>
-              )}
-            </div>
+    <div className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 rounded-xl p-4 space-y-3">
+      <div className="flex items-center justify-between flex-wrap gap-2">
+        <div>
+          <h2 className="font-semibold text-lg">
+            {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span>
+          </h2>
+          <p className="text-sm text-muted-foreground">
+            For today's bake ({g.planName}). Mix on the production day — not the day before.
+          </p>
+        </div>
+        <div className="text-right">
+          <div className="text-2xl font-bold font-display">{g.totalDoughKg.toFixed(2)} kg</div>
+          <div className="text-xs text-muted-foreground">
+            {mixCount > 1 ? `${doneCount} of ${mixCount} mixes done` : isMixComplete ? "Mix complete ✓" : "1 mix"}
           </div>
-        );
-      })}
-    </>
+          {progress.saveState !== "idle" && <MixSaveBadge state={progress.saveState} onRetry={progress.retry} />}
+        </div>
+      </div>
+
+      <div className="space-y-1.5">
+        {g.recipes.map(r => (
+          <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
+            <span className="font-medium">{r.recipeName}</span>
+            <span className="text-sm text-muted-foreground">
+              {formatBatches(r.batchesTarget)} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
+              {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {mixCount > 1 && (
+        <div className="flex items-center gap-2">
+          {Array.from({ length: mixCount }, (_, i) => i + 1).map(n => {
+            const nDone = status.completedMixes.has(n);
+            return (
+              <button
+                key={n}
+                onClick={() => setChosenMix(n)}
+                className={cn(
+                  "w-11 h-11 rounded-full font-bold text-lg transition-all",
+                  nDone
+                    ? "bg-emerald-500 text-white"
+                    : n === activeMix
+                      ? "bg-amber-500 text-white"
+                      : "bg-secondary text-muted-foreground hover:text-foreground",
+                  n === activeMix && nDone && "ring-2 ring-emerald-300",
+                )}
+              >
+                {n}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Tick-off rows — same shape as the calzone Mix view so the
+          bench works identically on either dough. */}
+      <div className={cn(
+        "rounded-xl border-2 overflow-hidden bg-card",
+        isMixComplete ? "border-emerald-300 dark:border-emerald-700" : "border-amber-400/60",
+      )}>
+        <div className={cn(
+          "px-5 py-3 flex items-center justify-between",
+          isMixComplete ? "bg-emerald-100/50 dark:bg-emerald-900/20" : "bg-amber-100/50 dark:bg-amber-900/20",
+        )}>
+          <div>
+            <h3 className="font-display text-xl font-bold">{mixCount > 1 ? `Mix ${activeMix}` : "Mix"}</h3>
+            <p className="text-sm text-muted-foreground">
+              {isMixComplete ? "All ingredients added" : `${checkedForMix.size} of ${g.ingredients.length} ingredients added`}
+            </p>
+          </div>
+          {isMixComplete && <CheckCircle2 className="w-7 h-7 text-emerald-500" />}
+        </div>
+
+        <div className="divide-y divide-border/40">
+          {g.ingredients.map((ing, i) => {
+            const ingKey = ingKeyOf(ing, i);
+            const isChecked = checkedForMix.has(ingKey) || isMixComplete;
+            return (
+              <button
+                key={ingKey}
+                onClick={() => toggle(ingKey)}
+                disabled={isOnBreak || isMixComplete}
+                className={cn(
+                  "w-full flex items-center gap-4 px-5 py-3.5 text-left transition-all",
+                  isChecked ? "bg-emerald-50/50 dark:bg-emerald-900/10" : "hover:bg-secondary/30",
+                  isOnBreak && "opacity-50",
+                )}
+              >
+                <div className={cn(
+                  "w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0 transition-all border-2",
+                  isChecked ? "bg-emerald-500 border-emerald-500 text-white" : "border-border bg-background",
+                )}>
+                  {isChecked && <Check className="w-5 h-5" />}
+                </div>
+                <p className={cn("flex-1 min-w-0 font-semibold text-2xl", isChecked && "line-through text-muted-foreground")}>
+                  {ing.ingredientName}
+                </p>
+                <p className={cn(
+                  "text-2xl font-semibold tabular-nums flex-shrink-0",
+                  isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground",
+                )}>
+                  {fmtDoughQty(mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit, ing.ingredientName)}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+
+        {!isMixComplete && (
+          <div className="px-5 py-3 border-t border-border/40">
+            <button
+              onClick={complete}
+              disabled={!allChecked || isOnBreak}
+              className={cn(
+                "w-full py-3.5 rounded-xl text-lg font-bold transition-all",
+                allChecked && !isOnBreak
+                  ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20"
+                  : "bg-secondary text-muted-foreground cursor-not-allowed",
+              )}
+            >
+              {allChecked ? `✓ ${mixCount > 1 ? `Mix ${activeMix} ` : "Mix "}Complete` : "Add all ingredients to continue"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -380,60 +404,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   // Old/blank days and forgotten "Mix complete" taps are read from the balls
   // recorded — lib/dough-mix-status.ts (the dashboard tile uses the same).
   // Only fetched once doughData has said which plan the dough is for.
-  const mixKey = doughMixProgressKey(trackingPlanId);
-  const mixProgress = useQuery({
-    queryKey: mixKey,
-    enabled: !!doughData,
-    refetchInterval: 5000,
-    queryFn: ({ signal }) => fetchDoughMixProgress(trackingPlanId, signal),
-  });
-  const [mixSaveState, setMixSaveState] = useState<MixSaveState>("idle");
-  const [failedMixChange, setFailedMixChange] = useState<DoughMixChange | null>(null);
-  const mixMutation = useMutation({
-    mutationKey: ["dough-mix-progress-save"],
-    mutationFn: async (change: DoughMixChange) => {
-      const res = await guardedFetch(`/api/dough-mix-progress/${trackingPlanId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(change),
-      });
-      return (await res.json()) as DoughMixProgressResponse;
-    },
-    onMutate: async (change) => {
-      setMixSaveState("saving");
-      setFailedMixChange(null);
-      await queryClient.cancelQueries({ queryKey: mixKey });
-      const prev = queryClient.getQueryData<DoughMixProgressResponse>(mixKey);
-      queryClient.setQueryData<DoughMixProgressResponse>(mixKey, old => ({
-        planId: trackingPlanId,
-        ballsRecorded: old?.ballsRecorded ?? totalComplete,
-        mixes: applyDoughMixChange(old?.mixes ?? [], change, new Date().toISOString()),
-      }));
-      return { prev };
-    },
-    onError: (err, change, ctx) => {
-      if (ctx?.prev) queryClient.setQueryData(mixKey, ctx.prev);
-      setMixSaveState("error");
-      setFailedMixChange(change);
-      // 423 = PIN due: the PIN pad is already up, a toast would only confuse.
-      if (!(err instanceof ClientError && err.status === 423)) {
-        toast({ title: "Mix tick not saved", description: `${err.message} — tap "Not saved — retry".`, variant: "destructive" });
-      }
-    },
-    onSuccess: (data) => {
-      // Only the last save in flight writes its answer, so a quick second
-      // tick isn't briefly undone by the first one's reply.
-      if (queryClient.isMutating({ mutationKey: ["dough-mix-progress-save"] }) <= 1) {
-        queryClient.setQueryData(mixKey, data);
-        setMixSaveState("saved");
-      }
-    },
-    onSettled: () => {
-      if (queryClient.isMutating({ mutationKey: ["dough-mix-progress-save"] }) <= 1) {
-        queryClient.invalidateQueries({ queryKey: mixKey });
-      }
-    },
-  });
+  const mixProgress = useDoughMixProgress(trackingPlanId, { enabled: !!doughData });
   const mixStatus = deriveDoughMixStatus({
     mixCount,
     saved: mixProgress.data?.mixes,
@@ -495,13 +466,13 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
     const ticked = checkedIngredients[mixNum]?.has(ingredientKey) ?? false;
-    mixMutation.mutate({ action: "tick", mixNo: mixNum, ingredientKey, ticked: !ticked });
+    mixProgress.save({ action: "tick", mixNo: mixNum, ingredientKey, ticked: !ticked });
   };
 
   const completeMix = (mixNum: number) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
-    mixMutation.mutate({ action: "complete", mixNo: mixNum, completed: true });
+    mixProgress.save({ action: "complete", mixNo: mixNum, completed: true });
     if (mixNum < mixCount) {
       setActiveMix(mixNum + 1);
     }
@@ -806,8 +777,8 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
             isOnBreak={isOnBreak}
             estimatedMixes={mixStatus.estimatedMixes}
             mixNote={mixStatus.note}
-            saveState={mixSaveState}
-            onRetrySave={failedMixChange ? () => mixMutation.mutate(failedMixChange) : undefined}
+            saveState={mixProgress.saveState}
+            onRetrySave={mixProgress.retry}
           />
 
           <div
@@ -1039,18 +1010,7 @@ function DoughMixingView({
   onRetrySave?: () => void;
 }) {
   const isEstimated = estimatedMixes.has(activeMix);
-  const saveBadge = saveState === "saving" ? (
-    <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Saving…</span>
-  ) : saveState === "saved" ? (
-    <span className="inline-flex items-center gap-1 text-sm text-emerald-700 dark:text-emerald-300"><Check className="w-3.5 h-3.5" />Saved</span>
-  ) : saveState === "error" ? (
-    <button
-      onClick={onRetrySave}
-      className="inline-flex items-center gap-1 text-sm font-semibold text-red-700 dark:text-red-300 underline"
-    >
-      <RotateCcw className="w-3.5 h-3.5" />Not saved — retry
-    </button>
-  ) : null;
+  const saveBadge = saveState !== "idle" ? <MixSaveBadge state={saveState} onRetry={onRetrySave} /> : null;
 
   // The big "all done" card only once every mix is RECORDED; while some are
   // estimated from balls, the mix chips stay up so they can be confirmed.

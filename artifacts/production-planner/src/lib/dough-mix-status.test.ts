@@ -112,6 +112,29 @@ describe("dough mix status — saved progress wins", () => {
   });
 });
 
+// Regression (2026-10-12 follow-up): the same-day (cinnamon bun) dough cards
+// kept ticks in memory only. They now read saved progress the same way; they
+// have no balls, so nothing is ever estimated — only saved taps count.
+describe("dough mix status — same-day dough (no balls)", () => {
+  it("nothing saved → nothing done, even with mixes to make", () => {
+    const s = deriveDoughMixStatus({ mixCount: 1, saved: [], ballsRecorded: 0, ballsNeeded: 0 });
+    expect(s.completedMixes.size).toBe(0);
+    expect(s.note).toBeNull();
+  });
+
+  it("saved ticks and a saved complete come back after a reload", () => {
+    const saved: SavedDoughMix[] = [
+      { mixNo: 1, ticked: [{ ingredientKey: "5" }, { ingredientKey: "x-2" }], completedAt: "2026-10-12T06:10:00Z" },
+      { mixNo: 2, ticked: [{ ingredientKey: "5" }], completedAt: null },
+    ];
+    const s = deriveDoughMixStatus({ mixCount: 2, saved, ballsRecorded: 0, ballsNeeded: 0 });
+    expect(done(s.completedMixes)).toEqual([1]);
+    expect(s.estimatedMixes.size).toBe(0);
+    expect([...s.ticksByMix[1]!].sort()).toEqual(["5", "x-2"]);
+    expect([...s.ticksByMix[2]!]).toEqual(["5"]);
+  });
+});
+
 describe("applyDoughMixChange (optimistic update)", () => {
   it("ticks, unticks and completes without touching other mixes", () => {
     let saved: SavedDoughMix[] = [];
