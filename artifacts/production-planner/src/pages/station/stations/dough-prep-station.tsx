@@ -5,7 +5,7 @@ import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
   Loader2, Plus, Minus, CheckCircle2, RotateCcw, Timer, Droplets, Scale,
   PackageSearch, ChevronRight, Layers, ClipboardList, Check, Package,
@@ -20,6 +20,8 @@ import { BreakTracker } from "../shared/break-tracker";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { PrepDateBanner, PrepDraftBanner, toastDraftBlocked } from "../shared/prep-helpers";
 import { getStationCount, compareItemsForDisplay, mainKitchenStationItems } from "../shared/constants";
+import { deriveDoughMixStatus, applyDoughMixChange, type DoughMixChange } from "@/lib/dough-mix-status";
+import { doughMixProgressKey, fetchDoughMixProgress, type DoughMixProgressResponse } from "@/hooks/use-dough-mix-progress";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Dough Prep Station
@@ -99,6 +101,8 @@ interface DoughPrepData {
     totalKg: number;
   };
 }
+
+type MixSaveState = "idle" | "saving" | "saved" | "error";
 
 export function useDoughPrepData(planId: number, mode?: "current") {
   const [data, setData] = useState<DoughPrepData | null>(null);
@@ -312,8 +316,6 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   const { data: doughData, loading: doughLoading, refetch: refetchDough } = useDoughPrepData(plan.id, isDirect ? "current" : undefined);
   const [activeMix, setActiveMix] = useState<number>(1);
   const [activeView, setActiveView] = useState<DoughView>("mixing");
-  const [checkedIngredients, setCheckedIngredients] = useState<Record<number, Set<string>>>({});
-  const [completedMixes, setCompletedMixes] = useState<Set<number>>(new Set());
   // The D-1 walk always finds the NEXT plan with dough, however far out it
   // is — but its mixes are only today's job when its dough day has actually
   // arrived. Opening Friday's plan used to present Monday's calzone mixes
@@ -372,6 +374,83 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   const overallPct = totalBallsNeeded > 0 ? Math.round((totalComplete / totalBallsNeeded) * 100) : 0;
   const mixCount = doughData?.mixCount ?? 0;
 
+  // -- Mix progress: saved per tracking plan so reloads, logins and other
+  // iPads agree (Graeme, 2026-10-12 — the ticks used to live only in this
+  // iPad's memory, so all 110 balls recorded still read "0 of 2 mixes").
+  // Old/blank days and forgotten "Mix complete" taps are read from the balls
+  // recorded — lib/dough-mix-status.ts (the dashboard tile uses the same).
+  // Only fetched once doughData has said which plan the dough is for.
+  const mixKey = doughMixProgressKey(trackingPlanId);
+  const mixProgress = useQuery({
+    queryKey: mixKey,
+    enabled: !!doughData,
+    refetchInterval: 5000,
+    queryFn: ({ signal }) => fetchDoughMixProgress(trackingPlanId, signal),
+  });
+  const [mixSaveState, setMixSaveState] = useState<MixSaveState>("idle");
+  const [failedMixChange, setFailedMixChange] = useState<DoughMixChange | null>(null);
+  const mixMutation = useMutation({
+    mutationKey: ["dough-mix-progress-save"],
+    mutationFn: async (change: DoughMixChange) => {
+      const res = await guardedFetch(`/api/dough-mix-progress/${trackingPlanId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(change),
+      });
+      return (await res.json()) as DoughMixProgressResponse;
+    },
+    onMutate: async (change) => {
+      setMixSaveState("saving");
+      setFailedMixChange(null);
+      await queryClient.cancelQueries({ queryKey: mixKey });
+      const prev = queryClient.getQueryData<DoughMixProgressResponse>(mixKey);
+      queryClient.setQueryData<DoughMixProgressResponse>(mixKey, old => ({
+        planId: trackingPlanId,
+        mixes: applyDoughMixChange(old?.mixes ?? [], change, new Date().toISOString()),
+      }));
+      return { prev };
+    },
+    onError: (err, change, ctx) => {
+      if (ctx?.prev) queryClient.setQueryData(mixKey, ctx.prev);
+      setMixSaveState("error");
+      setFailedMixChange(change);
+      // 423 = PIN due: the PIN pad is already up, a toast would only confuse.
+      if (!(err instanceof ClientError && err.status === 423)) {
+        toast({ title: "Mix tick not saved", description: `${err.message} — tap "Not saved — retry".`, variant: "destructive" });
+      }
+    },
+    onSuccess: (data) => {
+      // Only the last save in flight writes its answer, so a quick second
+      // tick isn't briefly undone by the first one's reply.
+      if (queryClient.isMutating({ mutationKey: ["dough-mix-progress-save"] }) <= 1) {
+        queryClient.setQueryData(mixKey, data);
+        setMixSaveState("saved");
+      }
+    },
+    onSettled: () => {
+      if (queryClient.isMutating({ mutationKey: ["dough-mix-progress-save"] }) <= 1) {
+        queryClient.invalidateQueries({ queryKey: mixKey });
+      }
+    },
+  });
+  const mixStatus = deriveDoughMixStatus({
+    mixCount,
+    saved: mixProgress.data?.mixes,
+    ballsRecorded: totalComplete,
+    ballsNeeded: totalBallsNeeded,
+  });
+  const checkedIngredients = mixStatus.ticksByMix;
+  const completedMixes = mixStatus.completedMixes;
+  // Open on the first mix not yet done, once the saved progress arrives.
+  const openedOnFirstUndone = useRef(false);
+  useEffect(() => {
+    if (openedOnFirstUndone.current || !mixProgress.isSuccess || mixCount === 0) return;
+    openedOnFirstUndone.current = true;
+    for (let n = 1; n <= mixCount; n++) {
+      if (!completedMixes.has(n)) { setActiveMix(n); return; }
+    }
+  }, [mixProgress.isSuccess, mixCount, completedMixes]);
+
   const hasServerProgress = totalComplete > 0;
   const hasAnyMixDone = completedMixes.size > 0 || hasServerProgress;
   const BALLS_PER_TRAY = 4;
@@ -414,18 +493,14 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   const toggleIngredient = (mixNum: number, ingredientKey: string) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
-    setCheckedIngredients(prev => {
-      const mixSet = new Set(prev[mixNum] ?? []);
-      if (mixSet.has(ingredientKey)) mixSet.delete(ingredientKey);
-      else mixSet.add(ingredientKey);
-      return { ...prev, [mixNum]: mixSet };
-    });
+    const ticked = checkedIngredients[mixNum]?.has(ingredientKey) ?? false;
+    mixMutation.mutate({ action: "tick", mixNo: mixNum, ingredientKey, ticked: !ticked });
   };
 
   const completeMix = (mixNum: number) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
-    setCompletedMixes(prev => new Set(prev).add(mixNum));
+    mixMutation.mutate({ action: "complete", mixNo: mixNum, completed: true });
     if (mixNum < mixCount) {
       setActiveMix(mixNum + 1);
     }
@@ -434,7 +509,9 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   const checkedForMix = checkedIngredients[activeMix] ?? new Set<string>();
   const ingredientCount = doughData?.ingredients.length ?? 0;
   const allChecked = ingredientCount > 0 && checkedForMix.size >= ingredientCount;
-  const isMixComplete = completedMixes.has(activeMix);
+  // A mix only estimated from balls still offers "Confirm Mix N complete",
+  // so it can be recorded properly.
+  const isMixComplete = completedMixes.has(activeMix) && !mixStatus.estimatedMixes.has(activeMix);
   const allMixesDone = mixCount > 0 && completedMixes.size >= mixCount;
 
   const ballCount = totalComplete;
@@ -660,6 +737,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
             <h2 className="font-semibold">Dough Prep Progress</h2>
             <p className="text-sm text-muted-foreground">
               {ballCount} of {totalBallsNeeded} balls · {completedMixes.size} / {mixCount} mixes
+              {mixStatus.note && <span className="text-amber-700 dark:text-amber-300"> ({mixStatus.note})</span>}
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -725,6 +803,10 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
             isMixComplete={isMixComplete}
             allMixesDone={allMixesDone}
             isOnBreak={isOnBreak}
+            estimatedMixes={mixStatus.estimatedMixes}
+            mixNote={mixStatus.note}
+            saveState={mixSaveState}
+            onRetrySave={failedMixChange ? () => mixMutation.mutate(failedMixChange) : undefined}
           />
 
           <div
@@ -892,6 +974,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
               </div>
               <div className="flex items-center gap-2 text-sm tabular-nums">
                 <span><span className="font-bold">{completedMixes.size}</span><span className="text-muted-foreground"> / {mixCount} mixes</span></span>
+                {mixStatus.note && <span className="text-xs text-amber-700 dark:text-amber-300">{mixStatus.note}</span>}
                 <ChevronRight className="w-4 h-4 text-muted-foreground" />
               </div>
             </div>
@@ -934,6 +1017,7 @@ function DoughMixingView({
   doughData, mixCount, activeMix, setActiveMix,
   checkedForMix, toggleIngredient, completedMixes, completeMix,
   allChecked, isMixComplete, allMixesDone, isOnBreak,
+  estimatedMixes, mixNote, saveState, onRetrySave,
 }: {
   doughData: DoughPrepData;
   mixCount: number;
@@ -947,8 +1031,29 @@ function DoughMixingView({
   isMixComplete: boolean;
   allMixesDone: boolean;
   isOnBreak: boolean;
+  /** Mixes counted as done from the balls recorded, not a saved tap. */
+  estimatedMixes: Set<number>;
+  mixNote: string | null;
+  saveState: MixSaveState;
+  onRetrySave?: () => void;
 }) {
-  if (allMixesDone) {
+  const isEstimated = estimatedMixes.has(activeMix);
+  const saveBadge = saveState === "saving" ? (
+    <span className="inline-flex items-center gap-1 text-sm text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" />Saving…</span>
+  ) : saveState === "saved" ? (
+    <span className="inline-flex items-center gap-1 text-sm text-emerald-700 dark:text-emerald-300"><Check className="w-3.5 h-3.5" />Saved</span>
+  ) : saveState === "error" ? (
+    <button
+      onClick={onRetrySave}
+      className="inline-flex items-center gap-1 text-sm font-semibold text-red-700 dark:text-red-300 underline"
+    >
+      <RotateCcw className="w-3.5 h-3.5" />Not saved — retry
+    </button>
+  ) : null;
+
+  // The big "all done" card only once every mix is RECORDED; while some are
+  // estimated from balls, the mix chips stay up so they can be confirmed.
+  if (allMixesDone && estimatedMixes.size === 0) {
     return (
       <div className="bg-emerald-50 dark:bg-emerald-950/20 border-2 border-emerald-300 dark:border-emerald-700 rounded-2xl p-8 text-center">
         <CheckCircle2 className="w-16 h-16 text-emerald-500 mx-auto mb-4" />
@@ -958,6 +1063,7 @@ function DoughMixingView({
         <p className="text-emerald-700 dark:text-emerald-300">
           Switch to Balling to start portioning dough balls.
         </p>
+        {saveBadge && <div className="mt-3">{saveBadge}</div>}
       </div>
     );
   }
@@ -992,7 +1098,9 @@ function DoughMixingView({
         <div className="text-right">
           <p className="text-sm text-muted-foreground">
             {completedMixes.size} of {mixCount} mixes done
+            {mixNote && <span className="text-amber-700 dark:text-amber-300"> · {mixNote}</span>}
           </p>
+          {saveBadge && <p>{saveBadge}</p>}
           <p className="text-sm text-muted-foreground">
             {(doughData.flourPerMix ?? 0).toFixed(3)} kg flour → ~{(doughData.doughPerMix ?? 0).toFixed(3)} kg dough per mix
           </p>
@@ -1017,7 +1125,9 @@ function DoughMixingView({
           <div>
             <h2 className="font-display text-2xl font-bold">Mix {activeMix}</h2>
             <p className="text-base text-muted-foreground">
-              {checkedForMix.size} of {doughData.ingredients.length} ingredients added
+              {isEstimated
+                ? `${mixNote ?? "Estimated from balls recorded"} — not ticked off here`
+                : `${checkedForMix.size} of ${doughData.ingredients.length} ingredients added`}
             </p>
           </div>
           {isMixComplete && <CheckCircle2 className="w-8 h-8 text-emerald-500" />}
@@ -1073,15 +1183,17 @@ function DoughMixingView({
           <div className="px-5 py-4 border-t border-border/40">
             <button
               onClick={() => completeMix(activeMix)}
-              disabled={!allChecked || isOnBreak}
+              disabled={(!allChecked && !isEstimated) || isOnBreak}
               className={cn(
                 "w-full py-4 rounded-xl text-lg font-bold transition-all",
-                allChecked && !isOnBreak
+                (allChecked || isEstimated) && !isOnBreak
                   ? "bg-emerald-500 text-white hover:bg-emerald-600 shadow-lg shadow-emerald-500/20"
                   : "bg-secondary text-muted-foreground cursor-not-allowed"
               )}
             >
-              {allChecked ? `✓ Mix ${activeMix} Complete` : `Add all ingredients to continue`}
+              {isEstimated
+                ? `✓ Confirm Mix ${activeMix} Complete`
+                : allChecked ? `✓ Mix ${activeMix} Complete` : `Add all ingredients to continue`}
             </button>
           </div>
         )}
