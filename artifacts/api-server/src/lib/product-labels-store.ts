@@ -8,7 +8,7 @@
  */
 import { createHash } from "node:crypto";
 import { db, recipesTable, productLabelTemplatesTable, productLabelSettingsTable, productLabelVersionsTable } from "@workspace/db";
-import { asc, desc, eq } from "drizzle-orm";
+import { asc, desc, eq, getTableColumns } from "drizzle-orm";
 import {
   buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, normalisePeriod, normaliseTemplate, snapshotKey,
   type LabelSnapshot, type LabelTemplate, type RecipeLabelSettings, type SnapshotChange, type PeriodUnit,
@@ -85,10 +85,13 @@ export async function loadSettingsRow(recipeId: number): Promise<SettingsRow | u
 
 // ── Live versions ──────────────────────────────────────────────────────────
 
-export type VersionRow = typeof productLabelVersionsTable.$inferSelect;
+/** A version row WITHOUT its stored proof image (~100 KB each) — only the
+ *  history's proof/PDF endpoints read that. */
+export type VersionRow = Omit<typeof productLabelVersionsTable.$inferSelect, "proofPng">;
+const { proofPng: _proofPng, ...versionColumns } = getTableColumns(productLabelVersionsTable);
 
 export async function loadLiveVersion(recipeId: number): Promise<VersionRow | undefined> {
-  const [row] = await db.select().from(productLabelVersionsTable)
+  const [row] = await db.select(versionColumns).from(productLabelVersionsTable)
     .where(eq(productLabelVersionsTable.recipeId, recipeId))
     .orderBy(desc(productLabelVersionsTable.versionNo))
     .limit(1);
@@ -96,7 +99,7 @@ export async function loadLiveVersion(recipeId: number): Promise<VersionRow | un
 }
 
 export async function loadAllLiveVersions(): Promise<Map<number, VersionRow>> {
-  const rows = await db.select().from(productLabelVersionsTable).orderBy(desc(productLabelVersionsTable.versionNo));
+  const rows = await db.select(versionColumns).from(productLabelVersionsTable).orderBy(desc(productLabelVersionsTable.versionNo));
   const out = new Map<number, VersionRow>();
   for (const r of rows) if (r.recipeId != null && !out.has(r.recipeId)) out.set(r.recipeId, r);
   return out;

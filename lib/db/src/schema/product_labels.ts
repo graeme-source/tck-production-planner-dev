@@ -1,4 +1,4 @@
-import { pgTable, serial, integer, text, timestamp, boolean, jsonb, unique, index, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, text, timestamp, boolean, jsonb, unique, index, date, customType } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { recipesTable } from "./recipes";
 
@@ -44,6 +44,13 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   updatedByName: text("updated_by_name"),
 });
 
+// Inline bytea, as morning_meetings / curiosity photos.
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
 export const productLabelVersionsTable = pgTable("product_label_versions", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
@@ -57,6 +64,11 @@ export const productLabelVersionsTable = pgTable("product_label_versions", {
   publishedAt: timestamp("published_at").notNull().defaultNow(),
   publishedById: integer("published_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   publishedByName: text("published_by_name"),
+  // The exact label image as it went live (migration 0172) — the history
+  // shows this, never a re-draw with newer layout code. Null = published
+  // before 0172 and not backfilled yet. ~100 KB, so list queries leave it out.
+  proofPng: bytea("proof_png"),
+  proofDpi: integer("proof_dpi"),
 }, t => [
   unique("product_label_versions_recipe_version").on(t.recipeId, t.versionNo),
   index("idx_product_label_versions_recipe").on(t.recipeId, t.versionNo),
