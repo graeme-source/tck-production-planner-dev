@@ -50,6 +50,7 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: new RegExp(`${PLAN}/prep-completions/?$`), what: "prep tick" },
   { method: "POST", pattern: new RegExp(`${PLAN}/prep-deferrals/?$`), what: "prep deferral" },
   { method: "POST", pattern: new RegExp(`${PLAN}/sub-recipe-completions/?$`), what: "sub-recipe tick" },
+  { method: "PUT", pattern: new RegExp(`^/dough-mix-progress/${ID}/?$`), what: "dough mix tick" },
   { method: "POST", pattern: /^\/production-plans\/stock-checks\/?$/, what: "daily stock check" },
   // Building-table claims and per-person station checklist flags
   { method: "PUT", pattern: /^\/app-settings\/(station_assignment_|checklist_done_|mozz_load_confirmed_)/, what: "station claim" },

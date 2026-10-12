@@ -17,6 +17,7 @@ import recipeQuidRouter from "./recipe-quid";
 import productionPlansRouter from "./production-plans";
 import buildingTablesRouter from "./building-tables";
 import buildingTargetFinishRouter from "./building-target-finish";
+import doughMixProgressRouter from "./dough-mix-progress";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
@@ -255,6 +256,9 @@ router.use("/production-plans", productionPlansRouter);
 router.use("/building-tables", buildingTablesRouter);
 // Builders' target finish time at 20 batches/hour — read-only, both tables.
 router.use("/building-target-finish", buildingTargetFinishRouter);
+// Dough Prep per-mix ingredient ticks + "Mix N complete", saved per plan
+// (the plan the dough is for) so reloads and other iPads agree.
+router.use("/dough-mix-progress", doughMixProgressRouter);
 router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 // Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).

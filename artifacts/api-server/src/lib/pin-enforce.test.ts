@@ -59,12 +59,14 @@ describe("matchAttributingWrite", () => {
     ["PUT", "/eight-pack-stock/12"], // 8-pack bag count, logged against the counter
     ["POST", "/messages"], // a team message goes out under a name
     ["POST", "/messages/42/ack"], // "I understand and will action this"
+    ["PUT", "/dough-mix-progress/180"], // dough mix tick / "Mix complete", saved under a name
   ])("guards %s %s", (method, path) => {
     expect(matchAttributingWrite(method, path)).not.toBeNull();
   });
 
   it.each([
     ["GET", "/production-plans/180/batch-completions"], // reads
+    ["GET", "/dough-mix-progress/180"], // reading the mix ticks
     ["GET", "/production-plans/180/items/9/building-edit"], // the Edit dialog's read
     ["DELETE", "/production-plans/180/batch-completions/last"], // undo
     ["DELETE", "/production-plans/180/items/9/wonly"], // undo a wonky
