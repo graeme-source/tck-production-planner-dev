@@ -506,12 +506,13 @@ export interface TemplatePreset {
   build: () => LabelTemplate;
 }
 
-/** Fried chicken (provisional, Graeme 2026-10-12: "we'll deal with the
- *  cooking instructions later"): no wooden-tray step — one placeholder step
- *  until the instructions are agreed; the title without "- N PACK"; the
- *  ingredients may go down to Barlow Condensed so the longest decks (Korean
- *  Fried Chicken) fit; the bones warning follows the automatic words, which
- *  include chicken. */
+/** Fried chicken — Graeme's Label LIVE fried chicken label (2026-10-12),
+ *  made clearer: three oven steps, a KEEP FROZEN band (customers expect our
+ *  products chilled; these must be stored frozen — said without mentioning
+ *  how they arrive), frozen use-by only, net quantity above the barcode, the
+ *  title as the recipe name, the bones warning (automatic, chicken) under
+ *  the storage text, and ingredients allowed down to Barlow Condensed for
+ *  the longest decks. */
 export function friedChickenTemplate(): LabelTemplate {
   const t = normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
   t.text.title = "{name}";
@@ -554,7 +555,7 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
   {
     key: "fried-chicken",
     name: "Fried chicken",
-    description: "Provisional: cooking instructions to be confirmed, no wooden-tray step, room for long ingredient lists.",
+    description: "Frozen products: KEEP FROZEN band, frozen use-by only, three oven steps, net quantity above the barcode, room for long ingredient lists.",
     build: friedChickenTemplate,
   },
 ];
