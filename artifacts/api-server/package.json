@@ -29,6 +29,7 @@
     "@workspace/production-schedule": "workspace:*",
     "@workspace/revenue-targets": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
+    "@workspace/people-reviews": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "@workspace/units": "workspace:*",
     "bcryptjs": "^3.0.3",

@@ -3416,6 +3416,9 @@ async function startup() {
     // form is signed (Graeme, 2026-09-14).
     const { startRtwScheduler } = await import("./lib/rtw-scheduler");
     startRtwScheduler();
+    // People → Needs attention: one generic HR to-do per record-writer (lib/hr-attention.ts).
+    const { startHrAttentionScheduler } = await import("./lib/hr-attention");
+    startHrAttentionScheduler();
 
     // Team efficiency KPI: one-off 12-month backfill on first boot after
     // deploy, then the last 10 production days recomputed nightly so late

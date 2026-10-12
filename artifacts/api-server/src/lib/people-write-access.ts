@@ -83,6 +83,8 @@ export const SELF_SERVICE_KINDS = [
   "own_starter_forms",
   /** Your own return-to-work form while it's a draft: open, fill, sign, attach. */
   "own_rtw_form",
+  /** Opening and "I've read this" on a letter sent to you (/api/people-letters/mine/:id/…). */
+  "own_letter_acknowledge",
 ] as const;
 export type SelfServiceKind = (typeof SELF_SERVICE_KINDS)[number];
 

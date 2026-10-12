@@ -25,7 +25,9 @@ function dataUri(file: string): string {
   return `data:image/png;base64,${readFileSync(path.join(DATA_DIR, file)).toString("base64")}`;
 }
 
-export async function renderContractPdf(body: string): Promise<Buffer> {
+/** Renders a contract — or any letter on the same letterhead (people letters
+ *  pass their own document title). */
+export async function renderContractPdf(body: string, opts: { title?: string } = {}): Promise<Buffer> {
   const logo = dataUri("contract-logo.png");
   const founderSignature = dataUri("founder-signature.png");
 
@@ -43,7 +45,7 @@ export async function renderContractPdf(body: string): Promise<Buffer> {
   });
 
   return renderToBuffer(
-    <Document title="Employment contract — The Calzone Kitchen">
+    <Document title={opts.title ?? "Employment contract — The Calzone Kitchen"}>
       <Page size="A4" style={styles.page}>
         <Image style={styles.logo} src={logo} />
         {blocks}

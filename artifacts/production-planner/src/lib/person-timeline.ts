@@ -41,11 +41,16 @@ export interface TimelineContractLike { key: string; date: string }
 /** A document on the record — `key` unique ("pd-3" filed, "od-5" onboarding
  *  upload), `date` the day it belongs on (YYYY-MM-DD). */
 export interface TimelineDocumentLike { key: string; date: string }
+/** An event from the person's employment-record entries (lib/people-reviews
+ *  recordTimelineEvents) — only ever present for viewers the server let see
+ *  them (founder / People access, never their own record). */
+export interface TimelineReviewLike { key: string; date: string }
 
 export type TimelineEntry<
   F extends TimelineFormLike, M extends TimelineMeetingLike, N extends TimelineNoteLike,
   C extends TimelineContractLike = TimelineContractLike,
   D extends TimelineDocumentLike = TimelineDocumentLike,
+  R extends TimelineReviewLike = TimelineReviewLike,
 > =
   | { kind: "absence"; key: string; date: string; spell: TimelineSpell; form: F | null }
   | { kind: "late"; key: string; date: string; late: TimelineLate }
@@ -53,9 +58,10 @@ export type TimelineEntry<
   | { kind: "meeting"; key: string; date: string; meeting: M }
   | { kind: "note"; key: string; date: string; note: N }
   | { kind: "contract"; key: string; date: string; contract: C }
-  | { kind: "document"; key: string; date: string; document: D };
+  | { kind: "document"; key: string; date: string; document: D }
+  | { kind: "review"; key: string; date: string; review: R };
 
-export type TimelineFilter = "all" | "attendance" | "rtw" | "meetings" | "notes" | "documents" | "contracts";
+export type TimelineFilter = "all" | "attendance" | "rtw" | "meetings" | "notes" | "documents" | "contracts" | "reviews";
 
 export const TIMELINE_FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: "all", label: "All" },
@@ -66,6 +72,8 @@ export const TIMELINE_FILTERS: Array<{ key: TimelineFilter; label: string }> = [
   { key: "documents", label: "Documents" },
   // Only ever has entries for the founder/HR accounts; the chip hides at 0.
   { key: "contracts", label: "Contracts" },
+  // Employment-record entries (reviews, warnings, letters…); hides at 0.
+  { key: "reviews", label: "Reviews & records" },
 ];
 
 /** The day a meeting sits on: when it's booked for, else when it was held. */
@@ -75,12 +83,13 @@ export function meetingDate(m: TimelineMeetingLike): string {
 
 // Same-day order, newest-first list: the conversation, then what was
 // written, then the paperwork, then the attendance facts.
-const KIND_RANK: Record<string, number> = { meeting: 0, note: 1, document: 2, contract: 3, form: 4, absence: 5, late: 6 };
+const KIND_RANK: Record<string, number> = { review: 0, meeting: 1, note: 2, document: 3, contract: 4, form: 5, absence: 6, late: 7 };
 
 export function buildPersonTimeline<
   F extends TimelineFormLike, M extends TimelineMeetingLike, N extends TimelineNoteLike,
   C extends TimelineContractLike = TimelineContractLike,
   D extends TimelineDocumentLike = TimelineDocumentLike,
+  R extends TimelineReviewLike = TimelineReviewLike,
 >(input: {
   spells: readonly TimelineSpell[];
   lates: readonly TimelineLate[];
@@ -92,10 +101,12 @@ export function buildPersonTimeline<
   contracts?: readonly C[];
   /** Documents this viewer may see (the server has already filtered). */
   documents?: readonly D[];
-}): Array<TimelineEntry<F, M, N, C, D>> {
+  /** Employment-record events — only for viewers allowed to see them. */
+  reviews?: readonly R[];
+}): Array<TimelineEntry<F, M, N, C, D, R>> {
   const formsById = new Map(input.forms.map(f => [f.id, f]));
   const onSpell = new Set(input.spells.map(s => s.formId).filter((id): id is number => id != null));
-  const out: Array<TimelineEntry<F, M, N, C, D>> = [
+  const out: Array<TimelineEntry<F, M, N, C, D, R>> = [
     ...input.spells.map(spell => ({
       kind: "absence" as const, key: `a-${spell.start}`, date: spell.end, spell,
       form: spell.formId != null ? formsById.get(spell.formId) ?? null : null,
@@ -107,6 +118,7 @@ export function buildPersonTimeline<
     ...input.looseNotes.map(note => ({ kind: "note" as const, key: `n-${note.id}`, date: note.createdAt.slice(0, 10), note })),
     ...(input.contracts ?? []).map(contract => ({ kind: "contract" as const, key: contract.key, date: contract.date.slice(0, 10), contract })),
     ...(input.documents ?? []).map(document => ({ kind: "document" as const, key: document.key, date: document.date.slice(0, 10), document })),
+    ...(input.reviews ?? []).map(review => ({ kind: "review" as const, key: review.key, date: review.date.slice(0, 10), review })),
   ];
   return out.sort((a, b) =>
     b.date.localeCompare(a.date)
@@ -123,6 +135,7 @@ export function entryMatchesFilter(e: { kind: string }, filter: TimelineFilter):
     case "notes": return e.kind === "note";
     case "documents": return e.kind === "document";
     case "contracts": return e.kind === "contract";
+    case "reviews": return e.kind === "review";
   }
 }
 
@@ -131,7 +144,7 @@ export function filterTimeline<E extends { kind: string }>(entries: readonly E[]
 }
 
 export function timelineCounts(entries: ReadonlyArray<{ kind: string }>): Record<TimelineFilter, number> {
-  const counts = { all: 0, attendance: 0, rtw: 0, meetings: 0, notes: 0, documents: 0, contracts: 0 } as Record<TimelineFilter, number>;
+  const counts = { all: 0, attendance: 0, rtw: 0, meetings: 0, notes: 0, documents: 0, contracts: 0, reviews: 0 } as Record<TimelineFilter, number>;
   for (const e of entries) {
     for (const f of TIMELINE_FILTERS) if (entryMatchesFilter(e, f.key)) counts[f.key] += 1;
   }
