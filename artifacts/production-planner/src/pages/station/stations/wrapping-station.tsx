@@ -24,8 +24,8 @@ import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../sh
 import { QualityRejectSteppers, useQualityRejects } from "../shared/quality-rejects-control";
 import { formatQualityRejects, packsLeftToClassify } from "@/lib/quality-rejects";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
-import { fetchFridgeAvailability, computeFridgeAllocation, type GateOrder } from "@/lib/fridge-gate";
-import { isCollection, isDispatchTagged, isLocalDelivery } from "@/lib/dispatch-tagging";
+import { fetchFridgeAvailability, computeFridgeAllocation, packShortfallOrders, type GateOrder } from "@/lib/fridge-gate";
+import { isCollection, isDispatchTagged } from "@/lib/dispatch-tagging";
 import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
@@ -1481,16 +1481,6 @@ function LeftToWrapBanner() {
     return res.json();
   };
 
-  const { data: configStatus } = useQuery<{ apcEnabled?: boolean; apcMode?: string }>({
-    queryKey: ["fulfilment-config-status"],
-    queryFn: async () => {
-      const res = await fetch(`/api/fulfilment/config-status`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load config");
-      return res.json();
-    },
-    staleTime: 60_000,
-  });
-  const apcMode = configStatus?.apcMode ?? (configStatus?.apcEnabled !== false ? "full" : "off");
 
   const { data: packDayOrders } = useQuery({
     queryKey: ["wrap-release-orders", packDay],
@@ -1501,17 +1491,6 @@ function LeftToWrapBanner() {
     queryKey: ["wrap-release-orders", today],
     queryFn: () => fetchOrdersLean(today),
     refetchInterval: 60_000,
-  });
-  const { data: bookedConsignments } = useQuery<Array<{ orderId: number }>>({
-    queryKey: ["wrap-release-consignments", packDay],
-    queryFn: async () => {
-      const res = await fetch(`/api/fulfilment/consignments?tag=${encodeURIComponent(packDay)}`, { credentials: "include" });
-      if (!res.ok) return [];
-      const data = await res.json();
-      return (data.consignments ?? []) as Array<{ orderId: number }>;
-    },
-    staleTime: 30_000,
-    enabled: apcMode === "full",
   });
   const { data: fridgeAvailability } = useQuery({
     queryKey: ["fulfilment-fridge-availability"],
@@ -1530,11 +1509,13 @@ function LeftToWrapBanner() {
     const collections = (todayOrders ?? []).filter(o => isCollection(o) && o.fulfillment_status !== "fulfilled");
     const courier = (packDayOrders ?? []).filter(o =>
       o.fulfillment_status !== "fulfilled" && !isCollection(o) && isDispatchTagged(o));
-    const booked = new Set((bookedConsignments ?? []).map(c => Number(c.orderId)));
-    const labelGateActive = apcMode === "full" && bookedConsignments != null;
-    const labelled = [...collections, ...courier].filter(o =>
-      !labelGateActive || isLocalDelivery(o) || isCollection(o) || booked.has(o.id));
-    return computeFridgeAllocation(labelled, fridgeAvailability).deficits
+    // EVERY order still to pack today, booked or not (Graeme, 12 Oct 2026:
+    // with only 3 APC labels booked first thing, counting just labelled
+    // orders said "the fridge covers everything" while the pack report showed
+    // Philly and Carnizone short). The label gate decides packing ORDER on
+    // the packing screen; it must not shrink "is there enough?" here. Same
+    // order set as the pack report.
+    return computeFridgeAllocation(packShortfallOrders(collections, courier), fridgeAvailability).deficits
       .map(d => ({ name: d.recipeName, packs: d.packs }));
   })();
 

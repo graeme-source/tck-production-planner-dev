@@ -116,3 +116,12 @@ describe("computeFridgeAllocation", () => {
     expect(r.shortFor.get(7)?.[0]).toContain("Carnizone (need 5, fridge has 2)");
   });
 });
+
+describe("wrapping screen's 'does the fridge cover today's pack?' order set", () => {
+  it("counts every order still to pack, not only ones with an APC label booked (12 Oct regression)", async () => {
+    const { packShortfallOrders } = await import("./fridge-gate");
+    const collections = [{ id: 1 }];
+    const courier = [{ id: 2 }, { id: 3 }, { id: 4 }];
+    expect(packShortfallOrders(collections, courier).map(o => o.id)).toEqual([1, 2, 3, 4]);
+  });
+});
