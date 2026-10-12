@@ -19,7 +19,10 @@ const KNOWN_PAGES = [
   { pageKey: "/dispatch-tag", label: "Dispatch Tagging" },
   { pageKey: "/reports", label: "Reports" },
   { pageKey: "/kanbans", label: "Kanbans" },
-  { pageKey: "/product-hub", label: "Product Hub" },
+  // Product Hub retired 12 Oct 2026; the key stays (saved levels keep
+  // working) and now governs the deck, nutrition and Data health tabs in
+  // Product Labels (/labels). See page.product_hub in the feature registry.
+  { pageKey: "/product-hub", label: "Product Labels: decks, nutrition & data health" },
   { pageKey: "/deliveries/receive", label: "Receive Deliveries (front door)" },
   { pageKey: "/training", label: "Training (station matrices — keep at Viewer so staff can train)" },
   { pageKey: "/lean-curriculum", label: "Lean Curriculum planner" },

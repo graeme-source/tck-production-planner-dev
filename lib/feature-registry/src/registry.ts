@@ -47,7 +47,12 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   { key: "ability.book_apc_labels", name: "Book APC labels", description: "Raise APC consignments and reschedule orders on Order Packing Live.", area: "Order Packing abilities", kind: "ability", minRole: "manager" },
   { key: "page.reports", name: "Reports", description: "Reports and the issue log.", area: "Pages", kind: "page", page: "/reports", minRole: "viewer" },
   { key: "page.kanbans", name: "Kanbans", description: "Kanban cards and the shelf-edge reorder loop.", area: "Pages", kind: "page", page: "/kanbans", minRole: "viewer" },
-  { key: "page.product_hub", name: "Product Hub", description: "Product listings, decks and Shopify.", area: "Pages", kind: "page", page: "/product-hub", minRole: "viewer" },
+  // The Product Hub page was retired on 12 Oct 2026 (now Product Labels at
+  // /labels). Key and page stay "/product-hub" so saved access levels and
+  // grants keep working: they now decide who sees the ingredient deck and
+  // nutrition tabs on each label and the Data health tab. Labels themselves
+  // are open to everyone, as before.
+  { key: "page.product_hub", name: "Product Labels: decks, nutrition & data health", description: "The ingredient deck and nutrition tabs on each product label, and the Data health tab (was the Product Hub).", area: "Pages", kind: "page", page: "/product-hub", minRole: "viewer" },
   { key: "page.deliveries_receive", name: "Receive Deliveries (front door)", description: "Booking goods in at the door.", area: "Pages", kind: "page", page: "/deliveries/receive", minRole: "viewer" },
   { key: "page.training", name: "Training", description: "Station SOP matrices for everyone; onboarding sign-off matrices for managers.", area: "Pages", kind: "page", page: "/training", minRole: "viewer" },
   { key: "page.lean_curriculum", name: "Lean Curriculum planner", description: "The weekly lesson plan behind the morning meeting.", area: "Pages", kind: "page", page: "/lean-curriculum", minRole: "manager" },
