@@ -26,6 +26,7 @@ export function PeopleModal({ title, onClose, children, wide = false }: {
         role="dialog"
         aria-modal="true"
         aria-label={title}
+        data-people-modal=""
         className={cn(
           "bg-card border-2 border-border rounded-3xl shadow-2xl w-full max-h-[92dvh] flex flex-col overflow-hidden",
           wide ? "max-w-3xl" : "max-w-2xl",

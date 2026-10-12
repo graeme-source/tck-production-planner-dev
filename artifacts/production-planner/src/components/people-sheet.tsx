@@ -9,7 +9,7 @@
  * a tap outside all close it; it's capped at 92dvh on a phone and scrolls
  * INSIDE. It sits just below PeopleModal (z-[110]) so a form or document
  * opened from inside the sheet comes up on top of it, and Escape then
- * closes only that top one.
+ * closes only that top one (PeopleModal carries data-people-modal).
  */
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
@@ -20,16 +20,15 @@ export function PeopleSheet({ title, onClose, children }: {
   children: ReactNode;
 }) {
   const titleId = useId();
-  const panel = useRef<HTMLDivElement>(null);
   const closeBtn = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      // Only when this sheet is the top dialog — a modal opened from inside
-      // it closes first.
-      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
-      if (dialogs[dialogs.length - 1] === panel.current) onClose();
+      // A People modal opened from inside the sheet (a document, a form)
+      // closes first; the sheet waits for the next Escape.
+      if (document.querySelector("[data-people-modal]")) return;
+      onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -40,7 +39,6 @@ export function PeopleSheet({ title, onClose, children }: {
   return (
     <div className="fixed inset-0 z-[105] bg-black/50" onClick={onClose}>
       <div
-        ref={panel}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
