@@ -50,7 +50,7 @@ export function ProofImage({ proof, highlight = [], showOverflow = true, classNa
           alt={caption ?? "Label proof"}
           onLoad={e => setNaturalH((e.target as HTMLImageElement).naturalHeight)}
           className="absolute inset-0 w-full h-full select-none"
-          style={{ imageRendering: "pixelated" }}
+          style={{ imageRendering: "auto" }}
           draggable={false}
         />
         {useOverflow && (

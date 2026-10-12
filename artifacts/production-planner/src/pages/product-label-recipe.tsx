@@ -96,16 +96,17 @@ export default function ProductLabelRecipePage() {
 
       {/* Proofs */}
       <div className="grid gap-5 lg:grid-cols-2">
+        {/* Work on the left, send it to the right (Graeme, 12 Oct 2026). */}
+        <div className="space-y-2">
+          <h2 className="text-lg font-bold">{data.matchesLive ? "Current — same as live" : "Current — from the recipe as it is now"}</h2>
+          <ProofImage proof={cur} highlight={data.matchesLive ? [] : highlight} />
+          <FitTable proof={cur} />
+        </div>
         <div className="space-y-2">
           <h2 className="text-lg font-bold">Live — what prints now</h2>
           {data.live?.proof
             ? <ProofImage proof={data.live.proof} highlight={data.matchesLive ? [] : highlight} showOverflow={false} />
             : <div className="rounded-lg border-2 border-dashed border-border p-10 text-center text-muted-foreground">Never published</div>}
-        </div>
-        <div className="space-y-2">
-          <h2 className="text-lg font-bold">{data.matchesLive ? "Current — same as live" : "Current — from the recipe as it is now"}</h2>
-          <ProofImage proof={cur} highlight={data.matchesLive ? [] : highlight} />
-          <FitTable proof={cur} />
         </div>
       </div>
 

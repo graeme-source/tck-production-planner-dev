@@ -195,7 +195,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
                   </div>
 
                   {p.png && (
-                    <img src={p.png} alt="The label that will print" className="w-full rounded-lg ring-1 ring-border bg-white" style={{ imageRendering: "pixelated" }} />
+                    <img src={p.png} alt="The label that will print" className="w-full rounded-lg ring-1 ring-border bg-white" style={{ imageRendering: "auto" }} />
                   )}
                 </>
               )}
