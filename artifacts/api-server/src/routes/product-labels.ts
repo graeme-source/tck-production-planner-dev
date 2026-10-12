@@ -24,6 +24,7 @@ import {
   decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
   STATUS_LABEL, WIDTH_ORDER, type LabelSnapshot,
 } from "@workspace/product-labels";
+import { encodePng } from "@workspace/product-labels/render";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { loadPackBarcodes } from "../lib/barcode-store";
 import { rawBody, validate } from "../middleware/validate";
@@ -317,10 +318,14 @@ router.post("/recipes/:id/publish", requireManagerOrAdmin, validate(PublishBody)
       const versionNo = Number(rows[0].next);
       await client.query(
         `INSERT INTO product_label_versions
-           (recipe_id, recipe_name, version_no, snapshot, snapshot_hash, fit, template_id, template_version, published_by_id, published_by_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           (recipe_id, recipe_name, version_no, snapshot, snapshot_hash, fit, template_id, template_version, published_by_id, published_by_name,
+            proof_png, proof_dpi)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [recipe.id, recipe.name, versionNo, JSON.stringify(current.snapshot), current.hash, JSON.stringify(fitSummary(proof)),
-          current.template.id, current.template.version, who.id, who.name],
+          current.template.id, current.template.version, who.id, who.name,
+          // The exact image going live (dated today, the publish day) — the
+          // label history shows this, never a later re-draw (migration 0172).
+          Buffer.from(encodePng(proof.bitmap)), proof.layout.dpi],
       );
       await client.query("COMMIT");
       res.json({ ok: true, versionNo, publishedByName: who.name });
