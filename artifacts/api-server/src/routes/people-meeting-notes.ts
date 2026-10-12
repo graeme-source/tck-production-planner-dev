@@ -6,9 +6,13 @@
  * already behind the private People PIN and the founder / People-access
  * rule (res.locals.recordViewer is set).
  *
- *   POST /api/people-reviews/entries/:id/meeting-notes/read   { url } | { text }
+ *   POST /api/people-reviews/entries/:id/meeting-notes/read   { text, url? }
  *        → a DRAFT (title, summary, what was agreed, actions, a suggested
  *          classification) plus the text it was made from. Saves nothing.
+ *          The notes are PASTED. A link is never fetched — Wispr Flow shared
+ *          notes need a login (checked with a real link, 12 Oct 2026) — it is
+ *          only kept as the source reference. A paste that is nothing but a
+ *          link is told to paste the notes instead.
  *   POST /api/people-reviews/entries/:id/meeting-notes        the checked draft
  *        → the write-up (private to the author until shared), the source
  *          kept for audit, the meeting marked held, and a generic to-do for
@@ -28,13 +32,13 @@ import {
 } from "@workspace/db";
 import {
   meetingNotesRows, actionTodos, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
+  linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS,
   type MeetingStatus, type Classification, type EvidenceKind,
 } from "@workspace/people-reviews";
 import { validate } from "../middleware/validate";
 import { employmentRecordWrite, fromRow, ownerOf, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { resyncAttentionSoon } from "../lib/hr-attention";
-import { fetchNotesText, MAX_TEXT_CHARS } from "../lib/meeting-notes-source";
 import { ReadMeetingNotesBody, SaveMeetingNotesBody, type SaveMeetingNotes } from "../lib/meeting-notes-ai";
 import { draftMeetingNotes } from "../services/meeting-notes-reader";
 
@@ -92,21 +96,16 @@ async function personName(userId: number): Promise<string> {
 
 router.post("/entries/:id/meeting-notes/read", onEntry, validate(ReadMeetingNotesBody), async (req: Request, res: Response) => {
   const viewer = viewerOf(res);
-  const b = req.body as { url?: string; text?: string };
+  const b = req.body as { text: string; url?: string | null };
   try {
     const entry = await loadEntry(viewer, req.params["id"]);
     if (!entry) { res.status(404).json({ error: "No such meeting" }); return; }
 
-    let text: string;
-    let sourceUrl: string | null = null;
-    if (b.url) {
-      const got = await fetchNotesText(b.url);
-      if (!got.ok) { res.status(got.status).json({ error: got.error, pasteInstead: true }); return; }
-      text = got.text;
-      sourceUrl = got.url;
-    } else {
-      text = (b.text ?? "").trim().slice(0, MAX_TEXT_CHARS);
-    }
+    // Links are never fetched — only kept as the reference.
+    const pastedLink = linkOnly(b.text);
+    if (pastedLink) { res.status(422).json({ error: linkPastedMessage(pastedLink), link: pastedLink }); return; }
+    const sourceUrl = cleanSourceLink(b.url);
+    const text = b.text.trim().slice(0, MAX_NOTES_CHARS);
     if (text.length < 20) { res.status(400).json({ error: "There isn't enough there to go on — paste the full notes." }); return; }
 
     const classifications = (await loadClassifications()).filter(c => c.active);
@@ -117,9 +116,9 @@ router.post("/entries/:id/meeting-notes/read", onEntry, validate(ReadMeetingNote
       classificationLabels: classifications.map(c => c.label),
     }, classifications);
     await audit(db, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "ai_draft",
-      detail: `Meeting notes read by AI from ${sourceUrl ? "a shared link" : "pasted text"}${drafted.ok ? "" : " — failed"}` });
+      detail: `Pasted meeting notes read by AI${sourceUrl ? " (source link kept)" : ""}${drafted.ok ? "" : " — failed"}` });
     if (!drafted.ok) { res.status(drafted.status).json({ error: drafted.error }); return; }
-    res.json({ draft: drafted.draft, repaired: drafted.repaired, source: { kind: sourceUrl ? "url" : "text", url: sourceUrl, text } });
+    res.json({ draft: drafted.draft, repaired: drafted.repaired, source: { kind: "text", url: sourceUrl, text } });
   } catch (err) {
     fail(res, "read", err, "Couldn't read the notes");
   }
@@ -171,7 +170,7 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
       }))).returning({ id: peopleReviewNotesTable.id });
 
       await tx.insert(peopleRecordEntrySourcesTable).values({
-        entryId: entry.id, userId: entry.userId, kind: b.source.kind, sourceUrl: b.source.kind === "url" ? b.source.url : null,
+        entryId: entry.id, userId: entry.userId, kind: b.source.kind, sourceUrl: cleanSourceLink(b.source.url),
         rawText: b.source.text, model: "claude", createdById: viewer.actor.id, createdByName: viewer.name,
       });
 
@@ -187,7 +186,7 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
       }
 
       await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "write_up",
-        detail: `Meeting notes added with AI from ${b.source.kind === "url" ? "a shared link" : "pasted text"} (${created.length} part${created.length === 1 ? "" : "s"}, private${todos.length ? `, ${todos.length} to-do${todos.length === 1 ? "" : "s"}` : ""})` });
+        detail: `Meeting notes added with AI from pasted text${b.source.url ? " (source link kept)" : ""} (${created.length} part${created.length === 1 ? "" : "s"}, private${todos.length ? `, ${todos.length} to-do${todos.length === 1 ? "" : "s"}` : ""})` });
       return { created: created.length, todos: todos.length };
     });
     resyncAttentionSoon();

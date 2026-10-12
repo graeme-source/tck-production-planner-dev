@@ -12,14 +12,14 @@
  * (not an object, nothing usable). Nothing is saved from here — Graeme
  * checks and edits the draft, then presses Save.
  *
- * Prompt injection: the notes are someone else's words (and a fetched page
- * is someone else's server). They go in ONLY inside <meeting_notes> tags,
+ * Prompt injection: the pasted notes may hold anyone's words (a recording
+ * app's transcript included). They go in ONLY inside <meeting_notes> tags,
  * any tag-like text that could close that block is defused, the system
  * prompt says they are data and never instructions, and the answer can only
  * be the one tool's fields — which a person then reads before saving.
  */
 import { z } from "zod";
-import { ACTION_OWNERS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
+import { ACTION_OWNERS, MAX_NOTES_CHARS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
 
 export const LIMITS = { title: 120, summary: 4000, what: 300, detail: 2000, ownerName: 80, items: 20 } as const;
 
@@ -220,15 +220,15 @@ export const SaveMeetingNotesBody = z.object({
   source: z.object({
     kind: z.enum(["url", "text"]),
     url: z.string().max(2000).nullable(),
-    text: z.string().min(1).max(60_000),
+    text: z.string().min(1).max(MAX_NOTES_CHARS),
   }),
 });
 export type SaveMeetingNotes = z.infer<typeof SaveMeetingNotesBody>;
 
-/** What the read endpoint takes: a link OR pasted text, never both. */
+/** What the read endpoint takes: the PASTED notes, and optionally the link
+ *  they came from — kept as a reference only, never fetched (Wispr Flow
+ *  shared notes need a login). */
 export const ReadMeetingNotesBody = z.object({
-  url: z.string().trim().max(2000).optional(),
-  text: z.string().max(60_000).optional(),
-}).refine(b => !!(b.url && b.url.length) !== !!(b.text && b.text.trim().length), {
-  message: "Paste a link or the notes themselves — one or the other.",
+  text: z.string().max(MAX_NOTES_CHARS).refine(t => t.trim().length > 0, "Paste the notes first."),
+  url: z.string().trim().max(2000).nullable().optional(),
 });

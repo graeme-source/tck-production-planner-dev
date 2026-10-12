@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   whatHappened, whatHappenedText, meetingWrittenUp, meetingNotesRows, actionTodos, recordTodo,
-  SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, heldByNotes, type MeetingNotesDraft,
+  SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, heldByNotes, linkOnly, linkPastedMessage, isWisprFlowLink, cleanSourceLink,
+  WISPR_LOGIN_MESSAGE, LINK_ONLY_MESSAGE, type MeetingNotesDraft,
 } from "./index";
 
 describe("one write-up per meeting", () => {
@@ -24,6 +25,26 @@ describe("one write-up per meeting", () => {
     const base = { meetingStatus: "held" as const, outcome: null, status: "closed", writeUpCount: 0 };
     expect(meetingWrittenUp({ ...base, notes: "We talked about leave dates" })).toBe(true);
     expect(meetingWrittenUp({ ...base, notes: "   " })).toBe(false);
+  });
+});
+
+describe("notes are pasted, links are only kept for reference", () => {
+  it("spots a pasted link that is all there is", () => {
+    expect(linkOnly("  https://notes.wisprflow.ai/shared/abc123 ")).toBe("https://notes.wisprflow.ai/shared/abc123");
+    expect(linkOnly("We met. See https://notes.wisprflow.ai/shared/abc123")).toBeNull();
+    expect(linkOnly("Notes from the meeting")).toBeNull();
+    expect(linkOnly("")).toBeNull();
+  });
+  it("a Wispr Flow link says it needs a login; any other link says paste the notes", () => {
+    expect(linkPastedMessage("https://notes.wisprflow.ai/shared/abc")).toBe(WISPR_LOGIN_MESSAGE);
+    expect(linkPastedMessage("https://example.com/notes")).toBe(LINK_ONLY_MESSAGE);
+    expect(isWisprFlowLink("https://notes.wisprflow.ai.example.com/x")).toBe(false);
+  });
+  it("keeps only a real web link as the source reference", () => {
+    expect(cleanSourceLink(" https://notes.wisprflow.ai/shared/abc ")).toBe("https://notes.wisprflow.ai/shared/abc");
+    expect(cleanSourceLink("javascript:alert(1)")).toBeNull();
+    expect(cleanSourceLink("not a link")).toBeNull();
+    expect(cleanSourceLink("")).toBeNull();
   });
 });
 
