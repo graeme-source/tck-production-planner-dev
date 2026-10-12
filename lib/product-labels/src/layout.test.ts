@@ -179,3 +179,42 @@ describe("layout fitting", () => {
     expect(sizes.size).toBe(1);
   });
 });
+
+describe("divider rule", () => {
+  it("is drawn by default: full inner width, whole dots, between the steps and the columns", () => {
+    const t = template();
+    const l = layoutLabel(t, content(words(40)), fake);
+    const d = l.divider!;
+    expect(d).toBeTruthy();
+    expect(d.h).toBe(2); // 0.25 mm at 203 dpi
+    for (const v of [d.x, d.y, d.w, d.h]) expect(Number.isInteger(v)).toBe(true);
+    expect(d.x).toBe(Math.round(l.columns.left.x));
+    expect(d.x + d.w).toBe(Math.round(l.columns.right.x + l.columns.right.w));
+    // Below every step's ink, above both columns.
+    const steps = field(l, "steps");
+    expect(d.y).toBeGreaterThanOrEqual(steps.boxes[0].y + steps.usedHeight);
+    expect(d.y + d.h).toBeLessThanOrEqual(l.columns.left.y);
+  });
+
+  it("sits in the middle of the white space, with room either side", () => {
+    const l = layoutLabel(template(), content(words(40)), fake);
+    const d = l.divider!;
+    const steps = field(l, "steps");
+    const above = d.y - (steps.boxes[0].y + Math.max(steps.usedHeight, l.circles[0].r * 2));
+    const below = l.columns.left.y - (d.y + d.h);
+    expect(Math.abs(above - below)).toBeLessThanOrEqual(1.5);
+    expect(below).toBeGreaterThan(8); // > 1 mm clear at 203 dpi
+  });
+
+  it("is absent when switched off, and the layout is otherwise unchanged", () => {
+    const on = layoutLabel(template(), content(words(40)), fake);
+    const off = layoutLabel(template(x => { x.page.dividerOn = false; }), content(words(40)), fake);
+    expect(off.divider).toBeNull();
+    expect(off.columns).toEqual(on.columns);
+  });
+
+  it("thickness follows the setting in whole dots, at least one", () => {
+    expect(layoutLabel(template(x => { x.page.dividerMm = 0.05; }), content("x"), fake).divider!.h).toBe(1);
+    expect(layoutLabel(template(x => { x.page.dividerMm = 0.5; }), content("x"), fake).divider!.h).toBe(4);
+  });
+});

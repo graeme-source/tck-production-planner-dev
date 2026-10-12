@@ -255,7 +255,7 @@ const TEXT_LABEL: Record<string, string> = {
 
 function pageSummary(t: LabelTemplate): string {
   const p = t.page;
-  return `${p.widthMm}×${p.heightMm} mm, ${p.dpi} dpi, margin ${p.marginMm} mm, left column ${p.columnSplitPct}%${p.smallPack ? ", small pack" : ""}`;
+  return `${p.widthMm}×${p.heightMm} mm, ${p.dpi} dpi, margin ${p.marginMm} mm, left column ${p.columnSplitPct}%, gaps ${p.bandGapMm}/${p.fieldGapMm} mm, ${p.dividerOn ? `divider ${p.dividerMm} mm` : "no divider"}${p.smallPack ? ", small pack" : ""}`;
 }
 function styleSummary(t: LabelTemplate, f: (typeof FIELD_KEYS)[number]): string {
   const s = t.fields[f];

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { allowedWidths, DEFAULT_TEMPLATE, normaliseTemplate } from "./template";
+import { allowedWidths, DEFAULT_TEMPLATE, dividerDots, normaliseTemplate } from "./template";
 
 const stored = (fields: Record<string, unknown>, page: Record<string, unknown> = {}) =>
   normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...DEFAULT_TEMPLATE.page, ...page }, fields: { ...DEFAULT_TEMPLATE.fields, ...fields } });
@@ -43,6 +43,34 @@ describe("narrowest width (replaces allowNarrower)", () => {
   it("the normalised template has no allowNarrower left in it", () => {
     const t = stored({ ingredients: { allowNarrower: true } });
     expect("allowNarrower" in t.fields.ingredients).toBe(false);
+  });
+});
+
+describe("divider rule settings", () => {
+  it("defaults on, 0.25 mm — two dots at 203 dpi", () => {
+    const t = normaliseTemplate({});
+    expect(t.page.dividerOn).toBe(true);
+    expect(t.page.dividerMm).toBe(0.25);
+    expect(dividerDots(t.page)).toBe(2);
+  });
+
+  it("an older stored template (no divider keys) gets the defaults", () => {
+    const { dividerOn: _o, dividerMm: _m, ...oldPage } = DEFAULT_TEMPLATE.page;
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: oldPage });
+    expect(t.page.dividerOn).toBe(true);
+    expect(t.page.dividerMm).toBe(0.25);
+  });
+
+  it("can be switched off, and its thickness is clamped", () => {
+    expect(normaliseTemplate({ page: { dividerOn: false } }).page.dividerOn).toBe(false);
+    expect(normaliseTemplate({ page: { dividerMm: 0 } }).page.dividerMm).toBe(0.05);
+    expect(normaliseTemplate({ page: { dividerMm: 9 } }).page.dividerMm).toBe(2);
+  });
+
+  it("thickness is whole printer dots, never under one", () => {
+    expect(dividerDots({ dividerMm: 0.05, dpi: 203 })).toBe(1);
+    expect(dividerDots({ dividerMm: 0.25, dpi: 300 })).toBe(3);
+    expect(dividerDots({ dividerMm: 0.5, dpi: 203 })).toBe(4);
   });
 });
 

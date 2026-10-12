@@ -382,3 +382,30 @@ describe("title", () => {
     expect(leftGap).toBeGreaterThan(50);
   });
 });
+
+describe("divider rule (printed)", () => {
+  const when = { printDate: "2026-10-10", productionDate: "2026-10-10" };
+  const blackRun = (bm: Bitmap, y: number, x0: number, x1: number) => {
+    for (let x = x0; x < x1; x++) if (bm.data[y * bm.width + x] !== 1) return false;
+    return true;
+  };
+  it("prints a solid line of exactly its thickness across the label", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const d = p.layout.divider!;
+    expect(d.h).toBe(2);
+    for (let y = d.y; y < d.y + d.h; y++) expect(blackRun(p.bitmap, y, d.x, d.x + d.w)).toBe(true);
+    // Clear white just above and below it (nothing crowds the rule).
+    for (const y of [d.y - 1, d.y + d.h]) {
+      const row = p.bitmap.data.subarray(y * p.bitmap.width + d.x, y * p.bitmap.width + d.x + d.w);
+      expect(row.some(v => v === 1)).toBe(false);
+    }
+  });
+  it("prints nothing there when switched off", () => {
+    const on = proofLabel(snapshot(), when, fonts).layout.divider!;
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...DEFAULT_TEMPLATE.page, dividerOn: false } });
+    const p = proofLabel({ ...snapshot(), template: t }, when, fonts);
+    expect(p.layout.divider).toBeNull();
+    const row = p.bitmap.data.subarray(on.y * p.bitmap.width + on.x, on.y * p.bitmap.width + on.x + on.w);
+    expect(row.some(v => v === 1)).toBe(false);
+  });
+});

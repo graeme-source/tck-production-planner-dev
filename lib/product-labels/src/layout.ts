@@ -16,8 +16,8 @@
  * glyphs at exactly the positions measured here — preview and print are one
  * computation.
  *
- * Regions: title band across the top; the three cooking steps in a row;
- * then a left column (storage, dates, barcode at the bottom) and a right
+ * Regions: title band across the top; the cooking steps in a row; an
+ * optional thin divider rule; then a left column (storage, dates, barcode at the bottom) and a right
  * column (ingredients, allergen note/may contain/warning, address). Fields
  * stacked in a column shrink together, level by level.
  */
@@ -26,7 +26,7 @@ import { fieldParagraphs, type LabelContent } from "./content";
 import { barcodeModuleDots, type ModuleChoice } from "./ean13";
 import { legalMinPt, PT_STEP, xHeightMmAt } from "./legal";
 import type { BodyWeight, FieldKey, FieldStyle, LabelTemplate, WidthVariant } from "./template";
-import { allowedWidths, FIELD_LABEL, WIDTH_ORDER } from "./template";
+import { allowedWidths, dividerDots, FIELD_LABEL, WIDTH_ORDER } from "./template";
 import type { Paragraph, Run } from "./text";
 
 export interface Face {
@@ -115,6 +115,9 @@ export interface LabelLayout {
   barcode: BarcodeLayout;
   /** The column boxes (for the proof overlay). */
   columns: { left: Rect; right: Rect; leftText: Rect };
+  /** The thin rule between the steps and the columns (whole dots), or null
+   *  when it's switched off. */
+  divider: Rect | null;
   fits: boolean;
   problems: FitProblem[];
 }
@@ -495,6 +498,23 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
       if (!fits) problems.push(overflowProblem(chosen, stepsH, mm1));
     }
   }
+  // The divider: full inner width, whole dots thick (at least one) on
+  // whole-dot rows so it prints as a clean, even line. Centred between the
+  // bottom of the steps' INK (or the band, if there are no steps) and the
+  // top of the columns, so the white space either side looks equal however
+  // much of the band the steps use. Never above the steps band's text, never
+  // into the columns.
+  let divider: Rect | null = null;
+  if (page.dividerOn) {
+    const h = dividerDots(page);
+    const stepsField = fields.find(f => f.key === "steps");
+    // The step-number circles count as ink too.
+    const above = stepsField && stepsField.lines > 0
+      ? Math.min(stepsTop + Math.max(stepsField.usedHeight, circleD), stepsTop + stepsH)
+      : stepsTop + stepsH;
+    const y = Math.max(Math.ceil(above), Math.min(Math.floor(colTop) - h, Math.round((above + colTop) / 2 - h / 2)));
+    divider = { x: Math.round(innerX), y, w: Math.round(innerX + innerW) - Math.round(innerX), h };
+  }
   const circles = stepBoxes.map(b => ({ cx: b.x + circleD / 2, cy: b.y + circleD / 2, r: circleD / 2 }));
   // Step numbers, white in the black circles.
   const numFace: Face = { width: "normal", weight: 700 };
@@ -575,6 +595,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     circles,
     barcode,
     columns: { left, right, leftText },
+    divider,
     fits: problems.length === 0,
     problems,
   };

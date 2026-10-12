@@ -9,6 +9,7 @@
  * in [square brackets] disappears when any number inside it is blank, and
  * {or} joins two parts with ", or" only when both are there (text.ts).
  */
+import { mmToDots } from "@workspace/units";
 import type { BatchBasis, PeriodUnit, ShelfPeriod } from "./dates";
 import { PERIOD_UNITS } from "./dates";
 import { EAN13_MIN_BAR_HEIGHT_MM } from "./ean13";
@@ -90,6 +91,12 @@ export interface PageSettings {
    *  The bars are then snapped to whole printer dots, so the printed size is
    *  the nearest whole-dot size (shown on the proof). */
   barcodeSizePct: number;
+  /** A thin rule across the label between the cooking steps and the two
+   *  columns, splitting it into "how to cook" and "what's in it" (Graeme,
+   *  2026-10-12). Drawn centred in the band gap, in whole printer dots. */
+  dividerOn: boolean;
+  /** Its thickness; rounded to whole dots, never under one dot. */
+  dividerMm: number;
   /** UK FIC Art. 13(3): the pack's largest surface is under 80 cm², so the
    *  minimum x-height is 0.9 mm instead of 1.2 mm. About the PACK, not the
    *  label. */
@@ -186,6 +193,8 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // 4 mm saved goes to the storage / ingredients / barcode columns.
     titleBandMm: 9, stepsBandMm: 9, bandGapMm: 2, fieldGapMm: 2,
     stepCircleMm: 5.5,
+    // 0.25 mm = 2 dots at 203 dpi: a hairline that still prints solidly.
+    dividerOn: true, dividerMm: 0.25,
     // Step widths are worked out automatically (layout.ts): a step written as
     // whole lines (step 2's cooking lines) gets just the width its longest
     // line needs, the rest share what's left.
@@ -301,6 +310,12 @@ export function allowedWidths(style: Pick<FieldStyle, "width" | "narrowest">): W
   return WIDTH_ORDER.slice(start, Math.max(start, WIDTH_ORDER.indexOf(style.narrowest)) + 1);
 }
 
+/** The divider's printed thickness in whole printer dots — never under one
+ *  dot, so a hairline setting still prints. */
+export function dividerDots(page: Pick<PageSettings, "dividerMm" | "dpi">): number {
+  return Math.max(1, Math.round(mmToDots(page.dividerMm, page.dpi)));
+}
+
 function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
   const o = obj(v);
   const minPt = num(o.minPt, d.minPt, 3, 72);
@@ -363,6 +378,8 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       stepsBandMm: num(p.stepsBandMm, D.page.stepsBandMm, 2, 60),
       bandGapMm: num(p.bandGapMm, D.page.bandGapMm, 0, 20),
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
+      dividerOn: bool(p.dividerOn, D.page.dividerOn),
+      dividerMm: num(p.dividerMm, D.page.dividerMm, 0.05, 2),
       stepCircleMm: num(p.stepCircleMm, D.page.stepCircleMm, 2, 20),
       barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, EAN13_MIN_BAR_HEIGHT_MM, 60),
       barcodeSizePct: num(p.barcodeSizePct, D.page.barcodeSizePct, 80, 200),

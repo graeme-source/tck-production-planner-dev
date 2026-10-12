@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
-  allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, dividerDots, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -168,6 +168,13 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
               <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
             </div>
+            <div className="flex flex-wrap items-end gap-4">
+              <Toggle on={draft.page.dividerOn} onChange={v => setPage("dividerOn", v)} label="Thin line under the cooking steps" />
+              {draft.page.dividerOn && (
+                <Num label="Line thickness" unit={`mm (${dividerDots(draft.page)} printer dot${dividerDots(draft.page) === 1 ? "" : "s"})`} value={draft.page.dividerMm} step={0.05} min={0.05} max={2} onChange={v => v != null && setPage("dividerMm", v)} />
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">The line splits the label into “how to cook” and “what's in it”. It sits in the middle of the gap between bands, so keep that gap at least 3 mm so it stays clear of the text either side.</p>
             <p className="text-sm text-muted-foreground">The steps share their row automatically: a step written as whole lines (the cooking times) gets exactly the width it needs, the others share the rest.</p>
             <p className="text-sm text-muted-foreground">Nothing is ever printed inside the margin — keep it at least 4 mm on rounded labels, or the edges can get cut off.</p>
           </Card>
