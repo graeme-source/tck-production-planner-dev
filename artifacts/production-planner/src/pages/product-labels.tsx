@@ -6,15 +6,28 @@
  * "Update live". Each recipe's label is rebuilt from the recipe as it is now
  * and compared — any difference shows here as "Update needed", and clears by
  * itself if the change is undone.
+ *
+ * Since 12 Oct 2026 this is the Product Labels hub that replaced the old
+ * Product Hub: a Labels tab (the cards) and a Data health tab (?tab=health,
+ * ingredients missing declarations or nutrition). Each card opens the
+ * recipe's label, ingredient deck and nutrition. Objective F.
  */
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
-import { AlertTriangle, CheckCircle2, ChevronRight, Loader2, Percent, Settings2, Tag } from "lucide-react";
+import { AlertTriangle, CheckCircle2, ChevronRight, HeartPulse, Loader2, Percent, Settings2, Tag } from "lucide-react";
 import type { LabelStatus } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { fmtDateTime, STATUS_TONE, useLabelList, type LabelListRow } from "@/components/product-labels/api";
+import { HubTabs, useCanSeeProductData, useTabParam, type HubTab } from "@/components/product-labels/hub-tabs";
+import { DataHealthPanel } from "@/components/product-labels/data-health-panel";
+
+type ListTab = "labels" | "health";
+const ALL_TABS: HubTab<ListTab>[] = [
+  { key: "labels", label: "Labels", icon: Tag },
+  { key: "health", label: "Data health", icon: HeartPulse },
+];
 
 const FILTERS: Array<{ key: "all" | LabelStatus; label: string }> = [
   { key: "all", label: "All" },
@@ -31,6 +44,10 @@ export default function ProductLabelsPage() {
   const canEdit = role === "admin" || role === "manager";
   const { data, isLoading, error } = useLabelList();
   const [filter, setFilter] = useState<"all" | LabelStatus>("all");
+  // Data health keeps the old Product Hub's access level.
+  const canSeeData = useCanSeeProductData();
+  const tabs = canSeeData ? ALL_TABS : ALL_TABS.filter(t => t.key === "labels");
+  const [tab, setTab] = useTabParam(tabs.map(t => t.key));
 
   const rows = data?.recipes ?? [];
   const counts = useMemo(() => {
@@ -43,8 +60,8 @@ export default function ProductLabelsPage() {
   return (
     <div className="space-y-5 max-w-5xl">
       <PageHeader
-        title="Labels"
-        description="Each recipe's pack label. The live version is what gets printed — recipe changes never alter it until someone checks the new one and updates it."
+        title="Product Labels"
+        description="Each recipe's pack label, ingredient deck and nutrition. The live label is what gets printed — recipe changes never alter it until someone checks the new one and updates it."
         action={canEdit ? (
           <div className="flex flex-wrap gap-2">
             <Link href="/labels/quid" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">
@@ -57,6 +74,9 @@ export default function ProductLabelsPage() {
         ) : undefined}
       />
 
+      {tabs.length > 1 && <HubTabs tabs={tabs} value={tab} onChange={setTab} />}
+
+      {tab === "health" ? <DataHealthPanel /> : (<>
       <div className="flex flex-wrap gap-2">
         {FILTERS.map(f => (
           <button
@@ -83,6 +103,7 @@ export default function ProductLabelsPage() {
           {visible.map(r => <LabelCard key={r.recipeId} row={r} />)}
         </div>
       )}
+      </>)}
     </div>
   );
 }

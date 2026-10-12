@@ -26,6 +26,7 @@ import { cn } from "@/lib/utils";
 import { api, useInvalidateLabels, useLabelTemplate, type Proof, type TemplatePayload } from "@/components/product-labels/api";
 import { ProofImage } from "@/components/product-labels/proof-image";
 import { StepPreview } from "@/components/product-labels/step-preview";
+import { MayContainEditor } from "@/components/product-labels/may-contain-editor";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const inputCls = "h-11 rounded-xl border-2 border-border bg-card px-3 text-base font-semibold tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/40 disabled:opacity-60";
@@ -298,6 +299,10 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               </div>
             </div>
           </Card>
+
+          {/* Shared by every deck and label; saved on its own, not part of
+              the template version above. Moved from the old Product Hub. */}
+          <MayContainEditor />
         </div>
       </div>
     </div>
