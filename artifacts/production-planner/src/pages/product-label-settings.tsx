@@ -260,6 +260,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               ))}
             </div>
             <Toggle on={draft.mayContainBoldList} onChange={v => update(t => ({ ...t, mayContainBoldList: v }))} label="Print the may-contain list in bold" />
+            <BoneWords words={draft.boneRiskWords} onChange={boneRiskWords => update(t => ({ ...t, boneRiskWords }))} />
           </Card>
 
           {/* Cooking */}
@@ -431,6 +432,41 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
         <Toggle on={style.bold} onChange={v => onChange({ bold: v })} label="All bold" />
         <Toggle on={style.caps} onChange={v => onChange({ caps: v })} label="CAPITALS" />
         <Toggle on={style.align === "center"} onChange={v => onChange({ align: v ? "center" : "left" })} label="Centred" />
+      </div>
+    </div>
+  );
+}
+
+/** The words that switch the bones warning on for recipes left on
+ *  Automatic. Saved with the rest of the design (autosave). */
+function BoneWords({ words, onChange }: { words: string[]; onChange: (w: string[]) => void }) {
+  const [text, setText] = useState("");
+  const add = () => {
+    const w = text.trim().replace(/\s+/g, " ");
+    if (!w) return;
+    if (!words.some(x => x.toLowerCase() === w.toLowerCase())) onChange([...words, w]);
+    setText("");
+  };
+  return (
+    <div className="space-y-2 rounded-xl border-2 border-border p-3">
+      <p className="font-bold">Bones warning — automatic words</p>
+      <p className="text-sm text-muted-foreground">
+        A recipe left on “Automatic” prints the bones warning when any of these words is in its ingredients (sub-recipes included; whole words, any capitals — “chicken” finds “Chicken Thigh” but not “chickpea”). With no words, Automatic is always off. Any recipe can still be set to always on or always off.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {words.length === 0 && <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">No words — Automatic never prints the warning.</span>}
+        {words.map(w => (
+          <span key={w} className="inline-flex items-center gap-2 h-11 pl-4 pr-1 rounded-full border-2 border-primary bg-primary/10 text-primary font-bold text-sm">
+            {w}
+            <button type="button" onClick={() => onChange(words.filter(x => x !== w))} aria-label={`Remove ${w}`}
+              className="h-9 w-9 rounded-full hover:bg-primary/20 font-bold">×</button>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          placeholder="Add a word, e.g. lamb" aria-label="Add a word" className={cn(inputCls, "w-56")} />
+        <button type="button" onClick={add} className="h-11 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary">Add</button>
       </div>
     </div>
   );
