@@ -26,6 +26,7 @@ import { ovenChangeReminder } from "../shared/oven-reminder";
 import { OvenChangeBanner } from "../shared/oven-change-banner";
 import { QualityRejectSteppers, RejectStepper, rejectCount, useQualityRejects } from "../shared/quality-rejects-control";
 import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
+import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Ovens Station
@@ -64,6 +65,7 @@ type WeightTargetsResponse = {
 };
 
 export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
@@ -674,7 +676,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
               <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
                 {idx + 1} of {items.length}
               </span>
-              <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={{ color: recipeColour }}>
+              <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : { color: recipeColour }}>
                 {item.recipeName ?? `Recipe #${item.recipeId}`}
               </h2>
               {isComplete && (
@@ -1143,7 +1145,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                     >
                       <span className="w-5 text-xs font-bold text-muted-foreground tabular-nums text-right flex-shrink-0">{idx + 1}</span>
                       {/* Colour dot */}
-                      <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: recipeColour }} />
+                      <RecipeSwatch recipeId={item.recipeColor ? item.recipeId : null} color={recipeColour} className="w-3 h-3 rounded-sm flex-shrink-0" />
 
                       {/* Recipe name */}
                       <span
@@ -1151,7 +1153,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                           "flex-1 font-bold text-sm truncate",
                           isComplete ? "line-through opacity-60" : ""
                         )}
-                        style={{ color: recipeColour }}
+                        style={item.recipeColor && !isComplete ? colourStyle(item.recipeId, item.recipeColor, "text") : { color: recipeColour }}
                       >
                         {item.recipeName ?? `Recipe #${item.recipeId}`}
                       </span>

@@ -16,11 +16,13 @@ import { createPortal } from "react-dom";
 import { getStationCount, compareItemsForDisplay, isMacCheese, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
 import { useDoughPrepData } from "./dough-prep-station";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Dough Sheeting Station
 // ──────────────────────────────────────────────────────────────────────────────
 export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
   // ONE recipe on show at a time (the shared station-queue pattern, Graeme
@@ -253,7 +255,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
                     {panelIdx + 1} of {items.length}
                   </span>
-                  <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={{ color: recipeColour }}>
+                  <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={recipeColour ? colourStyle(item.recipeId, recipeColour, "text") : undefined}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </h2>
                   {isDone && (
@@ -363,7 +365,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
                       "flex-1 font-bold text-sm truncate",
                       isDone ? "line-through opacity-60" : ""
                     )}
-                    style={{ color: item.recipeColor || undefined }}
+                    style={item.recipeColor && !isDone ? colourStyle(item.recipeId, item.recipeColor, "text") : { color: item.recipeColor || undefined }}
                   >
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </span>

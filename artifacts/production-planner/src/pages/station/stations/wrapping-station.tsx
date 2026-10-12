@@ -30,6 +30,7 @@ import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 // Everyone can make back labels at the bench (Graeme, 12 Oct 2026); only the
 // approved live label prints. Test prints stay on the label page, gated.
@@ -113,6 +114,7 @@ interface WrappingSpeed {
 }
 
 export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
 
   // Today's wrapping pace — refreshed every minute; each fridge/freezer add
@@ -887,7 +889,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                     <div className="flex items-center gap-3">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 mb-1">
-                          <h3 className={cn("font-semibold text-xl", isWrapped ? "line-through opacity-60" : "")} style={{ color: recipeColour }}>
+                          <h3 className={cn("font-semibold text-xl", isWrapped ? "line-through opacity-60" : "")} style={recipeColour && !isWrapped ? colourStyle(item.recipeId, recipeColour, "text") : { color: recipeColour }}>
                             {item.recipeName ?? `Recipe #${item.recipeId}`}
                           </h3>
                           {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
@@ -1347,7 +1349,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       "flex-1 font-bold text-sm truncate",
                       isWrapped ? "line-through opacity-60" : ""
                     )}
-                    style={{ color: item.recipeColor || undefined }}
+                    style={item.recipeColor && !isWrapped ? colourStyle(item.recipeId, item.recipeColor, "text") : { color: item.recipeColor || undefined }}
                   >
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </span>

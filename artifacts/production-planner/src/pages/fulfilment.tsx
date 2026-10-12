@@ -40,6 +40,7 @@ import { StationMessagesBanner } from "@/components/station-messages";
 import { barcodeFor, canTickByHand, decideScan, scanMessage, shouldRefreshOnMiss, type ScanDecision, type ScanLine } from "@workspace/barcodes";
 import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
+import { recipeColourStyle } from "@/lib/recipe-colour-style";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -71,6 +72,8 @@ interface LineItem {
   identityKey?: string | null;
   imageUrl: string | null;
   recipeColor: string | null;
+  /** Optional second recipe colour (migration 0185). */
+  recipeSecondaryColor?: string | null;
 }
 
 // Box categories, the dispatch tag and the tagging scope all live in
@@ -2249,6 +2252,7 @@ export default function Fulfilment() {
     identityKey: string | null;
     imageUrl: string | null;
     recipeColor: string | null;
+    recipeSecondaryColor: string | null;
   }
   const groupedItems: GroupedItem[] = [];
   {
@@ -2272,6 +2276,7 @@ export default function Fulfilment() {
           identityKey: (li.variant_id != null ? scanMap?.identities[String(li.variant_id)] : null) ?? li.identityKey ?? null,
           imageUrl: li.imageUrl,
           recipeColor: li.recipeColor,
+          recipeSecondaryColor: li.recipeSecondaryColor ?? null,
         };
         map.set(key, group);
         groupedItems.push(group);
@@ -3764,7 +3769,7 @@ export default function Fulfilment() {
                 <div className="flex-1 min-w-0">
                   <p
                     className={`font-bold text-2xl md:text-3xl leading-tight ${isComplete ? "line-through text-muted-foreground" : ""}`}
-                    style={!isComplete && item.recipeColor ? { color: item.recipeColor } : undefined}
+                    style={!isComplete && item.recipeColor ? recipeColourStyle(item.recipeColor, item.recipeSecondaryColor, "text") : undefined}
                   >
                     {item.title}
                     {item.variant_title && (

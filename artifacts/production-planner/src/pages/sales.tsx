@@ -9,6 +9,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { format } from "date-fns";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { activeRecipes } from "@/lib/recipe-archive";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 const schema = z.object({
   recipeId: z.coerce.number().min(1, "Select product"),
@@ -20,6 +21,7 @@ const schema = z.object({
 type FormValues = z.infer<typeof schema>;
 
 export default function Sales() {
+  const colourStyle = useRecipeColourLookup();
   const { data: sales, isLoading } = useListSalesEntries();
   const { data: recipes } = useListRecipes();
   const { createSale, deleteSale } = useAppMutations();
@@ -99,7 +101,7 @@ export default function Sales() {
             {sales?.map((sale) => (
               <tr key={sale.id} className="hover:bg-secondary/10">
                 <td className="px-6 py-4 text-muted-foreground">{format(new Date(sale.saleDate), 'MMM do, yyyy')}</td>
-                <td className="px-6 py-4 font-bold" style={(sale as any).recipeColor ? { color: (sale as any).recipeColor } : undefined}>{sale.recipeName}</td>
+                <td className="px-6 py-4 font-bold" style={(sale as any).recipeColor ? colourStyle((sale as any).recipeId, (sale as any).recipeColor, "text") : undefined}>{sale.recipeName}</td>
                 <td className="px-6 py-4">
                   <span className="bg-secondary px-2 py-1 rounded-md text-xs">{sale.channel || 'Direct'}</span>
                 </td>

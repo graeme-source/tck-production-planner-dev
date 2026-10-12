@@ -6,6 +6,7 @@ import { Thermometer, Snowflake, Package, RefreshCw, ChevronRight, ChevronDown, 
 import { cn } from "@/lib/utils";
 import { ProcessFulfilledTodayButton } from "@/components/process-fulfilled-today-button";
 import { activeRecipes } from "@/lib/recipe-archive";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -300,6 +301,7 @@ interface FocusPanelProps {
 }
 
 function FocusPanel({ location, onRefresh }: FocusPanelProps) {
+  const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const colors = zoneColors(location.zone);
   // Packs and bags are different units — total, bar and % are per unit.
@@ -840,7 +842,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                     <div className="flex items-center gap-2 mb-3">
                       <span
                         className="flex-1 font-medium text-sm truncate"
-                        style={item.color ? { color: item.color } : undefined}
+                        style={item.color ? colourStyle(item.recipeId, item.color, "text") : undefined}
                       >
                         {item.name}
                       </span>
@@ -902,7 +904,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                       <span className="text-xs font-semibold text-muted-foreground w-5 tabular-nums shrink-0">{idx + 1}</span>
                       <span
                         className="flex-1 font-medium text-sm truncate"
-                        style={item.color ? { color: item.color } : undefined}
+                        style={item.color ? colourStyle(item.recipeId, item.color, "text") : undefined}
                       >
                         {item.name}
                       </span>
@@ -963,7 +965,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                       )}
                       <span
                         className="flex-1 font-medium text-sm truncate"
-                        style={item.color ? { color: item.color } : undefined}
+                        style={item.color ? colourStyle(item.recipeId, item.color, "text") : undefined}
                       >
                         {item.name}
                       </span>
@@ -995,6 +997,7 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
                         style={{
                           width: `${barWidth}%`,
                           background: item.color ?? "hsl(var(--primary))",
+                          ...(item.color ? colourStyle(item.recipeId, item.color, "strip") : {}),
                         }}
                       />
                     </div>

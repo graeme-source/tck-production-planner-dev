@@ -17,6 +17,7 @@ import {
   ShoppingCart, CheckCircle2, AlertTriangle, Truck, ArrowLeft,
 } from "lucide-react";
 import { activeRecipes } from "@/lib/recipe-archive";
+import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -192,6 +193,7 @@ function DateIngredients({ date, onOrdersCreated }: { date: string; onOrdersCrea
 
 // ── Add-to-queue form ──────────────────────────────────────────────────
 function AddQueueForm({ initialDate, onSaved }: { initialDate: string; onSaved: () => void }) {
+  const colourStyle = useRecipeColourLookup();
   const [date, setDate] = useState(initialDate);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Record<number, number>>({}); // recipeId → batches
@@ -266,8 +268,8 @@ function AddQueueForm({ initialDate, onSaved }: { initialDate: string; onSaved: 
         {sorted.map((r: { id: number; name: string; color?: string | null }) => (
           <div key={r.id} className="flex items-center gap-2 py-0.5">
             <input type="checkbox" checked={selected[r.id] != null} onChange={() => toggle(r.id)} className="rounded border-border flex-shrink-0" />
-            <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-border" style={{ backgroundColor: r.color ?? "transparent" }} />
-            <span className="text-sm truncate flex-1" style={r.color ? { color: r.color } : undefined}>{r.name}</span>
+            <RecipeSwatch recipeId={r.id} color={r.color} fallback="transparent" className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-border" />
+            <span className="text-sm truncate flex-1" style={r.color ? colourStyle(r.id, r.color, "text") : undefined}>{r.name}</span>
             {selected[r.id] != null && (
               <span className="flex items-center gap-1 flex-shrink-0">
                 <input
@@ -297,6 +299,7 @@ function AddQueueForm({ initialDate, onSaved }: { initialDate: string; onSaved: 
 
 // ── Page ───────────────────────────────────────────────────────────────
 export default function QueuedProductionPage() {
+  const colourStyle = useRecipeColourLookup();
   const [, navigate] = useLocation();
   const searchStr = useSearch();
   const initialDate = new URLSearchParams(searchStr).get("date") ?? "";
@@ -385,8 +388,8 @@ export default function QueuedProductionPage() {
                 <div className="mt-3 space-y-2">
                   {dateRows.map(row => (
                     <div key={row.id} className="flex items-center gap-3">
-                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-border" style={{ backgroundColor: row.recipeColor ?? "transparent" }} />
-                      <span className="text-sm font-medium truncate flex-1" style={row.recipeColor ? { color: row.recipeColor } : undefined}>{row.recipeName}</span>
+                      <RecipeSwatch recipeId={row.recipeId} color={row.recipeColor} fallback="transparent" className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-border" />
+                      <span className="text-sm font-medium truncate flex-1" style={row.recipeColor ? colourStyle(row.recipeId, row.recipeColor, "text") : undefined}>{row.recipeName}</span>
                       <span className={cn(
                         "text-[10px] px-1.5 py-0.5 rounded font-medium flex-shrink-0",
                         row.status === "planned"

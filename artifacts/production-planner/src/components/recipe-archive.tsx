@@ -29,6 +29,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/hooks/use-toast";
 import { archivedLabel, archiveWarnings, draftedLabel, draftMenuQuestion, menuFlagQuestion } from "@/lib/recipe-archive";
+import { RecipeSwatch } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -401,7 +402,7 @@ export function DraftRecipesPanel({ recipes, canManage, onOpen, onArchive, onBre
           <div key={r.id} className="rounded-2xl border-2 border-amber-300/70 dark:border-amber-700/60 bg-card p-5 flex flex-col gap-3" data-testid="draft-recipe-card">
             <div className="min-w-0">
               <p className="text-lg font-semibold leading-tight flex items-center gap-2">
-                {r.color && <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color }} />}
+                {r.color && <RecipeSwatch recipeId={r.id} color={r.color} className="w-3 h-3 rounded-full shrink-0" />}
                 <span className="truncate">{r.name}</span>
               </p>
               {r.category && <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mt-1">{r.category}</p>}
@@ -495,7 +496,7 @@ export function ArchivedRecipesPanel({ recipes, canManage, onOpen }: {
           <div key={r.id} className="rounded-2xl border-2 border-dashed border-border bg-muted/40 p-5 flex flex-col gap-3" data-testid="archived-recipe-card">
             <div className="min-w-0 opacity-70">
               <p className="text-lg font-semibold leading-tight flex items-center gap-2">
-                {r.color && <span className="w-3 h-3 rounded-full shrink-0 grayscale" style={{ backgroundColor: r.color }} />}
+                {r.color && <RecipeSwatch recipeId={r.id} color={r.color} className="w-3 h-3 rounded-full shrink-0 grayscale" />}
                 <span className="truncate">{r.name}</span>
               </p>
               {r.category && <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground mt-1">{r.category}</p>}

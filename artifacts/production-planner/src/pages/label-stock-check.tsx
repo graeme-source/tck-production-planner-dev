@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/page-header";
 import { Loader2, Plus, Trash2, RefreshCw, ChevronLeft, Tag, Scale, Save, Search, Pencil, X as XIcon, Mail, Send, AlertTriangle, ClipboardCheck } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { RecipeSwatch } from "@/components/recipe-swatch";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Label Stock Check tool
@@ -559,7 +560,7 @@ export default function LabelStockCheckPage() {
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2.5">
                           {row.recipeColor && (
-                            <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: row.recipeColor }} />
+                            <RecipeSwatch recipeId={row.recipeId} color={row.recipeColor} className="w-3 h-3 rounded-full flex-shrink-0" />
                           )}
                           <div>
                             <p className="font-semibold">{row.recipeName}</p>
@@ -994,7 +995,7 @@ function AddFromMenuDialog({ onClose, onAdded }: { onClose: () => void; onAdded:
                         : "hover:bg-secondary/40 border-l-4 border-l-transparent"
                     )}
                   >
-                    {r.color && <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                    {r.color && <RecipeSwatch recipeId={r.id} color={r.color} className="w-3 h-3 rounded-full flex-shrink-0" />}
                     <span className="flex-1 truncate">{r.name}</span>
                     <span className={cn(
                       "text-xs tabular-nums",

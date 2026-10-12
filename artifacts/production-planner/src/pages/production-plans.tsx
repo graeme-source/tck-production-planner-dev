@@ -69,6 +69,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
 
 type PlanView = "list" | "detail";
 
@@ -507,6 +508,7 @@ interface SortableRowProps {
 }
 
 function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock, productionDayIndex }: SortableRowProps) {
+  const colourStyle = useRecipeColourLookup();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const style = {
@@ -547,7 +549,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
       </td>
       <td className="py-2 px-2">
         <div className="flex items-center gap-1.5">
-          <span className="font-medium text-sm" style={item.recipeColor ? { color: item.recipeColor } : undefined}>{item.recipeName}</span>
+          <span className="font-medium text-sm" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>{item.recipeName}</span>
           {item.sopUrl && (
             <a href={item.sopUrl} target="_blank" rel="noopener noreferrer" className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
               <ExternalLink className="w-3 h-3" />
@@ -695,7 +697,7 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
           disabled={!item.included || saving}
           placeholder="0"
-          style={item.recipeColor ? { color: item.recipeColor, borderColor: item.recipeColor } : undefined}
+          style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "chip") : undefined}
           className="w-16 px-1.5 py-1 bg-background border-2 rounded-lg text-base font-bold text-center focus-ring disabled:opacity-40 tabular-nums"
         />
         {/* Bags are made from these same batches, so their portions never
@@ -751,6 +753,7 @@ function DptSettingsDialog({
   onClose: () => void;
   onSaved?: () => void;
 }) {
+  const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const { data: dptSettings, isLoading: dptLoading } = useListDptSettings({ query: { queryKey: getListDptSettingsQueryKey(), enabled: open } });
   const { data: recipes, isLoading: recipesLoading } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
@@ -919,7 +922,7 @@ function DptSettingsDialog({
                     const batches = batchAllocation[recipe.id] ?? 0;
                     return (
                       <tr key={recipe.id} className="hover:bg-secondary/10 transition-colors">
-                        <td className="px-4 py-2.5 font-medium" style={recipe.color ? { color: recipe.color } : undefined}>{recipe.name}</td>
+                        <td className="px-4 py-2.5 font-medium" style={recipe.color ? colourStyle(recipe.id, recipe.color, "text") : undefined}>{recipe.name}</td>
                         <td className="px-4 py-2.5 text-right">
                           <input
                             type="number"
@@ -1158,6 +1161,7 @@ function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDate
   onAddSelected: (recipeIds: number[]) => void;
   onSetExclusion: (productTitles: string[], action: "exclude" | "include") => void;
 }) {
+  const colourStyle = useRecipeColourLookup();
   const [open, setOpen] = useState(false);
   const [showExcluded, setShowExcluded] = useState(false);
   const [ticked, setTicked] = useState<Set<number>>(new Set());
@@ -1226,7 +1230,7 @@ function AdditionalChilledPanel({ suggestions, unmatched, excluded, dispatchDate
                         />
                       </td>
                       <td className="py-1.5 pr-2">
-                        <span className="font-medium" style={s.color ? { color: s.color } : undefined}>{s.recipeName}</span>
+                        <span className="font-medium" style={s.color ? colourStyle(s.recipeId, s.color, "text") : undefined}>{s.recipeName}</span>
                         {archivedRecipeIds?.has(s.recipeId) && (
                           <span className="ml-1.5 rounded-full bg-secondary px-1.5 py-0.5 text-[10px] text-muted-foreground" title="This recipe is archived, but customers have ordered it for this window">Archived</span>
                         )}
@@ -1344,6 +1348,7 @@ function RecipePickerPanel({ recipes, collections, onAdd, onSaveCollection, onDe
   onDeleteCollection: (id: number) => void;
   canManageCollections: boolean;
 }) {
+  const colourStyle = useRecipeColourLookup();
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -1466,13 +1471,15 @@ function RecipePickerPanel({ recipes, collections, onAdd, onSaveCollection, onDe
               onChange={() => toggle(r.id)}
               className="rounded border-border flex-shrink-0"
             />
-            <span
+            <RecipeSwatch
+              recipeId={r.id}
+              color={(r as { color?: string | null }).color}
+              fallback="transparent"
               className="w-2.5 h-2.5 rounded-full flex-shrink-0 border border-border"
-              style={{ backgroundColor: (r as { color?: string | null }).color ?? "transparent" }}
             />
             <span
               className="text-sm truncate"
-              style={(r as { color?: string | null }).color ? { color: (r as { color?: string | null }).color! } : undefined}
+              style={(r as { color?: string | null }).color ? colourStyle(r.id, (r as { color?: string | null }).color, "text") : undefined}
             >
               {r.name}
             </span>
@@ -1762,7 +1769,7 @@ function FactoryNumberAuditDialog({
                     <tr key={r.recipeId} className="border-t border-border">
                       <td className="py-1.5 px-3">
                         <div className="flex items-center gap-2">
-                          {r.color && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                          {r.color && <RecipeSwatch recipeId={r.recipeId} color={r.color} className="w-2 h-2 rounded-full flex-shrink-0" />}
                           <span className={cn(!r.isCoreMenu && "text-muted-foreground")}>{r.recipeName}</span>
                           {!r.isCoreMenu && <span className="text-[10px] text-muted-foreground">(non-core)</span>}
                         </div>
@@ -4211,6 +4218,7 @@ interface UpdateFactoryDiffModalProps {
 }
 
 function UpdateFactoryDiffModal({ currentItems, calcData, onApply, onCancel }: UpdateFactoryDiffModalProps) {
+  const colourStyle = useRecipeColourLookup();
   const rows = currentItems.map(item => {
     const calc = calcData.recipes.find(r => r.recipeId === item.recipeId);
     const oldBatches = item.batchesTarget;
@@ -4316,7 +4324,7 @@ function UpdateFactoryDiffModal({ currentItems, calcData, onApply, onCancel }: U
                           className="rounded border-border cursor-pointer disabled:opacity-40"
                         />
                       </td>
-                      <td className="py-2 px-3 font-medium" style={row.recipeColor ? { color: row.recipeColor } : undefined}>
+                      <td className="py-2 px-3 font-medium" style={row.recipeColor ? colourStyle(row.recipeId, row.recipeColor, "text") : undefined}>
                         {row.recipeName}
                         {!row.hasCalc && <span className="ml-2 text-[10px] text-muted-foreground font-normal">(no DPT data)</span>}
                       </td>
@@ -5056,7 +5064,7 @@ function AddMacCheeseDialog({ planId, planDate, open, onOpenChange, onSuccess }:
                         <tr key={r.recipeId} className="border-b border-border/50">
                           <td className="py-2.5 pr-3 font-medium">
                             <div className="flex items-center gap-2">
-                              {r.color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                              {r.color && <RecipeSwatch recipeId={r.recipeId} color={r.color} className="w-2.5 h-2.5 rounded-full flex-shrink-0" />}
                               {r.recipeName}
                             </div>
                           </td>
@@ -5140,6 +5148,7 @@ interface PlanDetailProps {
 }
 
 function PlanDetail({ planId, onBack }: PlanDetailProps) {
+  const colourStyle = useRecipeColourLookup();
   const { data: plan, isLoading, refetch } = useGetProductionPlan(planId) as {
     data: ProductionPlanDetail | undefined;
     isLoading: boolean;
@@ -5795,7 +5804,7 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
                   <td className="py-3 px-4 text-muted-foreground text-sm">{item.orderPosition}</td>
                   <td className="py-3 px-4">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium" style={item.recipeColor ? { color: item.recipeColor } : undefined}>{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
+                      <span className="font-medium" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>{item.recipeName ?? `Recipe #${item.recipeId}`}</span>
                       {item.sopUrl && (
                         <a href={item.sopUrl} target="_blank" rel="noopener noreferrer"
                           className="text-muted-foreground hover:text-primary transition-colors" title="Open SOP">
@@ -6117,6 +6126,7 @@ interface PlansListProps {
 }
 
 function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurrentDate, selectedDate, setSelectedDate }: PlansListProps) {
+  const colourStyle = useRecipeColourLookup();
   const { data: plans, isLoading } = useListProductionPlans();
   const { deletePlan, createPlan } = useAppMutations();
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
@@ -6599,12 +6609,13 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                       <div className="space-y-1">
                         {planItems.map(item => {
                           const colorStyle = item.recipeColor ? { color: item.recipeColor } : undefined;
+                          const nameStyle = item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined;
                           return (
                             <div
                               key={item.id}
                               className="flex items-baseline justify-between gap-3 text-sm min-w-0"
                             >
-                              <span className="truncate font-medium" style={colorStyle}>
+                              <span className="truncate font-medium" style={nameStyle}>
                                 {item.recipeName}
                               </span>
                               <span className="tabular-nums font-bold whitespace-nowrap" style={colorStyle}>

@@ -1,3 +1,4 @@
+import { RECIPE_COLOURS_QUERY_KEY } from "@/components/recipe-swatch";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -97,8 +98,9 @@ export function useAppMutations() {
     deleteSubRecipe: useDeleteSubRecipe({ mutation: { onSuccess: () => handleSuccess(getListSubRecipesQueryKey(), "Sub-recipe deleted"), onError: handleError } }),
 
     // Recipes
-    createRecipe: useCreateRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe created"), onError: handleError } }),
-    updateRecipe: useUpdateRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe updated", true), onError: handleError } }),
+    // Recipe saves also refresh the identity-colour lookup (secondary colour, migration 0185).
+    createRecipe: useCreateRecipe({ mutation: { onSuccess: () => { queryClient.invalidateQueries({ queryKey: RECIPE_COLOURS_QUERY_KEY }); handleSuccess(getListRecipesQueryKey(), "Recipe created"); }, onError: handleError } }),
+    updateRecipe: useUpdateRecipe({ mutation: { onSuccess: () => { queryClient.invalidateQueries({ queryKey: RECIPE_COLOURS_QUERY_KEY }); handleSuccess(getListRecipesQueryKey(), "Recipe updated", true); }, onError: handleError } }),
     deleteRecipe: useDeleteRecipe({ mutation: { onSuccess: () => handleSuccess(getListRecipesQueryKey(), "Recipe deleted"), onError: handleError } }),
 
     // Production Plans

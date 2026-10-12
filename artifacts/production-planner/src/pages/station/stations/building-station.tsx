@@ -61,6 +61,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 /** Slim label over the "inside" rows, shown only when the recipe also has
  *  an On top section below — it's a divider, not a section. */
@@ -402,6 +403,7 @@ function formatChangeover(ms: number): string {
 }
 
 export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = false }: BuildingStationProps) {
+  const colourStyle = useRecipeColourLookup();
   const stationType: "building_1" | "building_2" = lineNumber === 1 ? "building_1" : "building_2";
   const queryClient = useQueryClient();
   const { state } = useAuth();
@@ -1319,6 +1321,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
             itemId={editItem ? editItem.id : null}
             recipeName={editItem?.recipeName ?? (editItem ? `Recipe #${editItem.recipeId}` : "")}
             recipeColor={editItem?.recipeColor}
+            recipeId={editItem?.recipeId}
             stationType={stationType}
             buildingFinishedAt={buildingFinishedAt}
             onClose={() => setEditNumbersItemId(null)}
@@ -1356,7 +1359,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   ) : (
                     <p className="text-xs uppercase tracking-wide text-muted-foreground font-semibold">First batch · check oven settings</p>
                   )}
-                  <h3 className="font-bold text-2xl mt-1" style={{ color: item.recipeColor || undefined }}>
+                  <h3 className="font-bold text-2xl mt-1" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </h3>
                   {profile && (
@@ -1418,7 +1421,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   <Scale className="w-7 h-7 text-primary flex-shrink-0 mt-0.5" />
                   <div>
                     <h3 className="font-bold text-xl text-foreground">Part Batch Calculator</h3>
-                    <p className="text-sm text-muted-foreground mt-1" style={{ color: calcItem.recipeColor || undefined }}>
+                    <p className="text-sm text-muted-foreground mt-1" style={calcItem.recipeColor ? colourStyle(calcItem.recipeId, calcItem.recipeColor, "text") : undefined}>
                       {calcItem.recipeName ?? `Recipe #${calcItem.recipeId}`}
                     </p>
                   </div>
@@ -1478,7 +1481,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                   <span className="text-xs font-bold uppercase tracking-wider text-muted-foreground tabular-nums flex-shrink-0">
                     {panelIdx + 1} of {items.length}
                   </span>
-                  <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={{ color: item.recipeColor || undefined }}>
+                  <h2 className="font-display text-xl font-bold leading-tight truncate flex-1 min-w-0" style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined}>
                     {item.recipeName ?? `Recipe #${item.recipeId}`}
                   </h2>
                   {paceData[item.id] != null && (
@@ -1923,7 +1926,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                         "flex-1 font-bold text-sm truncate",
                         itemDone ? "line-through opacity-60" : ""
                       )}
-                      style={{ color: item.recipeColor || undefined }}
+                      style={item.recipeColor && !itemDone ? colourStyle(item.recipeId, item.recipeColor, "text") : { color: item.recipeColor || undefined }}
                     >
                       {item.recipeName ?? `Recipe #${item.recipeId}`}
                       {isSelected && <span className="text-xs text-primary ml-1 no-underline">← now</span>}

@@ -18,6 +18,7 @@ import { FSA_COOK_BANDS, defaultHoldSeconds, meetsCookStandard, formatHold } fro
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import type { PlanStartStock } from "@workspace/stock-prediction";
 import { MacStockWorking, macStockWorking, withLiveStock } from "@/components/mac-cheese-stock-working";
+import { RecipeSwatch } from "@/components/recipe-swatch";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Macaroni Cheese Station
@@ -323,7 +324,7 @@ function InlineAddMacCheese({ planId, planDate, onSuccess }: { planId: number; p
                 <tr key={r.recipeId} className="border-b border-border/50">
                   <td className="py-2.5 pr-3 font-medium">
                     <div className="flex items-center gap-2">
-                      {r.color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: r.color }} />}
+                      {r.color && <RecipeSwatch recipeId={r.recipeId} color={r.color} className="w-2.5 h-2.5 rounded-full flex-shrink-0" />}
                       {r.recipeName}
                     </div>
                   </td>
@@ -700,7 +701,7 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
             return (
               <div key={item.id} className="flex items-center justify-between p-4 rounded-lg border bg-background border-border">
                 <div className="flex items-center gap-3">
-                  {item.recipeColor && <span className="w-3.5 h-3.5 rounded-full flex-shrink-0" style={{ backgroundColor: item.recipeColor ?? undefined }} />}
+                  {item.recipeColor && <RecipeSwatch recipeId={item.recipeId} color={item.recipeColor} className="w-3.5 h-3.5 rounded-full flex-shrink-0" />}
                   <span className="text-xl font-semibold">{item.recipeName}</span>
                 </div>
                 <span className="text-2xl font-bold tabular-nums">{Math.round(packs)} packs</span>

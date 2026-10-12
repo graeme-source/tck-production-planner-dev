@@ -14,6 +14,7 @@ import { format } from "date-fns";
 import { useListRecipes } from "@workspace/api-client-react";
 import { isDraftRecipe, notArchivedRecipes } from "@/lib/recipe-archive";
 import type { Recipe } from "@workspace/api-client-react";
+import { recipeColourStyle } from "@/lib/recipe-colour-style";
 
 type FilterCategory = "all" | string;
 type CoreFilter = "all" | "core" | "non_core";
@@ -292,7 +293,7 @@ export default function RecipePnLReport() {
                   return (
                     <tr key={r.id} className="pnl-row">
                       <td className="pnl-stripe-col">
-                        <span className="pnl-stripe" style={{ background: stripeColor }} />
+                        <span className="pnl-stripe" style={{ background: stripeColor, ...recipeColourStyle(r.color, (r as { secondaryColor?: string | null }).secondaryColor, "band") }} />
                       </td>
                       <td>
                         <div className="pnl-name">{r.name}</div>

@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { fmtPrepQty } from "./prep-helpers";
+import { RecipeSwatch } from "@/components/recipe-swatch";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // DeferredPrepBanner
@@ -157,7 +158,7 @@ export function DeferredPrepBanner({
               main-prep station's prep-tile layout: tin label at top, qty in
               the middle in big font, tap-the-tile to mark done. */}
           {Object.entries(
-            items.reduce<Record<string, { recipeName: string; recipeColor: string | null; items: DeferredPrepItem[] }>>((acc, item) => {
+            items.reduce<Record<string, { recipeId: number; recipeName: string; recipeColor: string | null; items: DeferredPrepItem[] }>>((acc, item) => {
               // Group key matches the per-tile disambiguation rules in
               // main-prep — same recipe + ingredient + sub-recipe origin =
               // one tile cluster, so a row's tile order matches the source
@@ -165,6 +166,7 @@ export function DeferredPrepBanner({
               const groupKey = `${item.recipeId}_${item.ingredientId}_${item.isSubRecipe ? "s" : "i"}_${item.subRecipeOriginId ?? "x"}`;
               if (!acc[groupKey]) {
                 acc[groupKey] = {
+                  recipeId: item.recipeId,
                   recipeName: item.recipeName ?? "Recipe",
                   recipeColor: item.recipeColor,
                   items: [],
@@ -188,10 +190,7 @@ export function DeferredPrepBanner({
                 <div className="flex items-center justify-between px-3 py-2.5 rounded-lg mb-2 bg-amber-100/60 dark:bg-amber-900/30">
                   <div className="flex items-center gap-2 min-w-0">
                     {group.recipeColor && (
-                      <span
-                        className="w-3 h-3 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: group.recipeColor }}
-                      />
+                      <RecipeSwatch recipeId={group.recipeId} color={group.recipeColor} className="w-3 h-3 rounded-full flex-shrink-0" />
                     )}
                     <p className="text-lg font-semibold truncate text-amber-900 dark:text-amber-100">
                       {first.itemName ?? "Item"}{" "}

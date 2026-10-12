@@ -18,6 +18,7 @@ import { useStationChecklist, useDynamicData, type ChecklistItem } from "./use-s
 import { batchDispatchVerdict } from "@/lib/julian-batch";
 import { sortByPickOrder, earliestBin, FALLBACK_ZONE_ORDER, type PickBin } from "@/lib/pick-order";
 import { ChecklistAdminPanel, DispatchShelfRulesCard } from "./checklist-admin-panel";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1471,6 +1472,7 @@ interface ClosingFridgeRow {
 }
 
 function ClosingFridgeCheck({ data }: { data: unknown[] }) {
+  const colourStyle = useRecipeColourLookup();
   // Guard the shape: useDynamicData keeps the PREVIOUS item's payload for
   // one render after the selected item changes, so this can briefly receive
   // rows from another dynamic type (e.g. pack-batch rows with no batches).
@@ -1549,7 +1551,7 @@ function ClosingFridgeCheck({ data }: { data: unknown[] }) {
           <div key={row.recipeId} className="p-3 rounded-xl border bg-red-50/60 dark:bg-red-950/20 border-red-200 dark:border-red-800 space-y-2">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm font-semibold truncate" style={row.recipeColor ? { color: row.recipeColor } : undefined}>
+                <p className="text-sm font-semibold truncate" style={row.recipeColor ? colourStyle(row.recipeId, row.recipeColor, "text") : undefined}>
                   {row.recipeName}
                 </p>
                 <p className="text-xs text-muted-foreground">

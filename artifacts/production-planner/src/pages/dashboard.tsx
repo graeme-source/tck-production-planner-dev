@@ -20,6 +20,7 @@ import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
 import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 interface AndonIssueSummary {
   id: number;
@@ -192,6 +193,7 @@ function AndonBanner({ userRole }: { userRole?: string }) {
 }
 
 function TodayPlanRecipes({ planId }: { planId: number }) {
+  const colourStyle = useRecipeColourLookup();
   const { data: plan, isLoading } = useGetProductionPlan(planId) as { data: any; isLoading: boolean };
   if (isLoading) return <p className="text-xs text-muted-foreground px-1">Loading…</p>;
   // Fried chicken is made elsewhere and kept out of the dashboard (2026-10-05).
@@ -210,7 +212,7 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
           : `batch${it.batchesTarget !== 1 ? "es" : ""}`;
         return (
           <div key={it.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors">
-            <span className="text-sm font-medium truncate pr-2" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
+            <span className="text-sm font-medium truncate pr-2" style={it.recipeColor ? colourStyle(it.recipeId, it.recipeColor, "text") : undefined}>
               {it.recipeName ?? "Unknown"}
             </span>
             <span className="text-sm font-bold tabular-nums shrink-0" style={it.recipeColor ? { color: it.recipeColor } : undefined}>

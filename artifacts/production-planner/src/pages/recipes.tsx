@@ -25,6 +25,9 @@ import { RecipeBarcodes } from "@/components/barcodes/recipe-barcodes";
 import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuTickNotice, isDraftRecipe, recipeStageCounts } from "@/lib/recipe-archive";
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
+import { RecipeColourFields } from "@/components/recipe-colour-fields";
+import { RecipeSwatch } from "@/components/recipe-swatch";
+import { effectiveSecondary, recipeColourStyle } from "@/lib/recipe-colour-style";
 import { recipeQuidKey, withoutQuid } from "@/components/recipe-quid/api";
 
 // Archive fields GET /api/recipes and /api/recipes/:id return (migration
@@ -59,6 +62,8 @@ const schema = z.object({
   // main create/update body (whose validator is OpenAPI-generated).
   isFridgeProduct: z.boolean().optional(),
   color: z.string().optional(),
+  // Optional second identity colour (migration 0185). "" = None.
+  secondaryColor: z.string().optional(),
   cookingLossPercent: z.preprocess(v => (v === "" || v == null ? null : Number(v)), z.number().min(0).max(50).nullable().optional()),
   builderFillingDeductionGrams: z.preprocess(v => (v === "" || v == null ? 0 : Number(v)), z.number().int().min(0).max(500, "Max 500 g").optional()),
   dietaryCategory: z.preprocess(v => (v === "" ? null : v), z.enum(["meat", "vegetarian"]).nullable().optional()),
@@ -615,13 +620,14 @@ function RecipeForm({
                 <span className="text-xs text-muted-foreground pl-5">No Calzone Club Special is currently set.</span>
               )}
             </div>
-            <div className="flex items-center gap-2">
-              <label htmlFor="recipeColor" className="text-sm font-medium">Colour</label>
-              <input type="color" id="recipeColor" {...register("color")} className="w-8 h-8 rounded border border-border cursor-pointer p-0.5" />
-              {watch("color") && (
-                <button type="button" onClick={() => setValue("color", "")} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
-              )}
-            </div>
+            <RecipeColourFields
+              color={watch("color") ?? ""}
+              secondaryColor={watch("secondaryColor") ?? ""}
+              registerColor={register("color")}
+              registerSecondary={register("secondaryColor")}
+              onClearColor={() => setValue("color", "", { shouldDirty: true })}
+              onSetSecondary={(v) => setValue("secondaryColor", v, { shouldDirty: true })}
+            />
           </div>
           <div className="col-span-2">
             <label className="text-sm font-medium mb-1 block">Description (optional)</label>
@@ -1319,6 +1325,7 @@ function EditRecipeDialog({
         isCurrentSpecial: detail.isCurrentSpecial ?? false,
         isFridgeProduct: detail.isFridgeProduct === true,
         color: detail.color ?? "",
+        secondaryColor: (detail as { secondaryColor?: string | null }).secondaryColor ?? "",
         cookingLossPercent: detail.cookingLossPercent != null ? Number(detail.cookingLossPercent) : 3,
         builderFillingDeductionGrams: Number(detail.builderFillingDeductionGrams ?? 0),
         dietaryCategory: detail.dietaryCategory ?? null,
@@ -1328,7 +1335,7 @@ function EditRecipeDialog({
         ingredients: (detail.ingredients ?? []).map(i => ({ ingredientId: i.ingredientId, quantity: Number(i.quantity), marinadeForIngredientId: i.marinadeForIngredientId ?? null, marinadeAddAtCooking: i.marinadeAddAtCooking === true, includeInFillingMix: i.includeInFillingMix ?? false, isTopping: i.isTopping === true, quid: i.quid === true, showInPrep: i.showInPrep === true, mixingOverage: Number(i.mixingOverage ?? 0) })),
         subRecipes: (detail.subRecipes ?? []).map(s => ({ subRecipeId: s.subRecipeId, quantity: Number(s.quantity), marinadeForIngredientId: s.marinadeForIngredientId ?? null, marinadeAddAtCooking: s.marinadeAddAtCooking === true, includeInFillingMix: s.includeInFillingMix ?? false, isTopping: s.isTopping === true, quid: s.quid === true, showInPrep: s.showInPrep === true, mixingOverage: Number(s.mixingOverage ?? 0) })),
       }
-    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [] };
+    : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", secondaryColor: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
     <>
@@ -2173,6 +2180,9 @@ type RecipeUpfInfo = {
 function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, onArchive, onMoveToDraft }: { recipe: RecipeItem; upf?: RecipeUpfInfo; onEdit: () => void; onDelete: () => void; onBreakdown: () => void; onDuplicate: () => void; onArchive?: () => void; onMoveToDraft?: () => void }) {
   const margin = recipe.grossMargin;
   const recipeColor = (recipe as any).color as string | null;
+  // Optional second colour (migration 0185): a split strip along the card's
+  // top edge and an underline on the name. None set → card as before.
+  const recipeSecondary = effectiveSecondary(recipeColor, (recipe as { secondaryColor?: string | null }).secondaryColor);
   const [nutritionalsOpen, setNutritionalsOpen] = useState(false);
   const [deckOpen, setDeckOpen] = useState(false);
   const [kanbanCreating, setKanbanCreating] = useState(false);
@@ -2188,9 +2198,10 @@ function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, o
 
   return (
     <div className={`rounded-2xl border-2 ${fallbackBorder} bg-card overflow-hidden flex flex-col group hover:shadow-md transition-all`} style={borderStyle}>
+      {recipeSecondary && <div className="h-1.5 shrink-0" style={recipeColourStyle(recipeColor, recipeSecondary, "strip")} aria-hidden />}
       <div className={`${fallbackBg} flex flex-col justify-between px-5 pt-4 pb-3 gap-2`} style={topStyle}>
         <div className="min-w-0">
-          <p className="font-semibold text-base leading-tight truncate" style={recipeColor ? { color: recipeColor } : undefined}>{recipe.name}</p>
+          <p className="font-semibold text-base leading-tight truncate" style={recipeColor ? recipeColourStyle(recipeColor, recipeSecondary, "text") : undefined}>{recipe.name}</p>
           {recipe.category && <p className="text-xs font-semibold uppercase tracking-wider mt-0.5" style={recipeColor ? { color: recipeColor + "cc" } : { color: "var(--muted-foreground)" }}>{recipe.category}</p>}
         </div>
         <div className="flex items-center justify-end">
@@ -2381,6 +2392,7 @@ export default function Recipes() {
         isCurrentSpecial: false,
         isFridgeProduct: duplicateDetail.isFridgeProduct === true,
         color: duplicateDetail.color ?? "",
+        secondaryColor: (duplicateDetail as { secondaryColor?: string | null }).secondaryColor ?? "",
         cookingLossPercent: duplicateDetail.cookingLossPercent != null ? Number(duplicateDetail.cookingLossPercent) : 3,
         builderFillingDeductionGrams: Number(duplicateDetail.builderFillingDeductionGrams ?? 0),
         dietaryCategory: duplicateDetail.dietaryCategory ?? null,
@@ -2423,7 +2435,7 @@ export default function Recipes() {
   const addDefaults: FormValues = {
     name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "",
     packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined,
-    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [],
+    tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", secondaryColor: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [],
     // New recipes start as drafts (Graeme's order: draft → menu → archive).
     startAsDraft: true,
     ingredients: [], subRecipes: [],
@@ -2791,6 +2803,7 @@ export default function Recipes() {
                 const m = r.grossMargin;
                 const mColor = m == null ? "text-muted-foreground" : m >= 80 ? "text-green-600" : m >= 75 ? "text-amber-600" : "text-red-600";
                 const color = (r as Record<string, unknown>).color as string | undefined;
+                const secondColor = (r as Record<string, unknown>).secondaryColor as string | null | undefined;
                 return (
                   <tr
                     key={r.id}
@@ -2799,7 +2812,7 @@ export default function Recipes() {
                   >
                     <td className="py-2.5 px-3 font-medium">
                       <span className="inline-flex items-center gap-2">
-                        {color && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: color }} />}
+                        {color && <RecipeSwatch color={color} secondaryColor={secondColor ?? null} className="w-2.5 h-2.5 rounded-full flex-shrink-0" />}
                         {r.name}
                       </span>
                     </td>

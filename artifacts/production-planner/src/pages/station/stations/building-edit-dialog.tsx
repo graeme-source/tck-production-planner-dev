@@ -45,6 +45,7 @@ import {
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 interface BuildingEditData {
   itemId: number;
@@ -66,13 +67,15 @@ class SaveError extends Error {
 }
 
 export function BuildingEditDialog({
-  planId, itemId, recipeName, recipeColor, stationType, buildingFinishedAt, onClose, onSaved, onEditLeftover,
+  planId, itemId, recipeName, recipeColor, recipeId, stationType, buildingFinishedAt, onClose, onSaved, onEditLeftover,
 }: {
   planId: number;
   /** null = closed. */
   itemId: number | null;
   recipeName: string;
   recipeColor?: string | null;
+  /** For the optional second recipe colour (migration 0185). */
+  recipeId?: number | null;
   stationType: "building_1" | "building_2";
   /** Set once "Mark building finished" was pressed — the run-rate window
    *  ends there, so a correction changes the count only. */
@@ -83,6 +86,7 @@ export function BuildingEditDialog({
   /** Shown as a link when the recipe has a filling to weigh back. */
   onEditLeftover?: () => void;
 }) {
+  const colourStyle = useRecipeColourLookup();
   const open = itemId != null;
   const queryClient = useQueryClient();
 
@@ -248,7 +252,7 @@ export function BuildingEditDialog({
         <div className="flex items-start gap-3 px-5 pt-4 pb-3 border-b border-border flex-shrink-0">
           <div className="flex-1 min-w-0">
             <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground">Edit production numbers</p>
-            <DialogTitle className="text-2xl font-bold leading-tight truncate" style={{ color: recipeColor || undefined }}>
+            <DialogTitle className="text-2xl font-bold leading-tight truncate" style={recipeColor ? colourStyle(recipeId, recipeColor, "text") : undefined}>
               {recipeName}
             </DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground mt-0.5">

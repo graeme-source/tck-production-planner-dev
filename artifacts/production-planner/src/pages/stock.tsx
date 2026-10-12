@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NumberInput } from "@/components/ui/number-input";
 import { activeRecipes } from "@/lib/recipe-archive";
+import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -240,6 +241,7 @@ function ExpiryWarnings({ canEdit }: { canEdit: boolean }) {
 }
 
 export default function Stock() {
+  const colourStyle = useRecipeColourLookup();
   const { data: stock, isLoading } = useListStockEntries();
   const { data: ingredients } = useListIngredients();
   const { data: recipes } = useListRecipes();
@@ -589,7 +591,7 @@ export default function Stock() {
                       <tr key={item.key} className={cn("transition-colors", isEditing && isDirty ? "bg-primary/5" : "hover:bg-secondary/10")}>
                         <td className="px-6 py-3 font-medium flex items-center gap-2">
                           <PackageSearch className={`w-4 h-4 ${item.itemType === "recipe" ? "text-accent" : "text-primary"}`} />
-                          <span style={item.itemType === "recipe" && item.color ? { color: item.color } : undefined}>{item.name}</span>
+                          <span style={item.itemType === "recipe" && item.color ? colourStyle(item.recipeId, item.color, "text") : undefined}>{item.name}</span>
                           {isEditing && isDirty && <span className="text-xs text-primary font-normal ml-1">•</span>}
                         </td>
                         <td className="px-6 py-3">
@@ -694,7 +696,7 @@ export default function Stock() {
                   {[...selectedItems].reverse().map((entry) => (
                     <tr key={entry.id} className="hover:bg-secondary/10">
                       <td className="px-6 py-2">
-                        <span style={entry.itemType === "recipe" && (entry as any).recipeColor ? { color: (entry as any).recipeColor } : undefined}>
+                        <span style={entry.itemType === "recipe" && (entry as any).recipeColor ? colourStyle(entry.recipeId, (entry as any).recipeColor, "text") : undefined}>
                           {entry.itemType === "recipe" ? (entry as any).recipeName : (entry as any).ingredientName}
                         </span>
                       </td>

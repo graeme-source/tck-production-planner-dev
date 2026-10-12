@@ -46,6 +46,7 @@ import { creditLabel } from "@/lib/improvement-credits";
 import { defectHeadline, pctText, plural } from "@/lib/defects-view";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { DictateButton } from "@/components/dictate-button";
+import { RecipeSwatch } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -2048,10 +2049,7 @@ function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: Meeting
             >
               <div className="flex items-center gap-3 min-w-0">
                 {it.recipeColor && (
-                  <span
-                    className="w-3 h-3 rounded-full shrink-0"
-                    style={{ backgroundColor: it.recipeColor }}
-                  />
+                  <RecipeSwatch recipeId={it.recipeId} color={it.recipeColor} className="w-3 h-3 rounded-full shrink-0" />
                 )}
                 <span className="font-medium truncate">{it.recipeName}</span>
                 {it.recipeCategory === "Macaroni Cheese" && (
@@ -2644,7 +2642,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
                     {startByRecipe.get(r.recipeId) ?? <span className="text-muted-foreground">—</span>}
                   </span>
                   <div className="flex items-center gap-3 min-w-0">
-                    <span className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: r.color ?? "hsl(var(--muted))" }} aria-hidden />
+                    <RecipeSwatch recipeId={r.recipeId} color={r.color} fallback="hsl(var(--muted))" className="w-3 h-3 rounded-full shrink-0" />
                     <span className={cn("font-semibold truncate", numTxt)}>{r.recipeName}</span>
                     {guessedBuildTime.has(r.recipeId) && (
                       <TimingFlag href={recipeTimingHref(r.recipeId)} className="shrink-0">No build time — start time is a guess</TimingFlag>
@@ -2839,11 +2837,7 @@ function BagOrdersSlide({ data, slide }: { data: DashboardData; slide: MeetingSl
                 key={it.recipeId}
                 className={cn("flex items-stretch gap-4 px-6 py-4", i > 0 && "border-t border-border/50")}
               >
-                <span
-                  className="w-3 rounded-full shrink-0"
-                  style={{ backgroundColor: it.recipeColor ?? "hsl(var(--muted))" }}
-                  aria-hidden
-                />
+                <RecipeSwatch recipeId={it.recipeId} color={it.recipeColor} shape="band" fallback="hsl(var(--muted))" className="w-3 rounded-full shrink-0" />
                 <span className="text-2xl font-semibold flex-1 truncate self-center">{it.recipeName}</span>
                 <span className="text-2xl font-display font-bold tabular-nums self-center whitespace-nowrap">
                   {it.eightPackBagCount}
