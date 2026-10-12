@@ -34,6 +34,10 @@ import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 import { sectionTotalKg } from "../lib/prep-sections";
 import { getProducts, adjustInventoryLevel } from "../services/shopify";
 import { FRIED_CHICKEN_CATEGORY } from "@workspace/production-schedule";
+import {
+  readStockSend, claimStockSend, finishStockSend, releaseStockSend,
+  alreadySentMessage, type StockSendRecord,
+} from "../lib/fried-chicken-stock-send";
 
 const router: IRouter = Router();
 
@@ -904,35 +908,40 @@ router.post("/plans/:planId/prep-tick", validate(PrepTickBody), async (req: Requ
 // before and after so the first real one can be checked against Shopify's own
 // inventory history.
 //
-// It ADDS the counted bags, so running it twice on the same day silently
-// doubles the shelf — the sort of mistake that is only found days later when
-// a customer orders something that isn't there. A confirmed run is therefore
-// recorded, and a second one is refused unless it is explicitly forced. The
-// guard lives here rather than in the screen because there is more than one
-// way to reach the endpoint.
+// It ADDS the counted bags, so running it twice on the same plan doubles the
+// shelf. So it goes ONCE per plan, full stop (Graeme, 2026-10-12): the send is
+// claimed atomically in the DB before anything reaches Shopify, and any second
+// send — double tap, second iPad, the closing check, an old cached screen
+// still asking to "force" — gets a 409. See lib/fried-chicken-stock-send.ts.
+// A correction is made in Shopify admin, not by sending again.
 const SubmitBody = z.object({
   confirm: z.boolean().optional(),
-  /** Send again even though this plan's stock has already gone. For the case
-   *  where the first run half-failed and the rest is genuinely still owed. */
+  /** No longer honoured (2026-10-12). Older cached screens still send it; a
+   *  second send is refused whatever it says. */
   force: z.boolean().optional(),
 });
 
-interface PriorSubmission { at: string; by: number | null; bags: number }
-
-function submissionKey(planId: number): string {
-  return `fried_chicken_stock_submitted_${planId}`;
-}
+type PriorSubmission = StockSendRecord;
 
 async function priorSubmission(planId: number): Promise<PriorSubmission | null> {
-  const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, submissionKey(planId)));
-  if (!row?.value) return null;
-  try {
-    const parsed = JSON.parse(row.value) as PriorSubmission;
-    return typeof parsed?.at === "string" ? parsed : null;
-  } catch {
-    return null;
-  }
+  return readStockSend(planId);
 }
+
+// GET /fried-chicken/plans/:planId/stock-send — has this plan's stock gone to
+// Shopify? Lets the screens show "Sent to Shopify" straight away, not only
+// after a dry run.
+const PlanIdParams = z.object({ planId: z.coerce.number().int().positive() });
+
+router.get("/plans/:planId/stock-send", async (req: Request, res: Response) => {
+  const parsed = PlanIdParams.safeParse(req.params);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid plan id" }); return; }
+  try {
+    res.json({ planId: parsed.data.planId, sent: await readStockSend(parsed.data.planId) });
+  } catch (err) {
+    console.error("[fried-chicken] stock-send read failed:", err);
+    res.status(500).json({ error: "Couldn't check whether the stock has been sent" });
+  }
+});
 
 /** What the count sheet says right now, without going through the submit
  *  endpoint's dry run.
@@ -979,15 +988,11 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
   if (!Number.isInteger(planId)) { res.status(400).json({ error: "Invalid plan id" }); return; }
   const body = req.body as z.infer<typeof SubmitBody>;
   const confirm = body.confirm === true;
-  const force = body.force === true;
 
   try {
     const already = await priorSubmission(planId);
-    if (confirm && already && !force) {
-      res.status(409).json({
-        error: "This plan's counted bags have already gone to Shopify",
-        alreadySubmitted: already,
-      });
+    if (confirm && already) {
+      res.status(409).json({ error: alreadySentMessage(already), alreadySubmitted: already });
       return;
     }
 
@@ -1028,6 +1033,15 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
       return;
     }
 
+    // Claim the one send BEFORE touching Shopify. Only one request can win
+    // this insert, so two taps at once can't both add the stock.
+    const userId = req.session.userId ?? null;
+    const raced = await claimStockSend(planId, userId);
+    if (raced) {
+      res.status(409).json({ error: alreadySentMessage(raced), alreadySubmitted: raced });
+      return;
+    }
+
     for (const row of plan) {
       if (!row.variantId) { row.result = "no Shopify variant linked — skipped"; continue; }
       if (row.made <= 0) { row.result = "nothing counted — skipped"; continue; }
@@ -1041,25 +1055,15 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
         console.error(`[fried-chicken] Shopify adjust failed for ${row.recipeName}:`, err);
       }
     }
-    // Record the run only if something actually landed. A submission where
-    // every line failed has changed nothing outside the building, so blocking
-    // the retry would strand the day's stock.
+    // Keep the record only if something actually landed. A send where every
+    // line failed changed nothing outside the building, so the claim is given
+    // back and the day's stock isn't stranded.
     const bagsSent = plan.reduce((n, r) => n + (r.result === "added" ? r.made : 0), 0);
-    if (bagsSent > 0) {
-      const record: PriorSubmission = {
-        at: new Date().toISOString(),
-        by: req.session.userId ?? null,
-        bags: bagsSent,
-      };
-      await db.insert(appSettingsTable)
-        .values({ key: submissionKey(planId), value: JSON.stringify(record) })
-        .onConflictDoUpdate({
-          target: appSettingsTable.key,
-          set: { value: JSON.stringify(record), updatedAt: new Date() },
-        });
-    }
+    let sentRecord: StockSendRecord | null = null;
+    if (bagsSent > 0) sentRecord = await finishStockSend(planId, userId, bagsSent);
+    else await releaseStockSend(planId);
 
-    res.json({ dryRun: false, planId, adjustments: plan, bagsSent, resent: force && already !== null });
+    res.json({ dryRun: false, planId, adjustments: plan, bagsSent, sent: sentRecord });
   } catch (err) {
     console.error("[fried-chicken] submit stock failed:", err);
     res.status(500).json({ error: "Couldn't submit stock" });
