@@ -74,3 +74,20 @@ export function mainKitchenLines<V>(byCategory: Record<string, V>): Record<strin
   for (const [cat, v] of Object.entries(byCategory)) if (isMainKitchen(cat)) out[cat] = v;
   return out;
 }
+
+/** Rota positions that work for a separate facility, read from the founder's
+ *  "which positions belong to which line" setting (team efficiency
+ *  line_positions, keyed by recipe category — e.g. Frying and Breading under
+ *  Fried Chicken). Lower-cased and trimmed for matching Planday position
+ *  names. Positions of lines the main kitchen makes are never included. */
+export function separateKitchenPositions(linePositions: Record<string, readonly string[]> | null | undefined): Set<string> {
+  const out = new Set<string>();
+  for (const [cat, names] of Object.entries(linePositions ?? {})) {
+    if (isMainKitchen(cat)) continue;
+    for (const n of names) {
+      const key = n.trim().toLowerCase();
+      if (key) out.add(key);
+    }
+  }
+  return out;
+}
