@@ -15,21 +15,28 @@
  * The rules (which batch comes off, where packs go, the floors and their
  * wording) are @workspace/building-edit, the same code the server re-checks
  * with inside its transaction (routes/building-edit.ts).
+ *
+ * Builders set their own numbers (Graeme, 12 Oct 2026, fix-queue #318): −
+ * works down to 0 and the number itself can be typed in. If that takes
+ * Batches below what the Ovens recorded from Building, the dialog says so
+ * before Save ("Ovens has 10 batches recorded from Building — saving will
+ * also set Ovens to 9") and the save brings the ovens down with it.
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { format, parseISO } from "date-fns";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Minus, Plus, X, Pencil, AlertTriangle } from "lucide-react";
+import { Loader2, Minus, Plus, X, Pencil, AlertTriangle, Flame } from "lucide-react";
 import {
   BATCH_WORDS,
   BUILDING_LINES,
   PACK_WORDS,
+  describeEdit,
   editBlockReason,
   lineCanGive,
   lineLabel,
   lineNumbers,
+  ovensFollowNote,
   type EditLines,
-  editSummary,
   planBuildEdit,
   type BuildEditState,
   type BuildNumbers,
@@ -118,35 +125,43 @@ export function BuildingEditDialog({
   // How many are being taken off each counter (≤ 0 = adding or unchanged).
   const off = (field: keyof EditTarget) => before && staged ? before[field] - staged[field] : 0;
 
-  // If the chosen line can't give what's being taken off but the other line
-  // can, switch to it — a line with nothing to remove is never the choice.
+  // Taking off: the chosen line goes first and the rest comes off the other
+  // line. If the chosen line has none at all, start with one that has some.
   useEffect(() => {
     if (!state || !staged || !before) return;
     for (const field of ["batches", "extraPacks"] as const) {
       const n = before[field] - staged[field];
-      if (n <= 0 || lineCanGive(state, lines[field], field, n)) continue;
-      const other = BUILDING_LINES.find(l => lineCanGive(state, l, field, n));
+      if (n <= 0 || lineCanGive(state, lines[field], field, 1)) continue;
+      const other = BUILDING_LINES.find(l => lineCanGive(state, l, field, 1));
       if (other && other !== lines[field]) setLines(prev => ({ ...prev, [field]: other }));
     }
   }, [state, staged, before?.batches, before?.extraPacks, lines]);
 
   const plan = state && staged ? planBuildEdit(state, staged, lines) : null;
-  const summary = before && staged ? editSummary(before, staged, unit, lines) : "";
+  const summary = plan ? describeEdit(plan, unit) : "";
   const blockNow = state && staged ? editBlockReason(state, staged, lines, unit) : null;
-  // − is off only when NO line could give one more (then say why, for the
-  // chosen line); otherwise the line choice moves to a line that can.
+  const ovensNote = state && staged ? ovensFollowNote(state, staged, unit) : null;
+  // − is off only when one fewer can't be saved (0, or packs already wrapped).
   const whyNotLower = (field: keyof EditTarget): string | null => {
     if (!state || !staged) return null;
-    const next = { ...staged, [field]: staged[field] - 1 };
-    const anyLineOk = BUILDING_LINES.some(l => editBlockReason(state, next, { ...lines, [field]: l }, unit) === null);
-    return anyLineOk ? null : editBlockReason(state, next, lines, unit);
+    return editBlockReason(state, { ...staged, [field]: staged[field] - 1 }, lines, unit);
+  };
+  const setField = (field: keyof EditTarget, value: number) => {
+    setProblem(null);
+    setStaged(s => s ? { ...s, [field]: value } : s);
   };
   const lineChoice = (field: keyof EditTarget): ReactNode => {
     if (!state || !staged || !before || staged[field] === before[field]) return null;
     const n = off(field);
+    const own = (l: string) => {
+      const o = lineNumbers(state, l);
+      return field === "batches" ? o.batches : Math.max(0, o.extraPacks);
+    };
+    // More than the chosen line holds → the rest comes off the other line.
+    const spills = n > 0 && own(lines[field]) < n;
     return (
       <LineChoice
-        question={n > 0 ? "Take it off which line?" : "Add it to which line?"}
+        question={n > 0 ? (spills ? "Take it off which line first?" : "Take it off which line?") : "Add it to which line?"}
         chosen={lines[field]}
         options={BUILDING_LINES.map(l => {
           const own = lineNumbers(state, l);
@@ -155,7 +170,7 @@ export function BuildingEditDialog({
             line: l,
             label: lineLabel(l),
             detail: `${have} ${field === "batches" ? (have === 1 ? unit.singular : unit.plural) : (have === 1 ? "pack" : "packs")} now`,
-            disabled: n > 0 && !lineCanGive(state, l, field, n),
+            disabled: n > 0 && !lineCanGive(state, l, field, 1),
             you: l === stationType,
           };
         })}
@@ -176,7 +191,9 @@ export function BuildingEditDialog({
           stationType,
           batches: staged.batches,
           extraPacks: staged.extraPacks,
-          expected: before,
+          // The ovens count the builder was shown: if the ovens record
+          // something meanwhile, the server refuses and the numbers reload.
+          expected: { ...before, ovenBatches: data?.ovenBatches ?? 0 },
           batchesLine: lines.batches,
           extraPacksLine: lines.extraPacks,
         }),
@@ -235,7 +252,7 @@ export function BuildingEditDialog({
               {recipeName}
             </DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground mt-0.5">
-              What's recorded today on both lines. Change it with − and +, then Save.
+              What's recorded today on both lines. Change it with − and +, or tap the number and type it, then Save.
             </DialogDescription>
           </div>
           <button
@@ -269,6 +286,7 @@ export function BuildingEditDialog({
                   was={before!.batches}
                   onMinus={() => step("batches", -1)}
                   onPlus={() => step("batches", 1)}
+                  onSet={(v) => setField("batches", v)}
                   minusBlockedBy={whyNotLower("batches")}
                   disabled={save.isPending}
                   note={data!.numbers.partBatches > 0
@@ -276,6 +294,12 @@ export function BuildingEditDialog({
                     : null}
                 >
                   {lineChoice("batches")}
+                  {ovensNote && (
+                    <p className="flex items-start gap-2 rounded-xl bg-sky-50 dark:bg-sky-950/30 border border-sky-200 dark:border-sky-800 px-3 py-2 text-sm font-semibold text-sky-900 dark:text-sky-100 leading-snug">
+                      <Flame className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                      {ovensNote}
+                    </p>
+                  )}
                 </Counter>
                 {!data!.countsPacks && (
                   <Counter
@@ -284,6 +308,7 @@ export function BuildingEditDialog({
                     was={before!.extraPacks}
                     onMinus={() => step("extraPacks", -1)}
                     onPlus={() => step("extraPacks", 1)}
+                    onSet={(v) => setField("extraPacks", v)}
                     minusBlockedBy={whyNotLower("extraPacks")}
                     disabled={save.isPending}
                     note="Loose packs not in a batch"
@@ -312,9 +337,9 @@ export function BuildingEditDialog({
               )}
 
               <p className="text-sm text-muted-foreground leading-snug">
-                Taking a {unit.singular} off removes the most recent one recorded on the line you pick, so the run rate updates.
+                Taking a {unit.singular} off removes the most recent one recorded on the line you pick (then the other line, if it needs more), so the run rate updates.
                 {" "}An added {unit.singular} is recorded now, as an edit by you.
-                {data!.ovenBatches > 0 && ` ${data!.ovenBatches} ${data!.ovenBatches === 1 ? unit.singular : unit.plural} already through the ovens.`}
+                {data!.ovenBatches > 0 && !ovensNote && ` Ovens has ${data!.ovenBatches} ${data!.ovenBatches === 1 ? unit.singular : unit.plural} recorded from Building; if you go below that, the ovens come down to match.`}
               </p>
 
               {onEditLeftover && (
@@ -408,13 +433,15 @@ function LineChoice({ question, chosen, options, onChoose, disabled }: {
 }
 
 function Counter({
-  label, value, was, onMinus, onPlus, minusBlockedBy, disabled, note, children,
+  label, value, was, onMinus, onPlus, onSet, minusBlockedBy, disabled, note, children,
 }: {
   label: string;
   value: number;
   was: number;
   onMinus: () => void;
   onPlus: () => void;
+  /** A number typed straight in (whole numbers from 0; digits only). */
+  onSet: (value: number) => void;
   /** Why − is off (a downstream floor), or null when it can be tapped. */
   minusBlockedBy: string | null;
   disabled: boolean;
@@ -423,6 +450,11 @@ function Counter({
   children?: ReactNode;
 }) {
   const changed = value !== was;
+  // The typed text, kept while the field is being edited so it can be
+  // emptied and retyped; every valid number is staged as it is typed, so
+  // tapping Save straight after typing saves what's shown.
+  const [text, setText] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   return (
     <div className={cn(
       "rounded-2xl border-2 px-4 py-3 space-y-2",
@@ -442,7 +474,24 @@ function Counter({
         >
           <Minus className="w-8 h-8" strokeWidth={3} />
         </button>
-        <span className="text-6xl font-extrabold tabular-nums leading-none">{value}</span>
+        <input
+          ref={inputRef}
+          type="text"
+          inputMode="numeric"
+          pattern="[0-9]*"
+          aria-label={`${label} — type the right number`}
+          value={text ?? String(value)}
+          disabled={disabled}
+          onFocus={(e) => { setText(String(value)); e.currentTarget.select(); }}
+          onChange={(e) => {
+            const digits = e.target.value.replace(/[^0-9]/g, "").slice(0, 4);
+            setText(digits);
+            if (digits !== "") onSet(Number(digits));
+          }}
+          onBlur={() => setText(null)}
+          onKeyDown={(e) => { if (e.key === "Enter") inputRef.current?.blur(); }}
+          className="w-32 min-w-0 text-center text-6xl font-extrabold tabular-nums leading-none bg-transparent rounded-xl border-2 border-transparent hover:border-border focus:border-primary focus:outline-none py-1"
+        />
         <button
           type="button"
           onClick={onPlus}
