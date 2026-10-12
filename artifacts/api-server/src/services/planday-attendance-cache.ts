@@ -44,13 +44,14 @@ async function syncRange(range: DateRange): Promise<void> {
     const date = (s.date ?? "").slice(0, 10);
     if (!date) continue;
     await db.execute(sql`
-      INSERT INTO planday_shifts_cache (id, employee_id, shift_type_id, position_id, date, updated_at)
-      VALUES (${s.id}, ${s.employeeId ?? null}, ${s.shiftTypeId ?? null}, ${s.positionId ?? null}, ${date}, NOW())
+      INSERT INTO planday_shifts_cache (id, employee_id, shift_type_id, position_id, date, status, updated_at)
+      VALUES (${s.id}, ${s.employeeId ?? null}, ${s.shiftTypeId ?? null}, ${s.positionId ?? null}, ${date}, ${s.status ?? null}, NOW())
       ON CONFLICT (id) DO UPDATE SET
         employee_id = EXCLUDED.employee_id,
         shift_type_id = EXCLUDED.shift_type_id,
         position_id = EXCLUDED.position_id,
         date = EXCLUDED.date,
+        status = EXCLUDED.status,
         updated_at = NOW()
     `);
   }
@@ -155,8 +156,8 @@ export async function getAttendanceFromCache(
   }
 
   const [shiftRows, absenceRows, state] = await Promise.all([
-    db.execute<{ id: string; employee_id: string | null; shift_type_id: string | null; position_id: string | null; date: string }>(
-      sql`SELECT id, employee_id, shift_type_id, position_id, date::text FROM planday_shifts_cache WHERE date >= ${from} AND date <= ${to}`,
+    db.execute<{ id: string; employee_id: string | null; shift_type_id: string | null; position_id: string | null; date: string; status: string | null }>(
+      sql`SELECT id, employee_id, shift_type_id, position_id, date::text, status FROM planday_shifts_cache WHERE date >= ${from} AND date <= ${to}`,
     ),
     db.execute<{ record: unknown }>(
       sql`SELECT record FROM planday_absences_cache WHERE start_date <= ${to} AND end_date >= ${from}`,
@@ -170,6 +171,8 @@ export async function getAttendanceFromCache(
     shiftTypeId: r.shift_type_id != null ? Number(r.shift_type_id) : null,
     positionId: r.position_id != null ? Number(r.position_id) : null,
     date: r.date,
+    // Rota status (migration 0171) — NULL on rows synced before it existed.
+    status: r.status ?? null,
   }));
 
   const absences = absenceRows.rows
@@ -177,6 +180,34 @@ export async function getAttendanceFromCache(
     .filter(Boolean);
 
   return { shifts, absences, syncedAt: state.freshAt ? new Date(state.freshAt).toISOString() : null, stale };
+}
+
+/**
+ * Re-pull [from, to] from Planday once per process, when the mirror holds
+ * shifts there without a rota status — rows synced before migration 0171
+ * added the column. The improvement score needs the status for its whole
+ * 30-day window, but the hourly trailing re-sync only covers 21 days.
+ * Queued behind any running sync; a failure is logged and retried on the
+ * next call rather than thrown.
+ */
+const statusBackfilled = new Set<string>();
+
+export async function backfillShiftStatuses(from: string, to: string): Promise<void> {
+  if (!isPlandayConfigured()) return;
+  const key = `${from}|${to}`;
+  if (statusBackfilled.has(key)) return;
+  const missing = await db.execute<{ n: number }>(
+    sql`SELECT COUNT(*)::int AS n FROM planday_shifts_cache WHERE date >= ${from} AND date <= ${to} AND status IS NULL`,
+  );
+  if (Number(missing.rows[0]?.n ?? 0) === 0) { statusBackfilled.add(key); return; }
+  const run = syncChain.then(() => syncRange({ from, to }));
+  syncChain = run.catch(() => {});
+  try {
+    await run;
+    statusBackfilled.add(key);
+  } catch (err) {
+    console.warn("[planday-cache] status backfill failed:", err);
+  }
 }
 
 /**

@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, pgEnum, unique } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, smallint, timestamp, pgEnum, unique } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
@@ -61,6 +61,12 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   // unreviewed guess is never mistaken for a decision.
   subjectId: integer("subject_id"),
   subjectSource: text("subject_source"),
+  // How many credits it's worth on the improvement score (migration 0171):
+  // 1 by default, 2 = "a really good one", 3 = "really substantial". Set by
+  // the founder only.
+  creditWeight: smallint("credit_weight").notNull().default(1),
+  creditWeightSetAt: timestamp("credit_weight_set_at"),
+  creditWeightSetBy: integer("credit_weight_set_by").references(() => usersTable.id, { onDelete: "set null" }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
