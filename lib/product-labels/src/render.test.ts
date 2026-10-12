@@ -271,7 +271,7 @@ describe("steps: any number, widths worked out automatically", () => {
     expect(steps.sizePt).toBeGreaterThanOrEqual(9);
     expect(steps.width).not.toBe("condensed");
   });
-  it("step 1 sits on two lines (not three), the bold phrase intact, still bigger than the body text", () => {
+  it("step 1 sits on two lines (not three), the bold phrase intact, never below 9 pt", () => {
     const p = proofLabel(snapshot(), when, fonts);
     const steps = p.layout.fields.find(f => f.key === "steps")!;
     const box1 = steps.boxes[0];
@@ -279,8 +279,10 @@ describe("steps: any number, widths worked out automatically", () => {
     expect(new Set(runs1.map(r => Math.round(r.y))).size).toBe(2);
     expect(runs1.filter(r => r.face.weight === 700).map(r => r.text).join(" ")).toBe("leave the calzones in the wooden tray");
     const storage = p.layout.fields.find(f => f.key === "storage")!;
+    // Storage is now the bigger of the two (Graeme, 2026-10-12: storage and
+    // ingredients bigger, steps left as they were).
     expect(steps.sizePt).toBeGreaterThanOrEqual(9);
-    expect(steps.sizePt).toBeGreaterThanOrEqual(storage.sizePt);
+    expect(storage.sizePt).toBeGreaterThanOrEqual(steps.sizePt);
   });
   it("a third step added back still lays out, numbered 1–3; a blank one closes up", () => {
     const three = withSteps([...DEFAULT_TEMPLATE.text.steps, "Enjoy."]);

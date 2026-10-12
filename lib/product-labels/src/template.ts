@@ -225,13 +225,20 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // fully condensed.
     title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center", narrowest: "condensed" }),
     steps: field({ maxPt: 10.5, lineHeight: 1.1 }),
-    storage: field({ maxPt: 9 }),
+    // Storage and ingredients up to "a couple of points bigger" (Graeme,
+    // 2026-10-12, after the proofs). Storage 10.5 is the biggest that stays
+    // in plain Barlow beside the dates and barcode (11 only fits Semi
+    // Condensed); a long deck still shrinks — biggest first, so it squeezes
+    // down to the allergen note's 9 pt before that gets any smaller.
+    storage: field({ maxPt: 10.5 }),
     dates: field({ weight: 700, bold: true, maxPt: 10 }),
-    ingredients: field({ maxPt: 9 }),
+    ingredients: field({ maxPt: 11 }),
     allergenInfo: field({ maxPt: 9 }),
     address: field({ maxPt: 8 }),
-    // Fixed size: printed at maxPt, never shrunk or narrowed.
-    headings: field({ weight: 700, bold: true, caps: true, minPt: 9, maxPt: 9, lineHeight: 1.1, narrowest: "normal" }),
+    // Fixed size: printed at maxPt, never shrunk or narrowed. 10.5 = the
+    // storage text under it; 11 would push the longest deck (The Godfather)
+    // off the label.
+    headings: field({ weight: 700, bold: true, caps: true, minPt: 10.5, maxPt: 10.5, lineHeight: 1.1, narrowest: "normal" }),
   },
   text: {
     title: "{name} - {packSize} PACK",

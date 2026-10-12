@@ -91,7 +91,12 @@ describe("readability defaults (2026-10-12)", () => {
   it("body text a touch smaller with more space between blocks", () => {
     const f = DEFAULT_TEMPLATE.fields;
     expect(f.steps.maxPt).toBeLessThanOrEqual(10.5);
-    for (const k of ["storage", "ingredients", "allergenInfo", "headings"] as const) expect(f[k].maxPt).toBeLessThanOrEqual(9);
+    expect(f.allergenInfo.maxPt).toBeLessThanOrEqual(9);
+    // …but storage and ingredients a couple of points bigger, and the
+    // headings no smaller than the storage text under them.
+    expect(f.storage.maxPt).toBeGreaterThanOrEqual(10.5);
+    expect(f.ingredients.maxPt).toBeGreaterThanOrEqual(10.5);
+    expect(f.headings.maxPt).toBeGreaterThanOrEqual(f.storage.maxPt);
     expect(f.dates.maxPt).toBeLessThanOrEqual(10);
     expect(DEFAULT_TEMPLATE.page.bandGapMm).toBeGreaterThanOrEqual(3);
     expect(DEFAULT_TEMPLATE.page.fieldGapMm).toBeGreaterThanOrEqual(3);

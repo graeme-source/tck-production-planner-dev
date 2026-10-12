@@ -303,7 +303,14 @@ function atFloor(spec: FieldSpec, level: number, widthIdx: number, t: LabelTempl
 
 /** Find the first level (largest size, then widest) where every field of a
  *  group fits. stack=true: the fields share one column height (stacked with
- *  gaps); false: each field (box) has the whole height to itself. */
+ *  gaps); false: each field (box) has the whole height to itself.
+ *
+ *  Fields of a group shrink BIGGEST FIRST, under one falling ceiling: a
+ *  field set smaller than the group's biggest keeps its own size (and its
+ *  preferred width) until the ceiling comes down to it, then they shrink
+ *  together. So an 11 pt deck squeezes down to the 9 pt allergen note before
+ *  the note gets any smaller, and 11 pt storage text shrinks before the 10 pt
+ *  use-by lines (Graeme, 2026-10-12: bigger storage and ingredients). */
 function fitGroup(specs: FieldSpec[], availH: number, stack: boolean, gap: number, t: LabelTemplate, m: TextMeasurer): { trials: Trial[]; fits: boolean } {
   const ok = (trials: Trial[]) => {
     if (trials.some(tr => tr.wraps.some(w => w.tooWide))) return false;
@@ -313,13 +320,18 @@ function fitGroup(specs: FieldSpec[], availH: number, stack: boolean, gap: numbe
     }
     return trials.every(tr => tr.height <= availH + 1e-6);
   };
+  // How many quarter-point levels each field sits below the group's biggest.
+  const top = Math.max(...specs.map(s => s.style.maxPt));
+  const offsets = specs.map(s => Math.max(0, Math.round((top - s.style.maxPt) / PT_STEP)));
   let last: Trial[] = [];
-  for (let level = 0; level < 400; level++) {
+  for (let level = 0; level < 800; level++) {
     for (let w = 0; w < WIDTH_ORDER.length; w++) {
-      const trials = specs.map(s => trial(s, level, w, t, m));
+      // A field still under the ceiling stays at its biggest, widest.
+      const at = offsets.map(off => (level - off < 0 ? { level: 0, w: 0 } : { level: level - off, w }));
+      const trials = specs.map((s, i) => trial(s, at[i].level, at[i].w, t, m));
       last = trials;
       if (ok(trials)) return { trials, fits: true };
-      if (specs.every(s => atFloor(s, level, w, t, m))) return { trials, fits: false };
+      if (specs.every((s, i) => atFloor(s, at[i].level, at[i].w, t, m))) return { trials, fits: false };
     }
   }
   return { trials: last, fits: false };
@@ -579,7 +591,9 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   // Section headings — one shared style at a FIXED size (level 0 = its
   // biggest, never narrowed), placed first at the top of each column; their
   // height is reserved and only the text underneath shrinks to fit.
-  const headingGap = d(0.8);
+  // 0.5 mm (was 0.8): the heading belongs to the text under it, and the
+  // bigger headings need the room (2026-10-12).
+  const headingGap = d(0.5);
   const headingBoxes: Rect[] = [];
   const headingRuns: PlacedRun[] = [];
   let headingTrial: Trial | null = null;

@@ -218,3 +218,25 @@ describe("divider rule", () => {
     expect(layoutLabel(template(x => { x.page.dividerMm = 0.5; }), content("x"), fake).divider!.h).toBe(4);
   });
 });
+
+describe("stacked fields shrink biggest first", () => {
+  it("a bigger deck squeezes down to the allergen note's size before the note shrinks", () => {
+    const t = template(x => { x.fields.ingredients.maxPt = 11; x.fields.allergenInfo.maxPt = 9; });
+    let saw = false;
+    for (let n = 20; n <= 400; n += 10) {
+      const c = content(words(n));
+      c.allergenInfo = [parseBold("Allergens are shown in **Bold**.")];
+      const l = layoutLabel(t, c, fake);
+      const ing = field(l, "ingredients");
+      const note = field(l, "allergenInfo");
+      if (ing.sizePt > 9) {
+        expect(note.sizePt).toBe(9);
+        expect(note.width).toBe("normal"); // untouched until the ceiling reaches it
+        if (ing.sizePt < 11) saw = true;
+      } else {
+        expect(note.sizePt).toBeLessThanOrEqual(ing.sizePt + 1e-9);
+      }
+    }
+    expect(saw).toBe(true);
+  });
+});
