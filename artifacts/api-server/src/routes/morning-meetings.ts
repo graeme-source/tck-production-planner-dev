@@ -52,6 +52,9 @@ import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/cl
 import { leanCorpusPrompt } from "../lib/lean-corpus";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "../services/defects-summary";
+import { separateKitchenPositions } from "@workspace/production-schedule";
+import { parseSettings as parseTeamEfficiencySettings } from "../lib/team-efficiency-settings";
+import { isSeparateKitchenPosition, meetingRotaStations, testProductPrepItems } from "../lib/meeting-scope";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
@@ -254,6 +257,15 @@ function isoDateMinusDays(iso: string, days: number): string {
   return d.toISOString().split("T")[0];
 }
 
+/** Rota positions of lines made outside the main kitchen, from the team
+ *  efficiency line-positions setting. Empty (nobody filtered) if unset. */
+async function loadSeparateKitchenPositions(): Promise<Set<string>> {
+  const r = await db.execute<{ key: string; value: unknown }>(sql`
+    SELECT key, value FROM team_efficiency_settings WHERE key = 'line_positions'
+  `);
+  return separateKitchenPositions(parseTeamEfficiencySettings(r.rows).linePositions);
+}
+
 // ── "Who's On Today" — station assignments from the Planday rota ──────────
 // Maps rota positions onto planner stations via the editable
 // station_assignments_mapping setting; unmapped positions land in an
@@ -289,6 +301,16 @@ router.get("/station-assignments", async (req: Request, res: Response) => {
     try {
       if (mapRow?.value) mapping = JSON.parse(mapRow.value);
     } catch { /* fall through with empty mapping — everything lands in extras */ }
+
+    // The fried chicken team works in a separate facility and doesn't attend
+    // the meeting (Graeme, 2026-10-12): their positions (the founder's
+    // line-positions setting) are left off the slide — no station row, not
+    // in "Also in today", not in the clocked-in tally.
+    const separate = await loadSeparateKitchenPositions().catch(err => {
+      console.warn("[morning-meetings] line positions unreadable — showing everyone:", err);
+      return new Set<string>();
+    });
+    mapping = { stations: meetingRotaStations(mapping.stations ?? [], separate) };
 
     const positionToStation = new Map<string, string>();
     for (const st of mapping.stations ?? []) {
@@ -326,6 +348,7 @@ router.get("/station-assignments", async (req: Request, res: Response) => {
     for (const s of shifts) {
       const emp = s.employeeId != null ? empById.get(s.employeeId) : undefined;
       const posName = s.positionId != null ? (posById.get(s.positionId)?.name ?? null) : null;
+      if (isSeparateKitchenPosition(posName, separate)) continue;
       const start = s.startDateTime?.slice(11, 16) ?? null;
       const punch = punchStateOf(s.status);
       const person: Person = {
@@ -528,7 +551,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .from(productionPlansTable)
       .where(eq(productionPlansTable.planDate, tomorrow))
       .limit(1);
-    let tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null }> = [];
+    let tomorrowNonCoreItems: Array<{ recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; isCoreMenu: boolean }> = [];
     // Full item list for tomorrow's plan, same shape and ordering as
     // todayPlanItems. The pack report flips to tomorrow's dispatch after 3pm —
     // its production columns must flip to tomorrow's PLAN with it, or the
@@ -554,13 +577,16 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           sql`CASE WHEN ${recipesTable.category} = 'Macaroni Cheese' THEN 0 ELSE 1 END`,
           productionPlanItemsTable.orderPosition,
         );
-      tomorrowNonCoreItems = await db
+      // Main kitchen only — fried chicken isn't core menu but it isn't a
+      // test product either (separate facility; see lib/meeting-scope).
+      tomorrowNonCoreItems = testProductPrepItems(await db
         .select({
           recipeId: productionPlanItemsTable.recipeId,
           recipeName: recipesTable.name,
           recipeColor: recipesTable.color,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
+          isCoreMenu: recipesTable.isCoreMenu,
         })
         .from(productionPlanItemsTable)
         .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -568,7 +594,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           eq(productionPlanItemsTable.planId, tomorrowPlan.id),
           eq(recipesTable.isCoreMenu, false),
         ))
-        .orderBy(productionPlanItemsTable.orderPosition);
+        .orderBy(productionPlanItemsTable.orderPosition));
     }
 
     // ── Today's deliveries ─────────────────────────────────────────

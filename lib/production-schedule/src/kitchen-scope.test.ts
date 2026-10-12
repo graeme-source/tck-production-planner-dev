@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, mainKitchenBatches, splitByKitchenLine, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
+  FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY, calzoneLineBatches, separateKitchenPositions, mainKitchenBatches, splitByKitchenLine, isMainKitchen, kitchenLine, mainKitchenItems, mainKitchenLines,
 } from "./kitchen-scope";
 
 describe("kitchenLine", () => {
@@ -82,5 +82,19 @@ describe("mainKitchenLines", () => {
   it("drops the fried chicken line from a per-category record", () => {
     expect(mainKitchenLines({ Calzones: 1, [MAC_CHEESE_CATEGORY]: 2, [FRIED_CHICKEN_CATEGORY]: 3 }))
       .toEqual({ Calzones: 1, [MAC_CHEESE_CATEGORY]: 2 });
+  });
+});
+
+describe("separateKitchenPositions", () => {
+  // Regression (2026-10-12): the morning meeting's Who's On Today listed the
+  // fried chicken team (Frying / Breading), who don't attend the meeting.
+  it("collects the positions of lines made outside the main kitchen", () => {
+    const s = separateKitchenPositions({ [FRIED_CHICKEN_CATEGORY]: [" Frying", "Breading "], Calzones: ["Builder 1"], [MAC_CHEESE_CATEGORY]: ["Mac"] });
+    expect([...s].sort()).toEqual(["breading", "frying"]);
+  });
+
+  it("is empty when nothing is set", () => {
+    expect(separateKitchenPositions(null).size).toBe(0);
+    expect(separateKitchenPositions({}).size).toBe(0);
   });
 });
