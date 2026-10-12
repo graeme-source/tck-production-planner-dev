@@ -10,17 +10,20 @@ import { rowsToDeclarationItems } from "@/lib/declaration-fix";
 import { SubRecipeLabelUsage } from "@/components/sub-recipe-label-usage";
 import { toGrams, kgOrNull } from "@workspace/units";
 import { PageHeader } from "@/components/page-header";
-import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { IngredientCombobox } from "@/components/ingredient-combobox";
 import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useForm, useFieldArray } from "react-hook-form";
+import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NumberInput } from "@/components/ui/number-input";
 import { SubRecipePrepTimeField } from "@/components/sub-recipe-prep-time-field";
-import { EditorDialog, EditorSaveBar } from "@/components/recipe-editor/editor-dialog";
+import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
+import { EditorForm } from "@/components/recipe-editor/editor-form";
+import { LineRows } from "@/components/recipe-editor/line-rows";
+import { useEditorIngredients } from "@/components/recipe-editor/use-editor-ingredients";
+import { recipeSubRecipeLineCost, subRecipeIngredientLineCost } from "@/lib/recipe-line-cost";
+import { buildSubRecipePayload } from "@/lib/recipe-editor-payload";
 import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
 import { scrollToFirstError } from "@/components/recipe-editor/scroll-to-error";
 
@@ -76,7 +79,7 @@ type IngredientOption = Pick<Ingredient, "id" | "name" | "unit" | "processingRat
   costPerPack?: number | null;
   packWeight?: number | null;
 };
-type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit">;
+type SubRecipeOption = Pick<SubRecipe, "id" | "name" | "yieldUnit"> & { costPerYieldUnit?: number | null };
 
 // All conversions go through @workspace/units — the hand-rolled versions
 // here each skipped litres, so a 10 L mayonnaise line contributed NOTHING
@@ -367,30 +370,27 @@ function SubRecipeForm({
   onDirtyChange?: (isDirty: boolean) => void;
   submitRef?: React.MutableRefObject<(() => void) | null>;
 }) {
-  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
+  const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
+  const { register, handleSubmit, setValue, watch, formState: { errors } } = form;
   // Unsaved changes = differs from what it opened with (edit then undo =
   // clean). Drives the pinned save bar and the close guard.
   const dirty = useFormDirty(watch, defaultValues, SUB_DIRTY_IGNORE, onDirtyChange);
-  const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
-  const { fields: srFields, append: appendSr, remove: removeSr } = useFieldArray({ control, name: "subRecipeComponents" });
-
-  const [localIngredients, setLocalIngredients] = useState<IngredientOption[]>(initialIngredients);
-  // Keep in step with the page's ingredient list — a declaration fixed from
-  // the preview's fix buttons refetches it — while keeping any quick-added
-  // ingredient the list hasn't caught up with yet.
-  useEffect(() => {
-    setLocalIngredients(prev => {
-      const ids = new Set(initialIngredients.map(i => i.id));
-      return [...initialIngredients, ...prev.filter(p => !ids.has(p.id))];
-    });
-  }, [initialIngredients]);
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
-  const [ingDisplayUnits, setIngDisplayUnits] = useState<Record<number, "g" | "kg">>({});
-  const [srDisplayUnits, setSrDisplayUnits] = useState<Record<number, "g" | "kg">>({});
+  // Ingredient list + "create new ingredient" from the picker (shared with
+  // the recipe editor, components/recipe-editor).
+  const { options: localIngredients, openQuickAdd, quickAddDialog } = useEditorIngredients<IngredientOption>(
+    initialIngredients,
+    created => ({ id: created.id, name: created.name, unit: created.unit, processingRatio: null, labelDeclaration: null, allergens: [] }),
+    (index, id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldDirty: true, shouldValidate: true }),
+  );
+  // Sub-recipe UPF % for the per-row pill, as in the recipe editor.
+  const { data: upfSummary } = useGetUpfSummary();
+  const subUpfById = useMemo(
+    () => new Map((upfSummary?.subRecipes ?? []).map(s => [s.subRecipeId, s])),
+    [upfSummary],
+  );
 
   const watchedIngredients = watch("ingredients");
 
@@ -437,30 +437,16 @@ function SubRecipeForm({
     setValue("yield", autoValue, { shouldValidate: false });
   }, [totalComponentKg, effectivePercent, watchedYieldUnit, setValue]);
 
-  const openQuickAdd = (index: number) => {
-    setQuickAddTargetIndex(index);
-    setQuickAddOpen(true);
-  };
 
-  const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    const newOpt: IngredientOption = { id: ingredient.id, name: ingredient.name, unit: ingredient.unit, processingRatio: null, labelDeclaration: null, allergens: [] };
-    setLocalIngredients(prev => [...prev, newOpt]);
-    if (quickAddTargetIndex !== null) {
-      setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
-    }
-    setQuickAddTargetIndex(null);
-  };
-
-  const hasAnyRatio = (watchedIngredients ?? []).some(row => {
-    const ing = localIngredients.find(i => i.id === Number(row.ingredientId));
-    return ing?.processingRatio != null && ing.processingRatio < 1;
-  });
 
   return (
     <>
-      <QuickAddIngredientDialog open={quickAddOpen} onOpenChange={setQuickAddOpen} onCreated={handleIngredientCreated} />
+      {quickAddDialog}
 
-      <form onSubmit={save} className="space-y-5 mt-4">
+      {/* Shared layout with the recipe editor (components/recipe-editor). */}
+      <EditorForm
+        onSubmit={save}
+        details={<>
         <div>
           <label className="text-sm font-medium mb-1 block">Name</label>
           <input
@@ -596,321 +582,73 @@ function SubRecipeForm({
           <SubRecipeLabelUsage subRecipeId={subRecipeId ?? null} />
         </div>
 
-        <div className="border-t border-border pt-4">
-          <div className="mb-3">
-            <label className="text-sm font-bold">Ingredients</label>
-          </div>
+        </>}
+        lines={[
+          <LineRows
+            key="ingredients"
+            form={form}
+            kind="ingredient"
+            name="ingredients"
+            idField="ingredientId"
+            title="Ingredients"
+            emptyText="No raw ingredients added yet."
+            addLabel="Add ingredient to sub-recipe"
+            options={localIngredients}
+            onQuickAdd={openQuickAdd}
+            newRow={() => ({ ingredientId: 0, quantity: 0, hideFromPrep: false, marinadeForIngredientId: null, marinadeAddAtCooking: false })}
+            lineCost={row => subRecipeIngredientLineCost(row?.quantity, localIngredients.find(i => i.id === Number(row?.ingredientId)))}
+            hideFromPrep
+            ratioNote
+            link={{
+              word: "Marinade for",
+              addLabel: "+ Marinade for a raw meat",
+              // Only a non-meat line can be a marinade, and only for a raw
+              // meat in this sub-recipe (migration 0111).
+              targets: row => localIngredients.find(i => i.id === Number(row?.ingredientId))?.category === "raw_meat" ? [] : rawMeatTargets,
+            }}
+          />,
+          <LineRows
+            key="components"
+            form={form}
+            kind="subRecipe"
+            name="subRecipeComponents"
+            idField="componentSubRecipeId"
+            tone="accent"
+            title="Sub-recipe Components"
+            emptyText={availableSubRecipes.length === 0 ? "No other sub-recipes available yet." : "No nested sub-recipes added yet."}
+            addLabel="Add sub-recipe component"
+            addDisabled={availableSubRecipes.length === 0}
+            options={availableSubRecipes}
+            upfById={subUpfById}
+            newRow={() => ({ componentSubRecipeId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false })}
+            lineCost={row => recipeSubRecipeLineCost(row?.quantity, allSubRecipes.find(s => s.id === Number(row?.componentSubRecipeId)), 1)}
+            link={{ word: "Marinade for", addLabel: "+ Marinade for a raw meat", targets: () => rawMeatTargets }}
+          />,
+        ]}
+        afterLines={<>
           {errors.ingredients?.message && (
-            <span className="text-destructive text-xs block mb-2">{errors.ingredients.message}</span>
+            <span className="text-destructive text-sm block">{errors.ingredients.message}</span>
           )}
-
-          {ingFields.length === 0 && (
-            <p className="text-xs text-muted-foreground italic py-2">No raw ingredients added yet.</p>
+          {((watchedIngredients?.length ?? 0) > 0 || (watchedSubRecipeComponents?.length ?? 0) > 0) && (
+            <YieldSanityCheck
+              ingredientRows={watchedIngredients ?? []}
+              allIngredients={localIngredients}
+              componentRows={watchedSubRecipeComponents ?? []}
+              allSubRecipes={allSubRecipes}
+              yieldValue={watchedYield ?? 0}
+              yieldUnit={watchedYieldUnit ?? "kg"}
+            />
           )}
-
-          {ingFields.length > 0 && (
-            <div className="grid grid-cols-[1fr_120px_44px] gap-2 mb-1 px-1">
-              <span className="text-xs text-muted-foreground font-medium">Ingredient</span>
-              <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
-              <span />
-            </div>
-          )}
-
-          {ingFields.length > 0 && (
-            <div className="grid grid-cols-[1fr_7rem_120px_3.5rem_44px] gap-2 items-end px-1 mb-1">
-              <span className="text-[10px] text-muted-foreground font-medium">Name</span>
-              <span className="text-[10px] text-muted-foreground font-medium">Supplier</span>
-              <span className="text-[10px] text-muted-foreground font-medium">Qty</span>
-              <span className="text-[10px] text-muted-foreground font-medium text-right">Cost</span>
-              <span />
-            </div>
-          )}
-          <div className="space-y-2">
-            {ingFields.map((field, index) => {
-              const selectedId = Number(watchedIngredients?.[index]?.ingredientId ?? 0);
-              const selectedIng = localIngredients.find(i => i.id === selectedId);
-              const unit = selectedIng?.unit ?? "";
-              const ratio = selectedIng?.processingRatio;
-              return (
-                <div key={field.id}>
-                  <div className="grid grid-cols-[1fr_7rem_120px_3.5rem_44px] gap-2 items-center">
-                    <div className="flex items-center gap-1.5 min-w-0">
-                      <div className="flex-1 min-w-0">
-                        <IngredientCombobox
-                          value={selectedId}
-                          onChange={(id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldValidate: true })}
-                          options={localIngredients}
-                          placeholder="Select ingredient..."
-                          onCreateNew={() => openQuickAdd(index)}
-                        />
-                      </div>
-                      <UpfChip novaClass={selectedIng?.novaClass} markers={selectedIng?.novaMarkers} />
-                    </div>
-                    {/* Supplier — same column the recipe form shows. */}
-                    <span className="text-[11px] text-muted-foreground truncate" title={selectedIng?.supplierName ?? undefined}>
-                      {selectedIng?.supplierName ?? <span className="text-muted-foreground/40">—</span>}
-                    </span>
-                    {(() => {
-                      const isKg = unit === "kg";
-                      const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
-                      const storedKg = Number(watchedIngredients?.[index]?.quantity) || 0;
-                      if (!isKg) {
-                        return (
-                          <div className="relative">
-                            <input
-                              type="number"
-                              step="0.001"
-                              {...register(`ingredients.${index}.quantity`)}
-                              className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                              placeholder="Qty"
-                            />
-                            {unit && (
-                              <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
-                                {unit}
-                              </span>
-                            )}
-                          </div>
-                        );
-                      }
-                      return (
-                        <div className="flex gap-0.5 items-stretch">
-                          <input
-                            type="number"
-                            step="any"
-                            min="0"
-                            value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1_000_000) / 1000 : storedKg}
-                            onChange={e => {
-                              const v = e.target.value === "" ? 0 : Number(e.target.value);
-                              setValue(`ingredients.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
-                            }}
-                            className="min-w-0 flex-1 w-0 px-2 py-2 bg-background border border-border rounded-l-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                            placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
-                          />
-                          <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
-                            <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
-                            <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    {/* Line cost — same read the recipe form gives you, so a
-                        sub-recipe's expensive lines are visible while editing. */}
-                    <span className="text-[11px] tabular-nums text-right text-muted-foreground">
-                      {(() => {
-                        const qty = Number(watchedIngredients?.[index]?.quantity) || 0;
-                        const cpp = Number(selectedIng?.costPerPack) || 0;
-                        const pw = Number(selectedIng?.packWeight) || 0;
-                        if (!(qty > 0) || !(cpp > 0) || !(pw > 0)) return <span className="text-muted-foreground/40">—</span>;
-                        return `£${((qty / pw) * cpp).toFixed(2)}`;
-                      })()}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => removeIng(index)}
-                      className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  </div>
-                  {ratio != null && ratio < 1 && (
-                    <div className="ml-1 mt-0.5 text-xs text-amber-600 flex items-center gap-1">
-                      <FlaskConical className="w-3 h-3" />
-                      Processing ratio: {(ratio * 100).toFixed(2)}% — yield adjusted from raw input
-                    </div>
-                  )}
-                  <label className="ml-1 mt-1 inline-flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
-                    <input
-                      type="checkbox"
-                      {...register(`ingredients.${index}.hideFromPrep`)}
-                      className="rounded border-border"
-                    />
-                    <span>Hide from prep sheet</span>
-                    <span className="text-[10px] text-muted-foreground/80">
-                      (keeps the quantity for ratio maths; doesn&rsquo;t show for prep)
-                    </span>
-                  </label>
-                  {rawMeatTargets.length > 0 && selectedIng?.category !== "raw_meat" && (
-                    <div className="ml-1 mt-1 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
-                      <span>Marinade for</span>
-                      <select
-                        {...register(`ingredients.${index}.marinadeForIngredientId`)}
-                        className="px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                      >
-                        <option value="">— not a marinade —</option>
-                        {rawMeatTargets.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                      </select>
-                      {Number(watchedIngredients?.[index]?.marinadeForIngredientId) > 0 && (
-                        <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                          <input type="checkbox" {...register(`ingredients.${index}.marinadeAddAtCooking`)} className="rounded border-border" />
-                          <span>Add at cooking (held back from prep day)</span>
-                        </label>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => appendIng({ ingredientId: 0, quantity: 1 })}
-            className="mt-2 w-full px-2 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium flex items-center justify-center gap-1"
-          >
-            <Plus className="w-3 h-3" /> Add ingredient to sub-recipe
-          </button>
-
-          {(ingFields.length > 0 || srFields.length > 0) && (
-            <div className="mt-3">
-              <YieldSanityCheck
-                ingredientRows={watchedIngredients ?? []}
-                allIngredients={localIngredients}
-                componentRows={watchedSubRecipeComponents ?? []}
-                allSubRecipes={allSubRecipes}
-                yieldValue={watchedYield ?? 0}
-                yieldUnit={watchedYieldUnit ?? "kg"}
-              />
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-border pt-4">
-          <div className="mb-3 flex items-center gap-2">
-            <Layers className="w-4 h-4 text-muted-foreground" />
-            <label className="text-sm font-bold">Sub-recipe Components</label>
-          </div>
-
-          {availableSubRecipes.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic py-2">No other sub-recipes available yet.</p>
-          ) : srFields.length === 0 ? (
-            <p className="text-xs text-muted-foreground italic py-2">No nested sub-recipes added yet.</p>
-          ) : null}
-
-          {srFields.length > 0 && (
-            <div className="grid grid-cols-[1fr_120px_32px] gap-2 mb-1 px-1">
-              <span className="text-xs text-muted-foreground font-medium">Sub-recipe</span>
-              <span className="text-xs text-muted-foreground font-medium text-center">Quantity</span>
-              <span />
-            </div>
-          )}
-
-          <div className="space-y-2">
-            {srFields.map((field, index) => {
-              const selectedId = Number(watchedSubRecipeComponents?.[index]?.componentSubRecipeId ?? 0);
-              const selectedSr = availableSubRecipes.find(sr => sr.id === selectedId);
-              const unit = selectedSr?.yieldUnit ?? "";
-              return (
-                <div key={field.id}>
-                <div className="grid grid-cols-[1fr_120px_32px] gap-2 items-center">
-                  {/* Type-to-search, same as the ingredient rows (Graeme, 2026-09-29). */}
-                  <IngredientCombobox
-                    value={selectedId}
-                    onChange={(id) => setValue(`subRecipeComponents.${index}.componentSubRecipeId`, id, { shouldValidate: true, shouldDirty: true })}
-                    options={availableSubRecipes.map(sr => ({ id: sr.id, name: sr.name, unit: sr.yieldUnit }))}
-                    placeholder="Select sub-recipe..."
-                    emptyText="No sub-recipes found"
-                  />
-                  {(() => {
-                    const isKg = unit === "kg";
-                    const displayUnit = isKg ? (srDisplayUnits[index] ?? "g") : null;
-                    const storedKg = Number(watchedSubRecipeComponents?.[index]?.quantity) || 0;
-                    if (!isKg) {
-                      return (
-                        <div className="relative">
-                          <input
-                            type="number"
-                            step="0.001"
-                            {...register(`subRecipeComponents.${index}.quantity`)}
-                            className="w-full px-2 py-2 pr-7 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                            placeholder="Qty"
-                          />
-                          {unit && (
-                            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground pointer-events-none">
-                              {unit}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    }
-                    return (
-                      <div className="flex gap-0.5 items-stretch">
-                        <input
-                          type="number"
-                          step="any"
-                          min="0"
-                          value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1_000_000) / 1000 : storedKg}
-                          onChange={e => {
-                            const v = e.target.value === "" ? 0 : Number(e.target.value);
-                            setValue(`subRecipeComponents.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
-                          }}
-                          className="min-w-0 flex-1 w-0 px-2 py-2 bg-background border border-border rounded-l-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                          placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
-                        />
-                        <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
-                          <button type="button" onClick={() => setSrDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
-                          <button type="button" onClick={() => setSrDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
-                        </div>
-                      </div>
-                    );
-                  })()}
-                  <button
-                    type="button"
-                    onClick={() => removeSr(index)}
-                    className="flex items-center justify-center text-muted-foreground hover:text-destructive transition-colors"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                </div>
-                {rawMeatTargets.length > 0 && (
-                  <div className="ml-1 mt-1 flex items-center gap-2 flex-wrap text-xs text-muted-foreground">
-                    <span>Marinade for</span>
-                    <select
-                      {...register(`subRecipeComponents.${index}.marinadeForIngredientId`)}
-                      className="px-2 py-1 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                    >
-                      <option value="">— not a marinade —</option>
-                      {rawMeatTargets.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                    </select>
-                    {Number(watchedSubRecipeComponents?.[index]?.marinadeForIngredientId) > 0 && (
-                      <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
-                        <input type="checkbox" {...register(`subRecipeComponents.${index}.marinadeAddAtCooking`)} className="rounded border-border" />
-                        <span>Add at cooking (held back from prep day)</span>
-                      </label>
-                    )}
-                  </div>
-                )}
-                </div>
-              );
-            })}
-          </div>
-
-          <button
-            type="button"
-            onClick={() => appendSr({ componentSubRecipeId: 0, quantity: 1 })}
-            disabled={availableSubRecipes.length === 0}
-            className="mt-2 w-full px-2 py-2 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
-          >
-            <Plus className="w-3 h-3" /> Add sub-recipe component
-          </button>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
-          <textarea
-            {...register("notes")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[56px] resize-none"
-          />
-        </div>
-
-        {/* Pinned to the bottom of the editor (components/recipe-editor). */}
-        <EditorSaveBar
-          mode={isEdit ? "edit" : "create"}
-          dirty={dirty}
-          saving={isPending}
-          label={isEdit ? "Save changes" : "Create sub-recipe"}
-          onSave={() => { void save(); }}
-        />
-      </form>
+        </>}
+        notes={register("notes")}
+        save={{
+          mode: isEdit ? "edit" : "create",
+          dirty,
+          saving: isPending,
+          label: isEdit ? "Save changes" : "Create sub-recipe",
+          onSave: () => { void save(); },
+        }}
+      />
     </>
   );
 }
@@ -982,7 +720,6 @@ function EditSubRecipeDialog({
       dirty={formIsDirty}
       onSaveRequest={() => submitRef.current?.()}
       entityLabel="sub-recipe"
-      widthClassName="sm:max-w-[720px]"
       title="Edit Sub-Recipe"
     >
           {isLoading ? (
@@ -1006,7 +743,7 @@ function EditSubRecipeDialog({
                 cyclicIds={detail?.cyclicIds}
                 onDirtyChange={setFormIsDirty}
                 submitRef={submitRef}
-                onSubmit={(data) => updateSubRecipe.mutate({ id, data }, { onSuccess: () => onOpenChange(false) })}
+                onSubmit={(data) => updateSubRecipe.mutate({ id, data: buildSubRecipePayload(data) }, { onSuccess: () => onOpenChange(false) })}
               />
             </>
           )}
@@ -1372,6 +1109,9 @@ export default function SubRecipes() {
     id: sr.id,
     name: sr.name,
     yieldUnit: sr.yieldUnit,
+    // Line cost of a nested component (qty × cost per yield unit), as the
+    // recipe editor shows for its sub-recipe lines.
+    costPerYieldUnit: Number(sr.costPerYieldUnit) || 0,
   }));
 
   const addDefaults: FormValues = {
@@ -1401,8 +1141,7 @@ export default function SubRecipes() {
         dirty={addFormDirty}
         onSaveRequest={() => addSubmitRef.current?.()}
         entityLabel="sub-recipe"
-        widthClassName="sm:max-w-[720px]"
-        title="New Sub-Recipe"
+          title="New Sub-Recipe"
       >
           <SubRecipeForm
             defaultValues={addDefaults}
@@ -1412,7 +1151,7 @@ export default function SubRecipes() {
             subRecipes={subRecipeList}
             onDirtyChange={setAddFormDirty}
             submitRef={addSubmitRef}
-            onSubmit={(data) => createSubRecipe.mutate({ data }, { onSuccess: () => { setAddFormDirty(false); setIsAddOpen(false); } })}
+            onSubmit={(data) => createSubRecipe.mutate({ data: buildSubRecipePayload(data) }, { onSuccess: () => { setAddFormDirty(false); setIsAddOpen(false); } })}
           />
       </EditorDialog>
 

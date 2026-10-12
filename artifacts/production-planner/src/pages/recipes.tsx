@@ -10,10 +10,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { SortableTh } from "@/components/sortable-th";
 import { TimingHealthCard } from "@/components/timing-health-card";
-import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
-import { IngredientCombobox } from "@/components/ingredient-combobox";
 import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
-import { useForm, useFieldArray, Controller } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -25,7 +23,12 @@ import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuT
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
 import { RecipeColourFields } from "@/components/recipe-colour-fields";
-import { EditorDialog, EditorSaveBar } from "@/components/recipe-editor/editor-dialog";
+import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
+import { EditorForm } from "@/components/recipe-editor/editor-form";
+import { LineRows } from "@/components/recipe-editor/line-rows";
+import { useEditorIngredients } from "@/components/recipe-editor/use-editor-ingredients";
+import { recipeIngredientLineCost, recipeSubRecipeLineCost } from "@/lib/recipe-line-cost";
+import { buildRecipeCreatePayload, buildRecipeUpdatePayload } from "@/lib/recipe-editor-payload";
 import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
 import { scrollToFirstError } from "@/components/recipe-editor/scroll-to-error";
 import { RecipeSwatch } from "@/components/recipe-swatch";
@@ -296,10 +299,11 @@ function RecipeForm({
   submitRef?: React.MutableRefObject<(() => void) | null>;
   allTags?: string[];
 }) {
-  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
+  const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
+  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = form;
   // Unsaved changes = the form differs from what it opened with (edit then
   // undo = clean). Drives the pinned save bar and the close guard.
   const dirty = useFormDirty(watch, defaultValues, [], onDirtyChange);
@@ -328,23 +332,19 @@ function RecipeForm({
     }
   }, [submitRef, save]);
 
-  const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
-  const { fields: subFields, append: appendSub, remove: removeSub } = useFieldArray({ control, name: "subRecipes" });
-  // The searchable picker wants {id, name, unit}; a sub-recipe's unit is its yield unit.
-  const subRecipeOptions = useMemo(() => subRecipes.map(s => ({ id: s.id, name: s.name, unit: s.yieldUnit })), [subRecipes]);
-
-  const [localIngredients, setLocalIngredients] = useState(initialIngredients);
+  // Ingredient list + "create new ingredient" from the picker (shared with
+  // the sub-recipe editor, components/recipe-editor).
+  const { options: localIngredients, openQuickAdd, quickAddDialog } = useEditorIngredients<IngredientOption>(
+    initialIngredients,
+    created => ({ ...created, processingRatio: 1, packWeight: 0, costPerPack: 0 }),
+    (index, id) => setValue(`ingredients.${index}.ingredientId`, id, { shouldDirty: true, shouldValidate: true }),
+  );
   // Sub-recipe UPF % lookup for the per-row chip in the Sub Recipes section.
   const { data: formUpfSummary } = useGetUpfSummary();
   const formSubUpfById = useMemo(
     () => new Map((formUpfSummary?.subRecipes ?? []).map(s => [s.subRecipeId, s])),
     [formUpfSummary],
   );
-  const [quickAddOpen, setQuickAddOpen] = useState(false);
-  const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
-  // Per-row display unit for kg ingredients: "g" (default) or "kg"
-  const [ingDisplayUnits, setIngDisplayUnits] = useState<Record<number, "g" | "kg">>({});
-  const [subDisplayUnits, setSubDisplayUnits] = useState<Record<number, "g" | "kg">>({});
 
   const watchedCategory = watch("category");
   const watchedRrp = watch("rrp");
@@ -419,49 +419,25 @@ function RecipeForm({
     setNewCategoryName("");
   };
 
-  const openQuickAdd = (index: number) => {
-    setQuickAddTargetIndex(index);
-    setQuickAddOpen(true);
-  };
 
-  const handleIngredientCreated = (ingredient: { id: number; name: string; unit: string }) => {
-    const full: IngredientOption = { ...ingredient, processingRatio: 1, packWeight: 0, costPerPack: 0 };
-    setLocalIngredients(prev => [...prev, full]);
-    if (quickAddTargetIndex !== null) {
-      setValue(`ingredients.${quickAddTargetIndex}.ingredientId`, ingredient.id);
-    }
-    setQuickAddTargetIndex(null);
-  };
-
-  const servings = Number(watchedServings) || 1;
   const overhead = (Number(watchedPackaging) || 0) + (Number(watchedLabour) || 0);
   const rrp = Number(watchedRrp) || 0;
 
-  function ingLineCost(index: number): number | null {
-    const row = watchedIngredients?.[index];
-    if (!row) return null;
-    const qty = Number(row.quantity);
-    const ing = localIngredients.find(i => i.id === Number(row.ingredientId));
-    if (!ing || !qty || ing.packWeight === 0) return null;
-    const pr = ing.processingRatio || 1;
-    const rawQty = qty / pr;
-    return (rawQty * ing.costPerPack / ing.packWeight) / servings;
-  }
-
-  function subLineCost(index: number): number | null {
-    const row = watchedSubRecipes?.[index];
-    if (!row) return null;
-    const qty = Number(row.quantity);
-    const sr = subRecipes.find(s => s.id === Number(row.subRecipeId));
-    if (!sr || !qty) return null;
-    return (qty * sr.costPerYieldUnit) / servings;
-  }
+  // Lines a row can be linked to (connected pairs, marinades): any
+  // ingredient already in this recipe.
+  const linkableIngs = (watchedIngredients ?? [])
+    .map(wi => localIngredients.find(i => i.id === Number(wi?.ingredientId)))
+    .filter((i): i is IngredientOption => !!i);
+  const lineDefaults = { marinadeForIngredientId: null, marinadeAddAtCooking: false, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 };
 
   return (
     <>
-      <QuickAddIngredientDialog open={quickAddOpen} onOpenChange={setQuickAddOpen} onCreated={handleIngredientCreated} />
+      {quickAddDialog}
 
-      <form onSubmit={save} className="space-y-5 mt-4">
+      {/* Shared layout with the sub-recipe editor (components/recipe-editor). */}
+      <EditorForm
+        onSubmit={save}
+        details={<>
         {/* Basic fields */}
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
@@ -691,6 +667,8 @@ function RecipeForm({
           )}
         </div>
 
+        </>}
+        beforeLines={<>
         {/* Declared Weights — live spreadsheet-style calculation. Sums every
             ingredient + sub-recipe in grams, applies the recipe's cooking-loss
             %, then divides by portions-per-batch and multiplies by pack size.
@@ -734,324 +712,44 @@ function RecipeForm({
           )}
         </div>
 
-        {/* Unified Ingredients & Prep Items */}
-        {(() => {
-          // All ingredients in this recipe that can be linked to (for connected ingredient pairs)
-          const linkableIngs = (watchedIngredients ?? [])
-            .map(wi => localIngredients.find(i => i.id === Number(wi.ingredientId)))
-            .filter((i): i is IngredientOption => !!i);
-
-          return (
-            <div className="border-t border-border pt-4 space-y-0">
-              {/* Column headers */}
-              <div className="grid grid-cols-[1fr_8rem_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-end px-1 mb-1.5">
-                <span className="text-[10px] text-muted-foreground font-medium">Name</span>
-                <span className="text-[10px] text-muted-foreground font-medium">Supplier</span>
-                <span className="text-[10px] text-muted-foreground font-medium">Qty</span>
-                <span className="text-[10px] text-muted-foreground font-medium text-right">Cost</span>
-                <span className="text-[10px] text-muted-foreground font-medium text-center" title="Include in filling mix">Fill</span>
-                <span className="text-[10px] text-muted-foreground font-medium text-center" title="Topping — skips prep">Top</span>
-                <span className="text-[10px] text-muted-foreground font-medium text-center" title="Show in prep station (for filling items)">Prep</span>
-                <span className="text-[10px] text-amber-600 font-medium text-center" title="Extra grams added at mixing station only">Mix +g</span>
-                <span />
-              </div>
-
-              {/* Ingredients section */}
-              <div className="mb-1">
-                <div className="py-1.5">
-                  <span className="text-xs font-semibold text-primary uppercase tracking-wide">
-                    Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span>
-                  </span>
-                </div>
-                {ingFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No ingredients added</p>}
-                <div className="space-y-1.5">
-                  {ingFields.map((field, index) => {
-                    const cost = ingLineCost(index);
-                    const thisIng = localIngredients.find(i => i.id === Number(watchedIngredients?.[index]?.ingredientId));
-                    const isRawMeat = thisIng?.category === "raw_meat";
-                    const ingMarinadeVal = watchedIngredients?.[index]?.marinadeForIngredientId;
-                    // The <select> registers string values at runtime even though the
-                    // schema type says number, so normalise before testing ("" and "0"
-                    // both coerce to 0 = not linked).
-                    const ingMarinadeSet = ingMarinadeVal != null && Number(ingMarinadeVal) !== 0;
-                    return (
-                      <div key={field.id} className="space-y-0.5">
-                        <div className="grid grid-cols-[1fr_8rem_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
-                          <Controller
-                            control={control}
-                            name={`ingredients.${index}.ingredientId`}
-                            render={({ field }) => (
-                              <IngredientCombobox
-                                value={Number(field.value)}
-                                onChange={id => field.onChange(id)}
-                                options={localIngredients}
-                                onCreateNew={() => openQuickAdd(index)}
-                              />
-                            )}
-                          />
-                          <span className="text-[11px] text-muted-foreground truncate inline-flex items-center gap-1" title={thisIng?.supplierName ?? undefined}>
-                            <UpfChip novaClass={thisIng?.novaClass} markers={thisIng?.novaMarkers} />
-                            <span className="truncate">{thisIng?.supplierName ?? <span className="text-muted-foreground/40">—</span>}</span>
-                          </span>
-                          {(() => {
-                            const isKg = thisIng?.unit === "kg";
-                            const displayUnit = isKg ? (ingDisplayUnits[index] ?? "g") : null;
-                            const storedKg = Number(watchedIngredients?.[index]?.quantity) || 0;
-                            if (!isKg) {
-                              return <input type="number" step="0.0001" {...register(`ingredients.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />;
-                            }
-                            return (
-                              <div className="flex gap-0.5 items-stretch">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1_000_000) / 1000 : storedKg}
-                                  onChange={e => {
-                                    const v = e.target.value === "" ? 0 : Number(e.target.value);
-                                    setValue(`ingredients.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
-                                  }}
-                                  className="min-w-0 flex-1 w-0 px-2 py-1.5 bg-background border border-border rounded-l-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                  placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
-                                />
-                                <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
-                                  <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
-                                  <button type="button" onClick={() => setIngDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                          <span className="text-xs tabular-nums text-right text-muted-foreground">
-                            {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
-                          </span>
-                          <div className="flex justify-center">
-                            <input type="checkbox" {...register(`ingredients.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3.5 h-3.5 cursor-pointer" title="Include in filling mix" />
-                          </div>
-                          <div className="flex justify-center">
-                            <input type="checkbox" {...register(`ingredients.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3.5 h-3.5 cursor-pointer" title="Topping" />
-                          </div>
-                          <div className="flex justify-center">
-                            <input type="checkbox" {...register(`ingredients.${index}.showInPrep`)} className="rounded border-border text-emerald-500 focus:ring-emerald-500/30 w-3.5 h-3.5 cursor-pointer" title="Show in prep station" />
-                          </div>
-                          <div className="flex justify-center">
-                            {watch(`ingredients.${index}.includeInFillingMix`) ? (() => {
-                              const isKg = thisIng?.unit === "kg";
-                              const storedOverage = Number(watchedIngredients?.[index]?.mixingOverage) || 0;
-                              const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
-                              return (
-                                <div className="flex items-center gap-0.5">
-                                  <input
-                                    type="number"
-                                    step="1"
-                                    min="0"
-                                    placeholder="0"
-                                    value={displayGrams || ""}
-                                    onChange={e => {
-                                      const g = Number(e.target.value) || 0;
-                                      setValue(`ingredients.${index}.mixingOverage`, isKg ? g / 1000 : g, { shouldDirty: true, shouldValidate: true });
-                                    }}
-                                    className="w-11 h-6 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
-                                  />
-                                  <span className="text-[9px] text-amber-600">g</span>
-                                </div>
-                              );
-                            })() : <span className="text-[10px] text-muted-foreground/30">—</span>}
-                          </div>
-                          <button type="button" onClick={() => removeIng(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
-                        </div>
-                        {(() => {
-                          // Other ingredients this one can be linked to (exclude self)
-                          const targets = linkableIngs.filter(i => i.id !== Number(watchedIngredients?.[index]?.ingredientId));
-                          if (targets.length === 0) return null;
-                          return ingMarinadeSet ? (
-                            <div className="pl-1 flex items-center gap-1.5">
-                              <select
-                                {...register(`ingredients.${index}.marinadeForIngredientId`)}
-                                className="px-1.5 py-0.5 bg-muted/50 border border-border rounded text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-                              >
-                                <option value="">Not linked</option>
-                                {targets.map(m => <option key={m.id} value={m.id}>Linked to {m.name}</option>)}
-                              </select>
-                              <button type="button" onClick={() => setValue(`ingredients.${index}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground"><X className="w-3 h-3" /></button>
-                              {/* Held back from prep day — the mixing/cooking station
-                                  adds it on production day (e.g. Philly beef stock).
-                                  Weight still counts toward the raw-meat tray sizing. */}
-                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer" title="Don't add at raw meat prep — the mixing station adds this at cooking on production day. Still counted in tray sizing.">
-                                <input type="checkbox" {...register(`ingredients.${index}.marinadeAddAtCooking`)} className="w-3 h-3 accent-primary" />
-                                at cooking
-                              </label>
-                            </div>
-                          ) : (
-                            <button type="button" onClick={() => { setValue(`ingredients.${index}.marinadeForIngredientId`, targets[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
-                              + Link ingredient
-                            </button>
-                          );
-                        })()}
-                      </div>
-                    );
-                  })}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => appendIng({ ingredientId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
-                  className="mt-1.5 w-full px-2 py-1.5 rounded-lg border border-dashed border-primary/40 text-primary hover:bg-primary/10 transition-colors text-xs font-medium"
-                >
-                  + Add ingredient to recipe
-                </button>
-              </div>
-
-              {/* Divider */}
-              <div className="border-t border-dashed border-border/60 my-2" />
-
-              {/* Sub-recipes section */}
-              <div>
-                <div className="py-1.5">
-                  <span className="text-xs font-semibold text-accent uppercase tracking-wide">Sub Recipes</span>
-                </div>
-                {subFields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">No sub recipes added</p>}
-                <div className="space-y-1.5">
-                  {subFields.map((field, index) => {
-                    const cost = subLineCost(index);
-                    const subMarinadeVal = watchedSubRecipes?.[index]?.marinadeForIngredientId;
-                    // See ingMarinadeSet above: the <select> yields strings at runtime.
-                    const subMarinadeSet = subMarinadeVal != null && Number(subMarinadeVal) !== 0;
-                    return (
-                      <div key={field.id} className="space-y-0.5">
-                        <div className="grid grid-cols-[1fr_8rem_6rem_3.5rem_2rem_2rem_2rem_4rem_1.25rem] gap-x-2 gap-y-0 items-center">
-                          {/* Type-to-search, same as the ingredient rows (Graeme, 2026-09-29). */}
-                          <Controller
-                            control={control}
-                            name={`subRecipes.${index}.subRecipeId`}
-                            render={({ field }) => (
-                              <IngredientCombobox
-                                value={Number(field.value)}
-                                onChange={id => field.onChange(id)}
-                                options={subRecipeOptions}
-                                placeholder="Select sub-recipe…"
-                                emptyText="No sub-recipes found"
-                              />
-                            )}
-                          />
-                          {(() => {
-                            const subUpf = formSubUpfById.get(Number(watchedSubRecipes?.[index]?.subRecipeId));
-                            return subUpf != null && (subUpf.upfPercent ?? 0) > 0 ? (
-                              <UpfPercentPill
-                                percent={subUpf.upfPercent}
-                                unclassifiedCount={subUpf.unclassifiedIngredients.length}
-                                upfNames={subUpf.upfIngredients.map(u => u.name)}
-                              />
-                            ) : <span className="text-[11px] text-muted-foreground/40">—</span>;
-                          })()}
-                          {(() => {
-                            const thisSub = subRecipes.find(s => s.id === Number(watchedSubRecipes?.[index]?.subRecipeId));
-                            const isKg = thisSub?.yieldUnit === "kg";
-                            const displayUnit = isKg ? (subDisplayUnits[index] ?? "g") : null;
-                            const storedKg = Number(watchedSubRecipes?.[index]?.quantity) || 0;
-                            if (!isKg) {
-                              return <input type="number" step="0.0001" {...register(`subRecipes.${index}.quantity`)} className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.000" />;
-                            }
-                            return (
-                              <div className="flex gap-0.5 items-stretch">
-                                <input
-                                  type="number"
-                                  step="any"
-                                  min="0"
-                                  value={storedKg === 0 ? "" : displayUnit === "g" ? Math.round(storedKg * 1_000_000) / 1000 : storedKg}
-                                  onChange={e => {
-                                    const v = e.target.value === "" ? 0 : Number(e.target.value);
-                                    setValue(`subRecipes.${index}.quantity`, displayUnit === "g" ? v / 1000 : v, { shouldValidate: true });
-                                  }}
-                                  className="min-w-0 flex-1 w-0 px-2 py-1.5 bg-background border border-border rounded-l-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30"
-                                  placeholder={displayUnit === "g" ? "e.g. 250" : "0.000"}
-                                />
-                                <div className="flex flex-col shrink-0 text-[9px] font-semibold overflow-hidden border border-l-0 border-border rounded-r-lg">
-                                  <button type="button" onClick={() => setSubDisplayUnits(u => ({ ...u, [index]: "g" }))} className={cn("px-1 flex-1 transition-colors", displayUnit === "g" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>g</button>
-                                  <button type="button" onClick={() => setSubDisplayUnits(u => ({ ...u, [index]: "kg" }))} className={cn("px-1 flex-1 border-t border-border transition-colors", displayUnit === "kg" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60")}>kg</button>
-                                </div>
-                              </div>
-                            );
-                          })()}
-                          <span className="text-xs tabular-nums text-right text-muted-foreground">
-                            {cost !== null ? `£${(Math.ceil(cost * 100) / 100).toFixed(2)}` : "—"}
-                          </span>
-                          <div className="flex justify-center">
-                            <input type="checkbox" {...register(`subRecipes.${index}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-3.5 h-3.5 cursor-pointer" title="Include in filling mix" />
-                          </div>
-                          <div className="flex justify-center">
-                            <input type="checkbox" {...register(`subRecipes.${index}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-3.5 h-3.5 cursor-pointer" title="Topping" />
-                          </div>
-                          <div className="flex justify-center">
-                            <input type="checkbox" {...register(`subRecipes.${index}.showInPrep`)} className="rounded border-border text-emerald-500 focus:ring-emerald-500/30 w-3.5 h-3.5 cursor-pointer" title="Show in prep station" />
-                          </div>
-                          <div className="flex justify-center">
-                            {watch(`subRecipes.${index}.includeInFillingMix`) ? (() => {
-                              const thisSub = subRecipes.find(s => s.id === Number(watchedSubRecipes?.[index]?.subRecipeId));
-                              const isKg = thisSub?.yieldUnit === "kg";
-                              const storedOverage = Number(watchedSubRecipes?.[index]?.mixingOverage) || 0;
-                              const displayGrams = isKg ? Math.round(storedOverage * 1000) : storedOverage;
-                              return (
-                                <div className="flex items-center gap-0.5">
-                                  <input
-                                    type="number"
-                                    step="1"
-                                    min="0"
-                                    placeholder="0"
-                                    value={displayGrams || ""}
-                                    onChange={e => {
-                                      const g = Number(e.target.value) || 0;
-                                      setValue(`subRecipes.${index}.mixingOverage`, isKg ? g / 1000 : g, { shouldDirty: true, shouldValidate: true });
-                                    }}
-                                    className="w-11 h-6 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-[10px] tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
-                                  />
-                                  <span className="text-[9px] text-amber-600">g</span>
-                                </div>
-                              );
-                            })() : <span className="text-[10px] text-muted-foreground/30">—</span>}
-                          </div>
-                          <button type="button" onClick={() => removeSub(index)} className="text-muted-foreground hover:text-destructive flex justify-center"><X className="w-3.5 h-3.5" /></button>
-                        </div>
-                        {linkableIngs.length > 0 && (
-                          subMarinadeSet ? (
-                            <div className="pl-1 flex items-center gap-1.5">
-                              <select
-                                {...register(`subRecipes.${index}.marinadeForIngredientId`)}
-                                className="px-1.5 py-0.5 bg-muted/50 border border-border rounded text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
-                              >
-                                <option value="">Not linked</option>
-                                {linkableIngs.map(m => <option key={m.id} value={m.id}>Linked to {m.name}</option>)}
-                              </select>
-                              <button type="button" onClick={() => setValue(`subRecipes.${index}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground"><X className="w-3 h-3" /></button>
-                              <label className="flex items-center gap-1 text-[10px] text-muted-foreground cursor-pointer" title="Don't add at raw meat prep — the mixing station adds this at cooking on production day. Still counted in tray sizing.">
-                                <input type="checkbox" {...register(`subRecipes.${index}.marinadeAddAtCooking`)} className="w-3 h-3 accent-primary" />
-                                at cooking
-                              </label>
-                            </div>
-                          ) : (
-                            <button type="button" onClick={() => { setValue(`subRecipes.${index}.marinadeForIngredientId`, linkableIngs[0]?.id ?? 0); }} className="pl-1 text-[10px] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
-                              + Link ingredient
-                            </button>
-                          )
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => appendSub({ subRecipeId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 })}
-                  className="mt-1.5 w-full px-2 py-1.5 rounded-lg border border-dashed border-accent/40 text-accent hover:bg-accent/10 transition-colors text-xs font-medium"
-                >
-                  + Add sub-recipe to recipe
-                </button>
-              </div>
-            </div>
-          );
-        })()}
-
-        <div>
-          <label className="text-sm font-medium mb-1 block">Notes (optional)</label>
-          <textarea {...register("notes")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none" placeholder="Allergens, packaging notes, shelf life…" />
-        </div>
+        </>}
+        lines={[
+          <LineRows
+            key="ingredients"
+            form={form}
+            kind="ingredient"
+            name="ingredients"
+            idField="ingredientId"
+            title={<>Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span></>}
+            emptyText="No ingredients added"
+            addLabel="Add ingredient to recipe"
+            options={localIngredients}
+            onQuickAdd={openQuickAdd}
+            newRow={() => ({ ingredientId: 0, quantity: 0, ...lineDefaults })}
+            lineCost={row => recipeIngredientLineCost(row?.quantity, localIngredients.find(i => i.id === Number(row?.ingredientId)), watchedServings)}
+            productionTicks
+            link={{ word: "Linked to", addLabel: "+ Link ingredient", targets: row => linkableIngs.filter(i => i.id !== Number(row?.ingredientId)) }}
+          />,
+          <LineRows
+            key="subRecipes"
+            form={form}
+            kind="subRecipe"
+            name="subRecipes"
+            idField="subRecipeId"
+            tone="accent"
+            title="Sub Recipes"
+            emptyText="No sub recipes added"
+            addLabel="Add sub-recipe to recipe"
+            options={subRecipes}
+            upfById={formSubUpfById}
+            newRow={() => ({ subRecipeId: 0, quantity: 0, ...lineDefaults })}
+            lineCost={row => recipeSubRecipeLineCost(row?.quantity, subRecipes.find(s => s.id === Number(row?.subRecipeId)), watchedServings)}
+            productionTicks
+            link={{ word: "Linked to", addLabel: "+ Link ingredient", targets: () => linkableIngs }}
+          />,
+        ]}
+        notes={register("notes")}
+        beforeSave={<>
 
         {!isEdit && (
           <label
@@ -1097,15 +795,15 @@ function RecipeForm({
           </div>
         )}
 
-        {/* Pinned to the bottom of the editor (components/recipe-editor). */}
-        <EditorSaveBar
-          mode={isEdit ? "edit" : "create"}
-          dirty={dirty}
-          saving={isPending}
-          label={isEdit ? (draftTickNotice ? "Save and put on the menu" : "Save changes") : createAsDraft ? "Create draft" : "Create recipe"}
-          onSave={() => { void save(); }}
-        />
-      </form>
+        </>}
+        save={{
+          mode: isEdit ? "edit" : "create",
+          dirty,
+          saving: isPending,
+          label: isEdit ? (draftTickNotice ? "Save and put on the menu" : "Save changes") : createAsDraft ? "Create draft" : "Create recipe",
+          onSave: () => { void save(); },
+        }}
+      />
     </>
   );
 }
@@ -1365,24 +1063,15 @@ function EditRecipeDialog({
                 allTags={allTags}
                 isDraft={isDraftRecipe(detail as ArchiveFields | undefined)}
                 onSubmit={(data) => {
-                  // isFridgeProduct rides its own endpoint — the main update
-                  // body's validator is OpenAPI-generated and would drop it.
-                  const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, startAsDraft: _startAsDraft, ...rest } = data;
-                  // Core menu / Special ticked on a draft: this save puts it
-                  // on the menu (the form said so above Save). Migration 0142.
-                  const publishDraft = isDraftRecipe(detail as ArchiveFields | undefined) && (rest.isCoreMenu === true || rest.isCurrentSpecial === true);
-                  const payload = {
-                    ...withoutQuid(rest),
-                    ...(publishDraft ? { publishDraft: true } : {}),
-                    targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
-                    ovenTempC: rest.ovenTempC ?? null,
-                    ovenTimeSeconds: ovenTimeMinutes != null ? Math.round(ovenTimeMinutes * 60) : null,
-                  } as unknown as typeof data;
+                  // isFridgeProduct rides its own endpoint; a draft with Core
+                  // menu / Special ticked is published (lib/recipe-editor-payload).
+                  const { body, isFridgeProduct } = buildRecipeUpdatePayload(data, { isDraft: isDraftRecipe(detail as ArchiveFields | undefined) });
+                  const payload = body as unknown as typeof data;
                   const fridgeWrite = fetch(`/api/recipes/${id}/fridge-product`, {
                     method: "PUT",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
-                    body: JSON.stringify({ isFridgeProduct: isFridgeProduct === true }),
+                    body: JSON.stringify({ isFridgeProduct }),
                   }).catch(() => {});
                   updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { fridgeWrite.finally(() => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); queryClient.invalidateQueries({ queryKey: ["/api/recipes"] }); queryClient.invalidateQueries({ queryKey: recipeQuidKey(id) }); }); onOpenChange(false); } });
                 }}
@@ -2645,19 +2334,10 @@ export default function Recipes() {
             categoryDefaults={catDefaults}
             allTags={allTags}
             onSubmit={(data) => {
-              // isFridgeProduct rides its own endpoint — the create body's
-              // validator is OpenAPI-generated and would drop it.
-              const { targetBuildMinutes, isFridgeProduct, ovenTimeMinutes, startAsDraft, ...rest } = data;
-              // Start as a draft (migration 0142) — never while Core menu or
-              // Special is ticked (the form shows that too).
-              const isDraft = startAsDraft === true && rest.isCoreMenu !== true && rest.isCurrentSpecial !== true;
-              const payload = {
-                ...withoutQuid(rest),
-                isDraft,
-                targetBuildSeconds: targetBuildMinutes != null ? Math.round(targetBuildMinutes * 60) : null,
-                ovenTempC: rest.ovenTempC ?? null,
-                ovenTimeSeconds: ovenTimeMinutes != null ? Math.round(ovenTimeMinutes * 60) : null,
-              } as unknown as typeof data;
+              // isFridgeProduct rides its own endpoint; drafts only when asked
+              // and not on the menu (lib/recipe-editor-payload).
+              const { body, isDraft, isFridgeProduct } = buildRecipeCreatePayload(data);
+              const payload = body as unknown as typeof data;
               createRecipe.mutate({ data: payload }, {
                 onSuccess: (created) => {
                   // Show the new recipe where it now lives.

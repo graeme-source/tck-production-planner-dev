@@ -1,0 +1,269 @@
+/**
+ * The ingredient rows and sub-recipe rows of the recipe AND sub-recipe
+ * editors — one component, so both editors search, add, measure, cost and
+ * link lines exactly the same way (Graeme, 2026-10-12: "if it's got the same
+ * thing … it should just use exactly the same structure and code").
+ * Objectives A and F.
+ *
+ * What only one editor needs is switched on by props, never by page name:
+ *   productionTicks  Fill / Top / Prep / Mix +g columns (final products)
+ *   hideFromPrep     "Hide from prep sheet" (sub-recipe ingredients)
+ *   ratioNote        processing-ratio note (sub-recipe ingredients)
+ *   link             which lines a row can be linked to, and the wording
+ *                    ("Linked to …" in recipes, "Marinade for …" raw meat
+ *                    in sub-recipes)
+ *   lineCost         the cost rule (lib/recipe-line-cost)
+ *
+ * The form is any react-hook-form form whose array rows carry the id field
+ * named by `idField` plus quantity / marinadeForIngredientId /
+ * marinadeAddAtCooking — field paths are built from `name`, so the form's
+ * own types aren't visible here.
+ */
+import { useState, type ReactNode } from "react";
+import { useFieldArray, type UseFormReturn } from "react-hook-form";
+import { FlaskConical, Plus, X } from "lucide-react";
+import { IngredientCombobox } from "@/components/ingredient-combobox";
+import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
+import { cn } from "@/lib/utils";
+import { formatLineCost } from "@/lib/recipe-line-cost";
+import { QuantityInput } from "./quantity-input";
+import type { EditorIngredientOption, EditorSubRecipeOption } from "./types";
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyForm = UseFormReturn<any>;
+type Row = Record<string, unknown>;
+type LinkTarget = { id: number; name: string };
+
+type UpfSummary = { upfPercent?: number | null; unclassifiedIngredients: unknown[]; upfIngredients: Array<{ name: string }> };
+
+export type LineRowsProps = {
+  form: AnyForm;
+  /** Field array name, e.g. "ingredients", "subRecipes", "subRecipeComponents". */
+  name: string;
+  /** Row field holding the picked id, e.g. "ingredientId", "subRecipeId". */
+  idField: string;
+  title: ReactNode;
+  tone?: "primary" | "accent";
+  emptyText: string;
+  addLabel: string;
+  /** A fresh row (quantity 0 = blank box). */
+  newRow: () => Row;
+  addDisabled?: boolean;
+  lineCost: (row: Row | undefined) => number | null;
+  /** Fill / Top / Prep / Mix +g columns. */
+  productionTicks?: boolean;
+  /** "Hide from prep sheet" under each row. */
+  hideFromPrep?: boolean;
+  /** Processing-ratio note under each row (ingredients). */
+  ratioNote?: boolean;
+  /** Linking a line to another line (marinades, connected pairs). */
+  link?: {
+    targets: (row: Row | undefined) => LinkTarget[];
+    /** "Linked to" / "Marinade for". */
+    word: string;
+    addLabel: string;
+  };
+} & (
+  | { kind: "ingredient"; options: EditorIngredientOption[]; onQuickAdd?: (index: number) => void }
+  | { kind: "subRecipe"; options: EditorSubRecipeOption[]; upfById?: Map<number, UpfSummary> }
+);
+
+export function LineRows(props: LineRowsProps) {
+  const { form, name, idField, title, tone = "primary", emptyText, addLabel, newRow, addDisabled, lineCost, productionTicks, hideFromPrep, ratioNote, link } = props;
+  const { control, register, setValue, watch } = form;
+  const { fields, append, remove } = useFieldArray({ control, name });
+  const rows = (watch(name) ?? []) as Row[];
+  // g / kg display per row, keyed by the row's stable id (not its index, so
+  // removing a row doesn't hand its setting to the next one).
+  const [display, setDisplay] = useState<Record<string, "g" | "kg">>({});
+
+  const pickerOptions = props.kind === "ingredient"
+    ? props.options
+    : props.options.map(s => ({ id: s.id, name: s.name, unit: s.yieldUnit }));
+
+  const grid = productionTicks
+    ? "grid-cols-[minmax(10rem,1fr)_7rem_8rem_4rem_2.25rem_2.25rem_2.25rem_4.5rem_2.25rem]"
+    : "grid-cols-[minmax(10rem,1fr)_7rem_8rem_4rem_2.25rem]";
+
+  const set = (path: string, v: unknown) => setValue(path, v, { shouldDirty: true, shouldValidate: true });
+
+  return (
+    <div data-testid={`lines-${name}`}>
+      <div className="py-1.5">
+        <span className={cn("text-xs font-semibold uppercase tracking-wide", tone === "accent" ? "text-accent" : "text-primary")}>{title}</span>
+      </div>
+
+      {fields.length > 0 && (
+        <div className={cn("grid gap-x-2 items-end px-1 mb-1", grid)}>
+          <span className="text-[10px] text-muted-foreground font-medium">Name</span>
+          <span className="text-[10px] text-muted-foreground font-medium">{props.kind === "ingredient" ? "Supplier" : "UPF"}</span>
+          <span className="text-[10px] text-muted-foreground font-medium">Qty</span>
+          <span className="text-[10px] text-muted-foreground font-medium text-right">Cost</span>
+          {productionTicks && (
+            <>
+              <span className="text-[10px] text-muted-foreground font-medium text-center" title="Include in filling mix">Fill</span>
+              <span className="text-[10px] text-muted-foreground font-medium text-center" title="Topping — skips prep">Top</span>
+              <span className="text-[10px] text-muted-foreground font-medium text-center" title="Show in prep station (for filling items)">Prep</span>
+              <span className="text-[10px] text-amber-600 font-medium text-center" title="Extra grams added at mixing station only">Mix +g</span>
+            </>
+          )}
+          <span />
+        </div>
+      )}
+
+      {fields.length === 0 && <p className="text-xs text-muted-foreground italic pl-1 pb-1">{emptyText}</p>}
+
+      <div className="space-y-2">
+        {fields.map((field, index) => {
+          const row = rows[index];
+          const path = `${name}.${index}`;
+          const pickedId = Number(row?.[idField] ?? 0);
+          const ing = props.kind === "ingredient" ? props.options.find(i => i.id === pickedId) : undefined;
+          const sub = props.kind === "subRecipe" ? props.options.find(s => s.id === pickedId) : undefined;
+          const unit = ing?.unit ?? sub?.yieldUnit ?? "";
+          const cost = lineCost(row);
+          const marinadeVal = row?.marinadeForIngredientId;
+          // Selects hand back strings; "" and "0" both mean not linked.
+          const linked = marinadeVal != null && marinadeVal !== "" && Number(marinadeVal) !== 0;
+          const targets = link ? link.targets(row) : [];
+          const ratio = ing?.processingRatio;
+          const subUpf = sub && props.kind === "subRecipe" ? props.upfById?.get(sub.id) : undefined;
+          return (
+            <div key={field.id} className="space-y-1">
+              <div className={cn("grid gap-x-2 items-center", grid)}>
+                <IngredientCombobox
+                  value={pickedId}
+                  onChange={id => set(`${path}.${idField}`, id)}
+                  options={pickerOptions}
+                  placeholder={props.kind === "ingredient" ? "Select ingredient…" : "Select sub-recipe…"}
+                  emptyText={props.kind === "ingredient" ? undefined : "No sub-recipes found"}
+                  onCreateNew={props.kind === "ingredient" && props.onQuickAdd ? () => props.onQuickAdd?.(index) : undefined}
+                />
+                {props.kind === "ingredient" ? (
+                  <span className="text-[11px] text-muted-foreground truncate inline-flex items-center gap-1" title={ing?.supplierName ?? undefined}>
+                    <UpfChip novaClass={ing?.novaClass} markers={ing?.novaMarkers} />
+                    <span className="truncate">{ing?.supplierName ?? <span className="text-muted-foreground/40">—</span>}</span>
+                  </span>
+                ) : subUpf != null && (subUpf.upfPercent ?? 0) > 0 ? (
+                  <UpfPercentPill
+                    percent={subUpf.upfPercent}
+                    unclassifiedCount={subUpf.unclassifiedIngredients.length}
+                    upfNames={subUpf.upfIngredients.map(u => u.name)}
+                  />
+                ) : <span className="text-[11px] text-muted-foreground/40">—</span>}
+                <QuantityInput
+                  unit={unit}
+                  storedValue={row?.quantity}
+                  display={display[field.id] ?? "g"}
+                  onDisplayChange={d => setDisplay(s => ({ ...s, [field.id]: d }))}
+                  onKgChange={kg => set(`${path}.quantity`, kg)}
+                  register={register(`${path}.quantity`)}
+                />
+                <span className="text-xs tabular-nums text-right text-muted-foreground">{formatLineCost(cost)}</span>
+                {productionTicks && (
+                  <>
+                    <div className="flex justify-center">
+                      <input type="checkbox" {...register(`${path}.includeInFillingMix`)} className="rounded border-border text-primary focus:ring-primary/30 w-4 h-4 cursor-pointer" title="Include in filling mix" />
+                    </div>
+                    <div className="flex justify-center">
+                      <input type="checkbox" {...register(`${path}.isTopping`)} className="rounded border-border text-amber-500 focus:ring-amber-500/30 w-4 h-4 cursor-pointer" title="Topping" />
+                    </div>
+                    <div className="flex justify-center">
+                      <input type="checkbox" {...register(`${path}.showInPrep`)} className="rounded border-border text-emerald-500 focus:ring-emerald-500/30 w-4 h-4 cursor-pointer" title="Show in prep station" />
+                    </div>
+                    <div className="flex justify-center">
+                      {row?.includeInFillingMix ? (() => {
+                        const isKg = unit === "kg";
+                        const stored = Number(row?.mixingOverage) || 0;
+                        const grams = isKg ? Math.round(stored * 1000) : stored;
+                        return (
+                          <div className="flex items-center gap-0.5">
+                            <input
+                              type="number"
+                              step="1"
+                              min="0"
+                              placeholder="0"
+                              value={grams || ""}
+                              onChange={e => {
+                                const g = Number(e.target.value) || 0;
+                                set(`${path}.mixingOverage`, isKg ? g / 1000 : g);
+                              }}
+                              className="w-12 h-8 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-xs tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
+                            />
+                            <span className="text-[10px] text-amber-600">g</span>
+                          </div>
+                        );
+                      })() : <span className="text-[10px] text-muted-foreground/30">—</span>}
+                    </div>
+                  </>
+                )}
+                <button type="button" onClick={() => remove(index)} className="flex items-center justify-center h-9 text-muted-foreground hover:text-destructive transition-colors" aria-label="Remove line">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {ratioNote && ratio != null && ratio < 1 && (
+                <div className="ml-1 text-xs text-amber-600 flex items-center gap-1">
+                  <FlaskConical className="w-3 h-3" />
+                  Processing ratio: {(ratio * 100).toFixed(2)}% — yield adjusted from raw input
+                </div>
+              )}
+
+              {(hideFromPrep || (link && targets.length > 0)) && (
+                <div className="pl-1 flex items-center gap-3 flex-wrap text-xs text-muted-foreground">
+                  {hideFromPrep && (
+                    <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+                      <input type="checkbox" {...register(`${path}.hideFromPrep`)} className="rounded border-border" />
+                      <span>Hide from prep sheet</span>
+                      <span className="text-[10px] text-muted-foreground/80">(keeps the quantity for ratio maths; doesn&rsquo;t show for prep)</span>
+                    </label>
+                  )}
+                  {link && targets.length > 0 && (linked ? (
+                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                      <select
+                        {...register(`${path}.marinadeForIngredientId`)}
+                        className="px-2 py-1 bg-muted/50 border border-border rounded-lg text-xs text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/30"
+                      >
+                        <option value="">Not linked</option>
+                        {targets.map(t => <option key={t.id} value={t.id}>{link.word} {t.name}</option>)}
+                      </select>
+                      <button type="button" onClick={() => set(`${path}.marinadeForIngredientId`, null)} className="text-muted-foreground/60 hover:text-muted-foreground p-1" aria-label="Unlink">
+                        <X className="w-3 h-3" />
+                      </button>
+                      {/* Held back from prep day — the mixing/cooking station adds
+                          it on production day. Still counts toward tray sizing. */}
+                      <label className="inline-flex items-center gap-1 cursor-pointer" title="Don't add at raw meat prep — the mixing station adds this at cooking on production day. Still counted in tray sizing.">
+                        <input type="checkbox" {...register(`${path}.marinadeAddAtCooking`)} className="w-3.5 h-3.5 accent-primary" />
+                        add at cooking
+                      </label>
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => set(`${path}.marinadeForIngredientId`, targets[0]?.id ?? null)}
+                      className="text-xs text-muted-foreground/70 hover:text-muted-foreground transition-colors py-1"
+                    >
+                      {link.addLabel}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={() => append(newRow())}
+        disabled={addDisabled}
+        className={cn(
+          "mt-2 w-full min-h-10 px-2 py-2 rounded-lg border border-dashed transition-colors text-sm font-medium flex items-center justify-center gap-1 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent",
+          tone === "accent" ? "border-accent/40 text-accent hover:bg-accent/10" : "border-primary/40 text-primary hover:bg-primary/10",
+        )}
+      >
+        <Plus className="w-4 h-4" /> {addLabel}
+      </button>
+    </div>
+  );
+}
