@@ -60,6 +60,7 @@
     "@workspace/production-schedule": "workspace:*",
     "@workspace/revenue-targets": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
+    "@workspace/people-reviews": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",

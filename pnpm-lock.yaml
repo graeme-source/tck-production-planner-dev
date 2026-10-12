@@ -135,6 +135,9 @@ importers:
       '@workspace/messages':
         specifier: workspace:*
         version: link:../../lib/messages
+      '@workspace/people-reviews':
+        specifier: workspace:*
+        version: link:../../lib/people-reviews
       '@workspace/product-labels':
         specifier: workspace:*
         version: link:../../lib/product-labels
@@ -617,6 +620,9 @@ importers:
       '@workspace/messages':
         specifier: workspace:*
         version: link:../../lib/messages
+      '@workspace/people-reviews':
+        specifier: workspace:*
+        version: link:../../lib/people-reviews
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
@@ -758,6 +764,8 @@ importers:
   lib/marketing-calendar: {}
 
   lib/messages: {}
+
+  lib/people-reviews: {}
 
   lib/product-labels:
     dependencies:
