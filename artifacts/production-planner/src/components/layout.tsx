@@ -48,7 +48,6 @@ import {
   KeyRound,
   User,
   LockKeyhole,
-  Beaker,
   AlertTriangle,
   FileText,
   Wrench,
@@ -113,9 +112,9 @@ export const productNavItems: NavItem[] = [
   { name: "Recipes", href: "/recipes", icon: ChefHat },
   { name: "Sub-Recipes", href: "/sub-recipes", icon: ClipboardList },
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
-  { name: "Product Hub", href: "/product-hub", icon: Beaker },
-  // Pack labels — live versions + proofs (Stage 1 of replacing Label LIVE).
-  { name: "Labels", href: "/labels", icon: Tag },
+  // Product Labels hub — pack labels, ingredient decks, nutrition and data
+  // health in one place. Replaced the old Product Hub (Graeme, 12 Oct 2026).
+  { name: "Product Labels", href: "/labels", icon: Tag },
   { name: "Surveys", href: "/surveys", icon: MessagesSquare },
 ];
 
@@ -146,7 +145,7 @@ export const analyticsSubItems: NavItem[] = [
   { name: "Finance", href: "/finance", icon: Banknote },
 ];
 
-const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/product-hub", "/labels", "/surveys"];
+const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
 const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/case-orders"];
 // Module-level so the top bar's page name can find these pages too.
 const DISPATCH_SUB_ITEMS = [

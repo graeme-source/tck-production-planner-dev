@@ -69,7 +69,6 @@ import FounderFixQueue from "@/pages/founder-fix-queue";
 import TestRequestsPage from "@/pages/test-requests";
 import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
-import ProductHub from "@/pages/product-hub";
 import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
 import { stationTrainingPath } from "@/lib/training-sections";
@@ -236,7 +235,9 @@ function Router() {
               <Route path="/kanbans">{() => <Redirect to="/orders" />}</Route>
               <Route path="/deliveries" component={Deliveries} />
               <Route path="/stock-control" component={StockControl} />
-              <Route path="/product-hub" component={ProductHub} />
+              {/* Product Hub retired 12 Oct 2026 — its decks, nutrition and
+                  data health now live in Product Labels (?tab=health kept). */}
+              <Route path="/product-hub">{() => <RedirectKeepingQuery to="/labels" />}</Route>
               <Route path="/surveys">{() => <ProtectedRoute component={Surveys} pageKey="/surveys" />}</Route>
               {/* The Business — a site within a site; FounderNav (shared tab
                   strip) covers the side-trips. /founder lands on the first tab
