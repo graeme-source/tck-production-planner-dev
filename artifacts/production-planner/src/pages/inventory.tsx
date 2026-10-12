@@ -537,7 +537,12 @@ export default function Inventory() {
     setIsPending(true);
     if (id !== null) {
       updateIngredient.mutate({ id, data: payload }, {
-        onSuccess: () => { setIsDialogOpen(false); setEditingItem(null); setIsPending(false); },
+        onSuccess: (row) => {
+          setIsDialogOpen(false); setEditingItem(null); setIsPending(false);
+          // The server wraps a bare component list under the name (2026-10-12).
+          const saved = row as typeof row & { labelDeclarationWrapped?: boolean; labelDeclaration?: string | null };
+          if (saved.labelDeclarationWrapped) toast({ title: "Wrapped under its name for the label", description: saved.labelDeclaration ?? undefined });
+        },
         onError: () => setIsPending(false),
       });
     } else {

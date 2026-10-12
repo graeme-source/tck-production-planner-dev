@@ -11,7 +11,7 @@
  */
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
-import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
+import { detectAllergens, ALLERGEN_DISPLAY, declarationNeedsWrapper, labelNameFor, wrapDeclaration } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -81,7 +81,7 @@ export function categoryLabel(value: string | null | undefined, isPerishable: bo
  *  validation — the caller decides whether to fire a create or update
  *  mutation, what the success toast says, etc. */
 export function IngredientFormDialog({
-  open, onClose, editingItem, defaultMode, suppliers, onSave, lockMode,
+  open, onClose, editingItem, defaultMode, suppliers, onSave, lockMode, focusDeclaration, declarationNotice,
 }: {
   open: boolean;
   onClose: () => void;
@@ -92,6 +92,12 @@ export function IngredientFormDialog({
   /** When true, the ingredient/supply tab toggle is hidden. Used by
    *  Quick-Add where the caller already knows the mode. */
   lockMode?: boolean;
+  /** Open with the Label Declaration field showing and focused — used when a
+   *  label check's "fix it" button opens this dialog (2026-10-12). */
+  focusDeclaration?: boolean;
+  /** Shown under the declaration after a save changed it (e.g. "Wrapped
+   *  under its name for the label"). */
+  declarationNotice?: string | null;
 }) {
   const { register, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<IngredientFormValues>({
     resolver: zodResolver(ingredientFormSchema),
@@ -138,7 +144,30 @@ export function IngredientFormDialog({
   // its text implies is auto-ticked. Add-only, and keyed to the declaration
   // text — unticking a false positive sticks until the text itself changes.
   const watchedDeclaration = watch("labelDeclaration") ?? "";
+  const watchedName = watch("name") ?? "";
   const detectedCodes = useMemo(() => detectAllergens(watchedDeclaration), [watchedDeclaration]);
+
+  // Opened from a label check's "fix it" button: show the declaration
+  // section and put the cursor in the field.
+  const declarationReg = register("labelDeclaration");
+  const declarationRef = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    if (open && focusDeclaration) setNutritionOpen(true);
+  }, [open, focusDeclaration]);
+  useEffect(() => {
+    if (!(open && focusDeclaration && nutritionOpen)) return;
+    const t = setTimeout(() => {
+      declarationRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
+      declarationRef.current?.focus({ preventScroll: true });
+    }, 200);
+    return () => clearTimeout(t);
+  }, [open, focusDeclaration, nutritionOpen]);
+  // What a save will store when the text is a bare list — the server wraps
+  // it under the name with the same shared rule (@workspace/allergens).
+  const wrapPreview = watchedDeclaration.trim() && declarationNeedsWrapper(watchedDeclaration)
+    ? wrapDeclaration(watchedName, watchedDeclaration).declaration
+    : null;
+  const singleName = labelNameFor(watchedName);
   const detectedKey = detectedCodes.join(",");
   useEffect(() => {
     if (!open || detectedCodes.length === 0) return;
@@ -1330,8 +1359,46 @@ export function IngredientFormDialog({
                   </div>
                   <div>
                     <label className="text-sm font-medium mb-1 block">Label Declaration</label>
-                    <textarea {...register("labelDeclaration")} rows={2} className={cn(inputClass, "resize-none")} placeholder='e.g. "Wheat Flour (Wheat, Calcium Carbonate, Iron, Niacin, Thiamin)"' />
+                    <textarea
+                      {...declarationReg}
+                      ref={el => { declarationReg.ref(el); declarationRef.current = el; }}
+                      rows={focusDeclaration ? 4 : 2}
+                      className={cn(inputClass, "resize-none", focusDeclaration && "ring-2 ring-primary/40")}
+                      placeholder='e.g. "Wheat Flour (Wheat, Calcium Carbonate, Iron, Niacin, Thiamin)"'
+                    />
                     <p className="text-xs text-muted-foreground mt-1">How this ingredient appears in the product ingredient deck.</p>
+                    {declarationNotice && (
+                      <p className="mt-2 rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/30 dark:border-emerald-800 px-3 py-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
+                        {declarationNotice}
+                      </p>
+                    )}
+                    {wrapPreview && (
+                      <p className="mt-2 rounded-lg border border-sky-300 bg-sky-50 dark:bg-sky-950/30 dark:border-sky-800 px-3 py-2 text-sm text-sky-900 dark:text-sky-200">
+                        This lists several ingredients without the name they belong to. When you save it's stored as{" "}
+                        <b>{wrapPreview}</b> — wrapped under its name for the label.
+                      </p>
+                    )}
+                    {!watchedDeclaration.trim() && isIngredient && (
+                      <div className="mt-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-800 px-3 py-2 space-y-2">
+                        <p className="text-sm text-amber-900 dark:text-amber-200">
+                          No declaration yet — product labels using this can't be published until it has one.
+                        </p>
+                        {singleName && (
+                          <button
+                            type="button"
+                            onClick={() => setValue("labelDeclaration", singleName, { shouldDirty: true })}
+                            className="min-h-11 px-3 py-2 rounded-lg border-2 border-amber-400 bg-card text-sm font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                          >
+                            Use “{singleName}” (single ingredient)
+                          </button>
+                        )}
+                        <p className="text-xs text-amber-800 dark:text-amber-300">
+                          Only for something that is one ingredient on its own, like Basil or Salt. Anything bought in with more than one
+                          ingredient — grated cheese with anti-caking agent, sauces, cured meats — needs the list from the supplier's spec
+                          sheet or the pack, so it's never filled in for you.
+                        </p>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-sm font-medium mb-1 block">Allergens (UK14)</label>
