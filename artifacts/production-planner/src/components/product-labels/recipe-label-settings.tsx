@@ -14,7 +14,7 @@ import { StepPreview } from "./step-preview";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
-import { api, useInvalidateLabels, type RecipeLabel } from "./api";
+import { api, useInvalidateLabels, useLabelTemplates, type RecipeLabel } from "./api";
 
 type Patch = Record<string, unknown>;
 
@@ -48,6 +48,8 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
   const [labelName, setLabelName] = useState("");
   const [nums, setNums] = useState<Record<string, string>>({});
   const [flags, setFlags] = useState({ ovenOn: data.settings.ovenOn, airFryerOn: data.settings.airFryerOn, frozenOn: data.settings.frozenOn });
+  const templates = useLabelTemplates();
+  const [templateChoice, setTemplateChoice] = useState<number | null>(data.templateChoice);
   // Bones warning: null = Automatic, true / false = always on / off.
   const [bones, setBones] = useState<boolean | null>(data.settings.warningOn);
   useEffect(() => {
@@ -126,6 +128,25 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
           Set it on the recipe page — the packing scanner uses the same number <ChevronRight className="w-4 h-4" />
         </Link>
       </div>
+
+      {/* Template */}
+      {(templates.data?.templates.length ?? 0) > 1 && (
+        <div className="space-y-2">
+          <label htmlFor="label-template" className="text-base font-bold">Label template</label>
+          <select
+            id="label-template"
+            value={templateChoice ?? ""}
+            disabled={!canEdit}
+            onChange={e => { const v = e.target.value === "" ? null : Number(e.target.value); setTemplateChoice(v); save({ templateId: v }); }}
+            className={cn(inputCls, "w-full max-w-md text-base")}
+          >
+            {templates.data!.templates.map(t => (
+              <option key={t.id} value={t.isDefault ? "" : t.id}>{t.name}{t.isDefault ? " (standard)" : ""}</option>
+            ))}
+          </select>
+          <p className="text-sm text-muted-foreground">The layout, wording and cooking steps come from the template. <Link href={templateChoice ? `/labels/settings?template=${templateChoice}` : "/labels/settings"} className="font-semibold text-primary underline">Open this template's design</Link></p>
+        </div>
+      )}
 
       {/* Label name */}
       <div className="space-y-2">

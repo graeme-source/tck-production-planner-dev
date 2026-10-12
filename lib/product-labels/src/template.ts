@@ -448,3 +448,44 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     boneRiskWords: normaliseWords(r.boneRiskWords, D.boneRiskWords),
   };
 }
+
+// ── Template presets ───────────────────────────────────────────────────────
+// Starting designs a manager can add as a new label template (Label design &
+// type → "Add a template"). Once added, a template is an ordinary stored row:
+// edited on the design page, chosen per recipe in its label settings.
+
+export interface TemplatePreset {
+  key: string;
+  name: string;
+  description: string;
+  build: () => LabelTemplate;
+}
+
+/** Fried chicken (provisional, Graeme 2026-10-12: "we'll deal with the
+ *  cooking instructions later"): no wooden-tray step — one placeholder step
+ *  until the instructions are agreed; the title without "- N PACK"; the
+ *  ingredients may go down to Barlow Condensed so the longest decks (Korean
+ *  Fried Chicken) fit; the bones warning follows the automatic words, which
+ *  include chicken. */
+export function friedChickenTemplate(): LabelTemplate {
+  const t = normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
+  t.text.title = "{name}";
+  t.text.steps = ["Cooking instructions to be confirmed."];
+  t.fields.ingredients = { ...t.fields.ingredients, narrowest: "condensed" };
+  return t;
+}
+
+export const TEMPLATE_PRESETS: TemplatePreset[] = [
+  {
+    key: "standard",
+    name: "Standard calzone label",
+    description: "The calzone label: two cooking steps (wooden tray, oven / air fryer), storage, ingredients and barcode.",
+    build: () => normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE))),
+  },
+  {
+    key: "fried-chicken",
+    name: "Fried chicken",
+    description: "Provisional: cooking instructions to be confirmed, no wooden-tray step, room for long ingredient lists.",
+    build: friedChickenTemplate,
+  },
+];

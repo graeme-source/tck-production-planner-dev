@@ -23,7 +23,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   resolveBonesWarning,
   decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
-  STATUS_LABEL, WIDTH_ORDER, type LabelSnapshot,
+  STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelSnapshot,
 } from "@workspace/product-labels";
 import { encodePng } from "@workspace/product-labels/render";
 import { requireManagerOrAdmin } from "../middleware/roles";
@@ -89,10 +89,58 @@ function templatePayload(t: LoadedTemplate) {
 
 // ── Template ───────────────────────────────────────────────────────────────
 
-router.get("/template", async (_req, res) => {
+// ?id=N reads that template; no id = the standard one (lowest id).
+const TemplateQuery = z.object({ id: z.coerce.number().int().positive().optional() });
+
+router.get("/template", async (req, res) => {
+  const q = TemplateQuery.safeParse(req.query);
+  if (!q.success) { res.status(400).json({ error: "Invalid template id" }); return; }
   try {
-    res.json(templatePayload(await loadTemplate()));
+    res.json(templatePayload(await loadTemplate(q.data.id ?? null)));
   } catch (err) { fail(res, err, "GET /template"); }
+});
+
+// ── Several templates (2026-10-12: fried chicken gets its own) ─────────────
+// Every label template, and the starting designs (presets) that can be added
+// as a new one. A recipe picks its template in its label settings; with
+// none picked it uses the standard one (lowest id).
+
+async function listTemplates() {
+  const rows = await db.select({
+    id: productLabelTemplatesTable.id, name: productLabelTemplatesTable.name,
+    version: productLabelTemplatesTable.version, updatedAt: productLabelTemplatesTable.updatedAt,
+  }).from(productLabelTemplatesTable).orderBy(productLabelTemplatesTable.id);
+  if (rows.length === 0) { await loadTemplate(); return listTemplates(); } // creates the standard one
+  const names = new Set(rows.map(r => r.name.trim().toLowerCase()));
+  return {
+    templates: rows.map((r, i) => ({ ...r, isDefault: i === 0 })),
+    presets: TEMPLATE_PRESETS.map(p => ({ key: p.key, name: p.name, description: p.description, added: names.has(p.name.toLowerCase()) })),
+  };
+}
+
+router.get("/templates", async (_req, res) => {
+  try {
+    res.json(await listTemplates());
+  } catch (err) { fail(res, err, "GET /templates"); }
+});
+
+const AddTemplateBody = z.object({ preset: z.string().min(1).max(60) });
+
+router.post("/templates", requireManagerOrAdmin, validate(AddTemplateBody), async (req, res) => {
+  const body = req.body as z.infer<typeof AddTemplateBody>;
+  const preset = TEMPLATE_PRESETS.find(p => p.key === body.preset);
+  if (!preset) { res.status(400).json({ error: "Unknown starting design" }); return; }
+  try {
+    const existing = await listTemplates();
+    const same = existing.templates.find(t => t.name.trim().toLowerCase() === preset.name.toLowerCase());
+    if (same) { res.status(409).json({ error: `There is already a “${preset.name}” template.`, id: same.id }); return; }
+    const who = await userName(req);
+    const { template } = enforceLegalMinimums(preset.build(), fonts());
+    const [row] = await db.insert(productLabelTemplatesTable)
+      .values({ name: preset.name, settings: template, updatedAt: new Date(), updatedById: who.id, updatedByName: who.name })
+      .returning({ id: productLabelTemplatesTable.id });
+    res.json(templatePayload(await loadTemplate(row.id)));
+  } catch (err) { fail(res, err, "POST /templates"); }
 });
 
 const TemplateBody = z.object({
@@ -209,6 +257,8 @@ router.get("/recipes/:id", async (req, res) => {
       boneRiskWords: current.template.template.boneRiskWords,
       settingsUpdatedAt: current.settingsRow?.updatedAt ?? null,
       settingsUpdatedByName: current.settingsRow?.updatedByName ?? null,
+      // The template this recipe picked; null = the standard one.
+      templateChoice: current.settingsRow?.templateId ?? null,
       template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault },
       status,
       statusLabel: STATUS_LABEL[status],
@@ -247,6 +297,8 @@ const SettingsBody = z.object({
   // Bones warning: true / false = always on / off; null = Automatic.
   warningOn: z.boolean().nullable().optional(),
   frozenOn: z.boolean().optional(),
+  // The label template this recipe uses; null = the standard one.
+  templateId: z.number().int().positive().nullable().optional(),
   ovenTempC: nullableInt(400),
   fanTempC: nullableInt(400),
   ovenMinMinutes: nullableInt(240),
@@ -270,6 +322,13 @@ router.put("/recipes/:id/settings", requireManagerOrAdmin, validate(SettingsBody
     if (body.labelName !== undefined) set.labelName = body.labelName?.trim() || null;
     for (const k of ["ovenOn", "airFryerOn", "frozenOn"] as const) if (body[k] !== undefined) set[k] = body[k];
     if (body.warningOn !== undefined) set.warningOn = body.warningOn;
+    if (body.templateId !== undefined) {
+      if (body.templateId != null) {
+        const [t] = await db.select({ id: productLabelTemplatesTable.id }).from(productLabelTemplatesTable).where(eq(productLabelTemplatesTable.id, body.templateId));
+        if (!t) { res.status(400).json({ error: "That label template doesn't exist" }); return; }
+      }
+      set.templateId = body.templateId;
+    }
     for (const k of ["ovenTempC", "fanTempC", "ovenMinMinutes", "ovenMaxMinutes", "airFryerTempC", "airFryerMinMinutes", "airFryerMaxMinutes"] as const) {
       if (body[k] !== undefined) set[k] = body[k] ?? null;
     }

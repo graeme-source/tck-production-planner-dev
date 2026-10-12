@@ -11,7 +11,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
   allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, dividerDots, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
@@ -23,7 +23,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useAutosave } from "@/hooks/use-autosave";
 import { activeRecipes } from "@/lib/recipe-archive";
 import { cn } from "@/lib/utils";
-import { api, useInvalidateLabels, useLabelTemplate, type Proof, type TemplatePayload } from "@/components/product-labels/api";
+import { api, useInvalidateLabels, useLabelTemplate, useLabelTemplates, type Proof, type TemplateList, type TemplatePayload } from "@/components/product-labels/api";
 import { ProofImage } from "@/components/product-labels/proof-image";
 import { StepPreview } from "@/components/product-labels/step-preview";
 import { MayContainEditor } from "@/components/product-labels/may-contain-editor";
@@ -60,11 +60,69 @@ export default function ProductLabelSettingsPage() {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const canEdit = role === "admin" || role === "manager";
-  const q = useLabelTemplate();
+  // Which template is being edited (?template=N in the address); none = the standard one.
+  const [templateId, setTemplateId] = useState<number | null>(() => {
+    const n = Number(new URLSearchParams(window.location.search).get("template"));
+    return Number.isInteger(n) && n > 0 ? n : null;
+  });
+  const q = useLabelTemplate(templateId);
+  const list = useLabelTemplates();
+  const pick = (id: number | null) => {
+    setTemplateId(id);
+    const url = new URL(window.location.href);
+    if (id) url.searchParams.set("template", String(id)); else url.searchParams.delete("template");
+    window.history.replaceState(null, "", url);
+  };
   if (!canEdit) return <p className="text-muted-foreground">Only managers and admins can change the label design. <Link href="/labels" className="underline">Back to labels</Link></p>;
-  if (q.isLoading) return <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Loading the label design…</div>;
-  if (q.isError || !q.data) return <p className="text-destructive">Couldn't load the label design — {(q.error as Error | null)?.message}</p>;
-  return <Editor initial={q.data} reload={() => void q.refetch()} />;
+  return (
+    <div className="space-y-5">
+      <TemplatePicker list={list.data} currentId={q.data?.id ?? null} onPick={pick} />
+      {q.isLoading ? (
+        <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Loading the label design…</div>
+      ) : q.isError || !q.data ? (
+        <p className="text-destructive">Couldn't load the label design — {(q.error as Error | null)?.message}</p>
+      ) : (
+        <Editor key={q.data.id} initial={q.data} reload={() => void q.refetch()} />
+      )}
+    </div>
+  );
+}
+
+/** Choose which label template to edit, or add one from a starting design
+ *  (e.g. Fried chicken). Recipes pick their template in their own label
+ *  settings; with none picked they use the standard one. */
+function TemplatePicker({ list, currentId, onPick }: { list: TemplateList | undefined; currentId: number | null; onPick: (id: number | null) => void }) {
+  const invalidate = useInvalidateLabels();
+  const add = useMutation({
+    mutationFn: (preset: string) => api<TemplatePayload>("/templates", { method: "POST", body: JSON.stringify({ preset }) }),
+    onSuccess: res => { void invalidate(); onPick(res.id); },
+  });
+  if (!list) return null;
+  const toAdd = list.presets.filter(p => !p.added);
+  return (
+    <section className="rounded-2xl border-2 border-border bg-card p-4 space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-bold mr-1">Label template:</span>
+        {list.templates.map(t => (
+          <button key={t.id} type="button" onClick={() => onPick(t.isDefault ? null : t.id)} aria-pressed={t.id === currentId}
+            className={cn("min-h-11 px-4 rounded-full border-2 text-sm font-bold", t.id === currentId ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-secondary")}>
+            {t.name}{t.isDefault ? " (standard)" : ""}
+          </button>
+        ))}
+      </div>
+      {toAdd.map(p => (
+        <div key={p.key} className="flex flex-wrap items-center gap-3">
+          <button type="button" disabled={add.isPending} onClick={() => add.mutate(p.key)}
+            className="min-h-11 px-4 rounded-xl border-2 border-dashed border-border text-sm font-semibold hover:bg-secondary disabled:opacity-60">
+            {add.isPending ? <Loader2 className="inline w-4 h-4 animate-spin" /> : "+"} Add the “{p.name}” template
+          </button>
+          <span className="text-sm text-muted-foreground">{p.description}</span>
+        </div>
+      ))}
+      {add.isError && <p className="text-sm font-semibold text-destructive">Couldn't add it — {(add.error as Error).message}</p>}
+      <p className="text-sm text-muted-foreground">Each recipe picks its template in its own label settings; recipes that haven't picked one use the standard template.</p>
+    </section>
+  );
 }
 
 function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => void }) {

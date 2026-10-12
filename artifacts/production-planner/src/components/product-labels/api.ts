@@ -93,6 +93,8 @@ export interface RecipeLabel {
   boneRiskWords: string[];
   settingsUpdatedAt: string | null;
   settingsUpdatedByName: string | null;
+  /** The template this recipe picked; null = the standard one. */
+  templateChoice: number | null;
   template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null };
   status: LabelStatus;
   statusLabel: string;
@@ -111,14 +113,27 @@ export interface RecipeLabel {
   };
 }
 
+export interface TemplateList {
+  templates: Array<{ id: number; name: string; version: number; updatedAt: string; isDefault: boolean }>;
+  /** Starting designs that can be added as a new template. */
+  presets: Array<{ key: string; name: string; description: string; added: boolean }>;
+}
+
 export const labelKeys = {
   template: ["product-labels", "template"] as const,
+  templateById: (id: number | null) => ["product-labels", "template", id ?? "default"] as const,
+  templates: ["product-labels", "templates"] as const,
   list: ["product-labels", "list"] as const,
   recipe: (id: number) => ["product-labels", "recipe", id] as const,
 };
 
-export function useLabelTemplate() {
-  return useQuery({ queryKey: labelKeys.template, queryFn: () => api<TemplatePayload>("/template") });
+/** One template: `id` null = the standard one. */
+export function useLabelTemplate(id: number | null = null) {
+  return useQuery({ queryKey: labelKeys.templateById(id), queryFn: () => api<TemplatePayload>(id ? `/template?id=${id}` : "/template") });
+}
+
+export function useLabelTemplates() {
+  return useQuery({ queryKey: labelKeys.templates, queryFn: () => api<TemplateList>("/templates") });
 }
 
 export function useLabelList() {
