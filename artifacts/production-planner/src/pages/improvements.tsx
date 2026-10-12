@@ -100,7 +100,7 @@ type Improvement = {
   /** Has THIS viewer opened it? Powers the To-review tab and NEW markers. */
   seenByMe?: boolean;
   /** Credits on the improvement score: 1, or 2/3 when the founder marked
-   *  it a great / substantial one (migration 0170). */
+   *  it a great / substantial one (migration 0171). */
   creditWeight?: number;
   /** Emoji applause, aggregated: [{emoji, count, mine}]. */
   reactions?: Array<{ emoji: string; count: number; mine: boolean }>;

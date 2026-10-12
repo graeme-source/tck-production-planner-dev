@@ -13,7 +13,7 @@
  *
  * Credits: every improvement is worth 1, and the founder can mark a really
  * good one ×2 or a really substantial one ×3 (improvement_submissions.
- * credit_weight, migration 0170). Everyone credited on a shared improvement
+ * credit_weight, migration 0171). Everyone credited on a shared improvement
  * gets its full credits — the same rule as the all-time tally (0125).
  *
  * Shifts worked: distinct days in the window with a Planday rota shift the

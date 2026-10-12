@@ -171,7 +171,7 @@ export async function getAttendanceFromCache(
     shiftTypeId: r.shift_type_id != null ? Number(r.shift_type_id) : null,
     positionId: r.position_id != null ? Number(r.position_id) : null,
     date: r.date,
-    // Rota status (migration 0170) — NULL on rows synced before it existed.
+    // Rota status (migration 0171) — NULL on rows synced before it existed.
     status: r.status ?? null,
   }));
 
@@ -184,7 +184,7 @@ export async function getAttendanceFromCache(
 
 /**
  * Re-pull [from, to] from Planday once per process, when the mirror holds
- * shifts there without a rota status — rows synced before migration 0170
+ * shifts there without a rota status — rows synced before migration 0171
  * added the column. The improvement score needs the status for its whole
  * 30-day window, but the hourly trailing re-sync only covers 21 days.
  * Queued behind any running sync; a failure is logged and retried on the

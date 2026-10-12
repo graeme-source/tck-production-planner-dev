@@ -61,7 +61,7 @@ export const improvementSubmissionsTable = pgTable("improvement_submissions", {
   // unreviewed guess is never mistaken for a decision.
   subjectId: integer("subject_id"),
   subjectSource: text("subject_source"),
-  // How many credits it's worth on the improvement score (migration 0170):
+  // How many credits it's worth on the improvement score (migration 0171):
   // 1 by default, 2 = "a really good one", 3 = "really substantial". Set by
   // the founder only.
   creditWeight: smallint("credit_weight").notNull().default(1),
