@@ -11,10 +11,13 @@
  * Product Hub: a Labels tab (the cards) and a Data health tab (?tab=health,
  * ingredients missing declarations or nutrition). Each card opens the
  * recipe's label, ingredient deck and nutrition. Objective F.
+ *
+ * Since 12 Oct 2026 the Labels tab is a sortable table, one product per row
+ * (sort rules: lib/label-list-table.ts), not a two-column grid of cards.
  */
 import { useMemo, useState } from "react";
-import { Link } from "wouter";
-import { AlertTriangle, CheckCircle2, ChevronRight, HeartPulse, Loader2, Percent, Settings2, Tag } from "lucide-react";
+import { Link, useLocation } from "wouter";
+import { AlertTriangle, CheckCircle2, ChevronRight, HeartPulse, Loader2, Percent, Search, Settings2, Tag, X } from "lucide-react";
 import type { LabelStatus } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -22,6 +25,12 @@ import { cn } from "@/lib/utils";
 import { fmtDateTime, STATUS_TONE, useLabelList, type LabelListRow } from "@/components/product-labels/api";
 import { HubTabs, useCanSeeProductData, useTabParam, type HubTab } from "@/components/product-labels/hub-tabs";
 import { DataHealthPanel } from "@/components/product-labels/data-health-panel";
+import { RecipeDraftBadge } from "@/components/recipe-archive";
+import { SortableTh } from "@/components/sortable-th";
+import { nextSort, type SortState } from "@/lib/sortable-table";
+import {
+  DEFAULT_LABEL_SORT, LABEL_FIRST_DIR, labelTodo, matchesLabelSearch, sortLabelRows, type LabelSortKey,
+} from "@/lib/label-list-table";
 
 type ListTab = "labels" | "health";
 const ALL_TABS: HubTab<ListTab>[] = [
@@ -55,7 +64,15 @@ export default function ProductLabelsPage() {
     for (const r of rows) c[r.status] = (c[r.status] ?? 0) + 1;
     return c;
   }, [rows]);
-  const visible = filter === "all" ? rows : rows.filter(r => r.status === filter);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<SortState<LabelSortKey>>(DEFAULT_LABEL_SORT);
+  const visible = useMemo(
+    () => sortLabelRows(
+      rows.filter(r => (filter === "all" || r.status === filter) && matchesLabelSearch(r, search)),
+      sort,
+    ),
+    [rows, filter, search, sort],
+  );
 
   return (
     <div className="space-y-5 max-w-5xl">
@@ -92,57 +109,123 @@ export default function ProductLabelsPage() {
         ))}
       </div>
 
+      <div className="relative max-w-md">
+        <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+        <input
+          type="search"
+          value={search}
+          onChange={e => setSearch(e.target.value)}
+          placeholder="Search products by name or category…"
+          aria-label="Search products"
+          className="w-full h-11 pl-10 pr-9 bg-card border-2 border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+        />
+        {search && (
+          <button
+            type="button"
+            onClick={() => setSearch("")}
+            className="absolute right-1 top-1/2 -translate-y-1/2 w-9 h-9 flex items-center justify-center text-muted-foreground hover:text-foreground"
+            aria-label="Clear search"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+
       {isLoading ? (
         <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Checking every label against its recipe…</div>
       ) : error ? (
         <p className="text-destructive">Couldn't load the labels — {(error as Error).message}</p>
-      ) : visible.length === 0 ? (
-        <p className="text-muted-foreground py-6">Nothing here.</p>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
-          {visible.map(r => <LabelCard key={r.recipeId} row={r} />)}
-        </div>
+        <LabelTable rows={visible} sort={sort} onSort={k => setSort(s => nextSort(s, k, LABEL_FIRST_DIR[k]))} />
       )}
       </>)}
     </div>
   );
 }
 
-function LabelCard({ row }: { row: LabelListRow }) {
+/**
+ * One row per product (Graeme, 12 Oct 2026: "one column… into tables that
+ * we can sort, a bit more like the recipe database"). Tapping a row opens
+ * the product's label; the name is a real link too, for keyboards.
+ */
+function LabelTable({ rows, sort, onSort }: {
+  rows: LabelListRow[];
+  sort: SortState<LabelSortKey>;
+  onSort: (key: LabelSortKey) => void;
+}) {
+  const [, navigate] = useLocation();
+  const th = (label: string, key: LabelSortKey, className?: string) => (
+    <SortableTh label={label} sortKey={key} activeKey={sort.key} dir={sort.dir} onSort={onSort} className={className} />
+  );
   return (
-    <Link
-      href={`/labels/${row.recipeId}`}
-      className="group rounded-2xl border-2 border-border bg-card p-4 flex flex-col gap-3 hover:border-primary/60 transition-colors"
-    >
-      <div className="flex items-start gap-3">
-        <div className="w-11 h-11 rounded-xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
-          <Tag className="w-6 h-6" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-lg font-bold leading-tight">{row.name}</p>
-          {row.category && <p className="text-sm text-muted-foreground">{row.category}</p>}
-        </div>
-        <ChevronRight className="w-6 h-6 text-muted-foreground group-hover:text-primary shrink-0" />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={cn("inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-sm font-bold", STATUS_TONE[row.status])}>
-          {row.status === "live" ? <CheckCircle2 className="w-4 h-4" /> : row.status === "update-needed" || row.status === "doesnt-fit" ? <AlertTriangle className="w-4 h-4" /> : null}
-          {row.statusLabel}
-        </span>
-        {row.liveVersion && (
-          <span className="text-sm text-muted-foreground">
-            Live v{row.liveVersion.versionNo} · {fmtDateTime(row.liveVersion.publishedAt)}{row.liveVersion.publishedByName ? ` · ${row.liveVersion.publishedByName}` : ""}
-          </span>
-        )}
-      </div>
-      {row.changes.length > 0 && (
-        <p className="text-sm"><span className="font-semibold">Changed since live:</span> {row.changes.slice(0, 4).join(", ")}{row.changes.length > 4 ? ` +${row.changes.length - 4} more` : ""}</p>
-      )}
-      {row.blockers.length > 0 && row.status !== "live" && (
-        <p className="text-sm text-rose-700 dark:text-rose-400">
-          {row.blockers.length === 1 ? row.blockers[0] : `${row.blockers.length} things to fix before it can go live`}
-        </p>
-      )}
-    </Link>
+    <div className="overflow-x-auto glass-panel rounded-2xl">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+            {th("Product", "name")}
+            {th("Category", "category", "hidden md:table-cell")}
+            {th("Status", "status")}
+            {th("Live version", "live", "hidden sm:table-cell")}
+            {th("What needs doing", "todo")}
+            <th className="w-8" />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(r => {
+            const todo = labelTodo(r);
+            return (
+              <tr
+                key={r.recipeId}
+                onClick={() => navigate(`/labels/${r.recipeId}`)}
+                className="group border-b border-border/50 last:border-0 hover:bg-secondary/40 cursor-pointer align-middle"
+              >
+                <td className="py-3 px-3 min-w-[9rem]">
+                  <Link
+                    href={`/labels/${r.recipeId}`}
+                    onClick={e => e.stopPropagation()}
+                    className="text-base font-semibold leading-snug hover:text-primary"
+                  >
+                    {r.name}
+                  </Link>
+                  {r.status === "draft-recipe" && <RecipeDraftBadge className="ml-2 align-middle" />}
+                  {r.category && <p className="md:hidden text-xs text-muted-foreground mt-0.5">{r.category}</p>}
+                </td>
+                <td className="py-3 px-3 text-muted-foreground hidden md:table-cell">{r.category ?? "—"}</td>
+                <td className="py-3 px-3">
+                  <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold whitespace-nowrap", STATUS_TONE[r.status])}>
+                    {r.status === "live" ? <CheckCircle2 className="w-3.5 h-3.5" /> : r.status === "update-needed" || r.status === "doesnt-fit" ? <AlertTriangle className="w-3.5 h-3.5" /> : null}
+                    {r.statusLabel}
+                  </span>
+                </td>
+                <td className="py-3 px-3 text-muted-foreground hidden sm:table-cell">
+                  {r.liveVersion ? (
+                    <span className="block leading-snug">
+                      <span className="font-semibold text-foreground">v{r.liveVersion.versionNo}</span> · {fmtDateTime(r.liveVersion.publishedAt)}
+                      {r.liveVersion.publishedByName && <span className="block text-xs">{r.liveVersion.publishedByName}</span>}
+                    </span>
+                  ) : "—"}
+                </td>
+                <td className="py-3 px-3 max-w-[18rem]">
+                  {todo.short ? (
+                    <span
+                      title={todo.full}
+                      className={cn("line-clamp-2", r.blockers.length > 0 && r.status !== "live" && r.changes.length === 0 && "text-rose-700 dark:text-rose-400")}
+                    >
+                      {todo.short}
+                    </span>
+                  ) : <span className="text-muted-foreground">—</span>}
+                </td>
+                <td className="py-3 pr-3 text-right">
+                  <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary inline" />
+                </td>
+              </tr>
+            );
+          })}
+          {rows.length === 0 && (
+            <tr><td colSpan={6} className="py-8 text-center text-muted-foreground">Nothing here.</td></tr>
+          )}
+        </tbody>
+      </table>
+    </div>
   );
 }
