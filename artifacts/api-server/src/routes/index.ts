@@ -134,6 +134,8 @@ import issuePipelineMachineRouter from "./issue-pipeline-machine";
 import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
 import personDocumentsRouter from "./person-documents";
+import peopleReviewsRouter from "./people-reviews";
+import peopleLettersMineRouter from "./people-letters-mine";
 import productLabelsRouter from "./product-labels";
 import productLabelPrintRouter from "./product-label-print";
 import barcodesRouter from "./barcodes";
@@ -388,6 +390,13 @@ router.use("/people", requirePeopleUnlock, peopleRouter);
 // after /mine — the employee's own shared documents, which must never ask
 // for the People PIN. Founder-only documents are re-checked per request.
 router.use("/person-documents", personDocumentsRouter);
+// The employment record — classified entries + letters (routes/people-reviews.ts):
+// private People PIN set + unlocked, founder or People access checked inside,
+// never your own record; every read and write audited.
+router.use("/people-reviews", requirePeopleUnlock, peopleReviewsRouter);
+// Letters sent to ME (routes/people-letters-mine.ts): session only, not
+// behind the People PIN — the employee reads and acknowledges their own.
+router.use("/people-letters", peopleLettersMineRouter);
 // Who has People access — the founder's per-person switch in Settings →
 // Team & Access. Admin read, founder-only write, guarded inside the router.
 router.use("/people-access", peopleAccessRouter);

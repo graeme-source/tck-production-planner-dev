@@ -83,7 +83,8 @@ describe("isOwnRecord — a second account is still you", () => {
 describe("self-service — the employee's own writes, on their own record only", () => {
   it("lists exactly the self-service kinds Graeme is asked to confirm", () => {
     expect([...SELF_SERVICE_KINDS].sort()).toEqual([
-      "own_emergency_contact", "own_onboarding_form", "own_rtw_form", "own_starter_forms", "sign_own_contract",
+      "own_emergency_contact", "own_letter_acknowledge", "own_onboarding_form", "own_rtw_form", "own_starter_forms",
+      "sign_own_contract",
     ]);
   });
 

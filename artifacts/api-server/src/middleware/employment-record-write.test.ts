@@ -68,6 +68,18 @@ const ROUTERS: Record<string, { load: () => Promise<{ default: unknown }>; notRe
     },
   },
   "onboarding.ts": { load: () => import("../routes/onboarding"), notRecordWrites: {} },
+  "people-reviews.ts": {
+    load: () => import("../routes/people-reviews"),
+    notRecordWrites: {
+      "POST /classifications": "the classification LIST, not anyone's record (founder / admin with People access)",
+      "PATCH /classifications/:id": "the classification LIST, not anyone's record (founder / admin with People access)",
+      "POST /stages": "the stage LIST, not anyone's record (founder / admin with People access)",
+      "PATCH /stages/:id": "the stage LIST, not anyone's record (founder / admin with People access)",
+      "PATCH /letter-templates/:id": "the letter TEMPLATES, not anyone's record (founder only)",
+      "PATCH /hr-settings": "who letter emails come from + Needs-attention lead times — settings, not anyone's record (founder only)",
+    },
+  },
+  "people-letters-mine.ts": { load: () => import("../routes/people-letters-mine"), notRecordWrites: {} },
   "starter-forms.ts": { load: () => import("../routes/starter-forms"), notRecordWrites: {} },
   "people-hours.ts": { load: () => import("../routes/people-hours"), notRecordWrites: {} },
   "people-access.ts": {
@@ -94,6 +106,8 @@ const SELF_SERVICE_ROUTES: Record<string, string> = {
   "return-to-work.ts POST /:id/complete": "own_rtw_form",
   "return-to-work.ts POST /:id/attachments": "own_rtw_form",
   "return-to-work.ts DELETE /attachments/:attachmentId": "own_rtw_form",
+  "people-letters-mine.ts POST /mine/:id/read": "own_letter_acknowledge",
+  "people-letters-mine.ts POST /mine/:id/acknowledge": "own_letter_acknowledge",
 };
 
 function writeRoutes(router: unknown) {
