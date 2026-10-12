@@ -144,7 +144,7 @@ async function loadClassifications(): Promise<Classification[]> {
   const rows = await db.select().from(peopleRecordClassificationsTable);
   return sortClassifications(rows.map(r => ({
     id: r.id, label: r.label, sortOrder: r.sortOrder, fieldSets: cleanFieldSets(r.fieldSets ?? []),
-    evidence: (r.evidence as EvidenceKind | null) ?? null, active: r.active,
+    evidence: (r.evidence as EvidenceKind | null) ?? null, active: r.active, defaultForMeetings: r.defaultForMeetings,
   })));
 }
 

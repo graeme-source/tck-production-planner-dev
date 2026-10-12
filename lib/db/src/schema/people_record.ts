@@ -16,6 +16,8 @@ export const peopleRecordClassificationsTable = pgTable("people_record_classific
   /** attendance | timekeeping */
   evidence: text("evidence"),
   active: boolean("active").notNull().default(true),
+  /** What a newly scheduled meeting starts as when nobody picks (0182). */
+  defaultForMeetings: boolean("default_for_meetings").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -107,6 +109,22 @@ export const peopleReviewNotesTable = pgTable("people_review_notes", {
 });
 
 export type PeopleReviewNote = typeof peopleReviewNotesTable.$inferSelect;
+
+/** The meeting notes an AI draft was made from (migration 0182): the shared
+ *  link, if any, and the raw text — kept for audit, People access only. */
+export const peopleRecordEntrySourcesTable = pgTable("people_record_entry_sources", {
+  id: serial("id").primaryKey(),
+  entryId: integer("entry_id").notNull().references(() => peopleRecordEntriesTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  /** url | text */
+  kind: text("kind").notNull(),
+  sourceUrl: text("source_url"),
+  rawText: text("raw_text").notNull(),
+  model: text("model"),
+  createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdByName: text("created_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
 
 /** Every read and write, and each entry's history. Append-only. */
 export const peopleRecordAuditTable = pgTable("people_record_audit", {

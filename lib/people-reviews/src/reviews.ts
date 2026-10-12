@@ -160,6 +160,18 @@ export function whatHappenedText(e: {
   return out.join("\n\n");
 }
 
+/** The classification a meeting scheduled without picking one starts as:
+ *  the active one flagged for meetings (data, migration 0182), else the
+ *  first active one in the list's order. */
+export function defaultMeetingClassification<C extends { id: number; sortOrder: number; label: string; active: boolean; defaultForMeetings?: boolean }>(
+  list: readonly C[],
+): C | null {
+  const active = list.filter(c => c.active);
+  return active.find(c => c.defaultForMeetings)
+    ?? [...active].sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label))[0]
+    ?? null;
+}
+
 // ── Meeting notes drafted by AI ────────────────────────────────────────────
 
 export const ACTION_OWNERS = ["me", "colleague", "other"] as const;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   whatHappened, whatHappenedText, meetingWrittenUp, meetingNotesRows, actionTodos, recordTodo,
-  SUMMARY_TITLE, ACTIONS_TITLE, type MeetingNotesDraft,
+  SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, type MeetingNotesDraft,
 } from "./index";
 
 describe("one write-up per meeting", () => {
@@ -25,6 +25,15 @@ describe("one write-up per meeting", () => {
     expect(meetingWrittenUp({ ...base, notes: "We talked about leave dates" })).toBe(true);
     expect(meetingWrittenUp({ ...base, notes: "   " })).toBe(false);
   });
+});
+
+describe("what a scheduled meeting starts as", () => {
+  const c = (id: number, sortOrder: number, extra: Partial<{ active: boolean; defaultForMeetings: boolean }> = {}) =>
+    ({ id, sortOrder, label: `C${id}`, active: true, ...extra });
+  it("the flagged one", () => expect(defaultMeetingClassification([c(1, 10), c(2, 20, { defaultForMeetings: true })])?.id).toBe(2));
+  it("never a switched-off one", () => expect(defaultMeetingClassification([c(1, 10), c(2, 5, { defaultForMeetings: true, active: false })])?.id).toBe(1));
+  it("else the first in the list's order", () => expect(defaultMeetingClassification([c(1, 30), c(2, 20)])?.id).toBe(2));
+  it("none when the list is empty", () => expect(defaultMeetingClassification([])).toBeNull());
 });
 
 describe("saving an AI draft", () => {

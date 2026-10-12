@@ -55,6 +55,8 @@ export interface Classification {
   fieldSets: FieldSet[];
   evidence: EvidenceKind | null;
   active: boolean;
+  /** What a newly scheduled meeting starts as (migration 0182). */
+  defaultForMeetings?: boolean;
 }
 
 /** The seeded list (migration 0170 inserts exactly this), in Graeme's order. */
