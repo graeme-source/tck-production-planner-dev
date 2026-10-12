@@ -18,3 +18,32 @@ export function formatQuantity(qty: number, unit: string): string {
 function trim(n: number): string {
   return String(Math.round(n * 100) / 100);
 }
+
+const SENT_AT = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "Europe/London", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+});
+
+/**
+ * When the day's chicken went to Shopify, in London time — "12 Oct, 16:24".
+ *
+ * The send is stored as a UTC ISO string (…Z). Formatting it in the device's
+ * own zone is only right when the device is set to London, so the zone is
+ * pinned here. (Checked 12 Oct 2026: the live record for plan 192 is
+ * 15:24Z — a real 16:24 BST send — so the old screen was showing it right.)
+ * Empty or unreadable input gives "".
+ */
+export function formatSentAt(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const part = (type: Intl.DateTimeFormatPartTypes) =>
+    SENT_AT.formatToParts(d).find(p => p.type === type)?.value ?? "";
+  return `${part("day")} ${part("month")}, ${part("hour")}:${part("minute")}`;
+}
+
+/** The greyed "already sent" line: "Sent to Shopify ✓ — 12 Oct, 16:24 · 155 bags". */
+export function sentToShopifyLabel(sent: { at: string; bags: number }): string {
+  const when = formatSentAt(sent.at);
+  const bags = `${sent.bags} bag${sent.bags === 1 ? "" : "s"}`;
+  return when ? `Sent to Shopify ✓ — ${when} · ${bags}` : `Sent to Shopify ✓ — ${bags}`;
+}

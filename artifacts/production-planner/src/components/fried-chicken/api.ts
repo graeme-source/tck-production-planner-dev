@@ -151,9 +151,12 @@ export interface StockAdjustment {
 }
 
 export interface PriorSubmission {
+  /** ISO timestamp in UTC (ends in Z). Show it with formatSentAt (London). */
   at: string;
   by: number | null;
   bags: number;
+  /** "sending" while a send is in flight (or stopped part-way). */
+  status?: "sending" | "sent";
 }
 
 export interface SubmitStockResult {
@@ -164,17 +167,30 @@ export interface SubmitStockResult {
   alreadySubmitted?: PriorSubmission | null;
   /** Bags that actually landed in Shopify on a confirmed run. */
   bagsSent?: number;
-  resent?: boolean;
+  /** The record of a confirmed run that landed something. */
+  sent?: PriorSubmission | null;
 }
 
-export function submitFriedChickenStock(
-  planId: number,
-  opts: { confirm: boolean; force?: boolean },
-) {
+/** A plan's stock goes to Shopify once (Graeme, 2026-10-12) — there is no
+ *  "send again"; the server refuses a second send with a 409. */
+export function submitFriedChickenStock(planId: number, opts: { confirm: boolean }) {
   return friedChickenFetch<SubmitStockResult>(`/plans/${planId}/submit-stock`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ confirm: opts.confirm, force: opts.force === true }),
+    body: JSON.stringify({ confirm: opts.confirm }),
+  });
+}
+
+export function friedChickenStockSendKey(planId: number) {
+  return ["fried-chicken", "stock-send", planId] as const;
+}
+
+/** Has this plan's counted chicken already gone to Shopify? */
+export function useFriedChickenStockSend(planId: number) {
+  return useQuery<{ planId: number; sent: PriorSubmission | null }>({
+    queryKey: friedChickenStockSendKey(planId),
+    queryFn: () => friedChickenFetch(`/plans/${planId}/stock-send`),
+    enabled: Number.isInteger(planId) && planId > 0,
   });
 }
 

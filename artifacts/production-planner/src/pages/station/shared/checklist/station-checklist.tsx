@@ -1937,7 +1937,7 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
     const fc = data[0] as {
       countedBags?: number;
       targetBags?: number;
-      alreadySubmitted?: { at: string; bags: number } | null;
+      alreadySubmitted?: { at: string; bags: number; status?: "sending" | "sent" } | null;
     } | undefined;
     // No fried chicken on this plan — the check stays an ordinary tick-box.
     if (!fc) return null;
@@ -1953,11 +1953,11 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
             Counted at the station. This is what goes to Shopify — never the target.
           </p>
         </div>
-        {fc.alreadySubmitted && (
+        {fc.alreadySubmitted && fc.alreadySubmitted.status !== "sending" && (
           <div className="p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/20 flex items-start gap-2">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
             <p className="text-sm text-emerald-700 dark:text-emerald-300">
-              Already sent — {fc.alreadySubmitted.bags} bags. Tick the check to close the day.
+              Stock is in Shopify. Tick the check to close the day.
             </p>
           </div>
         )}
