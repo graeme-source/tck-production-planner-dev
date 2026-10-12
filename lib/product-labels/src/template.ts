@@ -9,6 +9,7 @@
  * in [square brackets] disappears when any number inside it is blank, and
  * {or} joins two parts with ", or" only when both are there (text.ts).
  */
+import { mmToDots } from "@workspace/units";
 import type { BatchBasis, PeriodUnit, ShelfPeriod } from "./dates";
 import { PERIOD_UNITS } from "./dates";
 import { EAN13_MIN_BAR_HEIGHT_MM } from "./ean13";
@@ -42,10 +43,15 @@ export const FIELD_LABEL: Record<FieldKey, string> = {
 };
 
 export interface FieldStyle {
-  /** Preferred width; the layout tries narrower ones before smaller sizes
-   *  when allowNarrower is on. */
+  /** Preferred width; the layout tries narrower ones (down to `narrowest`)
+   *  before smaller sizes. */
   width: WidthVariant;
-  allowNarrower: boolean;
+  /** The narrowest width this field may go to. Equal to `width` = never
+   *  narrower. Body text stops at Semi Condensed: Barlow Condensed — bold
+   *  allergen words above all — was hard to read on the printed label
+   *  (Graeme, 2026-10-12). Replaces the old on/off `allowNarrower` (true =
+   *  condensed, false = the preferred width; normaliseTemplate reads both). */
+  narrowest: WidthVariant;
   /** Weight of ordinary text (bold text always uses 700). */
   weight: BodyWeight;
   /** Point sizes. minPt is raised to the legal minimum if set below it. */
@@ -76,6 +82,13 @@ export interface PageSettings {
   bandGapMm: number;
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
+  /** Step-number circles as tall as the step's text (cap top of the first
+   *  line to the bottom of the last — two lines = about the steps band),
+   *  worked out from the size the steps actually fit at (Graeme, 2026-10-12:
+   *  "make those 1 and 2 steps really obvious", like his original design).
+   *  Off = a fixed circle of stepCircleMm. */
+  stepCircleAuto: boolean;
+  /** The circle's size when stepCircleAuto is off. */
   stepCircleMm: number;
   /** Height of the barcode BARS (digits sit underneath). At least
    *  EAN13_MIN_BAR_HEIGHT_MM (12 mm); under GS1's recommended 18.3 mm the
@@ -85,6 +98,12 @@ export interface PageSettings {
    *  The bars are then snapped to whole printer dots, so the printed size is
    *  the nearest whole-dot size (shown on the proof). */
   barcodeSizePct: number;
+  /** A thin rule across the label between the cooking steps and the two
+   *  columns, splitting it into "how to cook" and "what's in it" (Graeme,
+   *  2026-10-12). Drawn centred in the band gap, in whole printer dots. */
+  dividerOn: boolean;
+  /** Its thickness; rounded to whole dots, never under one dot. */
+  dividerMm: number;
   /** UK FIC Art. 13(3): the pack's largest surface is under 80 cm², so the
    *  minimum x-height is 0.9 mm instead of 1.2 mm. About the PACK, not the
    *  label. */
@@ -137,6 +156,10 @@ export interface LabelTemplate {
   batchBasis: BatchBasis;
   /** Bold the allergen list in the may-contain statement. */
   mayContainBoldList: boolean;
+  /** Words that switch the bones warning on for a recipe left on
+   *  Automatic: any of them anywhere in its ingredients (whole word, any
+   *  case — bones.ts). Empty = Automatic is always off. */
+  boneRiskWords: string[];
 }
 
 export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
@@ -166,7 +189,7 @@ export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
 };
 
 const field = (f: Partial<FieldStyle>): FieldStyle => ({
-  width: "normal", allowNarrower: true, weight: 400, minPt: 6.75, maxPt: 9,
+  width: "normal", narrowest: "semi-condensed", weight: 400, minPt: 6.75, maxPt: 9,
   letterSpacingEm: 0, lineHeight: 1.12, bold: false, caps: false, align: "left", ...f,
 });
 
@@ -176,11 +199,17 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // clear all round (rounded corners; ink closer to the edge gets cut off).
     widthMm: 140, heightMm: 94, dpi: 203, marginMm: 4.5,
     columnSplitPct: 44, columnGapMm: 4,
-    // Steps band 9 mm (2026-10-12, was 13): room for exactly two lines at
-    // ~10.75 pt, so step 1 sits on two lines instead of three, and the
-    // 4 mm saved goes to the storage / ingredients / barcode columns.
-    titleBandMm: 9, stepsBandMm: 9, bandGapMm: 2, fieldGapMm: 2,
-    stepCircleMm: 5.5,
+    // Gaps 3 mm (2026-10-12, were 2): the printed label looked crowded —
+    // the steps sat on STORAGE INSTRUCTIONS and the use-by lines ran on
+    // from the storage text like one paragraph. The band gap also holds the
+    // divider rule. The extra 2 mm comes out of the title band (7 mm, was 9:
+    // a one-line 22 pt title still fits) and the steps band (8 mm, was 9:
+    // two lines up to ~10.5 pt), so the longest real deck (The Godfather)
+    // still fits at the legal minimum in Semi Condensed.
+    titleBandMm: 7, stepsBandMm: 8, bandGapMm: 3, fieldGapMm: 3,
+    stepCircleAuto: true, stepCircleMm: 5.5,
+    // 0.25 mm = 2 dots at 203 dpi: a hairline that still prints solidly.
+    dividerOn: true, dividerMm: 0.25,
     // Step widths are worked out automatically (layout.ts): a step written as
     // whole lines (step 2's cooking lines) gets just the width its longest
     // line needs, the rest share what's left.
@@ -194,17 +223,26 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     smallPack: false,
   },
   fields: {
-    title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center" }),
-    // Two steps share the row now, so they can be bigger: up to 12 pt (11.25
-    // pt condensed with the real Chicken & Chorizo, without squeezing the deck).
-    steps: field({ maxPt: 12, lineHeight: 1.1 }),
-    storage: field({ maxPt: 10 }),
-    dates: field({ weight: 700, bold: true, maxPt: 11 }),
-    ingredients: field({ maxPt: 10 }),
-    allergenInfo: field({ maxPt: 10 }),
-    address: field({ maxPt: 9 }),
-    // Fixed size: printed at maxPt, never shrunk or narrowed.
-    headings: field({ weight: 700, bold: true, caps: true, minPt: 10, maxPt: 10, lineHeight: 1.1, allowNarrower: false }),
+    // Readability (Graeme, 2026-10-12, after the first DA210 prints): a
+    // touch smaller, with more white space, and body text never narrower
+    // than Barlow Semi Condensed. Only the title (big, short) may still go
+    // fully condensed.
+    title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center", narrowest: "condensed" }),
+    steps: field({ maxPt: 10.5, lineHeight: 1.1 }),
+    // Storage and ingredients up to "a couple of points bigger" (Graeme,
+    // 2026-10-12, after the proofs). Storage 10.5 is the biggest that stays
+    // in plain Barlow beside the dates and barcode (11 only fits Semi
+    // Condensed); a long deck still shrinks — biggest first, so it squeezes
+    // down to the allergen note's 9 pt before that gets any smaller.
+    storage: field({ maxPt: 10.5 }),
+    dates: field({ weight: 700, bold: true, maxPt: 10 }),
+    ingredients: field({ maxPt: 11 }),
+    allergenInfo: field({ maxPt: 9 }),
+    address: field({ maxPt: 8 }),
+    // Fixed size: printed at maxPt, never shrunk or narrowed. 10.5 = the
+    // storage text under it; 11 would push the longest deck (The Godfather)
+    // off the label.
+    headings: field({ weight: 700, bold: true, caps: true, minPt: 10.5, maxPt: 10.5, lineHeight: 1.1, narrowest: "normal" }),
   },
   text: {
     title: "{name} - {packSize} PACK",
@@ -236,6 +274,8 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   frozenDefault: { amount: 6, unit: "months" },
   batchBasis: "production-day",
   mayContainBoldList: true,
+  // Graeme, 2026-10-12: "anything with chicken in it" may have bones.
+  boneRiskWords: ["chicken"],
 };
 
 // ── Normalising stored settings ────────────────────────────────────────────
@@ -270,12 +310,42 @@ export function normalisePeriod(v: unknown): ShelfPeriod | null {
   return amount == null || amount <= 0 ? null : { amount, unit };
 }
 
+function isWidth(v: unknown): v is WidthVariant {
+  return WIDTH_ORDER.includes(v as WidthVariant);
+}
+
+/** The narrowest width a field may use — never wider than its preferred
+ *  width. Templates saved before it existed have `allowNarrower` instead:
+ *  on = all the way to Condensed (what it did), off = the preferred width. */
+function normaliseNarrowest(o: Record<string, unknown>, width: WidthVariant, fallback: WidthVariant): WidthVariant {
+  const narrowest = isWidth(o.narrowest)
+    ? o.narrowest
+    : typeof o.allowNarrower === "boolean"
+      ? (o.allowNarrower ? "condensed" : width)
+      : fallback;
+  return WIDTH_ORDER.indexOf(narrowest) < WIDTH_ORDER.indexOf(width) ? width : narrowest;
+}
+
+/** The widths a field may use, widest first: its preferred width down to its
+ *  narrowest. */
+export function allowedWidths(style: Pick<FieldStyle, "width" | "narrowest">): WidthVariant[] {
+  const start = WIDTH_ORDER.indexOf(style.width);
+  return WIDTH_ORDER.slice(start, Math.max(start, WIDTH_ORDER.indexOf(style.narrowest)) + 1);
+}
+
+/** The divider's printed thickness in whole printer dots — never under one
+ *  dot, so a hairline setting still prints. */
+export function dividerDots(page: Pick<PageSettings, "dividerMm" | "dpi">): number {
+  return Math.max(1, Math.round(mmToDots(page.dividerMm, page.dpi)));
+}
+
 function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
   const o = obj(v);
   const minPt = num(o.minPt, d.minPt, 3, 72);
+  const width = isWidth(o.width) ? o.width : d.width;
   return {
-    width: WIDTH_ORDER.includes(o.width as WidthVariant) ? (o.width as WidthVariant) : d.width,
-    allowNarrower: bool(o.allowNarrower, d.allowNarrower),
+    width,
+    narrowest: normaliseNarrowest(o, width, d.narrowest),
     weight: BODY_WEIGHTS.includes(o.weight as BodyWeight) ? (o.weight as BodyWeight) : d.weight,
     minPt,
     maxPt: Math.max(minPt, num(o.maxPt, d.maxPt, 3, 72)),
@@ -288,6 +358,23 @@ function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
 }
 
 export const MAX_STEPS = 4;
+
+/** A word list: trimmed, blanks and repeats (any case) dropped, at most 50
+ *  words of 60 characters. Not a list = the default; an empty list stays
+ *  empty (Automatic then never switches the warning on). */
+function normaliseWords(v: unknown, fallback: string[]): string[] {
+  if (!Array.isArray(v)) return [...fallback];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const w of v) {
+    if (typeof w !== "string") continue;
+    const word = w.trim().replace(/\s+/g, " ").slice(0, 60);
+    if (!word || seen.has(word.toLowerCase())) continue;
+    seen.add(word.toLowerCase());
+    out.push(word);
+  }
+  return out.slice(0, 50);
+}
 
 /** The steps list. Templates saved before it existed have step1/step2/step3
  *  — read in order, blank ones left out (a blank step isn't drawn). */
@@ -331,6 +418,10 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       stepsBandMm: num(p.stepsBandMm, D.page.stepsBandMm, 2, 60),
       bandGapMm: num(p.bandGapMm, D.page.bandGapMm, 0, 20),
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
+      dividerOn: bool(p.dividerOn, D.page.dividerOn),
+      dividerMm: num(p.dividerMm, D.page.dividerMm, 0.05, 2),
+      // Templates saved before it existed get the default (auto).
+      stepCircleAuto: bool(p.stepCircleAuto, D.page.stepCircleAuto),
       stepCircleMm: num(p.stepCircleMm, D.page.stepCircleMm, 2, 20),
       barcodeHeightMm: num(p.barcodeHeightMm, D.page.barcodeHeightMm, EAN13_MIN_BAR_HEIGHT_MM, 60),
       barcodeSizePct: num(p.barcodeSizePct, D.page.barcodeSizePct, 80, 200),
@@ -343,5 +434,6 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     frozenDefault: "frozenDefault" in r ? normalisePeriod(r.frozenDefault) : D.frozenDefault,
     batchBasis: r.batchBasis === "print-day" ? "print-day" : r.batchBasis === "production-day" ? "production-day" : D.batchBasis,
     mayContainBoldList: bool(r.mayContainBoldList, D.mayContainBoldList),
+    boneRiskWords: normaliseWords(r.boneRiskWords, D.boneRiskWords),
   };
 }

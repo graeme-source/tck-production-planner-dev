@@ -12,6 +12,7 @@
  * Recipe edits never touch the live label: printing (Stage 2) reads the
  * published snapshot, never the current one.
  */
+import { resolveBonesWarning, type BonesSetting } from "./bones";
 import type { ShelfPeriod } from "./dates";
 import { describePeriod } from "./dates";
 import type { CookingValues, LabelTemplate } from "./template";
@@ -25,7 +26,9 @@ export interface RecipeLabelSettings {
   ovenOn: boolean;
   airFryerOn: boolean;
   cooking: CookingValues;
-  warningOn: boolean;
+  /** Bones warning: true / false = always on / off; null = Automatic (on
+   *  when the ingredients contain one of the template's boneRiskWords). */
+  warningOn: BonesSetting;
   chilled: ShelfPeriod | null;
   frozenOn: boolean;
   frozen: ShelfPeriod | null;
@@ -38,7 +41,7 @@ export const EMPTY_COOKING: CookingValues = {
 
 export const DEFAULT_RECIPE_LABEL_SETTINGS: RecipeLabelSettings = {
   barcode: null, labelName: null, ovenOn: true, airFryerOn: true,
-  cooking: { ...EMPTY_COOKING }, warningOn: true, chilled: null, frozenOn: true, frozen: null,
+  cooking: { ...EMPTY_COOKING }, warningOn: null, chilled: null, frozenOn: true, frozen: null,
 };
 
 export interface LabelSnapshot {
@@ -49,6 +52,9 @@ export interface LabelSnapshot {
   /** Ingredient deck with **allergens** (from the recipe's deck endpoint). */
   deckText: string;
   mayContain: string | null;
+  /** RESOLVED — whether the warning prints (Automatic already worked out),
+   *  so a published label stays frozen and a deck change that flips
+   *  Automatic shows as a change. */
   warningOn: boolean;
   /** Resolved: recipe override, else template default; blank when switched off. */
   cooking: CookingValues;
@@ -95,7 +101,7 @@ export function buildSnapshot(input: {
     packSize: formatPackSize(recipe.packSize),
     deckText: deck.deckText,
     mayContain: deck.mayContainStatement?.trim() || null,
-    warningOn: s.warningOn,
+    warningOn: resolveBonesWarning(s.warningOn, deck.deckText, template.boneRiskWords).on,
     cooking: resolveCooking(template, s),
     chilled,
     frozen: s.frozenOn ? (s.frozen ?? template.frozenDefault) : null,
@@ -121,7 +127,9 @@ export function canonicalJson(value: unknown): string {
  *  that this recipe overrides doesn't flag its label. recipeName is kept for
  *  the record but isn't compared — labelName is what prints. */
 export function comparableSnapshot(s: LabelSnapshot): unknown {
-  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, ...template } = s.template;
+  // boneRiskWords, like the defaults, only matters through the resolved
+  // warningOn already in the snapshot.
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
   return { ...rest, template };
 }
@@ -255,9 +263,9 @@ const TEXT_LABEL: Record<string, string> = {
 
 function pageSummary(t: LabelTemplate): string {
   const p = t.page;
-  return `${p.widthMm}×${p.heightMm} mm, ${p.dpi} dpi, margin ${p.marginMm} mm, left column ${p.columnSplitPct}%${p.smallPack ? ", small pack" : ""}`;
+  return `${p.widthMm}×${p.heightMm} mm, ${p.dpi} dpi, margin ${p.marginMm} mm, left column ${p.columnSplitPct}%, gaps ${p.bandGapMm}/${p.fieldGapMm} mm, ${p.dividerOn ? `divider ${p.dividerMm} mm` : "no divider"}${p.smallPack ? ", small pack" : ""}`;
 }
 function styleSummary(t: LabelTemplate, f: (typeof FIELD_KEYS)[number]): string {
   const s = t.fields[f];
-  return `${s.width}, ${s.weight}, ${s.minPt}–${s.maxPt} pt, spacing ${s.letterSpacingEm} em, line ${s.lineHeight}${s.bold ? ", bold" : ""}${s.caps ? ", caps" : ""}${s.allowNarrower ? "" : ", no narrower"}`;
+  return `${s.width}, ${s.weight}, ${s.minPt}–${s.maxPt} pt, spacing ${s.letterSpacingEm} em, line ${s.lineHeight}${s.bold ? ", bold" : ""}${s.caps ? ", caps" : ""}${s.narrowest === s.width ? ", no narrower" : `, down to ${s.narrowest}`}`;
 }

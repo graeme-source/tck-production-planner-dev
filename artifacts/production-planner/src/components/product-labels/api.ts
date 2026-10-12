@@ -7,7 +7,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DeclarationIssue } from "@workspace/allergens";
 import type {
   FieldKey, FitProblem, LabelDates, LabelSnapshot, LabelStatus, LabelTemplate, Rect, RecipeLabelSettings,
-  SnapshotChange, WidthVariant, CookingValues, ShelfPeriod,
+  SnapshotChange, WidthVariant, CookingValues, ShelfPeriod, BonesWarning,
 } from "@workspace/product-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -87,6 +87,10 @@ export interface RecipeLabel {
     factoryOvenTempC: number | null; factoryOvenTimeSeconds: number | null;
   };
   settings: RecipeLabelSettings;
+  /** The bones warning as it prints, and what Automatic finds. */
+  bonesWarning: BonesWarning;
+  /** The template's trigger words (for "no chicken found"). */
+  boneRiskWords: string[];
   settingsUpdatedAt: string | null;
   settingsUpdatedByName: string | null;
   template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null };

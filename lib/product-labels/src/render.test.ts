@@ -265,9 +265,13 @@ describe("steps: any number, widths worked out automatically", () => {
     // The row is used edge to edge (inside the margins).
     const last = steps.boxes[steps.boxes.length - 1];
     expect(last.x + last.w).toBeCloseTo(p.layout.widthDots - mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203), 0);
-    expect(steps.sizePt).toBeGreaterThan(10); // bigger than when there were three
+    // 2026-10-12: a touch smaller than before (max 10.5 pt, Semi Condensed
+    // at narrowest, beside full-height step numbers) so the label breathes —
+    // still at least the body text's size.
+    expect(steps.sizePt).toBeGreaterThanOrEqual(9);
+    expect(steps.width).not.toBe("condensed");
   });
-  it("step 1 sits on two lines (not three), the bold phrase intact, still bigger than the body text", () => {
+  it("step 1 sits on two lines (not three), the bold phrase intact, never below 9 pt", () => {
     const p = proofLabel(snapshot(), when, fonts);
     const steps = p.layout.fields.find(f => f.key === "steps")!;
     const box1 = steps.boxes[0];
@@ -275,8 +279,10 @@ describe("steps: any number, widths worked out automatically", () => {
     expect(new Set(runs1.map(r => Math.round(r.y))).size).toBe(2);
     expect(runs1.filter(r => r.face.weight === 700).map(r => r.text).join(" ")).toBe("leave the calzones in the wooden tray");
     const storage = p.layout.fields.find(f => f.key === "storage")!;
-    expect(steps.sizePt).toBeGreaterThanOrEqual(10);
-    expect(steps.sizePt).toBeGreaterThanOrEqual(storage.sizePt);
+    // Storage is now the bigger of the two (Graeme, 2026-10-12: storage and
+    // ingredients bigger, steps left as they were).
+    expect(steps.sizePt).toBeGreaterThanOrEqual(9);
+    expect(storage.sizePt).toBeGreaterThanOrEqual(steps.sizePt);
   });
   it("a third step added back still lays out, numbered 1–3; a blank one closes up", () => {
     const three = withSteps([...DEFAULT_TEMPLATE.text.steps, "Enjoy."]);
@@ -379,5 +385,73 @@ describe("title", () => {
     const rightGap = box.x + box.w - (maxX + 1);
     expect(Math.abs(leftGap - rightGap)).toBeLessThanOrEqual(4); // within a couple of dots
     expect(leftGap).toBeGreaterThan(50);
+  });
+});
+
+describe("divider rule (printed)", () => {
+  const when = { printDate: "2026-10-10", productionDate: "2026-10-10" };
+  const blackRun = (bm: Bitmap, y: number, x0: number, x1: number) => {
+    for (let x = x0; x < x1; x++) if (bm.data[y * bm.width + x] !== 1) return false;
+    return true;
+  };
+  it("prints a solid line of exactly its thickness across the label", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const d = p.layout.divider!;
+    expect(d.h).toBe(2);
+    for (let y = d.y; y < d.y + d.h; y++) expect(blackRun(p.bitmap, y, d.x, d.x + d.w)).toBe(true);
+    // Clear white just above and below it (nothing crowds the rule).
+    for (const y of [d.y - 1, d.y + d.h]) {
+      const row = p.bitmap.data.subarray(y * p.bitmap.width + d.x, y * p.bitmap.width + d.x + d.w);
+      expect(row.some(v => v === 1)).toBe(false);
+    }
+  });
+  it("prints nothing there when switched off", () => {
+    const on = proofLabel(snapshot(), when, fonts).layout.divider!;
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...DEFAULT_TEMPLATE.page, dividerOn: false } });
+    const p = proofLabel({ ...snapshot(), template: t }, when, fonts);
+    expect(p.layout.divider).toBeNull();
+    const row = p.bitmap.data.subarray(on.y * p.bitmap.width + on.x, on.y * p.bitmap.width + on.x + on.w);
+    expect(row.some(v => v === 1)).toBe(false);
+  });
+});
+
+describe("step numbers as tall as the step text (default)", () => {
+  const when = { printDate: "2026-10-10", productionDate: "2026-10-10" };
+  it("each circle spans the step's two lines, top-aligned with the text, inside the band", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const steps = p.layout.fields.find(f => f.key === "steps")!;
+    const band = mmToDots(DEFAULT_TEMPLATE.page.stepsBandMm, 203);
+    for (const [i, c] of p.layout.circles.entries()) {
+      const box = steps.boxes[i];
+      expect(2 * c.r).toBeGreaterThan(mmToDots(5.5, 203)); // bigger than the old fixed circle
+      expect(Math.abs(2 * c.r - steps.usedHeight)).toBeLessThanOrEqual(1);
+      expect(c.cy - c.r).toBeCloseTo(box.y, 5);
+      expect(2 * c.r).toBeLessThanOrEqual(band + 1e-6);
+    }
+  });
+  it("no step text overlaps its circle, and nothing runs past the row", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const steps = p.layout.fields.find(f => f.key === "steps")!;
+    for (const [i, c] of p.layout.circles.entries()) {
+      const box = steps.boxes[i];
+      const runs = steps.runs.filter(r => !r.white && r.x >= box.x && r.x < box.x + box.w);
+      expect(runs.length).toBeGreaterThan(0);
+      for (const r of runs) expect(r.x).toBeGreaterThan(c.cx + c.r);
+    }
+    expect(steps.fits).toBe(true);
+    const last = steps.boxes[steps.boxes.length - 1];
+    expect(last.x + last.w).toBeLessThanOrEqual(p.layout.widthDots - mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203) + 1);
+  });
+  it("the bold white number is scaled to the circle", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const nums = p.layout.fields.find(f => f.key === "steps")!.runs.filter(r => r.white);
+    const c = p.layout.circles[0];
+    expect(nums[0].face.weight).toBe(700);
+    expect(nums[0].sizeDots).toBeCloseTo(2 * c.r * 0.72, 5);
+  });
+  it("switched off: a fixed circle of the set size", () => {
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...DEFAULT_TEMPLATE.page, stepCircleAuto: false, stepCircleMm: 5.5 } });
+    const p = proofLabel({ ...snapshot(), template: t }, when, fonts);
+    for (const c of p.layout.circles) expect(2 * c.r).toBeCloseTo(mmToDots(5.5, 203), 5);
   });
 });

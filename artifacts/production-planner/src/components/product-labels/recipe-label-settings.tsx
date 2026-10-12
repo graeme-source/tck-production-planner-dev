@@ -47,7 +47,9 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
   const [loaded, setLoaded] = useState(false);
   const [labelName, setLabelName] = useState("");
   const [nums, setNums] = useState<Record<string, string>>({});
-  const [flags, setFlags] = useState({ ovenOn: data.settings.ovenOn, airFryerOn: data.settings.airFryerOn, warningOn: data.settings.warningOn, frozenOn: data.settings.frozenOn });
+  const [flags, setFlags] = useState({ ovenOn: data.settings.ovenOn, airFryerOn: data.settings.airFryerOn, frozenOn: data.settings.frozenOn });
+  // Bones warning: null = Automatic, true / false = always on / off.
+  const [bones, setBones] = useState<boolean | null>(data.settings.warningOn);
   useEffect(() => {
     if (loaded) return;
     setLabelName(s.labelName ?? "");
@@ -94,7 +96,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
     );
   };
 
-  const toggle = (key: "ovenOn" | "airFryerOn" | "warningOn" | "frozenOn", on: boolean, label: string) => (
+  const toggle = (key: "ovenOn" | "airFryerOn" | "frozenOn", on: boolean, label: string) => (
     <button
       type="button"
       disabled={!canEdit}
@@ -170,7 +172,25 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
       {/* Warning */}
       <div className="space-y-2">
         <h3 className="flex items-center gap-2 text-base font-bold"><AlertTriangle className="w-5 h-5 text-primary" /> Bones warning</h3>
-        {toggle("warningOn", flags.warningOn, "Print the warning")}
+        <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Bones warning">
+          {([[null, "Automatic"], [true, "Always on"], [false, "Always off"]] as const).map(([v, label]) => (
+            <button
+              key={label}
+              type="button"
+              role="radio"
+              aria-checked={bones === v}
+              disabled={!canEdit}
+              onClick={() => { setBones(v); save({ warningOn: v }); }}
+              className={cn(
+                "h-11 px-4 rounded-full border-2 text-sm font-bold transition-colors disabled:opacity-60",
+                bones === v ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground",
+              )}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        <BonesExplain mode={bones} found={data.bonesWarning.auto} words={data.boneRiskWords} />
       </div>
 
       {/* Use-by */}
@@ -237,5 +257,24 @@ function PeriodField({ icon, title, value, fallback, canEdit, onSave, onBlur }: 
       </div>
       <p className="text-xs text-muted-foreground">{amount === "" ? `Blank — using ${fallback}` : "This recipe's own period"}</p>
     </div>
+  );
+}
+
+/** What prints, and why — Automatic's finding is shown even beside a manual
+ *  choice, so an override that disagrees is obvious. */
+function BonesExplain({ mode, found, words }: { mode: boolean | null; found: { word: string; ingredient: string } | null; words: string[] }) {
+  const autoText = found
+    ? `contains ${found.word.toLowerCase()} (${found.ingredient})`
+    : words.length
+      ? `no ${words.map(w => w.toLowerCase()).join(" / ")} found`
+      : "no automatic words are set in the label design";
+  if (mode === null) {
+    return <p className="text-sm font-semibold">{found ? "On" : "Off"} — {autoText}.</p>;
+  }
+  const disagrees = mode !== (found != null);
+  return (
+    <p className={cn("text-sm", disagrees ? "font-semibold text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>
+      {mode ? "On" : "Off"} — set by hand. Automatic would be {found ? "on" : "off"}: {autoText}.
+    </p>
   );
 }

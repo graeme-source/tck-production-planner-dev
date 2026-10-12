@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
-  barsShorterThanGs1, BODY_WEIGHTS, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, dividerDots, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -109,7 +109,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
   // Legal minimum for a field = the largest across the widths it may use.
   const legalMin = (f: FieldKey) => {
     const st = draft.fields[f];
-    const widths = st.allowNarrower ? WIDTH_ORDER.slice(WIDTH_ORDER.indexOf(st.width)) : [st.width];
+    const widths = allowedWidths(st);
     const m = meta.legalMinimums[f];
     const base = Math.max(...widths.map(w => m?.[w] ?? 0));
     // Server figures are for the saved small-pack setting; adjust if it was just flipped.
@@ -166,8 +166,18 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Steps band" unit="mm" value={draft.page.stepsBandMm} step={0.5} min={2} max={60} onChange={v => v != null && setPage("stepsBandMm", v)} />
               <Num label="Gap between bands" unit="mm" value={draft.page.bandGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("bandGapMm", v)} />
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
-              <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
+              {!draft.page.stepCircleAuto && (
+                <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
+              )}
             </div>
+            <Toggle on={draft.page.stepCircleAuto} onChange={v => setPage("stepCircleAuto", v)} label="Step numbers as tall as the step text" />
+            <div className="flex flex-wrap items-end gap-4">
+              <Toggle on={draft.page.dividerOn} onChange={v => setPage("dividerOn", v)} label="Thin line under the cooking steps" />
+              {draft.page.dividerOn && (
+                <Num label="Line thickness" unit={`mm (${dividerDots(draft.page)} printer dot${dividerDots(draft.page) === 1 ? "" : "s"})`} value={draft.page.dividerMm} step={0.05} min={0.05} max={2} onChange={v => v != null && setPage("dividerMm", v)} />
+              )}
+            </div>
+            <p className="text-sm text-muted-foreground">The line splits the label into “how to cook” and “what's in it”. It sits in the middle of the gap between bands, so keep that gap at least 3 mm so it stays clear of the text either side.</p>
             <p className="text-sm text-muted-foreground">The steps share their row automatically: a step written as whole lines (the cooking times) gets exactly the width it needs, the others share the rest.</p>
             <p className="text-sm text-muted-foreground">Nothing is ever printed inside the margin — keep it at least 4 mm on rounded labels, or the edges can get cut off.</p>
           </Card>
@@ -191,7 +201,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
 
           {/* Typography */}
           <Card icon={<Type className="w-5 h-5" />} title="Text styles">
-            <p className="text-sm text-muted-foreground">Each block starts at its biggest size and steps down a quarter point at a time, trying the narrower widths first. If it still won't fit at its smallest, the label says DOESN'T FIT — nothing is ever cut off.</p>
+            <p className="text-sm text-muted-foreground">Each block starts at its biggest size and steps down a quarter point at a time, trying the narrower widths first — but never narrower than its “Narrowest width”. If it still won't fit at its smallest, the label says DOESN'T FIT — nothing is ever cut off.</p>
+            <p className="text-sm text-muted-foreground">Barlow Condensed is hard to read in small print, bold allergen words most of all — keep body text at Barlow Semi Condensed or wider and let it get a little smaller instead.</p>
             <div className="space-y-3">
               {FIELD_KEYS.map(f => (
                 <FieldCard key={f} field={f} style={draft.fields[f]} legal={legalMin(f)} onChange={p => setField(f, p)} />
@@ -249,6 +260,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               ))}
             </div>
             <Toggle on={draft.mayContainBoldList} onChange={v => update(t => ({ ...t, mayContainBoldList: v }))} label="Print the may-contain list in bold" />
+            <BoneWords words={draft.boneRiskWords} onChange={boneRiskWords => update(t => ({ ...t, boneRiskWords }))} />
           </Card>
 
           {/* Cooking */}
@@ -375,10 +387,25 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <label className="flex flex-col gap-1 col-span-2">
           <span className="text-sm font-semibold">Font width</span>
-          <select value={style.width} onChange={e => onChange({ width: e.target.value as WidthVariant })} className={inputCls}>
+          <select value={style.width} onChange={e => {
+            const width = e.target.value as WidthVariant;
+            // The narrowest can't be wider than the preferred width.
+            const narrowest = fixed || WIDTH_ORDER.indexOf(style.narrowest) < WIDTH_ORDER.indexOf(width) ? width : style.narrowest;
+            onChange({ width, narrowest });
+          }} className={inputCls}>
             {WIDTH_ORDER.map(w => <option key={w} value={w}>{WIDTH_LABEL[w]}</option>)}
           </select>
         </label>
+        {!fixed && (
+          <label className="flex flex-col gap-1 col-span-2">
+            <span className="text-sm font-semibold">Narrowest width</span>
+            <select value={style.narrowest} onChange={e => onChange({ narrowest: e.target.value as WidthVariant })} className={inputCls}>
+              {WIDTH_ORDER.slice(WIDTH_ORDER.indexOf(style.width)).map(w => (
+                <option key={w} value={w}>{w === style.width ? `${WIDTH_LABEL[w]} (never narrower)` : WIDTH_LABEL[w]}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="flex flex-col gap-1 col-span-2">
           <span className="text-sm font-semibold">Weight</span>
           <select value={style.weight} onChange={e => onChange({ weight: Number(e.target.value) as FieldStyle["weight"] })} className={inputCls}>
@@ -402,10 +429,44 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
       <p className={cn("text-xs", belowLegal ? "text-destructive font-semibold" : "text-muted-foreground")}>Legal minimum for this block: {legal} pt.</p>
       {fixed && <p className="text-sm text-muted-foreground">One style for “STORAGE INSTRUCTIONS:” and “THE INGREDIENTS:”, so they always match. They stay this size — only the text under them shrinks to fit.</p>}
       <div className="flex flex-wrap gap-2">
-        {!fixed && <Toggle on={style.allowNarrower} onChange={v => onChange({ allowNarrower: v })} label="Go narrower before smaller" />}
         <Toggle on={style.bold} onChange={v => onChange({ bold: v })} label="All bold" />
         <Toggle on={style.caps} onChange={v => onChange({ caps: v })} label="CAPITALS" />
         <Toggle on={style.align === "center"} onChange={v => onChange({ align: v ? "center" : "left" })} label="Centred" />
+      </div>
+    </div>
+  );
+}
+
+/** The words that switch the bones warning on for recipes left on
+ *  Automatic. Saved with the rest of the design (autosave). */
+function BoneWords({ words, onChange }: { words: string[]; onChange: (w: string[]) => void }) {
+  const [text, setText] = useState("");
+  const add = () => {
+    const w = text.trim().replace(/\s+/g, " ");
+    if (!w) return;
+    if (!words.some(x => x.toLowerCase() === w.toLowerCase())) onChange([...words, w]);
+    setText("");
+  };
+  return (
+    <div className="space-y-2 rounded-xl border-2 border-border p-3">
+      <p className="font-bold">Bones warning — automatic words</p>
+      <p className="text-sm text-muted-foreground">
+        A recipe left on “Automatic” prints the bones warning when any of these words is in its ingredients (sub-recipes included; whole words, any capitals — “chicken” finds “Chicken Thigh” but not “chickpea”). With no words, Automatic is always off. Any recipe can still be set to always on or always off.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {words.length === 0 && <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">No words — Automatic never prints the warning.</span>}
+        {words.map(w => (
+          <span key={w} className="inline-flex items-center gap-2 h-11 pl-4 pr-1 rounded-full border-2 border-primary bg-primary/10 text-primary font-bold text-sm">
+            {w}
+            <button type="button" onClick={() => onChange(words.filter(x => x !== w))} aria-label={`Remove ${w}`}
+              className="h-9 w-9 rounded-full hover:bg-primary/20 font-bold">×</button>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          placeholder="Add a word, e.g. lamb" aria-label="Add a word" className={cn(inputCls, "w-56")} />
+        <button type="button" onClick={add} className="h-11 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary">Add</button>
       </div>
     </div>
   );

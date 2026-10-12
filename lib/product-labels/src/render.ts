@@ -45,6 +45,8 @@ export function inkHeight(layout: LabelLayout, fonts: LabelFontSet): number {
 export function renderLabel(layout: LabelLayout, fonts: LabelFontSet, showOverflow = false): Bitmap {
   const bm = new Bitmap(layout.widthDots, showOverflow ? inkHeight(layout, fonts) : layout.heightDots);
   for (const c of layout.circles) fillCircle(bm, c.cx, c.cy, c.r, 1);
+  const rule = layout.divider;
+  if (rule) fillRect(bm, rule.x, rule.y, rule.w, rule.h, 1);
   for (const f of layout.fields) {
     for (const run of f.runs) if (!run.white) drawRun(bm, fonts, run);
   }

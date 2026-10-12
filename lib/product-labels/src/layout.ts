@@ -4,8 +4,8 @@
  * Works in printer dots. Every field has a box; its text is wrapped to the
  * box width and must fit the box height. Text starts at the field's MAX size
  * in its preferred width and steps down in quarter points; at each size it
- * tries the narrower widths (Barlow → Semi Condensed → Condensed) BEFORE
- * going smaller. The smallest size is the field's minimum, never below the
+ * tries the narrower widths (Barlow → Semi Condensed → Condensed, but never
+ * past the field's `narrowest`) BEFORE going smaller. The smallest size is the field's minimum, never below the
  * legal x-height minimum for that width. If the text still doesn't fit at
  * the minimum in the narrowest width, the label is DOESN'T FIT — and the
  * layout still places every word (running past the box) so the proof shows
@@ -16,8 +16,8 @@
  * glyphs at exactly the positions measured here — preview and print are one
  * computation.
  *
- * Regions: title band across the top; the three cooking steps in a row;
- * then a left column (storage, dates, barcode at the bottom) and a right
+ * Regions: title band across the top; the cooking steps in a row; an
+ * optional thin divider rule; then a left column (storage, dates, barcode at the bottom) and a right
  * column (ingredients, allergen note/may contain/warning, address). Fields
  * stacked in a column shrink together, level by level.
  */
@@ -26,7 +26,7 @@ import { fieldParagraphs, type LabelContent } from "./content";
 import { barcodeModuleDots, type ModuleChoice } from "./ean13";
 import { legalMinPt, PT_STEP, xHeightMmAt } from "./legal";
 import type { BodyWeight, FieldKey, FieldStyle, LabelTemplate, WidthVariant } from "./template";
-import { FIELD_LABEL, WIDTH_ORDER } from "./template";
+import { allowedWidths, dividerDots, FIELD_LABEL, WIDTH_ORDER } from "./template";
 import type { Paragraph, Run } from "./text";
 
 export interface Face {
@@ -115,6 +115,9 @@ export interface LabelLayout {
   barcode: BarcodeLayout;
   /** The column boxes (for the proof overlay). */
   columns: { left: Rect; right: Rect; leftText: Rect };
+  /** The thin rule between the steps and the columns (whole dots), or null
+   *  when it's switched off. */
+  divider: Rect | null;
   fits: boolean;
   problems: FitProblem[];
 }
@@ -240,10 +243,7 @@ interface Trial {
   bottom: number;
 }
 
-function widthCandidates(style: FieldStyle): WidthVariant[] {
-  const start = WIDTH_ORDER.indexOf(style.width);
-  return style.allowNarrower ? WIDTH_ORDER.slice(start) : [style.width];
-}
+const widthCandidates = (style: FieldStyle): WidthVariant[] => allowedWidths(style);
 
 function legalMinFor(style: FieldStyle, width: WidthVariant, m: TextMeasurer, smallPack: boolean): number {
   // The binding x-height is the smallest of the weights this field uses.
@@ -303,7 +303,14 @@ function atFloor(spec: FieldSpec, level: number, widthIdx: number, t: LabelTempl
 
 /** Find the first level (largest size, then widest) where every field of a
  *  group fits. stack=true: the fields share one column height (stacked with
- *  gaps); false: each field (box) has the whole height to itself. */
+ *  gaps); false: each field (box) has the whole height to itself.
+ *
+ *  Fields of a group shrink BIGGEST FIRST, under one falling ceiling: a
+ *  field set smaller than the group's biggest keeps its own size (and its
+ *  preferred width) until the ceiling comes down to it, then they shrink
+ *  together. So an 11 pt deck squeezes down to the 9 pt allergen note before
+ *  the note gets any smaller, and 11 pt storage text shrinks before the 10 pt
+ *  use-by lines (Graeme, 2026-10-12: bigger storage and ingredients). */
 function fitGroup(specs: FieldSpec[], availH: number, stack: boolean, gap: number, t: LabelTemplate, m: TextMeasurer): { trials: Trial[]; fits: boolean } {
   const ok = (trials: Trial[]) => {
     if (trials.some(tr => tr.wraps.some(w => w.tooWide))) return false;
@@ -313,13 +320,18 @@ function fitGroup(specs: FieldSpec[], availH: number, stack: boolean, gap: numbe
     }
     return trials.every(tr => tr.height <= availH + 1e-6);
   };
+  // How many quarter-point levels each field sits below the group's biggest.
+  const top = Math.max(...specs.map(s => s.style.maxPt));
+  const offsets = specs.map(s => Math.max(0, Math.round((top - s.style.maxPt) / PT_STEP)));
   let last: Trial[] = [];
-  for (let level = 0; level < 400; level++) {
+  for (let level = 0; level < 800; level++) {
     for (let w = 0; w < WIDTH_ORDER.length; w++) {
-      const trials = specs.map(s => trial(s, level, w, t, m));
+      // A field still under the ceiling stays at its biggest, widest.
+      const at = offsets.map(off => (level - off < 0 ? { level: 0, w: 0 } : { level: level - off, w }));
+      const trials = specs.map((s, i) => trial(s, at[i].level, at[i].w, t, m));
       last = trials;
       if (ok(trials)) return { trials, fits: true };
-      if (specs.every(s => atFloor(s, level, w, t, m))) return { trials, fits: false };
+      if (specs.every((s, i) => atFloor(s, at[i].level, at[i].w, t, m))) return { trials, fits: false };
     }
   }
   return { trials: last, fits: false };
@@ -387,8 +399,12 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const stepsTop = titleBox.y + titleBox.h + d(page.bandGapMm);
   const stepsH = d(page.stepsBandMm);
   const stepGap = d(page.columnGapMm);
-  const circleD = d(page.stepCircleMm);
-  const stepInset = circleD + d(1);
+  // Step-number circle: fixed (stepCircleMm), or — the default — as tall as
+  // the steps' text at the size they fit at, worked out in the fitting loop
+  // below. The text starts this far right of the circle's left edge.
+  const minAutoCircle = d(4);
+  const insetFor = (circle: number) => circle + d(page.stepCircleAuto ? 1.5 : 1);
+  let circleD = page.stepCircleAuto ? minAutoCircle : d(page.stepCircleMm);
   // Any number of steps (2 by default), widths worked out automatically: a
   // step written as whole lines (step 2's cooking lines, which never wrap)
   // gets exactly the width its longest line needs at the size being tried;
@@ -397,7 +413,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const nSteps = content.steps.length;
   const stepSpace = innerW - Math.max(0, nSteps - 1) * stepGap;
   const wholeStep = content.steps.map(ps => ps.some(p => p.some(r => r.text.includes(" "))));
-  const stepBoxesFor = (width: WidthVariant, sizeDots: number): Rect[] => {
+  const stepBoxesFor = (width: WidthVariant, sizeDots: number, stepInset: number): Rect[] => {
     const style = t.fields.steps;
     const need = content.steps.map((ps, i) =>
       wholeStep[i] ? stepInset + Math.max(0, ...ps.map(p => wrap([p], style, width, sizeDots, Infinity, m).lineRight[0] ?? 0)) + 1 : 0);
@@ -414,6 +430,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Columns
   const colTop = stepsTop + stepsH + d(page.bandGapMm);
+
   const colH = H - margin - colTop;
   const leftW = innerW * (page.columnSplitPct / 100);
   const left: Rect = { x: innerX, y: colTop, w: leftW, h: colH };
@@ -483,10 +500,26 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
         const width = cands[Math.min(w, cands.length - 1)];
         const effMin = Math.max(style.minPt, legalMinFor(style, width, m, page.smallPack));
         const sizeDots = ptToDots(sizeAt(style, level, effMin), dpi);
-        const boxes = stepBoxesFor(width, sizeDots);
-        const tr = trial(spec("steps", boxes, content.steps, stepInset), level, w, t, m);
+        // Auto circles: start small and grow to the text's height until the
+        // two agree (a bigger circle narrows the text, which can add a line,
+        // which makes the circle bigger…). Only ever grows, capped at the
+        // band, so it settles in a step or two. The trial kept is always the
+        // one laid out with the circle that's drawn — nothing can overlap.
+        let circle = page.stepCircleAuto ? minAutoCircle : d(page.stepCircleMm);
+        let boxes: Rect[] = [];
+        let tr!: Trial;
+        for (let i = 0; i < 6; i++) {
+          boxes = stepBoxesFor(width, sizeDots, insetFor(circle));
+          tr = trial(spec("steps", boxes, content.steps, insetFor(circle)), level, w, t, m);
+          if (!page.stepCircleAuto) break;
+          const want = Math.min(stepsH, Math.max(minAutoCircle, tr.height));
+          if (want <= circle + 0.5) break;
+          circle = want;
+        }
         chosen = tr;
         stepBoxes = boxes;
+        circleD = circle;
+        const stepInset = insetFor(circle);
         const narrowOk = boxes.every(b => b.w > stepInset);
         if (narrowOk && !tr.wraps.some(x => x.tooWide) && tr.height <= stepsH + 1e-6) { fits = true; break outer; }
         if (atFloor(tr.spec, level, w, t, m)) break outer;
@@ -497,10 +530,28 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
       if (!fits) problems.push(overflowProblem(chosen, stepsH, mm1));
     }
   }
+  // The divider: full inner width, whole dots thick (at least one) on
+  // whole-dot rows so it prints as a clean, even line. Centred between the
+  // bottom of the steps' INK (or the band, if there are no steps) and the
+  // top of the columns, so the white space either side looks equal however
+  // much of the band the steps use. Never above the steps band's text, never
+  // into the columns.
+  let divider: Rect | null = null;
+  if (page.dividerOn) {
+    const h = dividerDots(page);
+    const stepsField = fields.find(f => f.key === "steps");
+    // The step-number circles count as ink too.
+    const above = stepsField && stepsField.lines > 0
+      ? Math.min(stepsTop + Math.max(stepsField.usedHeight, circleD), stepsTop + stepsH)
+      : stepsTop + stepsH;
+    const y = Math.max(Math.ceil(above), Math.min(Math.floor(colTop) - h, Math.round((above + colTop) / 2 - h / 2)));
+    divider = { x: Math.round(innerX), y, w: Math.round(innerX + innerW) - Math.round(innerX), h };
+  }
   const circles = stepBoxes.map(b => ({ cx: b.x + circleD / 2, cy: b.y + circleD / 2, r: circleD / 2 }));
   // Step numbers, white in the black circles.
   const numFace: Face = { width: "normal", weight: 700 };
-  const numSize = circleD * 0.7;
+  // A big bold number: cap height about half the circle.
+  const numSize = circleD * (page.stepCircleAuto ? 0.72 : 0.7);
   const numMet = m.metrics(numFace);
   const numberRuns: PlacedRun[] = circles.map((c, i) => {
     const w = m.advance(String(i + 1), numFace, numSize, 0);
@@ -540,7 +591,9 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   // Section headings — one shared style at a FIXED size (level 0 = its
   // biggest, never narrowed), placed first at the top of each column; their
   // height is reserved and only the text underneath shrinks to fit.
-  const headingGap = d(0.8);
+  // 0.5 mm (was 0.8): the heading belongs to the text under it, and the
+  // bigger headings need the room (2026-10-12).
+  const headingGap = d(0.5);
   const headingBoxes: Rect[] = [];
   const headingRuns: PlacedRun[] = [];
   let headingTrial: Trial | null = null;
@@ -577,6 +630,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     circles,
     barcode,
     columns: { left, right, leftText },
+    divider,
     fits: problems.length === 0,
     problems,
   };

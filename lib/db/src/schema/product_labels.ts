@@ -33,7 +33,9 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   airFryerTempC: integer("air_fryer_temp_c"),
   airFryerMinMinutes: integer("air_fryer_min_minutes"),
   airFryerMaxMinutes: integer("air_fryer_max_minutes"),
-  warningOn: boolean("warning_on").notNull().default(true),
+  // Bones warning: TRUE / FALSE = always on / off; NULL = Automatic (on when
+  // the ingredients contain a template boneRiskWords word). Migration 0173.
+  warningOn: boolean("warning_on"),
   // NULL = the recipe's shelf_life_days (chilled) / the template (frozen).
   chilledAmount: integer("chilled_amount"),
   chilledUnit: text("chilled_unit"),
