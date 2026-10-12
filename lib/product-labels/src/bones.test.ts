@@ -29,6 +29,13 @@ describe("finding bone-risk words in a deck", () => {
     expect(findBoneRisk(VEG_DECK, ["  ", "lamb", "garlic butter"])).toEqual({ word: "garlic butter", ingredient: "Garlic Butter" });
   });
 
+  it("the default words catch turkey as well as chicken", () => {
+    const words = DEFAULT_TEMPLATE.boneRiskWords;
+    expect(findBoneRisk("Roast Turkey Breast (30%), Stuffing (Sage, Onion)", words)).toEqual({ word: "turkey", ingredient: "Roast Turkey Breast" });
+    expect(findBoneRisk(CHICKEN_DECK, words)?.word).toBe("chicken");
+    expect(findBoneRisk(VEG_DECK, words)).toBeNull();
+  });
+
   it("an empty word list never matches", () => {
     expect(findBoneRisk(CHICKEN_DECK, [])).toBeNull();
   });
@@ -86,14 +93,14 @@ describe("the snapshot stores what prints", () => {
 });
 
 describe("template word list", () => {
-  it("defaults to chicken; older templates get the default", () => {
-    expect(DEFAULT_TEMPLATE.boneRiskWords).toEqual(["chicken"]);
-    expect(normaliseTemplate({}).boneRiskWords).toEqual(["chicken"]);
+  it("defaults to chicken and turkey; older templates get the default", () => {
+    expect(DEFAULT_TEMPLATE.boneRiskWords).toEqual(["chicken", "turkey"]);
+    expect(normaliseTemplate({}).boneRiskWords).toEqual(["chicken", "turkey"]);
   });
 
   it("is tidied: trimmed, blanks and repeats dropped; an empty list stays empty", () => {
     expect(normaliseTemplate({ boneRiskWords: [" Chicken ", "chicken", "", 7, "turkey  breast"] }).boneRiskWords).toEqual(["Chicken", "turkey breast"]);
     expect(normaliseTemplate({ boneRiskWords: [] }).boneRiskWords).toEqual([]);
-    expect(normaliseTemplate({ boneRiskWords: "chicken" }).boneRiskWords).toEqual(["chicken"]);
+    expect(normaliseTemplate({ boneRiskWords: "chicken" }).boneRiskWords).toEqual(["chicken", "turkey"]);
   });
 });

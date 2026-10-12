@@ -284,8 +284,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   frozenDefault: { amount: 6, unit: "months" },
   batchBasis: "production-day",
   mayContainBoldList: true,
-  // Graeme, 2026-10-12: "anything with chicken in it" may have bones.
-  boneRiskWords: ["chicken"],
+  // Graeme, 2026-10-12: "anything with chicken in it" may have bones —
+  // and turkey too.
+  boneRiskWords: ["chicken", "turkey"],
 };
 
 // ── Normalising stored settings ────────────────────────────────────────────
