@@ -141,6 +141,7 @@ import peopleReviewsRouter from "./people-reviews";
 import peopleLettersMineRouter from "./people-letters-mine";
 import productLabelsRouter from "./product-labels";
 import productLabelPrintRouter from "./product-label-print";
+import productLabelHistoryRouter from "./product-label-history";
 import barcodesRouter from "./barcodes";
 import { runBackup } from "../lib/backup";
 
@@ -412,6 +413,8 @@ router.use("/people-access", peopleAccessRouter);
 // Product labels Stage 1 — template, per-recipe settings, live versions.
 // Reads for anyone signed in; writes manager/admin (guarded inside).
 router.use("/product-labels", productLabelsRouter);
+// Label history — every published version, its proof and an archive PDF. Read-only, anyone signed in.
+router.use("/product-labels", productLabelHistoryRouter);
 // Back-label printing (PDF from the live label) — founder feature, guarded inside.
 router.use("/product-label-print", productLabelPrintRouter);
 router.use("/fried-chicken", friedChickenRouter);
