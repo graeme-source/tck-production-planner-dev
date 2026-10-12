@@ -8,10 +8,11 @@ import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
+import { SortableTh } from "@/components/sortable-th";
 import { TimingHealthCard } from "@/components/timing-health-card";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
-import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown, Archive } from "lucide-react";
+import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -2487,19 +2488,10 @@ export default function Recipes() {
     if (sortKey === key) { setSortDir(d => (d === "asc" ? "desc" : "asc")); }
     else { setSortKey(key); setSortDir(key === "name" || key === "category" ? "asc" : "desc"); }
   };
-  // Sortable <th>. Numeric columns right-align and default to descending.
+  // Sortable <th> (shared with Product Labels and People). Numeric columns
+  // right-align and default to descending.
   const sortTh = (label: string, key: SortKey, align: "left" | "right" = "left") => (
-    <th
-      onClick={() => toggleSort(key)}
-      className={cn("py-2.5 px-3 font-semibold select-none cursor-pointer hover:text-foreground transition-colors", align === "right" ? "text-right" : "text-left")}
-    >
-      <span className={cn("inline-flex items-center gap-1", align === "right" && "flex-row-reverse")}>
-        {label}
-        {sortKey === key
-          ? (sortDir === "asc" ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />)
-          : <ArrowUpDown className="w-3 h-3 opacity-40" />}
-      </span>
-    </th>
+    <SortableTh label={label} sortKey={key} activeKey={sortKey} dir={sortDir} onSort={toggleSort} align={align} />
   );
 
   return (
