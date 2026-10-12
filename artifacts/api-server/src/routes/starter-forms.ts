@@ -25,6 +25,10 @@ import {
 } from "../lib/starter-forms";
 import { maybeTickStarterPaperwork, grantAppAccess } from "../lib/starter-paperwork";
 import { renderContractPdf } from "../pdf/contract-pdf";
+import { employmentRecordWrite, fromBody, fromSession } from "../middleware/employment-record-write";
+
+// Self-service on your OWN forms only (lib/people-write-access.ts).
+const ownStarterForms = employmentRecordWrite({ subject: fromSession, selfService: "own_starter_forms" });
 
 const router: IRouter = Router();
 
@@ -73,7 +77,7 @@ router.get("/mine", async (req: Request, res: Response) => {
 const DraftBody = z.object({ answers: AnswersSchema });
 
 // Autosaved draft — refuses to touch a signed submission.
-router.put("/mine/:formType", validate(DraftBody), async (req: Request, res: Response) => {
+router.put("/mine/:formType", ownStarterForms, validate(DraftBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const parsed = FormTypeSchema.safeParse(req.params.formType);
@@ -102,7 +106,7 @@ const SignBody = z.object({
   answers: AnswersSchema,
 });
 
-router.post("/mine/:formType/sign", validate(SignBody), async (req: Request, res: Response) => {
+router.post("/mine/:formType/sign", ownStarterForms, validate(SignBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const parsed = FormTypeSchema.safeParse(req.params.formType);
@@ -245,7 +249,7 @@ router.get("/overview", requireHrRecordAccess, async (_req: Request, res: Respon
 // finishing the paperwork never opens the app by itself.
 const GrantBody = z.object({ userId: z.number().int() });
 
-router.post("/grant-access", requireHrRecordAccess, validate(GrantBody), async (req: Request, res: Response) => {
+router.post("/grant-access", requireHrRecordAccess, validate(GrantBody), employmentRecordWrite({ subject: fromBody("userId") }), async (req: Request, res: Response) => {
   const { userId } = req.body as z.infer<typeof GrantBody>;
   const granted = await grantAppAccess(userId);
   if (!granted) { res.status(400).json({ error: "That person isn't waiting on the onboarding gate" }); return; }

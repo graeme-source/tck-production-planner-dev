@@ -103,7 +103,7 @@ export function JobTitlesBulk({ ready }: { ready: boolean }) {
                 <span className="text-lg font-bold truncate">{p.name}</span>
               </Link>
               <div className="flex-1 min-w-0">
-                <JobTitleField userId={p.id} initial={p.jobTitle} suggestion={p.contractJobTitle} size="md" label={`Job title for ${p.name}`} />
+                <JobTitleField userId={p.id} initial={p.jobTitle} suggestion={p.contractJobTitle} size="md" label={`Job title for ${p.name}`} readOnly={p.canWrite === false} />
               </div>
             </div>
           ))}

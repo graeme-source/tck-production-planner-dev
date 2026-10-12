@@ -52,6 +52,9 @@ export interface TeamMember {
 export interface Revealed {
   person: { id: number; name: string };
   contact: EmergencyContact | null;
+  /** May the viewer correct it? The server's employment-record lock:
+   *  Graeme, and People access on anyone's but their own. */
+  canCorrect?: boolean;
 }
 
 export const MY_EMERGENCY_CONTACT_KEY = ["staff-emergency-contacts", "me"] as const;

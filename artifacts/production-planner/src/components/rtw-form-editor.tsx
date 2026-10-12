@@ -39,6 +39,9 @@ export interface RtwForm {
   managerSignedAt: string | null;
   status: string;
   createdAt: string;
+  /** From GET /form/:id: whether the viewer has the manager's powers on
+   *  THIS form. False on your own form, even with People access. */
+  viewerCanManage?: boolean;
 }
 
 export function fmtRange(start: string, end: string | null) {
@@ -202,7 +205,10 @@ function FormAttachments({ formId, formStatus, isRtwManager }: { formId: number;
   );
 }
 
-export function FormEditor({ form, isRtwManager, onDone, onBack }: { form: RtwForm; isRtwManager: boolean; onDone: () => void; onBack: () => void }) {
+export function FormEditor({ form, isRtwManager: isRtwManagerProp, onDone, onBack }: { form: RtwForm; isRtwManager: boolean; onDone: () => void; onBack: () => void }) {
+  // On your own form you are the colleague, not the manager — the server
+  // enforces it (employment-record lock); this keeps the screen honest.
+  const isRtwManager = isRtwManagerProp && form.viewerCanManage !== false;
   const [f, setF] = useState(form);
   const { state: saveState, save } = useAutosave(form.id);
   const [signing, setSigning] = useState(false);

@@ -8,7 +8,8 @@
  *   GET  /team               managers/admins: active team members and whether
  *                            each has one on file — names only, no details
  *   POST /team/:userId/view  managers/admins: reveal one person's (LOGGED)
- *   PUT  /team/:userId       managers/admins: correct one person's (LOGGED)
+ *   PUT  /team/:userId       Graeme + People access, never your own (the
+ *                            employment-record lock): correct one (LOGGED)
  *   POST /people/:userId/view  People access + private PIN (the People
  *                            record's own gate, unchanged): reveal (LOGGED)
  *
@@ -27,6 +28,7 @@ import {
   hasUsableContact, shapeContact, NOT_YOURS,
   type EmergencyContactStore, type StoredContact, type Viewer, type EmergencyContactInput, type ViewSource,
 } from "../services/staff-emergency-contacts";
+import { employmentRecordWrite, fromParam, fromSession, isRecordEditor } from "../middleware/employment-record-write";
 
 const router: IRouter = Router();
 
@@ -103,7 +105,8 @@ router.get("/me", async (req: Request, res: Response) => {
   } catch (err) { fail(res, "get mine", err); }
 });
 
-router.put("/me", validate(emergencyContactBody), async (req: Request, res: Response) => {
+// Self-service: your own emergency contact (lib/people-write-access.ts).
+router.put("/me", employmentRecordWrite({ subject: fromSession, selfService: "own_emergency_contact" }), validate(emergencyContactBody), async (req: Request, res: Response) => {
   try {
     const out = await saveContact(store, await viewerOf(req), req.session.userId!, req.body as EmergencyContactInput, "contacts_page");
     res.status(out.status).json(out.body);
@@ -144,12 +147,15 @@ router.post("/team/:userId/view", validate(viewBody), async (req: Request, res: 
   if (userId == null) { res.status(400).json({ error: "Invalid person" }); return; }
   try {
     const out = await revealContact(store, await viewerOf(req), userId, "team", (req.body as { source: ViewSource }).source);
-    res.status(out.status).json(out.body);
+    res.status(out.status).json(out.status === 200 ? { ...out.body, canCorrect: await isRecordEditor(req.session.userId, userId) } : out.body);
   } catch (err) { fail(res, "reveal", err); }
 });
 
 // The source rides in the query string — the body is the contact itself.
-router.put("/team/:userId", validate(emergencyContactBody), async (req: Request, res: Response) => {
+// Correcting someone else's is a change to their employment record: Graeme
+// and Lorna only, never their own (lib/people-write-access.ts). It used to
+// be any manager or admin.
+router.put("/team/:userId", employmentRecordWrite({ subject: fromParam("userId") }), validate(emergencyContactBody), async (req: Request, res: Response) => {
   const userId = parseId(req.params["userId"]);
   if (userId == null) { res.status(400).json({ error: "Invalid person" }); return; }
   const q = req.query["source"];
@@ -175,7 +181,7 @@ router.post("/people/:userId/view", requirePeopleUnlock, requirePeopleAccess, va
   if (userId == null) { res.status(400).json({ error: "Invalid person" }); return; }
   try {
     const out = await revealContact(store, await viewerOf(req), userId, "people", "people_record");
-    res.status(out.status).json(out.body);
+    res.status(out.status).json(out.status === 200 ? { ...out.body, canCorrect: await isRecordEditor(req.session.userId, userId) } : out.body);
   } catch (err) { fail(res, "people reveal", err); }
 });
 

@@ -8,7 +8,8 @@
  * server logs (who looked, whose, when, from where) before answering — with
  * a big tap-to-call button. Hiding it and tapping again is another logged
  * look. People with nothing on file say so, and that they'll be asked at
- * their next sign-in. A manager can correct what's on file (also logged).
+ * their next sign-in. Graeme and Lorna can correct what's on file (also
+ * logged) — the server says so per reveal (canCorrect).
  *
  * Renders nothing for anyone else; the server refuses them regardless.
  */
@@ -118,10 +119,13 @@ function TeamMemberCard({ person, source }: { person: TeamMember; source: Exclud
           ) : (
             <>
               <RevealedContact contact={shown.contact} personName={person.name} />
-              <button onClick={() => setEditing(true)}
-                className="h-11 px-3.5 rounded-xl border-2 border-border text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-secondary/60">
-                <Pencil className="w-4 h-4" /> {shown.contact ? "Correct it" : "Add one for them"}
-              </button>
+              {/* Only Graeme and Lorna can correct one (never their own). */}
+              {shown.canCorrect === true && (
+                <button onClick={() => setEditing(true)}
+                  className="h-11 px-3.5 rounded-xl border-2 border-border text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-secondary/60">
+                  <Pencil className="w-4 h-4" /> {shown.contact ? "Correct it" : "Add one for them"}
+                </button>
+              )}
             </>
           )}
         </div>

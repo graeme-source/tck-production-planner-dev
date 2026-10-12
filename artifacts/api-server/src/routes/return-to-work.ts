@@ -25,6 +25,27 @@ import { singleFileUpload } from "../middleware/upload";
 import { canUploadRtwAttachment, canDeleteRtwAttachment } from "../lib/rtw-attachment-rules";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
 import { formSelect, shapeForm, type FormRow } from "../lib/rtw-forms";
+import {
+  employmentRecordWrite, employmentRecordRightOf, fromBody, fromRow, ownerOf, isRecordEditor,
+} from "../middleware/employment-record-write";
+
+// The employment-record write lock (lib/people-write-access.ts). A colleague's
+// own form is self-service ("own_rtw_form"): they fill, sign and attach to it
+// while it's a draft, with the EMPLOYEE's powers — on their own form even
+// someone with People access is not the manager (no countersigning, no
+// changing it once signed). Only an "editor" gets the manager's powers.
+const formOwner = fromRow("id", ownerOf("return_to_work_forms"));
+async function attachmentFormOwner(attachmentId: number): Promise<number | null> {
+  const rows = await db.execute<{ user_id: number }>(sql`
+    SELECT f.user_id FROM return_to_work_attachments a
+      JOIN return_to_work_forms f ON f.id = a.form_id
+     WHERE a.id = ${attachmentId} LIMIT 1
+  `);
+  const v = rows.rows[0]?.user_id;
+  return v == null ? null : Number(v);
+}
+const onOwnForm = { selfService: "own_rtw_form" } as const;
+const isEditor = (res: Response) => employmentRecordRightOf(res) === "editor";
 
 const router: IRouter = Router();
 
@@ -102,7 +123,8 @@ router.get("/form/:id", async (req: Request, res: Response) => {
     res.status(403).json({ error: "Return-to-work records are private — the colleague and people with People access only." });
     return;
   }
-  res.json(shapeForm(row));
+  // Whether the viewer has the manager's powers on THIS form (not on their own).
+  res.json({ ...shapeForm(row), viewerCanManage: await isRecordEditor(req.session.userId, Number(row.user_id)) });
 });
 
 const createSchema = z.object({
@@ -117,7 +139,7 @@ const createSchema = z.object({
 // POST / — open a draft: pre-filled from a detected spell, or dates a
 // manager typed for an absence Planday doesn't show (checked: end not before
 // start, nothing in the future — lib/rtw-dates.ts).
-router.post("/", validate(createSchema), async (req: Request, res: Response) => {
+router.post("/", validate(createSchema), employmentRecordWrite({ subject: fromBody("userId", true), ...onOwnForm }), async (req: Request, res: Response) => {
   const callerId = req.session.userId!;
   const { userId, absenceStart, absenceEnd, absenceType } = req.body as z.infer<typeof createSchema>;
   const subjectId = userId ?? callerId;
@@ -158,7 +180,7 @@ const patchSchema = z.object({
 
 // PATCH /:id — autosave. Subject or RTW manager; completed forms only
 // editable by RTW managers (the record shouldn't shift after signing).
-router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) => {
+router.patch("/:id", employmentRecordWrite({ subject: formOwner, ...onOwnForm }), validate(patchSchema), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid form" }); return; }
   const rows = await db.execute<{ user_id: number; status: string }>(sql`
@@ -167,7 +189,7 @@ router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) 
   const row = rows.rows[0];
   if (!row) { res.status(404).json({ error: "Form not found" }); return; }
   if (!(await canAccessRtwUser(req, Number(row.user_id)))) { res.status(403).json({ error: "Private" }); return; }
-  if (row.status === "complete" && !(await hasRtwManagerAccess(req))) {
+  if (row.status === "complete" && !isEditor(res)) {
     res.status(409).json({ error: "This form is signed — ask someone with People access to change it." });
     return;
   }
@@ -196,7 +218,7 @@ router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) 
 // back-fills may carry just a reason, or even less — the dates and the
 // recorder are the contract). An RTW manager completing a form with no
 // manager name recorded gets their own name stamped in automatically.
-router.post("/:id/complete", async (req: Request, res: Response) => {
+router.post("/:id/complete", employmentRecordWrite({ subject: formOwner, ...onOwnForm }), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid form" }); return; }
   const rows = await db.execute<{ user_id: number; reason_category: string | null; manager_name: string | null }>(sql`
@@ -206,7 +228,7 @@ router.post("/:id/complete", async (req: Request, res: Response) => {
   if (!row) { res.status(404).json({ error: "Form not found" }); return; }
   if (!(await canAccessRtwUser(req, Number(row.user_id)))) { res.status(403).json({ error: "Private" }); return; }
   const callerId = req.session.userId!;
-  const isManager = await hasRtwManagerAccess(req);
+  const isManager = isEditor(res);
   const isSubject = callerId === Number(row.user_id);
   if (!row.manager_name) {
     if (isManager) {
@@ -286,11 +308,11 @@ router.get("/:id/attachments", async (req: Request, res: Response) => {
 });
 
 // POST /:id/attachments — file one document (PDF or photo, 15MB).
-router.post("/:id/attachments", singleFileUpload("file", 15), async (req: Request, res: Response) => {
+router.post("/:id/attachments", employmentRecordWrite({ subject: formOwner, ...onOwnForm }), singleFileUpload("file", 15), async (req: Request, res: Response) => {
   const formId = Number(req.params.id);
   const form = await loadFormForAttachment(req, res, formId);
   if (!form) return;
-  const isManager = await hasRtwManagerAccess(req);
+  const isManager = isEditor(res);
   if (!canUploadRtwAttachment({ formStatus: form.status, isRtwManager: isManager })) {
     res.status(409).json({ error: "This form is signed — ask someone with People access to file the document." });
     return;
@@ -330,7 +352,7 @@ router.get("/attachments/:attachmentId", async (req: Request, res: Response) => 
 
 // DELETE /attachments/:attachmentId — managers always; the colleague only
 // their own upload while the form is still a draft.
-router.delete("/attachments/:attachmentId", async (req: Request, res: Response) => {
+router.delete("/attachments/:attachmentId", employmentRecordWrite({ subject: fromRow("attachmentId", attachmentFormOwner), ...onOwnForm }), async (req: Request, res: Response) => {
   const attId = Number(req.params.attachmentId);
   if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid attachment" }); return; }
   const rows = await db.execute<{ form_id: number; uploaded_by_user_id: number | null }>(sql`
@@ -340,7 +362,7 @@ router.delete("/attachments/:attachmentId", async (req: Request, res: Response) 
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   const form = await loadFormForAttachment(req, res, Number(row.form_id));
   if (!form) return;
-  const isManager = await hasRtwManagerAccess(req);
+  const isManager = isEditor(res);
   const allowed = canDeleteRtwAttachment({
     formStatus: form.status,
     isRtwManager: isManager,

@@ -27,6 +27,10 @@ import { renderContract, contractDate, templatePlaceholders, applySignature, CON
 import { renderContractPdf } from "../pdf/contract-pdf";
 import { maybeTickStarterPaperwork } from "../lib/starter-paperwork";
 import { jobTitleAfterIssue } from "../lib/job-title";
+import { employmentRecordWrite, fromBody, fromRow, ownerOf } from "../middleware/employment-record-write";
+
+// Whose record an issued contract is on — for the employment-record write lock.
+const contractOwner = fromRow("id", ownerOf("employment_contracts"));
 
 // Columns for reads that display a contract — everything except the
 // archival PDF bytes, which only ever leave through /:id/signed.pdf.
@@ -232,7 +236,7 @@ router.post("/preview", requireFounder, validate(GenerateBody), async (req: Requ
   res.json({ body: out.body, employeeName: out.employeeName, issueDate: out.issueDate });
 });
 
-router.post("/generate", requireFounder, validate(GenerateBody), async (req: Request, res: Response) => {
+router.post("/generate", requireFounder, validate(GenerateBody), employmentRecordWrite({ subject: fromBody("userId") }), async (req: Request, res: Response) => {
   const input = req.body as z.infer<typeof GenerateBody>;
   const out = await renderForUser(input);
   if (!out.ok) { res.status(out.status).json({ error: out.error }); return; }
@@ -280,7 +284,7 @@ router.post("/generate", requireFounder, validate(GenerateBody), async (req: Req
 
 // A mis-issued contract can be withdrawn — but never once the employee has
 // acknowledged it: from that moment it is a record, not a draft.
-router.delete("/:id", requireFounder, async (req: Request, res: Response) => {
+router.delete("/:id", requireFounder, employmentRecordWrite({ subject: contractOwner, refuseAs404: true }), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid contract id" }); return; }
   const [row] = await db.select().from(employmentContractsTable).where(eq(employmentContractsTable.id, id));
@@ -381,7 +385,9 @@ const SignBody = z.object({
   initials: z.string().trim().min(2, "At least two characters").max(12),
 });
 
-router.post("/:id/sign", validate(SignBody), async (req: Request, res: Response) => {
+// Self-service: the employee signs their own (anyone else's is a 404, and
+// the handler still re-checks the owner).
+router.post("/:id/sign", employmentRecordWrite({ subject: contractOwner, selfService: "sign_own_contract", refuseAs404: true }), validate(SignBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const id = Number(req.params.id);

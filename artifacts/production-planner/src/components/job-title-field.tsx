@@ -30,7 +30,7 @@ async function saveJobTitle(userId: number, jobTitle: string): Promise<string | 
   return body.jobTitle ?? null;
 }
 
-export function JobTitleField({ userId, initial, suggestion, size = "lg", label = "Job title" }: {
+export function JobTitleField({ userId, initial, suggestion, size = "lg", label = "Job title", readOnly = false }: {
   userId: number;
   initial: string | null;
   /** e.g. the title on their latest contract — offered as a one-tap fill
@@ -38,6 +38,8 @@ export function JobTitleField({ userId, initial, suggestion, size = "lg", label 
   suggestion?: string | null;
   size?: "lg" | "md";
   label?: string;
+  /** Shown, not editable — the viewer may not change this record. */
+  readOnly?: boolean;
 }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState(initial ?? "");
@@ -49,7 +51,7 @@ export function JobTitleField({ userId, initial, suggestion, size = "lg", label 
   });
 
   const change = (next: string) => { setValue(next); auto.schedule(next); };
-  const showSuggestion = suggestion != null && suggestion.trim() !== "" && suggestion.trim() !== value.trim();
+  const showSuggestion = !readOnly && suggestion != null && suggestion.trim() !== "" && suggestion.trim() !== value.trim();
 
   return (
     <div className="space-y-1.5 min-w-0">
@@ -59,8 +61,10 @@ export function JobTitleField({ userId, initial, suggestion, size = "lg", label 
           onChange={e => change(e.target.value)}
           onBlur={() => void auto.flush()}
           onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-          placeholder="Add a job title"
+          placeholder={readOnly ? "No job title" : "Add a job title"}
           aria-label={label}
+          readOnly={readOnly}
+          aria-readonly={readOnly}
           maxLength={120}
           className={cn(
             "flex-1 min-w-[12rem] rounded-2xl border-2 bg-card px-4 font-bold focus:outline-none focus:ring-2 focus:ring-primary/40",
@@ -68,7 +72,7 @@ export function JobTitleField({ userId, initial, suggestion, size = "lg", label 
             auto.state === "error" ? "border-destructive" : "border-border",
           )}
         />
-        <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} />
+        {!readOnly && <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} />}
       </div>
       {showSuggestion && (
         <button

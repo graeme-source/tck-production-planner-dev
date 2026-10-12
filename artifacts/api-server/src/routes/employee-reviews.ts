@@ -28,6 +28,16 @@ import { sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { hasPeopleAccess } from "../lib/people-access";
+import {
+  employmentRecordWrite, fromParam, fromRow, ownerOf, isRecordEditor,
+} from "../middleware/employment-record-write";
+
+// The employment-record write lock (lib/people-write-access.ts): Graeme, and
+// people with People access on anyone's record but their own. On top of the
+// People-access checks below, never instead of them.
+const onRecord = employmentRecordWrite({ subject: fromParam("userId") });
+const onMeeting = employmentRecordWrite({ subject: fromRow("id", ownerOf("employee_meetings", "subject_user_id")) });
+const onNote = employmentRecordWrite({ subject: fromRow("id", ownerOf("employee_notes", "subject_user_id")) });
 
 const router: IRouter = Router();
 
@@ -126,7 +136,9 @@ router.get("/:userId", async (req: Request, res: Response) => {
 
     res.json({
       subject,
-      canManage: canManageRecord(user),
+      // Manage = People access AND allowed to change THIS record (so never
+      // your own unless you're Graeme) — the screen hides its write controls.
+      canManage: canManageRecord(user) && (await isRecordEditor(user.id, subjectId)),
       isOwnRecord: user.id === subjectId,
       meetings,
       notes,
@@ -145,7 +157,7 @@ const MeetingBody = z.object({
   scheduledFor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
-router.post("/:userId/meetings", validate(MeetingBody), async (req: Request, res: Response) => {
+router.post("/:userId/meetings", onRecord, validate(MeetingBody), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
@@ -182,7 +194,7 @@ const MeetingPatch = z.object({
   title: z.string().trim().max(200).nullable().optional(),
 });
 
-router.patch("/meetings/:id", validate(MeetingPatch), async (req: Request, res: Response) => {
+router.patch("/meetings/:id", onMeeting, validate(MeetingPatch), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
@@ -216,7 +228,7 @@ router.patch("/meetings/:id", validate(MeetingPatch), async (req: Request, res: 
  *  here — the manager guard runs first). Its write-up notes survive: the
  *  meeting_id FK is ON DELETE SET NULL, so they fall back to the flat diary
  *  rather than vanishing with the meeting. */
-router.delete("/meetings/:id", async (req: Request, res: Response) => {
+router.delete("/meetings/:id", onMeeting, async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
@@ -255,7 +267,7 @@ const NoteBody = z.object({
   dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 });
 
-router.post("/:userId/notes", validate(NoteBody), async (req: Request, res: Response) => {
+router.post("/:userId/notes", onRecord, validate(NoteBody), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
@@ -329,7 +341,7 @@ const WriteUpBody = z.object({
   share: z.boolean().optional(),
 });
 
-router.post("/meetings/:id/write-up", validate(WriteUpBody), async (req: Request, res: Response) => {
+router.post("/meetings/:id/write-up", onMeeting, validate(WriteUpBody), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
@@ -397,7 +409,7 @@ router.post("/meetings/:id/write-up", validate(WriteUpBody), async (req: Request
  *  Only the author's OWN notes are published — "private" has to mean private
  *  from other managers too, so this cannot publish someone else's note as a
  *  side effect of sharing the meeting. */
-router.post("/meetings/:id/share", async (req: Request, res: Response) => {
+router.post("/meetings/:id/share", onMeeting, async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
@@ -444,7 +456,7 @@ const NotePatch = z.object({
  *  Only the author may touch their own note — including publishing it. That
  *  is the whole promise of "private": another manager cannot read it, and so
  *  must not be able to publish it either. */
-router.patch("/notes/:id", validate(NotePatch), async (req: Request, res: Response) => {
+router.patch("/notes/:id", onNote, validate(NotePatch), async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
 
@@ -486,7 +498,7 @@ router.patch("/notes/:id", validate(NotePatch), async (req: Request, res: Respon
   }
 });
 
-router.delete("/notes/:id", async (req: Request, res: Response) => {
+router.delete("/notes/:id", onNote, async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = Number(req.params.id);

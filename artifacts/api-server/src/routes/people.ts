@@ -43,6 +43,8 @@ import { getAttendanceFromCache } from "../services/planday-attendance-cache";
 import { getEmploymentFacts } from "../services/planday-employment";
 import { formSelect, shapeForm, type FormRow } from "../lib/rtw-forms";
 import peopleHoursRouter from "./people-hours";
+import { employmentRecordWrite, fromParam, recordWriteViewFor, loadRecordActor } from "../middleware/employment-record-write";
+import { canWriteEmploymentRecord } from "../lib/people-write-access";
 
 const router: IRouter = Router();
 
@@ -199,14 +201,15 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
 // list and the record instead of the app role. Never touches the permission
 // role. Declared before "/:userId" so "job-titles" isn't read as an id.
 
-router.get("/job-titles", validateQuery(listQuery), async (_req: Request, res: Response) => {
+router.get("/job-titles", validateQuery(listQuery), async (req: Request, res: Response) => {
   const { leavers } = res.locals["query"] as z.infer<typeof listQuery>;
   try {
     const rows = await db.execute<{
       id: number; name: string; avatar_url: string | null; is_active: boolean;
       job_title: string | null; contract_job_title: string | null;
+      email: string | null; planday_employee_id: number | null;
     }>(sql`
-      SELECT u.id, u.name, u.avatar_url, u.is_active, u.job_title,
+      SELECT u.id, u.name, u.avatar_url, u.is_active, u.job_title, u.email, u.planday_employee_id,
              c.job_title AS contract_job_title
         FROM app_users u
         LEFT JOIN LATERAL (
@@ -216,6 +219,9 @@ router.get("/job-titles", validateQuery(listQuery), async (_req: Request, res: R
        ${leavers === "1" ? sql`` : sql`WHERE u.is_active = TRUE`}
        ORDER BY u.name
     `);
+    // canWrite per person: the employment-record lock (never your own unless
+    // you're Graeme) — the screen shows those rows read-only.
+    const actor = await loadRecordActor(req.session.userId);
     res.json({
       people: rows.rows.map(r => ({
         id: Number(r.id),
@@ -224,6 +230,9 @@ router.get("/job-titles", validateQuery(listQuery), async (_req: Request, res: R
         isActive: r.is_active,
         jobTitle: r.job_title,
         contractJobTitle: r.contract_job_title,
+        canWrite: actor != null && canWriteEmploymentRecord(actor, {
+          id: Number(r.id), email: r.email, plandayEmployeeId: r.planday_employee_id == null ? null : Number(r.planday_employee_id),
+        }),
       })),
     });
   } catch (err) {
@@ -238,7 +247,7 @@ const JobTitleBody = z.object({
   jobTitle: z.string().max(JOB_TITLE_MAX * 4).nullable(),
 });
 
-router.patch("/:userId/job-title", validate(JobTitleBody), async (req: Request, res: Response) => {
+router.patch("/:userId/job-title", employmentRecordWrite({ subject: fromParam("userId") }), validate(JobTitleBody), async (req: Request, res: Response) => {
   const userId = parseUserId(req, res);
   if (userId == null) return;
   const jobTitle = normaliseJobTitle((req.body as z.infer<typeof JobTitleBody>).jobTitle);
@@ -298,7 +307,9 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
       .sort((a, b) => b.date.localeCompare(a.date));
 
     res.json({
-      person: shapePerson(user),
+      // canWrite / readOnlyNote: may the viewer change this record at all
+      // (lib/people-write-access.ts) — the screen hides its write controls.
+      person: { ...shapePerson(user), ...(await recordWriteViewFor(req.session.userId, userId)) },
       window: { from, to: today, defaultFrom },
       spells: spells.map(spellOut),
       lates,
