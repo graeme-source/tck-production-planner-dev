@@ -5,7 +5,9 @@ import healthRouter from "./health";
 import authRouter from "./auth";
 import storageRouter from "./storage";
 import ingredientsRouter from "./ingredients";
+import ingredientDeclarationsRouter from "./ingredient-declarations";
 import subRecipesRouter from "./sub-recipes";
+import subRecipeLabelUsageRouter from "./sub-recipe-label-usage";
 import subRecipePrepTimeRouter from "./sub-recipe-prep-time";
 import userToursRouter from "./user-tours";
 import testRequestsRouter from "./test-requests";
@@ -209,12 +211,16 @@ router.use("/test-requests", testRequestsRouter);
 router.use("/onboarding", onboardingRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
 router.use("/suppliers", suppliersRouter);
+// Admin dry-run tidy of unwrapped label declarations — before the main
+// ingredients router so its POST path is matched here.
+router.use("/ingredients", ingredientDeclarationsRouter);
 router.use("/ingredients", ingredientsRouter);
 router.use("/ingredients", ingredientScrapeRouter);
 router.use("/upf", upfRouter);
 // Standard prep time (autosaved on its own) — before the main router so its
 // /:id/standard-prep-minutes paths are matched here.
 router.use("/sub-recipes", subRecipePrepTimeRouter);
+router.use("/sub-recipes", subRecipeLabelUsageRouter);
 router.use("/sub-recipes", subRecipesRouter);
 router.use("/recipes", recipeArchiveRouter);
 // Automatic QUID: /recipes/:id/quid, /quid-terms, /quid-backfill.
