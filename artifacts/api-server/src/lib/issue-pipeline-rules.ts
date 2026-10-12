@@ -91,15 +91,29 @@ export function matchesAreaFilter(filter: AreaFilter, area: string | null | unde
  */
 export function machineIssueWanted(
   filter: AreaFilter,
-  issue: { area: string | null | undefined; station: string | null | undefined; category: string },
+  issue: { area: string | null | undefined; station: string | null | undefined; category: string; resolvedAt?: Date | string | null },
   triage: { awaitingRetriage: boolean; noActionAt?: Date | string | null } | null | undefined,
   includeTriaged: boolean,
+  includeResolved = true,
 ): boolean {
   // Graeme dismissed it with no action: the reviewer never sees it again.
   if (isSetAside(triage)) return false;
+  // A reply from Graeme always reaches Claude — whatever the area, and even
+  // when the report was already closed (2026-10-12: "Reply to Claude" works
+  // on Done cards too, so a dismissed/answered/fixed report can come back).
   if (triage?.awaitingRetriage) return pipelineMayHandle(issue).ok;
+  if (!includeResolved && issue.resolvedAt) return false;
   if (!matchesAreaFilter(filter, issue.area, issue.station)) return false;
   return includeTriaged || !triage;
+}
+
+/** The hourly inbox lists Graeme's replies first, so a busy hour of new
+ *  reports (or the `limit`) can never push his words out of the run. */
+export function repliesFirst<T>(rows: T[], triageFor: (row: T) => { awaitingRetriage: boolean } | null | undefined): T[] {
+  return rows
+    .map((row, i) => ({ row, i, reply: triageFor(row)?.awaitingRetriage ? 0 : 1 }))
+    .sort((a, b) => a.reply - b.reply || a.i - b.i)
+    .map(x => x.row);
 }
 
 // ── "Dismiss — no action" (Graeme, 2026-10-10) ──────────────────────────────
@@ -165,10 +179,53 @@ export function canReviewMove(from: TriageStatus, to: TriageStatus): boolean {
   return REVIEW_MOVES[from].includes(to);
 }
 
-/** "Reply / ask" goes back to the session for another look — only while the
- *  recommendation is still waiting on Graeme. */
-export function canReply(from: TriageStatus): boolean {
-  return from === "proposed";
+// ── "Reply to Claude" (Graeme, 2026-10-12) ─────────────────────────────────
+// "I can't speak directly back to Claude because Claude doesn't ask me
+// something." A reply now works on EVERY card, whatever its state — to answer
+// a question, correct Claude's understanding, or give a new instruction.
+//
+// Graeme's reply is his newest, overriding word, so it re-opens the card:
+//  - any decided/closed status goes back to 'proposed' (the old decision
+//    stays in the event history). Otherwise the reviewer's next POST /triage
+//    would hit a 409 "Graeme's decision stands" and his reply would be
+//    ignored.
+//  - "Dismissed — no action" is lifted: he is asking Claude to look again.
+//  - a snooze is cleared (he's looking at it now).
+//  - awaitingRetriage = true puts it in the hourly GET /issues inbox, which
+//    includes resolved reports when a reply is waiting (machineIssueWanted).
+// The andon report itself is NOT reopened (no message to the reporter),
+// except when lifting a quiet "no action" dismissal that closed it.
+export interface ReplyPlan {
+  /** The status is changing back to 'proposed'. */
+  reopen: boolean;
+  previousStatus: TriageStatus;
+  /** Lift "Dismissed — no action". */
+  restoreSetAside: boolean;
+}
+
+export function replyToClaudePlan(t: { status: TriageStatus; noActionAt?: Date | string | null }): ReplyPlan {
+  return { reopen: t.status !== "proposed", previousStatus: t.status, restoreSetAside: isSetAside(t) };
+}
+
+const REOPEN_WORDS: Record<TriageStatus, string> = {
+  proposed: "To review", approved: "Approved", rejected: "Rejected", in_progress: "In progress",
+  fixed: "Fixed", wont_fix: "Won't fix", answered: "Answered", dismissed: "Dismissed — already done",
+};
+
+/** The history line written when a reply re-opens a card; null = nothing re-opened. */
+export function reopenNote(plan: ReplyPlan): string | null {
+  if (!plan.reopen && !plan.restoreSetAside) return null;
+  const was = plan.restoreSetAside ? "Dismissed — no action" : REOPEN_WORDS[plan.previousStatus];
+  return `Reopened by your reply (was: ${was}) — back to Claude for another look`;
+}
+
+/** What Graeme has said since Claude last wrote a recommendation — the
+ *  reviewer treats these as its newest, overriding instructions (oldest
+ *  first, so the last one wins). */
+export function unansweredReplies(thread: ThreadEntry[]): ThreadEntry[] {
+  let lastClaude = -1;
+  thread.forEach((e, i) => { if (e.who === "claude" && e.kind !== "message") lastClaude = i; });
+  return thread.slice(lastClaude + 1).filter(e => e.who === "you" && e.kind === "reply");
 }
 
 /** "Message the reporter" (Graeme, 2026-09-24). A message on its own can go
@@ -284,6 +341,7 @@ const DECISION_WORDS: Record<string, string> = {
   snoozed: "Snoozed",
   no_action: "Dismissed — no action",
   restored: "Restored",
+  reopened: "Reopened",
 };
 
 export function buildThread(events: EventLike[]): ThreadEntry[] {
@@ -294,6 +352,9 @@ export function buildThread(events: EventLike[]): ThreadEntry[] {
     if (e.event === "triaged" || e.event === "retriaged") {
       if (snap.questionForGraeme) out.push({ at, who: "claude", kind: "question", text: snap.questionForGraeme });
       else if (snap.verdictSummary) out.push({ at, who: "claude", kind: "recommendation", text: snap.verdictSummary });
+    } else if (e.event === "claude_note" && e.note) {
+      // A note from Claude straight onto the card (machine POST /issues/:id/note).
+      out.push({ at, who: "claude", kind: "message", text: e.note });
     } else if (e.event === "replied" && e.note) {
       out.push({ at, who: "you", kind: "reply", text: e.note });
     } else if ((e.event === "messaged" || e.event === "answered") && e.note) {

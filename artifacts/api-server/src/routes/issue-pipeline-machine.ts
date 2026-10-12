@@ -17,8 +17,8 @@
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { db, andonIssuesTable, issueTriageTable, type IssueTriage } from "@workspace/db";
-import { and, asc, desc, eq, gte, isNull, type SQL } from "drizzle-orm";
+import { db, andonIssuesTable, issueTriageTable, issueTriageEventsTable, type IssueTriage } from "@workspace/db";
+import { and, asc, desc, eq, gte, inArray, isNull, or, type SQL } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import {
@@ -26,8 +26,11 @@ import {
   LEVELS,
   MACHINE_TARGETS,
   TRIAGE_LANES,
+  buildThread,
   checkMachineToken,
   machineIssueWanted,
+  repliesFirst,
+  unansweredReplies,
   machineMoveVerdict,
   parseBearer,
   pipelineMayHandle,
@@ -106,26 +109,68 @@ router.get("/issues", async (req, res) => {
   const area = q.area ?? "app";
   const limit = q.limit ?? 100;
   try {
+    // A card Graeme replied to is wanted even if its report is closed or
+    // older than `since` ("Reply to Claude" works on Done cards too) — the
+    // pure rule is machineIssueWanted; this SQL only narrows the read.
+    const awaitingReply = sql`${andonIssuesTable.id} IN (SELECT andon_issue_id FROM issue_triage WHERE awaiting_retriage AND no_action_at IS NULL)`;
     const conds: SQL[] = [];
     if (!includeResolved) conds.push(isNull(andonIssuesTable.resolvedAt));
     if (q.since) conds.push(gte(andonIssuesTable.createdAt, new Date(q.since)));
     const rows = await db.select().from(andonIssuesTable)
-      .where(conds.length ? and(...conds) : undefined)
+      .where(conds.length ? or(and(...conds), awaitingReply) : undefined)
       .orderBy(desc(andonIssuesTable.createdAt));
 
     const triage = await triageByIssueId(rows.map(r => r.id));
     // Default: only what still needs the session's attention — no triage row
     // yet (in the chosen area), or Graeme replied and asked for another look
-    // (any area — see machineIssueWanted).
-    const wanted = rows
-      .filter(r => machineIssueWanted(area, r, triage.get(r.id), includeTriaged))
-      .slice(0, limit);
+    // (any area, open or closed — see machineIssueWanted). Replies first.
+    const wanted = repliesFirst(
+      rows.filter(r => machineIssueWanted(area, r, triage.get(r.id), includeTriaged, includeResolved)),
+      r => triage.get(r.id),
+    ).slice(0, limit);
+
+    // The conversation on each card, so a reply is read in context.
+    const triageIds = wanted.map(r => triage.get(r.id)?.id).filter((x): x is number => x != null);
+    const eventRows = triageIds.length === 0 ? [] : await db.select({
+      triageId: issueTriageEventsTable.triageId,
+      event: issueTriageEventsTable.event,
+      note: issueTriageEventsTable.note,
+      createdAt: issueTriageEventsTable.createdAt,
+      snapshot: issueTriageEventsTable.snapshot,
+    }).from(issueTriageEventsTable)
+      .where(inArray(issueTriageEventsTable.triageId, triageIds))
+      .orderBy(issueTriageEventsTable.createdAt, issueTriageEventsTable.id);
+    const eventsByTriage = new Map<number, typeof eventRows>();
+    for (const e of eventRows) {
+      const list = eventsByTriage.get(e.triageId) ?? [];
+      list.push(e);
+      eventsByTriage.set(e.triageId, list);
+    }
 
     const views = await buildIssueViews(wanted, machineAttachmentUrl);
     res.json({
       count: views.length,
       filters: { area, includeTriaged, includeResolved, since: q.since ?? null, limit },
-      issues: views.map(v => ({ ...v, triage: triage.get(v.id) ?? null })),
+      issues: views.map(v => {
+        const t = triage.get(v.id) ?? null;
+        const thread = t ? buildThread(eventsByTriage.get(t.id) ?? []) : [];
+        const replies = t?.awaitingRetriage ? unansweredReplies(thread) : [];
+        return {
+          ...v,
+          triage: t,
+          thread,
+          // Graeme's words since Claude last recommended — his newest,
+          // overriding instruction for this re-triage (last one wins).
+          graemeReply: t?.awaitingRetriage
+            ? {
+              instruction: "Graeme replied on the Fix queue. Treat his words as the newest, overriding instruction: re-triage this issue (POST /triage) with a recommendation that answers him directly. If he says your understanding was wrong, start again from his explanation.",
+              latest: t.decisionNote,
+              at: t.decidedAt,
+              allSinceLastRecommendation: replies.map(r => ({ at: r.at, text: r.text })),
+            }
+            : null,
+        };
+      }),
     });
   } catch (err) {
     console.error("[issue-pipeline] machine issues failed:", err instanceof Error ? err.message : String(err));
@@ -423,6 +468,34 @@ router.post("/credit-improvements", async (_req, res) => {
   } catch (err) {
     console.error("[issue-pipeline] credit sweep failed:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: "Credit sweep failed" });
+  }
+});
+
+// ── POST /issues/:andonIssueId/note — a note from Claude onto the card ─────
+// (Graeme, 2026-10-12.) Claude telling GRAEME something on a Fix queue card
+// — "This is fixed — …", "Deployed in 1a2b3c", "Still looking" — without
+// re-triaging it or touching its status, decision, or the reporter. It shows
+// in the card's Conversation as "Claude". Keyed by the andon issue number
+// Graeme sees on the card ("Issue #318"). To tell the REPORTER, use
+// resolve-issue (after a deploy) instead.
+const noteBody = z.object({
+  note: z.string().trim().min(1).max(4000),
+  actor: z.string().trim().min(1).max(60).default("claude-code"),
+});
+
+router.post("/issues/:andonIssueId/note", validate(noteBody), async (req, res) => {
+  const issueId = parseId(req.params.andonIssueId);
+  if (!issueId) { res.status(400).json({ error: "Invalid issue id" }); return; }
+  const b = req.body as z.infer<typeof noteBody>;
+  try {
+    const [current] = await db.select().from(issueTriageTable).where(eq(issueTriageTable.andonIssueId, issueId));
+    if (!current) { res.status(404).json({ error: `Issue #${issueId} has no Fix queue card yet — POST /triage first` }); return; }
+    if (isSetAside(current)) { res.status(409).json({ error: SET_ASIDE_ERROR, triage: current }); return; }
+    await recordEvent(db, current, "claude_note", b.actor, b.note);
+    res.status(201).json({ ok: true, triageId: current.id, andonIssueId: issueId });
+  } catch (err) {
+    console.error("[issue-pipeline] note failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Failed to post the note" });
   }
 });
 

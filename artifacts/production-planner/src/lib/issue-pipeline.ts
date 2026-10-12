@@ -175,6 +175,31 @@ export function batchedNoticeCopy(notices: Array<Pick<MyFixedNotice, "kind">>): 
 }
 
 /**
+ * The card as it stands the moment Graeme sends "Reply to Claude" — mirrors
+ * the server (replyToClaudePlan): back to 'proposed', flagged for Claude,
+ * un-snoozed and un-dismissed, with his words added to the conversation.
+ * Used to show "Sent — Claude will look at this on its next pass" straight
+ * away instead of the card vanishing to another tab.
+ */
+export function withReplySent(item: FixQueueItem, note: string, now: Date = new Date()): FixQueueItem {
+  const at = now.toISOString();
+  return {
+    ...item,
+    triage: {
+      ...item.triage,
+      status: "proposed",
+      awaitingRetriage: true,
+      snoozedUntil: null,
+      noActionAt: null,
+      noActionBy: null,
+      decisionNote: note,
+      decidedAt: at,
+    },
+    thread: [...(item.thread ?? []), { at, who: "you", kind: "reply", text: note }],
+  };
+}
+
+/**
  * Which actions a Fix queue card offers, and where (Graeme, 2026-09-24).
  * Each action sits inside the thing it affects — Reply on Claude's question,
  * Approve/Dismiss on the proposed fix, Message on the suggested reply — and
@@ -186,8 +211,15 @@ export function cardActions(t: Pick<Triage, "status" | "questionForGraeme" | "aw
   const waitingOnClaude = t.status === "proposed" && t.awaitingRetriage;
   const openQuestion = t.status === "proposed" && !!t.questionForGraeme && !t.awaitingRetriage;
   return {
-    /** Talk to Claude (answer its question, or ask something). */
+    /** The in-place "Answer Claude" / "Ask Claude first" prompts. */
     canReply: t.status === "proposed" && !t.awaitingRetriage,
+    /** "Reply to Claude" in the bottom row — on EVERY card, whatever its
+     *  state (Graeme, 2026-10-12): correct its understanding or give a new
+     *  instruction even when it hasn't asked anything. A decided or closed
+     *  card is reopened for Claude by the reply. */
+    canReplyToClaude: true,
+    /** Sending a reply from here reopens a decided/closed card. */
+    replyReopens: t.status !== "proposed",
     openQuestion,
     waitingOnClaude,
     canDismiss: open && t.noActionNeeded && !openQuestion && !waitingOnClaude,
