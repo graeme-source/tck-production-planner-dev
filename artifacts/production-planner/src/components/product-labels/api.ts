@@ -4,6 +4,7 @@
  * the server's PNG, so the proof is the exact bitmap the printer will get.
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { DeclarationIssue } from "@workspace/allergens";
 import type {
   FieldKey, FitProblem, LabelDates, LabelSnapshot, LabelStatus, LabelTemplate, Rect, RecipeLabelSettings,
   SnapshotChange, WidthVariant, CookingValues, ShelfPeriod,
@@ -94,6 +95,9 @@ export interface RecipeLabel {
   matchesLive: boolean;
   changes: SnapshotChange[];
   blockers: string[];
+  /** The declaration lines of `blockers`, and the ingredient behind each. */
+  deckBlockers?: string[];
+  deckIssues?: DeclarationIssue[];
   warnings: string[];
   sample: { printDate: string; productionDate: string };
   current: { hash: string; snapshot: LabelSnapshot; proof: Proof };

@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { RecipeLabelLink } from "@/components/product-labels/recipe-label-link";
+import { DeclarationFixButtons, type DeclarationIssue } from "@/components/declaration-fix";
 import { RecipeBarcodes } from "@/components/barcodes/recipe-barcodes";
 import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuTickNotice, isDraftRecipe, recipeStageCounts } from "@/lib/recipe-archive";
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
@@ -1910,37 +1911,12 @@ interface DeckData {
   mayContainStatement: string | null;
   missingDeclarations: string[];
   missingDeclarationDetail?: { ingredientId: number; name: string }[];
+  unwrappedDeclarations?: string[];
+  declarationIssues?: DeclarationIssue[];
   isComplete: boolean;
 }
 
 const BASE_URL = import.meta.env.BASE_URL.replace(/\/$/, "");
-
-/** The names from a missing-declarations warning, each linked straight to
- *  that ingredient's edit dialog (via /inventory?edit=) so fixing them is a
- *  tap, not a search. Names the server couldn't id (shouldn't happen) fall
- *  back to plain text. */
-function MissingDeclarationLinks({ names, detail }: { names: string[]; detail?: { ingredientId: number; name: string }[] }) {
-  const byName = new Map((detail ?? []).map(d => [d.name, d.ingredientId]));
-  return (
-    <span className="inline-flex flex-wrap gap-1 align-middle">
-      {names.map(name => {
-        const id = byName.get(name);
-        return id != null ? (
-          <Link
-            key={name}
-            href={`/inventory?tab=ingredients&edit=${id}`}
-            className="underline decoration-dotted underline-offset-2 font-semibold hover:text-amber-900 dark:hover:text-amber-100"
-            title={`Open ${name} to add its label declaration`}
-          >
-            {name}
-          </Link>
-        ) : (
-          <span key={name}>{name}</span>
-        );
-      })}
-    </span>
-  );
-}
 
 /** The recipe's nutrition panel — weights, per 100g / per portion table and
  *  completeness warning. Shown in the beaker pop-up, the cost breakdown and
@@ -2017,11 +1993,16 @@ function RecipeNutritionPanel({ id, active = true, refreshKey }: { id: number; a
           {data.completeness.missingNutritionals.length > 0 && (
             <p className="text-xs text-amber-700 dark:text-amber-300">Missing nutritionals: {data.completeness.missingNutritionals.join(", ")}</p>
           )}
-          {data.completeness.missingDeclarations.length > 0 && (
+          {data.completeness.missingDeclarations.length > 0 && !data.completeness.missingDeclarationDetail?.length && (
             <p className="text-xs text-amber-700 dark:text-amber-300">
-              Missing label declarations:{" "}
-              <MissingDeclarationLinks names={data.completeness.missingDeclarations} detail={data.completeness.missingDeclarationDetail} />
+              Missing label declarations: {data.completeness.missingDeclarations.join(", ")}
             </p>
+          )}
+          {(data.completeness.missingDeclarationDetail?.length ?? 0) > 0 && (
+            <DeclarationFixButtons
+              className="text-xs text-amber-800 dark:text-amber-200"
+              issues={(data.completeness.missingDeclarationDetail ?? []).map(d => ({ kind: "missing" as const, ingredientId: d.ingredientId, name: d.name }))}
+            />
           )}
         </div>
       )}
@@ -2062,21 +2043,21 @@ function RecipeNutritionalsDialog({ id, open, onOpenChange }: { id: number; open
 // `active` gates the fetch (so it doesn't run while a parent dialog is shut);
 // bump `refreshKey` to force a re-fetch (e.g. after a save).
 function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: number; active?: boolean; refreshKey?: number | string }) {
-  const [data, setData] = useState<DeckData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState<null | "plain" | "label">(null);
-
-  useEffect(() => {
-    if (!active) return;
-    setLoading(true);
-    setError(null);
-    fetch(`${BASE_URL}/api/recipes/${id}/ingredient-deck`, { credentials: "include" })
-      .then(r => r.json())
-      .then(d => { if (d.error) throw new Error(d.error); setData(d); })
-      .catch(e => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setLoading(false));
-  }, [active, id, refreshKey]);
+  // React Query (was fetch-in-effect) so fixing a declaration from the
+  // buttons below re-runs the deck without a reload (2026-10-12).
+  const { data, isLoading: loading, error: queryError } = useQuery<DeckData>({
+    queryKey: ["recipe-ingredient-deck", id, refreshKey ?? null],
+    queryFn: async () => {
+      const r = await fetch(`${BASE_URL}/api/recipes/${id}/ingredient-deck`, { credentials: "include" });
+      const d = await r.json();
+      if (!r.ok || d.error) throw new Error(d.error ?? "Couldn't build the ingredient deck");
+      return d;
+    },
+    enabled: active,
+    staleTime: 0,
+  });
+  const error = queryError ? (queryError instanceof Error ? queryError.message : String(queryError)) : null;
 
   const copyDeck = () => {
     if (!data) return;
@@ -2158,11 +2139,11 @@ function RecipeIngredientDeckPanel({ id, active = true, refreshKey }: { id: numb
       </div>
 
       {!data.isComplete && (
-        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
-          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Missing Declarations</p>
-          <p className="text-xs text-amber-700 dark:text-amber-300">
-            <MissingDeclarationLinks names={data.missingDeclarations} detail={data.missingDeclarationDetail} />
-          </p>
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg p-3 space-y-1">
+          <p className="text-sm font-medium text-amber-800 dark:text-amber-200 flex items-center gap-1"><AlertTriangle className="w-4 h-4" /> Declarations to fix before this can go on a label</p>
+          {data.declarationIssues
+            ? <DeclarationFixButtons issues={data.declarationIssues} className="text-xs text-amber-800 dark:text-amber-200" />
+            : <p className="text-xs text-amber-700 dark:text-amber-300">{[...data.missingDeclarations, ...(data.unwrappedDeclarations ?? [])].join(", ")}</p>}
         </div>
       )}
     </div>
