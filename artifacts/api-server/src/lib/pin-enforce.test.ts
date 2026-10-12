@@ -51,6 +51,7 @@ describe("matchAttributingWrite", () => {
     ["POST", "/oven-events/oven-in"],
     ["PATCH", "/production-plans/180/items/9/wrapping-complete"],
     ["POST", "/fulfilment/verify-label-scan"],
+    ["POST", "/barcodes/variants/123456789/packer-set"],
     ["POST", "/deliveries/12/receive"],
     ["POST", "/production-plans/180/items/9/wonly"], // wonky reject (+1)
     ["POST", "/production-plans/180/items/9/dog-bin"], // dog bin reject (+1)
