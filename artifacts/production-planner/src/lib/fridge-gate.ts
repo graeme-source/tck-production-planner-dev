@@ -204,3 +204,12 @@ export function computeFridgeAllocation<T extends GateOrder>(
     .sort((a, b) => b.packs - a.packs);
   return { pickable, held, deficits, active: true, shortFor, uncheckedTitles, uncheckedOrderIds };
 }
+
+
+/** The orders the wrapping screen's "does the fridge cover today's pack?"
+ *  check uses: every collection plus every courier order still to pack —
+ *  NOT only orders with an APC label booked (12 Oct 2026 regression: with 3
+ *  of ~70 booked it reported the fridge covered everything). */
+export function packShortfallOrders<T>(collections: T[], courier: T[]): T[] {
+  return [...collections, ...courier];
+}
