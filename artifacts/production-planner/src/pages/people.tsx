@@ -262,7 +262,7 @@ function PeopleList({ ready }: { ready: boolean }) {
   const outstanding = data?.outstanding ?? [];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-24">
+    <div className="space-y-5 pb-24">
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
           <UsersRound className="w-6 h-6 text-primary" />
