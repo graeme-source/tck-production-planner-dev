@@ -14,6 +14,8 @@ import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
+import { doughTileSummary } from "@/lib/dough-mix-status";
+import { doughMixProgressKey, fetchDoughMixProgress } from "@/hooks/use-dough-mix-progress";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
@@ -549,6 +551,42 @@ export default function Dashboard() {
   });
   const doughPlanId = doughTarget?.planId ?? null;
 
+  // Dough Prep tile progress (Graeme, 2026-10-12): mixes + balls for the
+  // plan the dough is for, from the same saved mix progress and the same
+  // fallback helper as the station (lib/dough-mix-status.ts), so the two
+  // always agree. mode=current = this plan's own dough, exactly what the
+  // tile's link opens (direct=1). The mix-progress key is shared with the
+  // station, so a tick there refreshes this on the same iPad; polling
+  // covers the others. No KPI yet — the header stays neutral.
+  const { data: doughNeeds } = useQuery({
+    queryKey: ["dashboard-dough-needs", doughPlanId],
+    enabled: doughPlanId != null,
+    refetchInterval: 60000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/production-plans/${doughPlanId}/dough-prep?mode=current`, { credentials: "include" });
+      if (!res.ok) return null;
+      const d = await res.json() as { mixCount?: number; recipes?: Array<{ ballCount: number }> };
+      return {
+        mixCount: d.mixCount ?? 0,
+        ballsNeeded: (d.recipes ?? []).reduce((s, r) => s + (r.ballCount ?? 0), 0),
+      };
+    },
+  });
+  const { data: doughMixes } = useQuery({
+    queryKey: doughMixProgressKey(doughPlanId ?? 0),
+    enabled: doughPlanId != null,
+    refetchInterval: 15000,
+    queryFn: ({ signal }) => fetchDoughMixProgress(doughPlanId!, signal),
+  });
+  const doughTile = doughNeeds && doughMixes
+    ? doughTileSummary({
+        mixCount: doughNeeds.mixCount,
+        saved: doughMixes.mixes,
+        ballsRecorded: doughMixes.ballsRecorded,
+        ballsNeeded: doughNeeds.ballsNeeded,
+      })
+    : null;
+
   // One Building card for both tables: tapping it asks which table you're
   // working at (Graeme, 2026-09-16), instead of two cards or a detour
   // through the production plan.
@@ -597,7 +635,7 @@ export default function Dashboard() {
       <StatCard
         kpi={coreStatus.dough_prep}
         title="Dough Prep"
-        value="→"
+        value={doughTile && !doughTile.empty ? `${doughTile.pct}%` : "→"}
         subtitle={doughTarget?.planDate
           ? `dough for ${format(new Date(doughTarget.planDate + "T00:00:00"), "EEE d MMM")}`
           : "no upcoming plan"}
@@ -605,6 +643,13 @@ export default function Dashboard() {
         color="text-amber-600"
         bg="bg-amber-500/10"
         href={stationHref("dough_prep")}
+        progress={doughTile && !doughTile.empty ? {
+          done: doughTile.pct,
+          total: 100,
+          label: "",
+          detail: doughTile.line,
+          barClass: "bg-amber-500",
+        } : undefined}
       />
     ),
     dough_sheeting: (
@@ -1073,7 +1118,11 @@ function GoveeTempTile() {
 /** Optional at-a-glance progress under the headline number. Purely visual —
  *  `done / total` with a slim bar so nobody has to click into the card to see
  *  where the day is up to. `barClass` matches the card's accent colour. */
-type StatProgress = { done: number; total: number; label: string; barClass: string; hideDetail?: boolean };
+type StatProgress = {
+  done: number; total: number; label: string; barClass: string; hideDetail?: boolean;
+  /** Replaces the "done / total label" line (Dough Prep: "1 of 2 mixes · 64 of 110 balls"). */
+  detail?: string;
+};
 
 /** "44 / 46" once work has started; just "46" while nothing's done yet. The
  *  fraction IS the headline — per Graeme, progress is the biggest detail on
@@ -1133,7 +1182,7 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
             </div>
             {!progress.hideDetail && (
               <p className="text-xs text-muted-foreground mt-1 tabular-nums leading-snug">
-                {progress.done} / {progress.total} {progress.label}
+                {progress.detail ?? `${progress.done} / ${progress.total} ${progress.label}`}
               </p>
             )}
           </div>

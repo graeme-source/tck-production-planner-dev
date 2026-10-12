@@ -406,6 +406,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
       const prev = queryClient.getQueryData<DoughMixProgressResponse>(mixKey);
       queryClient.setQueryData<DoughMixProgressResponse>(mixKey, old => ({
         planId: trackingPlanId,
+        ballsRecorded: old?.ballsRecorded ?? totalComplete,
         mixes: applyDoughMixChange(old?.mixes ?? [], change, new Date().toISOString()),
       }));
       return { prev };

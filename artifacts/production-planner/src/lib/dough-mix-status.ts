@@ -102,3 +102,39 @@ export function applyDoughMixChange(saved: SavedDoughMix[], change: DoughMixChan
   }
   return [...saved.filter(m => m.mixNo !== change.mixNo), next].sort((a, b) => a.mixNo - b.mixNo);
 }
+
+/** The dashboard's Dough Prep tile (Graeme, 2026-10-12: "a progress bar on
+ *  the dashboard for the dough prep to see where we're up to … and when it's
+ *  finished, it's complete"). Built on deriveDoughMixStatus, so the tile and
+ *  the station always agree. No KPI or timing yet — progress only.
+ *  pct = mixing and balling weighted equally (mixing shows before any ball
+ *  is rolled; 100 only when both are done). */
+export type DoughTileSummary = {
+  line: string;
+  pct: number;
+  complete: boolean;
+  /** Nothing to make for this plan — the tile shows no bar. */
+  empty: boolean;
+};
+
+export function doughTileSummary(input: {
+  mixCount: number;
+  saved: SavedDoughMix[] | null | undefined;
+  ballsRecorded: number;
+  ballsNeeded: number;
+}): DoughTileSummary {
+  const mixCount = Math.max(0, Math.floor(input.mixCount));
+  const needed = Math.max(0, input.ballsNeeded);
+  if (mixCount === 0 && needed === 0) return { line: "No dough on this plan", pct: 0, complete: false, empty: true };
+  const balls = Math.max(0, input.ballsRecorded);
+  const mixesDone = Math.min(mixCount, deriveDoughMixStatus(input).completedMixes.size);
+  const mixFrac = mixCount > 0 ? mixesDone / mixCount : 1;
+  const ballFrac = needed > 0 ? Math.min(1, balls / needed) : 1;
+  const complete = mixFrac >= 1 && ballFrac >= 1;
+  if (complete) return { line: "Complete ✓", pct: 100, complete, empty: false };
+  const pct = Math.min(99, Math.floor(((mixFrac + ballFrac) / 2) * 100));
+  const parts: string[] = [];
+  if (mixCount > 0) parts.push(`${mixesDone} of ${mixCount} mix${mixCount === 1 ? "" : "es"}`);
+  if (needed > 0) parts.push(`${balls} of ${needed} balls`);
+  return { line: parts.join(" · "), pct, complete, empty: false };
+}

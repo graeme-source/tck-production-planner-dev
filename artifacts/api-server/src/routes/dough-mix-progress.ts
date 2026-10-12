@@ -4,7 +4,7 @@
  * (Graeme, 2026-10-12: all 110 balls recorded but the page said 0 / 2 mixes).
  *
  *   GET /dough-mix-progress/:planId
- *       → { planId, mixes: [{ mixNo, ticked: [{ ingredientKey, at, byUserId, byName }],
+ *       → { planId, ballsRecorded, mixes: [{ mixNo, ticked: [{ ingredientKey, at, byUserId, byName }],
  *                             completedAt, completedBy }] }
  *   PUT /dough-mix-progress/:planId
  *       body: one change (lib/dough-mix-progress.ts, zod):
@@ -48,7 +48,16 @@ async function readProgress(planId: number) {
       .where(inArray(usersTable.id, [...userIds]));
     for (const u of users) names.set(u.id, u.name);
   }
-  return { planId, mixes: shapeMixes(rows, names) };
+  // Balls rolled for this plan (its dough_prep batch completions), so the
+  // dashboard tile needs no plan-detail fetch to show balling progress.
+  const balls = await db.execute(sql`
+    SELECT COUNT(*)::int AS n
+    FROM batch_completions bc
+    JOIN production_plan_items pi ON pi.id = bc.plan_item_id
+    WHERE pi.plan_id = ${planId} AND bc.station_type = 'dough_prep'
+  `);
+  const ballsRecorded = Number((balls.rows[0] as { n?: number } | undefined)?.n ?? 0);
+  return { planId, ballsRecorded, mixes: shapeMixes(rows, names) };
 }
 
 function planIdOf(params: unknown): number | null {

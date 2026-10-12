@@ -1,5 +1,47 @@
 import { describe, it, expect } from "vitest";
-import { deriveDoughMixStatus, applyDoughMixChange, type SavedDoughMix } from "./dough-mix-status";
+import { deriveDoughMixStatus, applyDoughMixChange, doughTileSummary, type SavedDoughMix } from "./dough-mix-status";
+
+describe("dashboard Dough Prep tile summary", () => {
+  it("nothing started", () => {
+    expect(doughTileSummary({ mixCount: 2, saved: [], ballsRecorded: 0, ballsNeeded: 110 }))
+      .toEqual({ line: "0 of 2 mixes · 0 of 110 balls", pct: 0, complete: false, empty: false });
+  });
+
+  it("mixing shows on the bar before any balls", () => {
+    const s = doughTileSummary({ mixCount: 2, saved: [{ mixNo: 1, ticked: [], completedAt: "t" }], ballsRecorded: 0, ballsNeeded: 110 });
+    expect(s.line).toBe("1 of 2 mixes · 0 of 110 balls");
+    expect(s.pct).toBe(25);
+  });
+
+  it("part way through balling", () => {
+    const s = doughTileSummary({ mixCount: 2, saved: [{ mixNo: 1, ticked: [], completedAt: "t" }], ballsRecorded: 30, ballsNeeded: 110 });
+    expect(s.line).toBe("1 of 2 mixes · 30 of 110 balls");
+    expect(s.complete).toBe(false);
+    expect(s.pct).toBe(38);
+    // 64 balls ≈ more than one mix's worth, so mix 2 is filled in from the
+    // balls — exactly as the station shows it.
+    expect(doughTileSummary({ mixCount: 2, saved: [{ mixNo: 1, ticked: [], completedAt: "t" }], ballsRecorded: 64, ballsNeeded: 110 }).line)
+      .toBe("2 of 2 mixes · 64 of 110 balls");
+  });
+
+  it("all mixes and balls → Complete ✓ at 100% (the 12 Oct live case: 110 balls, nothing saved)", () => {
+    expect(doughTileSummary({ mixCount: 2, saved: [], ballsRecorded: 110, ballsNeeded: 110 }))
+      .toEqual({ line: "Complete ✓", pct: 100, complete: true, empty: false });
+  });
+
+  it("all mixes saved but balls short is not complete, and never shows 100", () => {
+    const saved = [1, 2].map(n => ({ mixNo: n, ticked: [], completedAt: "t" }));
+    const s = doughTileSummary({ mixCount: 2, saved, ballsRecorded: 109, ballsNeeded: 110 });
+    expect(s.complete).toBe(false);
+    expect(s.pct).toBe(99);
+    expect(s.line).toBe("2 of 2 mixes · 109 of 110 balls");
+  });
+
+  it("one mix reads singular; no dough → empty", () => {
+    expect(doughTileSummary({ mixCount: 1, saved: [], ballsRecorded: 0, ballsNeeded: 40 }).line).toBe("0 of 1 mix · 0 of 40 balls");
+    expect(doughTileSummary({ mixCount: 0, saved: [], ballsRecorded: 0, ballsNeeded: 0 }).empty).toBe(true);
+  });
+});
 
 const done = (s: Set<number>) => [...s].sort((a, b) => a - b);
 
