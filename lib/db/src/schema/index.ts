@@ -58,3 +58,4 @@ export * from "./test_requests";
 export * from "./quid";
 export * from "./ad_efficiency";
 export * from "./ad_spend_channels";
+export * from "./people_record";
