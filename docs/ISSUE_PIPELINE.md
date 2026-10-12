@@ -163,14 +163,34 @@ middleware is the only door. Bodies are zod-validated (400 with
 | `POST /triage/:id/status` | `{ status: in_progress\|fixed\|wont_fix, fixRef?, note?, actor? }`. Only approved work moves: proposed/rejected → 409. `fixed` needs `fixRef` (branch/commit/PR); `wont_fix` needs `note`. |
 | `POST /triage/:id/resolve-issue` | **After Graeme has deployed.** `{ whatChanged, testPath?, alsoResolveRelated?, actor? }`. Only for `fixed`, once. Resolves the andon issue (as `"<decider> (Fix queue)"`), comments on it "Your report changed this — here's what's different: …", sends the reporter a bell notification and queues their full-screen notice. `testPath` must be an in-app path starting with a single `/` (no URLs, no `/api`). `alsoResolveRelated` also closes clustered duplicates that have no triage row of their own. |
 
-`:id` is the triage row id (`triage.id`), not the andon issue id.
+| `POST /issues/:andonIssueId/note` | `{ note, actor? }` (2026-10-12). A note from Claude to **Graeme** on the card — "This is fixed — …", "Deployed in abc123" — shown in the card's Conversation as "Claude". Changes nothing else: no status move, no re-triage, nothing to the reporter. Keyed by the issue number on the card. 404 if the issue has no triage row yet; 409 if dismissed with no action. To tell the **reporter**, use `resolve-issue` (after a deploy). |
+
+`:id` is the triage row id (`triage.id`), not the andon issue id (except
+`/issues/:andonIssueId/note`, which takes the issue number).
+
+### Reply to Claude (2026-10-12)
+
+Every Fix queue card has a **Reply to Claude** button, whatever its state —
+Graeme no longer has to wait for Claude to ask him something. The reply
+(`POST /review/:id/reply {note}`, founder only) is his newest, overriding
+instruction, so it **reopens** the card (`replyToClaudePlan`): a decided or
+closed status goes back to `proposed` (the old decision stays in the event
+history; `fixRef` is kept), "Dismissed — no action" is lifted, a snooze is
+cleared, and `awaitingRetriage` is set. `GET /issues` then returns it even if
+the report is already resolved or older than `since`, replies first, with the
+card's `thread` and a `graemeReply` block (`latest`, `allSinceLastRecommendation`,
+and the instruction to re-triage answering him). The reviewer's next
+`POST /triage` is a plain update (never a 409) and clears the flag, which
+brings the card back to To review. The andon report and its reporter are not
+touched.
 
 ### People side (session auth)
 
 - `/founder/fix-queue` — Graeme's Fix queue (founder account only, page and
   API): `GET /api/issue-pipeline/review?tab=…`, `POST /review/:id/approve |
-  reject {note?} | reply {note}`. Reply keeps the item `proposed` and puts it
-  back in the session's `GET /issues` inbox.
+  reject {note?} | reply {note}`. Reply works on any card, reopens it to
+  `proposed` and puts it back in the session's `GET /issues` inbox (see
+  "Reply to Claude" below).
 - `GET /api/issue-pipeline/my-fixed-notices` and `POST /my-fixed-notices/:id/ack
   {action: test_now|later}` — each reporter's own pop-ups
   (`components/fixed-notice-interstitial.tsx`, mounted app-wide).
