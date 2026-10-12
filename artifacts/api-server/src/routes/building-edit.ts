@@ -10,7 +10,7 @@
  *          the two counters with @workspace/building-edit.
  *
  *   POST /production-plans/:id/items/:itemId/building-edit
- *        body { stationType, batches, extraPacks, expected: { batches, extraPacks },
+ *        body { stationType, batches, extraPacks, expected: { batches, extraPacks, ovenBatches? },
  *               batchesLine?, extraPacksLine? }  — which line each change is
  *               taken off / added to (the builder picks it; default stationType)
  *        → applies the staged edit in ONE transaction and returns the new
@@ -21,17 +21,24 @@
  *
  * What changes (rules + floors in @workspace/building-edit, tested):
  *   −batch  deletes a batch_completions row — the chosen line's newest full
- *           batch first — so the TCK run rate and dashboard KPI drop with it;
+ *           batch first, then the other line's if the chosen one runs out —
+ *           so the TCK run rate and dashboard KPI drop with it;
+ *   ovens   if the new batch count is below the Ovens' "From Building" count
+ *           (its own 'ovens' rows), the ovens' newest rows go in the same
+ *           transaction, with each one's newest weight record — exactly what
+ *           the oven station's own − does — so the oven person never has to
+ *           fix a builder's mistake (Graeme, 12 Oct 2026, fix-queue #318);
  *   +batch  inserts a full batch row on the chosen line now, under the
  *           signed-in person, marked
  *           with correction_by_user_id + correction_note "Edit numbers";
  *   ±packs  moves building_station_progress.extra_packs, then the item's
  *           extra_packs_built cache is recomputed (lib/building-progress).
- * Refused (422, with the reason in words) when the chosen line hasn't that
- * many to give, below the batches already through the ovens, or a pack total
- * below what's already wrapped into storage.
+ * Refused (422, with the reason in words) below 0 or a pack total below
+ * what's already wrapped into storage (real stock: Wrapping's own confirmed
+ * "take back out" moves it).
  * Every save writes one building_count_edits row (who, before → after, the
- * rows removed/added). It adds batches under a person's name, so it sits in
+ * rows removed/added — oven rows and their weight records included, so they
+ * can be put back). It adds batches under a person's name, so it sits in
  * the server PIN lock (lib/pin-enforce.ts).
  */
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -41,10 +48,11 @@ import {
   productionPlanItemsTable,
   recipesTable,
   batchCompletionsTable,
+  batchWeightRecordsTable,
   buildingStationProgressTable,
   buildingCountEditsTable,
 } from "@workspace/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { recomputeItemFromProgress } from "../lib/building-progress";
@@ -53,8 +61,8 @@ import {
   BATCH_WORDS,
   PACK_WORDS,
   buildNumbers,
+  describeEdit,
   editBlockReason,
-  editSummary,
   planBuildEdit,
   type BuildEditState,
 } from "@workspace/building-edit";
@@ -75,7 +83,10 @@ const Counts = z.object({
 
 export const BuildingEditBody = Counts.extend({
   stationType: z.enum(BUILDING_LINES),
-  expected: Counts,
+  // ovenBatches: what the dialog told the builder the ovens had — if the
+  // oven person has recorded since, the "will also set Ovens to N" they saw
+  // is out of date, so the save is refused (409) and the numbers reload.
+  expected: Counts.extend({ ovenBatches: z.number().int().min(0).optional() }),
   batchesLine: z.enum(BUILDING_LINES).optional(),
   extraPacksLine: z.enum(BUILDING_LINES).optional(),
 });
@@ -133,18 +144,20 @@ export async function loadState(ex: typeof db | Tx, planId: number, itemId: numb
   const packsPerBag = Math.max(1, Math.floor(8 / packSize));
 
   const buildRows = completions.filter(c => (BUILDING_LINES as readonly string[]).includes(c.stationType));
+  const ovenRows = completions.filter(c => c.stationType === "ovens");
   const state: BuildEditState = {
     completions: buildRows.map(c => ({ id: c.id, stationType: c.stationType, completedAt: c.completedAt, partialPacks: c.partialPacks })),
+    ovenCompletions: ovenRows.map(c => ({ id: c.id, stationType: c.stationType, completedAt: c.completedAt, partialPacks: c.partialPacks })),
     stationExtras: Object.fromEntries(progress.map(p => [p.stationType, p.extraPacks])),
     packsPerBatch,
-    ovenBatches: completions.length - buildRows.length,
+    ovenBatches: ovenRows.length,
     packsStored: (item.fridgeQty ?? 0) + (item.freezerQty ?? 0)
       + ((item.fridgeEightPackQty ?? 0) + (item.freezerEightPackQty ?? 0)) * packsPerBag,
   };
   // A batch is one pack (mac cheese and the like): the screen counts packs
   // and has no separate extra-packs counter.
   const countsPacks = packsPerBatch === 1;
-  return { item, state, buildRows, countsPacks };
+  return { item, state, buildRows, ovenRows, countsPacks };
 }
 
 function response(itemId: number, recipeName: string | null, state: BuildEditState, countsPacks: boolean) {
@@ -194,27 +207,43 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
       if (loaded.item.planStatus === "draft") {
         throw new EditRefused(409, "This plan is still a draft — activate it before recording production.");
       }
-      const { state, buildRows, countsPacks } = loaded;
+      const { state, buildRows, ovenRows, countsPacks } = loaded;
       const unit = countsPacks ? PACK_WORDS : BATCH_WORDS;
       const before = buildNumbers(state);
       if (before.batches !== body.expected.batches || before.extraPacks !== body.expected.extraPacks) {
         throw new EditRefused(409, "The numbers changed while you were editing (the other line may have recorded something). Check them and save again.");
+      }
+      if (body.expected.ovenBatches != null && body.expected.ovenBatches !== state.ovenBatches) {
+        throw new EditRefused(409, "The Ovens recorded something while you were editing. Check the numbers and save again.");
       }
       const target = { batches: body.batches, extraPacks: countsPacks ? before.extraPacks : body.extraPacks };
       const reason = editBlockReason(state, target, lines, unit);
       if (reason) throw new EditRefused(422, reason);
 
       const plan = planBuildEdit(state, target, lines);
-      const summary = editSummary(
-        { batches: before.batches, extraPacks: before.extraPacks },
-        { batches: plan.after.batches, extraPacks: plan.after.extraPacks },
-        unit,
-        lines,
-      );
+      const summary = describeEdit(plan, unit);
       if (!summary) return { state, recipeName: loaded.item.recipeName, countsPacks, summary };
 
       if (plan.removeCompletionIds.length > 0) {
         await tx.delete(batchCompletionsTable).where(inArray(batchCompletionsTable.id, plan.removeCompletionIds));
+      }
+      // The ovens follow the builders down. Same as the oven station's own −
+      // (DELETE /batch-completions/last): the newest oven row goes, and with
+      // it the newest weight record, so the HACCP weight log's batch
+      // sequence stays in step with the oven count. Both are kept in the
+      // audit row below.
+      const ovenIds = plan.ovens.removeCompletionIds;
+      let removedWeights: Array<Record<string, unknown>> = [];
+      if (ovenIds.length > 0) {
+        await tx.delete(batchCompletionsTable).where(inArray(batchCompletionsTable.id, ovenIds));
+        removedWeights = await tx.select().from(batchWeightRecordsTable)
+          .where(eq(batchWeightRecordsTable.planItemId, itemId))
+          .orderBy(desc(batchWeightRecordsTable.batchSequence), desc(batchWeightRecordsTable.recordedAt))
+          .limit(ovenIds.length);
+        if (removedWeights.length > 0) {
+          await tx.delete(batchWeightRecordsTable)
+            .where(inArray(batchWeightRecordsTable.id, removedWeights.map(w => Number(w.id))));
+        }
       }
       let addedIds: number[] = [];
       if (plan.addBatches > 0) {
@@ -246,9 +275,12 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
       }
       if (Object.keys(plan.extrasDelta).length > 0) await recomputeItemFromProgress(itemId, tx);
 
-      const removed = buildRows
-        .filter(c => plan.removeCompletionIds.includes(c.id))
+      const removed: Array<Record<string, unknown>> = [...buildRows, ...ovenRows]
+        .filter(c => plan.removeCompletionIds.includes(c.id) || ovenIds.includes(c.id))
         .map(c => ({ id: c.id, stationType: c.stationType, userId: c.userId, completedAt: c.completedAt.toISOString(), partialPacks: c.partialPacks }));
+      for (const w of removedWeights) {
+        removed.push({ weightRecord: { ...w, recordedAt: w.recordedAt instanceof Date ? w.recordedAt.toISOString() : w.recordedAt } });
+      }
       await tx.insert(buildingCountEditsTable).values({
         planId,
         planItemId: itemId,
