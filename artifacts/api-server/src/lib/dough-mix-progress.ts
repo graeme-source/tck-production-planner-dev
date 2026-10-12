@@ -15,19 +15,32 @@ export const MAX_MIX_NO = 50;
 
 const MixNo = z.number().int().min(1).max(MAX_MIX_NO);
 
+/** Which dough on the plan (migration 0177): the day-before calzone dough,
+ *  or one same-day dough by its sub-recipe id. Matches the table's CHECK. */
+export const DAY_BEFORE_DOUGH = "day_before";
+export const DoughKey = z.string().regex(/^(day_before|same_day:[1-9][0-9]{0,9})$/);
+export const sameDayDoughKey = (subRecipeId: number) => `same_day:${subRecipeId}`;
+
 export const DoughMixProgressChange = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("tick"),
+    dough: DoughKey.optional(),
     mixNo: MixNo,
     ingredientKey: z.string().trim().min(1).max(200),
     ticked: z.boolean(),
   }).strict(),
   z.object({
     action: z.literal("complete"),
+    dough: DoughKey.optional(),
     mixNo: MixNo,
     completed: z.boolean(),
   }).strict(),
 ]);
+
+/** GET ?dough=… — omitted = the day-before dough (the original contract). */
+export const DoughMixProgressQuery = z.object({
+  dough: DoughKey.optional(),
+});
 export type DoughMixProgressChange = z.infer<typeof DoughMixProgressChange>;
 
 export const DoughMixProgressParams = z.object({

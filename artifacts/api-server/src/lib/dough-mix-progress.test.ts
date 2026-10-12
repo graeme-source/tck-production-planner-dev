@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import type { Request, Response } from "express";
 import { validate } from "../middleware/validate";
-import { DoughMixProgressChange, DoughMixProgressParams, shapeMixes } from "./dough-mix-progress";
+import { DoughMixProgressChange, DoughMixProgressParams, DoughMixProgressQuery, sameDayDoughKey, shapeMixes } from "./dough-mix-progress";
 
 /** Run the exact middleware the PUT route uses, without a server. */
 function run(body: unknown) {
@@ -51,6 +51,27 @@ describe("PUT /dough-mix-progress/:planId body", () => {
     const r = run(body);
     expect(r.statusCode).toBe(400);
     expect(r.nextCalled).toBe(false);
+  });
+
+  // Regression (2026-10-12 follow-up): the same-day (cinnamon bun) dough
+  // cards lost their ticks on reload too. They save on the same endpoint
+  // with a dough key; leaving it out still means the day-before dough.
+  it("accepts a same-day dough key, and no key (day-before) as before", () => {
+    expect(run({ action: "tick", dough: "same_day:12", mixNo: 1, ingredientKey: "7", ticked: true }).nextCalled).toBe(true);
+    expect(run({ action: "complete", dough: "day_before", mixNo: 2, completed: true }).nextCalled).toBe(true);
+    expect(run({ action: "complete", mixNo: 2, completed: true }).nextCalled).toBe(true);
+  });
+
+  it.each([
+    ["same_day:"], ["same_day:0"], ["same_day:abc"], ["SAME_DAY:1"], ["calzone"], [""], ["same_day:1;drop"],
+  ])("refuses dough key %j", (dough) => {
+    expect(run({ action: "tick", dough, mixNo: 1, ingredientKey: "1", ticked: true }).statusCode).toBe(400);
+    expect(DoughMixProgressQuery.safeParse({ dough }).success).toBe(false);
+  });
+
+  it("GET query: dough is optional", () => {
+    expect(DoughMixProgressQuery.safeParse({}).success).toBe(true);
+    expect(DoughMixProgressQuery.safeParse({ dough: sameDayDoughKey(44) }).success).toBe(true);
   });
 
   it("plan id param must be a positive whole number", () => {
