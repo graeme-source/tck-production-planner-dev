@@ -217,3 +217,5 @@ export function allergenMismatch(
   const tickedSet = new Set(ticked);
   return detectAllergens(text).filter(c => !tickedSet.has(c));
 }
+
+export * from "./declaration";

@@ -10,6 +10,14 @@
  *  - A sub-recipe that is 25% or more of the product is a compound
  *    ingredient: "Calzone Dough (Flour, Water, …)". Anything smaller is
  *    broken up into the main list.
+ *    The law (retained Reg. 1169/2011, Annex VII Part E) ALLOWS either way
+ *    for any compound: name it with its ingredients straight after in
+ *    brackets, or list its ingredients individually in weight order. The
+ *    25% line is a house choice (it echoes the pre-2014 UK "25% rule",
+ *    which is no longer law). We never use the under-2% exemption that lets
+ *    a compound's own list be left off — every ingredient is always listed.
+ *    A sub-recipe nested INSIDE another sub-recipe is always merged into
+ *    its parent's list; only top-level sub-recipe lines can be bracketed.
  *  - Each ingredient is named ONCE, at its combined weight. Entries combine
  *    when they PRINT THE SAME — not just when they're the same ingredient
  *    record: Cracked Black Pepper and Ground Black Pepper both declare
@@ -65,6 +73,24 @@ export interface DeckEntry {
      *  whole product. */
     isQuid?: boolean;
   }>;
+}
+
+/** How one sub-recipe line shows on a product's label, and why — so the
+ *  sub-recipe page can say "On Garlic Cheese this shows as Garlic Butter
+ *  (…)" or "…its ingredients are listed individually (8% of the product)". */
+export interface SubRecipeDecision {
+  subRecipeId: number;
+  name: string;
+  /** Share of the whole product, 1 dp. */
+  percentage: number;
+  asCompound: boolean;
+  /** "quid": kept bracketed because its percentage is declared;
+   *  "share": kept bracketed because it is COMPOUND_THRESHOLD_PCT or more;
+   *  "under-threshold": broken up into the main list. */
+  reason: "quid" | "share" | "under-threshold";
+  /** As a compound: its full bracketed declaration. Broken up: its
+   *  ingredients' declarations, heaviest first (allergens in **bold**). */
+  printedAs: string;
 }
 
 /** Share of the product at or above which a sub-recipe stays bracketed. */
@@ -132,14 +158,24 @@ function pool(items: DeckItem[]): Pooled[] {
   return [...byKey.values()];
 }
 
-export function buildDeck(direct: DeckItem[], groups: DeckGroup[]): { entries: DeckEntry[]; deckText: string; totalWeightG: number } {
+export function buildDeck(direct: DeckItem[], groups: DeckGroup[]): { entries: DeckEntry[]; deckText: string; totalWeightG: number; subRecipeDecisions: SubRecipeDecision[] } {
   const totalWeightG = direct.reduce((s, i) => s + i.quantityG, 0) + groups.reduce((s, g) => s + g.totalQuantityG, 0);
 
   const loose: DeckItem[] = [...direct];
   const compounds: Array<{ group: DeckGroup; grams: number }> = [];
+  const decisions: SubRecipeDecision[] = [];
   for (const g of groups) {
-    if (g.isQuid || pctOf(g.totalQuantityG, totalWeightG) >= COMPOUND_THRESHOLD_PCT) compounds.push({ group: g, grams: g.totalQuantityG });
-    else for (const si of g.ingredients) loose.push({ ...si, isQuid: !!si.isQuid });
+    const pct = pctOf(g.totalQuantityG, totalWeightG);
+    if (g.isQuid || pct >= COMPOUND_THRESHOLD_PCT) {
+      compounds.push({ group: g, grams: g.totalQuantityG });
+      decisions.push({ subRecipeId: g.subRecipeId, name: g.name, percentage: pct, asCompound: true, reason: g.isQuid ? "quid" : "share", printedAs: "" });
+    } else {
+      for (const si of g.ingredients) loose.push({ ...si, isQuid: !!si.isQuid });
+      decisions.push({
+        subRecipeId: g.subRecipeId, name: g.name, percentage: pct, asCompound: false, reason: "under-threshold",
+        printedAs: pool(g.ingredients).sort((a, b) => b.grams - a.grams).map(p => boldAllergens(p.printed)).join(", "),
+      });
+    }
   }
 
   const ranked: Array<{ grams: number; entry: DeckEntry }> = [];
@@ -193,5 +229,8 @@ export function buildDeck(direct: DeckItem[], groups: DeckGroup[]): { entries: D
   ranked.sort((a, b) => b.grams - a.grams);
   const entries = ranked.map(r => r.entry);
   const deckText = entries.map(e => e.declaration).join(", ") + ".";
-  return { entries, deckText, totalWeightG };
+  for (const d of decisions) {
+    if (d.asCompound) d.printedAs = entries.find(e => e.type === "compound" && e.subRecipeId === d.subRecipeId)?.declaration ?? "";
+  }
+  return { entries, deckText, totalWeightG, subRecipeDecisions: decisions };
 }

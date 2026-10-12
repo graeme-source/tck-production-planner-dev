@@ -10,45 +10,13 @@
  */
 import { db, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, recipeQuidComponentsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
-import { ALLERGEN_DISPLAY, allergenMismatch } from "@workspace/allergens";
+import { ALLERGEN_DISPLAY, allergenMismatch, declarationNeedsWrapper, declarationIssues } from "@workspace/allergens";
 import { toGrams } from "@workspace/units";
 import { buildDeck } from "./ingredient-deck";
 
-/** True when a declaration lists several components but never names the compound
- *  ingredient they belong to — e.g. "Pork, Salt, Paprika" instead of
- *  "Chorizo (Pork, Salt, Paprika)". A correctly wrapped declaration has no
- *  top-level comma before its first bracket, and that bracket closes at the very
- *  end, so the whole string is one "Name (...)" group. Single-component
- *  declarations ("Salt", "Basil") need no wrapper and are never flagged. */
-export function declarationNeedsWrapper(declaration: string): boolean {
-  const s = declaration.trim().replace(/\.+$/, "").trim();
-  if (!s) return false;
-
-  const firstBracket = s.indexOf("(");
-  // Wrapped iff nothing before the first bracket contains a comma AND that
-  // bracket's match is the final character.
-  let wrapped = false;
-  if (firstBracket !== -1 && !s.slice(0, firstBracket).includes(",")) {
-    let depth = 0;
-    for (let j = firstBracket; j < s.length; j++) {
-      if (s[j] === "(") depth++;
-      else if (s[j] === ")") {
-        depth--;
-        if (depth === 0) { wrapped = j === s.length - 1; break; }
-      }
-    }
-  }
-  if (wrapped) return false;
-
-  // Not wrapped — only a problem if it's actually a multi-component list.
-  let depth = 0;
-  for (const ch of s) {
-    if (ch === "(") depth++;
-    else if (ch === ")") depth--;
-    else if (ch === "," && depth === 0) return true; // top-level comma => compound
-  }
-  return false;
-}
+// The shape rule lives in @workspace/allergens (shared with the app's
+// ingredient dialog and the save-time auto-wrap); re-exported for callers.
+export { declarationNeedsWrapper };
 
 export type RecipeIngredientDeck = Awaited<ReturnType<typeof buildRecipeIngredientDeck>>;
 
@@ -275,7 +243,7 @@ export async function buildRecipeIngredientDeck(recipeId: number, opts: DeckOpti
 
   // Assembly rules (compound threshold, combining entries that print the
   // same, ordering, QUID) live in lib/ingredient-deck.ts with their tests.
-  const { entries: sortedEntries, deckText } = buildDeck(directItems, subRecipeGroups);
+  const { entries: sortedEntries, deckText, subRecipeDecisions } = buildDeck(directItems, subRecipeGroups);
 
   const allAllergens = [...new Set([
     ...directItems.flatMap(i => i.allergens),
@@ -341,6 +309,12 @@ export async function buildRecipeIngredientDeck(recipeId: number, opts: DeckOpti
     missingDeclarations: [...new Set(missingDeclarations)],
     missingDeclarationDetail: [...new Map(missingDeclarationDetail.map(d => [d.ingredientId, d])).values()],
     unwrappedDeclarations: [...new Set(unwrappedDeclarations)],
+    // Every fixable problem with its ingredient id, so each check line can
+    // open that ingredient's edit dialog in place (2026-10-12).
+    declarationIssues: declarationIssues([...directItems, ...subRecipeGroups.flatMap(g => g.ingredients)]),
+    // How each sub-recipe shows on this product's label — bracketed under
+    // its name, or broken into its ingredients — and why.
+    subRecipeDecisions,
     isComplete: missingDeclarations.length === 0 && unwrappedDeclarations.length === 0,
   };
 }
