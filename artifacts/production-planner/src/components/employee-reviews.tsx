@@ -34,12 +34,22 @@ import {
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
+/** Fired when a People write is refused because the private-PIN lock shut. */
+export const PEOPLE_PIN_NEEDED_EVENT = "tck:people-pin-needed";
+
 export async function api<T>(path: string, opts?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}/api${path}`, {
     credentials: "include",
     headers: { "Content-Type": "application/json" },
     ...opts,
   });
+  if (res.status === 423 || res.status === 428) {
+    // The People PIN timed out while they were working (2026-10-12). Ask for
+    // it straight away (PeopleSection listens) and keep everything typed —
+    // the form isn't cleared on an error, so Save just needs pressing again.
+    window.dispatchEvent(new Event(PEOPLE_PIN_NEEDED_EVENT));
+    throw new Error("Your private PIN timed out — nothing you've typed is lost. Enter your PIN, then press Save again.");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body?.error || `Something went wrong (${res.status})`);

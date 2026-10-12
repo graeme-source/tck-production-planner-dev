@@ -125,6 +125,16 @@ function spellOut(s: AbsenceSpell) {
   };
 }
 
+// ── Keep-alive ─────────────────────────────────────────────────────────────
+// Graeme, 2026-10-12: a long meeting write-up took over 15 minutes to type,
+// the People lock (sliding 15 min, middleware/people-unlock.ts) closed behind
+// him and Save was refused. The record page pings this while someone is
+// typing; requirePeopleUnlock (mounted in index.ts) slides the window on
+// every successful request, so this needs no body and changes nothing.
+router.get("/keep-alive", (_req: Request, res: Response) => {
+  res.json({ ok: true });
+});
+
 // ── The list ───────────────────────────────────────────────────────────────
 
 const listQuery = z.object({ leavers: z.enum(["0", "1"]).optional() });
