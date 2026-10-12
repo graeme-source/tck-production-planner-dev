@@ -50,8 +50,9 @@ describe("tier selection", () => {
     expect(suggestCooking(profile(280, 40), cfg())!.reason).toBe("Medium — 280 g per calzone, 40 g meat (24% of the filling): within up to 330 g per calzone and up to 45 g meat");
   });
 
-  it("no dough (not a calzone) or no tiers → no suggestion", () => {
+  it("no dough (not a calzone), no filling (dough balls) or no tiers → no suggestion", () => {
     expect(suggestCooking(profile(400, 200, 0), cfg())).toBeNull();
+    expect(suggestCooking(profile(210, 0, 210), cfg())).toBeNull();
     expect(suggestCooking(profile(300, 0), cfg({ tiers: [] }))).toBeNull();
   });
 });

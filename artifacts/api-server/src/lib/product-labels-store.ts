@@ -18,6 +18,7 @@ import { loadBundledFonts } from "@workspace/product-labels/node";
 import { buildRecipeIngredientDeck } from "./recipe-ingredient-deck";
 import { londonDateString } from "./london-time";
 import { packBarcodeFor } from "./barcode-store";
+import { loadCookingData, recipeCookingSuggestion, type CookingData, type RecipeCookingSuggestion } from "./label-cooking-profile";
 
 export const fonts = () => loadBundledFonts();
 
@@ -71,6 +72,7 @@ export function settingsFromRow(row: SettingsRow | undefined): RecipeLabelSettin
       ovenTempC: row.ovenTempC, fanTempC: row.fanTempC, ovenMinMinutes: row.ovenMinMinutes, ovenMaxMinutes: row.ovenMaxMinutes,
       airFryerTempC: row.airFryerTempC, airFryerMinMinutes: row.airFryerMinMinutes, airFryerMaxMinutes: row.airFryerMaxMinutes,
     },
+    cookingMode: row.cookingMode === "suggested" || row.cookingMode === "manual" ? row.cookingMode : null,
     warningOn: row.warningOn,
     chilled: normalisePeriod({ amount: row.chilledAmount, unit: row.chilledUnit as PeriodUnit }),
     frozenOn: row.frozenOn,
@@ -120,6 +122,9 @@ export interface CurrentLabel {
   deck: Awaited<ReturnType<typeof buildRecipeIngredientDeck>>;
   snapshot: LabelSnapshot;
   hash: string;
+  /** Weight per calzone, what's in it, and the suggested tier (whether or
+   *  not it prints — that depends on the mode and the template switch). */
+  cooking: RecipeCookingSuggestion;
 }
 
 export async function loadRecipe(recipeId: number): Promise<RecipeRow | undefined> {
@@ -129,7 +134,7 @@ export async function loadRecipe(recipeId: number): Promise<RecipeRow | undefine
 
 /** The label as it would be if published now. `templateOverride` renders a
  *  template that isn't saved yet (the settings page's live preview). */
-export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }> } = {}): Promise<CurrentLabel> {
+export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }>; cookingData?: CookingData } = {}): Promise<CurrentLabel> {
   const settingsRow = await loadSettingsRow(recipe.id);
   const key = settingsRow?.templateId ?? "default";
   let template = opts.templateCache?.get(key);
@@ -144,14 +149,16 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
   // the packing scanner can never disagree. Mixed numbers = none printed.
   const pack = opts.packBarcodes?.get(recipe.id) ?? (opts.packBarcodes ? { barcode: null, mixed: false } : await packBarcodeFor(recipe.id));
   const settings = { ...settingsFromRow(settingsRow), barcode: pack.barcode };
+  const cooking = recipeCookingSuggestion(opts.cookingData ?? await loadCookingData(recipe.id), recipe.id, template.template.cookingTiers);
   const snapshot = buildSnapshot({
     recipe: { name: recipe.name, packSize: recipe.packSize, shelfLifeDays: recipe.shelfLifeDays },
     deck: { deckText: deck.deckText, mayContainStatement: deck.mayContainStatement },
     settings,
     templateId: template.id,
     template: template.template,
+    cookingSuggestion: cooking.suggestion?.cooking ?? null,
   });
-  return { recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, deck, snapshot, hash: snapshotHash(snapshot) };
+  return { recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, deck, snapshot, hash: snapshotHash(snapshot), cooking };
 }
 
 /** Proof dates: today (London) for both print and production day — a sample,

@@ -253,9 +253,10 @@ export function tierFits(t: Pick<CookingTier, "maxWeightG" | "maxMeatG">, p: Pic
 }
 
 /** The tier for this calzone and why. Null when there's nothing to go on:
- *  no tiers, or no dough (not a calzone — fried chicken, mac cheese). */
+ *  no tiers, no dough (not a calzone — fried chicken, mac cheese) or no
+ *  filling (plain dough balls). */
 export function suggestCooking(p: CookingProfile, cfg: CookingTiersConfig): CookingSuggestion | null {
-  if (cfg.tiers.length === 0 || p.doughG <= 0) return null;
+  if (cfg.tiers.length === 0 || p.doughG <= 0 || p.fillingG <= 0) return null;
   const idx = cfg.tiers.findIndex(t => tierFits(t, p));
   const tier = cfg.tiers[idx >= 0 ? idx : cfg.tiers.length - 1];
   const pct = p.fillingG > 0 ? Math.round((100 * p.meatG) / p.fillingG) : 0;
