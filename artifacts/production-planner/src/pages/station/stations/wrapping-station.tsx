@@ -30,9 +30,10 @@ import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
-import { useFounderArea } from "@/hooks/use-founder-area";
 
-const useCanPrintBackLabels = () => useFounderArea().canPrintBackLabels;
+// Everyone can make back labels at the bench (Graeme, 12 Oct 2026); only the
+// approved live label prints. Test prints stay on the label page, gated.
+const useCanPrintBackLabels = () => true;
 
 // Case-order freezer split — new columns not yet in the generated API client
 // (openapi.yaml codegen deliberately deferred; see project_api_spec_drift).

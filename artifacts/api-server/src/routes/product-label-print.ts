@@ -41,7 +41,17 @@ import { londonDateString } from "../lib/london-time";
 import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
-router.use(requireFounderArea(FOUNDER_FEATURES.printBackLabels));
+// Back labels at the wrapping station are for EVERYONE signed in (Graeme,
+// 12 Oct 2026: "Give everyone the label printing button") — they print only
+// the approved live label. TEST prints (the label review page, which can
+// stamp an unapproved proof) stay with the "Print back labels" grant.
+const testPrintGate = requireFounderArea(FOUNDER_FEATURES.printBackLabels);
+router.use((req: Request, res: Response, next) => {
+  const q = req.query?.["test"];
+  const isTest = q === "1" || q === "true" || (req.body && (req.body as { test?: unknown }).test === true);
+  if (isTest) { testPrintGate(req, res, next); return; }
+  next();
+});
 
 const RecipeParams = z.object({ recipeId: z.coerce.number().int().positive() });
 const PreviewQuery = z.object({
