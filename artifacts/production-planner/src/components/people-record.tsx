@@ -666,7 +666,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
 
       {/* Phone and iPad portrait: the side panels as a grid of buttons,
           straight under the header. */}
-      <nav aria-label={`More about ${p.name}`} className="grid gap-2 grid-cols-2 @lg/page:grid-cols-3 @2xl/page:hidden">
+      <nav aria-label={`More about ${p.name}`} className="grid gap-2 grid-cols-2 @2xl/page:hidden">
         {sectionCards(true)}
       </nav>
 
