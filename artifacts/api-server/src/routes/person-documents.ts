@@ -48,6 +48,10 @@ import {
   personDocumentFileProblem, titleFromFileName, safeDownloadName,
   type PersonDocViewer, type PersonDocumentVisibility,
 } from "../lib/person-document-rules";
+import { employmentRecordWrite, fromParam, fromRow, ownerOf } from "../middleware/employment-record-write";
+
+// Whose record a filed document is on — for the employment-record write lock.
+const recordOfDocument = { subject: fromRow("id", ownerOf("person_documents")), refuseAs404: true } as const;
 
 const router: IRouter = Router();
 
@@ -258,6 +262,7 @@ const UploadFields = z.object({
 
 router.post(
   "/person/:userId",
+  employmentRecordWrite({ subject: fromParam("userId") }),
   singleFileUpload("file", PERSON_DOCUMENT_MAX_MB),
   validate(UploadFields),
   async (req: Request, res: Response) => {
@@ -360,7 +365,7 @@ const PatchBody = z.object({
   visibility: z.enum(PERSON_DOCUMENT_VISIBILITIES).optional(),
 });
 
-router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) => {
+router.patch("/:id", employmentRecordWrite(recordOfDocument), validate(PatchBody), async (req: Request, res: Response) => {
   try {
     const found = await loadManaged(req, res);
     if (!found) return;
@@ -398,7 +403,7 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
 });
 
 // "Remove" — a soft delete, with who and when. Never a hard delete.
-router.delete("/:id", async (req: Request, res: Response) => {
+router.delete("/:id", employmentRecordWrite(recordOfDocument), async (req: Request, res: Response) => {
   try {
     const found = await loadManaged(req, res);
     if (!found) return;

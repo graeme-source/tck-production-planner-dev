@@ -39,6 +39,10 @@ import {
 } from "../lib/uploaded-contract-access";
 import { prefillFromExtraction, type ContractExtraction } from "../lib/contract-extraction";
 import { readContractDocument } from "../services/contract-reader";
+import { employmentRecordWrite, fromBody, fromRow, ownerOf } from "../middleware/employment-record-write";
+
+// Whose record a filed contract is on — for the employment-record write lock.
+const recordOfUploaded = { subject: fromRow("id", ownerOf("uploaded_contracts")), refuseAs404: true } as const;
 
 const router: IRouter = Router();
 
@@ -178,6 +182,7 @@ router.post(
   requireHr,
   singleFileUpload("file", UPLOADED_CONTRACT_MAX_MB),
   validate(UploadFields),
+  employmentRecordWrite({ subject: fromBody("userId") }),
   async (req: Request, res: Response) => {
     const body = req.body as z.infer<typeof UploadFields>;
     if (!req.file) { res.status(400).json({ error: "Choose the contract file first." }); return; }
@@ -245,7 +250,7 @@ const PatchBody = z.object({
   }).nullable().optional(),
 });
 
-router.patch("/:id", requireHr, validate(PatchBody), async (req: Request, res: Response) => {
+router.patch("/:id", requireHr, employmentRecordWrite(recordOfUploaded), validate(PatchBody), async (req: Request, res: Response) => {
   const found = await loadVisible(req, res);
   if (!found) return;
   const body = req.body as z.infer<typeof PatchBody>;
@@ -266,7 +271,7 @@ router.patch("/:id", requireHr, validate(PatchBody), async (req: Request, res: R
   res.json(shapeForHr(row as MetaRow));
 });
 
-router.delete("/:id", requireHr, async (req: Request, res: Response) => {
+router.delete("/:id", requireHr, employmentRecordWrite(recordOfUploaded), async (req: Request, res: Response) => {
   const found = await loadVisible(req, res);
   if (!found) return;
   await db.delete(uploadedContractsTable).where(eq(uploadedContractsTable.id, found.row.id));
@@ -281,7 +286,7 @@ const ExtractBody = z.object({
   replacePrefill: z.boolean().optional(),
 });
 
-router.post("/:id/extract", requireHr, validate(ExtractBody), async (req: Request, res: Response) => {
+router.post("/:id/extract", requireHr, employmentRecordWrite(recordOfUploaded), validate(ExtractBody), async (req: Request, res: Response) => {
   const found = await loadVisible(req, res);
   if (!found) return;
   const [file] = await db.select({ data: uploadedContractsTable.data }).from(uploadedContractsTable)

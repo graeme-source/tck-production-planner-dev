@@ -8,6 +8,11 @@ import multer from "multer";
 import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable, staffEmergencyContactsTable } from "@workspace/db";
 import { eq, and, asc } from "drizzle-orm";
 import { tickPreArrivalDetails, starterGateStatus } from "../lib/starter-paperwork";
+import { employmentRecordWrite, fromSession } from "../middleware/employment-record-write";
+
+// Self-service on your OWN record only (lib/people-write-access.ts) — every
+// write here is keyed by the session, never by a user id in the request.
+const ownOnboarding = employmentRecordWrite({ subject: fromSession, selfService: "own_onboarding_form" });
 
 const router: IRouter = Router();
 
@@ -62,7 +67,7 @@ router.get("/me/gate", async (req: Request, res: Response) => {
 });
 
 // PUT /me — upsert text fields and mark the details step done.
-router.put("/me", async (req: Request, res: Response) => {
+router.put("/me", ownOnboarding, async (req: Request, res: Response) => {
   try {
     const userId = req.session.userId!;
     const str = (v: unknown) => (v != null && String(v).trim() ? String(v).trim() : null);
@@ -134,7 +139,7 @@ router.put("/me", async (req: Request, res: Response) => {
 });
 
 // POST /me/documents — upload one file (field "file", body "kind").
-router.post("/me/documents", upload.single("file"), async (req: Request, res: Response) => {
+router.post("/me/documents", ownOnboarding, upload.single("file"), async (req: Request, res: Response) => {
   try {
     const userId = req.session.userId!;
     if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
@@ -164,7 +169,7 @@ router.post("/me/documents", upload.single("file"), async (req: Request, res: Re
 });
 
 // DELETE /me/documents/:id — remove one of your own uploads.
-router.delete("/me/documents/:id", async (req: Request, res: Response) => {
+router.delete("/me/documents/:id", ownOnboarding, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
