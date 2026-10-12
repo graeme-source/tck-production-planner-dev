@@ -4,7 +4,10 @@ import { useListSubRecipes, useListIngredients, useGetSubRecipe, useGetUpfSummar
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
 import type { Ingredient, SubRecipeDetail, SubRecipe } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
-import { boldAllergens } from "@workspace/allergens";
+import { boldAllergens, declarationIssues } from "@workspace/allergens";
+import { DeclarationFixButtons } from "@/components/declaration-fix";
+import { rowsToDeclarationItems } from "@/lib/declaration-fix";
+import { SubRecipeLabelUsage } from "@/components/sub-recipe-label-usage";
 import { toGrams, kgOrNull } from "@workspace/units";
 import { PageHeader } from "@/components/page-header";
 import { QuickAddIngredientDialog } from "@/components/quick-add-ingredient";
@@ -141,6 +144,8 @@ function DeclarationPreview({
     .map(r => allSubRecipes.find(s => s.id === Number(r.componentSubRecipeId))?.name)
     .filter((n): n is string => Boolean(n));
   const missing = rows.filter(({ ing }) => !ing.labelDeclaration).map(({ ing }) => ing.name);
+  // Each problem ingredient as a button that opens it to fix (2026-10-12).
+  const issues = declarationIssues(rowsToDeclarationItems(ingredientRows ?? [], allIngredients));
 
   const body = marked.join(", ");
   const text = compoundName?.trim() ? `${compoundName.trim()} (${body})` : body;
@@ -163,6 +168,9 @@ function DeclarationPreview({
         <p className="text-xs text-amber-600 mt-1">
           Falling back to ingredient name (no label declaration set yet): {missing.join(", ")}
         </p>
+      )}
+      {issues.length > 0 && (
+        <DeclarationFixButtons issues={issues} className="mt-2 text-xs text-amber-800 dark:text-amber-200" />
       )}
     </div>
   );
@@ -339,7 +347,10 @@ function SubRecipeForm({
   cyclicIds,
   onDirtyChange,
   submitRef,
+  subRecipeId,
 }: {
+  /** Set when editing — drives the "On product labels" verdicts. */
+  subRecipeId?: number;
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
@@ -358,6 +369,15 @@ function SubRecipeForm({
   const { fields: srFields, append: appendSr, remove: removeSr } = useFieldArray({ control, name: "subRecipeComponents" });
 
   const [localIngredients, setLocalIngredients] = useState<IngredientOption[]>(initialIngredients);
+  // Keep in step with the page's ingredient list — a declaration fixed from
+  // the preview's fix buttons refetches it — while keeping any quick-added
+  // ingredient the list hasn't caught up with yet.
+  useEffect(() => {
+    setLocalIngredients(prev => {
+      const ids = new Set(initialIngredients.map(i => i.id));
+      return [...initialIngredients, ...prev.filter(p => !ids.has(p.id))];
+    });
+  }, [initialIngredients]);
   const [quickAddOpen, setQuickAddOpen] = useState(false);
   const [quickAddTargetIndex, setQuickAddTargetIndex] = useState<number | null>(null);
   const [ingDisplayUnits, setIngDisplayUnits] = useState<Record<number, "g" | "kg">>({});
@@ -567,6 +587,7 @@ function SubRecipeForm({
             allSubRecipes={allSubRecipes}
             compoundName={watchedLabelDeclaration}
           />
+          <SubRecipeLabelUsage subRecipeId={subRecipeId ?? null} />
         </div>
 
         <div className="border-t border-border pt-4">
@@ -1013,6 +1034,7 @@ function EditSubRecipeDialog({
               )}
               <SubRecipeForm
                 key={id}
+                subRecipeId={id}
                 defaultValues={defaultValues}
                 isEdit
                 isPending={updateSubRecipe.isPending}
