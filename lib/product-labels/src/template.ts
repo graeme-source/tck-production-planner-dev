@@ -273,7 +273,10 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // instructions a bit narrower").
     storage: field({ maxPt: 10.5, width: "semi-condensed" }),
     dates: field({ weight: 700, bold: true, maxPt: 10, width: "semi-condensed" }),
-    ingredients: field({ maxPt: 11 }),
+    // Never bigger than the storage text (Graeme, 2026-10-12): a short deck
+    // like the Margherita grew to 11 pt and looked like the most important
+    // thing on the label. Long decks still shrink as before.
+    ingredients: field({ maxPt: 10.5 }),
     allergenInfo: field({ maxPt: 9 }),
     address: field({ maxPt: 8 }),
     // Fixed size: printed at maxPt, never shrunk or narrowed. 12.5 pt: a
