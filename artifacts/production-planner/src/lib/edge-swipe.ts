@@ -135,8 +135,12 @@ export function isTouchPrimary(o: { coarsePointer: boolean; canHover: boolean })
   return o.coarsePointer || !o.canHover;
 }
 
-export function showBusinessInNav(o: { isFounder: boolean; coarsePointer: boolean; canHover: boolean }): boolean {
+export function showBusinessInNav(o: { isFounder: boolean; coarsePointer: boolean; canHover: boolean; anyFinePointer?: boolean }): boolean {
   if (!o.isFounder) return true;
+  // Any mouse or trackpad attached (a touchscreen PC, a desktop browser that
+  // reports itself oddly): keep it in the menu. Only a pure touch device
+  // relies on the swipe (Graeme, 2026-10-12: on the desktop it came and went).
+  if (o.anyFinePointer) return true;
   return !isTouchPrimary(o);
 }
 

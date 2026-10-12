@@ -92,6 +92,9 @@ describe("The Business on touch screens", () => {
     expect(showBusinessInNav({ isFounder: true, ...ipad })).toBe(false);
     expect(showBusinessInNav({ isFounder: true, ...desktop })).toBe(true);
     expect(showBusinessInNav({ isFounder: true, coarsePointer: false, canHover: false })).toBe(false);
+    // A touchscreen PC with a mouse/trackpad keeps it in the menu (regression, 2026-10-12).
+    expect(showBusinessInNav({ isFounder: true, ...ipad, anyFinePointer: true })).toBe(true);
+    expect(showBusinessInNav({ isFounder: true, ...ipad, anyFinePointer: false })).toBe(false);
   });
   it("stays in the menu for anyone else with a Business grant", () => {
     expect(showBusinessInNav({ isFounder: false, ...ipad })).toBe(true);

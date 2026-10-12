@@ -794,7 +794,7 @@ export function Layout({ children }: { children: ReactNode }) {
   // Graeme, 2026-10-10). With a mouse it stays. Anyone else granted a tab
   // keeps it everywhere.
   if (founderArea.home) {
-    const founderItems: NavItem[] = showBusinessInNav({ isFounder: founderArea.isFounder, coarsePointer: pointerKind.coarsePointer, canHover: pointerKind.canHover })
+    const founderItems: NavItem[] = showBusinessInNav({ isFounder: founderArea.isFounder, coarsePointer: pointerKind.coarsePointer, canHover: pointerKind.canHover, anyFinePointer: pointerKind.anyFinePointer })
       ? [{ name: "The Business", href: founderArea.home, icon: Briefcase }]
       : [];
     if (founderArea.isFounder) founderItems.push({ name: "Fix queue", href: "/fix-queue", icon: Wrench });
