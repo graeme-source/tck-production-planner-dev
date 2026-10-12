@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  detectDictationPlatform,
+  dictationCapability,
+  micBlockedHelp,
+  speechErrorMessage,
+  type DictationCapability,
+  type DictationPlatform,
+} from "@/lib/dictation-support";
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
 
@@ -53,7 +61,38 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
   const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
   const onFinishedRef = useRef(onFinished);
   onFinishedRef.current = onFinished;
-  const supported = typeof window !== "undefined" && getSpeechRecognition() !== null;
+  const platform: DictationPlatform = useMemo(() => (
+    typeof navigator === "undefined"
+      ? { os: "other", browser: "other" }
+      : detectDictationPlatform(navigator.userAgent, navigator.maxTouchPoints ?? 0)
+  ), []);
+  const capability: DictationCapability = useMemo(() => dictationCapability({
+    hasSpeechApi: typeof window !== "undefined" && getSpeechRecognition() !== null,
+    isSecureContext: typeof window === "undefined" ? true : window.isSecureContext !== false,
+    platform,
+  }), [platform]);
+  const supported = capability.mode === "speech";
+
+  // Know up front when the mic is blocked, so a tap explains how to allow it
+  // instead of failing silently. Not every browser can answer (Firefox
+  // throws) — then the recognition error tells us instead.
+  const micDeniedRef = useRef(false);
+  useEffect(() => {
+    if (!supported || typeof navigator === "undefined" || !navigator.permissions?.query) return;
+    let status: PermissionStatus | null = null;
+    let cancelled = false;
+    const update = () => { micDeniedRef.current = status?.state === "denied"; };
+    navigator.permissions
+      .query({ name: "microphone" as PermissionName })
+      .then(s => {
+        if (cancelled) return;
+        status = s;
+        update();
+        s.addEventListener?.("change", update);
+      })
+      .catch(() => { /* this browser can't say — the recognition error will */ });
+    return () => { cancelled = true; status?.removeEventListener?.("change", update); };
+  }, [supported]);
 
   const stop = useCallback(() => {
     if (recognitionRef.current) {
@@ -64,6 +103,10 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
   const start = useCallback(() => {
     const SR = getSpeechRecognition();
     if (!SR) return;
+    if (micDeniedRef.current) {
+      setError(micBlockedHelp(platform));
+      return;
+    }
 
     if (recognitionRef.current) {
       recognitionRef.current.stop();
@@ -97,13 +140,7 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     recognition.onerror = (event) => {
       console.warn("[useVoiceInput] recognition error:", event.error);
       setListening(false);
-      if (event.error === "not-allowed" || event.error === "service-not-allowed") {
-        setError("Microphone permission denied. Enable it in browser settings.");
-      } else if (event.error === "no-speech") {
-        setError("Didn't hear anything. Tap the mic and try again.");
-      } else {
-        setError(`Voice input error: ${event.error}`);
-      }
+      setError(speechErrorMessage(event.error, platform));
     };
 
     recognition.onend = () => {
@@ -124,8 +161,9 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     } catch (err) {
       console.warn("[useVoiceInput] failed to start recognition:", err);
       setListening(false);
+      setError("Dictation couldn't start. Tap Dictate to try again.");
     }
-  }, [getCurrentValue, mode, onTranscript]);
+  }, [getCurrentValue, mode, onTranscript, platform]);
 
   const toggle = useCallback(() => {
     if (listening) stop();
@@ -138,5 +176,5 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     };
   }, []);
 
-  return { supported, listening, error, start, stop, toggle };
+  return { supported, capability, platform, listening, error, start, stop, toggle };
 }
