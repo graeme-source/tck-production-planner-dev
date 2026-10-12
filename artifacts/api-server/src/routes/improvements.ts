@@ -21,6 +21,8 @@ import { singleFileUpload } from "../middleware/upload";
 import { sendPushToUsers } from "../services/push";
 import { queueReviewTodo } from "../lib/improvement-review-todo";
 import { leanerBoardRows } from "../lib/leaner-board";
+import { rankByScore } from "../lib/improvement-score";
+import { loadImprovementScores } from "../services/improvement-score";
 import { CREDIT_PAIRS, creditsFor, setImprovementCredits, pinLeadCredit } from "../lib/improvement-credits-data";
 
 const router: IRouter = Router();
@@ -942,12 +944,25 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
        ORDER BY n DESC, name ASC
     `);
     // The Leaner-board leaves the founder off (Graeme, 2026-10-01).
-    res.json(leanerBoardRows(result.rows ?? []).map(r => ({
-      userId: r.user_id,
-      name: r.name,
-      count: Number(r.n),
-      signedOff: Number(r.signed_off),
-      lastAt: r.last_at,
+    const board = leanerBoardRows(result.rows ?? []);
+    // Ranked by improvement score — credits per shift worked over the last
+    // 30 days — not by raw count (Graeme, 2026-10-12: the aim is one
+    // meaningful improvement per shift, not as many as possible). The
+    // all-time count stays on each row as the secondary figure.
+    const scores = await loadImprovementScores(board.map(r => Number(r.user_id)).filter(n => n > 0));
+    res.json(rankByScore(board.map(r => {
+      const sc = r.user_id != null ? scores.byUser.get(Number(r.user_id)) : undefined;
+      return {
+        userId: r.user_id,
+        name: r.name ?? "Unknown",
+        count: Number(r.n),
+        signedOff: Number(r.signed_off),
+        lastAt: r.last_at,
+        credits30: sc?.credits ?? 0,
+        improvements30: sc?.improvements ?? 0,
+        shifts30: sc?.shifts ?? null,
+        scorePct: sc?.scorePct ?? null,
+      };
     })));
   } catch (err) {
     console.error("Error building improvement scoreboard:", err);
