@@ -265,7 +265,9 @@ describe("steps: any number, widths worked out automatically", () => {
     // The row is used edge to edge (inside the margins).
     const last = steps.boxes[steps.boxes.length - 1];
     expect(last.x + last.w).toBeCloseTo(p.layout.widthDots - mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203), 0);
-    expect(steps.sizePt).toBeGreaterThanOrEqual(9.5); // Semi Condensed at narrowest
+    // 2026-10-12: a touch smaller than before (max 10.5 pt, Semi Condensed
+    // at narrowest) so the label breathes — still above the body text.
+    expect(steps.sizePt).toBeGreaterThanOrEqual(9.5);
     expect(steps.width).not.toBe("condensed");
   });
   it("step 1 sits on two lines (not three), the bold phrase intact, still bigger than the body text", () => {
@@ -277,7 +279,7 @@ describe("steps: any number, widths worked out automatically", () => {
     expect(runs1.filter(r => r.face.weight === 700).map(r => r.text).join(" ")).toBe("leave the calzones in the wooden tray");
     const storage = p.layout.fields.find(f => f.key === "storage")!;
     expect(steps.sizePt).toBeGreaterThanOrEqual(9.5);
-    expect(storage.sizePt).toBeGreaterThan(0);
+    expect(steps.sizePt).toBeGreaterThanOrEqual(storage.sizePt);
   });
   it("a third step added back still lays out, numbered 1–3; a blank one closes up", () => {
     const three = withSteps([...DEFAULT_TEMPLATE.text.steps, "Enjoy."]);

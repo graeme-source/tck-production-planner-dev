@@ -188,10 +188,14 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // clear all round (rounded corners; ink closer to the edge gets cut off).
     widthMm: 140, heightMm: 94, dpi: 203, marginMm: 4.5,
     columnSplitPct: 44, columnGapMm: 4,
-    // Steps band 9 mm (2026-10-12, was 13): room for exactly two lines at
-    // ~10.75 pt, so step 1 sits on two lines instead of three, and the
-    // 4 mm saved goes to the storage / ingredients / barcode columns.
-    titleBandMm: 9, stepsBandMm: 9, bandGapMm: 2, fieldGapMm: 2,
+    // Gaps 3 mm (2026-10-12, were 2): the printed label looked crowded —
+    // the steps sat on STORAGE INSTRUCTIONS and the use-by lines ran on
+    // from the storage text like one paragraph. The band gap also holds the
+    // divider rule. The extra 2 mm comes out of the title band (7 mm, was 9:
+    // a one-line 22 pt title still fits) and the steps band (8 mm, was 9:
+    // two lines up to ~10.5 pt), so the longest real deck (The Godfather)
+    // still fits at the legal minimum in Semi Condensed.
+    titleBandMm: 7, stepsBandMm: 8, bandGapMm: 3, fieldGapMm: 3,
     stepCircleMm: 5.5,
     // 0.25 mm = 2 dots at 203 dpi: a hairline that still prints solidly.
     dividerOn: true, dividerMm: 0.25,
@@ -208,20 +212,19 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     smallPack: false,
   },
   fields: {
-    // Body text never narrower than Barlow Semi Condensed (Graeme,
-    // 2026-10-12: condensed, bold allergens above all, was hard to read on
-    // the printed label). Only the title (big, short) may still go fully
-    // condensed.
+    // Readability (Graeme, 2026-10-12, after the first DA210 prints): a
+    // touch smaller, with more white space, and body text never narrower
+    // than Barlow Semi Condensed. Only the title (big, short) may still go
+    // fully condensed.
     title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center", narrowest: "condensed" }),
-    // Two steps share the row now, so they can be bigger: up to 12 pt.
-    steps: field({ maxPt: 12, lineHeight: 1.1 }),
-    storage: field({ maxPt: 10 }),
-    dates: field({ weight: 700, bold: true, maxPt: 11 }),
-    ingredients: field({ maxPt: 10 }),
-    allergenInfo: field({ maxPt: 10 }),
-    address: field({ maxPt: 9 }),
+    steps: field({ maxPt: 10.5, lineHeight: 1.1 }),
+    storage: field({ maxPt: 9 }),
+    dates: field({ weight: 700, bold: true, maxPt: 10 }),
+    ingredients: field({ maxPt: 9 }),
+    allergenInfo: field({ maxPt: 9 }),
+    address: field({ maxPt: 8 }),
     // Fixed size: printed at maxPt, never shrunk or narrowed.
-    headings: field({ weight: 700, bold: true, caps: true, minPt: 10, maxPt: 10, lineHeight: 1.1, narrowest: "normal" }),
+    headings: field({ weight: 700, bold: true, caps: true, minPt: 9, maxPt: 9, lineHeight: 1.1, narrowest: "normal" }),
   },
   text: {
     title: "{name} - {packSize} PACK",
