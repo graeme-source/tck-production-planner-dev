@@ -151,6 +151,34 @@ function Sparkline({ points, target, band, caption, amberWidthPct }: { points: S
   );
 }
 
+/** The card's figure for each of the last 7 days, oldest → newest (Graeme,
+ *  2026-10-12: "I should see 7 actual numbers… I like looking at each day as
+ *  it comes through"), coloured against target like the line. The graph
+ *  still shows all 30 days on hover/drag. */
+function LastSevenDays({ points, target, amberWidthPct }: { points: SparkPoint[]; target: number; amberWidthPct: number }) {
+  const last = points.slice(-7);
+  if (last.length === 0) return null;
+  const chip = (band: KpiBand) =>
+    band === "green" ? "bg-[#7cb342]/15 text-[#33691e] dark:text-[#c5e1a5] border-[#7cb342]/40"
+      : band === "amber" ? "bg-yellow-400/20 text-yellow-900 dark:text-yellow-200 border-yellow-500/40"
+        : band === "red" ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/40"
+          : "bg-secondary text-muted-foreground border-border";
+  return (
+    <div className="rounded-xl border border-border/60 divide-y divide-border/60" aria-label="Last 7 days">
+      {[...last].reverse().map(p => {
+        const band = roasBand(p.percent, target, amberWidthPct);
+        const d = new Date(`${p.date}T12:00:00Z`);
+        return (
+          <div key={p.date} className="flex items-center justify-between px-2.5 py-1 text-sm">
+            <span className="text-muted-foreground">{d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" })}</span>
+            <span className={cn("rounded-md border px-1.5 text-sm font-bold tabular-nums", chip(band))}>{p.percent == null ? "—" : `${Math.round(p.percent)}%`}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RoasCard({
   title, qualifier, result, target, settings, spark, sparkCaption, window: win, revenueLabel,
 }: {
@@ -195,6 +223,7 @@ function RoasCard({
           </div>
         </div>
         <Sparkline points={spark} target={target} band={band} caption={sparkCaption} amberWidthPct={settings.amberWidthPct} />
+        <LastSevenDays points={spark} target={target} amberWidthPct={settings.amberWidthPct} />
         {result.available && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-secondary/50 px-3 py-2">
