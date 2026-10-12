@@ -138,9 +138,9 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
         <thead>
           <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
             {th("Name", "name")}
-            {th("Job title", "jobTitle", "hidden sm:table-cell")}
+            {th("Job title", "jobTitle", "hidden lg:table-cell")}
             {th("Needs attention", "attention")}
-            {th("Next meeting", "nextMeeting", "hidden md:table-cell")}
+            {th("Next meeting", "nextMeeting", "hidden lg:table-cell whitespace-nowrap")}
             {th("Status", "status")}
             <th className="w-8" />
           </tr>
@@ -171,13 +171,13 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
                         {p.name}
                       </Link>
                       {/* Their job, not their app access (Graeme, 2026-09-25). */}
-                      <span className={cn("sm:hidden block text-xs text-muted-foreground", !p.jobTitle && "italic opacity-70")}>
+                      <span className={cn("lg:hidden block text-xs text-muted-foreground", !p.jobTitle && "italic opacity-70")}>
                         {p.jobTitle ?? "No job title yet"}
                       </span>
                     </span>
                   </span>
                 </td>
-                <td className={cn("py-3 px-3 text-muted-foreground hidden sm:table-cell", !p.jobTitle && "italic opacity-70")}>
+                <td className={cn("py-3 px-3 text-muted-foreground hidden lg:table-cell", !p.jobTitle && "italic opacity-70")}>
                   {p.jobTitle ?? "No job title yet"}
                 </td>
                 <td className="py-3 px-3">
@@ -193,8 +193,14 @@ function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
                       {review && <ReviewStatusBadge badge={review.badge} liveWarningUntil={review.liveWarningUntil} size="sm" />}
                     </div>
                   ) : <span className="text-muted-foreground">—</span>}
+                  {/* Below desktop width the meeting rides here, not in its own column. */}
+                  {p.nextMeeting && (
+                    <span className="lg:hidden block text-xs text-muted-foreground mt-1">
+                      Meeting {fmtDay(p.nextMeeting.date)}
+                    </span>
+                  )}
                 </td>
-                <td className="py-3 px-3 hidden md:table-cell">
+                <td className="py-3 px-3 hidden lg:table-cell">
                   {p.nextMeeting ? (
                     <span className="leading-snug">
                       <span className="font-semibold whitespace-nowrap">{fmtDay(p.nextMeeting.date)}</span>
