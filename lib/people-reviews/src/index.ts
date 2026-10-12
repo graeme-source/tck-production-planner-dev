@@ -209,7 +209,11 @@ export function fmtDayIso(iso: string | null | undefined): string {
 
 export interface EntryLike {
   id: number;
+  /** The PRIMARY classification (the first ticked). */
   classificationId: number;
+  /** Every classification ticked, primary first (migration 0184). Absent or
+   *  empty = just the primary. Read through entryClassIds. */
+  classificationIds?: readonly number[] | null;
   entryDate: string;
   title: string;
   status: EntryStatus;
@@ -223,11 +227,68 @@ function byId<T extends { id: number }>(list: readonly T[]): Map<number, T> {
   return new Map(list.map(x => [x.id, x]));
 }
 
-/** The stage that counts for this entry — only if its classification uses
- *  stages. A stage kept from before a reclassification is hidden, not live. */
-export function effectiveStage(e: Pick<EntryLike, "classificationId" | "stageId">, classifications: readonly Classification[], stages: readonly Stage[]): Stage | null {
+// ── More than one classification (Graeme, 2026-10-12: "It could be about
+// attendance and timekeeping… we should be [able to tick a] number of
+// classifications") ─────────────────────────────────────────────────────────
+//
+// An entry keeps ONE primary classification (people_record_entries
+// .classification_id — the first ticked) and the full ticked set in
+// people_record_entry_classifications (migration 0184). Everything that asks
+// "what is this entry about?" reads the SET through these two helpers, so a
+// review about attendance AND disciplinary gets the stage ladder, the
+// formal rules, the attendance evidence — anything any of them switches on.
+
+type ClassRef = { classificationId: number; classificationIds?: readonly number[] | null };
+
+/** The entry's classifications: primary first, each once. */
+export function entryClassIds(e: ClassRef): number[] {
+  return [...new Set([e.classificationId, ...(e.classificationIds ?? [])])];
+}
+
+/** A ticked set as sent by a picker: whole positive ids, each once, in the
+ *  order ticked (the first is the primary). */
+export function cleanClassIds(raw: readonly number[]): number[] {
+  return [...new Set(raw.filter(n => Number.isInteger(n) && n > 0))];
+}
+
+/** Attendance covers sickness and lates, so it outranks timekeeping. */
+export function combinedEvidence(list: ReadonlyArray<string | null | undefined>): EvidenceKind | null {
+  if (list.includes("attendance")) return "attendance";
+  if (list.includes("timekeeping")) return "timekeeping";
+  return null;
+}
+
+/** The entry's classifications merged into one: the field sets and
+ *  evidence of ANY of them, labelled "Attendance + Disciplinary". The id is
+ *  the primary's. Undefined when none of them exists. */
+export function entryClassification(e: ClassRef, classifications: readonly Classification[]): Classification | undefined {
+  const map = byId(classifications);
+  const list = entryClassIds(e).map(id => map.get(id)).filter((c): c is Classification => !!c);
+  if (list.length === 0) return undefined;
+  if (list.length === 1) return list[0];
+  const sets = new Set(list.flatMap(c => c.fieldSets));
+  return {
+    id: list[0].id,
+    label: list.map(c => c.label).join(" + "),
+    sortOrder: list[0].sortOrder,
+    fieldSets: FIELD_SETS.filter(f => sets.has(f)),
+    evidence: combinedEvidence(list.map(c => c.evidence)),
+    active: list.some(c => c.active),
+  };
+}
+
+/** Each of the entry's classifications, primary first — for chips. */
+export function entryClassLabels(e: ClassRef, classifications: readonly Classification[]): string[] {
+  const map = byId(classifications);
+  return entryClassIds(e).map(id => map.get(id)?.label).filter((l): l is string => !!l);
+}
+
+/** The stage that counts for this entry — only if one of its
+ *  classifications uses stages. A stage kept from before a reclassification
+ *  is hidden, not live. */
+export function effectiveStage(e: Pick<EntryLike, "classificationId" | "classificationIds" | "stageId">, classifications: readonly Classification[], stages: readonly Stage[]): Stage | null {
   if (e.stageId == null) return null;
-  if (!usesField(byId(classifications).get(e.classificationId), "stage")) return null;
+  if (!usesField(entryClassification(e, classifications), "stage")) return null;
   return byId(stages).get(e.stageId) ?? null;
 }
 
@@ -326,7 +387,7 @@ export interface ReviewBadge {
 }
 
 export function entryHeadline(e: EntryLike, classifications: readonly Classification[], stages: readonly Stage[]): string {
-  const cls = byId(classifications).get(e.classificationId)?.label ?? "Record";
+  const cls = entryClassification(e, classifications)?.label ?? "Record";
   const level = entryLevel(e, classifications, stages);
   if (level === "none") return cls;
   if (level === "informal") return `In review · ${cls}`;
@@ -532,10 +593,9 @@ export interface TimelineEntry extends EntryLike {
 }
 
 export function recordTimelineEvents(entries: readonly TimelineEntry[], classifications: readonly Classification[], stages: readonly Stage[], todayIso: string): RecordEvent[] {
-  const cls = byId(classifications);
   const out: RecordEvent[] = [];
   for (const e of entries) {
-    const label = cls.get(e.classificationId)?.label ?? "Record";
+    const label = entryClassification(e, classifications)?.label ?? "Record";
     const stage = effectiveStage(e, classifications, stages);
     const w = entryWarning(e, classifications, stages);
     const bits = [stage?.label, e.status === "open" ? "Open — in review" : null, w ? warningStatusLabel(w, todayIso) : null].filter(Boolean);
@@ -564,17 +624,18 @@ export function recordTimelineEvents(entries: readonly TimelineEntry[], classifi
   return out.sort((a, b) => b.date.localeCompare(a.date) || b.key.localeCompare(a.key));
 }
 
-/** Entries newest first, optionally one classification only. */
-export function filterEntries<E extends Pick<EntryLike, "classificationId" | "entryDate" | "id">>(entries: readonly E[], classificationId: number | null): E[] {
+/** Entries newest first, optionally only those ticked with one classification. */
+export function filterEntries<E extends Pick<EntryLike, "classificationId" | "classificationIds" | "entryDate" | "id">>(entries: readonly E[], classificationId: number | null): E[] {
   return entries
-    .filter(e => classificationId == null || e.classificationId === classificationId)
+    .filter(e => classificationId == null || entryClassIds(e).includes(classificationId))
     .sort((a, b) => b.entryDate.localeCompare(a.entryDate) || b.id - a.id);
 }
 
-/** Filter chips: only classifications that have entries, in list order. */
-export function classificationCounts(entries: ReadonlyArray<Pick<EntryLike, "classificationId">>, classifications: readonly Classification[]): Array<{ id: number; label: string; count: number }> {
+/** Filter chips: only classifications that have entries, in list order. An
+ *  entry with several classifications counts under each. */
+export function classificationCounts(entries: ReadonlyArray<Pick<EntryLike, "classificationId" | "classificationIds">>, classifications: readonly Classification[]): Array<{ id: number; label: string; count: number }> {
   const counts = new Map<number, number>();
-  for (const e of entries) counts.set(e.classificationId, (counts.get(e.classificationId) ?? 0) + 1);
+  for (const e of entries) for (const id of entryClassIds(e)) counts.set(id, (counts.get(id) ?? 0) + 1);
   return sortClassifications(classifications)
     .filter(c => (counts.get(c.id) ?? 0) > 0)
     .map(c => ({ id: c.id, label: c.label, count: counts.get(c.id)! }));
@@ -610,6 +671,8 @@ export interface LetterTemplate {
 
 export interface LetterEntryFacts {
   classificationId: number;
+  /** Every classification ticked (0184) — any formal one brings its letters. */
+  classificationIds?: readonly number[] | null;
   stageId: number | null;
   probationOutcome: ProbationOutcome | null;
   meetingDate: string | null;
@@ -620,8 +683,8 @@ export interface LetterEntryFacts {
 export function templatesForEntry<T extends LetterTemplate>(
   e: LetterEntryFacts, classifications: readonly Classification[], stages: readonly Stage[], templates: readonly T[],
 ): T[] {
-  const cls = byId(classifications).get(e.classificationId);
-  const stage = effectiveStage({ classificationId: e.classificationId, stageId: e.stageId }, classifications, stages);
+  const cls = entryClassification(e, classifications);
+  const stage = effectiveStage(e, classifications, stages);
   return [...templates]
     .filter(t => t.active)
     .filter(t => t.fieldSet == null || usesField(cls, t.fieldSet))

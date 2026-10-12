@@ -42,7 +42,10 @@
  * explicitly, so that review always counts. The server turns rows into
  * PolicyReviewFact with entryReviewFact; everything else here is pure.
  */
-import { fmtDayIso } from "./index";
+import { fmtDayIso, combinedEvidence } from "./index";
+
+/** One classification's evidence, or every ticked one's (migration 0184). */
+type Evidence = string | null | ReadonlyArray<string | null>;
 
 export type PolicyTriggerKind = "sickness" | "lates";
 
@@ -164,15 +167,18 @@ export const NO_POLICY_TRIGGER: PolicyTriggerReview = { sickness: null, lates: n
  *  automatic, by the classification's attendance evidence (data on the
  *  classification, never its name) — "timekeeping" deals with lates,
  *  "attendance" with sickness and lates, anything else with neither. */
-export function triggersAnswered(answersTrigger: string | null | undefined, evidence: string | null): PolicyTriggerKind[] {
+// `evidence` may be the evidence of EVERY classification ticked on the entry
+// (0184): it answers automatically if ANY of them is attendance / timekeeping.
+export function triggersAnswered(answersTrigger: string | null | undefined, evidence: Evidence): PolicyTriggerKind[] {
   switch (answersTrigger) {
     case "none": return [];
     case "sickness": return ["sickness"];
     case "lates": return ["lates"];
     case "both": return ["sickness", "lates"];
   }
-  if (evidence === "timekeeping") return ["lates"];
-  if (evidence === "attendance") return ["sickness", "lates"];
+  const ev = combinedEvidence(typeof evidence === "string" || evidence == null ? [evidence] : evidence);
+  if (ev === "timekeeping") return ["lates"];
+  if (ev === "attendance") return ["sickness", "lates"];
   return [];
 }
 
@@ -181,7 +187,7 @@ export function triggersAnswered(answersTrigger: string | null | undefined, evid
  *  meeting, else the entry date; held once it's marked held or that day
  *  has come. */
 export function entryReviewFact(e: {
-  id: number; meetingStatus: string | null; evidence: string | null; meetingDate: string | null; entryDate: string;
+  id: number; meetingStatus: string | null; evidence: Evidence; meetingDate: string | null; entryDate: string;
   answersTrigger: string | null;
 }, todayIso: string): PolicyReviewFact | null {
   if (e.meetingStatus === "cancelled") return null;
