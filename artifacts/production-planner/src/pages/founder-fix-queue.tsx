@@ -22,11 +22,12 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { MarkdownBlock } from "@/components/lesson-media";
 import { ImprovementSuggestions, NoActionButton, useNoAction } from "@/components/fix-queue-extras";
+import { DictateButton } from "@/components/dictate-button";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import {
-  LANE_LABELS, cardActions, noticeStatusLine, tabCount,
+  LANE_LABELS, cardActions, noticeStatusLine, tabCount, withReplySent,
   type FixQueueItem, type FixQueueResponse, type FixQueueTab, type TriageLane, type TriageStatus,
 } from "@/lib/issue-pipeline";
 
@@ -82,8 +83,10 @@ const ACTION_TO_STATUS: Record<Exclude<DecisionAction, "reply">, TriageStatus> =
 
 // ── Note dialog (reject with an optional note / reply with a question) ─────
 
-function NoteDialog({ mode, onCancel, onSubmit }: {
+function NoteDialog({ mode, reopens = false, onCancel, onSubmit }: {
   mode: "reject" | "reply";
+  /** Reply on a decided/closed card — say that it reopens it. */
+  reopens?: boolean;
   onCancel: () => void;
   onSubmit: (note: string) => void;
 }) {
@@ -97,7 +100,7 @@ function NoteDialog({ mode, onCancel, onSubmit }: {
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           {isReply ? <MessageCircleQuestion className="w-5 h-5 text-sky-600" /> : <XCircle className="w-5 h-5 text-red-600" />}
-          <h2 className="font-display font-bold text-lg flex-1">{isReply ? "Reply / ask Claude" : "Reject this recommendation"}</h2>
+          <h2 className="font-display font-bold text-lg flex-1">{isReply ? "Reply to Claude" : "Reject this recommendation"}</h2>
           <button onClick={onCancel} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
             <X className="w-5 h-5" />
           </button>
@@ -105,16 +108,26 @@ function NoteDialog({ mode, onCancel, onSubmit }: {
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
           <p className="text-sm text-muted-foreground">
             {isReply
-              ? "Ask a question or add what Claude missed. It goes back for another look and returns here with an updated recommendation."
+              ? "Correct Claude's understanding, answer its question, or tell it what to do instead. Your words become its newest instruction — it looks again on its next hourly pass and updates this card."
               : "Optional: say why, so the next recommendation for something similar is better."}
           </p>
+          {isReply && reopens && (
+            <p className="text-sm font-medium text-sky-800 dark:text-sky-200 bg-sky-50 dark:bg-sky-950/30 rounded-xl px-3 py-2.5">
+              This reopens the card: your earlier decision is kept in its history, and Claude's updated recommendation comes back to To review for a fresh decision. The reporter isn't messaged.
+            </p>
+          )}
+          {isReply && (
+            <div className="flex justify-end">
+              <DictateButton value={note} onChange={setNote} context="note" />
+            </div>
+          )}
           <textarea
             value={note}
             onChange={e => setNote(e.target.value)}
             autoFocus
-            maxLength={2000}
-            placeholder={isReply ? "e.g. Which screen is this on? Check the building station on the iPad." : "e.g. Working as intended — it's a training point."}
-            className="w-full min-h-[120px] px-3 py-2.5 bg-background border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+            maxLength={isReply ? 4000 : 2000}
+            placeholder={isReply ? "e.g. Your understanding is wrong — it's the wrapping count on the iPad, not the stock figure." : "e.g. Working as intended — it's a training point."}
+            className="w-full min-h-[160px] px-3 py-2.5 bg-background border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
         <div className="p-5 pt-0 flex gap-2">
@@ -282,7 +295,10 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
       {actions.waitingOnClaude && (
         <div className="rounded-2xl border-2 border-sky-300 bg-sky-50 dark:bg-sky-950/30 p-4 flex gap-3">
           <MessageCircleQuestion className="w-6 h-6 text-sky-600 flex-shrink-0" />
-          <p className="text-base"><span className="font-bold">You replied — Claude is working on it.</span> The card comes back to To review once it has answered. Nothing for you to do yet.</p>
+          <p className="text-base">
+            <span className="font-bold">Sent — Claude will look at this on its next pass.</span>{" "}
+            It reads your reply as its newest instruction and updates this card (it runs every hour). Until then the card waits under In progress, then comes back to To review. Nothing for you to do yet.
+          </p>
         </div>
       )}
 
@@ -491,6 +507,15 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
 
       {/* Housekeeping */}
       <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border">
+        {/* Reply to Claude — on every card, whatever its state (Graeme,
+            2026-10-12): correct its understanding or give new instructions
+            even when it hasn't asked anything. */}
+        {actions.canReplyToClaude && (
+          <button onClick={() => setDialog("reply")} disabled={saving}
+            className="h-12 px-4 rounded-xl bg-sky-600 text-white font-bold flex items-center gap-2 hover:bg-sky-700 disabled:opacity-50">
+            <MessageCircleQuestion className="w-5 h-5" /> Reply to Claude
+          </button>
+        )}
         {actions.canReject && (
           <button onClick={() => setDialog("reject")} disabled={saving}
             className="h-12 px-4 rounded-xl border-2 border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 font-bold flex items-center gap-2 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50">
@@ -559,6 +584,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
       {(dialog === "reject" || dialog === "reply") && (
         <NoteDialog
           mode={dialog}
+          reopens={dialog === "reply" && (actions.replyReopens || !!t.noActionAt)}
           onCancel={() => setDialog(null)}
           onSubmit={note => { setDialog(null); onDecide(dialog, note || undefined); }}
         />
@@ -575,6 +601,10 @@ export default function FounderFixQueue() {
   const isFounder = state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
   const [tab, setTab] = useState<FixQueueTab>("proposed");
   const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
+  // Cards Graeme has just replied to from this tab: kept on screen (with the
+  // "Sent" state) after the refetch files them under In progress, so the
+  // card he was looking at doesn't vanish. Cleared when he changes tab.
+  const [sentItems, setSentItems] = useState<Map<number, FixQueueItem>>(new Map());
   const qc = useQueryClient();
   const queryKey = ["issue-pipeline", "review", tab, meId] as const;
 
@@ -606,8 +636,13 @@ export default function FounderFixQueue() {
           const counts = { ...previous.counts };
           let items = previous.items;
           if (action === "reply") {
-            // Now waiting on Claude: it moves to In progress, off To review.
-            items = items.filter(i => i.triage.id !== id);
+            // Now waiting on Claude. The card stays where Graeme is looking,
+            // showing "Sent — Claude will look at this on its next pass"
+            // (the server files it under In progress; sentItems keeps it on
+            // screen here until he changes tab).
+            const sent = withReplySent(item, note ?? "");
+            items = items.map(i => (i.triage.id === id ? sent : i));
+            setSentItems(m => new Map(m).set(id, sent));
             if (!item.triage.awaitingRetriage) counts.awaitingReply += 1;
           } else {
             const to = ACTION_TO_STATUS[action];
@@ -620,14 +655,17 @@ export default function FounderFixQueue() {
       }
       return { previous };
     },
-    onError: (err: Error, _vars, ctx) => {
+    onError: (err: Error, { id, action }, ctx) => {
       if (ctx?.previous) qc.setQueryData(queryKey, ctx.previous);
-      toast({ title: "Not saved", description: err.message, variant: "destructive" });
+      if (action === "reply") setSentItems(m => { const n = new Map(m); n.delete(id); return n; });
+      toast({ title: action === "reply" ? "Not sent to Claude" : "Not saved", description: err.message, variant: "destructive" });
     },
     onSuccess: (_data, { action }) => {
       toast({
-        title: action === "approve" ? "Approved — saved" : action === "reject" ? "Rejected — saved" : "Sent to Claude — saved",
-        description: action === "approve" ? "It joins the fix queue. Nothing ships until you deploy." : undefined,
+        title: action === "approve" ? "Approved — saved" : action === "reject" ? "Rejected — saved" : "Sent — Claude will look at this on its next pass",
+        description: action === "approve"
+          ? "It joins the fix queue. Nothing ships until you deploy."
+          : action === "reply" ? "It waits under In progress until Claude has answered, then comes back to To review." : undefined,
       });
     },
     onSettled: (_d, _e, { id }) => {
@@ -725,9 +763,11 @@ export default function FounderFixQueue() {
 
   const items = data?.items ?? [];
   const saving = savingIds.size > 0;
-  // On To review, cards Graeme has replied to fold away below — they're
-  // waiting on Claude, not him.
-  const needsYou = items;
+  // Just-replied cards the server has moved to In progress stay at the top
+  // here, showing "Sent — Claude will look at this on its next pass".
+  const listedIds = new Set(items.map(i => i.triage.id));
+  const needsYou = [...[...sentItems.values()].filter(s => !listedIds.has(s.triage.id)), ...items];
+  const changeTab = (next: FixQueueTab) => { setSentItems(new Map()); setTab(next); };
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -749,7 +789,7 @@ export default function FounderFixQueue() {
           const n = tabCount(data, t.key);
           const active = t.key === tab;
           return (
-            <button key={t.key} onClick={() => setTab(t.key)}
+            <button key={t.key} onClick={() => changeTab(t.key)}
               className={cn(
                 "rounded-2xl border-2 px-3 py-3 text-left transition-colors min-w-0",
                 active ? "border-primary bg-primary/10" : "border-border bg-card hover:bg-secondary/50",

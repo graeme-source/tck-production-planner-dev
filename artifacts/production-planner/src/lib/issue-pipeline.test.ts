@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions } from "./issue-pipeline";
+import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions, withReplySent, type FixQueueItem } from "./issue-pipeline";
 
 describe("safeTestPath", () => {
   it("keeps in-app paths", () => {
@@ -91,5 +91,40 @@ describe("cardActions — the right action in the right place", () => {
   it("closed cards offer nothing", () => {
     const a = cardActions({ ...base, status: "fixed" as never });
     expect([a.canApprove, a.canDismiss, a.canReply, a.canReject]).toEqual([false, false, false, false]);
+  });
+  // Regression (Graeme, 2026-10-12): no way to talk back to Claude unless it asked.
+  it("Reply to Claude is on every card, whatever its state", () => {
+    for (const status of ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix", "answered", "dismissed"] as const) {
+      for (const awaitingRetriage of [false, true]) {
+        const a = cardActions({ ...base, status, awaitingRetriage });
+        expect(a.canReplyToClaude).toBe(true);
+        expect(a.replyReopens).toBe(status !== "proposed");
+      }
+    }
+  });
+});
+
+describe("withReplySent — the card right after Reply to Claude", () => {
+  const item = {
+    triage: {
+      id: 9, andonIssueId: 318, status: "approved", awaitingRetriage: false, snoozedUntil: "2026-10-20T00:00:00Z",
+      noActionAt: null, noActionBy: null, decisionNote: null, decidedAt: null,
+    },
+    issue: null, notices: [], related: [],
+    thread: [{ at: "2026-10-11T09:00:00Z", who: "claude", kind: "recommendation", text: "Not a bug" }],
+  } as unknown as FixQueueItem;
+  it("is back with Claude, shows your words, and keeps the earlier thread", () => {
+    const now = new Date("2026-10-12T10:00:00Z");
+    const out = withReplySent(item, "Your understanding is wrong — it's the wrapping count", now);
+    expect(out.triage.status).toBe("proposed");
+    expect(out.triage.awaitingRetriage).toBe(true);
+    expect(out.triage.snoozedUntil).toBeNull();
+    expect(out.triage.decisionNote).toBe("Your understanding is wrong — it's the wrapping count");
+    expect(out.thread).toHaveLength(2);
+    expect(out.thread![1]).toEqual({ at: now.toISOString(), who: "you", kind: "reply", text: "Your understanding is wrong — it's the wrapping count" });
+    expect(cardActions(out.triage).waitingOnClaude).toBe(true);
+    // The original is untouched (it's the rollback copy).
+    expect(item.thread).toHaveLength(1);
+    expect(item.triage.status).toBe("approved");
   });
 });
