@@ -41,6 +41,10 @@ Read this first, every session.
   scrolling so actions stay reachable, and sized responsively for phone and
   iPad landscape. A modal must never be able to trap the user.
   (Graeme, 2026-09-14.)
+- Pages use the full width of the panel: no fixed max-width page container
+  (`max-w-5xl` etc.). Lay out responsively to the container so big desktop
+  screens are used; keep `max-w-prose` only for long paragraphs of text.
+  New pages follow this; fix old ones as you touch them. (Graeme, 2026-10-12.)
 - Anything the UI names, it links: a policy, SOP or document mentioned anywhere
   (checklists, training items, lessons, notifications) links to its canonical
   page (`/documents/:id` for the Documents repository), and the visible label
