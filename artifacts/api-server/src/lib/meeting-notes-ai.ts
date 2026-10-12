@@ -203,6 +203,9 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD
 export const SaveMeetingNotesBody = z.object({
   title: z.string().trim().max(LIMITS.title),
   classificationId: z.number().int().positive().nullable(),
+  /** Every classification ticked in the check step, first = primary (0184).
+   *  Wins over classificationId when sent. */
+  classificationIds: z.array(z.number().int().positive()).min(1, "Tick at least one").max(12).optional(),
   summary: z.string().max(LIMITS.summary),
   agreements: z.array(z.object({
     what: z.string().max(LIMITS.what),

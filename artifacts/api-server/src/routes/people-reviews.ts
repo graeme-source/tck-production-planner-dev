@@ -55,7 +55,7 @@ import {
   extendedEnd, extensionMessage, periodEnd, nextStage, attentionLine, PERIOD_MONTHS,
   MERGE_FIELDS, hrEmailIdentity, checkHrEmailSettings, templatesForEntry, letterMergeValues, fillTemplate, letterGaps, checkLetterAction, letterWaitingEmail,
   effectiveStage, MEETING_STATUSES, meetingStatusChange, meetingTodoDate, heldByNotes,
-  ANSWERS_TRIGGER, NO_POLICY_TRIGGER, answersTriggerMessage,
+  ANSWERS_TRIGGER, NO_POLICY_TRIGGER, answersTriggerMessage, cleanClassIds, entryClassIds, entryClassification,
   type PolicyTriggerReview, type AnswersTrigger, type MeetingStatus, type LetterTemplate, type LetterStatus, type FieldSet, type ProbationOutcome,
   type Classification, type Stage, type StageType, type EvidenceKind, type EntryLike, type EntryStatus,
   type MeetingType, type TodoKind,
@@ -69,6 +69,7 @@ import { isFounderEmail, FOUNDER_EMAIL } from "../lib/founder-email";
 import { loadClassifiedShifts } from "../lib/rtw-detect";
 import { summariseAttendance, rollingWindowStart, policyTriggerReview } from "../lib/attendance-summary";
 import { loadPolicyReviews } from "../lib/policy-trigger-reviews";
+import { loadEntryClassIds, setEntryClassifications } from "../lib/entry-classifications";
 import { renderContractPdf } from "../pdf/contract-pdf";
 import { sendEmail, FROM_EMAIL } from "../lib/email";
 import {
@@ -155,9 +156,10 @@ async function loadClassifications(): Promise<Classification[]> {
 
 type EntryRow = typeof peopleRecordEntriesTable.$inferSelect;
 
-function asEntryLike(r: EntryRow): EntryLike {
+/** `classIds`: every classification ticked (0184, loadEntryClassIds). */
+function asEntryLike(r: EntryRow, classIds?: readonly number[]): EntryLike {
   return {
-    id: r.id, classificationId: r.classificationId, entryDate: r.entryDate, title: r.title, status: r.status as EntryStatus,
+    id: r.id, classificationId: r.classificationId, classificationIds: classIds ?? null, entryDate: r.entryDate, title: r.title, status: r.status as EntryStatus,
     stageId: r.stageId, warningExpiresOn: r.warningExpiresOn,
     warningWithdrawnAt: r.warningWithdrawnAt ? r.warningWithdrawnAt.toISOString() : null,
   };
@@ -174,6 +176,7 @@ router.get("/badges", async (_req: Request, res: Response) => {
     ]);
     const byUser = new Map<number, EntryRow[]>();
     for (const e of entries) byUser.set(e.userId, [...(byUser.get(e.userId) ?? []), e]);
+    const classIds = await loadEntryClassIds(db, entries.map(e => e.id));
     const ids = [...byUser.keys()];
     const subjects = ids.length
       ? await db.select({ id: usersTable.id, email: usersTable.email, plandayEmployeeId: usersTable.plandayEmployeeId })
@@ -182,7 +185,7 @@ router.get("/badges", async (_req: Request, res: Response) => {
     const badges = subjects
       .filter(s => canWriteEmploymentRecord(viewer.actor, s)) // never the viewer's own
       .map(s => {
-        const list = (byUser.get(s.id) ?? []).map(asEntryLike);
+        const list = (byUser.get(s.id) ?? []).map(e => asEntryLike(e, classIds.get(e.id)));
         const warnings = list.map(e => entryWarning(e, classifications, stages)).filter((w): w is NonNullable<typeof w> => w != null);
         return {
           userId: s.id,
@@ -366,6 +369,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
       .where(eq(peopleRecordEntriesTable.userId, userId))
       .orderBy(desc(peopleRecordEntriesTable.entryDate), desc(peopleRecordEntriesTable.id));
     const ids = entries.map(e => e.id);
+    const classIds = await loadEntryClassIds(db, ids);
     const [classifications, stages, history, { attendance, triggerReview }, letters] = await Promise.all([
       loadClassifications(),
       loadStages(),
@@ -401,7 +405,9 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
     res.json({
       person, today, viewerId: viewer.actor.id, probation: probation ?? null, periodMonths: PERIOD_MONTHS, canEditLists: mayEditLists(viewer), classifications, stages, attendance, triggerReview,
       entries: entries.map(e => ({
-        id: e.id, userId: e.userId, classificationId: e.classificationId, entryDate: e.entryDate, title: e.title,
+        id: e.id, userId: e.userId, classificationId: e.classificationId,
+        classificationIds: entryClassIds({ classificationId: e.classificationId, classificationIds: classIds.get(e.id) }),
+        entryDate: e.entryDate, title: e.title,
         notes: e.notes, notesUpdatedByName: e.notesUpdatedByName, notesUpdatedAt: e.notesUpdatedAt,
         status: e.status, closedOn: e.closedOn, reviewStart: e.reviewStart, reviewEnd: e.reviewEnd, outcome: e.outcome, nextReviewDate: e.nextReviewDate,
         stageId: e.stageId, warningExpiresOn: e.warningExpiresOn, warningWithdrawnAt: e.warningWithdrawnAt,
@@ -433,7 +439,11 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
 // ── Entries ────────────────────────────────────────────────────────────────
 
 const EntryFields = z.object({
+  /** The primary classification. A one-item set when sent alone. */
   classificationId: z.number().int().positive(),
+  /** Every classification ticked, first = primary (0184). Wins over
+   *  classificationId when both are sent. At least one. */
+  classificationIds: z.array(z.number().int().positive()).min(1, "Tick at least one").max(12),
   entryDate: isoDate,
   title: z.string().max(400),
   notes: z.string().max(TEXT_MAX).nullable(),
@@ -515,13 +525,23 @@ async function applyChange(tx: Exec, viewer: Viewer, row: EntryRow, b: EntryPatc
   const set: Partial<typeof peopleRecordEntriesTable.$inferInsert> = { updatedAt: new Date() };
   const changed = Object.keys(b).filter(k => (b as Record<string, unknown>)[k] !== undefined);
 
-  const cls = new Map(ctx.classifications.map(c => [c.id, c]));
-  if (b.classificationId !== undefined && b.classificationId !== row.classificationId) {
-    const to = cls.get(b.classificationId);
-    if (!to) throw new Refusal(400, "No such classification");
-    set.classificationId = to.id;
-    if (!ctx.created) {
-      await audit(tx, viewer, { subjectUserId: row.userId, entryId: row.id, action: "reclassify", detail: reclassify(cls.get(row.classificationId), to).message });
+  // What it's about: the ticked set (0184), written with the primary by
+  // setEntryClassifications. A lone classificationId means a set of one.
+  const wanted = b.classificationIds !== undefined ? cleanClassIds(b.classificationIds)
+    : b.classificationId !== undefined ? [b.classificationId] : null;
+  if (wanted) {
+    if (wanted.length === 0) throw new Refusal(400, "Tick at least one classification");
+    const cls = new Map(ctx.classifications.map(c => [c.id, c]));
+    if (wanted.some(id => !cls.has(id))) throw new Refusal(400, "No such classification");
+    const before = entryClassIds({ classificationId: row.classificationId, classificationIds: (await loadEntryClassIds(tx, [row.id])).get(row.id) });
+    if (wanted.join(",") !== before.join(",")) {
+      await setEntryClassifications(tx, row.id, wanted);
+      const differs = [...wanted].sort().join(",") !== [...before].sort().join(",");
+      if (!ctx.created && differs) {
+        const from = entryClassification({ classificationId: before[0], classificationIds: before }, ctx.classifications);
+        const to = entryClassification({ classificationId: wanted[0], classificationIds: wanted }, ctx.classifications)!;
+        await audit(tx, viewer, { subjectUserId: row.userId, entryId: row.id, action: "reclassify", detail: reclassify(from, to).message });
+      }
     }
   }
   for (const k of ["entryDate", "title", "reviewStart", "reviewEnd", "outcome", "rating", "payFrom", "payTo", "payEffectiveOn", "probationOutcome",
@@ -632,15 +652,20 @@ router.post(
     try {
       if (!(await mayOpen(viewer, userId))) { res.status(404).json({ error: "Not found" }); return; }
       const [classifications, stages] = await Promise.all([loadClassifications(), loadStages()]);
-      const cls = classifications.find(c => c.id === b.classificationId);
-      if (!cls) { res.status(400).json({ error: "No such classification" }); return; }
+      // Every classification ticked (0184); first = primary.
+      const wanted = b.classificationIds?.length ? cleanClassIds(b.classificationIds) : [b.classificationId];
+      if (wanted.length === 0 || wanted.some(w => !classifications.some(c => c.id === w))) {
+        res.status(400).json({ error: "No such classification" }); return;
+      }
+      const cls = entryClassification({ classificationId: wanted[0], classificationIds: wanted }, classifications)!;
       const id = await db.transaction(async tx => {
         const [row] = await tx.insert(peopleRecordEntriesTable).values({
-          userId, classificationId: cls.id, entryDate: b.entryDate ?? londonTodayIso(), title: b.title ?? "",
+          userId, classificationId: wanted[0], entryDate: b.entryDate ?? londonTodayIso(), title: b.title ?? "",
           createdById: viewer.actor.id, createdByName: viewer.name,
         }).returning();
+        await setEntryClassifications(tx, row.id, wanted);
         await audit(tx, viewer, { subjectUserId: userId, entryId: row.id, action: "entry_add", detail: `Added as ${cls.label}` });
-        const { classificationId: _c, entryDate: _d, title: _t, ...rest } = b;
+        const { classificationId: _c, classificationIds: _cs, entryDate: _d, title: _t, ...rest } = b;
         await applyChange(tx, viewer, row, rest, { classifications, stages, created: true });
         return row.id;
       });
@@ -691,7 +716,8 @@ router.post(
       const [row] = id == null ? [] : await db.select().from(peopleRecordEntriesTable).where(eq(peopleRecordEntriesTable.id, id));
       if (!row || !(await mayOpen(viewer, row.userId))) { res.status(404).json({ error: "No such entry" }); return; }
       const [classifications, stages] = await Promise.all([loadClassifications(), loadStages()]);
-      if (!entryWarning(asEntryLike(row), classifications, stages)) { res.status(409).json({ error: "This entry isn't a warning." }); return; }
+      const classIds = (await loadEntryClassIds(db, [row.id])).get(row.id);
+      if (!entryWarning(asEntryLike(row, classIds), classifications, stages)) { res.status(409).json({ error: "This entry isn't a warning." }); return; }
       if (row.warningWithdrawnAt) { res.status(409).json({ error: "Already withdrawn." }); return; }
       await db.transaction(async tx => {
         await tx.update(peopleRecordEntriesTable).set({ warningWithdrawnAt: new Date(), warningWithdrawnReason: b.reason, updatedAt: new Date() })
@@ -835,18 +861,19 @@ router.post(
       const [row] = id == null ? [] : await db.select().from(peopleRecordEntriesTable).where(eq(peopleRecordEntriesTable.id, id));
       if (!row || !(await mayOpen(viewer, row.userId))) { res.status(404).json({ error: "No such entry" }); return; }
       const [classifications, stages, templates] = await Promise.all([loadClassifications(), loadStages(), loadTemplates()]);
+      const classIds = (await loadEntryClassIds(db, [row.id])).get(row.id);
       const offered = templatesForEntry({
-        classificationId: row.classificationId, stageId: row.stageId,
+        classificationId: row.classificationId, classificationIds: classIds, stageId: row.stageId,
         probationOutcome: (row.probationOutcome as ProbationOutcome | null) ?? null, meetingDate: row.meetingDate, payTo: row.payTo,
       }, classifications, stages, templates);
       const tpl = offered.find(t => t.id === templateId);
       if (!tpl) { res.status(400).json({ error: "That letter doesn't fit this entry." }); return; }
       const [person] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, row.userId));
-      const stage = effectiveStage(asEntryLike(row), classifications, stages);
+      const stage = effectiveStage(asEntryLike(row, classIds), classifications, stages);
       const values = letterMergeValues({
         todayIso: londonTodayIso(),
         personName: person?.name ?? "",
-        classificationLabel: classifications.find(c => c.id === row.classificationId)?.label ?? "",
+        classificationLabel: entryClassification(asEntryLike(row, classIds), classifications)?.label ?? "",
         entry: {
           title: row.title, outcome: row.outcome, stageLabel: stage?.label ?? null, warningExpiresOn: row.warningExpiresOn,
           nextReviewDate: row.nextReviewDate, meetingType: (row.meetingType as MeetingType | null) ?? null,
@@ -1037,9 +1064,12 @@ router.get("/attention", async (_req: Request, res: Response) => {
       loadClassifications(), loadStages(), loadProbations(userIds),
     ]);
     const today = londonTodayIso();
+    // Every classification ticked on each entry (0184).
+    const classIds = await loadEntryClassIds(db, entries.map(e => e.id));
+    const merged = (e: EntryRow) => entryClassification(asEntryLike(e, classIds.get(e.id)), classifications) ?? null;
     const attendance = new Map<number, Awaited<ReturnType<typeof attendanceFacts>>>();
     for (const e of entries) {
-      const c = classifications.find(x => x.id === e.classificationId);
+      const c = merged(e);
       if (c?.evidence && !attendance.has(e.userId)) attendance.set(e.userId, await attendanceFacts(e.userId, today));
     }
     await audit(db, viewer, { subjectUserId: null, action: "view_attention", detail: `${items.length} item(s)` });
@@ -1047,8 +1077,8 @@ router.get("/attention", async (_req: Request, res: Response) => {
       today,
       items: items.map(i => {
         const e = entries.find(x => x.id === i.entryId) ?? null;
-        const cls = e ? classifications.find(c => c.id === e.classificationId) ?? null : null;
-        const stage = e ? effectiveStage(asEntryLike(e), classifications, stages) : null;
+        const cls = e ? merged(e) : null;
+        const stage = e ? effectiveStage(asEntryLike(e, classIds.get(e.id)), classifications, stages) : null;
         return {
           ...i,
           line: attentionLine(i),
@@ -1111,6 +1141,10 @@ async function followOn(viewer: Viewer, row: EntryRow, values: Partial<typeof pe
       userId: row.userId, classificationId: row.classificationId, entryDate: today, status: "open", reviewStart: today,
       createdById: viewer.actor.id, createdByName: viewer.name, ...values,
     }).returning();
+    // The follow-on is about the same things (0184).
+    await setEntryClassifications(tx, n.id, entryClassIds({
+      classificationId: row.classificationId, classificationIds: (await loadEntryClassIds(tx, [row.id])).get(row.id),
+    }));
     await audit(tx, viewer, { subjectUserId: row.userId, entryId: n.id, action: "entry_add", detail });
     await audit(tx, viewer, { subjectUserId: row.userId, entryId: row.id, action, detail });
     return n.id;
@@ -1128,7 +1162,7 @@ router.post(
       const [row] = id == null ? [] : await db.select().from(peopleRecordEntriesTable).where(eq(peopleRecordEntriesTable.id, id));
       if (!row || !(await mayOpen(viewer, row.userId))) { res.status(404).json({ error: "No such entry" }); return; }
       const [classifications, stages] = await Promise.all([loadClassifications(), loadStages()]);
-      const cls = classifications.find(c => c.id === row.classificationId);
+      const cls = entryClassification(asEntryLike(row, (await loadEntryClassIds(db, [row.id])).get(row.id)), classifications);
       if (!cls?.fieldSets.includes("stage")) { res.status(400).json({ error: "This kind of entry doesn't have stages." }); return; }
       const asked = (req.body as { stageId?: number | null }).stageId;
       const target = asked != null ? stages.find(s => s.id === asked) ?? null : nextStage(row.stageId, stages);
@@ -1233,6 +1267,7 @@ router.post(
             probationOutcome: b.action === "extend" ? "extended" : b.action, probationNewEnd: b.action === "extend" ? endDate : null,
             createdById: viewer.actor.id, createdByName: viewer.name,
           }).returning({ id: peopleRecordEntriesTable.id });
+          await setEntryClassifications(tx, n.id, [probationCls.id]);
           entryId = n.id;
         }
         await audit(tx, viewer, { subjectUserId: userId, entryId, action: b.action === "set" ? "probation_set" : "entry_add", detail });
