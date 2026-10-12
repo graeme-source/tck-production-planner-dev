@@ -76,6 +76,10 @@ describe("a packer setting a barcode for a product with none", () => {
     expect(planPackerBarcode("5065018206054", target, [holder({ identityKey: "insert", ours: "5065018206054" })]))
       .toMatchObject({ ok: true });
   });
+  it("refuses a different number from the one another listing of the same product scans with", () => {
+    expect(planPackerBarcode("5065018206207", target, [holder({ identityKey: "insert", ours: "5065018206054" })]))
+      .toMatchObject({ ok: false, why: "has-barcode" });
+  });
   it("refuses when the product already has a barcode — changing it is manager-only", () => {
     const r = planPackerBarcode("5065018206207", { ...target, existing: "5065018206054" }, []);
     expect(r).toMatchObject({ ok: false, why: "has-barcode" });

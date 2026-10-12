@@ -94,6 +94,16 @@ export function planPackerBarcode(
     };
   }
   const key = gtinKey(g.digits);
+  // Another listing of the SAME product (an F2F copy, a sibling pack
+  // listing) already scans with a different number: the pack in hand isn't
+  // what we expected, or the product has two codes — a manager decides.
+  const sibling = holders.find(h => h.identityKey === target.identityKey && h.current && h.ours != null && gtinKey(h.ours) !== key);
+  if (sibling) {
+    return {
+      ok: false, why: "has-barcode",
+      reason: `${target.name} already scans as ${sibling.ours}, not ${g.digits}. Check the pack — only a manager can change a barcode, so please fetch a manager.`,
+    };
+  }
   const other = holders.find(h => h.identityKey !== target.identityKey
     && ((h.ours != null && gtinKey(h.ours) === key) || (h.shopify != null && gtinKey(h.shopify) === key)));
   if (other) {
