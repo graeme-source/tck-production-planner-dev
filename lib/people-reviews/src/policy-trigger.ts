@@ -24,11 +24,15 @@
  * in the current rolling window to the threshold (the Nth, oldest first).
  * A review dated on or after that day counts; one before it doesn't.
  *
- * Reviews come from BOTH places they're recorded today: the meetings diary
- * (employee_meetings, kind "review", never a cancelled one) and the
- * employment record (an entry whose classification shows attendance
- * evidence). The server turns rows into PolicyReviewFact with the two
- * helpers below; everything else here is pure.
+ * Reviews come from the one place they're recorded since migration 0178
+ * (one review, classified): the employment record. ANY review that isn't
+ * cancelled counts, whatever its classification — "I booked a review, it
+ * should recognise it" (Graeme, 2026-10-12) — and so does an entry with no
+ * meeting whose classification shows attendance evidence (data, never a
+ * name). The old meetings diary's reviews were moved in by 0178, so
+ * Nozomi's review on 12 Oct still answers her trigger. The server turns
+ * rows into PolicyReviewFact with entryReviewFact; everything else here is
+ * pure.
  */
 import { fmtDayIso } from "./index";
 
@@ -36,8 +40,8 @@ export type PolicyTriggerKind = "sickness" | "lates";
 export type PolicyTriggerState = "due" | "booked" | "handled" | "due_again";
 
 export interface PolicyReviewRef {
-  /** "meeting" = the meetings diary; "entry" = an employment-record entry. */
-  source: "meeting" | "entry";
+  /** Always an employment-record entry since migration 0178. */
+  source: "entry";
   id: number;
   date: string;
 }
@@ -63,9 +67,6 @@ export interface PolicyTriggerStatus {
   /** Instances after lastReview (0 when none was held). */
   sinceReview: number;
 }
-
-/** Legacy meetings that count: kind "review", never cancelled. */
-export const POLICY_REVIEW_MEETING_KINDS: readonly string[] = ["review"];
 
 const ref = (r: PolicyReviewFact): PolicyReviewRef => ({ source: r.source, id: r.id, date: r.date });
 const day = (iso: string) => iso.slice(0, 10);
@@ -124,35 +125,30 @@ export interface PolicyTriggerReview {
 
 export const NO_POLICY_TRIGGER: PolicyTriggerReview = { sickness: null, lates: null };
 
-// ── Rows → facts (the server's two sources) ────────────────────────────────
+// ── Rows → facts ───────────────────────────────────────────────────────────
 
-/** A meetings-diary row. Cancelled meetings, and kinds that aren't a
- *  review, never count. Its date: scheduled, else held, else created — the
- *  same date the timeline shows it on. */
-export function meetingReviewFact(m: {
-  id: number; kind: string; status: string;
-  scheduledFor: string | null; heldAt: string | null; createdAt: string | null;
-}): PolicyReviewFact | null {
-  if (m.status === "cancelled" || !POLICY_REVIEW_MEETING_KINDS.includes(m.kind)) return null;
-  const date = (m.scheduledFor ?? m.heldAt ?? m.createdAt ?? "").slice(0, 10);
-  if (!date) return null;
-  return { source: "meeting", id: m.id, date, held: m.status === "held", covers: ["sickness", "lates"] };
-}
-
-/** An employment-record entry. Only classifications that show attendance
- *  evidence count: "timekeeping" deals with lates; "attendance" with
- *  sickness and lates. Dated by its meeting, else the entry date; held
- *  once that day has come. */
+/** An employment-record entry, as a review that can answer a trigger.
+ *
+ *  • A review (it has a meeting status) counts whatever its classification,
+ *    for both triggers — unless it's cancelled, which never counts.
+ *  • An entry with no meeting counts only if its classification shows
+ *    attendance evidence: "timekeeping" deals with lates, "attendance" with
+ *    sickness and lates (data on the classification, never its name).
+ *
+ *  Dated by its meeting, else the entry date; held once it's marked held or
+ *  that day has come. */
 export function entryReviewFact(e: {
-  id: number; evidence: string | null; meetingDate: string | null; entryDate: string;
+  id: number; meetingStatus: string | null; evidence: string | null; meetingDate: string | null; entryDate: string;
 }, todayIso: string): PolicyReviewFact | null {
+  if (e.meetingStatus === "cancelled") return null;
   const covers: PolicyTriggerKind[] | null =
-    e.evidence === "timekeeping" ? ["lates"]
-      : e.evidence === "attendance" ? ["sickness", "lates"]
-        : null;
+    e.meetingStatus != null ? ["sickness", "lates"]
+      : e.evidence === "timekeeping" ? ["lates"]
+        : e.evidence === "attendance" ? ["sickness", "lates"]
+          : null;
   if (!covers) return null;
   const date = (e.meetingDate ?? e.entryDate).slice(0, 10);
-  return { source: "entry", id: e.id, date, held: date <= todayIso, covers };
+  return { source: "entry", id: e.id, date, held: e.meetingStatus === "held" || date <= todayIso, covers };
 }
 
 // ── Words ──────────────────────────────────────────────────────────────────
