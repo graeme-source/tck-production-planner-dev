@@ -18,8 +18,8 @@
  *                                         (autosaved from the record header
  *                                         and the bulk screen)
  *
- * Meetings, reviews, notes and feedback keep coming from
- * /api/employee-reviews/:userId, which holds the private-note rules.
+ * Reviews and their write-ups (feedback, objectives, notes) come from
+ * /api/people-reviews/person/:userId, which holds the private-note rules.
  *
  * Access: People access ONLY (lib/people-access.ts, the founder's per-person
  * switch), and index.ts mounts this behind requirePeopleUnlock — so the
@@ -160,10 +160,13 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
       loadFormCovers(ids),
       ids.length === 0 ? Promise.resolve({ rows: [] as Array<{ subject_user_id: number; kind: string; title: string | null; scheduled_for: string }> }) :
         db.execute<{ subject_user_id: number; kind: string; title: string | null; scheduled_for: string }>(sql`
-          SELECT DISTINCT ON (subject_user_id) subject_user_id, kind, title, scheduled_for::text
-            FROM employee_meetings
-           WHERE status = 'booked' AND scheduled_for >= ${today}
-           ORDER BY subject_user_id, scheduled_for ASC
+          -- The next booked review (migration 0178: reviews are record
+          -- entries). Neutral on purpose: no classification or summary on
+          -- the list, which also shows the viewer's own row.
+          SELECT DISTINCT ON (user_id) user_id AS subject_user_id, 'review' AS kind, NULL::text AS title, meeting_date::text AS scheduled_for
+            FROM people_record_entries
+           WHERE meeting_status = 'booked' AND meeting_date >= ${today}
+           ORDER BY user_id, meeting_date ASC, meeting_time ASC NULLS LAST
         `),
       loadPolicyReviews(ids, today),
     ]);

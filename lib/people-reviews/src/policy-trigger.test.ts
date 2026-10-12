@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
-  entryReviewFact, meetingReviewFact, needsPolicyReview, policyTriggerLine, policyTriggerStatus, triggerReachedOn,
+  entryReviewFact, needsPolicyReview, policyTriggerLine, policyTriggerStatus, triggerReachedOn,
   type PolicyReviewFact,
 } from "./policy-trigger";
 
 const LATES = ["2026-03-02", "2026-04-07", "2026-05-11", "2026-06-01", "2026-07-06", "2026-08-03", "2026-09-07", "2026-10-05"];
 const review = (date: string, held: boolean, extra: Partial<PolicyReviewFact> = {}): PolicyReviewFact =>
-  ({ source: "meeting", id: 1, date, held, covers: ["sickness", "lates"], ...extra });
+  ({ source: "entry", id: 1, date, held, covers: ["sickness", "lates"], ...extra });
 const lates = (instanceDates: string[], reviews: PolicyReviewFact[] = []) =>
   policyTriggerStatus("lates", { threshold: 6, instanceDates, reviews });
 
@@ -43,7 +43,7 @@ describe("policyTriggerStatus", () => {
 
   it("Nozomi: 8 lates, review held 12 Oct after the 8th late, none since → handled", () => {
     const s = lates(LATES, [review("2026-10-12", true, { id: 42 })]);
-    expect(s).toMatchObject({ state: "handled", count: 8, lastReview: { source: "meeting", id: 42, date: "2026-10-12" }, sinceReview: 0 });
+    expect(s).toMatchObject({ state: "handled", count: 8, lastReview: { source: "entry", id: 42, date: "2026-10-12" }, sinceReview: 0 });
     expect(needsPolicyReview(s)).toBe(false);
     expect(policyTriggerLine(s!, 12)).toBe("Policy trigger reached (8 lates) — reviewed 12 Oct 2026");
   });
@@ -79,35 +79,47 @@ describe("policyTriggerStatus", () => {
   });
 });
 
-describe("review sources", () => {
-  const m = { id: 7, kind: "review", status: "held", scheduledFor: "2026-10-12", heldAt: "2026-10-12T15:00:00Z", createdAt: "2026-10-01T09:00:00Z" };
+describe("review sources (one review, classified — migration 0178)", () => {
+  const today = "2026-10-12";
+  const e = { id: 7, meetingStatus: "held" as string | null, evidence: null as string | null, meetingDate: "2026-10-12" as string | null, entryDate: "2026-10-01" };
 
-  it("meetings diary: a held review counts; cancelled never does", () => {
-    expect(meetingReviewFact(m)).toMatchObject({ source: "meeting", id: 7, date: "2026-10-12", held: true });
-    expect(meetingReviewFact({ ...m, status: "cancelled" })).toBeNull();
-    expect(lates(LATES, [meetingReviewFact({ ...m, status: "cancelled" })].filter((x): x is PolicyReviewFact => x != null))?.state).toBe("due");
-    expect(meetingReviewFact({ ...m, status: "booked" })).toMatchObject({ held: false });
+  it("any review that isn't cancelled counts, whatever its classification", () => {
+    expect(entryReviewFact(e, today)).toMatchObject({ source: "entry", id: 7, date: "2026-10-12", held: true, covers: ["sickness", "lates"] });
+    expect(entryReviewFact({ ...e, evidence: "timekeeping" }, today)?.covers).toEqual(["sickness", "lates"]);
+    expect(entryReviewFact({ ...e, meetingStatus: "cancelled" }, today)).toBeNull();
+    expect(entryReviewFact({ ...e, meetingStatus: "cancelled", evidence: "attendance" }, today)).toBeNull();
   });
 
-  it("meetings diary: only review meetings count", () => {
-    expect(meetingReviewFact({ ...m, kind: "probation" })).toBeNull();
-    expect(meetingReviewFact({ ...m, kind: "one_to_one" })).toBeNull();
+  it("booked = not held until it's marked held or its day comes", () => {
+    expect(entryReviewFact({ ...e, meetingStatus: "booked", meetingDate: "2026-10-20" }, today)).toMatchObject({ held: false });
+    expect(entryReviewFact({ ...e, meetingStatus: "booked", meetingDate: "2026-10-12" }, today)).toMatchObject({ held: true });
+    expect(entryReviewFact({ ...e, meetingStatus: "held", meetingDate: "2026-10-20" }, today)).toMatchObject({ held: true });
   });
 
-  it("employment record: attendance-evidence entries, dated by their meeting", () => {
-    const today = "2026-10-12";
-    expect(entryReviewFact({ id: 3, evidence: "timekeeping", meetingDate: "2026-10-12", entryDate: "2026-10-10" }, today))
-      .toMatchObject({ source: "entry", date: "2026-10-12", held: true, covers: ["lates"] });
-    expect(entryReviewFact({ id: 3, evidence: "attendance", meetingDate: "2026-10-20", entryDate: "2026-10-10" }, today))
-      .toMatchObject({ held: false, covers: ["sickness", "lates"] });
-    expect(entryReviewFact({ id: 3, evidence: "attendance", meetingDate: null, entryDate: "2026-10-10" }, today))
-      .toMatchObject({ date: "2026-10-10", held: true });
-    expect(entryReviewFact({ id: 3, evidence: null, meetingDate: "2026-10-12", entryDate: "2026-10-12" }, today)).toBeNull();
+  it("dated by its meeting, else the entry date", () => {
+    expect(entryReviewFact({ ...e, meetingDate: null }, today)).toMatchObject({ date: "2026-10-01" });
   });
 
-  it("either source handles the trigger", () => {
-    const entry = entryReviewFact({ id: 9, evidence: "timekeeping", meetingDate: "2026-10-12", entryDate: "2026-10-12" }, "2026-10-12")!;
-    expect(lates(LATES, [entry])).toMatchObject({ state: "handled", lastReview: { source: "entry", id: 9 } });
-    expect(lates(LATES, [meetingReviewFact(m)!])).toMatchObject({ state: "handled", lastReview: { source: "meeting", id: 7 } });
+  it("an entry with no meeting counts only through its classification's attendance evidence", () => {
+    const plain = { ...e, meetingStatus: null, meetingDate: null };
+    expect(entryReviewFact(plain, today)).toBeNull();
+    expect(entryReviewFact({ ...plain, evidence: "timekeeping" }, today)).toMatchObject({ covers: ["lates"], held: true });
+    expect(entryReviewFact({ ...plain, evidence: "attendance" }, today)).toMatchObject({ covers: ["sickness", "lates"] });
+  });
+
+  it("Nozomi after the migration: her old 'review' meeting (held 12 Oct) is now a Performance appraisal entry — still handled", () => {
+    // 0178 maps kind review -> Performance appraisal (no attendance evidence),
+    // meeting_status held, meeting_date 12 Oct.
+    const migrated = entryReviewFact({ id: 31, meetingStatus: "held", evidence: null, meetingDate: "2026-10-12", entryDate: "2026-10-12" }, today)!;
+    expect(lates(LATES, [migrated])).toMatchObject({ state: "handled", count: 8, lastReview: { source: "entry", id: 31, date: "2026-10-12" } });
+    expect(policyTriggerLine(lates(LATES, [migrated])!, 12)).toBe("Policy trigger reached (8 lates) — reviewed 12 Oct 2026");
+  });
+
+  it("a review booked after the day it was reached, any classification, is booked; cancelling it puts the trigger back to due", () => {
+    const booked = entryReviewFact({ id: 5, meetingStatus: "booked", evidence: null, meetingDate: "2026-10-26", entryDate: "2026-10-12" }, today)!;
+    expect(lates(LATES, [booked])?.state).toBe("booked");
+    const cancelled = entryReviewFact({ id: 5, meetingStatus: "cancelled", evidence: null, meetingDate: "2026-10-26", entryDate: "2026-10-12" }, today);
+    expect(cancelled).toBeNull();
+    expect(lates(LATES, [])?.state).toBe("due");
   });
 });

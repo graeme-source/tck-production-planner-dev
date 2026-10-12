@@ -69,11 +69,44 @@ export const peopleRecordEntriesTable = pgTable("people_record_entries", {
   meetingAttendees: text("meeting_attendees"),
   meetingChecklist: text("meeting_checklist").array().notNull().default([]),
   meetingTodoId: integer("meeting_todo_id"),
+  /** The review itself (migration 0178): booked | held | cancelled. NULL =
+   *  no meeting, just on the record. meeting_type is an optional detail. */
+  meetingStatus: text("meeting_status"),
+  heldAt: timestamp("held_at"),
+  /** The old employee_meetings row this came from (0178), if any. */
+  legacyMeetingId: integer("legacy_meeting_id"),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdByName: text("created_by_name"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+/** A review's write-up (migration 0178): feedback, objectives and notes,
+ *  each PRIVATE to its author until shared with the employee. Who may read
+ *  which is decided on the server by employee-review-visibility.ts. entry_id
+ *  NULL = a loose note from the old diary. Never hard-deleted. */
+export const peopleReviewNotesTable = pgTable("people_review_notes", {
+  id: serial("id").primaryKey(),
+  entryId: integer("entry_id").references(() => peopleRecordEntriesTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  /** note | feedback | objective */
+  kind: text("kind").notNull().default("note"),
+  title: text("title"),
+  body: text("body").notNull(),
+  /** private | shared */
+  visibility: text("visibility").notNull().default("private"),
+  sharedAt: timestamp("shared_at"),
+  dueDate: date("due_date"),
+  doneAt: timestamp("done_at"),
+  authorId: integer("author_id").references(() => usersTable.id, { onDelete: "set null" }),
+  authorName: text("author_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+  legacyNoteId: integer("legacy_note_id"),
+});
+
+export type PeopleReviewNote = typeof peopleReviewNotesTable.$inferSelect;
 
 /** Every read and write, and each entry's history. Append-only. */
 export const peopleRecordAuditTable = pgTable("people_record_audit", {

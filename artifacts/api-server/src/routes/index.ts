@@ -394,7 +394,8 @@ router.use("/staff-emergency-contacts", staffEmergencyContactsRouter);
 // People section: anyone with People access must have SET their private
 // PIN (428 until they do) and unlocked People with it recently (423)
 // (middleware/people-unlock.ts); everyone else passes straight through to
-// their own record.
+// their own record. Read-only since migration 0178: GET /me, the reviews
+// shared with you (reviews themselves are written via /people-reviews).
 router.use("/employee-reviews", requirePeopleUnlock, employeeReviewsRouter);
 // People — the list and each person's record (routes/people.ts): People
 // access only (403 otherwise, checked inside), private PIN set + unlocked.
