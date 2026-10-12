@@ -87,10 +87,17 @@ export interface OwnershipState {
   clubSpecial: Map<string, ClubSpecialScan>;
 }
 
-/** Is a variant CURRENT? Linked to an active recipe, or its Shopify product
- *  is active. Before the first check (status unknown) it counts as current —
- *  the safe default that keeps today's scanning working. */
-function isCurrent(link: LinkedVariant | undefined, recipeActive: Map<number, boolean>, status: string | null | undefined): boolean {
+/** Is a variant CURRENT? Linked to an active recipe, its Shopify product
+ *  is active, or a PERSON set its barcode in the app. Before the first check
+ *  (status unknown) it counts as current — the safe default that keeps
+ *  today's scanning working.
+ *  The "set by a person" rule (12 Oct 2026): the first-order Order Insert is
+ *  a deliberately DRAFT Shopify product, added to new customers' orders and
+ *  linked to no recipe — it was judged retired, lost its barcode, and the
+ *  packing team couldn't scan it. A barcode someone sets on purpose always
+ *  counts. */
+export function isCurrent(link: LinkedVariant | undefined, recipeActive: Map<number, boolean>, status: string | null | undefined, setByPerson = false): boolean {
+  if (setByPerson) return true;
   if (link && recipeActive.get(link.recipeId)) return true;
   if (status == null) return true;
   return status === "active";
@@ -121,7 +128,7 @@ function ownershipFrom(
     const row = byVariant.get(id);
     const link = linkOf.get(id);
     const status = override?.status.has(id) ? override.status.get(id) : row?.shopifyProductStatus;
-    const current = isCurrent(link, recipeActive, status);
+    const current = isCurrent(link, recipeActive, status, row?.barcodeSource === "app" || row?.barcodeSource === "label");
     currentOf.set(id, current);
     const ours = override?.barcode.has(id) ? override.barcode.get(id)! : row?.barcode ?? null;
     const shopify = override?.shopify.has(id) ? override.shopify.get(id)! : row?.shopifyBarcode ?? null;
@@ -663,7 +670,7 @@ async function runReconcile({ mode, dryRun, actor }: { mode: "pull" | "check"; d
     const row = byVariant.get(id);
     const l = live.get(id);
     const link = linkOf.get(id);
-    const current = isCurrent(link, recipeActive, l?.status ?? row?.shopifyProductStatus);
+    const current = isCurrent(link, recipeActive, l?.status ?? row?.shopifyProductStatus, row?.barcodeSource === "app" || row?.barcodeSource === "label");
     const decision = decidePull({
       mode, linked: !!link, current, setInApp: row?.barcodeSource === "app" || row?.barcodeSource === "label",
       ours: row?.barcode ?? null, shopify: l ? { barcode: l.barcode } : null,
