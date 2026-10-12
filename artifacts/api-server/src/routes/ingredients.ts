@@ -5,6 +5,7 @@ import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
 import { reconcileRecipesUsing } from "../lib/quid-store";
+import { declarationToStore } from "../lib/ingredient-declaration";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
 import * as z from "zod";
@@ -149,7 +150,10 @@ function validateProcessingRatio(value: unknown): string | null {
 }
 
 router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, res) => {
-  const { name, unit, packWeight, costPerPack, secondaryCostPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, openedLifeDays, defrostLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, shopifyUnitsPerPack, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
+  const { name, unit, packWeight, costPerPack, secondaryCostPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, openedLifeDays, defrostLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, shopifyUnitsPerPack, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration: rawLabelDeclaration, allergens, nutritionalsAiEstimated } = req.body;
+  // A bare component list is stored wrapped under the ingredient's name
+  // (lib/ingredient-declaration.ts) so the deck never flags it.
+  const { value: labelDeclaration, wrapped: labelDeclarationWrapped } = declarationToStore(name, rawLabelDeclaration);
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const packsError = validateStockInPacks(stockInPacks, packWeight);
@@ -223,7 +227,7 @@ router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, r
     })
     .catch((err) => console.error(`QR code generation failed for ingredient ${row.id}:`, err));
 
-  res.status(201).json(mapRow(row));
+  res.status(201).json({ ...mapRow(row), labelDeclarationWrapped });
 });
 
 // Data-health worklist: every ingredient used by any recipe (directly or
@@ -430,7 +434,8 @@ router.get("/:id/usage", async (req, res) => {
 
 router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, unit, packWeight, costPerPack, secondaryCostPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, openedLifeDays, defrostLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, shopifyUnitsPerPack, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration, allergens, nutritionalsAiEstimated, novaClass } = req.body;
+  const { name, unit, packWeight, costPerPack, secondaryCostPerPack, brand, supplierPartNumber, supplierId, secondarySupplierId, orderingUrl, notes, processingRatio, rawMeatTrayCapacityKg, minCookingTempC, estimatedCookTimeMin, meatProcessMinutes, ovenTempC, steamPct, category, prepWeightMode, isBottle, bottleSize, prepCountPerPortion, isPasta, stockInPacks, stockCheckEnabled, stockCheckFrequency, stockCheckDay, surplusPercent, surplusMode, surplusAbsoluteQty, shelfLifeDays, requiresUseByDate, openedLifeDays, defrostLifeDays, kanbanEnabled, kanbanQuantity, kanbanUnit, kanbanOrderAmount, shopifyVariantId, shopifyProductTitle, shopifyVariantTitle, shopifyUnitsPerPack, perishable, palletSize, caseSizePacks, energyKj, energyKcal, fat, saturates, carbohydrate, sugars, protein, fibre, salt, labelDeclaration: rawLabelDeclaration, allergens, nutritionalsAiEstimated, novaClass } = req.body;
+  const { value: labelDeclaration, wrapped: labelDeclarationWrapped } = declarationToStore(name, rawLabelDeclaration);
   const ratioError = validateProcessingRatio(processingRatio);
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   if (novaClass !== undefined && novaClass !== null && ![1, 2, 3, 4].includes(Number(novaClass))) {
@@ -543,7 +548,7 @@ router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req,
     } : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
-  res.json(mapRow(row));
+  res.json({ ...mapRow(row), labelDeclarationWrapped });
 
   // Automatic QUID: a renamed ingredient (or new declaration / category)
   // may now be — or no longer be — what a recipe's name names.
