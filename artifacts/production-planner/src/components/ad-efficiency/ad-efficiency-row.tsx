@@ -15,8 +15,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import {
-  adWindows, earliestDayNeeded, measureWindow, recommend, roasBand, rollingSeries,
-  ROAS_BAND_WORDS, spendSourceLine, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
+  adWindows, earliestDayNeeded, measureWindow, recommend, roasBand, roasShade, roasVerdict, rollingSeries, shadeAtRatio, ROAS_SHADE_ANCHORS, ROAS_SHADE_STEPS,
+  spendSourceLine, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
 } from "@/lib/ad-efficiency";
 import { yesterdayLondon, type RoasResult, type RoasWindow } from "@/lib/roas";
 import { BAND_HEADER_CLASS, BAND_TEXT_CLASS, type KpiBand } from "@/lib/station-kpi-bands";
@@ -54,10 +54,7 @@ function scrubDayLabel(d: string): string {
   return dt.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
 }
 
-/** Hex per band for the line's colour bands (same colours as SPARK_CLASS). */
-const SPARK_HEX = { green: "#7cb342", amber: "#eab308", red: "#e11d48" } as const;
-
-function Sparkline({ points, target, band, caption, amberWidthPct }: { points: SparkPoint[]; target: number; band: KpiBand; caption: string; amberWidthPct: number }) {
+function Sparkline({ points, target, band, caption }: { points: SparkPoint[]; target: number; band: KpiBand; caption: string }) {
   const W = 300;
   const H = 56;
   // Hooks first — before the "not enough days" early return.
@@ -101,10 +98,16 @@ function Sparkline({ points, target, band, caption, amberWidthPct }: { points: S
   // the "just under" band, red below that. A hard-stop vertical gradient in
   // the chart's own coordinates, so each stretch of the line takes the colour
   // of its height.
+  // Since 2026-10-12 the line runs through the same 31 shades as the card
+  // header — each height takes the shade for that % of target.
   const toOffset = (v: number) => Math.min(1, Math.max(0, y(v) / H));
-  const targetOff = toOffset(target);
-  const amberOff = toOffset(target * (1 - amberWidthPct / 100));
-  const dotBand = last.percent! >= target ? "green" : last.percent! >= target * (1 - amberWidthPct / 100) ? "amber" : "red";
+  const lowRatio = ROAS_SHADE_ANCHORS[0]!.ratio;
+  const highRatio = ROAS_SHADE_ANCHORS[ROAS_SHADE_ANCHORS.length - 1]!.ratio;
+  const stops = Array.from({ length: ROAS_SHADE_STEPS + 1 }, (_, k) => {
+    const ratio = highRatio - (k / ROAS_SHADE_STEPS) * (highRatio - lowRatio);
+    return { offset: toOffset(target * ratio), hex: shadeAtRatio(ratio).hex };
+  });
+  const dotHex = shadeAtRatio(last.percent! / target).hex;
   return (
     <figure className="space-y-1">
       <div className="relative" data-no-swipe>
@@ -122,19 +125,14 @@ function Sparkline({ points, target, band, caption, amberWidthPct }: { points: S
         aria-label={`${caption}: from ${values[0]}% to ${values[values.length - 1]}%, target ${target}%`}>
         <defs>
           <linearGradient id={gradId} gradientUnits="userSpaceOnUse" x1={0} y1={0} x2={0} y2={H}>
-            <stop offset={0} stopColor={SPARK_HEX.green} />
-            <stop offset={targetOff} stopColor={SPARK_HEX.green} />
-            <stop offset={targetOff} stopColor={SPARK_HEX.amber} />
-            <stop offset={amberOff} stopColor={SPARK_HEX.amber} />
-            <stop offset={amberOff} stopColor={SPARK_HEX.red} />
-            <stop offset={1} stopColor={SPARK_HEX.red} />
+            {stops.map((st, k) => <stop key={k} offset={st.offset} stopColor={st.hex} />)}
           </linearGradient>
         </defs>
         <line x1={0} x2={W} y1={y(target)} y2={y(target)} className="stroke-muted-foreground/50" strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
         {segments.map((s, i) => (
           <polyline key={i} points={s} fill="none" stroke={`url(#${gradId})`} strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
         ))}
-        <circle cx={x(lastIdx)} cy={y(last.percent!)} r={3.5} fill={SPARK_HEX[dotBand]} />
+        <circle cx={x(lastIdx)} cy={y(last.percent!)} r={3.5} fill={dotHex} />
         {hover != null && points[hover]?.percent != null && (
           <>
             <line x1={x(hover)} x2={x(hover)} y1={0} y2={H} className="stroke-foreground/40" strokeWidth={1} vectorEffect="non-scaling-stroke" />
@@ -155,23 +153,21 @@ function Sparkline({ points, target, band, caption, amberWidthPct }: { points: S
  *  2026-10-12: "I should see 7 actual numbers… I like looking at each day as
  *  it comes through"), coloured against target like the line. The graph
  *  still shows all 30 days on hover/drag. */
-function LastSevenDays({ points, target, amberWidthPct }: { points: SparkPoint[]; target: number; amberWidthPct: number }) {
+function LastSevenDays({ points, target }: { points: SparkPoint[]; target: number }) {
   const last = points.slice(-7);
   if (last.length === 0) return null;
-  const chip = (band: KpiBand) =>
-    band === "green" ? "bg-[#7cb342]/15 text-[#33691e] dark:text-[#c5e1a5] border-[#7cb342]/40"
-      : band === "amber" ? "bg-yellow-400/20 text-yellow-900 dark:text-yellow-200 border-yellow-500/40"
-        : band === "red" ? "bg-rose-500/10 text-rose-700 dark:text-rose-300 border-rose-500/40"
-          : "bg-secondary text-muted-foreground border-border";
   return (
-    <div className="rounded-xl border border-border/60 divide-y divide-border/60" aria-label="Last 7 days">
+    <div className="space-y-px" aria-label="Last 7 days">
       {[...last].reverse().map(p => {
-        const band = roasBand(p.percent, target, amberWidthPct);
+        const shade = roasShade(p.percent, target);
         const d = new Date(`${p.date}T12:00:00Z`);
         return (
-          <div key={p.date} className="flex items-center justify-between px-2.5 py-1 text-sm">
+          <div key={p.date} className="flex items-center justify-between px-1 text-[13px] leading-5">
             <span className="text-muted-foreground">{d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" })}</span>
-            <span className={cn("rounded-md border px-1.5 text-sm font-bold tabular-nums", chip(band))}>{p.percent == null ? "—" : `${Math.round(p.percent)}%`}</span>
+            <span
+              className={cn("rounded px-1.5 font-bold tabular-nums", !shade && "bg-secondary text-muted-foreground", shade && (shade.darkBackground ? "text-white" : "text-stone-900"))}
+              style={shade ? { backgroundColor: shade.hex } : undefined}
+            >{p.percent == null ? "—" : `${Math.round(p.percent)}%`}</span>
           </div>
         );
       })}
@@ -193,14 +189,21 @@ function RoasCard({
   window: RoasWindow;
   revenueLabel: string;
 }) {
-  const band = roasBand(result.available ? result.percent : null, target, settings.amberWidthPct);
+  const shown = result.available ? result.percent : null;
+  const band = roasBand(shown, target, settings.amberWidthPct);
+  // Header shade: one of 31 from dark red to deep platinum, so the colour
+  // says HOW far above or below target (Graeme, 2026-10-12).
+  const shade = roasShade(shown, target);
   return (
     <div className="glass-panel rounded-2xl overflow-hidden flex flex-col">
-      <div className={cn("px-5 py-3", BAND_HEADER_CLASS[band], BAND_TEXT_CLASS[band])}>
+      <div
+        className={cn("px-5 py-3", shade ? (shade.darkBackground ? "text-white" : "text-stone-900") : [BAND_HEADER_CLASS[band], BAND_TEXT_CLASS[band]])}
+        style={shade ? { backgroundColor: shade.hex } : undefined}
+      >
         <p className="text-lg font-display font-bold leading-tight">{title}</p>
         {/* The window lives in the title ("7-day new customer ROAS") so it
             reads at a glance (Graeme, 2026-10-11); this line is the verdict. */}
-        <p className="text-sm font-semibold opacity-90">{ROAS_BAND_WORDS[band]}</p>
+        <p className="text-sm font-semibold opacity-90">{roasVerdict(shown, target, settings.amberWidthPct)}</p>
       </div>
       <div className="p-5 flex flex-col gap-4 flex-1">
         <div className="flex items-end justify-between gap-3 flex-wrap">
@@ -222,8 +225,8 @@ function RoasCard({
             <p className="text-2xl font-display font-bold tabular-nums">{pctText(target)}</p>
           </div>
         </div>
-        <Sparkline points={spark} target={target} band={band} caption={sparkCaption} amberWidthPct={settings.amberWidthPct} />
-        <LastSevenDays points={spark} target={target} amberWidthPct={settings.amberWidthPct} />
+        <Sparkline points={spark} target={target} band={band} caption={sparkCaption} />
+        <LastSevenDays points={spark} target={target} />
         {result.available && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-secondary/50 px-3 py-2">

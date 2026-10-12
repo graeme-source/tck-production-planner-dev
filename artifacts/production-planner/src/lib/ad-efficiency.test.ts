@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, rollingSeries,
+  adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, roasShade, roasVerdict, shadeAtRatio, ROAS_SHADE_STEPS, rollingSeries,
   spendSourceLine, windowOf, zeroSpendDays, type AdDay, type AdEfficiencySettings,
 } from "./ad-efficiency";
 import { addDays } from "./roas";
@@ -268,5 +268,37 @@ describe("spendSourceLine — which ad spend the cards count", () => {
   it("keeps a long list of typed days short", () => {
     const rows = Array.from({ length: 8 }, (_, i) => ({ date: `2026-10-0${i + 1}`, source: "manual" }));
     expect(spendSourceLine(rows, null)).toMatch(/8 Meta days typed by hand \(1 Oct, 2 Oct, 3 Oct, 4 Oct, 5 Oct and 3 more\)/);
+  });
+});
+
+describe("ROAS shade scale", () => {
+  it("runs from dark red to deep platinum in 31 shades", () => {
+    expect(shadeAtRatio(0.5)).toMatchObject({ step: 0, hex: "#7f1d1d", darkBackground: true });
+    expect(shadeAtRatio(2)).toMatchObject({ step: ROAS_SHADE_STEPS, hex: "#0f5f59", darkBackground: true });
+    const hexes = new Set(Array.from({ length: 81 }, (_, i) => shadeAtRatio(0.7 + i * 0.01).hex));
+    expect(hexes.size).toBe(ROAS_SHADE_STEPS + 1);
+  });
+  it("tells a bit above from well above target", () => {
+    const onTarget = roasShade(210, 210)!;
+    const bitAbove = roasShade(230, 210)!;
+    const wellAbove = roasShade(290, 210)!;
+    expect(onTarget.step).toBeLessThan(bitAbove.step);
+    expect(bitAbove.step).toBeLessThan(wellAbove.step);
+    expect(onTarget.hex).not.toBe(wellAbove.hex);
+  });
+  it("gets darker below target too", () => {
+    expect(roasShade(160, 210)!.step).toBeLessThan(roasShade(195, 210)!.step);
+  });
+  it("uses dark text on the yellow shades", () => {
+    expect(shadeAtRatio(0.95).darkBackground).toBe(false);
+  });
+  it("is null with no figure or target", () => {
+    expect(roasShade(null, 210)).toBeNull();
+    expect(roasShade(200, 0)).toBeNull();
+  });
+  it("says well above from 25% over target", () => {
+    expect(roasVerdict(271, 210, 10)).toBe("Well above target");
+    expect(roasVerdict(215, 210, 10)).toBe("On or above target");
+    expect(roasVerdict(195, 210, 10)).toBe("Just under target");
   });
 });

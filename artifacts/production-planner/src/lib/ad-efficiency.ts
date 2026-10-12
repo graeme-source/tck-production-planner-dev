@@ -176,6 +176,73 @@ export function roasBand(percent: number | null | undefined, targetPct: number, 
   return "red";
 }
 
+// ── Shade scale (Graeme, 2026-10-12) ─────────────────────────────────────
+// "The greens are just telling me that everything's great all the time… I
+// don't know how great." One continuous scale from dark red (way under
+// target) through yellow and brand green to a deep platinum teal (way over),
+// cut into ROAS_SHADE_STEPS + 1 shades so the colour alone says roughly how
+// far above or below target a figure is.
+
+/** Number of steps between the worst and best shade (31 shades in all). */
+export const ROAS_SHADE_STEPS = 30;
+
+/** Anchor colours by ratio of figure ÷ target; shades are interpolated
+ *  between them. Below the first ratio is the darkest red, above the last
+ *  the deepest platinum. */
+export const ROAS_SHADE_ANCHORS: ReadonlyArray<{ ratio: number; hex: string }> = [
+  { ratio: 0.7, hex: "#7f1d1d" },  // dark red — 30% or more under target
+  { ratio: 0.85, hex: "#e11d48" }, // red
+  { ratio: 0.95, hex: "#facc15" }, // yellow — just under
+  { ratio: 1.0, hex: "#7cb342" },  // brand green — on target
+  { ratio: 1.25, hex: "#059669" }, // emerald — well above
+  { ratio: 1.5, hex: "#0f5f59" },  // deep platinum teal — 50% or more over
+];
+
+export interface RoasShade {
+  /** 0 = worst (dark red) … ROAS_SHADE_STEPS = best (deep platinum). */
+  step: number;
+  hex: string;
+  /** True when white text reads better than dark text on this shade. */
+  darkBackground: boolean;
+}
+
+const hexToRgb = (h: string) => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+const rgbToHex = (rgb: number[]) => `#${rgb.map(v => Math.round(v).toString(16).padStart(2, "0")).join("")}`;
+
+/** Colour of the shade at a ratio, snapped to one of the 31 shades. */
+export function shadeAtRatio(ratio: number): RoasShade {
+  const first = ROAS_SHADE_ANCHORS[0]!;
+  const last = ROAS_SHADE_ANCHORS[ROAS_SHADE_ANCHORS.length - 1]!;
+  const t = Math.min(1, Math.max(0, (ratio - first.ratio) / (last.ratio - first.ratio)));
+  const step = Math.round(t * ROAS_SHADE_STEPS);
+  const r = first.ratio + (step / ROAS_SHADE_STEPS) * (last.ratio - first.ratio);
+  let i = 0;
+  while (i < ROAS_SHADE_ANCHORS.length - 2 && r > ROAS_SHADE_ANCHORS[i + 1]!.ratio) i++;
+  const a = ROAS_SHADE_ANCHORS[i]!;
+  const b = ROAS_SHADE_ANCHORS[i + 1]!;
+  const f = Math.min(1, Math.max(0, (r - a.ratio) / (b.ratio - a.ratio)));
+  const ca = hexToRgb(a.hex);
+  const cb = hexToRgb(b.hex);
+  const rgb = ca.map((v, k) => v + (cb[k]! - v) * f);
+  // Relative luminance (sRGB) — white text below ~0.4.
+  const lum = rgb.map(v => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  const L = 0.2126 * lum[0]! + 0.7152 * lum[1]! + 0.0722 * lum[2]!;
+  return { step, hex: rgbToHex(rgb), darkBackground: L < 0.4 };
+}
+
+/** Shade for a ROAS figure against its target; null when there's no figure. */
+export function roasShade(percent: number | null | undefined, targetPct: number): RoasShade | null {
+  if (percent == null || !Number.isFinite(percent) || !(targetPct > 0)) return null;
+  return shadeAtRatio(percent / targetPct);
+}
+
+/** Header verdict, finer than the band: "Well above target" from 25% over. */
+export function roasVerdict(percent: number | null | undefined, targetPct: number, amberWidthPct: number): string {
+  const band = roasBand(percent, targetPct, amberWidthPct);
+  if (band === "green" && percent! / targetPct >= 1.25 - EPS) return ROAS_BAND_WORDS.platinum;
+  return ROAS_BAND_WORDS[band];
+}
+
 export const ROAS_BAND_WORDS: Record<KpiBand, string> = {
   platinum: "Well above target",
   green: "On or above target",
