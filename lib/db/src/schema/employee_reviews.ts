@@ -1,6 +1,12 @@
 // Employee reviews, probation meetings and the ongoing record of a person's
 // time here (Graeme, 2026-09-03). See migration 0071_employee_reviews.sql.
 //
+// RETIRED 2026-10-12 (migration 0178): every meeting and note was copied into
+// the classified employment record — people_record_entries (a review is an
+// entry with a meeting status) and people_review_notes (its write-up). Nothing
+// reads or writes these tables any more; they are kept, untouched, as the
+// original. Don't build on them.
+//
 // Sensitive personal data: a note is PRIVATE to whoever wrote it until it is
 // deliberately shared to the employee's record. Who may read what is decided
 // by employee-review-visibility.ts and applied on the server — never by
