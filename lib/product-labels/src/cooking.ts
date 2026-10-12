@@ -3,14 +3,17 @@
  *
  * Customers set the FULL time and forgot to turn the calzones, so the tops
  * burnt (Graeme, 2026-10-11). Step 2 reads cook → TURN OVER → cook again:
- * a FIXED first half, and the range only on the second (Graeme, 2026-10-12):
+ * a FIXED first half, and the range only on the second (Graeme, 2026-10-12).
+ * The second cook is never longer than the first — the main cook goes in
+ * before turning (Graeme, 2026-10-12 pm):
  *
- *   first  = half the midpoint, rounded half up = round(((min + max) / 2) / 2)
+ *   first  = half the longest time, rounded up = ceil(max / 2)
  *   second = (min − first) – (max − first), never below 1 minute
  *
- * so first + second always adds up to the stated total range:
- *   oven 18–22      → 10, then 8–12
- *   air fryer 16–19 →  9, then 7–10
+ * so first + second always adds up to the stated total range, the range
+ * keeps its width, and the second's top end is never above the first:
+ *   oven 18–22      → 11, then 7–11
+ *   air fryer 16–19 → 10, then 6–9
  *
  * If the first half would leave less than a minute for the second (a total
  * under 2 minutes), the first half is capped so the second is still 1.
@@ -26,9 +29,7 @@ export interface HalvedRange {
 
 export function halveRange(min: number | null, max: number | null): HalvedRange | null {
   if (min == null || max == null || min < 2 || max < min) return null;
-  const midHalf = (min + max) / 4;
-  const rounded = Math.floor(midHalf + 0.5); // half up
-  const first = Math.max(1, Math.min(rounded, min - 1));
+  const first = Math.max(1, Math.min(Math.ceil(max / 2), min - 1));
   return { first, second: [min - first, max - first] };
 }
 
