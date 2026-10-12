@@ -115,10 +115,138 @@ export function writeUpRows(w: WriteUpInput): WriteUpRow[] {
  *  closed counts. A booked or held review with nothing written isn't. */
 export function meetingWrittenUp(e: {
   meetingStatus: MeetingStatus | null; outcome: string | null; status: string; writeUpCount: number;
+  /** The entry's own notes box. Notes typed there ARE the write-up (Graeme,
+   *  2026-10-12: "I don't want to then be asked to add more notes"). */
+  notes?: string | null;
 }): boolean {
   if (e.meetingStatus === "cancelled") return true;
-  if ((e.outcome ?? "").trim() || e.writeUpCount > 0) return true;
+  if ((e.outcome ?? "").trim() || e.writeUpCount > 0 || (e.notes ?? "").trim()) return true;
   return e.meetingStatus == null && e.status === "closed";
+}
+
+// ── "What happened" — ONE write-up per meeting ─────────────────────────────
+//
+// Graeme, 2026-10-12: "It looks like we've got two different UIs for adding
+// information to the same meeting." The entry's notes box (typed at booking
+// or after) and the write-up parts (summary, what was agreed, actions) are
+// one thing on screen: the notes first, then the parts, nothing dropped.
+
+export interface WhatHappened<N> {
+  /** The entry's own notes (People access only, never shared), or null. */
+  recordNotes: string | null;
+  /** The write-up parts, in the order they were written. */
+  parts: N[];
+  hasContent: boolean;
+}
+
+export function whatHappened<N>(e: { notes: string | null; writeUp: readonly N[] }): WhatHappened<N> {
+  const recordNotes = (e.notes ?? "").trim() ? e.notes : null;
+  return { recordNotes, parts: [...e.writeUp], hasContent: recordNotes != null || e.writeUp.length > 0 };
+}
+
+/** Notes typed on a BOOKED review once its day has come mean it happened —
+ *  mark it held. Notes typed ahead of the day (agenda, prep) don't. */
+export function heldByNotes(e: { meetingStatus: MeetingStatus | null; meetingDate: string | null; entryDate: string },
+  notes: string | null | undefined, todayIso: string): boolean {
+  return e.meetingStatus === "booked" && !!(notes ?? "").trim() && reviewDay(e) <= todayIso;
+}
+
+/** Everything already written on a meeting as plain text — what "Use what's
+ *  already here" hands the AI, so nothing typed earlier is asked for again. */
+export function whatHappenedText(e: {
+  notes: string | null;
+  writeUp: ReadonlyArray<{ kind: string; title: string | null; body: string }>;
+}): string {
+  const out: string[] = [];
+  const notes = (e.notes ?? "").trim();
+  if (notes) out.push(notes);
+  for (const n of e.writeUp) {
+    const label = NOTE_KIND_LABEL[(NOTE_KINDS as readonly string[]).includes(n.kind) ? n.kind as NoteKind : "note"];
+    out.push(`${label}: ${n.title ? `${n.title}\n` : ""}${n.body.trim()}`);
+  }
+  return out.join("\n\n");
+}
+
+/** The classification a meeting scheduled without picking one starts as:
+ *  the active one flagged for meetings (data, migration 0182), else the
+ *  first active one in the list's order. */
+export function defaultMeetingClassification<C extends { id: number; sortOrder: number; label: string; active: boolean; defaultForMeetings?: boolean }>(
+  list: readonly C[],
+): C | null {
+  const active = list.filter(c => c.active);
+  return active.find(c => c.defaultForMeetings)
+    ?? [...active].sort((a, b) => a.sortOrder - b.sortOrder || a.label.localeCompare(b.label))[0]
+    ?? null;
+}
+
+// ── Meeting notes drafted by AI ────────────────────────────────────────────
+
+export const ACTION_OWNERS = ["me", "colleague", "other"] as const;
+export type ActionOwner = (typeof ACTION_OWNERS)[number];
+
+/** What "Add meeting notes (AI)" drafts and Graeme checks before saving. */
+export interface MeetingNotesDraft {
+  /** e.g. "Maternity review meeting". */
+  title: string;
+  /** Short and factual. */
+  summary: string;
+  /** What was agreed — dates, hours, amounts kept in the words. */
+  agreements: Array<{ what: string; detail: string | null; date: string | null }>;
+  /** Follow-ups: me = whoever is recording it, colleague = the person whose
+   *  record it is, other = someone else (ownerName says who). */
+  actions: Array<{ what: string; owner: ActionOwner; ownerName: string | null; date: string | null }>;
+  /** A suggestion from the classification list, or null. */
+  classificationId: number | null;
+}
+
+export const SUMMARY_TITLE = "Summary";
+export const ACTIONS_TITLE = "Follow-up actions";
+
+/** The write-up rows a checked draft saves: the summary, each agreement as
+ *  an objective (so it lands in "What we agreed"), then the actions as one
+ *  note. Blank parts are dropped. Names belong to the record — they never
+ *  go near a to-do (see actionTodos). */
+export function meetingNotesRows(d: Pick<MeetingNotesDraft, "summary" | "agreements" | "actions">, who: {
+  me: string; colleague: string;
+}): WriteUpRow[] {
+  const rows: WriteUpRow[] = [];
+  const summary = d.summary.trim();
+  if (summary) rows.push({ kind: "note", title: SUMMARY_TITLE, body: summary, dueDate: null });
+  for (const a of d.agreements) {
+    const what = a.what.trim();
+    const detail = (a.detail ?? "").trim();
+    if (!what && !detail) continue;
+    rows.push(what && detail
+      ? { kind: "objective", title: what, body: detail, dueDate: a.date ?? null }
+      : { kind: "objective", title: null, body: what || detail, dueDate: a.date ?? null });
+  }
+  const lines = d.actions
+    .filter(a => a.what.trim())
+    .map(a => {
+      const owner = a.owner === "me" ? who.me : a.owner === "colleague" ? who.colleague : (a.ownerName ?? "").trim() || "Someone";
+      return `• ${a.what.trim()} — ${owner}${a.date ? ` (by ${fmtDayShort(a.date)})` : ""}`;
+    });
+  if (lines.length) rows.push({ kind: "note", title: ACTIONS_TITLE, body: lines.join("\n"), dueDate: null });
+  return rows;
+}
+
+/** The booker's own actions become discreet to-dos (generic title, no names
+ *  — recordTodo kind "action"); one with no date sits a week out. */
+export function actionTodos(actions: MeetingNotesDraft["actions"], todayIso: string): Array<{ date: string }> {
+  return actions
+    .filter(a => a.owner === "me" && a.what.trim())
+    .map(a => ({ date: a.date && /^\d{4}-\d{2}-\d{2}$/.test(a.date) ? a.date : addDaysIso(todayIso, 7) }));
+}
+
+function addDaysIso(iso: string, days: number): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function fmtDayShort(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 }
 
 // ── The employee's own view ────────────────────────────────────────────────

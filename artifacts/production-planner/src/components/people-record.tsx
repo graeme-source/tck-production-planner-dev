@@ -689,7 +689,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           </button>
           <button onClick={() => setModal("book")} disabled={!canManage}
             className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
-            <CalendarDays className="w-6 h-6 shrink-0" /> Book a review
+            <CalendarDays className="w-6 h-6 shrink-0" /> Schedule a meeting
           </button>
         </div>
       </section>
@@ -862,7 +862,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           onOpened={form => { setModal(null); setOpenForm(form); refreshAll(); }} />
       )}
       {modal === "book" && recordEntries.data && (
-        <PeopleModal title={`Book a review — ${p.name}`} onClose={() => setModal(null)} wide>
+        <PeopleModal title={`Schedule a meeting — ${p.name}`} onClose={() => setModal(null)} wide>
           {/* Then the review opens, to write it up or change anything. */}
           <BookReviewForm data={recordEntries.data} onCancel={() => setModal(null)}
             onCreated={id => { setModal(null); refreshReviews(); openEntryInPanel(id); }} />

@@ -136,7 +136,7 @@ function AttentionCard({ item, onDone }: { item: Card; today: string; onDone: ()
 
       {mode === null && (
         <div className="grid gap-2 grid-cols-2">
-          {e && <Btn tone="primary" onClick={() => openEntry(e.id)}>{item.kind === "meeting_write_up" ? "Write it up" : "Open · book a meeting"}</Btn>}
+          {e && <Btn tone="primary" onClick={() => openEntry(e.id)}>{item.kind === "meeting_write_up" ? "Add meeting notes" : "Open · book a meeting"}</Btn>}
           {item.kind === "review_due" && e && <Btn onClick={() => setMode("extend")}>Extend</Btn>}
           {item.kind === "review_due" && e && (
             <Btn disabled={busy} onClick={() => void run(() => recordSend("PATCH", `/entries/${e.id}`, { status: "closed", outcome: "Resolved" }), "Closed as resolved")}>Close as resolved</Btn>

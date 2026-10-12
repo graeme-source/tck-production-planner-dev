@@ -83,11 +83,12 @@ export async function loadAttentionItems(today = londonTodayIso()): Promise<Atte
     db.execute<{
       id: number; user_id: number; status: string; review_end: string | null; meeting_date: string | null; outcome: string | null;
       warning_expires_on: string | null; warning_withdrawn_at: string | null; stage_type: string | null; uses_stage: boolean;
-      meeting_status: string | null; write_ups: number;
+      meeting_status: string | null; write_ups: number; has_notes: boolean;
     }>(sql`
       SELECT e.id, e.user_id, e.status, e.review_end::text, e.meeting_date::text, e.outcome,
              e.warning_expires_on::text, e.warning_withdrawn_at::text, s.type AS stage_type,
              ('stage' = ANY(c.field_sets)) AS uses_stage, e.meeting_status,
+             (btrim(COALESCE(e.notes, '')) <> '') AS has_notes,
              (SELECT COUNT(*)::int FROM people_review_notes n WHERE n.entry_id = e.id AND n.deleted_at IS NULL) AS write_ups
         FROM people_record_entries e
         JOIN app_users u ON u.id = e.user_id AND u.is_active = TRUE
@@ -106,11 +107,14 @@ export async function loadAttentionItems(today = londonTodayIso()): Promise<Atte
     meetings: entries.rows
       .filter(e => e.meeting_date)
       // A review needs writing up once its day comes (lib/people-reviews
-      // meetingWrittenUp): a write-up note or an outcome answers it, a
-      // cancelled one never asks.
+      // meetingWrittenUp): a write-up note, notes typed on the entry or an
+      // outcome answers it, a cancelled one never asks.
       .map(e => ({
         entryId: Number(e.id), userId: Number(e.user_id), meetingDate: e.meeting_date!,
-        writtenUp: meetingWrittenUp({ meetingStatus: (e.meeting_status as MeetingStatus | null) ?? null, outcome: e.outcome, status: e.status, writeUpCount: Number(e.write_ups) }),
+        writtenUp: meetingWrittenUp({
+          meetingStatus: (e.meeting_status as MeetingStatus | null) ?? null, outcome: e.outcome, status: e.status,
+          writeUpCount: Number(e.write_ups), notes: e.has_notes ? "yes" : null,
+        }),
       })),
   };
   return attentionQueue(facts);

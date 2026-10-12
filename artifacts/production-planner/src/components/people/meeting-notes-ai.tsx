@@ -1,0 +1,322 @@
+/**
+ * "Add meeting notes (AI)" (Graeme, 2026-10-12: "record the meeting on AI
+ * note summary and then upload that summary. I just give you the URL, and
+ * then you scrape it and build the record… I don't need to do loads of
+ * admin").
+ *
+ *   1. Paste the Wispr Flow shared link — or the notes themselves (big box,
+ *      dictation too), or reuse what's already written on the meeting.
+ *   2. The server reads it and Claude drafts: a title from the topic, a
+ *      short summary, what was agreed, follow-up actions with owners and
+ *      dates, and a suggested classification.
+ *   3. Graeme checks and edits the draft. NOTHING is on the record until he
+ *      presses Save to record — the panel says so the whole time. The draft
+ *      is held in memory for this tab (never on disk: HR notes on a shared
+ *      iPad) so closing the pop-up by accident doesn't lose it.
+ *   4. Saved → private to him; "Share with <name>" is the next, separate tap.
+ *
+ * Server: routes/people-meeting-notes.ts (People PIN, the write rule, zod).
+ */
+import { useEffect, useState } from "react";
+import { useMutation } from "@tanstack/react-query";
+import {
+  AlertTriangle, Check, ClipboardPaste, Link2, Loader2, Plus, RotateCcw, Sparkles, Trash2, X,
+} from "lucide-react";
+import {
+  sortClassifications, whatHappenedText, ACTION_OWNERS, type ActionOwner, type MeetingNotesDraft,
+} from "@workspace/people-reviews";
+import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
+import { DictateButton } from "@/components/dictate-button";
+import { FieldLabel, PillButton } from "./review-fields";
+import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
+
+type Action = MeetingNotesDraft["actions"][number] & { todo: boolean };
+interface Draft extends Omit<MeetingNotesDraft, "actions"> { actions: Action[] }
+interface Source { kind: "url" | "text"; url: string | null; text: string }
+interface ReadResult { draft: MeetingNotesDraft; repaired: string[]; source: Source }
+
+interface Held {
+  mode: "url" | "text";
+  url: string;
+  text: string;
+  draft: Draft | null;
+  source: Source | null;
+  repaired: string[];
+}
+
+/** Drafts in progress, per meeting, for this tab only (never persisted). */
+const heldDrafts = new Map<number, Held>();
+
+const box = "w-full px-4 py-3 rounded-2xl border-2 border-border bg-background text-lg leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30";
+const input = "w-full h-12 px-4 rounded-xl border-2 border-border bg-background text-lg focus:outline-none focus:ring-2 focus:ring-primary/30";
+
+export function hasHeldDraft(entryId: number): boolean {
+  return heldDrafts.get(entryId)?.draft != null;
+}
+
+export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
+  entry: RecordEntry;
+  data: PersonRecordEntries;
+  personName: string;
+  onSaved: () => void;
+  onClose: () => void;
+}) {
+  const first = personName.split(" ")[0];
+  const start = heldDrafts.get(entry.id);
+  const [mode, setMode] = useState<"url" | "text">(start?.mode ?? "url");
+  const [url, setUrl] = useState(start?.url ?? "");
+  const [text, setText] = useState(start?.text ?? "");
+  const [draft, setDraft] = useState<Draft | null>(start?.draft ?? null);
+  const [source, setSource] = useState<Source | null>(start?.source ?? null);
+  const [repaired, setRepaired] = useState<string[]>(start?.repaired ?? []);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  const existing = whatHappenedText(entry);
+  const classifications = sortClassifications(data.classifications).filter(c => c.active || c.id === entry.classificationId);
+
+  // Keep the work in memory as it changes.
+  useEffect(() => {
+    heldDrafts.set(entry.id, { mode, url, text, draft, source, repaired });
+  }, [entry.id, mode, url, text, draft, source, repaired]);
+
+  const read = useMutation({
+    mutationFn: (body: { url: string } | { text: string }) =>
+      recordSend<ReadResult>("POST", `/entries/${entry.id}/meeting-notes/read`, body),
+    onSuccess: r => {
+      setReadError(null);
+      setSource(r.source);
+      setRepaired(r.repaired);
+      setDraft({ ...r.draft, actions: r.draft.actions.map(a => ({ ...a, todo: a.owner === "me" })) });
+    },
+    onError: (e: unknown) => {
+      const msg = e instanceof Error ? e.message : "Couldn't read the notes";
+      setReadError(msg);
+      // A link we can't read → straight to pasting, with the reason on screen.
+      if (mode === "url") setMode("text");
+    },
+  });
+
+  const save = useMutation({
+    mutationFn: (d: Draft) => recordSend<{ created: number; todos: number }>("POST", `/entries/${entry.id}/meeting-notes`, {
+      title: d.title, classificationId: d.classificationId, summary: d.summary,
+      agreements: d.agreements.map(a => ({ what: a.what, detail: a.detail || null, date: a.date || null })),
+      actions: d.actions.map(a => ({ what: a.what, owner: a.owner, ownerName: a.owner === "other" ? (a.ownerName || null) : null, date: a.date || null, todo: a.owner === "me" && a.todo })),
+      source,
+    }),
+    onSuccess: r => {
+      heldDrafts.delete(entry.id);
+      toast({
+        title: "Saved to the record — private to you",
+        description: `${r.todos ? `${r.todos} to-do${r.todos === 1 ? "" : "s"} on your list. ` : ""}Share it with ${first} when you're ready.`,
+      });
+      onSaved();
+    },
+    onError: (e: unknown) => {
+      toast({ title: "Couldn't save it", description: e instanceof Error ? e.message : "Try again — the draft is still here", variant: "destructive" });
+    },
+  });
+
+  const discard = () => { heldDrafts.delete(entry.id); onClose(); };
+  const set = (patch: Partial<Draft>) => setDraft(d => (d ? { ...d, ...patch } : d));
+
+  // ── Step 1: the notes ────────────────────────────────────────────────────
+  if (!draft) {
+    const canRead = mode === "url" ? url.trim().length > 0 : text.trim().length >= 20;
+    return (
+      <div className="rounded-3xl border-2 border-primary/50 bg-card p-4 space-y-4">
+        <div className="flex items-start gap-3">
+          <Sparkles className="w-6 h-6 text-primary shrink-0 mt-1" />
+          <div className="flex-1 min-w-0">
+            <h4 className="text-xl font-bold">Add meeting notes (AI)</h4>
+            <p className="text-base text-muted-foreground">Paste the Wispr Flow link or the notes. The AI drafts the record; you check it before anything is saved.</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-xl text-muted-foreground hover:bg-secondary"><X className="w-6 h-6" /></button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-2">
+          {([["url", "Paste a link", Link2], ["text", "Paste the notes", ClipboardPaste]] as const).map(([k, label, Icon]) => (
+            <button key={k} type="button" onClick={() => setMode(k)} aria-pressed={mode === k}
+              className={cn("h-14 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-2",
+                mode === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground")}>
+              <Icon className="w-5 h-5" /> {label}
+            </button>
+          ))}
+        </div>
+
+        {readError && (
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800 p-4 flex items-start gap-3">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <p className="text-base font-semibold text-amber-950 dark:text-amber-100">{readError}</p>
+          </div>
+        )}
+
+        {mode === "url" ? (
+          <label className="block space-y-1.5">
+            <FieldLabel>Shared notes link</FieldLabel>
+            <input value={url} onChange={e => setUrl(e.target.value)} inputMode="url" autoCapitalize="off" autoCorrect="off"
+              placeholder="https://notes.wisprflow.ai/shared/…" className={cn(input, "h-14")} />
+            <span className="block text-sm text-muted-foreground">Wispr Flow shared links only. For anything else, paste the notes.</span>
+          </label>
+        ) : (
+          <div className="space-y-2">
+            <FieldLabel>The notes</FieldLabel>
+            <textarea value={text} onChange={e => setText(e.target.value)} rows={10} maxLength={60_000}
+              placeholder="Paste the meeting summary or transcript here — or dictate it." className={cn(box, "resize-y")} />
+            <DictateButton value={text} onChange={setText} context="note" size="lg" />
+            {existing && text.trim() !== existing.trim() && (
+              <button type="button" onClick={() => setText(t => (t.trim() ? `${t.trim()}\n\n${existing}` : existing))}
+                className="w-full h-12 rounded-2xl border-2 border-border text-base font-bold hover:bg-secondary/50">
+                Use what's already written on this meeting
+              </button>
+            )}
+          </div>
+        )}
+
+        <button type="button" disabled={!canRead || read.isPending}
+          onClick={() => read.mutate(mode === "url" ? { url: url.trim() } : { text })}
+          className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+          {read.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6" />}
+          {read.isPending ? "Reading the notes… about 20 seconds" : "Read the notes"}
+        </button>
+      </div>
+    );
+  }
+
+  // ── Step 2: check the draft, then save ───────────────────────────────────
+  const suggested = classifications.find(c => c.id === draft.classificationId);
+  const current = classifications.find(c => c.id === entry.classificationId);
+  return (
+    <div className="rounded-3xl border-2 border-primary/50 bg-card p-4 space-y-5">
+      <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800 px-4 py-3 flex items-center gap-3" role="status">
+        <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
+        <p className="text-base font-bold text-amber-950 dark:text-amber-100">Not saved yet — check it, then press Save to record.</p>
+      </div>
+
+      {repaired.length > 0 && (
+        <p className="text-sm text-muted-foreground">The AI's answer needed tidying: {repaired.join("; ")}.</p>
+      )}
+
+      <label className="block space-y-1.5">
+        <FieldLabel>Title</FieldLabel>
+        <input value={draft.title} onChange={e => set({ title: e.target.value })} maxLength={120} className={cn(input, "h-14 font-bold")} />
+      </label>
+
+      <div className="space-y-1.5">
+        <FieldLabel>What's it about?</FieldLabel>
+        <p className="text-sm text-muted-foreground">
+          {suggested ? `The AI suggests "${suggested.label}".` : "The AI didn't suggest one."} Now: {current?.label ?? "—"}. Tap to change, or leave it.
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {classifications.filter(c => c.active).map(c => (
+            <PillButton key={c.id} selected={(draft.classificationId ?? entry.classificationId) === c.id}
+              onClick={() => set({ classificationId: c.id })}>{c.label}</PillButton>
+          ))}
+        </div>
+      </div>
+
+      <label className="block space-y-1.5">
+        <FieldLabel>Summary</FieldLabel>
+        <textarea value={draft.summary} onChange={e => set({ summary: e.target.value })} rows={5} maxLength={4000} className={cn(box, "resize-y")} />
+      </label>
+
+      <div className="space-y-2">
+        <FieldLabel>What was agreed</FieldLabel>
+        <p className="text-sm text-muted-foreground -mt-1">These show under "What we agreed" on the record — and to {first} once shared.</p>
+        {draft.agreements.length === 0 && <p className="text-base text-muted-foreground">Nothing agreed — that's fine.</p>}
+        {draft.agreements.map((a, i) => (
+          <div key={i} className="rounded-2xl border-2 border-border p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <input value={a.what} placeholder="e.g. Return date" maxLength={300}
+                onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? { ...v, what: e.target.value } : v)) })}
+                className={cn(input, "flex-1 min-w-0 font-bold")} />
+              <button type="button" aria-label="Remove this agreement" onClick={() => set({ agreements: draft.agreements.filter((_, j) => j !== i) })}
+                className="p-3 text-muted-foreground hover:text-destructive"><Trash2 className="w-5 h-5" /></button>
+            </div>
+            <textarea value={a.detail ?? ""} rows={2} maxLength={2000} placeholder="The details — dates, hours, amounts"
+              onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? { ...v, detail: e.target.value } : v)) })}
+              className={cn(box, "resize-y text-base")} />
+            <label className="block space-y-1">
+              <span className="text-sm font-bold">Date (optional)</span>
+              <input type="date" value={a.date ?? ""}
+                onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? { ...v, date: e.target.value || null } : v)) })}
+                className={cn(input, "text-base font-bold")} />
+            </label>
+          </div>
+        ))}
+        <button type="button" onClick={() => set({ agreements: [...draft.agreements, { what: "", detail: null, date: null }] })}
+          className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add an agreement</button>
+      </div>
+
+      <div className="space-y-2">
+        <FieldLabel>Follow-up actions</FieldLabel>
+        {draft.actions.length === 0 && <p className="text-base text-muted-foreground">No actions.</p>}
+        {draft.actions.map((a, i) => {
+          const upd = (p: Partial<Action>) => set({ actions: draft.actions.map((v, j) => (j === i ? { ...v, ...p } : v)) });
+          return (
+            <div key={i} className="rounded-2xl border-2 border-border p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <input value={a.what} maxLength={300} onChange={e => upd({ what: e.target.value })} className={cn(input, "flex-1 min-w-0 font-bold")} />
+                <button type="button" aria-label="Remove this action" onClick={() => set({ actions: draft.actions.filter((_, j) => j !== i) })}
+                  className="p-3 text-muted-foreground hover:text-destructive"><Trash2 className="w-5 h-5" /></button>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {ACTION_OWNERS.map((o: ActionOwner) => (
+                  <button key={o} type="button" onClick={() => upd({ owner: o, todo: o === "me" })} aria-pressed={a.owner === o}
+                    className={cn("h-12 rounded-xl border-2 text-base font-bold", a.owner === o ? "border-primary bg-primary/10 text-primary" : "border-border")}>
+                    {o === "me" ? "Me" : o === "colleague" ? first : "Someone else"}
+                  </button>
+                ))}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {a.owner === "other" && (
+                  <input value={a.ownerName ?? ""} placeholder="Who?" maxLength={80} onChange={e => upd({ ownerName: e.target.value })} className={input} />
+                )}
+                <input type="date" value={a.date ?? ""} aria-label="By when" onChange={e => upd({ date: e.target.value || null })} className={cn(input, "text-base font-bold")} />
+              </div>
+              {a.owner === "me" && (
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <input type="checkbox" checked={a.todo} onChange={e => upd({ todo: e.target.checked })} className="w-5 h-5 accent-emerald-600" />
+                  <span className="text-base font-semibold">Put it on my to-do list <span className="font-normal text-muted-foreground">("HR action due — tap here", {a.date ? "that day" : "a week from today"})</span></span>
+                </label>
+              )}
+            </div>
+          );
+        })}
+        <button type="button" onClick={() => set({ actions: [...draft.actions, { what: "", owner: "me", ownerName: null, date: null, todo: true }] })}
+          className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add an action</button>
+      </div>
+
+      <p className="text-sm text-muted-foreground">
+        Saving marks the meeting held and keeps the original notes{source?.url ? " and link" : ""} on it (People access only). It stays private to you until you tap Share with {first}.
+      </p>
+
+      {confirmDiscard ? (
+        <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
+          <p className="text-lg font-bold">Throw this draft away?</p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" onClick={discard} className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold">Yes, throw it away</button>
+            <button type="button" onClick={() => setConfirmDiscard(false)} className="h-14 rounded-2xl border-2 border-border text-lg font-bold">Keep it</button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <button type="button" disabled={save.isPending} onClick={() => save.mutate(draft)}
+            className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+            {save.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Check className="w-6 h-6" />} Save to record
+          </button>
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" onClick={() => { setDraft(null); setSource(null); }}
+              className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
+              <RotateCcw className="w-5 h-5" /> Read again
+            </button>
+            <button type="button" onClick={() => setConfirmDiscard(true)}
+              className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
+              <X className="w-5 h-5" /> Discard
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

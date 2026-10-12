@@ -55,6 +55,8 @@ export interface Classification {
   fieldSets: FieldSet[];
   evidence: EvidenceKind | null;
   active: boolean;
+  /** What a newly scheduled meeting starts as (migration 0182). */
+  defaultForMeetings?: boolean;
 }
 
 /** The seeded list (migration 0170 inserts exactly this), in Graeme's order. */
@@ -455,7 +457,9 @@ export function cleanChecklist(type: MeetingType | null | undefined, keys: reado
 
 // ── To-dos (meeting day, next review date) ─────────────────────────────────
 
-export type TodoKind = "meeting" | "review";
+/** meeting = the booked day; review = the next-review date; action = a
+ *  follow-up action from a meeting's notes that is the booker's own. */
+export type TodoKind = "meeting" | "review" | "action";
 
 export interface TodoInput {
   kind: TodoKind;
@@ -481,6 +485,7 @@ export function recordTodo(i: TodoInput) {
     createdByName: i.ownerName,
     title: i.kind === "meeting"
       ? `HR meeting${i.time ? ` at ${i.time}` : ""} — tap here`
+      : i.kind === "action" ? "HR action due — tap here"
       : "HR follow-up due — tap here",
     notes: "Details are in HR (private — needs your People PIN).",
     url: `/people/${i.subjectUserId}?entry=${i.entryId}`,
