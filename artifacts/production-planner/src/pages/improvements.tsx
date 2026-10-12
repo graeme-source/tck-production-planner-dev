@@ -38,6 +38,8 @@ import { scrollAppToTop } from "@/lib/scroll";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { CreditPeoplePicker, ImprovementCreditEditor } from "@/components/credit-people-picker";
 import { creditIds, creditLabel, isCreditedTo } from "@/lib/improvement-credits";
+import { LeanerBoard } from "@/components/leaner-board";
+import { CreditBadge, CreditWeightControl, useIsFounder } from "@/components/improvement-credit-weight";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -97,6 +99,9 @@ type Improvement = {
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
   /** Has THIS viewer opened it? Powers the To-review tab and NEW markers. */
   seenByMe?: boolean;
+  /** Credits on the improvement score: 1, or 2/3 when the founder marked
+   *  it a great / substantial one (migration 0170). */
+  creditWeight?: number;
   /** Emoji applause, aggregated: [{emoji, count, mine}]. */
   reactions?: Array<{ emoji: string; count: number; mine: boolean }>;
 };
@@ -150,8 +155,6 @@ function ReactionBar({ item }: { item: Improvement }) {
 // Feed media rendering lives in components/improvement-feed-media.tsx —
 // shared with the meeting's Recent Improvements slide so both tell the
 // story the same way (stitched clip first, before/after pair otherwise).
-
-type ScoreRow = { userId: number | null; name: string; count: number; signedOff: number; lastAt: string | null };
 
 /** A done improvement's chip carries the doer's name — "To do" on finished
  *  work read as nonsense (Graeme, 2026-09-02). */
@@ -324,7 +327,7 @@ export default function Improvements() {
         <>
           {/* Leaner-board first — start by seeing the team's tallies
               (Graeme, 2026-09-10). */}
-          <Scoreboard />
+          <LeanerBoard />
 
           {/* One timeline, two kind FILTERS that combine rather than exclude. */}
           <div className="flex gap-2">
@@ -547,6 +550,7 @@ function LoadOlder({ remaining, onLoad }: { remaining: number; onLoad: () => voi
 }
 
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
+  const isFounder = useIsFounder();
   // Read it and scroll past it = seen (Graeme, 2026-10-01). Recorded at
   // once (nav count, NEW badge), but the card stays where it is — showing
   // "Seen ✓" — until the list next refreshes, so the To review list never
@@ -585,6 +589,7 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
           <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
             {stageChipText(item)}
           </span>
+          {!isIdea(item) && <CreditBadge weight={item.creditWeight} />}
           {needsReview(item) && (
             <span className="text-xs px-2 py-1 rounded-lg font-bold bg-blue-600 text-white" title="You haven't opened this yet">NEW</span>
           )}
@@ -614,6 +619,13 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       <div className="mt-3">
         <ReactionBar item={item} />
       </div>
+      {/* The founder's ×1 / ×2 / ×3, right where he reads the feed
+          (Graeme, 2026-10-12). Done work only — an idea earns nothing yet. */}
+      {isFounder && !isIdea(item) && (
+        <div className="mt-3">
+          <CreditWeightControl improvementId={item.id} weight={item.creditWeight} />
+        </div>
+      )}
       {(item.stage === "todo" || needsReview(item)) && (
         <div className="mt-3 flex gap-2 flex-wrap">
           {item.stage === "todo" && (
@@ -759,6 +771,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const currentUserId = state.status === "authenticated" ? state.user.id : null;
+  const isFounder = useIsFounder();
   const [sendBackNote, setSendBackNote] = useState("");
 
   // Opening one counts as having looked at it, and takes it off the nav
@@ -883,9 +896,12 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
       </button>
 
       <div>
-        <span className={cn("text-sm px-3 py-1.5 rounded-lg font-bold inline-block mb-3", STAGE_STYLE[item.stage])}>
-          {stageChipText(item)}
-        </span>
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <span className={cn("text-sm px-3 py-1.5 rounded-lg font-bold inline-block", STAGE_STYLE[item.stage])}>
+            {stageChipText(item)}
+          </span>
+          {!isIdea(item) && <CreditBadge weight={item.creditWeight} className="text-sm px-3 py-1.5" />}
+        </div>
         <h1 className="text-3xl font-bold leading-snug break-words">{item.title}</h1>
         {item.description && item.description !== item.title && (
           <p className="text-xl leading-relaxed mt-3 whitespace-pre-wrap">{item.description}</p>
@@ -905,6 +921,10 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             : "Up for grabs — nobody has picked this up"}
         </p>
       </div>
+
+      {isFounder && !isIdea(item) && (
+        <CreditWeightControl improvementId={item.id} weight={item.creditWeight} size="detail" />
+      )}
 
       {/* Forced testing (2026-10-10): ask whoever logged it (always) to try
           the change for real. Managers and admins — the page enforces it. */}
@@ -1199,44 +1219,4 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   );
 }
 
-// ─── Who's improving ──────────────────────────────────────────────────────────
-
-function Scoreboard() {
-  const { data = [] } = useQuery<ScoreRow[]>({
-    queryKey: ["improvement-scoreboard"],
-    queryFn: () => api<ScoreRow[]>("/improvements/scoreboard"),
-  });
-  if (data.length === 0) return null;
-
-  // Anything completed before sign-off existed was retro-credited so the
-  // tallies started from real history — but nobody approved it, so the
-  // heading says "completed" and the legacy portion is named rather than
-  // quietly counted as approvals.
-  const legacy = data.reduce((n, r) => n + (r.count - r.signedOff), 0);
-
-  return (
-    <section className="space-y-3">
-      <h2 className="text-lg font-bold flex items-center gap-2">
-        <Trophy className="w-5 h-5 text-amber-500" /> Leaner-board
-      </h2>
-      {legacy > 0 && (
-        <p className="text-base text-muted-foreground -mt-1">
-          Includes {legacy} completed before sign-off existed — those were never
-          approved by anyone. New ones only count once a manager signs them off.
-        </p>
-      )}
-      {/* One list, most at the top — not columns (Graeme, 2026-09-25). */}
-      <div className="rounded-2xl border-2 border-border bg-card overflow-hidden">
-        {[...data].sort((x, y) => y.count - x.count || x.name.localeCompare(y.name)).map((row, i) => (
-          <div
-            key={row.userId ?? row.name}
-            className={cn("flex items-center justify-between gap-3 px-4 py-3.5 min-w-0", i > 0 && "border-t border-border")}
-          >
-            <span className="text-lg font-bold truncate">{row.name}</span>
-            <span className="text-2xl font-bold tabular-nums">{row.count}</span>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
+// The Leaner-board lives in components/leaner-board.tsx (2026-10-12).
