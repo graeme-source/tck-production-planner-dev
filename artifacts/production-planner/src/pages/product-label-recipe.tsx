@@ -2,12 +2,13 @@
  * One recipe's pack label: status, the live proof next to the current one,
  * what changed, its label settings (autosaved), and "Update live version".
  * Since 12 Oct 2026 it is the one place for everything about the product:
- * big tabs for Label, Ingredient deck and Nutrition (?tab=deck / nutrition),
+ * big tabs for Label, Ingredient deck, Nutrition and History (?tab=deck /
+ * nutrition / history — every published version, Objective D),
  * replacing the old Product Hub's pop-ups. Objectives A, D and F.
  */
 import { useState } from "react";
 import { Link, useRoute } from "wouter";
-import { AlertTriangle, ArrowLeft, Beaker, CheckCircle2, ChefHat, ClipboardList, Info, Loader2, Printer, ShieldCheck, Tag, XCircle } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Beaker, CheckCircle2, ChefHat, ClipboardList, History, Info, Loader2, Printer, ShieldCheck, Tag, XCircle } from "lucide-react";
 import { areasForChange, FIELD_LABEL, WIDTH_LABEL } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -23,12 +24,15 @@ import { otherBlockers } from "@/lib/declaration-fix";
 import { HubTabs, useCanSeeProductData, useTabParam, type HubTab } from "@/components/product-labels/hub-tabs";
 import { DeckPanel } from "@/components/product-labels/deck-panel";
 import { NutritionalsPanel } from "@/components/product-labels/nutritionals-panel";
+import { LabelHistoryPanel } from "@/components/product-labels/history-panel";
 
-type RecipeTab = "label" | "deck" | "nutrition";
+type RecipeTab = "label" | "deck" | "nutrition" | "history";
 const ALL_TABS: HubTab<RecipeTab>[] = [
   { key: "label", label: "Label", icon: Tag },
   { key: "deck", label: "Ingredient deck", icon: ClipboardList },
   { key: "nutrition", label: "Nutrition", icon: Beaker },
+  // Every published version — open to everyone, like the label (Objective D).
+  { key: "history", label: "History", icon: History },
 ];
 
 export default function ProductLabelRecipePage() {
@@ -44,7 +48,7 @@ export default function ProductLabelRecipePage() {
   const [testPrinting, setTestPrinting] = useState(false);
   // Deck and nutrition keep the old Product Hub's access level.
   const canSeeData = useCanSeeProductData();
-  const tabs = canSeeData ? ALL_TABS : ALL_TABS.filter(t => t.key === "label");
+  const tabs = canSeeData ? ALL_TABS : ALL_TABS.filter(t => t.key === "label" || t.key === "history");
   const [tab, setTab] = useTabParam(tabs.map(t => t.key));
 
   if (isLoading) return <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Building the label…</div>;
@@ -78,6 +82,8 @@ export default function ProductLabelRecipePage() {
         <section className="rounded-2xl border-2 border-border bg-card p-5 max-w-3xl">
           <DeckPanel recipe={data.recipe} />
         </section>
+      ) : tab === "history" ? (
+        <LabelHistoryPanel recipeId={data.recipe.id} />
       ) : tab === "nutrition" ? (
         <section className="rounded-2xl border-2 border-border bg-card p-5 max-w-3xl">
           <NutritionalsPanel recipe={data.recipe} />
