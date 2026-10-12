@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "wouter";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck, Snowflake } from "lucide-react";
 import {
   allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, dividerDots, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
@@ -319,6 +319,33 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
             </div>
             <Toggle on={draft.mayContainBoldList} onChange={v => update(t => ({ ...t, mayContainBoldList: v }))} label="Print the may-contain list in bold" />
             <BoneWords words={draft.boneRiskWords} onChange={boneRiskWords => update(t => ({ ...t, boneRiskWords }))} />
+          </Card>
+
+          {/* Frozen products & extra lines (fried chicken, 2026-10-12) */}
+          <Card icon={<Snowflake className="w-5 h-5" />} title="Frozen products and extra lines">
+            <div className="space-y-3">
+              <Toggle on={draft.storageBanner.on} onChange={on => update(t => ({ ...t, storageBanner: { ...t.storageBanner, on } }))} label="Black storage band at the top of the storage column" />
+              {draft.storageBanner.on && (
+                <div className="flex flex-wrap items-end gap-4 pl-2">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-sm font-semibold">Band words</span>
+                    <input value={draft.storageBanner.text} maxLength={40} onChange={e => update(t => ({ ...t, storageBanner: { ...t.storageBanner, text: e.target.value } }))} onBlur={() => void auto.flush()} className={cn(inputCls, "w-56")} />
+                  </label>
+                  <Num label="Band height" unit="mm" value={draft.storageBanner.heightMm} step={0.5} min={3} max={20} onChange={v => v != null && update(t => ({ ...t, storageBanner: { ...t.storageBanner, heightMm: v } }))} />
+                  <Toggle on={draft.storageBanner.snowflake} onChange={snowflake => update(t => ({ ...t, storageBanner: { ...t.storageBanner, snowflake } }))} label="Snowflakes" />
+                </div>
+              )}
+              <Toggle on={draft.chilledUseByOn} onChange={chilledUseByOn => update(t => ({ ...t, chilledUseByOn }))} label="Print the chilled use-by line (off = frozen use-by only)" />
+              {!draft.chilledUseByOn && <p className="text-sm text-muted-foreground pl-2">Only the frozen use-by prints, labelled with the “Frozen use-by label” wording (e.g. “USE BY:”).</p>}
+              <div className="flex flex-wrap items-end gap-4">
+                <Toggle on={draft.netQuantity.on} onChange={on => update(t => ({ ...t, netQuantity: { ...t.netQuantity, on } }))} label="Net quantity line above the barcode" />
+                {draft.netQuantity.on && (
+                  <Num label="Net quantity size" unit="pt" value={draft.netQuantity.sizePt} step={0.5} min={6.75} max={40} onChange={v => v != null && update(t => ({ ...t, netQuantity: { ...t.netQuantity, sizePt: v } }))} />
+                )}
+              </div>
+              {draft.netQuantity.on && <p className="text-sm text-muted-foreground pl-2">Each recipe types its own (e.g. 500g) in its label settings; a label can't go live without it.</p>}
+              <Toggle on={draft.warningPlacement === "storage"} onChange={v => update(t => ({ ...t, warningPlacement: v ? "storage" : "allergens" }))} label="Put the bones warning under the storage text (off = with the allergens)" />
+            </div>
           </Card>
 
           {/* Cooking */}
