@@ -17,7 +17,6 @@ import { useForm, useFieldArray, Controller } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
 import { RecipeLabelLink } from "@/components/product-labels/recipe-label-link";
 import { DeclarationFixButtons, type DeclarationIssue } from "@/components/declaration-fix";
@@ -26,6 +25,9 @@ import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuT
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
 import { RecipeColourFields } from "@/components/recipe-colour-fields";
+import { EditorDialog, EditorSaveBar } from "@/components/recipe-editor/editor-dialog";
+import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
+import { scrollToFirstError } from "@/components/recipe-editor/scroll-to-error";
 import { RecipeSwatch } from "@/components/recipe-swatch";
 import { effectiveSecondary, recipeColourStyle } from "@/lib/recipe-colour-style";
 import { recipeQuidKey, withoutQuid } from "@/components/recipe-quid/api";
@@ -294,10 +296,13 @@ function RecipeForm({
   submitRef?: React.MutableRefObject<(() => void) | null>;
   allTags?: string[];
 }) {
-  const { register, control, handleSubmit, setValue, watch, formState: { errors, isDirty } } = useForm<FormValues>({
+  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
+  // Unsaved changes = the form differs from what it opened with (edit then
+  // undo = clean). Drives the pinned save bar and the close guard.
+  const dirty = useFormDirty(watch, defaultValues, [], onDirtyChange);
 
   // Only admins and managers can edit per-recipe build time targets; everyone
   // else sees the field disabled. The target drives the countdown timer inside
@@ -306,10 +311,6 @@ function RecipeForm({
   const canEditBuildTime =
     recipeFormAuthState.status === "authenticated" &&
     (recipeFormAuthState.user.role === "admin" || recipeFormAuthState.user.role === "manager");
-
-  useEffect(() => {
-    onDirtyChange?.(isDirty);
-  }, [isDirty, onDirtyChange]);
 
   // Drafts (migration 0142): a draft can't be Core menu or the special.
   // Editing a draft with either ticked → saving puts it on the menu (said
@@ -320,11 +321,12 @@ function RecipeForm({
   const draftTickNotice = isEdit ? draftMenuTickNotice(isDraft, { isCoreMenu: wantsCore, isCurrentSpecial: wantsSpecial }) : null;
   const createAsDraft = !isEdit && watch("startAsDraft") === true && !wantsCore && !wantsSpecial;
 
+  const save = handleSubmit(onSubmit, scrollToFirstError);
   useEffect(() => {
     if (submitRef) {
-      submitRef.current = handleSubmit(onSubmit);
+      submitRef.current = save;
     }
-  }, [submitRef, handleSubmit, onSubmit]);
+  }, [submitRef, save]);
 
   const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
   const { fields: subFields, append: appendSub, remove: removeSub } = useFieldArray({ control, name: "subRecipes" });
@@ -459,9 +461,7 @@ function RecipeForm({
     <>
       <QuickAddIngredientDialog open={quickAddOpen} onOpenChange={setQuickAddOpen} onCreated={handleIngredientCreated} />
 
-      <form onSubmit={handleSubmit((data) => {
-        onSubmit(data);
-      })} className="space-y-5 mt-4">
+      <form onSubmit={save} className="space-y-5 mt-4">
         {/* Basic fields */}
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
@@ -1097,10 +1097,14 @@ function RecipeForm({
           </div>
         )}
 
-        <button type="submit" disabled={isPending} className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
-          {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          {isPending ? "Saving..." : isEdit ? (draftTickNotice ? "Save and put on the menu" : "Save Changes") : createAsDraft ? "Create draft" : "Create Recipe"}
-        </button>
+        {/* Pinned to the bottom of the editor (components/recipe-editor). */}
+        <EditorSaveBar
+          mode={isEdit ? "edit" : "create"}
+          dirty={dirty}
+          saving={isPending}
+          label={isEdit ? (draftTickNotice ? "Save and put on the menu" : "Save changes") : createAsDraft ? "Create draft" : "Create recipe"}
+          onSave={() => { void save(); }}
+        />
       </form>
     </>
   );
@@ -1147,7 +1151,6 @@ function EditRecipeDialog({
   const { updateRecipe } = useAppMutations();
 
   const [formIsDirty, setFormIsDirty] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const submitRef = useRef<(() => void) | null>(null);
 
   // Shopify link state — multiple variants per recipe
@@ -1279,24 +1282,11 @@ function EditRecipeDialog({
   const currentSpecialName = specialRecipe ? specialRecipe.name : null;
   const thisRecipeIsSpecial = detail?.isCurrentSpecial ?? false;
 
-  function handleOpenChange(v: boolean) {
-    if (!v && formIsDirty) {
-      setConfirmOpen(true);
-    } else {
-      if (!v) setShopifyEditing(false);
-      onOpenChange(v);
-    }
-  }
-
-  function handleDiscard() {
-    setConfirmOpen(false);
+  // Closing (after the unsaved-changes question, if any — EditorDialog).
+  function handleClose() {
+    setShopifyEditing(false);
     setFormIsDirty(false);
     onOpenChange(false);
-  }
-
-  function handleSaveFromConfirm() {
-    setConfirmOpen(false);
-    submitRef.current?.();
   }
 
   if (!open) return null;
@@ -1338,46 +1328,24 @@ function EditRecipeDialog({
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", secondaryColor: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
-    <>
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent className="bg-card border-border rounded-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unsaved changes</AlertDialogTitle>
-            <AlertDialogDescription>
-              You have unsaved changes to this recipe. What would you like to do?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel className="sm:mr-auto">Keep editing</AlertDialogCancel>
-            <button
-              onClick={handleDiscard}
-              className="inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              Discard changes
-            </button>
-            <AlertDialogAction
-              onClick={handleSaveFromConfirm}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              Save changes
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-[min(96vw,1100px)] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display text-xl flex items-center gap-2 flex-wrap">
-              Edit Recipe
-              {isDraftRecipe(detail as ArchiveFields | undefined) && <RecipeDraftBadge className="text-sm font-sans" />}
-              {(detail as ArchiveFields | undefined)?.archivedAt && (
-                <span className="text-sm font-sans font-medium rounded-full bg-secondary text-muted-foreground px-3 py-1">
-                  {archivedLabel((detail as ArchiveFields).archivedAt, (detail as ArchiveFields).archivedByName)}
-                </span>
-              )}
-            </DialogTitle>
-          </DialogHeader>
+    <EditorDialog
+      open={open}
+      onClose={handleClose}
+      dirty={formIsDirty}
+      onSaveRequest={() => submitRef.current?.()}
+      entityLabel="recipe"
+      title={
+        <>
+          Edit Recipe
+          {isDraftRecipe(detail as ArchiveFields | undefined) && <RecipeDraftBadge className="text-sm font-sans" />}
+          {(detail as ArchiveFields | undefined)?.archivedAt && (
+            <span className="text-sm font-sans font-medium rounded-full bg-secondary text-muted-foreground px-3 py-1">
+              {archivedLabel((detail as ArchiveFields).archivedAt, (detail as ArchiveFields).archivedByName)}
+            </span>
+          )}
+        </>
+      }
+    >
           {(isLoading || isFetching) ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
@@ -1589,9 +1557,7 @@ function EditRecipeDialog({
               )}
             </>
           )}
-        </DialogContent>
-      </Dialog>
-    </>
+    </EditorDialog>
   );
 }
 
@@ -2305,6 +2271,9 @@ export default function Recipes() {
   const { data: upfSummary } = useGetUpfSummary();
   const { createRecipe, deleteRecipe } = useAppMutations();
   const [isAddOpen, setIsAddOpen] = useState(false);
+  // New / duplicate editor: unsaved-changes state and its save trigger.
+  const [addDirty, setAddDirty] = useState(false);
+  const addSubmitRef = useRef<(() => void) | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [breakdownId, setBreakdownId] = useState<number | null>(null);
   const [duplicatingId, setDuplicatingId] = useState<number | null>(null);
@@ -2656,11 +2625,18 @@ export default function Recipes() {
       </div>
 
       {/* Add dialog */}
-      <Dialog open={isAddOpen} onOpenChange={(v) => { setIsAddOpen(v); if (!v) setDuplicateDefaults(null); }}>
-        <DialogContent className="sm:max-w-[min(96vw,1100px)] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader><DialogTitle className="font-display text-xl">{duplicateDefaults ? "Duplicate Final Product" : "New Final Product"}</DialogTitle></DialogHeader>
+      <EditorDialog
+        open={isAddOpen}
+        onClose={() => { setIsAddOpen(false); setDuplicateDefaults(null); setAddDirty(false); }}
+        dirty={addDirty}
+        onSaveRequest={() => addSubmitRef.current?.()}
+        entityLabel="recipe"
+        title={duplicateDefaults ? "Duplicate Final Product" : "New Final Product"}
+      >
           <RecipeForm
             key={duplicateDefaults ? "duplicate" : "new"}
+            onDirtyChange={setAddDirty}
+            submitRef={addSubmitRef}
             defaultValues={duplicateDefaults ?? addDefaults}
             isEdit={false}
             isPending={createRecipe.isPending}
@@ -2695,13 +2671,12 @@ export default function Recipes() {
                       body: JSON.stringify({ isFridgeProduct: true }),
                     }).catch(() => {});
                   }
-                  setIsAddOpen(false); setDuplicateDefaults(null);
+                  setIsAddOpen(false); setDuplicateDefaults(null); setAddDirty(false);
                 },
               });
             }}
           />
-        </DialogContent>
-      </Dialog>
+      </EditorDialog>
 
       {/* Cost breakdown dialog */}
       {breakdownId !== null && (

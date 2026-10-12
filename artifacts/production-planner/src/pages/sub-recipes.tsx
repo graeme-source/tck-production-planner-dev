@@ -18,9 +18,15 @@ import { useForm, useFieldArray } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { NumberInput } from "@/components/ui/number-input";
 import { SubRecipePrepTimeField } from "@/components/sub-recipe-prep-time-field";
+import { EditorDialog, EditorSaveBar } from "@/components/recipe-editor/editor-dialog";
+import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
+import { scrollToFirstError } from "@/components/recipe-editor/scroll-to-error";
+
+// The mix yield is derived from the components on every change, so it never
+// counts as an unsaved change on its own.
+const SUB_DIRTY_IGNORE = ["yield"] as const;
 
 const schema = z.object({
   name: z.string().min(1, "Name is required"),
@@ -361,10 +367,13 @@ function SubRecipeForm({
   onDirtyChange?: (isDirty: boolean) => void;
   submitRef?: React.MutableRefObject<(() => void) | null>;
 }) {
-  const { register, control, handleSubmit, setValue, watch, formState: { errors, isDirty } } = useForm<FormValues>({
+  const { register, control, handleSubmit, setValue, watch, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues,
   });
+  // Unsaved changes = differs from what it opened with (edit then undo =
+  // clean). Drives the pinned save bar and the close guard.
+  const dirty = useFormDirty(watch, defaultValues, SUB_DIRTY_IGNORE, onDirtyChange);
   const { fields: ingFields, append: appendIng, remove: removeIng } = useFieldArray({ control, name: "ingredients" });
   const { fields: srFields, append: appendSr, remove: removeSr } = useFieldArray({ control, name: "subRecipeComponents" });
 
@@ -397,15 +406,12 @@ function SubRecipeForm({
   const watchedYieldUnit = watch("yieldUnit");
   const watchedYieldPercent = watch("yieldPercent");
 
-  useEffect(() => {
-    onDirtyChange?.(isDirty);
-  }, [isDirty, onDirtyChange]);
-
+  const save = handleSubmit(onSubmit, scrollToFirstError);
   useEffect(() => {
     if (submitRef) {
-      submitRef.current = handleSubmit(onSubmit);
+      submitRef.current = save;
     }
-  }, [submitRef, handleSubmit, onSubmit]);
+  }, [submitRef, save]);
 
   const availableSubRecipes = cyclicIds
     ? allSubRecipes.filter(sr => !cyclicIds.includes(sr.id))
@@ -454,7 +460,7 @@ function SubRecipeForm({
     <>
       <QuickAddIngredientDialog open={quickAddOpen} onOpenChange={setQuickAddOpen} onCreated={handleIngredientCreated} />
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-5 mt-4">
+      <form onSubmit={save} className="space-y-5 mt-4">
         <div>
           <label className="text-sm font-medium mb-1 block">Name</label>
           <input
@@ -896,14 +902,14 @@ function SubRecipeForm({
           />
         </div>
 
-        <button
-          type="submit"
-          disabled={isPending}
-          className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-          {isPending ? "Saving..." : isEdit ? "Save Changes" : "Create Sub-Recipe"}
-        </button>
+        {/* Pinned to the bottom of the editor (components/recipe-editor). */}
+        <EditorSaveBar
+          mode={isEdit ? "edit" : "create"}
+          dirty={dirty}
+          saving={isPending}
+          label={isEdit ? "Save changes" : "Create sub-recipe"}
+          onSave={() => { void save(); }}
+        />
       </form>
     </>
   );
@@ -936,29 +942,9 @@ function EditSubRecipeDialog({
   const { updateSubRecipe } = useAppMutations();
 
   const [formIsDirty, setFormIsDirty] = useState(false);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const submitRef = useRef<(() => void) | null>(null);
 
   if (!open) return null;
-
-  function handleOpenChange(v: boolean) {
-    if (!v && formIsDirty) {
-      setConfirmOpen(true);
-    } else {
-      onOpenChange(v);
-    }
-  }
-
-  function handleDiscard() {
-    setConfirmOpen(false);
-    setFormIsDirty(false);
-    onOpenChange(false);
-  }
-
-  function handleSaveFromConfirm() {
-    setConfirmOpen(false);
-    submitRef.current?.();
-  }
 
   const defaultValues: FormValues = detail
     ? {
@@ -990,38 +976,15 @@ function EditSubRecipeDialog({
     : { name: "", description: "", yield: 1, yieldPercent: "", yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
-    <>
-      <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent className="bg-card border-border rounded-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unsaved changes</AlertDialogTitle>
-            <AlertDialogDescription>
-              You have unsaved changes to this sub-recipe. What would you like to do?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel className="sm:mr-auto">Keep editing</AlertDialogCancel>
-            <button
-              onClick={handleDiscard}
-              className="inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              Discard changes
-            </button>
-            <AlertDialogAction
-              onClick={handleSaveFromConfirm}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              Save changes
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <Dialog open={open} onOpenChange={handleOpenChange}>
-        <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display text-xl">Edit Sub-Recipe</DialogTitle>
-          </DialogHeader>
+    <EditorDialog
+      open={open}
+      onClose={() => { setFormIsDirty(false); onOpenChange(false); }}
+      dirty={formIsDirty}
+      onSaveRequest={() => submitRef.current?.()}
+      entityLabel="sub-recipe"
+      widthClassName="sm:max-w-[720px]"
+      title="Edit Sub-Recipe"
+    >
           {isLoading ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
@@ -1047,9 +1010,7 @@ function EditSubRecipeDialog({
               />
             </>
           )}
-        </DialogContent>
-      </Dialog>
-    </>
+    </EditorDialog>
   );
 }
 
@@ -1355,7 +1316,6 @@ export default function SubRecipes() {
   const debouncedSearch = useDebouncedValue(search);
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [addFormDirty, setAddFormDirty] = useState(false);
-  const [addConfirmOpen, setAddConfirmOpen] = useState(false);
   const addSubmitRef = useRef<(() => void) | null>(null);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewingId, setViewingId] = useState<number | null>(null);
@@ -1435,43 +1395,15 @@ export default function SubRecipes() {
         }
       />
 
-      <AlertDialog open={addConfirmOpen} onOpenChange={setAddConfirmOpen}>
-        <AlertDialogContent className="bg-card border-border rounded-2xl">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Unsaved changes</AlertDialogTitle>
-            <AlertDialogDescription>
-              You have unsaved changes to this sub-recipe. What would you like to do?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter className="flex-col sm:flex-row gap-2">
-            <AlertDialogCancel className="sm:mr-auto">Keep editing</AlertDialogCancel>
-            <button
-              onClick={() => { setAddConfirmOpen(false); setAddFormDirty(false); setIsAddOpen(false); }}
-              className="inline-flex items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
-            >
-              Discard changes
-            </button>
-            <AlertDialogAction
-              onClick={() => { setAddConfirmOpen(false); addSubmitRef.current?.(); }}
-              className="bg-primary text-primary-foreground hover:bg-primary/90"
-            >
-              Save changes
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-      <Dialog open={isAddOpen} onOpenChange={(v) => {
-        if (!v && addFormDirty) {
-          setAddConfirmOpen(true);
-        } else {
-          setIsAddOpen(v);
-        }
-      }}>
-        <DialogContent className="sm:max-w-[720px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display text-xl">New Sub-Recipe</DialogTitle>
-          </DialogHeader>
+      <EditorDialog
+        open={isAddOpen}
+        onClose={() => { setAddFormDirty(false); setIsAddOpen(false); }}
+        dirty={addFormDirty}
+        onSaveRequest={() => addSubmitRef.current?.()}
+        entityLabel="sub-recipe"
+        widthClassName="sm:max-w-[720px]"
+        title="New Sub-Recipe"
+      >
           <SubRecipeForm
             defaultValues={addDefaults}
             isEdit={false}
@@ -1480,10 +1412,9 @@ export default function SubRecipes() {
             subRecipes={subRecipeList}
             onDirtyChange={setAddFormDirty}
             submitRef={addSubmitRef}
-            onSubmit={(data) => createSubRecipe.mutate({ data }, { onSuccess: () => setIsAddOpen(false) })}
+            onSubmit={(data) => createSubRecipe.mutate({ data }, { onSuccess: () => { setAddFormDirty(false); setIsAddOpen(false); } })}
           />
-        </DialogContent>
-      </Dialog>
+      </EditorDialog>
 
       {editingId !== null && (
         <EditSubRecipeDialog
