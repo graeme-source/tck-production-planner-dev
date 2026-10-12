@@ -1,33 +1,86 @@
 import { describe, expect, it } from "vitest";
-import { creditBadge, normaliseCreditWeight, scoreBand, scoreBarFill, scoreDetail, scoreText } from "./improvement-score";
+import { LEANER_TARGETS, creditBadge, leanerStep, normaliseCreditWeight, scoreDetail, scoreText, stepBarFill } from "./improvement-score";
 
 describe("improvement score on screen", () => {
   it("shows the real number, uncapped, and '—' with no score", () => {
     expect(scoreText(200)).toBe("200%");
-    expect(scoreText(450)).toBe("450%");
+    expect(scoreText(8)).toBe("8%");
     expect(scoreText(0)).toBe("0%");
     expect(scoreText(null)).toBe("—");
   });
 
-  it("fills the bar to 200% and no further", () => {
-    expect(scoreBarFill(100)).toBe(50);
-    expect(scoreBarFill(200)).toBe(100);
-    expect(scoreBarFill(450)).toBe(100);
-    expect(scoreBarFill(null)).toBe(0);
-    expect(scoreBarFill(0)).toBe(0);
+  it("shows the plain count and the shifts so the maths is visible", () => {
+    expect(scoreDetail({ improvements30: 4, credits30: 4, shifts30: 10 })).toBe("4 improvements · 10 shifts");
+    expect(scoreDetail({ improvements30: 1, credits30: 1, shifts30: 1 })).toBe("1 improvement · 1 shift");
   });
 
-  it("bands the colour around one a shift", () => {
-    expect(scoreBand(null)).toBe("none");
-    expect(scoreBand(60)).toBe("under");
-    expect(scoreBand(100)).toBe("on");
-    expect(scoreBand(160)).toBe("above");
+  it("names a ×2/×3 bonus only when it changes the sum", () => {
+    expect(scoreDetail({ improvements30: 3, credits30: 5, shifts30: 12 })).toBe("3 improvements · 12 shifts · counts as 5 with ×2/×3");
   });
 
-  it("spells out credits, shifts and the all-time count", () => {
-    expect(scoreDetail({ credits30: 6, shifts30: 3, count: 14 })).toBe("6 credits · 3 shifts · 14 all-time");
-    expect(scoreDetail({ credits30: 1, shifts30: 1, count: 1 })).toBe("1 credit · 1 shift · 1 all-time");
-    expect(scoreDetail({ credits30: 2, shifts30: null, count: 5 })).toBe("2 credits · shifts not linked · 5 all-time");
+  it("says why there's no score", () => {
+    expect(scoreDetail({ improvements30: 2, credits30: 2, shifts30: 0 })).toBe("2 improvements · no shifts in the last 30 days");
+    expect(scoreDetail({ improvements30: 2, credits30: 4, shifts30: null })).toBe("2 improvements · shifts not linked to Planday");
+  });
+});
+
+describe("encouraging steps", () => {
+  const step = (scorePct: number | null, improvements30: number, count = improvements30) =>
+    leanerStep({ scorePct, improvements30, count });
+
+  it("targets are 20% then 50%", () => {
+    expect(LEANER_TARGETS).toEqual([20, 50]);
+  });
+
+  it("nothing yet: the first improvement is waiting", () => {
+    expect(step(0, 0)).toEqual({
+      key: "waiting", nextPct: 20,
+      message: "Your first improvement is waiting — what's one thing that annoyed you this week?",
+    });
+  });
+
+  it("nothing this month but some before: the NEXT one is waiting", () => {
+    expect(step(0, 0, 6)?.message).toBe("Your next improvement is waiting — what's one thing that annoyed you this week?");
+  });
+
+  it("8% is a great start, next stop 20%", () => {
+    expect(step(8, 1)).toEqual({ key: "started", nextPct: 20, message: "Great — you've made a start. Next stop: 20%" });
+    expect(step(19, 3)?.key).toBe("started");
+  });
+
+  it("20% up to 50%: on to 50%", () => {
+    expect(step(20, 2)).toEqual({ key: "rolling", nextPct: 50, message: "Brilliant — on to 50%" });
+    expect(step(49, 5)?.key).toBe("rolling");
+  });
+
+  it("50% and up: Leaner legend", () => {
+    expect(step(50, 5)).toEqual({ key: "legend", nextPct: null, message: "Leaner legend" });
+    expect(step(300, 9)?.key).toBe("legend");
+  });
+
+  it("no shifts, no step — just the count", () => {
+    expect(step(null, 3)).toBeNull();
+    expect(step(null, 0)).toBeNull();
+  });
+
+  it("no message ever says low or scolds", () => {
+    for (const [pct, n] of [[0, 0], [3, 1], [25, 2], [80, 8]] as const) {
+      expect(step(pct, n)?.message.toLowerCase()).not.toMatch(/low|poor|bad|behind/);
+    }
+  });
+});
+
+describe("the bar fills towards the next stop", () => {
+  it("8% is 40% of the way to 20%", () => {
+    expect(stepBarFill(8, 20)).toBe(40);
+  });
+  it("30% is 60% of the way to 50%", () => {
+    expect(stepBarFill(30, 50)).toBe(60);
+  });
+  it("full for a legend, empty for nothing yet", () => {
+    expect(stepBarFill(120, null)).toBe(100);
+    expect(stepBarFill(0, 20)).toBe(0);
+    expect(stepBarFill(null, 20)).toBe(0);
   });
 });
 
