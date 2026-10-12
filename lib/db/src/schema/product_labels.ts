@@ -42,6 +42,9 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   frozenOn: boolean("frozen_on").notNull().default(true),
   frozenAmount: integer("frozen_amount"),
   frozenUnit: text("frozen_unit"),
+  // Net quantity printed above the barcode on templates that show it, e.g.
+  // "500g". NULL = not set. Migration 0174.
+  netQuantity: text("net_quantity"),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   updatedByName: text("updated_by_name"),
 });

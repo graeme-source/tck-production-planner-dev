@@ -75,6 +75,7 @@ export function settingsFromRow(row: SettingsRow | undefined): RecipeLabelSettin
     chilled: normalisePeriod({ amount: row.chilledAmount, unit: row.chilledUnit as PeriodUnit }),
     frozenOn: row.frozenOn,
     frozen: normalisePeriod({ amount: row.frozenAmount, unit: row.frozenUnit as PeriodUnit }),
+    netQuantity: row.netQuantity ?? null,
   };
 }
 

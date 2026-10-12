@@ -259,7 +259,7 @@ router.get("/recipes/:id", async (req, res) => {
       settingsUpdatedByName: current.settingsRow?.updatedByName ?? null,
       // The template this recipe picked; null = the standard one.
       templateChoice: current.settingsRow?.templateId ?? null,
-      template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault },
+      template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault, netQuantityOn: current.template.template.netQuantity.on },
       status,
       statusLabel: STATUS_LABEL[status],
       matchesLive,
@@ -299,6 +299,8 @@ const SettingsBody = z.object({
   frozenOn: z.boolean().optional(),
   // The label template this recipe uses; null = the standard one.
   templateId: z.number().int().positive().nullable().optional(),
+  // e.g. "500g"; blank = not set.
+  netQuantity: z.string().max(40).nullable().optional(),
   ovenTempC: nullableInt(400),
   fanTempC: nullableInt(400),
   ovenMinMinutes: nullableInt(240),
@@ -322,6 +324,7 @@ router.put("/recipes/:id/settings", requireManagerOrAdmin, validate(SettingsBody
     if (body.labelName !== undefined) set.labelName = body.labelName?.trim() || null;
     for (const k of ["ovenOn", "airFryerOn", "frozenOn"] as const) if (body[k] !== undefined) set[k] = body[k];
     if (body.warningOn !== undefined) set.warningOn = body.warningOn;
+    if (body.netQuantity !== undefined) set.netQuantity = body.netQuantity?.trim() || null;
     if (body.templateId !== undefined) {
       if (body.templateId != null) {
         const [t] = await db.select({ id: productLabelTemplatesTable.id }).from(productLabelTemplatesTable).where(eq(productLabelTemplatesTable.id, body.templateId));

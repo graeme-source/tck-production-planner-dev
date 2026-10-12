@@ -24,6 +24,8 @@ function content(deck: string): LabelContent {
     ingredientsHeading: [],
     storage: [parseBold("Keep cold.")],
     dates: [parseBold("USE BY: 01/01/27")],
+    storageBanner: null,
+    netQuantity: [],
     ingredients: [parseBold(deck)],
     allergenInfo: [],
     address: [],

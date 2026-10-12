@@ -20,7 +20,11 @@ export interface LabelContent {
    *  "headings" style; laid out on their own above each column's text. */
   storageHeading: Paragraph[];
   storage: Paragraph[];
+  /** The black storage band's words (e.g. "KEEP FROZEN"), or null. */
+  storageBanner: string | null;
   dates: Paragraph[];
+  /** The big net-quantity line above the barcode ("500g"), or none. */
+  netQuantity: Paragraph[];
   ingredientsHeading: Paragraph[];
   ingredients: Paragraph[];
   allergenInfo: Paragraph[];
@@ -86,15 +90,23 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
 
   const dateLine = (label: string, value: string): Paragraph => mergeRuns([...parseBold(label.trim()), { text: ` ${value}`, bold: false }]);
   const dateLines: Paragraph[] = [];
-  if (dates.chilledUseBy) dateLines.push(dateLine(t.chilledLabel, formatLabelDate(dates.chilledUseBy)));
-  else problems.push("No chilled use-by — set the recipe's shelf life or a chilled period on this label.");
+  if (s.template.chilledUseByOn !== false) {
+    if (dates.chilledUseBy) dateLines.push(dateLine(t.chilledLabel, formatLabelDate(dates.chilledUseBy)));
+    else problems.push("No chilled use-by — set the recipe's shelf life or a chilled period on this label.");
+  }
   if (dates.frozenUseBy) dateLines.push(dateLine(t.frozenLabel, formatLabelDate(dates.frozenUseBy)));
+  else if (s.template.chilledUseByOn === false) problems.push("No use-by — this template prints only the frozen use-by; switch the frozen line on or set a frozen period.");
   dateLines.push(dateLine(t.batchLabel, dates.batchCode));
 
   if (!s.deckText.trim()) problems.push("The ingredient deck is empty.");
   const allergenInfo: Paragraph[] = [parseBold(t.allergenNote)];
   if (s.mayContain) allergenInfo.push(mayContainParagraph(s.mayContain, s.template.mayContainBoldList));
-  if (s.warningOn && t.warning.trim()) allergenInfo.push(parseBold(t.warning.trim()));
+  const storage: Paragraph[] = [parseBold(t.storage.trim())];
+  if (s.warningOn && t.warning.trim()) {
+    (s.template.warningPlacement === "storage" ? storage : allergenInfo).push(parseBold(t.warning.trim()));
+  }
+  const netQuantity = s.template.netQuantity?.on ? (s.netQuantity?.trim() ?? "") : null;
+  if (netQuantity === "") problems.push("No net quantity — set it in this recipe's label settings (e.g. 500g).");
 
   if (!s.barcode) problems.push("No barcode number yet.");
   else {
@@ -106,8 +118,10 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
     title: nonEmpty([parseBold(title.text.trim())]),
     steps,
     storageHeading: nonEmpty([heading(t.storageHeading)]),
-    storage: nonEmpty([parseBold(t.storage.trim())]),
+    storage: nonEmpty(storage),
+    storageBanner: s.template.storageBanner?.on && s.template.storageBanner.text.trim() ? s.template.storageBanner.text.trim().toUpperCase() : null,
     dates: dateLines,
+    netQuantity: netQuantity ? [[{ text: netQuantity, bold: true }]] : [],
     ingredientsHeading: nonEmpty([heading(t.ingredientsHeading)]),
     ingredients: nonEmpty([parseBold(s.deckText.trim())]),
     allergenInfo: nonEmpty(allergenInfo),

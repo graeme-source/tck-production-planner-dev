@@ -15,6 +15,7 @@ import { layoutLabel, type LabelLayout, type PlacedRun } from "./layout";
 import { pngDataUrl } from "./png";
 import { Bitmap, fillCircle, fillContours, fillRect, flattenPath, type PathCmd } from "./raster";
 import type { LabelSnapshot } from "./snapshot";
+import { snowflakeContours } from "./snowflake";
 import { normaliseTemplate } from "./template";
 
 export { LabelFontSet, FONT_FILES } from "./fonts";
@@ -47,6 +48,13 @@ export function renderLabel(layout: LabelLayout, fonts: LabelFontSet, showOverfl
   for (const c of layout.circles) fillCircle(bm, c.cx, c.cy, c.r, 1);
   const rule = layout.divider;
   if (rule) fillRect(bm, rule.x, rule.y, rule.w, rule.h, 1);
+  // The storage band: black, then its white words and snowflakes.
+  if (layout.banner) {
+    const { rect, flakes } = layout.banner;
+    fillRect(bm, rect.x, rect.y, rect.w, rect.h, 1);
+    for (const f of flakes) fillContours(bm, snowflakeContours(f.cx, f.cy, f.r), 0);
+  }
+  for (const run of layout.extraRuns ?? []) drawRun(bm, fonts, run);
   for (const f of layout.fields) {
     for (const run of f.runs) if (!run.white) drawRun(bm, fonts, run);
   }

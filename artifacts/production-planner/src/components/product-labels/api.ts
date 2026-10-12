@@ -95,7 +95,7 @@ export interface RecipeLabel {
   settingsUpdatedByName: string | null;
   /** The template this recipe picked; null = the standard one. */
   templateChoice: number | null;
-  template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null };
+  template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null; netQuantityOn: boolean };
   status: LabelStatus;
   statusLabel: string;
   matchesLive: boolean;

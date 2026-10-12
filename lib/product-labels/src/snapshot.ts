@@ -32,6 +32,9 @@ export interface RecipeLabelSettings {
   chilled: ShelfPeriod | null;
   frozenOn: boolean;
   frozen: ShelfPeriod | null;
+  /** Net quantity printed above the barcode, e.g. "500g" — only on
+   *  templates with the net-quantity line switched on. */
+  netQuantity: string | null;
 }
 
 export const EMPTY_COOKING: CookingValues = {
@@ -41,7 +44,7 @@ export const EMPTY_COOKING: CookingValues = {
 
 export const DEFAULT_RECIPE_LABEL_SETTINGS: RecipeLabelSettings = {
   barcode: null, labelName: null, ovenOn: true, airFryerOn: true,
-  cooking: { ...EMPTY_COOKING }, warningOn: null, chilled: null, frozenOn: true, frozen: null,
+  cooking: { ...EMPTY_COOKING }, warningOn: null, chilled: null, frozenOn: true, frozen: null, netQuantity: null,
 };
 
 export interface LabelSnapshot {
@@ -61,6 +64,9 @@ export interface LabelSnapshot {
   chilled: ShelfPeriod | null;
   frozen: ShelfPeriod | null;
   barcode: string | null;
+  /** Only present when the template prints a net-quantity line (so labels
+   *  without one — and those published before it existed — compare equal). */
+  netQuantity?: string | null;
   templateId: number;
   template: LabelTemplate;
 }
@@ -106,6 +112,7 @@ export function buildSnapshot(input: {
     chilled,
     frozen: s.frozenOn ? (s.frozen ?? template.frozenDefault) : null,
     barcode: s.barcode?.replace(/\s+/g, "") || null,
+    ...(template.netQuantity?.on ? { netQuantity: s.netQuantity?.trim() || null } : {}),
     templateId: input.templateId,
     template,
   };
@@ -158,8 +165,11 @@ export function areasForChange(key: string): Array<FieldKey | "barcode" | "all">
   if (key === "deckText") return ["ingredients"];
   if (key === "mayContain" || key === "warningOn" || key === "template.mayContainBoldList") return ["allergenInfo"];
   if (key.startsWith("cooking.")) return ["steps"];
-  if (key === "chilled" || key === "frozen" || key === "template.batchBasis") return ["dates"];
-  if (key === "barcode") return ["barcode"];
+  if (key === "chilled" || key === "frozen" || key === "template.batchBasis" || key === "template.chilledUseByOn") return ["dates"];
+  if (key === "template.storageBanner") return ["storage"];
+  if (key === "template.netQuantity") return ["barcode"];
+  if (key === "template.warningPlacement") return ["storage", "allergenInfo"];
+  if (key === "barcode" || key === "netQuantity") return ["barcode"];
   if (key.startsWith("template.fields.")) return [key.slice("template.fields.".length) as FieldKey];
   if (key.startsWith("template.text.steps")) return ["steps"];
   const text: Record<string, FieldKey> = {
@@ -202,6 +212,9 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
   add("chilled", "Chilled use-by", period(live.chilled), period(current.chilled));
   add("frozen", "Frozen use-by", period(live.frozen), period(current.frozen));
   add("barcode", "Barcode number", show(live.barcode), show(current.barcode));
+  if (live.netQuantity !== undefined || current.netQuantity !== undefined) {
+    add("netQuantity", "Net quantity", show(live.netQuantity), show(current.netQuantity));
+  }
   add("templateId", "Label template", String(live.templateId), String(current.templateId));
   out.push(...diffTemplates(live.template, current.template));
   // Belt and braces: a mismatch must always say SOMETHING, never "update
@@ -248,6 +261,17 @@ export function diffTemplates(rawA: LabelTemplate, rawB: LabelTemplate): Snapsho
     }
   }
   if (a.batchBasis !== b.batchBasis) out.push({ key: "template.batchBasis", label: "Batch number taken from", before: a.batchBasis, after: b.batchBasis });
+  const onOff = (v: boolean) => (v ? "On" : "Off");
+  if (canonicalJson(a.storageBanner) !== canonicalJson(b.storageBanner)) {
+    const band = (t: LabelTemplate) => (t.storageBanner.on ? `“${t.storageBanner.text}”${t.storageBanner.snowflake ? " with snowflakes" : ""}, ${t.storageBanner.heightMm} mm` : "Off");
+    out.push({ key: "template.storageBanner", label: "Storage band", before: band(a), after: band(b) });
+  }
+  if (a.chilledUseByOn !== b.chilledUseByOn) out.push({ key: "template.chilledUseByOn", label: "Chilled use-by line", before: onOff(a.chilledUseByOn), after: onOff(b.chilledUseByOn) });
+  if (canonicalJson(a.netQuantity) !== canonicalJson(b.netQuantity)) {
+    const nq = (t: LabelTemplate) => (t.netQuantity.on ? `On, ${t.netQuantity.sizePt} pt` : "Off");
+    out.push({ key: "template.netQuantity", label: "Net quantity line", before: nq(a), after: nq(b) });
+  }
+  if (a.warningPlacement !== b.warningPlacement) out.push({ key: "template.warningPlacement", label: "Bones warning placed", before: a.warningPlacement === "storage" ? "Under storage" : "With allergens", after: b.warningPlacement === "storage" ? "Under storage" : "With allergens" });
   if (a.mayContainBoldList !== b.mayContainBoldList) out.push({ key: "template.mayContainBoldList", label: "May-contain list in bold", before: a.mayContainBoldList ? "Yes" : "No", after: b.mayContainBoldList ? "Yes" : "No" });
   // template.cooking / chilledDefault / frozenDefault only matter through the resolved values
   // above, which already list them when they change what prints.

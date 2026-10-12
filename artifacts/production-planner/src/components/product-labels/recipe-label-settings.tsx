@@ -46,6 +46,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
   const t = data.template;
   const [loaded, setLoaded] = useState(false);
   const [labelName, setLabelName] = useState("");
+  const [netQuantity, setNetQuantity] = useState(data.settings.netQuantity ?? "");
   const [nums, setNums] = useState<Record<string, string>>({});
   const [flags, setFlags] = useState({ ovenOn: data.settings.ovenOn, airFryerOn: data.settings.airFryerOn, frozenOn: data.settings.frozenOn });
   const templates = useLabelTemplates();
@@ -162,6 +163,24 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
         />
         <p className="text-sm text-muted-foreground">Leave blank to use the recipe name ({data.recipe.name}). The title adds the pack size: {data.recipe.packSize} PACK.</p>
       </div>
+
+      {/* Net quantity — only on templates that print it (e.g. Fried chicken). */}
+      {t.netQuantityOn && (
+        <div className="space-y-2">
+          <label htmlFor="net-quantity" className="text-base font-bold">Net quantity</label>
+          <input
+            id="net-quantity"
+            value={netQuantity}
+            disabled={!canEdit}
+            maxLength={40}
+            onChange={e => { setNetQuantity(e.target.value); save({ netQuantity: e.target.value }); }}
+            onBlur={() => void auto.flush()}
+            placeholder="e.g. 500g"
+            className={cn(inputCls, "w-40 text-base", !netQuantity.trim() && "border-amber-400")}
+          />
+          <p className="text-sm text-muted-foreground">Printed big and bold above the barcode. The label can't go live without it.</p>
+        </div>
+      )}
 
       {/* Cooking */}
       <div className="space-y-3">

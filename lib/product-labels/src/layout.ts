@@ -118,6 +118,12 @@ export interface LabelLayout {
   /** The thin rule between the steps and the columns (whole dots), or null
    *  when it's switched off. */
   divider: Rect | null;
+  /** The black "KEEP FROZEN" band at the top of the storage column (whole
+   *  dots), with its white words in `extraRuns` and its snowflakes. */
+  banner: { rect: Rect; flakes: Array<{ cx: number; cy: number; r: number }> } | null;
+  /** Runs outside the text fields: the banner words (white) and the net
+   *  quantity line above the barcode. */
+  extraRuns: PlacedRun[];
   fits: boolean;
   problems: FitProblem[];
 }
@@ -419,8 +425,19 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
       wholeStep[i] ? stepInset + Math.max(0, ...ps.map(p => wrap([p], style, width, sizeDots, Infinity, m).lineRight[0] ?? 0)) + 1 : 0);
     const fixed = need.reduce((s, w) => s + w, 0);
     const flexCount = wholeStep.filter(w => !w).length;
+    // Wrapping steps share what's left in proportion to how much they say
+    // (their one-line length), so a long step 1 isn't squeezed into the same
+    // width as a short step 2 (fried chicken's three steps, 2026-10-12).
+    const flexLen = content.steps.map((ps, i) =>
+      wholeStep[i] ? 0 : Math.max(1, ps.reduce((s, p) => s + (wrap([p], style, width, sizeDots, Infinity, m).lineRight[0] ?? 0), 0)));
+    const flexTotal = flexLen.reduce((s, x) => s + x, 0);
+    const minWord = content.steps.map((ps, i) =>
+      wholeStep[i] ? 0 : Math.max(0, ...wrap(ps, style, width, sizeDots, 1, m).lineRight) + 1);
+    const minWordTotal = minWord.reduce((s, x) => s + x, 0);
     const widths = flexCount > 0
-      ? need.map((w, i) => (wholeStep[i] ? w : Math.max(0, (stepSpace - fixed) / flexCount)))
+      // Each wrapping step gets its circle's room and its longest word, then
+      // a share of the rest in proportion to its length.
+      ? need.map((w, i) => (wholeStep[i] ? w : stepInset + minWord[i] + Math.max(0, ((stepSpace - fixed - flexCount * stepInset - minWordTotal) * flexLen[i]) / flexTotal)))
       : need.map(w => (fixed > 0 ? (w * stepSpace) / fixed : stepSpace / Math.max(1, nSteps)));
     const boxes: Rect[] = [];
     let x = innerX;
@@ -491,7 +508,22 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     // The asked-for size didn't fit: say so rather than shrink it silently.
     problems.push({ field: "barcode", message: `The barcode only fits at ${module.magnificationPct}% (asked for ${page.barcodeSizePct}%) — widen the left column or ask for a smaller size` });
   }
-  const leftText: Rect = { x: left.x, y: left.y, w: left.w, h: Math.max(0, barcodeTop - d(page.fieldGapMm) - left.y) };
+  // Net quantity ("500g"): a big bold line just above the barcode, at its
+  // set size (smaller only if it's wider than the column). Its room comes
+  // off the storage/dates space.
+  const extraRuns: PlacedRun[] = [];
+  let netTop = barcodeTop;
+  if (content.netQuantity?.length) {
+    const face: Face = { width: "normal", weight: 700 };
+    const text = content.netQuantity[0].map(r => r.text).join("");
+    let size = ptToDots(t.netQuantity.sizePt, dpi);
+    const w0 = m.ink(text, face, size, 0);
+    if (w0.right - Math.min(0, w0.left) > left.w) size *= left.w / (w0.right - Math.min(0, w0.left));
+    const ink = m.ink(text, face, size, 0);
+    netTop = Math.floor(barcodeTop - d(1.5) - (ink.top + ink.bottom));
+    extraRuns.push({ x: left.x - Math.min(0, ink.left), y: netTop + ink.top, text, face, sizeDots: size, letterSpacingEm: 0 });
+  }
+  const leftText: Rect = { x: left.x, y: left.y, w: left.w, h: Math.max(0, netTop - d(page.fieldGapMm) - left.y) };
 
   // Missing glyphs anywhere = can't print that character.
   const allParas: Array<[FieldKey, Paragraph[]]> = [
@@ -545,7 +577,11 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
           boxes = stepBoxesFor(width, sizeDots, insetFor(circle));
           tr = trial(spec("steps", boxes, content.steps, insetFor(circle)), level, w, t, m);
           if (!page.stepCircleAuto) break;
-          const want = Math.min(stepsH, Math.max(minAutoCircle, tr.height));
+          // As tall as the text, but never more than two lines' worth: a
+          // three- or four-line step (fried chicken) would otherwise get a
+          // circle so wide it squeezes its own text smaller.
+          const twoLines = tr.top + tr.pitch + tr.bottom;
+          const want = Math.min(stepsH, twoLines, Math.max(minAutoCircle, tr.height));
           if (want <= circle + 0.5) break;
           circle = want;
         }
@@ -641,7 +677,33 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     if (tr.wraps.some(w => w.tooWide)) { headingsFit = false; problems.push(overflowProblem(tr, col.h, mm1)); }
     return tr.height + headingGap;
   };
-  const leftHead = placeHeading(content.storageHeading, leftText);
+  // The storage band (e.g. "KEEP FROZEN"): solid black, whole dots, white
+  // bold capitals with a drawn snowflake either side, at the top of the
+  // storage column; the heading (if any) and the storage text follow.
+  let banner: LabelLayout["banner"] = null;
+  let bannerH = 0;
+  if (content.storageBanner) {
+    const h = Math.round(d(t.storageBanner.heightMm));
+    const rect: Rect = { x: Math.round(leftText.x), y: Math.round(leftText.y), w: Math.floor(leftText.w), h };
+    const face: Face = { width: "normal", weight: 700 };
+    const ls = 0.04;
+    const text = content.storageBanner;
+    const flakeD = t.storageBanner.snowflake ? h * 0.72 : 0;
+    const pad = h * 0.3;
+    const cap = m.metrics(face).capHeight;
+    let size = (h * 0.56) / cap;
+    const avail = rect.w - 2 * pad - (flakeD ? 2 * (flakeD + pad) : 0);
+    const w0 = m.advance(text, face, size, ls);
+    if (w0 > avail) size *= avail / w0;
+    const tw = m.advance(text, face, size, ls);
+    const cx = rect.x + rect.w / 2;
+    const cy = rect.y + h / 2;
+    extraRuns.push({ x: cx - tw / 2, y: cy + (cap * size) / 2, text, face, sizeDots: size, letterSpacingEm: ls, white: true });
+    const flakes = flakeD ? [-1, 1].map(s => ({ cx: cx + s * (tw / 2 + pad + flakeD / 2), cy, r: flakeD / 2 })) : [];
+    banner = { rect, flakes };
+    bannerH = h + d(1.5);
+  }
+  const leftHead = bannerH + placeHeading(content.storageHeading, { ...leftText, y: leftText.y + bannerH, h: Math.max(0, leftText.h - bannerH) });
   const rightHead = placeHeading(content.ingredientsHeading, right);
   if (headingTrial) {
     const hl = fieldLayout(headingTrial, headingBoxes, -1, headingsFit, t, m);
@@ -664,6 +726,8 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
     barcode,
     columns: { left, right, leftText },
     divider,
+    banner,
+    extraRuns,
     fits: problems.length === 0,
     problems,
   };

@@ -160,6 +160,29 @@ export interface LabelTemplate {
    *  Automatic: any of them anywhere in its ingredients (whole word, any
    *  case — bones.ts). Empty = Automatic is always off. */
   boneRiskWords: string[];
+  /** A solid black band at the top of the storage column — white bold
+   *  capitals with a drawn snowflake either side (direct thermal prints
+   *  black only) — for products that must be stored frozen (fried chicken,
+   *  2026-10-12). Off on the standard calzone label. */
+  storageBanner: StorageBanner;
+  /** Print the chilled use-by line. Off = frozen use-by only (labelled by
+   *  text.frozenLabel, e.g. "USE BY:"), for frozen-only products. */
+  chilledUseByOn: boolean;
+  /** A big bold net-quantity line (e.g. "500g") above the barcode, from the
+   *  recipe's label settings. Off on the standard label. */
+  netQuantity: { on: boolean; sizePt: number };
+  /** Where the bones warning goes: with the allergen note (standard) or at
+   *  the end of the storage text. */
+  warningPlacement: "allergens" | "storage";
+}
+
+export interface StorageBanner {
+  on: boolean;
+  /** e.g. "KEEP FROZEN" — printed in capitals. */
+  text: string;
+  snowflake: boolean;
+  /** Band height. */
+  heightMm: number;
 }
 
 export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
@@ -287,6 +310,10 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   // Graeme, 2026-10-12: "anything with chicken in it" may have bones —
   // and turkey too.
   boneRiskWords: ["chicken", "turkey"],
+  storageBanner: { on: false, text: "KEEP FROZEN", snowflake: true, heightMm: 6.5 },
+  chilledUseByOn: true,
+  netQuantity: { on: false, sizePt: 16 },
+  warningPlacement: "allergens",
 };
 
 // ── Normalising stored settings ────────────────────────────────────────────
@@ -370,6 +397,16 @@ function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
 
 export const MAX_STEPS = 4;
 
+function normaliseBanner(v: unknown, d: StorageBanner): StorageBanner {
+  const o = obj(v);
+  return {
+    on: bool(o.on, d.on),
+    text: str(o.text, d.text).slice(0, 40),
+    snowflake: bool(o.snowflake, d.snowflake),
+    heightMm: num(o.heightMm, d.heightMm, 3, 20),
+  };
+}
+
 /** A word list: trimmed, blanks and repeats (any case) dropped, at most 50
  *  words of 60 characters. Not a list = the default; an empty list stays
  *  empty (Automatic then never switches the warning on). */
@@ -446,6 +483,14 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     batchBasis: r.batchBasis === "print-day" ? "print-day" : r.batchBasis === "production-day" ? "production-day" : D.batchBasis,
     mayContainBoldList: bool(r.mayContainBoldList, D.mayContainBoldList),
     boneRiskWords: normaliseWords(r.boneRiskWords, D.boneRiskWords),
+    // Templates saved before these existed get the standard behaviour.
+    storageBanner: normaliseBanner(r.storageBanner, D.storageBanner),
+    chilledUseByOn: bool(r.chilledUseByOn, D.chilledUseByOn),
+    netQuantity: {
+      on: bool(obj(r.netQuantity).on, D.netQuantity.on),
+      sizePt: num(obj(r.netQuantity).sizePt, D.netQuantity.sizePt, 6.75, 40),
+    },
+    warningPlacement: r.warningPlacement === "storage" ? "storage" : r.warningPlacement === "allergens" ? "allergens" : D.warningPlacement,
   };
 }
 
@@ -470,7 +515,31 @@ export interface TemplatePreset {
 export function friedChickenTemplate(): LabelTemplate {
   const t = normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
   t.text.title = "{name}";
-  t.text.steps = ["Cooking instructions to be confirmed."];
+  // Graeme's current fried chicken label (Label LIVE), tidied; the numbers
+  // are the template's cooking values, so a recipe can override them.
+  t.text.steps = [
+    "**COOK FROM FROZEN.** Pre-heat the oven to {ovenTemp}°C ({fanTemp}°C fan) and remove all packaging.",
+    "Spread the chicken strips across a baking tray.",
+    "Cook for {ovenMin}–{ovenMax} minutes until piping hot and crunchy.",
+  ];
+  t.cooking = {
+    ovenTempC: 190, fanTempC: 170, ovenMinMinutes: 14, ovenMaxMinutes: 16,
+    airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
+  };
+  // Three wrapping steps need a taller band than the calzone's two.
+  t.page.stepsBandMm = 11;
+  // Stored frozen — said unmistakably, without mentioning how it arrives.
+  t.storageBanner = { ...t.storageBanner, on: true, text: "KEEP FROZEN", snowflake: true };
+  t.text.storageHeading = "";
+  t.text.storage = "Store at -18°C or below. Cook from frozen.";
+  t.chilledUseByOn = false;
+  t.text.frozenLabel = "USE BY:";
+  t.frozenDefault = { amount: 5, unit: "months" };
+  t.netQuantity = { ...t.netQuantity, on: true };
+  // The bones warning sits with the storage text, as on Graeme's label,
+  // leaving the right column to the long ingredient decks.
+  t.warningPlacement = "storage";
+  t.text.allergenNote = "For allergens, see ingredients in **bold**.";
   t.fields.ingredients = { ...t.fields.ingredients, narrowest: "condensed" };
   return t;
 }
