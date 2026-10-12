@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck } from "lucide-react";
 import {
-  barsShorterThanGs1, BODY_WEIGHTS, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -109,7 +109,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
   // Legal minimum for a field = the largest across the widths it may use.
   const legalMin = (f: FieldKey) => {
     const st = draft.fields[f];
-    const widths = st.allowNarrower ? WIDTH_ORDER.slice(WIDTH_ORDER.indexOf(st.width)) : [st.width];
+    const widths = allowedWidths(st);
     const m = meta.legalMinimums[f];
     const base = Math.max(...widths.map(w => m?.[w] ?? 0));
     // Server figures are for the saved small-pack setting; adjust if it was just flipped.
@@ -191,7 +191,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
 
           {/* Typography */}
           <Card icon={<Type className="w-5 h-5" />} title="Text styles">
-            <p className="text-sm text-muted-foreground">Each block starts at its biggest size and steps down a quarter point at a time, trying the narrower widths first. If it still won't fit at its smallest, the label says DOESN'T FIT — nothing is ever cut off.</p>
+            <p className="text-sm text-muted-foreground">Each block starts at its biggest size and steps down a quarter point at a time, trying the narrower widths first — but never narrower than its “Narrowest width”. If it still won't fit at its smallest, the label says DOESN'T FIT — nothing is ever cut off.</p>
+            <p className="text-sm text-muted-foreground">Barlow Condensed is hard to read in small print, bold allergen words most of all — keep body text at Barlow Semi Condensed or wider and let it get a little smaller instead.</p>
             <div className="space-y-3">
               {FIELD_KEYS.map(f => (
                 <FieldCard key={f} field={f} style={draft.fields[f]} legal={legalMin(f)} onChange={p => setField(f, p)} />
@@ -375,10 +376,25 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <label className="flex flex-col gap-1 col-span-2">
           <span className="text-sm font-semibold">Font width</span>
-          <select value={style.width} onChange={e => onChange({ width: e.target.value as WidthVariant })} className={inputCls}>
+          <select value={style.width} onChange={e => {
+            const width = e.target.value as WidthVariant;
+            // The narrowest can't be wider than the preferred width.
+            const narrowest = fixed || WIDTH_ORDER.indexOf(style.narrowest) < WIDTH_ORDER.indexOf(width) ? width : style.narrowest;
+            onChange({ width, narrowest });
+          }} className={inputCls}>
             {WIDTH_ORDER.map(w => <option key={w} value={w}>{WIDTH_LABEL[w]}</option>)}
           </select>
         </label>
+        {!fixed && (
+          <label className="flex flex-col gap-1 col-span-2">
+            <span className="text-sm font-semibold">Narrowest width</span>
+            <select value={style.narrowest} onChange={e => onChange({ narrowest: e.target.value as WidthVariant })} className={inputCls}>
+              {WIDTH_ORDER.slice(WIDTH_ORDER.indexOf(style.width)).map(w => (
+                <option key={w} value={w}>{w === style.width ? `${WIDTH_LABEL[w]} (never narrower)` : WIDTH_LABEL[w]}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <label className="flex flex-col gap-1 col-span-2">
           <span className="text-sm font-semibold">Weight</span>
           <select value={style.weight} onChange={e => onChange({ weight: Number(e.target.value) as FieldStyle["weight"] })} className={inputCls}>
@@ -402,7 +418,6 @@ function FieldCard({ field, style, legal, onChange }: { field: FieldKey; style: 
       <p className={cn("text-xs", belowLegal ? "text-destructive font-semibold" : "text-muted-foreground")}>Legal minimum for this block: {legal} pt.</p>
       {fixed && <p className="text-sm text-muted-foreground">One style for “STORAGE INSTRUCTIONS:” and “THE INGREDIENTS:”, so they always match. They stay this size — only the text under them shrinks to fit.</p>}
       <div className="flex flex-wrap gap-2">
-        {!fixed && <Toggle on={style.allowNarrower} onChange={v => onChange({ allowNarrower: v })} label="Go narrower before smaller" />}
         <Toggle on={style.bold} onChange={v => onChange({ bold: v })} label="All bold" />
         <Toggle on={style.caps} onChange={v => onChange({ caps: v })} label="CAPITALS" />
         <Toggle on={style.align === "center"} onChange={v => onChange({ align: v ? "center" : "left" })} label="Centred" />

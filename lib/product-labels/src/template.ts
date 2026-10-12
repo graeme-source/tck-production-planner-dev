@@ -42,10 +42,15 @@ export const FIELD_LABEL: Record<FieldKey, string> = {
 };
 
 export interface FieldStyle {
-  /** Preferred width; the layout tries narrower ones before smaller sizes
-   *  when allowNarrower is on. */
+  /** Preferred width; the layout tries narrower ones (down to `narrowest`)
+   *  before smaller sizes. */
   width: WidthVariant;
-  allowNarrower: boolean;
+  /** The narrowest width this field may go to. Equal to `width` = never
+   *  narrower. Body text stops at Semi Condensed: Barlow Condensed — bold
+   *  allergen words above all — was hard to read on the printed label
+   *  (Graeme, 2026-10-12). Replaces the old on/off `allowNarrower` (true =
+   *  condensed, false = the preferred width; normaliseTemplate reads both). */
+  narrowest: WidthVariant;
   /** Weight of ordinary text (bold text always uses 700). */
   weight: BodyWeight;
   /** Point sizes. minPt is raised to the legal minimum if set below it. */
@@ -166,7 +171,7 @@ export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
 };
 
 const field = (f: Partial<FieldStyle>): FieldStyle => ({
-  width: "normal", allowNarrower: true, weight: 400, minPt: 6.75, maxPt: 9,
+  width: "normal", narrowest: "semi-condensed", weight: 400, minPt: 6.75, maxPt: 9,
   letterSpacingEm: 0, lineHeight: 1.12, bold: false, caps: false, align: "left", ...f,
 });
 
@@ -194,9 +199,12 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     smallPack: false,
   },
   fields: {
-    title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center" }),
-    // Two steps share the row now, so they can be bigger: up to 12 pt (11.25
-    // pt condensed with the real Chicken & Chorizo, without squeezing the deck).
+    // Body text never narrower than Barlow Semi Condensed (Graeme,
+    // 2026-10-12: condensed, bold allergens above all, was hard to read on
+    // the printed label). Only the title (big, short) may still go fully
+    // condensed.
+    title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center", narrowest: "condensed" }),
+    // Two steps share the row now, so they can be bigger: up to 12 pt.
     steps: field({ maxPt: 12, lineHeight: 1.1 }),
     storage: field({ maxPt: 10 }),
     dates: field({ weight: 700, bold: true, maxPt: 11 }),
@@ -204,7 +212,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     allergenInfo: field({ maxPt: 10 }),
     address: field({ maxPt: 9 }),
     // Fixed size: printed at maxPt, never shrunk or narrowed.
-    headings: field({ weight: 700, bold: true, caps: true, minPt: 10, maxPt: 10, lineHeight: 1.1, allowNarrower: false }),
+    headings: field({ weight: 700, bold: true, caps: true, minPt: 10, maxPt: 10, lineHeight: 1.1, narrowest: "normal" }),
   },
   text: {
     title: "{name} - {packSize} PACK",
@@ -270,12 +278,36 @@ export function normalisePeriod(v: unknown): ShelfPeriod | null {
   return amount == null || amount <= 0 ? null : { amount, unit };
 }
 
+function isWidth(v: unknown): v is WidthVariant {
+  return WIDTH_ORDER.includes(v as WidthVariant);
+}
+
+/** The narrowest width a field may use — never wider than its preferred
+ *  width. Templates saved before it existed have `allowNarrower` instead:
+ *  on = all the way to Condensed (what it did), off = the preferred width. */
+function normaliseNarrowest(o: Record<string, unknown>, width: WidthVariant, fallback: WidthVariant): WidthVariant {
+  const narrowest = isWidth(o.narrowest)
+    ? o.narrowest
+    : typeof o.allowNarrower === "boolean"
+      ? (o.allowNarrower ? "condensed" : width)
+      : fallback;
+  return WIDTH_ORDER.indexOf(narrowest) < WIDTH_ORDER.indexOf(width) ? width : narrowest;
+}
+
+/** The widths a field may use, widest first: its preferred width down to its
+ *  narrowest. */
+export function allowedWidths(style: Pick<FieldStyle, "width" | "narrowest">): WidthVariant[] {
+  const start = WIDTH_ORDER.indexOf(style.width);
+  return WIDTH_ORDER.slice(start, Math.max(start, WIDTH_ORDER.indexOf(style.narrowest)) + 1);
+}
+
 function normaliseField(v: unknown, d: FieldStyle): FieldStyle {
   const o = obj(v);
   const minPt = num(o.minPt, d.minPt, 3, 72);
+  const width = isWidth(o.width) ? o.width : d.width;
   return {
-    width: WIDTH_ORDER.includes(o.width as WidthVariant) ? (o.width as WidthVariant) : d.width,
-    allowNarrower: bool(o.allowNarrower, d.allowNarrower),
+    width,
+    narrowest: normaliseNarrowest(o, width, d.narrowest),
     weight: BODY_WEIGHTS.includes(o.weight as BodyWeight) ? (o.weight as BodyWeight) : d.weight,
     minPt,
     maxPt: Math.max(minPt, num(o.maxPt, d.maxPt, 3, 72)),

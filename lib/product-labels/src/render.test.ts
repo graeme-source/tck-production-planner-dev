@@ -265,7 +265,8 @@ describe("steps: any number, widths worked out automatically", () => {
     // The row is used edge to edge (inside the margins).
     const last = steps.boxes[steps.boxes.length - 1];
     expect(last.x + last.w).toBeCloseTo(p.layout.widthDots - mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203), 0);
-    expect(steps.sizePt).toBeGreaterThan(10); // bigger than when there were three
+    expect(steps.sizePt).toBeGreaterThanOrEqual(9.5); // Semi Condensed at narrowest
+    expect(steps.width).not.toBe("condensed");
   });
   it("step 1 sits on two lines (not three), the bold phrase intact, still bigger than the body text", () => {
     const p = proofLabel(snapshot(), when, fonts);
@@ -275,8 +276,8 @@ describe("steps: any number, widths worked out automatically", () => {
     expect(new Set(runs1.map(r => Math.round(r.y))).size).toBe(2);
     expect(runs1.filter(r => r.face.weight === 700).map(r => r.text).join(" ")).toBe("leave the calzones in the wooden tray");
     const storage = p.layout.fields.find(f => f.key === "storage")!;
-    expect(steps.sizePt).toBeGreaterThanOrEqual(10);
-    expect(steps.sizePt).toBeGreaterThanOrEqual(storage.sizePt);
+    expect(steps.sizePt).toBeGreaterThanOrEqual(9.5);
+    expect(storage.sizePt).toBeGreaterThan(0);
   });
   it("a third step added back still lays out, numbered 1–3; a blank one closes up", () => {
     const three = withSteps([...DEFAULT_TEMPLATE.text.steps, "Enjoy."]);

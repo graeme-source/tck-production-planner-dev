@@ -66,7 +66,8 @@ describe("layout fitting", () => {
   });
 
   it("shrinks once the narrowest width at that size doesn't fit", () => {
-    // The first deck length that needs a smaller size went condensed first.
+    // The first deck length that needs a smaller size went to the field's
+    // narrowest width (Semi Condensed by default) first.
     let n = 50;
     let l = layoutLabel(template(), content(words(n)), fake);
     while (field(l, "ingredients").sizePt === DEFAULT_TEMPLATE.fields.ingredients.maxPt && n < 1000) {
@@ -75,7 +76,7 @@ describe("layout fitting", () => {
     }
     const f = field(l, "ingredients");
     expect(l.fits).toBe(true);
-    expect(f.width).toBe("condensed");
+    expect(f.width).toBe("semi-condensed");
     expect(f.sizePt).toBeLessThan(DEFAULT_TEMPLATE.fields.ingredients.maxPt);
     expect(f.sizePt).toBeGreaterThanOrEqual(7);
   });
@@ -89,7 +90,7 @@ describe("layout fitting", () => {
     expect(p!.overflowMm).toBeGreaterThan(0);
     const f = field(l, "ingredients");
     expect(f.sizePt).toBe(7); // legal minimum for x-height 0.5
-    expect(f.width).toBe("condensed");
+    expect(f.width).toBe("semi-condensed"); // the narrowest it's allowed
     // never truncated: every deck word is placed somewhere
     const placed = f.runs.map(r => r.text).filter(t => t.startsWith("word"));
     expect(placed).toHaveLength(800);
@@ -109,9 +110,40 @@ describe("layout fitting", () => {
   });
 
   it("keeps the preferred width when narrower widths are switched off", () => {
-    const t = template(x => { x.fields.ingredients.allowNarrower = false; });
+    const t = template(x => { x.fields.ingredients.narrowest = "normal"; });
     const l = layoutLabel(t, content(words(150)), fake);
     expect(field(l, "ingredients").width).toBe("normal");
+  });
+
+  it("body text never goes Condensed when its narrowest is Semi Condensed — it gets smaller instead", () => {
+    // Every deck length from short to far too long: no body field is ever
+    // drawn condensed (Graeme, 2026-10-12: condensed was hard to read).
+    for (let n = 10; n <= 800; n += 30) {
+      const l = layoutLabel(template(), content(words(n)), fake);
+      for (const k of ["steps", "storage", "dates", "ingredients", "allergenInfo", "address"]) {
+        const f = l.fields.find(x => x.key === k);
+        if (f) expect(f.width, `${k} with ${n} words`).not.toBe("condensed");
+        if (f) expect(f.runs.every(r => r.white || r.face.width !== "condensed"), `${k} runs`).toBe(true);
+      }
+    }
+  });
+
+  it("a field allowed down to Condensed still goes Condensed before smaller", () => {
+    const t = template(x => { x.fields.ingredients.narrowest = "condensed"; });
+    let n = 50;
+    let l = layoutLabel(t, content(words(n)), fake);
+    while (field(l, "ingredients").sizePt === t.fields.ingredients.maxPt && n < 1000) {
+      n += 10;
+      l = layoutLabel(t, content(words(n)), fake);
+    }
+    expect(field(l, "ingredients").width).toBe("condensed");
+  });
+
+  it("the title may still go Condensed by default", () => {
+    const c = content("x");
+    c.title = [parseBold("A VERY LONG RECIPE NAME THAT NEEDS SQUEEZING HARD - 2 PACK")];
+    const t = template(x => { x.fields.title.minPt = x.fields.title.maxPt; });
+    expect(field(layoutLabel(t, c, fake), "title").width).toBe("condensed");
   });
 
   it("a word too wide for its box is a problem, not a cut", () => {

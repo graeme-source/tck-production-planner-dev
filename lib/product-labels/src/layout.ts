@@ -4,8 +4,8 @@
  * Works in printer dots. Every field has a box; its text is wrapped to the
  * box width and must fit the box height. Text starts at the field's MAX size
  * in its preferred width and steps down in quarter points; at each size it
- * tries the narrower widths (Barlow → Semi Condensed → Condensed) BEFORE
- * going smaller. The smallest size is the field's minimum, never below the
+ * tries the narrower widths (Barlow → Semi Condensed → Condensed, but never
+ * past the field's `narrowest`) BEFORE going smaller. The smallest size is the field's minimum, never below the
  * legal x-height minimum for that width. If the text still doesn't fit at
  * the minimum in the narrowest width, the label is DOESN'T FIT — and the
  * layout still places every word (running past the box) so the proof shows
@@ -26,7 +26,7 @@ import { fieldParagraphs, type LabelContent } from "./content";
 import { barcodeModuleDots, type ModuleChoice } from "./ean13";
 import { legalMinPt, PT_STEP, xHeightMmAt } from "./legal";
 import type { BodyWeight, FieldKey, FieldStyle, LabelTemplate, WidthVariant } from "./template";
-import { FIELD_LABEL, WIDTH_ORDER } from "./template";
+import { allowedWidths, FIELD_LABEL, WIDTH_ORDER } from "./template";
 import type { Paragraph, Run } from "./text";
 
 export interface Face {
@@ -240,10 +240,7 @@ interface Trial {
   bottom: number;
 }
 
-function widthCandidates(style: FieldStyle): WidthVariant[] {
-  const start = WIDTH_ORDER.indexOf(style.width);
-  return style.allowNarrower ? WIDTH_ORDER.slice(start) : [style.width];
-}
+const widthCandidates = (style: FieldStyle): WidthVariant[] => allowedWidths(style);
 
 function legalMinFor(style: FieldStyle, width: WidthVariant, m: TextMeasurer, smallPack: boolean): number {
   // The binding x-height is the smallest of the weights this field uses.
@@ -414,6 +411,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Columns
   const colTop = stepsTop + stepsH + d(page.bandGapMm);
+
   const colH = H - margin - colTop;
   const leftW = innerW * (page.columnSplitPct / 100);
   const left: Rect = { x: innerX, y: colTop, w: leftW, h: colH };

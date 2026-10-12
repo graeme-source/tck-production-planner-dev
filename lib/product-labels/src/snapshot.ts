@@ -259,5 +259,5 @@ function pageSummary(t: LabelTemplate): string {
 }
 function styleSummary(t: LabelTemplate, f: (typeof FIELD_KEYS)[number]): string {
   const s = t.fields[f];
-  return `${s.width}, ${s.weight}, ${s.minPt}–${s.maxPt} pt, spacing ${s.letterSpacingEm} em, line ${s.lineHeight}${s.bold ? ", bold" : ""}${s.caps ? ", caps" : ""}${s.allowNarrower ? "" : ", no narrower"}`;
+  return `${s.width}, ${s.weight}, ${s.minPt}–${s.maxPt} pt, spacing ${s.letterSpacingEm} em, line ${s.lineHeight}${s.bold ? ", bold" : ""}${s.caps ? ", caps" : ""}${s.narrowest === s.width ? ", no narrower" : `, down to ${s.narrowest}`}`;
 }
