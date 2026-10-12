@@ -1,14 +1,17 @@
 /**
  * "Add meeting notes (AI)" (Graeme, 2026-10-12: "record the meeting on AI
- * note summary and then upload that summary. I just give you the URL, and
- * then you scrape it and build the record… I don't need to do loads of
+ * note summary and then upload that summary… I don't need to do loads of
  * admin").
  *
- *   1. Paste the Wispr Flow shared link — or the notes themselves (big box,
- *      dictation too), or reuse what's already written on the meeting.
- *   2. The server reads it and Claude drafts: a title from the topic, a
- *      short summary, what was agreed, follow-up actions with owners and
- *      dates, and a suggested classification.
+ *   1. PASTE the notes (big box, dictation too), or reuse what's already
+ *      written on the meeting. Wispr Flow shared links need a login
+ *      (checked with a real link, 12 Oct 2026), so the app never reads a
+ *      link: a pasted link moves into "Link to the notes (optional)", is
+ *      kept on the entry as the source reference, and the box says to copy
+ *      the notes in instead.
+ *   2. Claude drafts: a title from the topic, a short summary, what was
+ *      agreed, follow-up actions with owners and dates, and a suggested
+ *      classification.
  *   3. Graeme checks and edits the draft. NOTHING is on the record until he
  *      presses Save to record — the panel says so the whole time. The draft
  *      is held in memory for this tab (never on disk: HR notes on a shared
@@ -20,10 +23,11 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
-  AlertTriangle, Check, ClipboardPaste, Link2, Loader2, Plus, RotateCcw, Sparkles, Trash2, X,
+  AlertTriangle, Check, Link2, Loader2, Plus, RotateCcw, Sparkles, Trash2, X,
 } from "lucide-react";
 import {
-  sortClassifications, whatHappenedText, ACTION_OWNERS, type ActionOwner, type MeetingNotesDraft,
+  sortClassifications, whatHappenedText, linkOnly, linkPastedMessage, ACTION_OWNERS, MAX_NOTES_CHARS,
+  type ActionOwner, type MeetingNotesDraft,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -37,7 +41,6 @@ interface Source { kind: "url" | "text"; url: string | null; text: string }
 interface ReadResult { draft: MeetingNotesDraft; repaired: string[]; source: Source }
 
 interface Held {
-  mode: "url" | "text";
   url: string;
   text: string;
   draft: Draft | null;
@@ -64,37 +67,44 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
 }) {
   const first = personName.split(" ")[0];
   const start = heldDrafts.get(entry.id);
-  const [mode, setMode] = useState<"url" | "text">(start?.mode ?? "url");
   const [url, setUrl] = useState(start?.url ?? "");
   const [text, setText] = useState(start?.text ?? "");
   const [draft, setDraft] = useState<Draft | null>(start?.draft ?? null);
   const [source, setSource] = useState<Source | null>(start?.source ?? null);
   const [repaired, setRepaired] = useState<string[]>(start?.repaired ?? []);
-  const [readError, setReadError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const existing = whatHappenedText(entry);
   const classifications = sortClassifications(data.classifications).filter(c => c.active || c.id === entry.classificationId);
 
   // Keep the work in memory as it changes.
   useEffect(() => {
-    heldDrafts.set(entry.id, { mode, url, text, draft, source, repaired });
-  }, [entry.id, mode, url, text, draft, source, repaired]);
+    heldDrafts.set(entry.id, { url, text, draft, source, repaired });
+  }, [entry.id, url, text, draft, source, repaired]);
+
+  /** The notes box. A link pasted on its own is never read — it moves to the
+   *  link field (kept as the reference) and the box says what to do. */
+  const changeText = (v: string) => {
+    const link = linkOnly(v);
+    if (link) {
+      setUrl(link);
+      setText("");
+      setNotice(linkPastedMessage(link));
+      return;
+    }
+    setText(v);
+    if (v.trim()) setNotice(null);
+  };
 
   const read = useMutation({
-    mutationFn: (body: { url: string } | { text: string }) =>
-      recordSend<ReadResult>("POST", `/entries/${entry.id}/meeting-notes/read`, body),
+    mutationFn: () => recordSend<ReadResult>("POST", `/entries/${entry.id}/meeting-notes/read`, { text, url: url.trim() || null }),
     onSuccess: r => {
-      setReadError(null);
+      setNotice(null);
       setSource(r.source);
       setRepaired(r.repaired);
       setDraft({ ...r.draft, actions: r.draft.actions.map(a => ({ ...a, todo: a.owner === "me" })) });
     },
-    onError: (e: unknown) => {
-      const msg = e instanceof Error ? e.message : "Couldn't read the notes";
-      setReadError(msg);
-      // A link we can't read → straight to pasting, with the reason on screen.
-      if (mode === "url") setMode("text");
-    },
+    onError: (e: unknown) => setNotice(e instanceof Error ? e.message : "Couldn't read the notes"),
   });
 
   const save = useMutation({
@@ -120,61 +130,48 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
   const discard = () => { heldDrafts.delete(entry.id); onClose(); };
   const set = (patch: Partial<Draft>) => setDraft(d => (d ? { ...d, ...patch } : d));
 
-  // ── Step 1: the notes ────────────────────────────────────────────────────
+  // ── Step 1: paste the notes ──────────────────────────────────────────────
   if (!draft) {
-    const canRead = mode === "url" ? url.trim().length > 0 : text.trim().length >= 20;
+    const canRead = text.trim().length >= 20;
     return (
       <div className="rounded-3xl border-2 border-primary/50 bg-card p-4 space-y-4">
         <div className="flex items-start gap-3">
           <Sparkles className="w-6 h-6 text-primary shrink-0 mt-1" />
           <div className="flex-1 min-w-0">
             <h4 className="text-xl font-bold">Add meeting notes (AI)</h4>
-            <p className="text-base text-muted-foreground">Paste the Wispr Flow link or the notes. The AI drafts the record; you check it before anything is saved.</p>
+            <p className="text-base text-muted-foreground">Paste the notes — from Wispr Flow or anywhere. The AI drafts the record; you check it before anything is saved.</p>
           </div>
           <button type="button" onClick={onClose} aria-label="Close" className="p-2 rounded-xl text-muted-foreground hover:bg-secondary"><X className="w-6 h-6" /></button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
-          {([["url", "Paste a link", Link2], ["text", "Paste the notes", ClipboardPaste]] as const).map(([k, label, Icon]) => (
-            <button key={k} type="button" onClick={() => setMode(k)} aria-pressed={mode === k}
-              className={cn("h-14 rounded-2xl border-2 text-lg font-bold flex items-center justify-center gap-2",
-                mode === k ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground")}>
-              <Icon className="w-5 h-5" /> {label}
+        {notice && (
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800 p-4 flex items-start gap-3" role="status">
+            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+            <p className="text-base font-semibold text-amber-950 dark:text-amber-100">{notice}</p>
+          </div>
+        )}
+
+        <div className="space-y-2">
+          <FieldLabel>Paste the notes</FieldLabel>
+          <textarea value={text} onChange={e => changeText(e.target.value)} rows={12} maxLength={MAX_NOTES_CHARS}
+            placeholder="Paste the meeting summary or transcript here — or dictate it." className={cn(box, "resize-y min-h-64")} />
+          <DictateButton value={text} onChange={changeText} context="note" size="lg" />
+          {existing && text.trim() !== existing.trim() && (
+            <button type="button" onClick={() => changeText(text.trim() ? `${text.trim()}\n\n${existing}` : existing)}
+              className="w-full h-12 rounded-2xl border-2 border-border text-base font-bold hover:bg-secondary/50">
+              Use what's already written on this meeting
             </button>
-          ))}
+          )}
         </div>
 
-        {readError && (
-          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800 p-4 flex items-start gap-3">
-            <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
-            <p className="text-base font-semibold text-amber-950 dark:text-amber-100">{readError}</p>
-          </div>
-        )}
+        <label className="block space-y-1.5">
+          <span className="text-base font-bold flex items-center gap-2"><Link2 className="w-4 h-4 text-muted-foreground" /> Link to the notes (optional)</span>
+          <input value={url} onChange={e => setUrl(e.target.value)} inputMode="url" autoCapitalize="off" autoCorrect="off" maxLength={2000}
+            placeholder="https://notes.wisprflow.ai/shared/…" className={input} />
+          <span className="block text-sm text-muted-foreground">Kept on the record as where the notes came from. The app doesn't open it — Wispr Flow links need a login.</span>
+        </label>
 
-        {mode === "url" ? (
-          <label className="block space-y-1.5">
-            <FieldLabel>Shared notes link</FieldLabel>
-            <input value={url} onChange={e => setUrl(e.target.value)} inputMode="url" autoCapitalize="off" autoCorrect="off"
-              placeholder="https://notes.wisprflow.ai/shared/…" className={cn(input, "h-14")} />
-            <span className="block text-sm text-muted-foreground">Wispr Flow shared links only. For anything else, paste the notes.</span>
-          </label>
-        ) : (
-          <div className="space-y-2">
-            <FieldLabel>The notes</FieldLabel>
-            <textarea value={text} onChange={e => setText(e.target.value)} rows={10} maxLength={60_000}
-              placeholder="Paste the meeting summary or transcript here — or dictate it." className={cn(box, "resize-y")} />
-            <DictateButton value={text} onChange={setText} context="note" size="lg" />
-            {existing && text.trim() !== existing.trim() && (
-              <button type="button" onClick={() => setText(t => (t.trim() ? `${t.trim()}\n\n${existing}` : existing))}
-                className="w-full h-12 rounded-2xl border-2 border-border text-base font-bold hover:bg-secondary/50">
-                Use what's already written on this meeting
-              </button>
-            )}
-          </div>
-        )}
-
-        <button type="button" disabled={!canRead || read.isPending}
-          onClick={() => read.mutate(mode === "url" ? { url: url.trim() } : { text })}
+        <button type="button" disabled={!canRead || read.isPending} onClick={() => read.mutate()}
           className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
           {read.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6" />}
           {read.isPending ? "Reading the notes… about 20 seconds" : "Read the notes"}
@@ -288,7 +285,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Saving marks the meeting held and keeps the original notes{source?.url ? " and link" : ""} on it (People access only). It stays private to you until you tap Share with {first}.
+        Saving marks the meeting held and keeps the pasted notes{source?.url ? " and the link" : ""} on it (People access only). It stays private to you until you tap Share with {first}.
       </p>
 
       {confirmDiscard ? (

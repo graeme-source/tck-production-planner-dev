@@ -110,10 +110,10 @@ describe("the notes are data, not instructions", () => {
 });
 
 describe("request bodies", () => {
-  it("reading takes a link or text, not both, not neither", () => {
-    expect(ReadMeetingNotesBody.safeParse({ url: "https://notes.wisprflow.ai/shared/x" }).success).toBe(true);
+  it("reading needs pasted notes; a link alongside is only a reference", () => {
     expect(ReadMeetingNotesBody.safeParse({ text: "We met" }).success).toBe(true);
-    expect(ReadMeetingNotesBody.safeParse({ url: "https://a", text: "b" }).success).toBe(false);
+    expect(ReadMeetingNotesBody.safeParse({ text: "We met", url: "https://notes.wisprflow.ai/shared/x" }).success).toBe(true);
+    expect(ReadMeetingNotesBody.safeParse({ url: "https://notes.wisprflow.ai/shared/x" }).success).toBe(false);
     expect(ReadMeetingNotesBody.safeParse({ text: "  " }).success).toBe(false);
     expect(ReadMeetingNotesBody.safeParse({}).success).toBe(false);
   });

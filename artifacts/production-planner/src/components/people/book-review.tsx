@@ -156,7 +156,7 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
       </div>
       <p className="text-sm text-muted-foreground">
         {status === "booked" ? "A to-do goes on your own list for that day. " : ""}
-        After the meeting, open it and tap "Add meeting notes (AI)" — paste your Wispr Flow link or the notes, check what it drafts, save.
+        After the meeting, open it and tap "Add meeting notes (AI)" — paste your notes (from Wispr Flow or anywhere), check what it drafts, save.
       </p>
     </div>
   );

@@ -179,6 +179,46 @@ export function defaultMeetingClassification<C extends { id: number; sortOrder: 
     ?? null;
 }
 
+// ── Pasting notes, not links ───────────────────────────────────────────────
+//
+// Wispr Flow shared notes need a login (checked with a real shared link,
+// 12 Oct 2026: the page says "Login to access shared notes" and its data
+// endpoints refuse without one), so the app never fetches a link. Notes are
+// PASTED; a link is only kept on the entry as the source reference.
+
+export const MAX_NOTES_CHARS = 60_000;
+
+export const WISPR_LOGIN_MESSAGE =
+  "Wispr Flow links need a login, so I can't read them — open the link, copy the notes, and paste them here.";
+export const LINK_ONLY_MESSAGE =
+  "That's a link, and links can't be read from here — open it, copy the notes, and paste them here.";
+
+/** The link, if what was pasted is nothing but one http(s) link. */
+export function linkOnly(text: string | null | undefined): string | null {
+  const t = (text ?? "").trim();
+  if (!/^https?:\/\/\S+$/i.test(t)) return null;
+  try { return new URL(t).toString(); } catch { return null; }
+}
+
+export function isWisprFlowLink(url: string | null | undefined): boolean {
+  try { return new URL((url ?? "").trim()).hostname.toLowerCase() === "notes.wisprflow.ai"; } catch { return false; }
+}
+
+/** What to say when a link is pasted where the notes should go. */
+export function linkPastedMessage(url: string): string {
+  return isWisprFlowLink(url) ? WISPR_LOGIN_MESSAGE : LINK_ONLY_MESSAGE;
+}
+
+/** A source link kept for reference: an https/http URL, tidied, or null. */
+export function cleanSourceLink(raw: string | null | undefined): string | null {
+  const t = (raw ?? "").trim();
+  if (!t || t.length > 2000) return null;
+  try {
+    const u = new URL(t);
+    return u.protocol === "https:" || u.protocol === "http:" ? u.toString() : null;
+  } catch { return null; }
+}
+
 // ── Meeting notes drafted by AI ────────────────────────────────────────────
 
 export const ACTION_OWNERS = ["me", "colleague", "other"] as const;

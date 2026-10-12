@@ -97,7 +97,7 @@ export function WhatHappened({ entry, data, person, onChanged }: {
           {showSources && sources.map(s => (
             <div key={s.id} className="rounded-xl border-2 border-border bg-card p-3 space-y-1">
               <p className="text-sm text-muted-foreground">
-                {s.kind === "url" ? "From a shared link" : "Pasted"} · {fmtDayIso(s.createdAt.slice(0, 10))}{s.createdByName ? ` · ${s.createdByName}` : ""}
+                Pasted notes{s.url ? " · link kept for reference" : ""} · {fmtDayIso(s.createdAt.slice(0, 10))}{s.createdByName ? ` · ${s.createdByName}` : ""}
               </p>
               {s.url && (
                 <a href={s.url} target="_blank" rel="noopener noreferrer" className="text-base font-semibold text-primary underline break-all">{s.url}</a>
