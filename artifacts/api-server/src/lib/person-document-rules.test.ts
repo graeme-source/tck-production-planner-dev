@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   defaultVisibility, isPersonDocumentKind, personDocumentAccess, documentsForPeopleViewer, documentsForEmployee,
-  shapeForEmployee, visibilityOnCreate, visibilityOnEdit, onboardingDocumentVisibility, canSeeOnboardingDocument,
+  shapeForEmployee, visibilityOnCreate, visibilityOnEdit,
   personDocumentFileProblem, contentMatchesMime, titleFromFileName, safeDownloadName, PERSON_DOCUMENT_KINDS,
   type PersonDocViewer,
 } from "./person-document-rules";
@@ -130,17 +130,6 @@ describe("choosing visibility", () => {
   it("HR can set it explicitly alongside a kind change", () => {
     expect(visibilityOnEdit({ current: "people", currentKind: "letter", newKind: "warning", requested: "people", viewerIsHr: true }))
       .toEqual({ ok: true, visibility: "people" });
-  });
-});
-
-describe("onboarding uploads on the record", () => {
-  it("the P45 is founder-only; the rest follow People access", () => {
-    expect(onboardingDocumentVisibility("p45")).toBe("hr");
-    expect(onboardingDocumentVisibility("right_to_work")).toBe("people");
-    expect(canSeeOnboardingDocument(PEOPLE_MANAGER, "p45")).toBe(false);
-    expect(canSeeOnboardingDocument(PEOPLE_MANAGER, "food_hygiene")).toBe(true);
-    expect(canSeeOnboardingDocument(HR, "p45")).toBe(true);
-    expect(canSeeOnboardingDocument(OTHER_EMPLOYEE, "food_hygiene")).toBe(false);
   });
 });
 

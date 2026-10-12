@@ -9,6 +9,7 @@ import { db, usersTable, onboardingSubmissionsTable, onboardingDocumentsTable, s
 import { eq, and, asc } from "drizzle-orm";
 import { tickPreArrivalDetails, starterGateStatus } from "../lib/starter-paperwork";
 import { employmentRecordWrite, fromSession } from "../middleware/employment-record-write";
+import { canStreamOwnOnboardingUpload } from "../lib/onboarding-record-documents";
 
 // Self-service on your OWN record only (lib/people-write-access.ts) — every
 // write here is keyed by the session, never by a user id in the request.
@@ -194,7 +195,10 @@ router.get("/documents/:id/file", async (req: Request, res: Response) => {
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const [row] = await db.select().from(onboardingDocumentsTable).where(eq(onboardingDocumentsTable.id, id));
-    if (!row || !row.fileBlob || row.userId !== req.session.userId) { res.status(404).json({ error: "No file" }); return; }
+    if (!row || !row.fileBlob || !canStreamOwnOnboardingUpload(req.session.userId, row.userId)) {
+      res.status(404).json({ error: "No file" });
+      return;
+    }
 
     const buf = Buffer.isBuffer(row.fileBlob) ? row.fileBlob : Buffer.from(row.fileBlob as any);
     const filename = (row.fileName || "document").replace(/"/g, "");

@@ -25,6 +25,7 @@ import {
 } from "../lib/starter-forms";
 import { maybeTickStarterPaperwork, grantAppAccess } from "../lib/starter-paperwork";
 import { renderContractPdf } from "../pdf/contract-pdf";
+import { ensureStarterFormPdf } from "../lib/starter-form-pdf";
 import { employmentRecordWrite, fromBody, fromSession } from "../middleware/employment-record-write";
 
 // Self-service on your OWN forms only (lib/people-write-access.ts).
@@ -202,11 +203,7 @@ router.get("/submission/:id/signed.pdf", async (req: Request, res: Response) => 
   }
   if (!row.signedAt || !row.body) { res.status(400).json({ error: "This form hasn't been signed yet" }); return; }
 
-  let pdf = row.signedPdf;
-  if (!pdf) {
-    pdf = await renderContractPdf(row.body);
-    await db.update(starterFormSubmissionsTable).set({ signedPdf: pdf }).where(eq(starterFormSubmissionsTable.id, id));
-  }
+  const pdf = await ensureStarterFormPdf({ id: row.id, body: row.body, signedPdf: row.signedPdf });
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `inline; filename="TCK-${row.formType}-${row.userId}.pdf"`);
   res.send(pdf);

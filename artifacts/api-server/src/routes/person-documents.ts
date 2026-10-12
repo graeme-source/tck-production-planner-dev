@@ -10,16 +10,21 @@
  *
  * The People side (People access + private PIN set and unlocked —
  * requirePeopleUnlock, then a People-access check):
- *   GET    /api/person-documents/person/:userId     one person's documents, their
- *                                                   own onboarding uploads, and the
- *                                                   onboarding form they filled in
- *                                                   (contact, emergency contact,
- *                                                   footwear) — People-gated here
- *                                                   ONLY (2026-09-28)
+ *   GET    /api/person-documents/person/:userId     one person's documents, plus
+ *                                                   everything they handed in at
+ *                                                   onboarding (uploads, signed
+ *                                                   starter forms, the onboarding
+ *                                                   form) mapped at read time by
+ *                                                   lib/onboarding-record-documents.ts
+ *                                                   — People-gated here ONLY
  *   POST   /api/person-documents/person/:userId     file one (multipart: file, kind,
  *                                                   title, documentDate, notes?,
  *                                                   sharedWithEmployee?, visibility?)
  *   GET    /api/person-documents/onboarding/:id/file  an onboarding upload (P45 etc.)
+ *   GET    /api/person-documents/starter-forms/:id/file  a signed starter form's PDF
+ *                                                   (Graeme only: bank, NI, health)
+ *   GET    /api/person-documents/person/:userId/onboarding-form  the onboarding
+ *                                                   form as a readable PDF
  *   GET    /api/person-documents/:id                one document
  *   GET    /api/person-documents/:id/file           the file, inline (?download=1)
  *   PATCH  /api/person-documents/:id                kind, title, date, notes, shared,
@@ -34,8 +39,10 @@
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import * as z from "zod";
-import { db, personDocumentsTable, onboardingDocumentsTable, onboardingSubmissionsTable, usersTable } from "@workspace/db";
-import { and, asc, desc, eq, isNotNull, isNull } from "drizzle-orm";
+import {
+  db, personDocumentsTable, onboardingDocumentsTable, onboardingSubmissionsTable, starterFormSubmissionsTable, usersTable,
+} from "@workspace/db";
+import { and, asc, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { validate, validateQuery } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
 import { hasHrRecordAccess } from "../middleware/hr-access";
@@ -44,11 +51,17 @@ import { hasPeopleAccess } from "../lib/people-access";
 import {
   PERSON_DOCUMENT_KINDS, PERSON_DOCUMENT_VISIBILITIES, PERSON_DOCUMENT_MAX_MB,
   personDocumentAccess, documentsForPeopleViewer, documentsForEmployee, shapeForEmployee,
-  visibilityOnCreate, visibilityOnEdit, canSeeOnboardingDocument, onboardingDocumentVisibility,
+  visibilityOnCreate, visibilityOnEdit,
   personDocumentFileProblem, titleFromFileName, safeDownloadName,
   type PersonDocViewer, type PersonDocumentVisibility,
 } from "../lib/person-document-rules";
 import { employmentRecordWrite, fromParam, fromRow, ownerOf } from "../middleware/employment-record-write";
+import {
+  onboardingRecordDocs, onboardingRecordDocsFor, canSeeOnboardingRecordDoc, onboardingFormSummaryBody,
+  starterFormTitle, ONBOARDING_FORM_TITLE,
+} from "../lib/onboarding-record-documents";
+import { ensureStarterFormPdf } from "../lib/starter-form-pdf";
+import { renderContractPdf } from "../pdf/contract-pdf";
 
 // Whose record a filed document is on — for the employment-record write lock.
 const recordOfDocument = { subject: fromRow("id", ownerOf("person_documents")), refuseAs404: true } as const;
@@ -192,7 +205,54 @@ async function loadManaged(req: Request, res: Response) {
   return { row: row as MetaRow, viewer };
 }
 
-// One person's documents, plus the files they uploaded themselves at onboarding.
+/** Everything a person handed in at onboarding, as record documents — NOT
+ *  filtered by viewer. The blobs never leave here; only whether they exist
+ *  and how big they are. */
+async function loadOnboardingRecord(userId: number) {
+  const [uploads, starterForms, [form]] = await Promise.all([
+    db.select({
+      id: onboardingDocumentsTable.id,
+      kind: onboardingDocumentsTable.kind,
+      fileName: onboardingDocumentsTable.fileName,
+      mime: onboardingDocumentsTable.fileMime,
+      byteSize: onboardingDocumentsTable.fileSizeBytes,
+      uploadedAt: onboardingDocumentsTable.uploadedAt,
+      hasFile: sql<boolean>`${onboardingDocumentsTable.fileBlob} IS NOT NULL`,
+    }).from(onboardingDocumentsTable)
+      .where(eq(onboardingDocumentsTable.userId, userId))
+      .orderBy(asc(onboardingDocumentsTable.uploadedAt)),
+    db.select({
+      id: starterFormSubmissionsTable.id,
+      formType: starterFormSubmissionsTable.formType,
+      signedAt: starterFormSubmissionsTable.signedAt,
+      pdfBytes: sql<number | null>`octet_length(${starterFormSubmissionsTable.signedPdf})`,
+    }).from(starterFormSubmissionsTable)
+      .where(and(eq(starterFormSubmissionsTable.userId, userId), isNotNull(starterFormSubmissionsTable.signedAt))),
+    // The onboarding form. This is the only place anyone but the person
+    // reads it — Team & Access and the training matrix used to show it to
+    // every manager and admin (Graeme, 2026-09-28).
+    // The emergency contact is NOT sent with it: the current one is
+    // revealed on the record through /api/staff-emergency-contacts, which
+    // logs every read (Graeme, 2026-10-02), and the form's copy was
+    // carried into that table by migration 0145.
+    db.select({
+      id: onboardingSubmissionsTable.id,
+      phone: onboardingSubmissionsTable.phone,
+      address: onboardingSubmissionsTable.address,
+      shoeSize: onboardingSubmissionsTable.shoeSize,
+      footwearChoice: onboardingSubmissionsTable.footwearChoice,
+      submittedAt: onboardingSubmissionsTable.submittedAt,
+    }).from(onboardingSubmissionsTable).where(eq(onboardingSubmissionsTable.userId, userId)),
+  ]);
+  const docs = onboardingRecordDocs({
+    uploads: uploads.map(u => ({ ...u, byteSize: u.byteSize ?? null, hasFile: u.hasFile === true })),
+    starterForms: starterForms.map(f => ({ ...f, pdfBytes: f.pdfBytes == null ? null : Number(f.pdfBytes) })),
+    form: form ? { id: form.id, submittedAt: form.submittedAt } : null,
+  });
+  return { docs, form: form ?? null };
+}
+
+// One person's documents, plus everything they handed in at onboarding.
 router.get("/person/:userId", async (req: Request, res: Response) => {
   const userId = parseId(req.params["userId"]);
   if (userId == null) { res.status(400).json({ error: "Invalid person" }); return; }
@@ -200,48 +260,25 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
     const [person] = await db.select({ id: usersTable.id, name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
     if (!person) { res.status(404).json({ error: "Not found" }); return; }
     const viewer = await viewerOf(req);
-    const [docs, onboarding, [form]] = await Promise.all([
+    const [docs, onboarding] = await Promise.all([
       db.select(META).from(personDocumentsTable)
         .where(and(eq(personDocumentsTable.userId, userId), isNull(personDocumentsTable.deletedAt)))
         .orderBy(desc(personDocumentsTable.documentDate), desc(personDocumentsTable.uploadedAt)),
-      db.select({
-        id: onboardingDocumentsTable.id,
-        kind: onboardingDocumentsTable.kind,
-        fileName: onboardingDocumentsTable.fileName,
-        mime: onboardingDocumentsTable.fileMime,
-        byteSize: onboardingDocumentsTable.fileSizeBytes,
-        uploadedAt: onboardingDocumentsTable.uploadedAt,
-      }).from(onboardingDocumentsTable)
-        // Only uploads that actually hold a file — nothing to open otherwise.
-        .where(and(eq(onboardingDocumentsTable.userId, userId), isNotNull(onboardingDocumentsTable.fileBlob)))
-        .orderBy(asc(onboardingDocumentsTable.uploadedAt)),
-      // The onboarding form itself. This is the only place anyone but the
-      // person reads it — Team & Access and the training matrix used to show
-      // it to every manager and admin (Graeme, 2026-09-28).
-      // The emergency contact is NOT sent with it: the current one is
-      // revealed on the record through /api/staff-emergency-contacts, which
-      // logs every read (Graeme, 2026-10-02), and the form's copy was
-      // carried into that table by migration 0145.
-      db.select({
-        phone: onboardingSubmissionsTable.phone,
-        address: onboardingSubmissionsTable.address,
-        shoeSize: onboardingSubmissionsTable.shoeSize,
-        footwearChoice: onboardingSubmissionsTable.footwearChoice,
-        submittedAt: onboardingSubmissionsTable.submittedAt,
-      }).from(onboardingSubmissionsTable).where(eq(onboardingSubmissionsTable.userId, userId)),
+      loadOnboardingRecord(userId),
     ]);
+    const form = onboarding.form;
     res.json({
       person,
       canSetVisibility: viewer.isHr,
-      onboardingForm: form ?? null,
+      onboardingForm: form
+        ? { phone: form.phone, address: form.address, shoeSize: form.shoeSize, footwearChoice: form.footwearChoice, submittedAt: form.submittedAt }
+        : null,
       documents: documentsForPeopleViewer(viewer, docs as MetaRow[]).map(shapeForPeople),
-      onboarding: onboarding
-        .filter(d => canSeeOnboardingDocument(viewer, d.kind))
-        .map(d => ({
-          id: d.id, kind: d.kind, fileName: d.fileName, mime: d.mime ?? "application/octet-stream",
-          byteSize: d.byteSize ?? 0, uploadedAt: d.uploadedAt, uploadedByName: person.name,
-          visibility: onboardingDocumentVisibility(d.kind),
-        })),
+      // Title, date and size only — never what's inside (no bank details,
+      // no NI number on a list).
+      onboarding: onboardingRecordDocsFor(viewer, onboarding.docs).map(d => ({
+        ...d, uploadedAt: d.at, uploadedByName: person.name,
+      })),
     });
   } catch (err) {
     fail(res, "list", err, "Couldn't load documents");
@@ -319,7 +356,7 @@ router.get("/onboarding/:id/file", validateQuery(FileQuery), async (req: Request
   try {
     const [row] = await db.select().from(onboardingDocumentsTable).where(eq(onboardingDocumentsTable.id, id));
     const viewer = await viewerOf(req);
-    if (!row || !row.fileBlob || !canSeeOnboardingDocument(viewer, row.kind)) {
+    if (!row || !row.fileBlob || !canSeeOnboardingRecordDoc(viewer, "upload", row.kind)) {
       res.status(404).json({ error: "No such document" });
       return;
     }
@@ -328,6 +365,67 @@ router.get("/onboarding/:id/file", validateQuery(FileQuery), async (req: Request
     sendFile(res, { data, mime: row.fileMime || "application/octet-stream", fileName: row.fileName, download: download === "1" });
   } catch (err) {
     fail(res, "onboarding file", err, "Couldn't open the document");
+  }
+});
+
+// A signed starter form (HMRC checklist, payroll details, health
+// questionnaire) — Graeme only, and from here only through People access +
+// the private PIN. The starter reads their own on /api/starter-forms.
+router.get("/starter-forms/:id/file", validateQuery(FileQuery), async (req: Request, res: Response) => {
+  const id = parseId(req.params["id"]);
+  if (id == null) { res.status(404).json({ error: "No such document" }); return; }
+  try {
+    const [row] = await db.select({
+      id: starterFormSubmissionsTable.id,
+      formType: starterFormSubmissionsTable.formType,
+      body: starterFormSubmissionsTable.body,
+      signedAt: starterFormSubmissionsTable.signedAt,
+      signedPdf: starterFormSubmissionsTable.signedPdf,
+    }).from(starterFormSubmissionsTable).where(eq(starterFormSubmissionsTable.id, id));
+    const viewer = await viewerOf(req);
+    if (!row || !row.signedAt || !row.body || !canSeeOnboardingRecordDoc(viewer, "starter_form", row.formType)) {
+      res.status(404).json({ error: "No such document" });
+      return;
+    }
+    const pdf = await ensureStarterFormPdf({ id: row.id, body: row.body, signedPdf: row.signedPdf });
+    const { download } = res.locals["query"] as z.infer<typeof FileQuery>;
+    sendFile(res, { data: pdf, mime: "application/pdf", fileName: `${starterFormTitle(row.formType)}.pdf`, download: download === "1" });
+  } catch (err) {
+    fail(res, "starter form file", err, "Couldn't open the document");
+  }
+});
+
+// The onboarding form they filled in, as a readable PDF — rendered on
+// demand from onboarding_submissions, so it is always what's stored.
+router.get("/person/:userId/onboarding-form", validateQuery(FileQuery), async (req: Request, res: Response) => {
+  const userId = parseId(req.params["userId"]);
+  if (userId == null) { res.status(404).json({ error: "No such document" }); return; }
+  try {
+    const viewer = await viewerOf(req);
+    if (!canSeeOnboardingRecordDoc(viewer, "onboarding_form", "onboarding_form")) {
+      res.status(404).json({ error: "No such document" });
+      return;
+    }
+    const [[person], onboarding] = await Promise.all([
+      db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)),
+      loadOnboardingRecord(userId),
+    ]);
+    const form = onboarding.form;
+    if (!person || !form?.submittedAt) { res.status(404).json({ error: "No such document" }); return; }
+    const body = onboardingFormSummaryBody({
+      personName: person.name,
+      submittedAt: form.submittedAt,
+      phone: form.phone,
+      address: form.address,
+      shoeSize: form.shoeSize,
+      footwearChoice: form.footwearChoice,
+      alsoHandedIn: onboardingRecordDocsFor(viewer, onboarding.docs),
+    });
+    const pdf = await renderContractPdf(body, { title: `${ONBOARDING_FORM_TITLE} — ${person.name}` });
+    const { download } = res.locals["query"] as z.infer<typeof FileQuery>;
+    sendFile(res, { data: pdf, mime: "application/pdf", fileName: `${ONBOARDING_FORM_TITLE}.pdf`, download: download === "1" });
+  } catch (err) {
+    fail(res, "onboarding form", err, "Couldn't open the onboarding form");
   }
 });
 

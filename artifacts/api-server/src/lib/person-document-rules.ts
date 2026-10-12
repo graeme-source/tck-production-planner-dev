@@ -22,9 +22,9 @@
  *   • shared_with_employee always starts false — sharing is an explicit tick,
  *     for every kind, warnings included.
  *
- * The person's own onboarding uploads (routes/onboarding.ts: P45, right to
- * work, food hygiene) show on the record read-only by the same rule, with
- * the P45 treated as 'hr' because it carries pay and tax to date.
+ * What the person handed in at onboarding (uploads, signed starter forms,
+ * the onboarding form) shows on the record read-only by the same rule —
+ * lib/onboarding-record-documents.ts.
  */
 
 export const PERSON_DOCUMENT_KINDS = [
@@ -146,19 +146,8 @@ export function visibilityOnEdit(input: {
   return { ok: true, visibility: input.current };
 }
 
-// ── Onboarding uploads on the record ───────────────────────────────────────
-
-/** A starter's own uploads shown on their record: the P45 carries pay and
- *  tax to date, so it follows the contract rule (founder only). */
-export function onboardingDocumentVisibility(kind: string): PersonDocumentVisibility {
-  return kind === "p45" ? "hr" : "people";
-}
-
-/** People-side read of an onboarding upload. The employee reads their own
- *  through the onboarding routes, not here. */
-export function canSeeOnboardingDocument(viewer: PersonDocViewer, kind: string): boolean {
-  return viewer.viewerId != null && viewer.hasPeopleAccess && canSeeVisibility(viewer, onboardingDocumentVisibility(kind));
-}
+// Onboarding uploads, signed starter forms and the onboarding form on the
+// record: lib/onboarding-record-documents.ts (P45 + starter forms 'hr').
 
 // ── Files ──────────────────────────────────────────────────────────────────
 
