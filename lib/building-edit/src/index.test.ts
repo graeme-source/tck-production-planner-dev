@@ -156,6 +156,13 @@ describe("ovens follow the builders (fix-queue #318)", () => {
     expect(describeEdit(plan)).toBe("Batches 10 → 9 (taken off Line 1), Ovens 10 → 9");
   });
 
+  it("takes off oven tray rows only — weight records (HACCP) are never part of the edit", () => {
+    const plan = planBuildEdit(s, { batches: 7, extraPacks: 0 }, "building_1");
+    expect(plan.ovens.removeCompletionIds).toEqual([110, 109, 108]);
+    expect(plan.ovens.removeCompletionIds.every(id => ovenRows.some(r => r.id === id))).toBe(true);
+    expect(Object.keys(plan.ovens).sort()).toEqual(["after", "before", "removeCompletionIds"]);
+  });
+
   it("building 10 → 12 leaves ovens at 10", () => {
     const plan = planBuildEdit(s, { batches: 12, extraPacks: 0 }, "building_1");
     expect(plan.ovens).toEqual({ before: 10, after: 10, removeCompletionIds: [] });

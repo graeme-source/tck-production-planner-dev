@@ -25,9 +25,12 @@
  *           so the TCK run rate and dashboard KPI drop with it;
  *   ovens   if the new batch count is below the Ovens' "From Building" count
  *           (its own 'ovens' rows), the ovens' newest rows go in the same
- *           transaction, with each one's newest weight record — exactly what
- *           the oven station's own − does — so the oven person never has to
- *           fix a builder's mistake (Graeme, 12 Oct 2026, fix-queue #318);
+ *           transaction, so the oven person never has to fix a builder's
+ *           mistake (Graeme, 12 Oct 2026, fix-queue #318). Oven WEIGHT
+ *           records are never touched: they are HACCP measurements someone
+ *           physically took, so they stay in the weight log even when there
+ *           are now more of them than oven trays (unlike the oven station's
+ *           own −, which removes its newest one);
  *   +batch  inserts a full batch row on the chosen line now, under the
  *           signed-in person, marked
  *           with correction_by_user_id + correction_note "Edit numbers";
@@ -37,8 +40,8 @@
  * what's already wrapped into storage (real stock: Wrapping's own confirmed
  * "take back out" moves it).
  * Every save writes one building_count_edits row (who, before → after, the
- * rows removed/added — oven rows and their weight records included, so they
- * can be put back). It adds batches under a person's name, so it sits in
+ * rows removed/added — oven rows included, so they can be put back). It
+ * adds batches under a person's name, so it sits in
  * the server PIN lock (lib/pin-enforce.ts).
  */
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -48,11 +51,10 @@ import {
   productionPlanItemsTable,
   recipesTable,
   batchCompletionsTable,
-  batchWeightRecordsTable,
   buildingStationProgressTable,
   buildingCountEditsTable,
 } from "@workspace/db";
-import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { recomputeItemFromProgress } from "../lib/building-progress";
@@ -227,23 +229,12 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
       if (plan.removeCompletionIds.length > 0) {
         await tx.delete(batchCompletionsTable).where(inArray(batchCompletionsTable.id, plan.removeCompletionIds));
       }
-      // The ovens follow the builders down. Same as the oven station's own −
-      // (DELETE /batch-completions/last): the newest oven row goes, and with
-      // it the newest weight record, so the HACCP weight log's batch
-      // sequence stays in step with the oven count. Both are kept in the
-      // audit row below.
+      // The ovens follow the builders down: their newest tray rows go (kept
+      // in the audit row below). Weight records stay exactly as weighed —
+      // HACCP data is never deleted by a builder's count correction.
       const ovenIds = plan.ovens.removeCompletionIds;
-      let removedWeights: Array<Record<string, unknown>> = [];
       if (ovenIds.length > 0) {
         await tx.delete(batchCompletionsTable).where(inArray(batchCompletionsTable.id, ovenIds));
-        removedWeights = await tx.select().from(batchWeightRecordsTable)
-          .where(eq(batchWeightRecordsTable.planItemId, itemId))
-          .orderBy(desc(batchWeightRecordsTable.batchSequence), desc(batchWeightRecordsTable.recordedAt))
-          .limit(ovenIds.length);
-        if (removedWeights.length > 0) {
-          await tx.delete(batchWeightRecordsTable)
-            .where(inArray(batchWeightRecordsTable.id, removedWeights.map(w => Number(w.id))));
-        }
       }
       let addedIds: number[] = [];
       if (plan.addBatches > 0) {
@@ -275,12 +266,9 @@ router.post("/:id/items/:itemId/building-edit", validate(BuildingEditBody), asyn
       }
       if (Object.keys(plan.extrasDelta).length > 0) await recomputeItemFromProgress(itemId, tx);
 
-      const removed: Array<Record<string, unknown>> = [...buildRows, ...ovenRows]
+      const removed = [...buildRows, ...ovenRows]
         .filter(c => plan.removeCompletionIds.includes(c.id) || ovenIds.includes(c.id))
         .map(c => ({ id: c.id, stationType: c.stationType, userId: c.userId, completedAt: c.completedAt.toISOString(), partialPacks: c.partialPacks }));
-      for (const w of removedWeights) {
-        removed.push({ weightRecord: { ...w, recordedAt: w.recordedAt instanceof Date ? w.recordedAt.toISOString() : w.recordedAt } });
-      }
       await tx.insert(buildingCountEditsTable).values({
         planId,
         planItemId: itemId,
