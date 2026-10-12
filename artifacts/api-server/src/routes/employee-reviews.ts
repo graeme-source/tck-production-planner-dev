@@ -1,521 +1,64 @@
 /**
- * Employee reviews, probation meetings and the ongoing record of someone's
- * time here (Graeme, 2026-09-03).
+ * YOUR OWN record, as you see it (Graeme, 2026-09-03; rebuilt 2026-10-12).
  *
- * The shape of it:
- *   • MEETINGS are booked for a date and written up afterwards.
- *   • NOTES are the diary — notes, feedback and objectives. Every one is
- *     PRIVATE to its author until deliberately shared to the employee's
- *     record, at which point they get a notification.
- *   • The employee READS their record and never writes to it. It is a record
- *     of what was said, not a conversation.
+ *   GET /api/employee-reviews/me   the reviews with something shared with
+ *                                  you, and what was agreed
  *
- * Privacy is enforced HERE, not in the UI: every read runs through
- * visibleNotes() before it leaves the server, so a private note is never sent
- * to a browser that has no business holding it. "Private" means private to
- * whoever wrote it — not to management collectively — so another admin cannot
- * read Graeme's private notes either. A named person can be granted the
- * private side of a record later; that is what hasPrivateGrant is for and it
- * is false today.
+ * Reviews used to live here as their own meetings + notes. Since migration
+ * 0178 (one review, classified) every review is an entry on the employment
+ * record (routes/people-reviews.ts — People access, never your own record)
+ * and its write-up is in people_review_notes. This file is now only the
+ * employee's read-only window onto that, with the same privacy rule as
+ * ever, applied HERE before anything is sent: visibleNotes() — a note is
+ * private to whoever wrote it until shared; a shared one is yours to read.
+ * You get the day of each review and what was shared from it — never its
+ * classification, summary, stage or anything else on the entry. It is a
+ * record of what was said, not a conversation: nothing here writes.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
+import { and, eq, isNull } from "drizzle-orm";
 import {
-  db, employeeMeetingsTable, employeeNotesTable, usersTable,
-  canManageRecord, canOpenRecord, visibleNotes,
+  db, usersTable, peopleRecordEntriesTable, peopleReviewNotesTable, visibleNotes,
 } from "@workspace/db";
-import { and, desc, eq } from "drizzle-orm";
-import { sql } from "drizzle-orm";
-import * as z from "zod";
-import { validate } from "../middleware/validate";
+import { ownRecordView, type MeetingStatus } from "@workspace/people-reviews";
 import { hasPeopleAccess } from "../lib/people-access";
-import {
-  employmentRecordWrite, fromParam, fromRow, ownerOf, isRecordEditor,
-} from "../middleware/employment-record-write";
-
-// The employment-record write lock (lib/people-write-access.ts): Graeme, and
-// people with People access on anyone's record but their own. On top of the
-// People-access checks below, never instead of them.
-const onRecord = employmentRecordWrite({ subject: fromParam("userId") });
-const onMeeting = employmentRecordWrite({ subject: fromRow("id", ownerOf("employee_meetings", "subject_user_id")) });
-const onNote = employmentRecordWrite({ subject: fromRow("id", ownerOf("employee_notes", "subject_user_id")) });
 
 const router: IRouter = Router();
 
-async function sessionUser(req: Request): Promise<{ id: number; role: string; name: string; hasPeopleAccess: boolean } | null> {
+router.get("/me", async (req: Request, res: Response) => {
   const id = req.session.userId;
-  if (!id) return null;
-  const [row] = await db
-    .select({ role: usersTable.role, name: usersTable.name })
-    .from(usersTable)
-    .where(eq(usersTable.id, id));
-  if (!row) return null;
-  if (!req.session.userRole) req.session.userRole = row.role as "admin" | "manager" | "viewer";
-  // Who looks after people-data is decided by identity, not role: the
-  // founder's per-person People access switch (lib/people-access.ts), read
-  // fresh on every request so a revoke bites immediately.
-  return { id, role: row.role, name: row.name, hasPeopleAccess: await hasPeopleAccess(id) };
-}
-
-/** Notify without ever letting a missed bell fail the action itself. */
-async function notify(userId: number, message: string) {
+  if (!id) { res.status(401).json({ error: "Not authenticated" }); return; }
   try {
-    await db.execute(sql`
-      INSERT INTO notifications (user_id, type, message, read)
-      VALUES (${userId}, ${"review"}, ${message.slice(0, 500)}, false)
-    `);
+    const [me] = await db.select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
+      .from(usersTable).where(eq(usersTable.id, id));
+    if (!me) { res.status(401).json({ error: "Not authenticated" }); return; }
+
+    const [entries, allNotes] = await Promise.all([
+      db.select({
+        id: peopleRecordEntriesTable.id, entryDate: peopleRecordEntriesTable.entryDate,
+        meetingDate: peopleRecordEntriesTable.meetingDate, meetingStatus: peopleRecordEntriesTable.meetingStatus,
+        heldAt: peopleRecordEntriesTable.heldAt,
+      }).from(peopleRecordEntriesTable).where(eq(peopleRecordEntriesTable.userId, id)),
+      db.select().from(peopleReviewNotesTable)
+        .where(and(eq(peopleReviewNotesTable.userId, id), isNull(peopleReviewNotesTable.deletedAt))),
+    ]);
+
+    // THE line that matters: only what this person may read leaves here.
+    const notes = visibleNotes(allNotes, { id, role: me.role, hasPeopleAccess: await hasPeopleAccess(id) }, id)
+      .map(n => ({
+        id: n.id, entryId: n.entryId, kind: n.kind, title: n.title, body: n.body, visibility: n.visibility,
+        dueDate: n.dueDate, doneAt: n.doneAt ? n.doneAt.toISOString() : null, authorName: n.authorName,
+        createdAt: n.createdAt.toISOString(),
+      }));
+    const view = ownRecordView(entries.map(e => ({
+      id: e.id, entryDate: e.entryDate, meetingDate: e.meetingDate,
+      meetingStatus: (e.meetingStatus as MeetingStatus | null) ?? null,
+      heldAt: e.heldAt ? e.heldAt.toISOString() : null,
+    })), notes);
+    res.json({ name: me.name, ...view });
   } catch (err) {
-    console.warn("[EmployeeReviews] notification insert failed:", err instanceof Error ? err.message : err);
-  }
-}
-
-// ── Reads ──────────────────────────────────────────────────────────────────
-
-/** Who a manager can open a record for. Managers and admins only — this is
- *  the staff list, and it has no business being enumerable by everyone. */
-router.get("/people", async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-  try {
-    const rows = await db
-      .select({
-        id: usersTable.id,
-        name: usersTable.name,
-        role: usersTable.role,
-        probationMonths: usersTable.probationMonths,
-      })
-      .from(usersTable)
-      .where(eq(usersTable.isActive, true))
-      .orderBy(usersTable.name);
-    res.json(rows);
-  } catch (err) {
-    console.error("[EmployeeReviews] people error:", err);
-    res.status(500).json({ error: "Failed to load people" });
-  }
-});
-
-/** One person's record. `me` is the caller's own. */
-router.get("/:userId", async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-
-  const subjectId = req.params.userId === "me" ? user.id : Number(req.params.userId);
-  if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user id" }); return; }
-
-  // A team member can open their own record and nobody else's.
-  if (!canOpenRecord(user, subjectId)) {
-    res.status(403).json({ error: "That isn't your record" });
-    return;
-  }
-
-  try {
-    const [subject] = await db
-      .select({ id: usersTable.id, name: usersTable.name, probationMonths: usersTable.probationMonths })
-      .from(usersTable)
-      .where(eq(usersTable.id, subjectId));
-    if (!subject) { res.status(404).json({ error: "Not found" }); return; }
-
-    const meetings = await db
-      .select()
-      .from(employeeMeetingsTable)
-      .where(eq(employeeMeetingsTable.subjectUserId, subjectId))
-      .orderBy(desc(employeeMeetingsTable.scheduledFor), desc(employeeMeetingsTable.createdAt));
-
-    const allNotes = await db
-      .select()
-      .from(employeeNotesTable)
-      .where(eq(employeeNotesTable.subjectUserId, subjectId))
-      .orderBy(desc(employeeNotesTable.createdAt));
-
-    // THE line that matters. Everything below this point has already been
-    // filtered to what this person may see.
-    // hasPeopleAccess MUST be passed: canReadNote sends a SHARED note
-    // through canManageRecord, which is keyed on identity, not role.
-    // Dropping it made a shared note invisible to the person who shared it.
-    const notes = visibleNotes(allNotes, { id: user.id, role: user.role, hasPeopleAccess: user.hasPeopleAccess }, subjectId);
-
-    res.json({
-      subject,
-      // Manage = People access AND allowed to change THIS record (so never
-      // your own unless you're Graeme) — the screen hides its write controls.
-      canManage: canManageRecord(user) && (await isRecordEditor(user.id, subjectId)),
-      isOwnRecord: user.id === subjectId,
-      meetings,
-      notes,
-    });
-  } catch (err) {
-    console.error("[EmployeeReviews] record error:", err);
-    res.status(500).json({ error: "Failed to load the record" });
-  }
-});
-
-// ── Meetings ───────────────────────────────────────────────────────────────
-
-const MeetingBody = z.object({
-  kind: z.enum(["review", "probation", "one_to_one"]).default("review"),
-  title: z.string().trim().max(200).optional(),
-  scheduledFor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-});
-
-router.post("/:userId/meetings", onRecord, validate(MeetingBody), async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-
-  const subjectId = Number(req.params.userId);
-  if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user id" }); return; }
-
-  const b = req.body as z.infer<typeof MeetingBody>;
-  try {
-    const [row] = await db.insert(employeeMeetingsTable).values({
-      subjectUserId: subjectId,
-      kind: b.kind,
-      title: b.title || null,
-      scheduledFor: b.scheduledFor ?? null,
-      createdBy: user.id,
-      createdByName: user.name,
-    }).returning();
-
-    // The employee is told a meeting exists — the date is theirs to know.
-    // Nothing about what will be said in it.
-    if (row && subjectId !== user.id && b.scheduledFor) {
-      await notify(subjectId, `${user.name} booked a ${b.kind === "one_to_one" ? "1:1" : b.kind} with you on ${b.scheduledFor}`);
-    }
-    res.status(201).json(row);
-  } catch (err) {
-    console.error("[EmployeeReviews] book meeting error:", err);
-    res.status(500).json({ error: "Failed to book the meeting" });
-  }
-});
-
-const MeetingPatch = z.object({
-  status: z.enum(["booked", "held", "cancelled"]).optional(),
-  scheduledFor: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  title: z.string().trim().max(200).nullable().optional(),
-});
-
-router.patch("/meetings/:id", onMeeting, validate(MeetingPatch), async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-
-  const b = req.body as z.infer<typeof MeetingPatch>;
-  const updates: Record<string, unknown> = { updatedAt: new Date() };
-  if (b.status !== undefined) {
-    updates.status = b.status;
-    // Marking it held stamps when, so the record reads as a history rather
-    // than a list of intentions.
-    if (b.status === "held") updates.heldAt = new Date();
-  }
-  if (b.scheduledFor !== undefined) updates.scheduledFor = b.scheduledFor;
-  if (b.title !== undefined) updates.title = b.title;
-
-  try {
-    const [row] = await db.update(employeeMeetingsTable).set(updates)
-      .where(eq(employeeMeetingsTable.id, id)).returning();
-    if (!row) { res.status(404).json({ error: "Not found" }); return; }
-    res.json(row);
-  } catch (err) {
-    console.error("[EmployeeReviews] update meeting error:", err);
-    res.status(500).json({ error: "Failed to update the meeting" });
-  }
-});
-
-/** Delete a meeting outright. Only whoever booked it (employees never get
- *  here — the manager guard runs first). Its write-up notes survive: the
- *  meeting_id FK is ON DELETE SET NULL, so they fall back to the flat diary
- *  rather than vanishing with the meeting. */
-router.delete("/meetings/:id", onMeeting, async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-
-  try {
-    const [meeting] = await db.select().from(employeeMeetingsTable).where(eq(employeeMeetingsTable.id, id));
-    if (!meeting) { res.status(404).json({ error: "Not found" }); return; }
-    // Same promise as notes: what you put on a record is yours to take off.
-    // createdBy null means the booker's account is gone — an admin may tidy.
-    if (meeting.createdBy !== user.id && !(meeting.createdBy == null && user.role === "admin")) {
-      res.status(403).json({ error: "Only whoever booked a meeting can delete it" });
-      return;
-    }
-    await db.delete(employeeMeetingsTable).where(eq(employeeMeetingsTable.id, id));
-    console.log(`[EmployeeReviews] meeting ${id} on user ${meeting.subjectUserId} deleted by ${user.id}`);
-    res.status(204).send();
-  } catch (err) {
-    console.error("[EmployeeReviews] delete meeting error:", err);
-    res.status(500).json({ error: "Failed to delete the meeting" });
-  }
-});
-
-// ── Notes, feedback and objectives ─────────────────────────────────────────
-
-const NoteBody = z.object({
-  kind: z.enum(["note", "feedback", "objective"]).default("note"),
-  /** Optional bold headline above the body (migration 0114). */
-  title: z.string().trim().max(200).nullable().optional(),
-  body: z.string().trim().min(1).max(10_000),
-  // Private unless the author deliberately says otherwise, here or later.
-  visibility: z.enum(["private", "shared"]).default("private"),
-  meetingId: z.number().int().nullable().optional(),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-});
-
-router.post("/:userId/notes", onRecord, validate(NoteBody), async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-
-  const subjectId = Number(req.params.userId);
-  if (!Number.isInteger(subjectId)) { res.status(400).json({ error: "Invalid user id" }); return; }
-
-  const b = req.body as z.infer<typeof NoteBody>;
-
-  // A note may only attach to a meeting on THIS person's record — a stray
-  // or crafted meetingId must not stitch records together.
-  if (b.meetingId != null) {
-    const [mtg] = await db
-      .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
-      .from(employeeMeetingsTable)
-      .where(eq(employeeMeetingsTable.id, b.meetingId));
-    if (!mtg || mtg.subjectUserId !== subjectId) {
-      res.status(400).json({ error: "That meeting isn't on this record" });
-      return;
-    }
-  }
-
-  try {
-    const [row] = await db.insert(employeeNotesTable).values({
-      subjectUserId: subjectId,
-      meetingId: b.meetingId ?? null,
-      kind: b.kind,
-      title: b.title ?? null,
-      body: b.body,
-      visibility: b.visibility,
-      sharedAt: b.visibility === "shared" ? new Date() : null,
-      dueDate: b.dueDate ?? null,
-      authorId: user.id,
-      authorName: user.name,
-    }).returning();
-
-    if (row && b.visibility === "shared" && subjectId !== user.id) {
-      await notify(subjectId, `${user.name} shared a note on your record`);
-    }
-    res.status(201).json(row);
-  } catch (err) {
-    console.error("[EmployeeReviews] create note error:", err);
-    res.status(500).json({ error: "Failed to save the note" });
-  }
-});
-
-/**
- * Write a meeting up in ONE go: feedback, objectives and notes together,
- * saved as a single entry on the record.
- *
- * Adding them one at a time, then publishing them one at a time, meant a
- * probation meeting arrived at the colleague as a handful of disconnected
- * fragments (Graeme, 2026-09-17). A write-up is one thing that happened, so
- * it is written once and shared once.
- *
- * Every part is optional — a meeting may be all feedback and no objectives —
- * but an empty write-up is rejected rather than silently doing nothing.
- * Order is the order of the conversation: feedback, then what was agreed,
- * then anything else.
- */
-const WriteUpBody = z.object({
-  feedback: z.string().trim().max(10_000).optional(),
-  objectives: z.array(z.object({
-    /** Bold headline — "Increase in output speed" — with the detail in body. */
-    title: z.string().trim().max(200).optional(),
-    body: z.string().trim().min(1).max(10_000),
-    dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-  })).max(20).optional(),
-  notes: z.string().trim().max(10_000).optional(),
-  /** Publish the whole write-up to the colleague as it is saved. */
-  share: z.boolean().optional(),
-});
-
-router.post("/meetings/:id/write-up", onMeeting, validate(WriteUpBody), async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-
-  const meetingId = Number(req.params.id);
-  if (!Number.isInteger(meetingId)) { res.status(400).json({ error: "Invalid meeting id" }); return; }
-
-  const [mtg] = await db
-    .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
-    .from(employeeMeetingsTable)
-    .where(eq(employeeMeetingsTable.id, meetingId));
-  if (!mtg) { res.status(404).json({ error: "Meeting not found" }); return; }
-
-  const b = req.body as z.infer<typeof WriteUpBody>;
-  const objectives = (b.objectives ?? []).filter(o => o.body.trim().length > 0);
-  const feedback = b.feedback?.trim() ?? "";
-  const notes = b.notes?.trim() ?? "";
-  if (!feedback && !notes && objectives.length === 0) {
-    res.status(400).json({ error: "Write something first — feedback, an objective, or a note." });
-    return;
-  }
-
-  const visibility = b.share ? "shared" : "private";
-  const sharedAt = b.share ? new Date() : null;
-  const common = {
-    subjectUserId: mtg.subjectUserId,
-    meetingId,
-    visibility,
-    sharedAt,
-    authorId: user.id,
-    authorName: user.name,
-  };
-
-  // In the order the conversation runs: how it went, what was agreed, then
-  // anything else worth recording.
-  const rows: Array<typeof employeeNotesTable.$inferInsert> = [];
-  if (feedback) rows.push({ ...common, kind: "feedback", body: feedback });
-  for (const o of objectives) {
-    rows.push({ ...common, kind: "objective", title: o.title?.trim() || null, body: o.body.trim(), dueDate: o.dueDate ?? null });
-  }
-  if (notes) rows.push({ ...common, kind: "note", body: notes });
-
-  try {
-    // One transaction: a half-saved write-up is worse than none, because the
-    // missing half is invisible.
-    const created = await db.transaction(async (tx) => {
-      const out = await tx.insert(employeeNotesTable).values(rows).returning();
-      await tx.update(employeeMeetingsTable)
-        .set({ status: "held", heldAt: new Date(), updatedAt: new Date() })
-        .where(eq(employeeMeetingsTable.id, meetingId));
-      return out;
-    });
-    if (b.share && mtg.subjectUserId !== user.id) {
-      await notify(mtg.subjectUserId, `${user.name} shared a meeting write-up on your record`);
-    }
-    res.status(201).json({ created: created.length, notes: created });
-  } catch (err) {
-    console.error("[EmployeeReviews] write-up error:", err);
-    res.status(500).json({ error: "Failed to save the write-up" });
-  }
-});
-
-/** Publish a whole meeting write-up at once.
- *
- *  Only the author's OWN notes are published — "private" has to mean private
- *  from other managers too, so this cannot publish someone else's note as a
- *  side effect of sharing the meeting. */
-router.post("/meetings/:id/share", onMeeting, async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  if (!canManageRecord(user)) { res.status(403).json({ error: "Employee records are restricted" }); return; }
-
-  const meetingId = Number(req.params.id);
-  if (!Number.isInteger(meetingId)) { res.status(400).json({ error: "Invalid meeting id" }); return; }
-
-  const [mtg] = await db
-    .select({ subjectUserId: employeeMeetingsTable.subjectUserId })
-    .from(employeeMeetingsTable)
-    .where(eq(employeeMeetingsTable.id, meetingId));
-  if (!mtg) { res.status(404).json({ error: "Meeting not found" }); return; }
-
-  try {
-    const updated = await db.update(employeeNotesTable)
-      .set({ visibility: "shared", sharedAt: new Date(), updatedAt: new Date() })
-      .where(and(
-        eq(employeeNotesTable.meetingId, meetingId),
-        eq(employeeNotesTable.authorId, user.id),
-        eq(employeeNotesTable.visibility, "private"),
-      ))
-      .returning({ id: employeeNotesTable.id });
-
-    if (updated.length > 0 && mtg.subjectUserId !== user.id) {
-      await notify(mtg.subjectUserId, `${user.name} shared a meeting write-up on your record`);
-    }
-    res.json({ shared: updated.length });
-  } catch (err) {
-    console.error("[EmployeeReviews] share meeting error:", err);
-    res.status(500).json({ error: "Failed to share the write-up" });
-  }
-});
-
-const NotePatch = z.object({
-  title: z.string().trim().max(200).nullable().optional(),
-  body: z.string().trim().min(1).max(10_000).optional(),
-  visibility: z.enum(["private", "shared"]).optional(),
-  done: z.boolean().optional(),
-  dueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
-});
-
-/** Edit a note, publish it, or tick an objective off.
- *
- *  Only the author may touch their own note — including publishing it. That
- *  is the whole promise of "private": another manager cannot read it, and so
- *  must not be able to publish it either. */
-router.patch("/notes/:id", onNote, validate(NotePatch), async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-
-  try {
-    const [note] = await db.select().from(employeeNotesTable).where(eq(employeeNotesTable.id, id));
-    if (!note) { res.status(404).json({ error: "Not found" }); return; }
-    if (note.authorId !== user.id) {
-      res.status(403).json({ error: "Only whoever wrote a note can change it" });
-      return;
-    }
-
-    const b = req.body as z.infer<typeof NotePatch>;
-    const updates: Record<string, unknown> = { updatedAt: new Date() };
-    if (b.title !== undefined) updates.title = b.title;
-    if (b.body !== undefined) updates.body = b.body;
-    if (b.dueDate !== undefined) updates.dueDate = b.dueDate;
-    if (b.done !== undefined) updates.doneAt = b.done ? new Date() : null;
-    if (b.visibility !== undefined) {
-      updates.visibility = b.visibility;
-      // Stamp the first time it is published; taking it back down clears it
-      // so the record doesn't claim it is still shared.
-      updates.sharedAt = b.visibility === "shared" ? (note.sharedAt ?? new Date()) : null;
-    }
-
-    const [row] = await db.update(employeeNotesTable).set(updates)
-      .where(eq(employeeNotesTable.id, id)).returning();
-
-    const newlyShared = b.visibility === "shared" && note.visibility !== "shared";
-    if (newlyShared && note.subjectUserId !== user.id) {
-      await notify(note.subjectUserId, `${user.name} shared a note on your record`);
-    }
-    res.json(row);
-  } catch (err) {
-    console.error("[EmployeeReviews] update note error:", err);
-    res.status(500).json({ error: "Failed to update the note" });
-  }
-});
-
-router.delete("/notes/:id", onNote, async (req: Request, res: Response) => {
-  const user = await sessionUser(req);
-  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  try {
-    const [note] = await db.select().from(employeeNotesTable).where(eq(employeeNotesTable.id, id));
-    if (!note) { res.status(404).json({ error: "Not found" }); return; }
-    if (note.authorId !== user.id) {
-      res.status(403).json({ error: "Only whoever wrote a note can delete it" });
-      return;
-    }
-    await db.delete(employeeNotesTable).where(eq(employeeNotesTable.id, id));
-    console.log(`[EmployeeReviews] note ${id} on user ${note.subjectUserId} deleted by ${user.id}`);
-    res.status(204).send();
-  } catch (err) {
-    console.error("[EmployeeReviews] delete note error:", err);
-    res.status(500).json({ error: "Failed to delete the note" });
+    console.error("[EmployeeReviews] my record error:", err);
+    res.status(500).json({ error: "Failed to load your record" });
   }
 });
 

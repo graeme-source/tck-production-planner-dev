@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { summariseAttendance, rollingWindowStart, ATTENDANCE_POLICY } from "./attendance-summary";
+import { summariseAttendance, rollingWindowStart, policyTriggerReview, ATTENDANCE_POLICY } from "./attendance-summary";
 import type { ClassifiedShift } from "./absence-spells";
 
 const sh = (date: string, typeName: string | null = null): ClassifiedShift => ({ date, typeName });
@@ -57,5 +57,23 @@ describe("summariseAttendance", () => {
   it("holiday is not absence at all", () => {
     const s = summariseAttendance([sh("2026-09-01", "Holiday (with Pay)")], TODAY);
     expect(s).toMatchObject({ sickDays: 0, otherAbsenceDays: 0, lates: 0 });
+  });
+
+  it("dates each instance: a sickness run by its first day, every late shift", () => {
+    const s = summariseAttendance([
+      sh("2026-09-01", "Sick Leave"), sh("2026-09-02", "Sick Leave"), sh("2026-09-03"),
+      sh("2026-09-10", "Sick Leave"), sh("2026-09-15", "Arrived late"), sh("2026-08-04", "Arrived late"),
+    ], TODAY);
+    expect(s.instanceDates).toEqual({ sickness: ["2026-09-01", "2026-09-10"], lates: ["2026-08-04", "2026-09-15"] });
+  });
+});
+
+describe("policyTriggerReview", () => {
+  const eight = ["03", "04", "05", "06", "07", "08", "09"].map(m => sh(`2026-${m}-07`, "Arrived late")).concat(sh("2026-09-20", "Arrived late"));
+  it("a review held after the trigger was reached, no lates since → handled", () => {
+    const s = summariseAttendance(eight, TODAY);
+    const review = { source: "entry" as const, id: 1, date: "2026-09-22", held: true, covers: ["sickness", "lates"] as const };
+    expect(policyTriggerReview(s, [review])).toMatchObject({ sickness: null, lates: { state: "handled", count: 8, reachedOn: "2026-08-07" } });
+    expect(policyTriggerReview(s, [])).toMatchObject({ lates: { state: "due" } });
   });
 });

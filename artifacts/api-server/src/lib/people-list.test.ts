@@ -1,3 +1,4 @@
+import type { PolicyTriggerReview, PolicyTriggerStatus } from "@workspace/people-reviews";
 import { describe, it, expect } from "vitest";
 import { outstandingFormsForViewer, sortPeopleForList, personNeedsAction, type OutstandingSpell } from "./people-list";
 
@@ -34,12 +35,14 @@ describe("outstandingFormsForViewer", () => {
 });
 
 describe("sortPeopleForList", () => {
-  const base = { isActive: true, formsNeeded: 0, triggers: { sickness: false, lates: false } };
+  const base = { isActive: true, formsNeeded: 0, triggerReview: { sickness: null, lates: null } as PolicyTriggerReview };
+  const status = (state: PolicyTriggerStatus["state"]): PolicyTriggerStatus =>
+    ({ kind: "lates", state, count: 8, threshold: 6, reachedOn: "2026-08-03", lastReview: null, booked: null, sinceReview: 0 });
   it("people needing action first, then by name, leavers last", () => {
     const sorted = sortPeopleForList([
       { ...base, id: 1, name: "Anna" },
       { ...base, id: 2, name: "Zoe", formsNeeded: 1 },
-      { ...base, id: 3, name: "Bob", triggers: { sickness: false, lates: true } },
+      { ...base, id: 3, name: "Bob", triggerReview: { sickness: null, lates: status("due") } },
       { ...base, id: 4, name: "Aaron", isActive: false, formsNeeded: 3 },
       { ...base, id: 5, name: "Cara", formsNeeded: 2 },
     ]);
@@ -48,6 +51,13 @@ describe("sortPeopleForList", () => {
 
   it("needs action = a form owed or a trigger hit", () => {
     expect(personNeedsAction({ ...base, id: 1, name: "x" })).toBe(false);
-    expect(personNeedsAction({ ...base, id: 1, name: "x", triggers: { sickness: true, lates: false } })).toBe(true);
+    expect(personNeedsAction({ ...base, id: 1, name: "x", triggerReview: { sickness: { ...status("due"), kind: "sickness" }, lates: null } })).toBe(true);
+  });
+
+  it("a trigger already reviewed, or with a review booked, doesn't need action; due again does", () => {
+    const p = (state: PolicyTriggerStatus["state"]) => ({ ...base, id: 1, name: "Nozomi", triggerReview: { sickness: null, lates: status(state) } });
+    expect(personNeedsAction(p("handled"))).toBe(false);
+    expect(personNeedsAction(p("booked"))).toBe(false);
+    expect(personNeedsAction(p("due_again"))).toBe(true);
   });
 });

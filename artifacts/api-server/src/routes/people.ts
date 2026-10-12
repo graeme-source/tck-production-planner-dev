@@ -18,8 +18,8 @@
  *                                         (autosaved from the record header
  *                                         and the bulk screen)
  *
- * Meetings, reviews, notes and feedback keep coming from
- * /api/employee-reviews/:userId, which holds the private-note rules.
+ * Reviews and their write-ups (feedback, objectives, notes) come from
+ * /api/people-reviews/person/:userId, which holds the private-note rules.
  *
  * Access: People access ONLY (lib/people-access.ts, the founder's per-person
  * switch), and index.ts mounts this behind requirePeopleUnlock — so the
@@ -36,7 +36,8 @@ import { normaliseJobTitle, JOB_TITLE_MAX } from "../lib/job-title";
 import { hasPeopleAccess } from "../lib/people-access";
 import { loadClassifiedShifts, loadFormCovers, todayIso } from "../lib/rtw-detect";
 import { absenceSpells, dueSpells, type AbsenceSpell } from "../lib/absence-spells";
-import { summariseAttendance, rollingWindowStart } from "../lib/attendance-summary";
+import { summariseAttendance, rollingWindowStart, policyTriggerReview } from "../lib/attendance-summary";
+import { loadPolicyReviews } from "../lib/policy-trigger-reviews";
 import { outstandingFormsForViewer, sortPeopleForList } from "../lib/people-list";
 import { isLateName } from "../services/attendance-classify";
 import { getAttendanceFromCache } from "../services/planday-attendance-cache";
@@ -154,16 +155,20 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
       ORDER BY u.name
     `);
     const ids = users.rows.map(u => Number(u.id));
-    const [shiftsByUser, formsByUser, meetings] = await Promise.all([
+    const [shiftsByUser, formsByUser, meetings, reviewsByUser] = await Promise.all([
       loadClassifiedShifts(ids, windowStart, { includeInactive: includeLeavers }),
       loadFormCovers(ids),
       ids.length === 0 ? Promise.resolve({ rows: [] as Array<{ subject_user_id: number; kind: string; title: string | null; scheduled_for: string }> }) :
         db.execute<{ subject_user_id: number; kind: string; title: string | null; scheduled_for: string }>(sql`
-          SELECT DISTINCT ON (subject_user_id) subject_user_id, kind, title, scheduled_for::text
-            FROM employee_meetings
-           WHERE status = 'booked' AND scheduled_for >= ${today}
-           ORDER BY subject_user_id, scheduled_for ASC
+          -- The next booked review (migration 0178: reviews are record
+          -- entries). Neutral on purpose: no classification or summary on
+          -- the list, which also shows the viewer's own row.
+          SELECT DISTINCT ON (user_id) user_id AS subject_user_id, 'review' AS kind, NULL::text AS title, meeting_date::text AS scheduled_for
+            FROM people_record_entries
+           WHERE meeting_status = 'booked' AND meeting_date >= ${today}
+           ORDER BY user_id, meeting_date ASC, meeting_time ASC NULLS LAST
         `),
+      loadPolicyReviews(ids, today),
     ]);
     const nextMeeting = new Map(meetings.rows.map(m => [Number(m.subject_user_id), { date: m.scheduled_for, kind: m.kind, title: m.title }]));
 
@@ -180,6 +185,8 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
         formsNeeded: due.length,
         awayNow: spells.some(s => s.formState === "away"),
         triggers: summary.triggers,
+        // Due / booked / handled / due again — only due and due again nag.
+        triggerReview: policyTriggerReview(summary, reviewsByUser.get(id) ?? []),
         sickInstances: summary.sickInstances,
         lates: summary.lates,
         nextMeeting: nextMeeting.get(id) ?? null,
@@ -302,10 +309,11 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
     // The summary always needs the full 12 months, even if the timeline asks for less.
     const loadFrom = from < defaultFrom ? from : defaultFrom;
     const attendance = await syncAttendance(loadFrom, today);
-    const [shiftsByUser, formsByUser, formRows] = await Promise.all([
+    const [shiftsByUser, formsByUser, formRows, reviewsByUser] = await Promise.all([
       loadClassifiedShifts([userId], loadFrom, { includeInactive: true }),
       loadFormCovers([userId]),
       db.execute<FormRow>(sql`${formSelect} WHERE f.user_id = ${userId} ORDER BY f.absence_start DESC`),
+      loadPolicyReviews([userId], today),
     ]);
     const shifts = shiftsByUser.get(userId) ?? [];
     const spells = absenceSpells(shifts, formsByUser.get(userId) ?? [], today)
@@ -316,6 +324,7 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
       .map(s => ({ date: s.date, label: s.typeName as string }))
       .sort((a, b) => b.date.localeCompare(a.date));
 
+    const summary = summariseAttendance(shifts, today);
     res.json({
       // canWrite / readOnlyNote: may the viewer change this record at all
       // (lib/people-write-access.ts) — the screen hides its write controls.
@@ -324,7 +333,8 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
       spells: spells.map(spellOut),
       lates,
       forms: formRows.rows.map(shapeForm),
-      summary: summariseAttendance(shifts, today),
+      summary,
+      triggerReview: policyTriggerReview(summary, reviewsByUser.get(userId) ?? []),
       attendance: { ...attendance, linked: user.planday_employee_id != null },
     });
   } catch (err) {

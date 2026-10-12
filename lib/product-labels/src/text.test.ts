@@ -43,19 +43,25 @@ describe("wordDiff", () => {
 
 describe("fillTemplate — the default step 2: one line per appliance, turn in the middle, halves", () => {
   const values = cookingPlaceholderValues(DEFAULT_TEMPLATE.cooking);
-  it("both appliances, raw fill-ins (oven 18–22 → 10 then 8–12; air fryer 16–19 → 9 then 7–10; the label collapses 10–10 to 10)", () => {
+  it("both appliances, raw fill-ins (oven 18–22 → 11 then 7–11; air fryer 16–19 → 10 then 6–9; the label collapses 11–11 to 11)", () => {
     expect(fillTemplate(DEFAULT_TEMPLATE.text.steps[1], values).text).toBe(
-      "**OVEN** 210°C (190°C fan): 10–10 min ➜ **TURN OVER** ➜ 8–12 min\n**AIR FRYER** 180°C: 9–9 min ➜ **TURN OVER** ➜ 7–10 min",
+      "**OVEN** 190°C fan (210°C): 11–11 min ➜ **TURN OVER** ➜ 7–11 min\n**AIR FRYER** 180°C: 10–10 min ➜ **TURN OVER** ➜ 6–9 min",
     );
+  });
+  it("oven temperatures read fan first; no fan figure → just the oven's", () => {
+    expect(values.ovenTemps).toBe("190°C fan (210°C)");
+    expect(cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, fanTempC: null }).ovenTemps).toBe("210°C");
+    expect(cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, ovenTempC: null }).ovenTemps).toBe("190°C fan");
+    expect(cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, ovenTempC: null, fanTempC: null }).ovenTemps).toBeNull();
   });
   it("a blank appliance drops its whole line", () => {
     const noAir = cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, airFryerTempC: null });
     expect(fillTemplate(DEFAULT_TEMPLATE.text.steps[1], noAir).text.trim()).toBe(
-      "**OVEN** 210°C (190°C fan): 10–10 min ➜ **TURN OVER** ➜ 8–12 min",
+      "**OVEN** 190°C fan (210°C): 11–11 min ➜ **TURN OVER** ➜ 7–11 min",
     );
     const noOven = cookingPlaceholderValues({ ...DEFAULT_TEMPLATE.cooking, ovenMinMinutes: null });
     expect(fillTemplate(DEFAULT_TEMPLATE.text.steps[1], noOven).text.trim()).toBe(
-      "**AIR FRYER** 180°C: 9–9 min ➜ **TURN OVER** ➜ 7–10 min",
+      "**AIR FRYER** 180°C: 10–10 min ➜ **TURN OVER** ➜ 6–9 min",
     );
   });
   it("placeholder names may contain digits ({ovenHalf2Min})", () => {

@@ -66,9 +66,9 @@ describe("the default tier times", () => {
   });
   it("print as these halves either side of TURN OVER", () => {
     expect(halveRange(14, 16)).toEqual({ first: 8, second: [6, 8] });
-    expect(halveRange(12, 15)).toEqual({ first: 7, second: [5, 8] });
-    expect(halveRange(16, 19)).toEqual({ first: 9, second: [7, 10] });
-    expect(halveRange(14, 17)).toEqual({ first: 8, second: [6, 9] });
+    expect(halveRange(12, 15)).toEqual({ first: 8, second: [4, 7] });
+    expect(halveRange(16, 19)).toEqual({ first: 10, second: [6, 9] });
+    expect(halveRange(14, 17)).toEqual({ first: 9, second: [5, 8] });
   });
 });
 

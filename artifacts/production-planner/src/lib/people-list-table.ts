@@ -3,6 +3,7 @@
  * old cards already showed: name, job title, what needs attention, next
  * meeting, and whether they're working / off now / a leaver. Objective F.
  */
+import { needsPolicyReview, type PolicyTriggerReview } from "@workspace/people-reviews";
 import { sortRows, type SortState, type SortValue } from "./sortable-table";
 
 /** The bits of a /api/people list row (lib/people-api PersonCard) the table uses. */
@@ -12,7 +13,7 @@ export interface PersonTableRow {
   isActive: boolean;
   awayNow: boolean;
   formsNeeded: number;
-  triggers: { sickness: boolean; lates: boolean };
+  triggerReview: PolicyTriggerReview;
   nextMeeting: { date: string } | null;
 }
 
@@ -27,11 +28,12 @@ export const PEOPLE_FIRST_DIR: Record<PeopleSortKey, "asc" | "desc"> = {
 
 /**
  * How many things on this person need a manager: each return-to-work form
- * owed, each policy trigger, and an open review (passed in, as the review
+ * owed, each policy trigger still needing a review (due, or due again —
+ * one already reviewed or booked doesn't nag), and an open review (passed in, as the review
  * badges come from a separate request). 0 = nothing.
  */
 export function attentionCount(p: PersonTableRow, inReview: boolean): number {
-  return p.formsNeeded + (p.triggers.sickness ? 1 : 0) + (p.triggers.lates ? 1 : 0) + (inReview ? 1 : 0);
+  return p.formsNeeded + (needsPolicyReview(p.triggerReview.sickness) ? 1 : 0) + (needsPolicyReview(p.triggerReview.lates) ? 1 : 0) + (inReview ? 1 : 0);
 }
 
 export type PersonStatus = "working" | "off-now" | "leaver";

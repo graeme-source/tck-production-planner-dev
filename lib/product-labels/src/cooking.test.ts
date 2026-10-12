@@ -2,13 +2,13 @@ import { describe, it, expect } from "vitest";
 import { collapseEqualRanges, cookingPlaceholderValues, formatRange, halveRange } from "./cooking";
 
 describe("cooking halves: a fixed first half, the range on the second", () => {
-  it("oven 18–22 → 10, then 8–12", () => {
-    expect(halveRange(18, 22)).toEqual({ first: 10, second: [8, 12] });
+  it("oven 18–22 → 11, then 7–11", () => {
+    expect(halveRange(18, 22)).toEqual({ first: 11, second: [7, 11] });
   });
-  it("air fryer 16–19 → 9 (half of 17.5 = 8.75, rounded), then 7–10", () => {
-    expect(halveRange(16, 19)).toEqual({ first: 9, second: [7, 10] });
+  it("air fryer 16–19 → 10 (half of 19, rounded up), then 6–9 — Graeme's example", () => {
+    expect(halveRange(16, 19)).toEqual({ first: 10, second: [6, 9] });
   });
-  it("rounds half up: 15–15 (midpoint 15 → 7.5) → 8, then 7", () => {
+  it("rounds up: 15–15 → 8, then 7", () => {
     expect(halveRange(15, 15)).toEqual({ first: 8, second: [7, 7] });
   });
   it("the halves always add up to the stated range, the second never under 1", () => {
@@ -18,6 +18,9 @@ describe("cooking halves: a fixed first half, the range on the second", () => {
       expect(h.first + h.second[1]).toBe(max);
       expect(h.second[0]).toBeGreaterThanOrEqual(1);
       expect(h.first).toBeGreaterThanOrEqual(1);
+      // The second cook is never longer than the first, unless the minimum
+      // is so short the first half had to be capped to leave a minute.
+      if (h.first === Math.ceil(max / 2)) expect(h.second[1]).toBeLessThanOrEqual(h.first);
     }
   });
   it("a short minimum caps the first half so the second is still a minute", () => {
@@ -42,6 +45,6 @@ describe("formatting", () => {
       ovenTempC: 210, fanTempC: 190, ovenMinMinutes: 18, ovenMaxMinutes: 22,
       airFryerTempC: 180, airFryerMinMinutes: null, airFryerMaxMinutes: null,
     });
-    expect(v).toMatchObject({ ovenHalfMin: 10, ovenHalfMax: 10, ovenHalf2Min: 8, ovenHalf2Max: 12, ovenFirst: "10", ovenSecond: "8–12", airHalfMin: null, airSecond: null });
+    expect(v).toMatchObject({ ovenHalfMin: 11, ovenHalfMax: 11, ovenHalf2Min: 7, ovenHalf2Max: 11, ovenFirst: "11", ovenSecond: "7–11", airHalfMin: null, airSecond: null });
   });
 });

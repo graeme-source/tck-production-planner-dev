@@ -1,7 +1,7 @@
 /**
  * "Reviews & records" — everything on someone's employment record as ONE
  * list of entries (Graeme, 2026-10-12), opened from the record's right-hand
- * section buttons. Add to record → one form; the classification decides the
+ * section buttons. Book a review → one form; the classification decides the
  * few extra fields. Newest first, chips to filter by classification.
  *
  * Self-contained: give it the person and `ready` (from usePeopleReady) and it
@@ -11,9 +11,9 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useSearch } from "wouter";
-import { CalendarDays, ChevronRight, FileText, Loader2, Lock, Plus, Settings2 } from "lucide-react";
+import { CalendarDays, ChevronRight, FileText, Loader2, Lock, Settings2 } from "lucide-react";
 import {
-  reviewBadge, longestLiveWarning, entryWarning, entryHeadline, entryLevel, warningStatusLabel, classificationCounts,
+  reviewBadge, longestLiveWarning, entryWarning, entryHeadline, entryLevel, warningStatusLabel, classificationCounts, MEETING_STATUS_LABEL,
   filterEntries, fmtDayIso, recordTimelineEvents, MEETING_TYPE_LABEL, type RecordEvent,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,8 @@ import { PeopleModal } from "@/components/people-modal";
 import { PeopleLockedError } from "@/hooks/use-people-gate";
 import { PeopleLockedCard } from "@/components/people-locked-card";
 import { ReviewStatusBadge } from "./review-status-badge";
-import { EntryEditor, NewEntryForm } from "./entry-form";
+import { EntryEditor } from "./entry-form";
+import { BookReviewForm } from "./book-review";
 import { RecordSettings } from "./record-settings";
 import { ProbationCard } from "./probation-card";
 import { usePersonEntries, useRefreshEntries, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
@@ -114,7 +115,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
       <ProbationCard data={data} onChanged={refresh} />
       <button type="button" onClick={() => setAdding(true)}
         className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 active:scale-[0.99]">
-        <Plus className="w-6 h-6" /> Add to record
+        <CalendarDays className="w-6 h-6" /> Book a review
       </button>
 
       {chips.length > 1 && (
@@ -132,7 +133,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
       {shown.length === 0 ? (
         <div className="text-center py-8 rounded-2xl bg-secondary/30">
           <p className="text-xl font-bold">Nothing on the record yet</p>
-          <p className="text-base text-muted-foreground">Appraisals, probation reviews, warnings, praise, training — all go here.</p>
+          <p className="text-base text-muted-foreground">Book a review — appraisals, probation, 1:1s, disciplinaries, praise, training — and classify it. You can change it later.</p>
         </div>
       ) : shown.map(e => {
         const level = entryLevel(e, data.classifications, data.stages);
@@ -154,11 +155,18 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
                 </span>
               )}
               {w && <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200">{w.stage.label} · {warningStatusLabel(w, data.today)}</span>}
-              {e.meetingDate && e.meetingType && (
-                <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
-                  {MEETING_TYPE_LABEL[e.meetingType]} · {fmtDayIso(e.meetingDate)}{e.meetingTime ? ` ${e.meetingTime}` : ""}
+              {e.meetingStatus && (
+                <span className={cn("text-sm font-bold px-2.5 py-1 rounded-lg",
+                  e.meetingStatus === "cancelled" ? "bg-secondary text-muted-foreground" : "bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200")}>
+                  Review {MEETING_STATUS_LABEL[e.meetingStatus].toLowerCase()}{e.meetingDate ? ` · ${fmtDayIso(e.meetingDate)}` : ""}{e.meetingTime ? ` ${e.meetingTime}` : ""}
                 </span>
               )}
+              {e.meetingDate && e.meetingType && (
+                <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200">
+                  {MEETING_TYPE_LABEL[e.meetingType]}
+                </span>
+              )}
+              {e.writeUp.length > 0 && <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary">Written up</span>}
               {e.letters.length > 0 && <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary">{e.letters.length} letter{e.letters.length === 1 ? "" : "s"}</span>}
             </span>
           </button>
@@ -174,8 +182,8 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
       </p>
 
       {adding && (
-        <PeopleModal title={`Add to record — ${person.name}`} onClose={() => setAdding(false)} wide>
-          <NewEntryForm data={data} onCancel={() => setAdding(false)}
+        <PeopleModal title={`Book a review — ${person.name}`} onClose={() => setAdding(false)} wide>
+          <BookReviewForm data={data} onCancel={() => setAdding(false)}
             onCreated={id => { setAdding(false); refresh(); setOpen(id); }} />
         </PeopleModal>
       )}

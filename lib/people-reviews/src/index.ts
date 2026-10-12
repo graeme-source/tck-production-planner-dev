@@ -28,6 +28,8 @@
  * enforces can't drift apart.
  */
 
+import type { MeetingStatus } from "./reviews";
+
 // ── Field sets and classifications ─────────────────────────────────────────
 
 export const FIELD_SETS = ["stage", "rating", "pay", "probation", "fitness"] as const;
@@ -516,6 +518,8 @@ export interface RecordEvent {
 export interface TimelineEntry extends EntryLike {
   closedOn: string | null;
   meetingType: MeetingType | null;
+  /** The review's status (migration 0178); a cancelled one has no meeting event. */
+  meetingStatus?: MeetingStatus | null;
   meetingDate: string | null;
   meetingTime: string | null;
   /** From the entry's history: reclassifications, with the day they happened. */
@@ -534,10 +538,12 @@ export function recordTimelineEvents(entries: readonly TimelineEntry[], classifi
       key: `re-${e.id}`, date: e.entryDate, kind: "entry", entryId: e.id,
       title: `${label}${e.title ? `: ${e.title}` : ""}`, detail: bits.length ? bits.join(" · ") : null,
     });
-    if (e.meetingDate && e.meetingType) {
+    // A review's meeting: any with a date that isn't cancelled. The ACAS
+    // meeting type, when given, names it; otherwise it's just "Review".
+    if (e.meetingDate && (e.meetingType || e.meetingStatus) && e.meetingStatus !== "cancelled") {
       out.push({
         key: `re-${e.id}-m`, date: e.meetingDate, kind: "meeting", entryId: e.id,
-        title: `${MEETING_TYPE_LABEL[e.meetingType]} · ${label}`, detail: e.meetingTime ? `At ${e.meetingTime}` : null,
+        title: `${e.meetingType ? MEETING_TYPE_LABEL[e.meetingType] : "Review"} · ${label}`, detail: e.meetingTime ? `At ${e.meetingTime}` : null,
       });
     }
     if (w && warningState(w, todayIso) === "expired") {
@@ -814,3 +820,5 @@ export function letterWaitingEmail(personName: string, appUrl: string): { subjec
 }
 
 export * from "./attention";
+export * from "./reviews";
+export * from "./policy-trigger";

@@ -6,7 +6,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import {
-  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck, X, Trash2,
+  Loader2, Plus, Minus, CheckCircle2, Snowflake, AlertCircle, Gift, Flame, ChevronDown, ThermometerSnowflake, ArrowDown, ClipboardList, PackageCheck, X, Trash2, Printer,
 } from "lucide-react";
 import { Link } from "wouter";
 import { cn } from "@/lib/utils";
@@ -869,15 +869,16 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       <CheckCircle2 className="w-3.5 h-3.5" /> All wrapped
                     </span>
                   )}
-                  {/* Deliberately quiet: a small link at the card's edge, only
-                      for whoever holds "Print back labels" (Graeme for now). */}
+                  {/* A proper green button on every flavour panel (Graeme,
+                      2026-10-12) — still only for whoever holds "Print back
+                      labels". */}
                   {canPrintBackLabels && (
                     <button
                       type="button"
                       onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net })}
-                      className="ml-auto text-xs font-semibold text-muted-foreground hover:text-foreground underline underline-offset-2"
+                      className="ml-auto h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/90 active:scale-[0.98]"
                     >
-                      Back labels
+                      <Printer className="w-4 h-4" /> Print back labels
                     </button>
                   )}
                 </div>
