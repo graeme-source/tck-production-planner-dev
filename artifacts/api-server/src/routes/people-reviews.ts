@@ -46,7 +46,7 @@ import { sql } from "drizzle-orm";
 import {
   db, usersTable, peopleRecordClassificationsTable, peopleReviewStagesTable, peopleRecordEntriesTable, peopleRecordAuditTable,
   peopleLetterTemplatesTable, peopleLettersTable, personDocumentsTable, peopleHrSettingsTable, peopleReviewNotesTable,
-  visibleNotes,
+  peopleRecordEntrySourcesTable, visibleNotes,
 } from "@workspace/db";
 import {
   FIELD_SETS, EVIDENCE_KINDS, STAGE_TYPES, RATINGS, PROBATION_OUTCOMES, FIT_FOR_WORK, ENTRY_STATUSES, MEETING_TYPES,
@@ -54,7 +54,7 @@ import {
   longestLiveWarning, entryWarning, recordTodo, planTodo, sortStages, sortClassifications, londonTodayIso,
   extendedEnd, extensionMessage, periodEnd, nextStage, attentionLine, PERIOD_MONTHS,
   MERGE_FIELDS, hrEmailIdentity, checkHrEmailSettings, templatesForEntry, letterMergeValues, fillTemplate, letterGaps, checkLetterAction, letterWaitingEmail,
-  effectiveStage, MEETING_STATUSES, meetingStatusChange, meetingTodoDate,
+  effectiveStage, MEETING_STATUSES, meetingStatusChange, meetingTodoDate, heldByNotes,
   type MeetingStatus, type LetterTemplate, type LetterStatus, type FieldSet, type ProbationOutcome,
   type Classification, type Stage, type StageType, type EvidenceKind, type EntryLike, type EntryStatus,
   type MeetingType, type TodoKind,
@@ -73,6 +73,7 @@ import {
   resyncAttentionSoon, attentionForViewer, loadProbations, attentionSettings, subjectsById,
 } from "../lib/hr-attention";
 import reviewNotesRouter from "./people-review-notes";
+import meetingNotesRouter from "./people-meeting-notes";
 
 const router: IRouter = Router();
 
@@ -116,6 +117,8 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
 // A review's write-up (feedback, objectives, notes) — its own file, behind
 // the same access check above.
 router.use(reviewNotesRouter);
+// "Add meeting notes (AI)" — read notes into a draft, save the checked draft.
+router.use(meetingNotesRouter);
 
 /** May this viewer open (and change) this person's record? The shared rule. */
 async function mayOpen(viewer: Viewer, subjectUserId: number): Promise<boolean> {
@@ -322,7 +325,7 @@ async function attendanceFacts(userId: number, today: string) {
 }
 
 /** History lines worth showing on an entry (not every autosave). */
-const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack"];
+const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack", "ai_draft"];
 
 router.get("/person/:userId", async (req: Request, res: Response) => {
   const viewer = viewerOf(res);
@@ -360,6 +363,12 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
       id: n.id, entryId: n.entryId, kind: n.kind, title: n.title, body: n.body, visibility: n.visibility, sharedAt: n.sharedAt,
       dueDate: n.dueDate, doneAt: n.doneAt, authorId: n.authorId, authorName: n.authorName, createdAt: n.createdAt, updatedAt: n.updatedAt,
     }));
+    // The meeting notes AI drafts were made from (0182) — People access only,
+    // like everything on this route.
+    const sources = ids.length
+      ? await db.select().from(peopleRecordEntrySourcesTable)
+        .where(inArray(peopleRecordEntrySourcesTable.entryId, ids)).orderBy(asc(peopleRecordEntrySourcesTable.createdAt))
+      : [];
     const [probation] = await loadProbations([userId]);
     await audit(db, viewer, { subjectUserId: userId, action: "view", detail: `${entries.length} entr${entries.length === 1 ? "y" : "ies"}` });
     res.json({
@@ -375,6 +384,9 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         meetingAttendees: e.meetingAttendees, meetingChecklist: e.meetingChecklist,
         createdByName: e.createdByName, createdAt: e.createdAt, updatedAt: e.updatedAt,
         writeUp: notes.filter(n => n.entryId === e.id),
+        sources: sources.filter(x => x.entryId === e.id).map(x => ({
+          id: x.id, kind: x.kind, url: x.sourceUrl, text: x.rawText, createdByName: x.createdByName, createdAt: x.createdAt,
+        })),
         history: history.filter(h => h.entryId === e.id).map(h => ({ action: h.action, detail: h.detail, at: h.at, by: h.by })),
         letters: letters.filter(l => l.entryId === e.id).map(l => ({
           id: l.id, templateId: l.templateId, title: l.title, body: l.body, status: l.status, signatoryName: l.signatoryName,
@@ -466,6 +478,11 @@ async function applyChange(tx: Exec, viewer: Viewer, row: EntryRow, b: EntryPatc
   classifications: Classification[]; stages: Stage[]; created: boolean;
 }): Promise<void> {
   const today = londonTodayIso();
+  // Notes typed on a booked review once its day has come mean it was held.
+  if (b.meetingStatus === undefined && heldByNotes({ meetingStatus: (row.meetingStatus ?? null) as MeetingStatus | null,
+    meetingDate: row.meetingDate, entryDate: row.entryDate }, b.notes, today)) {
+    b = { ...b, meetingStatus: "held" };
+  }
   const set: Partial<typeof peopleRecordEntriesTable.$inferInsert> = { updatedAt: new Date() };
   const changed = Object.keys(b).filter(k => (b as Record<string, unknown>)[k] !== undefined);
 

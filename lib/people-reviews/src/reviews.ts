@@ -144,6 +144,13 @@ export function whatHappened<N>(e: { notes: string | null; writeUp: readonly N[]
   return { recordNotes, parts: [...e.writeUp], hasContent: recordNotes != null || e.writeUp.length > 0 };
 }
 
+/** Notes typed on a BOOKED review once its day has come mean it happened —
+ *  mark it held. Notes typed ahead of the day (agenda, prep) don't. */
+export function heldByNotes(e: { meetingStatus: MeetingStatus | null; meetingDate: string | null; entryDate: string },
+  notes: string | null | undefined, todayIso: string): boolean {
+  return e.meetingStatus === "booked" && !!(notes ?? "").trim() && reviewDay(e) <= todayIso;
+}
+
 /** Everything already written on a meeting as plain text — what "Use what's
  *  already here" hands the AI, so nothing typed earlier is asked for again. */
 export function whatHappenedText(e: {

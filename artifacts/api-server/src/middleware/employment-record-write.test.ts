@@ -52,6 +52,8 @@ const ROUTERS: Record<string, { load: () => Promise<{ default: unknown }>; notRe
   // Read-only since migration 0178 (your own record); reviews are written through people-reviews.ts.
   "employee-reviews.ts": { load: () => import("../routes/employee-reviews"), notRecordWrites: {} },
   "people-review-notes.ts": { load: () => import("../routes/people-review-notes"), notRecordWrites: {} },
+  // "Add meeting notes (AI)": even the read (a draft, nothing saved) is guarded — it sends a record's notes to the model.
+  "people-meeting-notes.ts": { load: () => import("../routes/people-meeting-notes"), notRecordWrites: {} },
   "person-documents.ts": { load: () => import("../routes/person-documents"), notRecordWrites: {} },
   "return-to-work.ts": { load: () => import("../routes/return-to-work"), notRecordWrites: {} },
   "uploaded-contracts.ts": { load: () => import("../routes/uploaded-contracts"), notRecordWrites: {} },

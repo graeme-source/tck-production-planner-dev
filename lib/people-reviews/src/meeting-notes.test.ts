@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   whatHappened, whatHappenedText, meetingWrittenUp, meetingNotesRows, actionTodos, recordTodo,
-  SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, type MeetingNotesDraft,
+  SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, heldByNotes, type MeetingNotesDraft,
 } from "./index";
 
 describe("one write-up per meeting", () => {
@@ -24,6 +24,20 @@ describe("one write-up per meeting", () => {
     const base = { meetingStatus: "held" as const, outcome: null, status: "closed", writeUpCount: 0 };
     expect(meetingWrittenUp({ ...base, notes: "We talked about leave dates" })).toBe(true);
     expect(meetingWrittenUp({ ...base, notes: "   " })).toBe(false);
+  });
+});
+
+describe("notes mark a meeting held", () => {
+  const booked = { meetingStatus: "booked" as const, meetingDate: "2026-10-12", entryDate: "2026-10-12" };
+  it("on or after its day", () => {
+    expect(heldByNotes(booked, "We met", "2026-10-12")).toBe(true);
+    expect(heldByNotes(booked, "We met", "2026-10-20")).toBe(true);
+  });
+  it("not before its day — that's prep", () => expect(heldByNotes(booked, "Agenda", "2026-10-11")).toBe(false));
+  it("not for empty notes, or a meeting already held or cancelled", () => {
+    expect(heldByNotes(booked, "  ", "2026-10-12")).toBe(false);
+    expect(heldByNotes({ ...booked, meetingStatus: "cancelled" }, "x", "2026-10-12")).toBe(false);
+    expect(heldByNotes({ ...booked, meetingStatus: "held" }, "x", "2026-10-12")).toBe(false);
   });
 });
 

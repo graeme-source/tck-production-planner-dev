@@ -17,7 +17,7 @@ function fakeFetch(routes: Record<string, () => Response>): Fetcher & { calls: s
     const r = routes[url];
     if (!r) throw new Error(`unexpected fetch ${url}`);
     return r();
-  }) as Fetcher & { calls: string[] };
+  }) as unknown as Fetcher & { calls: string[] };
   f.calls = calls;
   return f;
 }
