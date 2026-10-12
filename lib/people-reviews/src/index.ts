@@ -467,19 +467,20 @@ export interface TodoInput {
 }
 
 /** A to-do on the BOOKER's own list for the day, linking back to the entry.
- *  Discreet on purpose — other managers can open to-do lists — so it names
- *  the person's first name and the time only: never the classification,
- *  stage or reason. Nothing is ever sent to the employee. */
+ *  No personal information at all (Graeme, 2026-10-12: "We don't say,
+ *  'Naomi's review is coming up.' We just say, 'Your attention is required
+ *  in HR'") — not even a first name, since other managers can open to-do
+ *  lists. The details sit behind the People PIN. Nothing is ever sent to
+ *  the employee. */
 export function recordTodo(i: TodoInput) {
-  const first = i.subjectName.trim().split(/\s+/)[0] || "colleague";
   return {
     assigneeId: i.ownerId,
     createdBy: i.ownerId,
     createdByName: i.ownerName,
     title: i.kind === "meeting"
-      ? `Private meeting with ${first}${i.time ? ` at ${i.time}` : ""}`
-      : `Private follow-up for ${first}`,
-    notes: "Details are on their People record (private — People access and your People PIN).",
+      ? `HR meeting${i.time ? ` at ${i.time}` : ""} — tap here`
+      : "HR follow-up due — tap here",
+    notes: "Details are in HR (private — needs your People PIN).",
     url: `/people/${i.subjectUserId}?entry=${i.entryId}`,
     priority: "high" as const,
     scheduledFor: i.date,

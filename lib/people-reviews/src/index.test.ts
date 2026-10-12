@@ -186,15 +186,15 @@ describe("to-dos", () => {
   it("meeting to-do lands on the booker's list, links back, gives nothing away", () => {
     const t = recordTodo({ kind: "meeting", ownerId: 3, ownerName: "Graeme Carter", subjectUserId: 41, subjectName: "Test Person", entryId: 9, date: "2026-10-20", time: "10:30" });
     expect(t).toEqual({
-      assigneeId: 3, createdBy: 3, createdByName: "Graeme Carter", title: "Private meeting with Test at 10:30",
-      notes: "Details are on their People record (private — People access and your People PIN).",
+      assigneeId: 3, createdBy: 3, createdByName: "Graeme Carter", title: "HR meeting at 10:30 — tap here",
+      notes: "Details are in HR (private — needs your People PIN).",
       url: "/people/41?entry=9", priority: "high", scheduledFor: "2026-10-20", dueDate: "2026-10-20",
     });
-    expect(`${t.title} ${t.notes}`).not.toMatch(/disciplinary|warning|timekeeping|attendance/i);
+    expect(`${t.title} ${t.notes}`).not.toMatch(/disciplinary|warning|timekeeping|attendance|Test|Person/i);
   });
   it("next-review to-do", () => {
     expect(recordTodo({ kind: "review", ownerId: 3, ownerName: "G", subjectUserId: 41, subjectName: "Test Person", entryId: 9, date: "2027-01-05" }).title)
-      .toBe("Private follow-up for Test");
+      .toBe("HR follow-up due — tap here");
   });
   it("create, move, cancel or leave the linked to-do", () => {
     expect(planTodo({ todoId: null, date: null }, { date: "2026-10-20" })).toBe("create");
