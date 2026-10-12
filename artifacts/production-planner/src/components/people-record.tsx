@@ -414,25 +414,25 @@ function SectionCard({ section, summary, onOpen, compact }: {
       onClick={onOpen}
       aria-haspopup="dialog"
       className={cn(
-        "w-full text-left rounded-2xl border-2 bg-card flex items-start gap-3 transition-all hover:border-primary/50 active:scale-[0.99]",
-        compact ? "p-3 min-h-[4.5rem]" : "p-4 min-h-[5rem]",
+        "w-full text-left rounded-2xl border-2 bg-card flex flex-col gap-1 transition-all hover:border-primary/50 active:scale-[0.99]",
+        compact ? "p-3 min-h-[4.5rem]" : "p-4 min-h-[5.5rem]",
         summary.tone === "alert" ? "border-rose-400 dark:border-rose-700"
           : summary.tone === "warn" ? "border-amber-400 dark:border-amber-700"
           : "border-border",
       )}
     >
-      <Icon className={cn("shrink-0 mt-0.5", compact ? "w-5 h-5" : "w-6 h-6",
-        section === "emergency" ? "text-red-600 dark:text-red-400" : "text-primary")} />
-      <span className="flex-1 min-w-0">
-        <span className={cn("block font-bold leading-tight", compact ? "text-base" : "text-lg")}>{SECTION_TITLE[section]}</span>
-        <span className={cn("block text-muted-foreground mt-0.5 leading-snug line-clamp-2",
-          compact ? "text-sm" : "text-base",
-          summary.tone === "alert" && "text-rose-700 dark:text-rose-300 font-semibold",
-          summary.tone === "warn" && "text-amber-800 dark:text-amber-200 font-semibold")}>
-          {summary.line}
-        </span>
+      <span className="flex items-center gap-2 w-full">
+        <Icon className={cn("shrink-0", compact ? "w-5 h-5" : "w-6 h-6",
+          section === "emergency" ? "text-red-600 dark:text-red-400" : "text-primary")} />
+        <span className={cn("flex-1 min-w-0 font-bold leading-tight", compact ? "text-base" : "text-base @5xl/page:text-lg")}>{SECTION_TITLE[section]}</span>
+        <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
       </span>
-      {!compact && <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0 mt-1" />}
+      <span className={cn("block text-muted-foreground leading-snug line-clamp-2",
+        compact ? "text-sm" : "text-base",
+        summary.tone === "alert" && "text-rose-700 dark:text-rose-300 font-semibold",
+        summary.tone === "warn" && "text-amber-800 dark:text-amber-200 font-semibold")}>
+        {summary.line}
+      </span>
     </button>
   );
 }
@@ -621,7 +621,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           Narrower (iPad portrait, phone): one column, with the buttons in a
           grid under the header. Container queries, so it follows the space
           the page really has beside the app sidebar. */}
-      <div className="@2xl/page:grid @2xl/page:grid-cols-[minmax(0,1fr)_15rem] @5xl/page:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] @2xl/page:gap-5 @2xl/page:items-start">
+      <div className="@2xl/page:grid @2xl/page:grid-cols-[minmax(0,1fr)_13rem] @5xl/page:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] @2xl/page:gap-4 @5xl/page:gap-6 @2xl/page:items-start">
       <div className="@container/main min-w-0 space-y-5">
 
       {/* Who they are, and the three things you come here to do. */}
@@ -638,18 +638,18 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         {/* Their job title — what they do, not their app access. Keyed by
             person so moving between records never carries a draft across. */}
         <JobTitleField key={p.id} userId={p.id} initial={p.jobTitle} />
-        <div className="grid gap-3 @lg/main:grid-cols-3">
+        <div className="grid gap-3 @sm/main:grid-cols-2 @3xl/main:grid-cols-3">
           <button onClick={() => setModal("rtw")}
-            className={cn("min-h-16 px-3 py-2 rounded-2xl text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
+            className={cn("@sm/main:col-span-2 @3xl/main:col-span-1 min-h-14 px-3 py-2 rounded-2xl text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
               formsNeeded > 0 ? "bg-amber-600 text-white hover:bg-amber-700" : "border-2 border-border hover:bg-secondary/50")}>
             <HeartPulse className="w-6 h-6 shrink-0" /> Return-to-work form{formsNeeded > 0 ? ` (${formsNeeded})` : ""}
           </button>
           <button onClick={() => setModal("book")} disabled={!canManage}
-            className="min-h-16 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
+            className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
             <CalendarDays className="w-6 h-6 shrink-0" /> Book a meeting / review
           </button>
           <button onClick={() => setModal("note")} disabled={!canManage}
-            className="min-h-16 px-3 py-2 rounded-2xl border-2 border-border text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
+            className="min-h-14 px-3 py-2 rounded-2xl border-2 border-border text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
             <Plus className="w-6 h-6 shrink-0" /> Write a note
           </button>
         </div>
