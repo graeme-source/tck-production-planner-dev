@@ -275,10 +275,11 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     ingredients: field({ maxPt: 11 }),
     allergenInfo: field({ maxPt: 9 }),
     address: field({ maxPt: 8 }),
-    // Fixed size: printed at maxPt, never shrunk or narrowed. 10.5 = the
-    // storage text under it; 11 would push the longest deck (The Godfather)
-    // off the label.
-    headings: field({ weight: 700, bold: true, caps: true, minPt: 10.5, maxPt: 10.5, lineHeight: 1.1, narrowest: "normal" }),
+    // Fixed size: printed at maxPt, never shrunk or narrowed. 12.5 pt: a
+    // clear step up from the 10.5–11 pt text under it, and "STORAGE
+    // INSTRUCTIONS:" almost fills the storage column (Graeme, 2026-10-12).
+    // The longest deck (The Godfather) still fits at its usual size.
+    headings: field({ weight: 700, bold: true, caps: true, minPt: 12.5, maxPt: 12.5, lineHeight: 1.1, narrowest: "normal" }),
   },
   text: {
     title: "{name} - {packSize} PACK",
