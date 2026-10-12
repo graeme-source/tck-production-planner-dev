@@ -19,8 +19,8 @@ import { useMemo, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, FilePlus2, HeartPulse, Loader2, Lock,
-  PenLine, Plus, RefreshCw, Sun, Target, History,
+  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
+  HeartPulse, Loader2, Lock, PenLine, Plus, RefreshCw, Sun, Target, History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -55,6 +55,13 @@ import {
 } from "@/components/person-documents";
 import { documentEntries, isFiledFounderOnly } from "@/lib/person-documents";
 import { PersonEmergencyContactPanel } from "@/components/emergency-contacts/person-emergency-contact-panel";
+import { PeopleSheet } from "@/components/people-sheet";
+import { defaultHoursRange } from "@/components/hours-range-picker";
+import type { PersonHoursResponse } from "@/lib/hours-worked-view";
+import {
+  fmtAmount, sectionFromSearch, hoursSummary, holidaySummary, contractsSummary, documentsSummary, agreedSummary,
+  type RecordSection, type SectionSummary,
+} from "@/lib/person-record-sections";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -104,12 +111,6 @@ function Tile({ label, value, sub, alert }: { label: string; value: number | str
 }
 
 // ── Employment & holiday (Planday) ─────────────────────────────────────────
-
-function fmtAmount(n: number | null, unit: string): string {
-  if (n == null) return "—";
-  const u = unit.toLowerCase() === "hours" ? "h" : ` ${unit.toLowerCase()}`;
-  return `${Number.isInteger(n) ? n : n.toFixed(1)}${u}`;
-}
 
 function EmploymentPanel({ userId, ready }: { userId: number; ready: boolean }) {
   const queryClient = useQueryClient();
@@ -377,6 +378,65 @@ function FormEntryCard({ form, onOpen }: { form: RtwForm; onOpen: (id: number) =
   );
 }
 
+// ── Side panels: a big button each, opening a sheet ────────────────────────
+
+const SECTION_TITLE: Record<RecordSection, string> = {
+  hours: "Hours worked",
+  holiday: "Employment & holiday",
+  contracts: "Contracts",
+  documents: "Documents",
+  emergency: "Emergency contact",
+  agreed: "What we agreed",
+};
+
+const SECTION_ICON: Record<RecordSection, React.ComponentType<{ className?: string }>> = {
+  hours: Clock3,
+  holiday: Sun,
+  contracts: FileSignature,
+  documents: FolderOpen,
+  emergency: HeartPulse,
+  agreed: Target,
+};
+
+/** One big tappable card: the section's name and one plain line about
+ *  what's inside. `compact` is the phone / iPad-portrait grid above
+ *  Attendance; otherwise it's the stack in the right-hand column. */
+function SectionCard({ section, summary, onOpen, compact }: {
+  section: RecordSection;
+  summary: SectionSummary;
+  onOpen: () => void;
+  compact: boolean;
+}) {
+  const Icon = SECTION_ICON[section];
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-haspopup="dialog"
+      className={cn(
+        "w-full text-left rounded-2xl border-2 bg-card flex flex-col gap-1 transition-all hover:border-primary/50 active:scale-[0.99]",
+        compact ? "p-3 min-h-[4.5rem]" : "p-4 min-h-[5.5rem]",
+        summary.tone === "alert" ? "border-rose-400 dark:border-rose-700"
+          : summary.tone === "warn" ? "border-amber-400 dark:border-amber-700"
+          : "border-border",
+      )}
+    >
+      <span className="flex items-center gap-2 w-full">
+        <Icon className={cn("shrink-0", compact ? "w-5 h-5" : "w-6 h-6",
+          section === "emergency" ? "text-red-600 dark:text-red-400" : "text-primary")} />
+        <span className={cn("flex-1 min-w-0 font-bold leading-tight", compact ? "text-base" : "text-base @5xl/page:text-lg")}>{SECTION_TITLE[section]}</span>
+        <ChevronRight className="w-5 h-5 text-muted-foreground shrink-0" />
+      </span>
+      <span className={cn("block text-muted-foreground leading-snug line-clamp-2",
+        compact ? "text-sm" : "text-base",
+        summary.tone === "alert" && "text-rose-700 dark:text-rose-300 font-semibold",
+        summary.tone === "warn" && "text-amber-800 dark:text-amber-200 font-semibold")}>
+        {summary.line}
+      </span>
+    </button>
+  );
+}
+
 // ── The record ─────────────────────────────────────────────────────────────
 
 export function PersonRecord({ userId, ready }: { userId: number; ready: boolean }) {
@@ -400,6 +460,18 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const documents = usePersonDocuments(userId, ready);
   const [addingDocument, setAddingDocument] = useState(false);
   const [openDocument, setOpenDocument] = useState<OpenDocument | null>(null);
+  // The side panel open in a sheet — ?section=holiday opens one from a link.
+  const [section, setSection] = useState<RecordSection | null>(() => sectionFromSearch(search));
+  // Same query (and cache) as the Hours worked panel's default range, for
+  // the one-line summary on its button.
+  const hoursRange = useMemo(defaultHoursRange, []);
+  const hours = useQuery<PersonHoursResponse>({
+    queryKey: ["people-hours", userId, hoursRange.from, hoursRange.to],
+    queryFn: () => peopleFetch<PersonHoursResponse>(`/people/${userId}/hours?from=${hoursRange.from}&to=${hoursRange.to}`),
+    enabled: ready,
+    retry: peopleRetry,
+    staleTime: 5 * 60 * 1000,
+  });
 
   const recordKey = ["people-record", userId, from ?? "default"];
   const record = useQuery<PersonRecordResponse>({
@@ -525,11 +597,36 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   };
   const formsNeeded = data.spells.filter(x => x.formState === "needed").length;
 
+  // The side panels, in the order they're asked about most. Contracts only
+  // for the founder/HR account (they carry pay); What we agreed only when
+  // something is open.
+  const agreedNow = grouped?.agreedNow ?? [];
+  const sections: Array<{ key: RecordSection; summary: SectionSummary }> = [
+    { key: "hours", summary: hoursSummary(hours.data, hours.isLoading || !ready) },
+    { key: "holiday", summary: holidaySummary(employment.data, employment.isLoading || !ready) },
+    ...(agreedNow.length > 0 ? [{ key: "agreed" as const, summary: agreedSummary(agreedNow.length) }] : []),
+    { key: "documents", summary: documentsSummary(documents.data, documents.isLoading, !!documents.error) },
+    ...(canContracts ? [{ key: "contracts" as const, summary: contractsSummary(contracts.data, contracts.isLoading, !!contracts.error) }] : []),
+    { key: "emergency", summary: { line: "Tap to show — every look is recorded", tone: "plain" } },
+  ];
+  const sectionCards = (compact: boolean) => sections.map(x => (
+    <SectionCard key={x.key} section={x.key} summary={x.summary} compact={compact} onOpen={() => setSection(x.key)} />
+  ));
+  const openSection = section === "contracts" && !canContracts ? null : section;
+
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-24">
+    <div className="@container/page max-w-4xl lg:max-w-7xl mx-auto space-y-5 pb-24">
       <Link href="/people" className="inline-flex items-center gap-2 px-4 h-14 rounded-2xl bg-secondary hover:bg-secondary/70 text-lg font-bold transition-colors">
         <ChevronLeft className="w-5 h-5" /> Everyone
       </Link>
+
+      {/* Two columns once there's room (iPad landscape, desktop): the record
+          on the left, the side panels as a stack of buttons on the right.
+          Narrower (iPad portrait, phone): one column, with the buttons in a
+          grid under the header. Container queries, so it follows the space
+          the page really has beside the app sidebar. */}
+      <div className="@2xl/page:grid @2xl/page:grid-cols-[minmax(0,1fr)_13rem] @5xl/page:grid-cols-[minmax(0,3fr)_minmax(0,1fr)] @2xl/page:gap-4 @5xl/page:gap-6 @2xl/page:items-start">
+      <div className="@container/main min-w-0 space-y-5">
 
       {/* Who they are, and the three things you come here to do. */}
       <section className="rounded-3xl border-2 border-border bg-card p-4 sm:p-5 space-y-4">
@@ -550,22 +647,28 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             <Lock className="w-5 h-5 shrink-0" /> {p.readOnlyNote}
           </p>
         )}
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 @sm/main:grid-cols-2 @3xl/main:grid-cols-3">
           <button onClick={() => setModal("rtw")}
-            className={cn("h-16 rounded-2xl text-lg font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
+            className={cn("@sm/main:col-span-2 @3xl/main:col-span-1 min-h-14 px-3 py-2 rounded-2xl text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
               formsNeeded > 0 ? "bg-amber-600 text-white hover:bg-amber-700" : "border-2 border-border hover:bg-secondary/50")}>
-            <HeartPulse className="w-6 h-6" /> Return-to-work form{formsNeeded > 0 ? ` (${formsNeeded})` : ""}
+            <HeartPulse className="w-6 h-6 shrink-0" /> Return-to-work form{formsNeeded > 0 ? ` (${formsNeeded})` : ""}
           </button>
           <button onClick={() => setModal("book")} disabled={!canManage}
-            className="h-16 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
-            <CalendarDays className="w-6 h-6" /> Book a meeting / review
+            className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
+            <CalendarDays className="w-6 h-6 shrink-0" /> Book a meeting / review
           </button>
           <button onClick={() => setModal("note")} disabled={!canManage}
-            className="h-16 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
-            <Plus className="w-6 h-6" /> Write a note
+            className="min-h-14 px-3 py-2 rounded-2xl border-2 border-border text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
+            <Plus className="w-6 h-6 shrink-0" /> Write a note
           </button>
         </div>
       </section>
+
+      {/* Phone and iPad portrait: the side panels as a grid of buttons,
+          straight under the header. */}
+      <nav aria-label={`More about ${p.name}`} className="grid gap-2 grid-cols-2 @2xl/page:hidden">
+        {sectionCards(true)}
+      </nav>
 
       {/* Attendance at a glance, against the policy triggers. */}
       <section className="space-y-3">
@@ -574,7 +677,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           <p className="text-base text-muted-foreground">Not linked to Planday yet, so there's no attendance to show — link them from Analytics → Employee Records.</p>
         ) : (
           <>
-            <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
+            <div className="grid gap-3 grid-cols-2 @2xl/main:grid-cols-4">
               <Tile label="Sickness instances" value={s.sickInstances} sub={`Trigger at ${s.policy.sickInstances}`} alert={s.triggers.sickness} />
               <Tile label="Sick days" value={s.sickDays} />
               <Tile label="Lates" value={s.lates} sub={`Trigger at ${s.policy.lates}`} alert={s.triggers.lates} />
@@ -599,42 +702,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         )}
       </section>
 
-      {grouped && grouped.agreedNow.length > 0 && (
-        <section className="space-y-3">
-          <h2 className="text-xl font-bold flex items-center gap-2"><Target className="w-5 h-5 text-primary" /> What we agreed</h2>
-          {grouped.agreedNow.map(n => (
-            <AgreedObjective key={n.id} note={n} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />
-          ))}
-        </section>
-      )}
-
-      <EmploymentPanel userId={userId} ready={ready} />
-
-      <PersonHoursPanel userId={userId} ready={ready} />
-
-      {canContracts && (
-        <PersonContractsSection
-          history={contracts.data}
-          isLoading={contracts.isLoading}
-          error={contracts.error}
-          onOpen={setOpenContract}
-          onAdd={() => setAddingContract(true)}
-        />
-      )}
-
-      {/* Their emergency contact — tap to show; every look is logged. */}
-      <PersonEmergencyContactPanel userId={userId} personName={p.name} />
-
-      <PersonDocumentsSection
-        data={documents.data}
-        isLoading={documents.isLoading}
-        error={documents.error}
-        onOpen={setOpenDocument}
-        onAdd={() => setAddingDocument(true)}
-        readOnly={!canWrite}
-      />
-
-      {/* Everything, in one line of time. */}
+      {/* Everything, in one line of time — straight after Attendance. */}
       <section className="space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="flex-1 min-w-0 text-xl font-bold flex items-center gap-2"><History className="w-5 h-5 text-primary" /> The record</h2>
@@ -703,6 +771,53 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <Lock className="w-3.5 h-3.5" /> Private — People access only. Notes stay private to whoever wrote them until shared.
       </p>
+      </div>
+
+      {/* iPad landscape and wider: the side panels as a column of buttons,
+          kept in view while the timeline scrolls. */}
+      <aside aria-label={`More about ${p.name}`} className="hidden @2xl/page:flex flex-col gap-3 sticky top-0">
+        {sectionCards(false)}
+      </aside>
+      </div>
+
+      {/* The open side panel. Same components as before, moved in here —
+          their own saving and buttons are unchanged. */}
+      {openSection && (
+        <PeopleSheet title={`${SECTION_TITLE[openSection]} — ${p.name}`} onClose={() => setSection(null)}>
+          {openSection === "hours" && <PersonHoursPanel userId={userId} ready={ready} />}
+          {openSection === "holiday" && <EmploymentPanel userId={userId} ready={ready} />}
+          {openSection === "contracts" && (
+            <PersonContractsSection
+              history={contracts.data}
+              isLoading={contracts.isLoading}
+              error={contracts.error}
+              onOpen={setOpenContract}
+              onAdd={() => setAddingContract(true)}
+            />
+          )}
+          {/* Their emergency contact — tap to show; every look is logged. */}
+          {openSection === "emergency" && <PersonEmergencyContactPanel userId={userId} personName={p.name} />}
+          {openSection === "documents" && (
+            <PersonDocumentsSection
+              data={documents.data}
+              isLoading={documents.isLoading}
+              error={documents.error}
+              onOpen={setOpenDocument}
+              onAdd={() => setAddingDocument(true)}
+              readOnly={!canWrite}
+            />
+          )}
+          {openSection === "agreed" && (
+            <section className="space-y-3">
+              {agreedNow.length === 0 ? (
+                <p className="text-base text-muted-foreground py-2">Nothing agreed is open right now.</p>
+              ) : agreedNow.map(n => (
+                <AgreedObjective key={n.id} note={n} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />
+              ))}
+            </section>
+          )}
+        </PeopleSheet>
+      )}
 
       {modal === "rtw" && (
         <RtwStartModal userId={p.id} name={p.name} spells={data.spells} onClose={() => setModal(null)}
