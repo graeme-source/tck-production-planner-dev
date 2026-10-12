@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   defaultVisibility, kindLabel, onboardingKindLabel, documentEntries, documentFileProblem, mimeForFile,
-  titleFromFileName, isFiledFounderOnly, PERSON_DOCUMENT_KINDS, type PersonDocumentRow, type OnboardingDocumentRow,
+  titleFromFileName, isFiledFounderOnly, onboardingDocLabel, onboardingDocPath, PERSON_DOCUMENT_KINDS,
+  type PersonDocumentRow, type OnboardingDocumentRow,
 } from "./person-documents";
 
 const filed = (id: number, documentDate: string, uploadedAt = `${documentDate}T09:00:00Z`): PersonDocumentRow => ({
@@ -35,6 +36,36 @@ describe("one list, newest first", () => {
   it("same day: the later upload first", () => {
     const list = documentEntries([filed(1, "2026-09-01", "2026-09-01T08:00:00Z"), filed(2, "2026-09-01", "2026-09-01T15:00:00Z")], []);
     expect(list.map(e => e.key)).toEqual(["pd-2", "pd-1"]);
+  });
+
+  it("places starter forms and the onboarding form by the day they were handed in", () => {
+    const signed: OnboardingDocumentRow = {
+      key: "sf-21", source: "starter_form", id: 21, kind: "payroll_details", title: "Personnel Payroll Details",
+      label: "Personnel Payroll Details — from onboarding, 11 Sept 2026", date: "2026-09-11",
+      fileName: null, mime: "application/pdf", byteSize: null, uploadedAt: "2026-09-10T23:30:00Z", uploadedByName: "Sam", visibility: "hr",
+    };
+    const list = documentEntries([filed(1, "2026-09-10")], [signed]);
+    expect(list.map(e => [e.key, e.date])).toEqual([["sf-21", "2026-09-11"], ["pd-1", "2026-09-10"]]);
+  });
+});
+
+describe("documents handed in at onboarding", () => {
+  const row = (over: Partial<OnboardingDocumentRow>): OnboardingDocumentRow => ({
+    id: 4, kind: "p45", fileName: null, mime: "application/pdf", byteSize: null, uploadedAt: "2026-09-11T09:00:00Z",
+    uploadedByName: "Sam", visibility: "hr", ...over,
+  });
+  it("uses the server's label, else a plain one", () => {
+    expect(onboardingDocLabel(row({ label: "P45 — from onboarding, 11 Sept 2026" }))).toBe("P45 — from onboarding, 11 Sept 2026");
+    expect(onboardingDocLabel(row({}))).toBe("P45 — from onboarding");
+  });
+  it("opens every source through the gated People routes, never /api/onboarding", () => {
+    expect(onboardingDocPath(row({}), 7)).toBe("/api/person-documents/onboarding/4/file");
+    expect(onboardingDocPath(row({ source: "upload" }), 7, true)).toBe("/api/person-documents/onboarding/4/file?download=1");
+    expect(onboardingDocPath(row({ source: "starter_form", id: 21 }), 7)).toBe("/api/person-documents/starter-forms/21/file");
+    expect(onboardingDocPath(row({ source: "onboarding_form", id: 5 }), 7)).toBe("/api/person-documents/person/7/onboarding-form");
+    for (const source of ["upload", "starter_form", "onboarding_form"] as const) {
+      expect(onboardingDocPath(row({ source }), 7).startsWith("/api/person-documents/")).toBe(true);
+    }
   });
 });
 

@@ -101,10 +101,16 @@ describe("documentsSummary", () => {
     onboarding: Array.from({ length: onboarding }, () => ({})) as PersonDocumentsResponse["onboarding"],
     onboardingForm: form ? ({} as PersonDocumentsResponse["onboardingForm"]) : null,
   });
-  it("counts filed and onboarding documents together", () => {
-    expect(documentsSummary(docs(3, 1, true), false, false).line).toBe("4 on file · onboarding form");
-    expect(documentsSummary(docs(0, 0, true), false, false).line).toBe("Onboarding form only");
+  it("counts filed documents and what they handed in at onboarding", () => {
+    expect(documentsSummary(docs(3, 1, true), false, false).line).toBe("3 on file · 1 from onboarding");
+    expect(documentsSummary(docs(2, 0, false), false, false).line).toBe("2 on file");
     expect(documentsSummary(docs(0, 0, false), false, false).line).toBe("None on file yet");
+  });
+  // Regression (Graeme, 2026-10-12): a starter who signed three starter
+  // forms and filled in the onboarding form read "Onboarding form only".
+  it("reads 'N from onboarding' when everything came from onboarding", () => {
+    expect(documentsSummary(docs(0, 4, true), false, false).line).toBe("4 from onboarding");
+    expect(documentsSummary(docs(0, 3, true), false, false).line).toBe("3 from onboarding");
   });
 });
 

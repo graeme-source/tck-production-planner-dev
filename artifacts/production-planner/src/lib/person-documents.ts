@@ -71,15 +71,51 @@ export interface PersonDocumentRow {
   canSetVisibility?: boolean;
 }
 
+/** Where a document handed in at onboarding came from (server:
+ *  lib/onboarding-record-documents.ts): a file they uploaded, a starter form
+ *  they signed, or the onboarding form itself. */
+export type OnboardingSource = "upload" | "starter_form" | "onboarding_form";
+
 export interface OnboardingDocumentRow {
+  /** Unique across sources ("od-3", "sf-12", "of-5"). Optional so an older
+   *  cached response (uploads only) still reads. */
+  key?: string;
+  source?: OnboardingSource;
   id: number;
   kind: string;
+  /** "P45", "HMRC Starter Checklist", "Onboarding form". */
+  title?: string;
+  /** "P45 — from onboarding, 11 Sept 2026". */
+  label?: string;
+  /** London day it was handed in, YYYY-MM-DD. */
+  date?: string;
   fileName: string | null;
   mime: string;
-  byteSize: number;
+  /** Null for a document rendered when it's opened. */
+  byteSize: number | null;
   uploadedAt: string;
   uploadedByName: string | null;
   visibility: PersonDocumentVisibility;
+}
+
+export function onboardingSource(d: Pick<OnboardingDocumentRow, "source">): OnboardingSource {
+  return d.source ?? "upload";
+}
+
+/** What the card and the open document are called. */
+export function onboardingDocLabel(d: Pick<OnboardingDocumentRow, "label" | "title" | "kind">): string {
+  return d.label ?? `${d.title ?? onboardingKindLabel(d.kind)} — from onboarding`;
+}
+
+/** The gated People-side path that opens it (never /api/onboarding — that
+ *  link is the starter's own). */
+export function onboardingDocPath(d: Pick<OnboardingDocumentRow, "source" | "id">, userId: number, download = false): string {
+  const q = download ? "?download=1" : "";
+  switch (onboardingSource(d)) {
+    case "starter_form": return `/api/person-documents/starter-forms/${d.id}/file${q}`;
+    case "onboarding_form": return `/api/person-documents/person/${userId}/onboarding-form${q}`;
+    default: return `/api/person-documents/onboarding/${d.id}/file${q}`;
+  }
 }
 
 export interface PersonDocumentsResponse {
@@ -124,13 +160,15 @@ export type DocumentEntry =
   | { key: string; date: string; source: "filed"; doc: PersonDocumentRow }
   | { key: string; date: string; source: "onboarding"; doc: OnboardingDocumentRow };
 
-/** Filed documents and onboarding uploads as one list, newest first. A
- *  filed document sits on its own date; an onboarding upload on the day it
- *  was uploaded. */
+/** Filed documents and what they handed in at onboarding as one list,
+ *  newest first. A filed document sits on its own date; an onboarding one
+ *  on the day it was handed in. */
 export function documentEntries(filed: readonly PersonDocumentRow[], onboarding: readonly OnboardingDocumentRow[]): DocumentEntry[] {
   const out: DocumentEntry[] = [
     ...filed.map(doc => ({ key: `pd-${doc.id}`, date: doc.documentDate.slice(0, 10), source: "filed" as const, doc })),
-    ...onboarding.map(doc => ({ key: `od-${doc.id}`, date: doc.uploadedAt.slice(0, 10), source: "onboarding" as const, doc })),
+    ...onboarding.map(doc => ({
+      key: doc.key ?? `od-${doc.id}`, date: (doc.date ?? doc.uploadedAt).slice(0, 10), source: "onboarding" as const, doc,
+    })),
   ];
   const uploaded = (e: DocumentEntry) => e.doc.uploadedAt;
   return out.sort((a, b) => b.date.localeCompare(a.date) || uploaded(b).localeCompare(uploaded(a)) || b.key.localeCompare(a.key));

@@ -94,13 +94,18 @@ export function contractsSummary(data: ContractHistoryResponse | undefined, load
   return plain(`${total} uploaded contract${total === 1 ? "" : "s"}`);
 }
 
-/** Documents filed on the record plus onboarding uploads. */
+/** Documents filed on the record, plus what they handed in at onboarding
+ *  (uploads, signed starter forms, the onboarding form — each one a
+ *  document in the list): "2 on file · 4 from onboarding". */
 export function documentsSummary(data: PersonDocumentsResponse | undefined, loading: boolean, failed: boolean): SectionSummary {
   if (!data) return plain(loading ? "Loading documents…" : failed ? "Couldn't load documents" : "None on file yet");
-  const n = data.documents.length + data.onboarding.length;
-  const form = data.onboardingForm ? " · onboarding form" : "";
-  if (n === 0) return plain(data.onboardingForm ? "Onboarding form only" : "None on file yet");
-  return plain(`${n} on file${form}`);
+  const filed = data.documents.length;
+  const fromOnboarding = data.onboarding.length;
+  const parts = [
+    filed > 0 ? `${filed} on file` : null,
+    fromOnboarding > 0 ? `${fromOnboarding} from onboarding` : null,
+  ].filter(Boolean);
+  return plain(parts.length > 0 ? parts.join(" · ") : "None on file yet");
 }
 
 /** What we agreed — open objectives from meetings. */

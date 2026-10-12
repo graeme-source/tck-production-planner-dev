@@ -18,7 +18,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, Camera, ChevronRight, ClipboardList, Eye, EyeOff, FilePlus2, FileText, FileUp, FolderOpen, Loader2, Lock,
+  AlertTriangle, Camera, ChevronRight, ClipboardList, Eye, EyeOff, FilePlus2, FileSignature, FileText, FileUp, FolderOpen, Loader2, Lock,
   Share2, Trash2, UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -32,7 +32,8 @@ import { InlineDocument } from "@/components/inline-document";
 import { fmtBytes } from "@/lib/contract-history";
 import { fmtDay } from "@/lib/people-api";
 import {
-  PERSON_DOCUMENT_KINDS, PERSON_DOCUMENT_ACCEPT, KIND_LABELS, kindLabel, onboardingKindLabel, defaultVisibility,
+  PERSON_DOCUMENT_KINDS, PERSON_DOCUMENT_ACCEPT, KIND_LABELS, kindLabel, onboardingDocLabel, onboardingDocPath, onboardingSource,
+  defaultVisibility,
   isHrDefaultKind, visibilityLabel, documentEntries, documentFileProblem, mimeForFile, titleFromFileName,
   isFiledFounderOnly,
   type PersonDocumentsResponse, type PersonDocumentRow, type OnboardingDocumentRow, type DocumentEntry,
@@ -44,9 +45,11 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export function personDocumentFileUrl(id: number, download = false): string {
   return `${BASE}/api/person-documents/${id}/file${download ? "?download=1" : ""}`;
 }
-export function onboardingDocumentFileUrl(id: number, download = false): string {
-  return `${BASE}/api/person-documents/onboarding/${id}/file${download ? "?download=1" : ""}`;
+export function onboardingDocumentFileUrl(doc: OnboardingDocumentRow, userId: number, download = false): string {
+  return `${BASE}${onboardingDocPath(doc, userId, download)}`;
 }
+
+const ONBOARDING_ICON = { upload: UserRound, starter_form: FileSignature, onboarding_form: ClipboardList } as const;
 
 async function jsonOrThrow<T>(res: Response): Promise<T> {
   const data = await res.json().catch(() => null);
@@ -100,16 +103,19 @@ function KindBadge({ label, tone = "neutral" }: { label: string; tone?: "neutral
 export function DocumentEntryCard({ entry, onOpen }: { entry: DocumentEntry; onOpen: (o: OpenDocument) => void }) {
   if (entry.source === "onboarding") {
     const d = entry.doc;
+    const source = onboardingSource(d);
+    const Icon = ONBOARDING_ICON[source];
+    const how = source === "upload" ? "Uploaded" : source === "starter_form" ? "Signed" : "Filled in";
     return (
       <button onClick={() => onOpen({ source: "onboarding", doc: d })}
         className="w-full text-left rounded-2xl border-2 border-border bg-card p-4 flex items-center gap-3 hover:border-primary/50">
         <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0 bg-secondary">
-          <UserRound className="w-6 h-6 text-muted-foreground" />
+          <Icon className="w-6 h-6 text-muted-foreground" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-lg font-bold truncate">{onboardingKindLabel(d.kind)}{d.fileName ? ` — ${d.fileName}` : ""}</p>
-          <p className="text-base text-muted-foreground">
-            {fmtDay(d.uploadedAt, true)} · Uploaded by {d.uploadedByName ?? "them"} at onboarding
+          <p className="text-lg font-bold truncate">{onboardingDocLabel(d)}</p>
+          <p className="text-base text-muted-foreground truncate">
+            {how} by {d.uploadedByName ?? "them"} in the app{d.fileName ? ` · ${d.fileName}` : ""}
           </p>
         </div>
         {d.visibility === "hr" && <Lock className="w-5 h-5 text-muted-foreground shrink-0" aria-label="Graeme only" />}
@@ -172,7 +178,7 @@ export function PersonDocumentsSection({ data, isLoading, error, onOpen, onAdd, 
         <div className="space-y-2">{entries.map(e => <DocumentEntryCard key={e.key} entry={e} onOpen={onOpen} />)}</div>
       )}
       <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-        <Lock className="w-4 h-4 shrink-0" /> People access only. Warnings and disciplinaries are Graeme only. The person sees a document only if you share it.
+        <Lock className="w-4 h-4 shrink-0" /> People access only. Warnings, disciplinaries, signed starter forms and the P45 are Graeme only. The person sees a document only if you share it.
       </p>
     </section>
   );
@@ -401,14 +407,19 @@ export function DocumentOpenModal({ target, userId, personName, onClose, readOnl
 }) {
   if (target.source === "onboarding") {
     const d = target.doc;
+    const source = onboardingSource(d);
+    const how = source === "upload" ? "Uploaded" : source === "starter_form" ? "Signed" : "Filled in";
+    const why = source === "starter_form"
+      ? " Graeme only — it carries bank, tax or health details."
+      : d.visibility === "hr" ? " Graeme only — it carries pay." : "";
     return (
-      <PeopleModal title={`${onboardingKindLabel(d.kind)} — ${personName}`} onClose={onClose} wide>
+      <PeopleModal title={`${d.title ?? onboardingDocLabel(d)} — ${personName}`} onClose={onClose} wide>
         <div className="space-y-4">
-          <InlineDocument src={onboardingDocumentFileUrl(d.id)} downloadSrc={onboardingDocumentFileUrl(d.id, true)}
-            mime={d.mime} title={d.fileName ?? onboardingKindLabel(d.kind)} />
+          <InlineDocument src={onboardingDocumentFileUrl(d, userId)} downloadSrc={onboardingDocumentFileUrl(d, userId, true)}
+            mime={d.mime} title={d.fileName ?? onboardingDocLabel(d)} />
           <p className="text-base text-muted-foreground">
-            Uploaded by {d.uploadedByName ?? personName} at onboarding, {fmtDay(d.uploadedAt, true)} · {fmtBytes(d.byteSize)}.
-            {d.visibility === "hr" ? " Graeme only — it carries pay." : ""} Read-only here.
+            {how} by {d.uploadedByName ?? personName} at onboarding, {fmtDay(d.uploadedAt, true)}
+            {d.byteSize != null ? ` · ${fmtBytes(d.byteSize)}` : ""}.{why} Read-only here.
           </p>
         </div>
       </PeopleModal>
