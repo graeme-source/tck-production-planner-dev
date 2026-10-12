@@ -21,7 +21,7 @@
  * PIN instead of losing what was typed.
  */
 import { useState } from "react";
-import { AlertTriangle, CalendarDays, FileText, History, Info, MessageSquare, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarDays, ChevronDown, History, Info, Undo2 } from "lucide-react";
 import {
   usesField, entryWarning, periodEnd, PERIOD_MONTHS, warningStatusLabel, evidenceLine, meetingChecklist, isFormalHearing, fmtDayIso,
   sortClassifications, sortStages, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
@@ -33,7 +33,7 @@ import { toast } from "@/hooks/use-toast";
 import { AutoText, AutoDate, AutoTime, AutoChoice, AutoChecklist, FieldLabel } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 import { LettersBlock } from "./letter-editor";
-import { WriteUpSection } from "./review-notes";
+import { WhatHappened } from "./what-happened";
 
 type Patch = Partial<Omit<RecordEntry, "id" | "history" | "letters" | "writeUp" | "heldAt">>;
 
@@ -64,6 +64,7 @@ export function EntryEditor({ entry, data, onChanged, person }: {
   const evidence = evidenceLine(cls?.evidence ?? null, data.attendance);
   const checklist = meetingChecklist(entry.meetingType);
   const isReview = entryIsReview(entry);
+  const first = person.name.split(" ")[0];
   const hidden = (["stage", "rating", "pay", "probation", "fitness"] as const).filter(f => {
     if (usesField(cls, f)) return false;
     if (f === "stage") return entry.stageId != null;
@@ -75,58 +76,54 @@ export function EntryEditor({ entry, data, onChanged, person }: {
   const classOptions = classifications
     .filter(c => c.active || c.id === entry.classificationId)
     .map((c: Classification) => ({ value: c.id, label: c.label }));
+  // A meeting's extras sit under More options — opened by itself when
+  // something in there is already in use, so nothing filled in is hidden.
+  const extrasInUse = entry.status === "open" || entry.stageId != null || !!entry.meetingType || !!entry.meetingAttendees
+    || !!(entry.outcome ?? "").trim() || entry.nextReviewDate != null || entry.letters.length > 0
+    || entry.rating != null || !!(entry.payFrom || entry.payTo) || entry.probationOutcome != null || entry.fitForWork != null;
+  const [more, setMore] = useState(extrasInUse);
 
-  return (
-    <div className="space-y-4">
-      <Block title={isReview ? "The review" : "What it is"} icon={isReview ? CalendarDays : undefined}>
-        <AutoChoice label="Classification — change it any time" value={entry.classificationId} options={classOptions} pills
-          onSave={v => saveAndRefresh({ classificationId: v as number })} />
-        {hidden.length > 0 && (
-          <p className="text-sm text-muted-foreground flex items-start gap-2">
-            <Info className="w-4 h-4 shrink-0 mt-0.5" />
-            Some details filled in under an earlier classification are kept but hidden here. Change it back to see them.
+  const classificationField = (
+    <>
+      <AutoChoice label="What it's about — change it any time" value={entry.classificationId} options={classOptions} pills
+        onSave={v => saveAndRefresh({ classificationId: v as number })} />
+      {hidden.length > 0 && (
+        <p className="text-sm text-muted-foreground flex items-start gap-2">
+          <Info className="w-4 h-4 shrink-0 mt-0.5" />
+          Some details filled in under an earlier classification are kept but hidden here. Change it back to see them.
+        </p>
+      )}
+    </>
+  );
+  const statusFields = (
+    <>
+      <AutoChoice label="Status" value={entry.status} columns={2}
+        options={[
+          { value: "open", label: "Open — in review", hint: "Shows on their badge until closed", tone: "warn" },
+          { value: "closed", label: "Closed / on the record", hint: "Nothing outstanding" },
+        ]}
+        onSave={v => saveAndRefresh({ status: v as RecordEntry["status"] })} />
+      {entry.status === "open" && <ReviewPeriod entry={entry} save={saveAndRefresh} onChanged={onChanged} />}
+      {evidence && (
+        <div className={cn("rounded-2xl p-4 flex items-start gap-3", evidence.triggered ? "bg-rose-50 dark:bg-rose-950/30" : "bg-secondary/50")}>
+          {evidence.triggered && <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />}
+          <p className="text-base">
+            <span className="font-bold">{evidence.triggered ? "Policy trigger reached. " : "From their attendance: "}</span>
+            {evidence.text} <span className="text-muted-foreground">See Attendance on this record.</span>
           </p>
-        )}
-        <AutoChoice label="Meeting" value={entry.meetingStatus} allowClear="No meeting — just on the record" columns={2}
-          options={MEETING_STATUSES.map(s => ({ value: s, label: MEETING_STATUS_LABEL[s],
-            hint: s === "booked" ? "Coming up — a to-do on your list for the day" : s === "held" ? "It happened" : "Not happening — kept on the record" }))}
-          onSave={v => saveAndRefresh({ meetingStatus: v as MeetingStatus | null, ...(v && !entry.meetingDate ? { meetingDate: entry.entryDate } : {}) })} />
-        {isReview ? (
-          <>
-            <div className="grid gap-4 sm:grid-cols-2">
-              {/* The review's day is the entry's date too, so the record,
-                  letters and warnings all read the same day. */}
-              <AutoDate label="Day" initial={entry.meetingDate ?? entry.entryDate}
-                onSave={v => (v ? saveAndRefresh({ meetingDate: v, entryDate: v }) : Promise.reject(new Error("A review needs a day — or choose No meeting.")))} />
-              <AutoTime label="Time" initial={entry.meetingTime} onSave={v => save({ meetingTime: v })} />
-            </div>
-            <AutoText label="Summary" initial={entry.title} placeholder="e.g. Three-month check-in" maxLength={400}
-              onSave={v => save({ title: v })} />
-          </>
-        ) : (
-          <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
-            <AutoDate label="Date" initial={entry.entryDate} onSave={v => save({ entryDate: v ?? undefined })} />
-            <AutoText label="Summary" initial={entry.title} placeholder="e.g. Late six times since August" maxLength={400}
-              onSave={v => save({ title: v })} />
-          </div>
-        )}
-        <AutoChoice label="Status" value={entry.status} columns={2}
-          options={[
-            { value: "open", label: "Open — in review", hint: "Shows on their badge until closed", tone: "warn" },
-            { value: "closed", label: "Closed / on the record", hint: "Nothing outstanding" },
-          ]}
-          onSave={v => saveAndRefresh({ status: v as RecordEntry["status"] })} />
-        {entry.status === "open" && <ReviewPeriod entry={entry} save={saveAndRefresh} onChanged={onChanged} />}
-        {evidence && (
-          <div className={cn("rounded-2xl p-4 flex items-start gap-3", evidence.triggered ? "bg-rose-50 dark:bg-rose-950/30" : "bg-secondary/50")}>
-            {evidence.triggered && <AlertTriangle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />}
-            <p className="text-base">
-              <span className="font-bold">{evidence.triggered ? "Policy trigger reached. " : "From their attendance: "}</span>
-              {evidence.text} <span className="text-muted-foreground">See Attendance on this record.</span>
-            </p>
-          </div>
-        )}
-      </Block>
+        </div>
+      )}
+    </>
+  );
+
+  const extras = (
+    <>
+      {isReview && (
+        <Block title="What it's about">
+          {classificationField}
+          {statusFields}
+        </Block>
+      )}
 
       {usesField(cls, "stage") && (
         <Block title="Stage" tone={stage?.formal ? "warn" : undefined}>
@@ -193,39 +190,23 @@ export function EntryEditor({ entry, data, onChanged, person }: {
         </Block>
       )}
 
-      <Block title="Write-up — feedback, objectives, notes" icon={MessageSquare}>
-        <p className="text-sm text-muted-foreground">Each part is private to whoever wrote it until shared with {person.name.split(" ")[0]}.</p>
-        <WriteUpSection entry={entry} viewerId={data.viewerId} canWrite personName={person.name} onChanged={onChanged} />
-      </Block>
-
-      <Block title="Record notes (People access only)" icon={FileText}>
-        <AutoText label="Notes" initial={entry.notes} rows={7} placeholder="Currently …" onSave={v => save({ notes: v })} />
-        {entry.notesUpdatedByName && entry.notesUpdatedAt && (
-          <p className="text-sm text-muted-foreground">Last written by {entry.notesUpdatedByName}, {fmtDayIso(entry.notesUpdatedAt)}</p>
-        )}
-      </Block>
-
-      {(isReview || entry.meetingType) && <Block title="Meeting details (optional)" icon={CalendarDays}>
+      {(isReview || entry.meetingType) && <Block title="Formal meeting details" icon={CalendarDays}>
         <AutoChoice label="Formal meeting type — only if it is one" value={entry.meetingType} allowClear="Not a formal meeting" columns={3}
           options={MEETING_TYPES.map(t => ({ value: t, label: MEETING_TYPE_LABEL[t], tone: isFormalHearing(t) ? "warn" as const : undefined }))}
           onSave={v => saveAndRefresh({ meetingType: v as MeetingType | null })} />
-        {(isReview || entry.meetingType) && (
-          <>
-            <AutoText label="Who's attending" initial={entry.meetingAttendees} placeholder="e.g. Graeme, Lorna taking notes"
-              maxLength={2000} onSave={v => save({ meetingAttendees: v || null })} />
-            <p className="text-sm text-muted-foreground">Nothing here is sent to {person.name.split(" ")[0]} — only what you share from the write-up.</p>
-            {checklist.length > 0 && (
-              <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-4 space-y-3">
-                {isFormalHearing(entry.meetingType) && (
-                  <p className="text-base font-semibold text-amber-950 dark:text-amber-100">
-                    Before a formal hearing they must have written notice, and they have the right to be accompanied by a colleague or trade union rep (ACAS Code).
-                  </p>
-                )}
-                <AutoChecklist key={entry.meetingType} label="Checklist" items={checklist} initial={entry.meetingChecklist}
-                  onSave={keys => save({ meetingChecklist: keys })} />
-              </div>
+        <AutoText label="Who's attending" initial={entry.meetingAttendees} placeholder="e.g. Graeme, Lorna taking notes"
+          maxLength={2000} onSave={v => save({ meetingAttendees: v || null })} />
+        <p className="text-sm text-muted-foreground">Nothing here is sent to {first} — only what you share from What happened.</p>
+        {checklist.length > 0 && (
+          <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 p-4 space-y-3">
+            {isFormalHearing(entry.meetingType) && (
+              <p className="text-base font-semibold text-amber-950 dark:text-amber-100">
+                Before a formal hearing they must have written notice, and they have the right to be accompanied by a colleague or trade union rep (ACAS Code).
+              </p>
             )}
-          </>
+            <AutoChecklist key={entry.meetingType} label="Checklist" items={checklist} initial={entry.meetingChecklist}
+              onSave={keys => save({ meetingChecklist: keys })} />
+          </div>
         )}
       </Block>}
 
@@ -249,6 +230,56 @@ export function EntryEditor({ entry, data, onChanged, person }: {
           </ul>
         </Block>
       )}
+    </>
+  );
+
+  return (
+    <div className="space-y-4">
+      {isReview ? (
+        // The meeting: title, day, time, status — that's all up front.
+        <Block title="The meeting" icon={CalendarDays}>
+          <AutoText label="Title" initial={entry.title} placeholder="Optional — the AI names it from your notes" maxLength={400}
+            onSave={v => save({ title: v })} />
+          <div className="grid gap-4 grid-cols-1 sm:grid-cols-2">
+            {/* The meeting's day is the entry's date too, so the record,
+                letters and warnings all read the same day. */}
+            <AutoDate label="Day" initial={entry.meetingDate ?? entry.entryDate}
+              onSave={v => (v ? saveAndRefresh({ meetingDate: v, entryDate: v }) : Promise.reject(new Error("A meeting needs a day.")))} />
+            <AutoTime label="Time" initial={entry.meetingTime} onSave={v => save({ meetingTime: v })} />
+          </div>
+          <AutoChoice label="Status" value={entry.meetingStatus} columns={3}
+            options={MEETING_STATUSES.map(s => ({ value: s, label: MEETING_STATUS_LABEL[s],
+              hint: s === "booked" ? "Coming up" : s === "held" ? "It happened" : "Not happening — kept on the record" }))}
+            onSave={v => saveAndRefresh({ meetingStatus: v as MeetingStatus })} />
+          <p className="text-sm text-muted-foreground">Adding meeting notes marks it held by itself.</p>
+        </Block>
+      ) : (
+        <Block title="What it is">
+          {classificationField}
+          <AutoChoice label="Meeting" value={entry.meetingStatus} allowClear="No meeting — just on the record" columns={2}
+            options={MEETING_STATUSES.map(s => ({ value: s, label: MEETING_STATUS_LABEL[s],
+              hint: s === "booked" ? "Coming up — a to-do on your list for the day" : s === "held" ? "It happened" : "Not happening — kept on the record" }))}
+            onSave={v => saveAndRefresh({ meetingStatus: v as MeetingStatus | null, ...(v && !entry.meetingDate ? { meetingDate: entry.entryDate } : {}) })} />
+          <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
+            <AutoDate label="Date" initial={entry.entryDate} onSave={v => save({ entryDate: v ?? undefined })} />
+            <AutoText label="Summary" initial={entry.title} placeholder="e.g. Late six times since August" maxLength={400}
+              onSave={v => save({ title: v })} />
+          </div>
+          {statusFields}
+        </Block>
+      )}
+
+      <WhatHappened entry={entry} data={data} person={person} onChanged={onChanged} />
+
+      {isReview ? (
+        <div className="space-y-4">
+          <button type="button" onClick={() => setMore(m => !m)} aria-expanded={more}
+            className="w-full min-h-14 rounded-2xl border-2 border-dashed border-border px-4 py-2 text-lg font-bold flex items-center justify-center gap-2 text-muted-foreground hover:text-foreground">
+            More options <ChevronDown className={cn("w-5 h-5 shrink-0 transition-transform", more && "rotate-180")} />
+          </button>
+          {more && extras}
+        </div>
+      ) : extras}
     </div>
   );
 }

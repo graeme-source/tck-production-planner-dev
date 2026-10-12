@@ -14,7 +14,7 @@ import { useSearch } from "wouter";
 import { CalendarDays, ChevronRight, FileText, Loader2, Lock, Settings2 } from "lucide-react";
 import {
   reviewBadge, longestLiveWarning, entryWarning, entryHeadline, entryLevel, warningStatusLabel, classificationCounts, MEETING_STATUS_LABEL,
-  filterEntries, fmtDayIso, recordTimelineEvents, MEETING_TYPE_LABEL, type RecordEvent,
+  filterEntries, fmtDayIso, recordTimelineEvents, MEETING_TYPE_LABEL, whatHappened, type RecordEvent,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { PeopleModal } from "@/components/people-modal";
@@ -115,7 +115,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
       <ProbationCard data={data} onChanged={refresh} />
       <button type="button" onClick={() => setAdding(true)}
         className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 active:scale-[0.99]">
-        <CalendarDays className="w-6 h-6" /> Book a review
+        <CalendarDays className="w-6 h-6" /> Schedule a meeting
       </button>
 
       {chips.length > 1 && (
@@ -133,7 +133,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
       {shown.length === 0 ? (
         <div className="text-center py-8 rounded-2xl bg-secondary/30">
           <p className="text-xl font-bold">Nothing on the record yet</p>
-          <p className="text-base text-muted-foreground">Book a review — appraisals, probation, 1:1s, disciplinaries, praise, training — and classify it. You can change it later.</p>
+          <p className="text-base text-muted-foreground">Schedule a meeting — a title and a day is all it needs; the AI writes it up from your notes. You can change it later.</p>
         </div>
       ) : shown.map(e => {
         const level = entryLevel(e, data.classifications, data.stages);
@@ -166,7 +166,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
                   {MEETING_TYPE_LABEL[e.meetingType]}
                 </span>
               )}
-              {e.writeUp.length > 0 && <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary">Written up</span>}
+              {whatHappened(e).hasContent && <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary">Written up</span>}
               {e.letters.length > 0 && <span className="text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary">{e.letters.length} letter{e.letters.length === 1 ? "" : "s"}</span>}
             </span>
           </button>
@@ -182,7 +182,7 @@ export function RecordPanel({ userId, ready, person, openEntryId, onOpenEntry }:
       </p>
 
       {adding && (
-        <PeopleModal title={`Book a review — ${person.name}`} onClose={() => setAdding(false)} wide>
+        <PeopleModal title={`Schedule a meeting — ${person.name}`} onClose={() => setAdding(false)} wide>
           <BookReviewForm data={data} onCancel={() => setAdding(false)}
             onCreated={id => { setAdding(false); refresh(); setOpen(id); }} />
         </PeopleModal>

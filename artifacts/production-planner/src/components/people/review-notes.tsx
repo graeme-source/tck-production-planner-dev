@@ -18,10 +18,10 @@
  */
 import { useState } from "react";
 import {
-  CalendarDays, CheckCircle2, ChevronRight, Eye, EyeOff, Loader2, Lock, MessageSquare, Pencil, Plus, Target, Trash2, X, Check,
+  CalendarDays, CheckCircle2, ChevronRight, Eye, EyeOff, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
 } from "lucide-react";
 import {
-  NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel,
+  NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened,
   type Classification, type Stage,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
@@ -222,8 +222,10 @@ export function AgreedObjectiveCard({ note, viewerId, canWrite, onChanged }: {
  *  shared as one. In the order the conversation runs. The draft stays put
  *  if the save fails (a PIN time-out included), so Save just needs pressing
  *  again. Writing up a booked review marks it held. */
-export function WriteUpComposer({ entryId, personName, onDone, onCancel }: {
+export function WriteUpComposer({ entryId, personName, onDone, onCancel, hideNotes = false }: {
   entryId: number; personName: string; onDone: () => void; onCancel: () => void;
+  /** In "What happened" the meeting's notes box is already there — never ask twice. */
+  hideNotes?: boolean;
 }) {
   const [feedback, setFeedback] = useState("");
   const [objectives, setObjectives] = useState<Array<{ title: string; body: string; dueDate: string }>>([{ title: "", body: "", dueDate: "" }]);
@@ -254,7 +256,7 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel }: {
   return (
     <div className="rounded-2xl border-2 border-primary/40 bg-card p-4 space-y-5">
       <div>
-        <h4 className="text-xl font-bold">Write it up</h4>
+        <h4 className="text-xl font-bold">{hideNotes ? "Feedback or objectives, by hand" : "Write it up"}</h4>
         <p className="text-base text-muted-foreground mt-0.5">Fill in what applies — it saves as one write-up, and shares as one.</p>
       </div>
       <div className="space-y-2">
@@ -291,11 +293,13 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel }: {
           <Plus className="w-4 h-4" /> Add another objective
         </button>
       </div>
-      <div className="space-y-2">
-        <label className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5 text-muted-foreground" /> Notes</label>
-        <p className="text-sm text-muted-foreground -mt-1">Anything else worth recording.</p>
-        <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={box} />
-      </div>
+      {!hideNotes && (
+        <div className="space-y-2">
+          <label className="text-lg font-bold flex items-center gap-2"><MessageSquare className="w-5 h-5 text-muted-foreground" /> Notes</label>
+          <p className="text-sm text-muted-foreground -mt-1">Anything else worth recording.</p>
+          <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={box} />
+        </div>
+      )}
       <label className="flex items-center gap-3 cursor-pointer rounded-2xl border-2 border-border px-4 py-3">
         <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} className="w-5 h-5 accent-emerald-600" />
         <span className="text-base font-semibold">
@@ -319,7 +323,7 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel }: {
 
 /** Share everything YOU wrote on a review in one act (the server never
  *  publishes anyone else's private note). Asks once. */
-function ShareWriteUp({ entryId, personName, onChanged }: { entryId: number; personName: string; onChanged: () => void }) {
+export function ShareWriteUp({ entryId, personName, onChanged }: { entryId: number; personName: string; onChanged: () => void }) {
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const first = personName.split(" ")[0];
@@ -327,14 +331,14 @@ function ShareWriteUp({ entryId, personName, onChanged }: { entryId: number; per
     return (
       <button type="button" onClick={() => setConfirming(true)}
         className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2">
-        <Eye className="w-5 h-5" /> Share this write-up with {first}
+        <Eye className="w-5 h-5" /> Share with {first}
       </button>
     );
   }
   return (
     <div className="rounded-2xl border-2 border-primary/40 bg-secondary/30 p-4 space-y-3">
-      <p className="text-base font-semibold">Share the whole write-up with {first}?</p>
-      <p className="text-sm text-muted-foreground">They'll be able to read the feedback, objectives and notes you wrote on this review, and get a notification.</p>
+      <p className="text-base font-semibold">Share it with {first}?</p>
+      <p className="text-sm text-muted-foreground">They'll be able to read what you wrote up on this meeting — the summary, what was agreed and the actions — on their own record, and get a notification in the app. Your private notes and the original meeting notes stay private.</p>
       <div className="grid gap-3 sm:grid-cols-2">
         <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="h-12 rounded-2xl border-2 border-border text-base font-bold disabled:opacity-50 sm:order-1">Not yet</button>
         <button type="button" disabled={busy}
@@ -357,20 +361,32 @@ function ShareWriteUp({ entryId, personName, onChanged }: { entryId: number; per
   );
 }
 
-/** A review's write-up: its parts, "Write it up", and "Share" for your own
- *  private parts. Used in the review's editor and on its timeline card. */
-export function WriteUpSection({ entry, viewerId, canWrite, personName, onChanged }: {
-  entry: Pick<RecordEntry, "id" | "meetingStatus" | "writeUp">;
+/** A meeting's write-up on its timeline card: the meeting's own notes first,
+ *  then its parts (whatHappened — one write-up, nothing dropped), "Add
+ *  meeting notes" (opens the meeting, the ONE place notes are added) and
+ *  "Share with <name>" for your own private parts. */
+export function WriteUpSection({ entry, viewerId, canWrite, personName, onChanged, onAdd }: {
+  entry: Pick<RecordEntry, "id" | "meetingStatus" | "writeUp" | "notes">;
   viewerId: number | null;
   canWrite: boolean;
   personName: string;
   onChanged: () => void;
+  /** Opens the meeting to add notes there; without it, the by-hand composer opens here. */
+  onAdd?: () => void;
 }) {
   const [writing, setWriting] = useState(false);
-  const notes = entry.writeUp;
+  const { recordNotes, parts: notes } = whatHappened(entry);
   const myPrivate = notes.some(n => n.visibility !== "shared" && n.authorId === viewerId);
   return (
     <div className="space-y-3">
+      {recordNotes && (
+        <div className="rounded-2xl border-2 border-dashed border-muted-foreground/40 bg-card p-4">
+          <span className="inline-flex items-center gap-1 text-sm font-bold uppercase tracking-wide text-muted-foreground mb-1">
+            <Lock className="w-3.5 h-3.5" /> Notes · People access only
+          </span>
+          <p className="text-lg leading-relaxed whitespace-pre-wrap break-words line-clamp-6">{recordNotes}</p>
+        </div>
+      )}
       {notes.length > 0 && (
         <div className="space-y-3 pl-3 border-l-4 border-secondary">
           {notes.map(n => (
@@ -379,9 +395,10 @@ export function WriteUpSection({ entry, viewerId, canWrite, personName, onChange
         </div>
       )}
       {canWrite && entry.meetingStatus !== "cancelled" && !writing && (
-        <button type="button" onClick={() => setWriting(true)}
+        <button type="button" onClick={() => (onAdd ? onAdd() : setWriting(true))}
           className="w-full h-14 rounded-2xl border-2 border-dashed border-border text-lg font-bold flex items-center justify-center gap-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50">
-          <Plus className="w-5 h-5" /> {notes.length ? "Add to the write-up" : "Write it up"}
+          {onAdd ? <Sparkles className="w-5 h-5" /> : <Plus className="w-5 h-5" />}
+          {onAdd ? (recordNotes || notes.length ? "Open to add more" : "Add meeting notes") : notes.length ? "Add to the write-up" : "Write it up"}
         </button>
       )}
       {writing && (
@@ -443,7 +460,7 @@ export function ReviewTimelineCard({ entry, classifications, stages, viewerId, c
               </span>
             )}
           </span>
-          <span className="block text-xl font-bold leading-snug">{entry.title || (status ? "Review" : label)}</span>
+          <span className="block text-xl font-bold leading-snug">{entry.title || (status ? "Meeting" : label)}</span>
           <span className="block text-base text-muted-foreground mt-0.5">
             {fmtDayIso(entry.meetingDate ?? entry.entryDate)}{entry.meetingTime ? ` at ${entry.meetingTime}` : ""}
             {entry.meetingType ? ` · ${MEETING_TYPE_LABEL[entry.meetingType]}` : ""}
@@ -468,7 +485,7 @@ export function ReviewTimelineCard({ entry, classifications, stages, viewerId, c
         </div>
       )}
 
-      <WriteUpSection entry={entry} viewerId={viewerId} canWrite={canWrite} personName={personName} onChanged={onChanged} />
+      <WriteUpSection entry={entry} viewerId={viewerId} canWrite={canWrite} personName={personName} onChanged={onChanged} onAdd={onOpen} />
     </div>
   );
 }

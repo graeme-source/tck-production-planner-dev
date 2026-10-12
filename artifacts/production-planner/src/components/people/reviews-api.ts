@@ -91,6 +91,17 @@ export interface RecordEntry {
   letters: RecordLetter[];
   /** Its write-up, already filtered by the server to what this viewer may read. */
   writeUp: ReviewNote[];
+  /** The meeting notes AI drafts were made from (migration 0182). */
+  sources?: EntrySource[];
+}
+
+export interface EntrySource {
+  id: number;
+  kind: "url" | "text";
+  url: string | null;
+  text: string;
+  createdByName: string | null;
+  createdAt: string;
 }
 
 export interface RecordAttendance {
