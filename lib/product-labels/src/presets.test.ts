@@ -78,7 +78,7 @@ describe("fried chicken template", () => {
     const c = content(snap(t));
     const steps = c.steps.map(ps => ps.map(p => p.map(r => r.text).join("")).join(" "));
     expect(steps).toEqual([
-      "COOK FROM FROZEN. Pre-heat the oven to 190°C (170°C fan) and remove all packaging.",
+      "COOK FROM FROZEN. Pre-heat the oven to 170°C fan (190°C) and remove all packaging.",
       "Spread the chicken strips across a baking tray.",
       "Cook for 14–16 minutes until piping hot and crunchy.",
     ]);

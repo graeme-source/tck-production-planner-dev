@@ -196,6 +196,7 @@ export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
   "{packSize}": "Pack size, e.g. 2",
   "{ovenTemp}": "Oven °C",
   "{fanTemp}": "Fan oven °C",
+  "{ovenTemps}": "Oven temperatures, fan first, e.g. 180°C fan (200°C)",
   "{ovenMin}": "Oven minutes, from",
   "{ovenMax}": "Oven minutes, to",
   "{airTemp}": "Air fryer °C",
@@ -289,7 +290,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // and the time halved; a line with a blank number drops out.
     steps: [
       "Remove the film but **leave the calzones in the wooden tray**.",
-      "[**OVEN** {ovenTemp}°C[ ({fanTemp}°C fan)]: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]",
+      "[**OVEN** {ovenTemps}: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]",
     ],
     storageHeading: "STORAGE INSTRUCTIONS:",
     // Every fact of the old wording, shorter (2026-10-12): chilled below
@@ -529,7 +530,7 @@ export function friedChickenTemplate(): LabelTemplate {
   // Graeme's current fried chicken label (Label LIVE), tidied; the numbers
   // are the template's cooking values, so a recipe can override them.
   t.text.steps = [
-    "**COOK FROM FROZEN.** Pre-heat the oven to {ovenTemp}°C ({fanTemp}°C fan) and remove all packaging.",
+    "**COOK FROM FROZEN.** Pre-heat the oven to {ovenTemps} and remove all packaging.",
     "Spread the chicken strips across a baking tray.",
     "Cook for {ovenMin}–{ovenMax} minutes until piping hot and crunchy.",
   ];

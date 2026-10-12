@@ -47,9 +47,15 @@ export function formatRange(a: number, b: number): string {
  *  ready-formatted halves. */
 export function cookingPlaceholderValues(c: CookingValues): Record<string, number | string | null> {
   const oven = halveRange(c.ovenMinMinutes, c.ovenMaxMinutes);
+  // Fan first (Graeme, 2026-10-12): nearly every oven is a fan oven, and
+  // reading the conventional figure first gets a fan oven set ~20°C too hot.
+  // "(200°C conventional)" was too long — the steps fell below 9 pt.
+  const ovenTemps = c.fanTempC != null && c.ovenTempC != null ? `${c.fanTempC}°C fan (${c.ovenTempC}°C)`
+    : c.fanTempC != null ? `${c.fanTempC}°C fan`
+    : c.ovenTempC != null ? `${c.ovenTempC}°C` : null;
   const air = halveRange(c.airFryerMinMinutes, c.airFryerMaxMinutes);
   return {
-    ovenTemp: c.ovenTempC, fanTemp: c.fanTempC, ovenMin: c.ovenMinMinutes, ovenMax: c.ovenMaxMinutes,
+    ovenTemp: c.ovenTempC, fanTemp: c.fanTempC, ovenTemps, ovenMin: c.ovenMinMinutes, ovenMax: c.ovenMaxMinutes,
     airTemp: c.airFryerTempC, airMin: c.airFryerMinMinutes, airMax: c.airFryerMaxMinutes,
     ovenHalfMin: oven?.first ?? null, ovenHalfMax: oven?.first ?? null,
     ovenHalf2Min: oven?.second[0] ?? null, ovenHalf2Max: oven?.second[1] ?? null,
