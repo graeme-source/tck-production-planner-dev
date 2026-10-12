@@ -13,6 +13,7 @@
  * published snapshot, never the current one.
  */
 import { resolveBonesWarning, type BonesSetting } from "./bones";
+import { capCooking } from "./cooking-tiers";
 import type { ShelfPeriod } from "./dates";
 import { describePeriod } from "./dates";
 import type { CookingValues, LabelTemplate } from "./template";
@@ -26,6 +27,11 @@ export interface RecipeLabelSettings {
   ovenOn: boolean;
   airFryerOn: boolean;
   cooking: CookingValues;
+  /** "suggested" = the weight-tier times (cooking-tiers.ts) when the
+   *  template has them switched on; "manual" = the values above. Null =
+   *  not chosen yet: manual when any cooking value is set (Garlic Cheese's
+   *  hand-set times stay), otherwise suggested. */
+  cookingMode?: CookingMode | null;
   /** Bones warning: true / false = always on / off; null = Automatic (on
    *  when the ingredients contain one of the template's boneRiskWords). */
   warningOn: BonesSetting;
@@ -37,6 +43,15 @@ export interface RecipeLabelSettings {
   netQuantity: string | null;
 }
 
+export type CookingMode = "suggested" | "manual";
+
+/** The mode in force: the chosen one, else manual when the recipe has any
+ *  cooking value of its own, else suggested. */
+export function effectiveCookingMode(s: Pick<RecipeLabelSettings, "cookingMode" | "cooking">): CookingMode {
+  if (s.cookingMode) return s.cookingMode;
+  return COOKING_KEYS.some(k => s.cooking[k] != null) ? "manual" : "suggested";
+}
+
 export const EMPTY_COOKING: CookingValues = {
   ovenTempC: null, fanTempC: null, ovenMinMinutes: null, ovenMaxMinutes: null,
   airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
@@ -44,7 +59,7 @@ export const EMPTY_COOKING: CookingValues = {
 
 export const DEFAULT_RECIPE_LABEL_SETTINGS: RecipeLabelSettings = {
   barcode: null, labelName: null, ovenOn: true, airFryerOn: true,
-  cooking: { ...EMPTY_COOKING }, warningOn: null, chilled: null, frozenOn: true, frozen: null, netQuantity: null,
+  cooking: { ...EMPTY_COOKING }, cookingMode: null, warningOn: null, chilled: null, frozenOn: true, frozen: null, netQuantity: null,
 };
 
 export interface LabelSnapshot {
@@ -78,12 +93,25 @@ export function formatPackSize(v: string | number | null | undefined): string {
   return String(Math.round(n * 1000) / 1000);
 }
 
-export function resolveCooking(template: LabelTemplate, s: RecipeLabelSettings): CookingValues {
-  const out = { ...EMPTY_COOKING };
+/** What prints. Manual: the recipe's own values, else the template's.
+ *  Suggested: the weight tier's values (a blank one falls back to the
+ *  template's), capped at the longest cook — only when the template has the
+ *  tiers switched on and there is a suggestion; otherwise the template's
+ *  standard values. An appliance switched off is blank. */
+export function resolveCooking(template: LabelTemplate, s: RecipeLabelSettings, suggestion?: CookingValues | null): CookingValues {
+  const mode = effectiveCookingMode(s);
+  const tiers = template.cookingTiers;
+  const useSuggestion = mode === "suggested" && !!tiers?.on && !!suggestion;
+  let out = { ...EMPTY_COOKING };
+  for (const k of COOKING_KEYS) {
+    out[k] = useSuggestion ? (suggestion![k] ?? template.cooking[k])
+      : mode === "manual" ? (s.cooking[k] ?? template.cooking[k])
+      : template.cooking[k];
+  }
+  if (useSuggestion) out = capCooking(out, tiers);
   for (const k of COOKING_KEYS) {
     const isAir = k.startsWith("airFryer");
-    if (isAir ? !s.airFryerOn : !s.ovenOn) { out[k] = null; continue; }
-    out[k] = s.cooking[k] ?? template.cooking[k];
+    if (isAir ? !s.airFryerOn : !s.ovenOn) out[k] = null;
   }
   return out;
 }
@@ -94,6 +122,8 @@ export function buildSnapshot(input: {
   settings: RecipeLabelSettings;
   templateId: number;
   template: LabelTemplate;
+  /** The weight tier's times for this recipe (suggestCooking), if any. */
+  cookingSuggestion?: CookingValues | null;
 }): LabelSnapshot {
   const { recipe, deck, settings: s, template } = input;
   // Chilled use-by: the label's own setting → the recipe's shelf life (some
@@ -108,7 +138,9 @@ export function buildSnapshot(input: {
     deckText: deck.deckText,
     mayContain: deck.mayContainStatement?.trim() || null,
     warningOn: resolveBonesWarning(s.warningOn, deck.deckText, template.boneRiskWords).on,
-    cooking: resolveCooking(template, s),
+    // RESOLVED (what prints), so a published label stays frozen and a tier
+    // change shows as the existing cooking change rows.
+    cooking: resolveCooking(template, s, input.cookingSuggestion),
     chilled,
     frozen: s.frozenOn ? (s.frozen ?? template.frozenDefault) : null,
     barcode: s.barcode?.replace(/\s+/g, "") || null,
@@ -136,7 +168,9 @@ export function canonicalJson(value: unknown): string {
 export function comparableSnapshot(s: LabelSnapshot): unknown {
   // boneRiskWords, like the defaults, only matters through the resolved
   // warningOn already in the snapshot.
-  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, ...template } = s.template;
+  // cookingTiers the same: only through the resolved cooking (and labels
+  // published before the tiers existed must still match).
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
   return { ...rest, template };
 }
