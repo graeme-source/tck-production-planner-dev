@@ -5,7 +5,7 @@
  * their record. From there, we can do the reviews, the return-to-work forms,
  * and book meetings. It's got their attendance record in there.").
  *
- *   /people            the list — big cards, search, people needing action first
+ *   /people            the list — a sortable table (lib/people-list-table.ts), search
  *   /people/:userId    their record (components/people-record.tsx)
  *   /people/job-titles everyone's job title on one screen (components/job-titles-bulk.tsx)
  *   /people/contracts  contracts & starter forms — founder/HR only (pages/founder-contracts.tsx,
@@ -23,7 +23,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useRoute, useSearch, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Lock, Search, HeartPulse, AlertTriangle, CalendarDays, ChevronRight, UsersRound, BadgeCheck, Clock3, FileSignature } from "lucide-react";
+import { Loader2, Lock, Search, HeartPulse, AlertTriangle, ChevronRight, UsersRound, BadgeCheck, Clock3, FileSignature } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { isFounderEmail } from "@workspace/feature-registry";
 import { useAuth } from "@/contexts/auth-context";
@@ -41,6 +41,11 @@ import { PeopleLockedCard } from "@/components/people-locked-card";
 import { JobTitlesBulk } from "@/components/job-titles-bulk";
 import { TeamHoursView } from "@/components/team-hours-view";
 import { type PeopleListResponse, type PersonCard, MEETING_KIND_LABEL, fmtDay, fmtDayRange } from "@/lib/people-api";
+import { SortableTh } from "@/components/sortable-th";
+import { nextSort, type SortState } from "@/lib/sortable-table";
+import {
+  DEFAULT_PEOPLE_SORT, PEOPLE_FIRST_DIR, PERSON_STATUS_LABEL, personStatus, sortPeopleRows, type PeopleSortKey,
+} from "@/lib/people-list-table";
 
 export default function PeopleSection() {
   const { state } = useAuth();
@@ -110,53 +115,117 @@ function Flag({ tone, icon: Icon, children }: { tone: "amber" | "rose" | "sky" |
   );
 }
 
-function PersonCardView({ p, policy, review }: { p: PersonCard; policy: PeopleListResponse["policy"]; review?: BadgeRow }) {
+/**
+ * One person per row, sortable by any column (Graeme, 12 Oct 2026: "on the
+ * people section we've got two columns of people. We want to put these into
+ * tables that we can sort, a bit more like the recipe database"). Shows only
+ * what the old cards showed. Tapping a row opens their record.
+ */
+function PeopleTable({ people, policy, badgeByUser, sort, onSort }: {
+  people: PersonCard[];
+  policy: PeopleListResponse["policy"];
+  badgeByUser: Map<number, BadgeRow>;
+  sort: SortState<PeopleSortKey>;
+  onSort: (key: PeopleSortKey) => void;
+}) {
+  const [, navigate] = useLocation();
+  const th = (label: string, key: PeopleSortKey, className?: string) => (
+    <SortableTh label={label} sortKey={key} activeKey={sort.key} dir={sort.dir} onSort={onSort} className={className} />
+  );
   return (
-    <Link
-      href={`/people/${p.id}`}
-      className={cn(
-        "block rounded-3xl border-2 bg-card p-4 sm:p-5 transition-all active:scale-[0.995] hover:border-primary/50",
-        p.formsNeeded > 0 || p.triggers.sickness || p.triggers.lates ? "border-amber-400/70 dark:border-amber-700" : "border-border",
-        !p.isActive && "opacity-70",
-      )}
-    >
-      <div className="flex items-center gap-4">
-        <UserAvatar name={p.name} avatarUrl={p.avatarUrl} size="lg" />
-        <div className="flex-1 min-w-0">
-          <p className="text-xl font-bold leading-snug truncate">{p.name}</p>
-          {/* Their job, not their app access (Graeme, 2026-09-25). */}
-          <p className={cn("text-base truncate text-muted-foreground", !p.jobTitle && "italic opacity-70")}>
-            {p.jobTitle ?? "No job title yet"}
-          </p>
-        </div>
-        <ChevronRight className="w-6 h-6 text-muted-foreground shrink-0" />
-      </div>
-      {/* Reviews & records — only ever sent for people this viewer may open. */}
-      {review && <ReviewStatusBadge badge={review.badge} liveWarningUntil={review.liveWarningUntil} size="sm" className="mt-3" />}
-      {(p.formsNeeded > 0 || p.triggers.sickness || p.triggers.lates || p.nextMeeting || p.awayNow || !p.isActive) && (
-        <div className="flex flex-wrap gap-2 mt-3">
-          {!p.isActive && <Flag tone="slate">Leaver</Flag>}
-          {p.formsNeeded > 0 && (
-            <Flag tone="amber" icon={HeartPulse}>
-              Return-to-work form needed{p.formsNeeded > 1 ? ` (${p.formsNeeded})` : ""}
-            </Flag>
-          )}
-          {p.awayNow && <Flag tone="slate">Off now</Flag>}
-          {p.triggers.sickness && (
-            <Flag tone="rose" icon={AlertTriangle}>Policy trigger: {p.sickInstances} sickness instances</Flag>
-          )}
-          {p.triggers.lates && (
-            <Flag tone="rose" icon={AlertTriangle}>Policy trigger: {p.lates} lates</Flag>
-          )}
-          {p.nextMeeting && (
-            <Flag tone="sky" icon={CalendarDays}>
-              {p.nextMeeting.title || MEETING_KIND_LABEL[p.nextMeeting.kind] || "Meeting"} · {fmtDay(p.nextMeeting.date)}
-            </Flag>
-          )}
-        </div>
-      )}
-      <span className="sr-only">Policy: {policy.sickInstances} sickness instances or {policy.lates} lates in {policy.months} months</span>
-    </Link>
+    <div className="overflow-x-auto glass-panel rounded-2xl">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+            {th("Name", "name")}
+            {th("Job title", "jobTitle", "hidden lg:table-cell")}
+            {th("Needs attention", "attention")}
+            {th("Next meeting", "nextMeeting", "hidden lg:table-cell whitespace-nowrap")}
+            {th("Status", "status")}
+            <th className="w-8" />
+          </tr>
+        </thead>
+        <tbody>
+          {people.map(p => {
+            const review = badgeByUser.get(p.id);
+            const status = personStatus(p);
+            const flagged = p.formsNeeded > 0 || p.triggers.sickness || p.triggers.lates;
+            return (
+              <tr
+                key={p.id}
+                onClick={() => navigate(`/people/${p.id}`)}
+                className={cn(
+                  "group border-b border-border/50 last:border-0 hover:bg-secondary/40 cursor-pointer align-middle",
+                  !p.isActive && "opacity-70",
+                )}
+              >
+                <td className="py-3 px-3 min-w-[10rem]">
+                  <span className="flex items-center gap-3">
+                    <UserAvatar name={p.name} avatarUrl={p.avatarUrl} size="md" />
+                    <span className="min-w-0">
+                      <Link
+                        href={`/people/${p.id}`}
+                        onClick={e => e.stopPropagation()}
+                        className="block text-base font-semibold leading-snug hover:text-primary"
+                      >
+                        {p.name}
+                      </Link>
+                      {/* Their job, not their app access (Graeme, 2026-09-25). */}
+                      <span className={cn("lg:hidden block text-xs text-muted-foreground", !p.jobTitle && "italic opacity-70")}>
+                        {p.jobTitle ?? "No job title yet"}
+                      </span>
+                    </span>
+                  </span>
+                </td>
+                <td className={cn("py-3 px-3 text-muted-foreground hidden lg:table-cell", !p.jobTitle && "italic opacity-70")}>
+                  {p.jobTitle ?? "No job title yet"}
+                </td>
+                <td className="py-3 px-3">
+                  {flagged || review?.badge || review?.liveWarningUntil ? (
+                    <div className="flex flex-wrap gap-1.5">
+                      {p.formsNeeded > 0 && (
+                        <Flag tone="amber" icon={HeartPulse}>
+                          Return-to-work form{p.formsNeeded > 1 ? ` (${p.formsNeeded})` : ""}
+                        </Flag>
+                      )}
+                      {p.triggers.sickness && <Flag tone="rose" icon={AlertTriangle}>{p.sickInstances} sickness instances</Flag>}
+                      {p.triggers.lates && <Flag tone="rose" icon={AlertTriangle}>{p.lates} lates</Flag>}
+                      {review && <ReviewStatusBadge badge={review.badge} liveWarningUntil={review.liveWarningUntil} size="sm" />}
+                    </div>
+                  ) : <span className="text-muted-foreground">—</span>}
+                  {/* Below desktop width the meeting rides here, not in its own column. */}
+                  {p.nextMeeting && (
+                    <span className="lg:hidden block text-xs text-muted-foreground mt-1">
+                      Meeting {fmtDay(p.nextMeeting.date)}
+                    </span>
+                  )}
+                </td>
+                <td className="py-3 px-3 hidden lg:table-cell">
+                  {p.nextMeeting ? (
+                    <span className="leading-snug">
+                      <span className="font-semibold whitespace-nowrap">{fmtDay(p.nextMeeting.date)}</span>
+                      <span className="block text-xs text-muted-foreground">{p.nextMeeting.title || MEETING_KIND_LABEL[p.nextMeeting.kind] || "Meeting"}</span>
+                    </span>
+                  ) : <span className="text-muted-foreground">—</span>}
+                </td>
+                <td className="py-3 px-3">
+                  <span className={cn(
+                    "inline-flex px-2.5 py-1 rounded-lg text-xs font-bold whitespace-nowrap",
+                    status === "working" ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-secondary text-muted-foreground",
+                  )}>
+                    {PERSON_STATUS_LABEL[status]}
+                  </span>
+                </td>
+                <td className="py-3 pr-3 text-right">
+                  <ChevronRight className="w-5 h-5 text-muted-foreground group-hover:text-primary inline" />
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+      <span className="sr-only">Policy trigger: {policy.sickInstances} sickness instances or {policy.lates} lates in {policy.months} months</span>
+    </div>
   );
 }
 
@@ -188,13 +257,18 @@ function PeopleList({ ready }: { ready: boolean }) {
     if (!q) return people;
     return people.filter(p => p.name.toLowerCase().includes(q) || (p.jobTitle ?? "").toLowerCase().includes(q));
   }, [data, search, inReviewOnly, badgeByUser]);
+  const [sort, setSort] = useState<SortState<PeopleSortKey>>(DEFAULT_PEOPLE_SORT);
+  const sorted = useMemo(
+    () => sortPeopleRows(shown, sort, p => !!badgeByUser.get(p.id)?.badge),
+    [shown, sort, badgeByUser],
+  );
 
   if (error instanceof PeopleLockedError) return <PeopleLockedCard error={error} />;
 
   const outstanding = data?.outstanding ?? [];
 
   return (
-    <div className="max-w-4xl mx-auto space-y-5 pb-24">
+    <div className="space-y-5 pb-24">
       <div className="flex items-center gap-3">
         <div className="w-12 h-12 rounded-2xl bg-primary/10 flex items-center justify-center shrink-0">
           <UsersRound className="w-6 h-6 text-primary" />
@@ -306,9 +380,13 @@ function PeopleList({ ready }: { ready: boolean }) {
       ) : shown.length === 0 ? (
         <p className="text-center py-12 text-lg text-muted-foreground">{search ? "Nobody matches that." : "Nobody here yet."}</p>
       ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          {shown.map(p => <PersonCardView key={p.id} p={p} policy={data!.policy} review={badgeByUser.get(p.id)} />)}
-        </div>
+        <PeopleTable
+          people={sorted}
+          policy={data!.policy}
+          badgeByUser={badgeByUser}
+          sort={sort}
+          onSort={k => setSort(s => nextSort(s, k, PEOPLE_FIRST_DIR[k]))}
+        />
       )}
 
       {data?.attendance.stale && (

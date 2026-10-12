@@ -59,7 +59,7 @@ export default function QuidWordsPage() {
   };
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5">
       <Link href="/labels" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="w-4 h-4" /> Labels</Link>
       <PageHeader
         title="QUID words"

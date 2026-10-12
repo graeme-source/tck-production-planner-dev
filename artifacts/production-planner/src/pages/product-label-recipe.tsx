@@ -58,7 +58,7 @@ export default function ProductLabelRecipePage() {
   const cur = data.current.proof;
 
   return (
-    <div className="space-y-5 max-w-6xl">
+    <div className="space-y-5">
       <PageHeader title={`${data.recipe.name} — label`} description="The live label is what prints. Changes to the recipe show here and wait for someone to check them." />
 
       <div className="flex flex-wrap items-center gap-3">
@@ -79,13 +79,13 @@ export default function ProductLabelRecipePage() {
       {tabs.length > 1 && <HubTabs tabs={tabs} value={tab} onChange={setTab} />}
 
       {tab === "deck" ? (
-        <section className="rounded-2xl border-2 border-border bg-card p-5 max-w-3xl">
+        <section className="rounded-2xl border-2 border-border bg-card p-5">
           <DeckPanel recipe={data.recipe} />
         </section>
       ) : tab === "history" ? (
         <LabelHistoryPanel recipeId={data.recipe.id} />
       ) : tab === "nutrition" ? (
-        <section className="rounded-2xl border-2 border-border bg-card p-5 max-w-3xl">
+        <section className="rounded-2xl border-2 border-border bg-card p-5">
           <NutritionalsPanel recipe={data.recipe} />
         </section>
       ) : (<>
@@ -127,7 +127,7 @@ export default function ProductLabelRecipePage() {
         )}
       </section>
 
-      <p className="flex items-start gap-2 text-sm text-muted-foreground">
+      <p className="flex items-start gap-2 text-sm text-muted-foreground max-w-prose">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
         Proof dates are a sample: printed and made today ({fmtDay(data.sample.printDate)}). Real labels use the day they're printed; the batch number comes from the {data.current.snapshot.template.batchBasis === "print-day" ? "print day" : "production day"}. These pictures are the exact {cur.dpi} dpi image the printer will get.
       </p>
