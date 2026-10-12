@@ -51,8 +51,8 @@ export function LabelHistoryPanel({ recipeId }: { recipeId: number }) {
   }
 
   return (
-    <div className="space-y-4 max-w-4xl">
-      <p className="flex items-start gap-2 text-sm text-muted-foreground">
+    <div className="space-y-4">
+      <p className="flex items-start gap-2 text-sm text-muted-foreground max-w-prose">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
         Every time the label is published, the exact picture that went live is kept here, dated the day it was published.
         The PDFs are stamped "NOT FOR PRINTING" — they are a record, not labels to stick on packs.

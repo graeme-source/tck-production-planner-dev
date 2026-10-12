@@ -176,7 +176,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
   };
 
   return (
-    <div className="space-y-5 max-w-[1400px]">
+    <div className="space-y-5">
       <PageHeader title="Label design & type" description="The layout, fonts and wording every pack label uses. Changes here never alter a live label — affected labels show “Update needed” until someone checks them." />
       <div className="flex flex-wrap items-center gap-3 sticky top-0 z-20 bg-background/95 backdrop-blur py-2">
         <Link href="/labels" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"><ArrowLeft className="w-5 h-5" /> All labels</Link>
