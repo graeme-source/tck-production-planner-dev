@@ -9,17 +9,22 @@
  *   GET /recipes/:id/versions/:versionNo/pdf        one-page archive PDF,
  *                                                   stamped "ARCHIVE vN — NOT FOR PRINTING"
  *
- * Read-only and open to everyone signed in (labels are). Every publish is
- * already stored in full in product_label_versions (routes/product-labels.ts
- * inserts the frozen snapshot); this only reads it. Proofs are dated the day
- * the version was published (London), so they show the label as it was then.
+ * Read-only and open to everyone signed in (labels are).
+ *
+ * The picture is the EXACT image stored when the version went live
+ * (product_label_versions.proof_png, migration 0172 — written by the publish
+ * route), so later layout-code changes never alter an old version. Only a
+ * version with no stored image (published before 0172 and not backfilled by
+ * scripts/backfill-label-version-proofs.ts) is re-drawn from its saved
+ * snapshot, dated the day it was published — and the list says so
+ * (proofSource "redrawn") so the page can tell people.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db, productLabelPrintsTable, productLabelVersionsTable } from "@workspace/db";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, sql } from "drizzle-orm";
 import {
-  archivePdfFilename, archiveStampText, buildLabelHistory, normaliseTemplate, type LabelSnapshot,
+  archiveImage, archivePdfFilename, archiveStampText, buildLabelHistory, normaliseTemplate, type LabelSnapshot,
 } from "@workspace/product-labels";
 import { encodePng, labelsPdf, proofLabel, stampTest } from "@workspace/product-labels/render";
 import { londonDateString } from "../lib/london-time";
@@ -41,7 +46,15 @@ router.get("/recipes/:id/versions", async (req: Request, res: Response) => {
   try {
     const recipe = await loadRecipe(p.data.id);
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
-    const versions = await db.select().from(productLabelVersionsTable)
+    // Everything but the stored image itself (~100 KB a version).
+    const versions = await db.select({
+      id: productLabelVersionsTable.id,
+      versionNo: productLabelVersionsTable.versionNo,
+      snapshot: productLabelVersionsTable.snapshot,
+      publishedAt: productLabelVersionsTable.publishedAt,
+      publishedByName: productLabelVersionsTable.publishedByName,
+      hasStoredProof: sql<boolean>`${productLabelVersionsTable.proofPng} IS NOT NULL`,
+    }).from(productLabelVersionsTable)
       .where(eq(productLabelVersionsTable.recipeId, recipe.id))
       .orderBy(asc(productLabelVersionsTable.versionNo));
     const prints = versions.length
@@ -50,6 +63,7 @@ router.get("/recipes/:id/versions", async (req: Request, res: Response) => {
           count: productLabelPrintsTable.count, kind: productLabelPrintsTable.kind, createdAt: productLabelPrintsTable.createdAt,
         }).from(productLabelPrintsTable).where(eq(productLabelPrintsTable.recipeId, recipe.id))
       : [];
+    const stored = new Map(versions.map(v => [v.id, v.hasStoredProof === true]));
     const history = buildLabelHistory(
       versions.map(v => ({ id: v.id, versionNo: v.versionNo, snapshot: v.snapshot as LabelSnapshot, publishedAt: v.publishedAt, publishedByName: v.publishedByName })),
       prints,
@@ -57,50 +71,63 @@ router.get("/recipes/:id/versions", async (req: Request, res: Response) => {
     res.json({
       recipeId: recipe.id,
       recipeName: recipe.name,
-      versions: history.map(h => ({ ...h, publishedDay: londonDateString(new Date(h.publishedAt)) })),
+      versions: history.map(h => ({
+        ...h,
+        publishedDay: londonDateString(new Date(h.publishedAt)),
+        proofSource: stored.get(h.id) ? "stored" : "redrawn",
+      })),
     });
   } catch (err) { fail(res, err, "GET /recipes/:id/versions"); }
 });
 
-/** One stored version drawn as it was on the day it was published. */
-async function renderVersion(req: Request, res: Response) {
+/** One version's picture: the stored image, or a re-draw of its snapshot
+ *  dated the day it was published when none was stored. */
+async function versionImage(req: Request, res: Response) {
   const p = VersionParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "Invalid recipe or version" }); return null; }
   const [v] = await db.select().from(productLabelVersionsTable)
     .where(and(eq(productLabelVersionsTable.recipeId, p.data.id), eq(productLabelVersionsTable.versionNo, p.data.versionNo)));
   if (!v) { res.status(404).json({ error: "No such label version" }); return null; }
   const day = londonDateString(v.publishedAt);
-  const snapshot = v.snapshot as LabelSnapshot;
-  const proof = proofLabel(snapshot, { printDate: day, productionDate: day }, fonts());
-  return { v, day, snapshot, proof };
+  const image = archiveImage(
+    { png: v.proofPng ? new Uint8Array(v.proofPng) : null, dpi: v.proofDpi },
+    () => {
+      const snapshot = v.snapshot as LabelSnapshot;
+      const proof = proofLabel(snapshot, { printDate: day, productionDate: day }, fonts());
+      return { bitmap: proof.bitmap, dpi: normaliseTemplate(snapshot.template).page.dpi };
+    },
+  );
+  return { v, day, image };
 }
 
 router.get("/recipes/:id/versions/:versionNo/proof", async (req: Request, res: Response) => {
   try {
-    const r = await renderVersion(req, res);
+    const r = await versionImage(req, res);
     if (!r) return;
     res.setHeader("Content-Type", "image/png");
-    // A version never changes once published.
-    res.setHeader("Cache-Control", "private, max-age=3600");
-    res.send(Buffer.from(encodePng(r.proof.bitmap)));
+    res.setHeader("X-Label-Proof-Source", r.image.source);
+    // A stored image never changes; a re-draw may be replaced by the backfill.
+    res.setHeader("Cache-Control", r.image.source === "stored" ? "private, max-age=86400" : "private, no-cache");
+    // The stored bytes as they are; a re-draw encoded fresh.
+    res.send(r.image.source === "stored" && r.v.proofPng ? Buffer.from(r.v.proofPng) : Buffer.from(encodePng(r.image.bitmap)));
   } catch (err) { fail(res, err, "GET proof"); }
 });
 
 router.get("/recipes/:id/versions/:versionNo/pdf", async (req: Request, res: Response) => {
   try {
-    const r = await renderVersion(req, res);
+    const r = await versionImage(req, res);
     if (!r) return;
     // Stamped across the label (as test prints are) so an archive copy can
     // never be printed and stuck on a pack by mistake.
-    stampTest(r.proof.bitmap, fonts(), archiveStampText(r.v.versionNo));
-    const page = normaliseTemplate(r.snapshot.template).page;
+    stampTest(r.image.bitmap, fonts(), archiveStampText(r.v.versionNo));
     const pdf = labelsPdf({
-      bitmap: r.proof.bitmap, dpi: page.dpi, copies: 1,
-      title: `ARCHIVE - ${r.v.recipeName} label v${r.v.versionNo} published ${r.day} - NOT FOR PRINTING`,
+      bitmap: r.image.bitmap, dpi: r.image.dpi, copies: 1,
+      title: `ARCHIVE - ${r.v.recipeName} label v${r.v.versionNo} published ${r.day}${r.image.source === "redrawn" ? " (re-drawn from saved settings)" : ""} - NOT FOR PRINTING`,
     });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="${archivePdfFilename(r.v.recipeName, r.v.versionNo, r.day)}"`);
-    res.setHeader("Cache-Control", "private, max-age=3600");
+    res.setHeader("X-Label-Proof-Source", r.image.source);
+    res.setHeader("Cache-Control", "private, no-cache");
     res.send(Buffer.from(pdf));
   } catch (err) { fail(res, err, "GET pdf"); }
 });

@@ -9,6 +9,8 @@
  * and its "not for printing" stamp.
  */
 import { diffSnapshots, type LabelSnapshot, type SnapshotChange } from "./snapshot";
+import { decodeLabelPng } from "./png-decode";
+import type { Bitmap } from "./raster";
 
 export interface HistoryVersionInput {
   id: number;
@@ -115,4 +117,26 @@ export function archivePdfFilename(recipeName: string, versionNo: number, publis
  *  the file name and the PDF title. */
 export function archiveStampText(versionNo: number): string {
   return `ARCHIVE v${versionNo} — NOT FOR PRINTING`;
+}
+
+/** Where a history picture came from: the exact image stored when the
+ *  version went live, or a re-draw of its saved snapshot with today's code
+ *  (versions published before the image was stored, migration 0172). */
+export type ArchiveImageSource = "stored" | "redrawn";
+
+/** The image for a version's archive PDF: the stored one when there is a
+ *  readable one, otherwise `redraw()`. Never mixes the two. */
+export function archiveImage(
+  stored: { png: Uint8Array | null; dpi: number | null },
+  redraw: () => { bitmap: Bitmap; dpi: number },
+): { bitmap: Bitmap; dpi: number; source: ArchiveImageSource } {
+  if (stored.png && stored.png.length > 0 && stored.dpi) {
+    try {
+      return { bitmap: decodeLabelPng(stored.png), dpi: stored.dpi, source: "stored" };
+    } catch {
+      // Unreadable stored image — fall through to a re-draw (and say so).
+    }
+  }
+  const r = redraw();
+  return { bitmap: r.bitmap, dpi: r.dpi, source: "redrawn" };
 }

@@ -8,12 +8,19 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, ChevronUp, Download, History, Info, Loader2, Printer, X } from "lucide-react";
-import type { HistoryEntry } from "@workspace/product-labels";
+import type { ArchiveImageSource, HistoryEntry } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
 import { API, api, fmtDateTime } from "./api";
 import { ChangeRow } from "./publish-dialog";
 
-type VersionRow = HistoryEntry & { publishedDay: string };
+type VersionRow = HistoryEntry & { publishedDay: string; proofSource: ArchiveImageSource };
+
+/** "stored" = the exact image saved when it went live; "redrawn" = published
+ *  before images were saved, so drawn again from its saved settings. */
+const sourceNote = (v: VersionRow) =>
+  v.proofSource === "stored"
+    ? "The exact label as it went live."
+    : "Re-drawn from the saved settings (published before label pictures were kept) — dates are the publish day.";
 interface HistoryPayload { recipeId: number; recipeName: string; versions: VersionRow[] }
 
 export function useLabelHistory(recipeId: number) {
@@ -47,7 +54,7 @@ export function LabelHistoryPanel({ recipeId }: { recipeId: number }) {
     <div className="space-y-4 max-w-4xl">
       <p className="flex items-start gap-2 text-sm text-muted-foreground">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />
-        Every time the label is published it is kept here exactly as it was. Each picture is dated the day that version was published, so it shows what the label looked like then.
+        Every time the label is published, the exact picture that went live is kept here, dated the day it was published.
         The PDFs are stamped "NOT FOR PRINTING" — they are a record, not labels to stick on packs.
       </p>
       {data.versions.map(v => (
@@ -82,14 +89,17 @@ function VersionCard({ recipeId, v, onOpen }: { recipeId: number; v: VersionRow;
   return (
     <section className={cn("rounded-2xl border-2 bg-card p-5", v.live ? "border-emerald-400 dark:border-emerald-700" : "border-border")}>
       <div className="flex flex-col md:flex-row gap-5">
-        <button
-          type="button"
-          onClick={onOpen}
-          className="md:w-72 shrink-0 rounded-xl border-2 border-border bg-white p-1 hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          aria-label={`Open version ${v.versionNo} full size`}
-        >
-          <img src={proofUrl(recipeId, v.versionNo)} alt={`Label version ${v.versionNo}`} loading="lazy" className="w-full h-auto" />
-        </button>
+        <div className="md:w-72 shrink-0 space-y-1">
+          <button
+            type="button"
+            onClick={onOpen}
+            className="w-full rounded-xl border-2 border-border bg-white p-1 hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label={`Open version ${v.versionNo} full size`}
+          >
+            <img src={proofUrl(recipeId, v.versionNo)} alt={`Label version ${v.versionNo}`} loading="lazy" className="w-full h-auto" />
+          </button>
+          <p className="text-xs text-muted-foreground">{sourceNote(v)}</p>
+        </div>
 
         <div className="flex-1 min-w-0 space-y-3">
           <div className="flex flex-wrap items-center gap-3">
@@ -150,7 +160,7 @@ function ProofModal({ recipeId, recipeName, v, onClose }: { recipeId: number; re
         <div className="flex items-center gap-3 px-5 py-3 border-b border-border">
           <div className="flex-1 min-w-0">
             <p className="text-xl font-bold truncate">{recipeName} — version {v.versionNo}{v.live ? " (live)" : ""}</p>
-            <p className="text-sm text-muted-foreground">Published {fmtDateTime(v.publishedAt)}{v.publishedByName ? ` by ${v.publishedByName}` : ""}. Dates on the picture are that day.</p>
+            <p className="text-sm text-muted-foreground">Published {fmtDateTime(v.publishedAt)}{v.publishedByName ? ` by ${v.publishedByName}` : ""}. {sourceNote(v)}</p>
           </div>
           <button onClick={onClose} className="p-3 rounded-xl hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
         </div>

@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { archivePdfFilename, archiveStampText, buildLabelHistory, groupPrintsByVersion, slugify, type HistoryVersionInput } from "./history";
+import { encodePng } from "./png";
+import { Bitmap } from "./raster";
+import { archiveImage, archivePdfFilename, archiveStampText, buildLabelHistory, groupPrintsByVersion, slugify, type HistoryVersionInput } from "./history";
 import { buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS } from "./snapshot";
 import { DEFAULT_TEMPLATE, normaliseTemplate } from "./template";
 
@@ -74,6 +76,24 @@ describe("archive file name and stamp", () => {
     expect(archivePdfFilename("Garlic Cheese", 3, "2026-10-12")).toBe("garlic-cheese-label-v3-2026-10-12.pdf");
     expect(archivePdfFilename("Mac & Cheese (Jalapeño)!", 1, "2026-01-02")).toBe("mac-cheese-jalapeno-label-v1-2026-01-02.pdf");
     expect(slugify("***")).toBe("label");
+  });
+
+  it("archive image: the stored picture when there is one, a re-draw only when not", () => {
+    const stored = new Bitmap(10, 4);
+    stored.data[3] = 1;
+    const drawn = new Bitmap(10, 4);
+    let redraws = 0;
+    const redraw = () => { redraws++; return { bitmap: drawn, dpi: 300 }; };
+
+    const a = archiveImage({ png: encodePng(stored), dpi: 203 }, redraw);
+    expect(a.source).toBe("stored");
+    expect(a.dpi).toBe(203);
+    expect(Array.from(a.bitmap.data)).toEqual(Array.from(stored.data));
+    expect(redraws).toBe(0);
+
+    expect(archiveImage({ png: null, dpi: null }, redraw)).toMatchObject({ source: "redrawn", dpi: 300 });
+    expect(archiveImage({ png: new Uint8Array([1, 2, 3]), dpi: 203 }, redraw).source).toBe("redrawn");
+    expect(redraws).toBe(2);
   });
 
   it("stamps the version and says not for printing", () => {
