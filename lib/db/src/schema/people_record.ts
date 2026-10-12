@@ -75,6 +75,10 @@ export const peopleRecordEntriesTable = pgTable("people_record_entries", {
    *  no meeting, just on the record. meeting_type is an optional detail. */
   meetingStatus: text("meeting_status"),
   heldAt: timestamp("held_at"),
+  /** Which attendance trigger this review deals with (migration 0183):
+   *  sickness | lates | both | none. NULL = automatic, by the
+   *  classification's attendance evidence (policy-trigger.ts). */
+  answersTrigger: text("answers_trigger"),
   /** The old employee_meetings row this came from (0178), if any. */
   legacyMeetingId: integer("legacy_meeting_id"),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),

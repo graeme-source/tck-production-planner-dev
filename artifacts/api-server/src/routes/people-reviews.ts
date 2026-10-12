@@ -55,7 +55,8 @@ import {
   extendedEnd, extensionMessage, periodEnd, nextStage, attentionLine, PERIOD_MONTHS,
   MERGE_FIELDS, hrEmailIdentity, checkHrEmailSettings, templatesForEntry, letterMergeValues, fillTemplate, letterGaps, checkLetterAction, letterWaitingEmail,
   effectiveStage, MEETING_STATUSES, meetingStatusChange, meetingTodoDate, heldByNotes,
-  type MeetingStatus, type LetterTemplate, type LetterStatus, type FieldSet, type ProbationOutcome,
+  ANSWERS_TRIGGER, NO_POLICY_TRIGGER, answersTriggerMessage,
+  type PolicyTriggerReview, type AnswersTrigger, type MeetingStatus, type LetterTemplate, type LetterStatus, type FieldSet, type ProbationOutcome,
   type Classification, type Stage, type StageType, type EvidenceKind, type EntryLike, type EntryStatus,
   type MeetingType, type TodoKind,
 } from "@workspace/people-reviews";
@@ -66,7 +67,8 @@ import {
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { isFounderEmail, FOUNDER_EMAIL } from "../lib/founder-email";
 import { loadClassifiedShifts } from "../lib/rtw-detect";
-import { summariseAttendance, rollingWindowStart } from "../lib/attendance-summary";
+import { summariseAttendance, rollingWindowStart, policyTriggerReview } from "../lib/attendance-summary";
+import { loadPolicyReviews } from "../lib/policy-trigger-reviews";
 import { renderContractPdf } from "../pdf/contract-pdf";
 import { sendEmail, FROM_EMAIL } from "../lib/email";
 import {
@@ -307,25 +309,50 @@ router.patch("/stages/:id", validate(StagePatch), async (req: Request, res: Resp
 
 // ── One person ─────────────────────────────────────────────────────────────
 
-async function attendanceFacts(userId: number, today: string) {
+async function attendanceSummary(userId: number, today: string) {
   try {
     const [u] = await db.select({ plandayId: usersTable.plandayEmployeeId }).from(usersTable).where(eq(usersTable.id, userId));
     if (!u || u.plandayId == null) return null;
     // The Planday mirror as it stands — the record page keeps it synced.
     const shifts = (await loadClassifiedShifts([userId], rollingWindowStart(today), { includeInactive: true })).get(userId) ?? [];
-    const s = summariseAttendance(shifts, today);
-    return {
-      sickInstances: s.sickInstances, sickDays: s.sickDays, lates: s.lates, otherAbsenceDays: s.otherAbsenceDays,
-      triggers: s.triggers, policy: s.policy, windowStart: s.windowStart,
-    };
+    return summariseAttendance(shifts, today);
   } catch (err) {
     console.warn("[people-reviews] attendance evidence unavailable:", err instanceof Error ? err.message : err);
     return null;
   }
 }
 
+function factsOf(s: NonNullable<Awaited<ReturnType<typeof attendanceSummary>>>) {
+  return {
+    sickInstances: s.sickInstances, sickDays: s.sickDays, lates: s.lates, otherAbsenceDays: s.otherAbsenceDays,
+    triggers: s.triggers, policy: s.policy, windowStart: s.windowStart,
+  };
+}
+
+async function attendanceFacts(userId: number, today: string) {
+  const s = await attendanceSummary(userId, today);
+  return s ? factsOf(s) : null;
+}
+
+/** The attendance facts plus where each policy trigger stands (the same
+ *  rule as the person record's banner) — so a review can ask "does this
+ *  deal with the attendance trigger?" only when one has been reached. */
+async function attendanceWithTriggers(userId: number, today: string): Promise<{
+  attendance: ReturnType<typeof factsOf> | null; triggerReview: PolicyTriggerReview;
+}> {
+  const s = await attendanceSummary(userId, today);
+  if (!s) return { attendance: null, triggerReview: NO_POLICY_TRIGGER };
+  try {
+    const reviews = (await loadPolicyReviews([userId], today)).get(userId) ?? [];
+    return { attendance: factsOf(s), triggerReview: policyTriggerReview(s, reviews) };
+  } catch (err) {
+    console.warn("[people-reviews] policy trigger unavailable:", err instanceof Error ? err.message : err);
+    return { attendance: factsOf(s), triggerReview: NO_POLICY_TRIGGER };
+  }
+}
+
 /** History lines worth showing on an entry (not every autosave). */
-const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack", "ai_draft"];
+const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "trigger_link", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack", "ai_draft"];
 
 router.get("/person/:userId", async (req: Request, res: Response) => {
   const viewer = viewerOf(res);
@@ -339,7 +366,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
       .where(eq(peopleRecordEntriesTable.userId, userId))
       .orderBy(desc(peopleRecordEntriesTable.entryDate), desc(peopleRecordEntriesTable.id));
     const ids = entries.map(e => e.id);
-    const [classifications, stages, history, attendance, letters] = await Promise.all([
+    const [classifications, stages, history, { attendance, triggerReview }, letters] = await Promise.all([
       loadClassifications(),
       loadStages(),
       ids.length
@@ -348,7 +375,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
           .where(and(inArray(peopleRecordAuditTable.entryId, ids), inArray(peopleRecordAuditTable.action, HISTORY_ACTIONS)))
           .orderBy(asc(peopleRecordAuditTable.at))
         : Promise.resolve([] as Array<{ entryId: number | null; action: string; detail: string | null; at: Date; by: string | null }>),
-      attendanceFacts(userId, today),
+      attendanceWithTriggers(userId, today),
       ids.length
         ? db.select().from(peopleLettersTable).where(inArray(peopleLettersTable.entryId, ids)).orderBy(asc(peopleLettersTable.createdAt))
         : Promise.resolve([] as Array<typeof peopleLettersTable.$inferSelect>),
@@ -372,7 +399,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
     const [probation] = await loadProbations([userId]);
     await audit(db, viewer, { subjectUserId: userId, action: "view", detail: `${entries.length} entr${entries.length === 1 ? "y" : "ies"}` });
     res.json({
-      person, today, viewerId: viewer.actor.id, probation: probation ?? null, periodMonths: PERIOD_MONTHS, canEditLists: mayEditLists(viewer), classifications, stages, attendance,
+      person, today, viewerId: viewer.actor.id, probation: probation ?? null, periodMonths: PERIOD_MONTHS, canEditLists: mayEditLists(viewer), classifications, stages, attendance, triggerReview,
       entries: entries.map(e => ({
         id: e.id, userId: e.userId, classificationId: e.classificationId, entryDate: e.entryDate, title: e.title,
         notes: e.notes, notesUpdatedByName: e.notesUpdatedByName, notesUpdatedAt: e.notesUpdatedAt,
@@ -380,7 +407,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         stageId: e.stageId, warningExpiresOn: e.warningExpiresOn, warningWithdrawnAt: e.warningWithdrawnAt,
         warningWithdrawnReason: e.warningWithdrawnReason, rating: e.rating, payFrom: e.payFrom, payTo: e.payTo,
         payEffectiveOn: e.payEffectiveOn, probationOutcome: e.probationOutcome, probationNewEnd: e.probationNewEnd,
-        fitForWork: e.fitForWork, meetingStatus: e.meetingStatus, heldAt: e.heldAt, meetingType: e.meetingType, meetingDate: e.meetingDate, meetingTime: e.meetingTime,
+        fitForWork: e.fitForWork, meetingStatus: e.meetingStatus, answersTrigger: e.answersTrigger, heldAt: e.heldAt, meetingType: e.meetingType, meetingDate: e.meetingDate, meetingTime: e.meetingTime,
         meetingAttendees: e.meetingAttendees, meetingChecklist: e.meetingChecklist,
         createdByName: e.createdByName, createdAt: e.createdAt, updatedAt: e.updatedAt,
         writeUp: notes.filter(n => n.entryId === e.id),
@@ -425,6 +452,8 @@ const EntryFields = z.object({
   probationNewEnd: isoDate.nullable(),
   fitForWork: z.enum(FIT_FOR_WORK).nullable(),
   meetingStatus: z.enum(MEETING_STATUSES).nullable(),
+  /** Which attendance trigger it deals with (0183); null = automatic. */
+  answersTrigger: z.enum(ANSWERS_TRIGGER).nullable(),
   meetingType: z.enum(MEETING_TYPES).nullable(),
   meetingDate: isoDate.nullable(),
   meetingTime: hhmm.nullable(),
@@ -548,6 +577,15 @@ async function applyChange(tx: Exec, viewer: Viewer, row: EntryRow, b: EntryPatc
     if (change.stampHeldAt) set.heldAt = new Date();
     if (!ctx.created) {
       await audit(tx, viewer, { subjectUserId: row.userId, entryId: row.id, action: "meeting_status", detail: change.message });
+    }
+  }
+
+  // Which attendance trigger it deals with (0183) — the banner follows.
+  if (b.answersTrigger !== undefined && b.answersTrigger !== (row.answersTrigger ?? null)) {
+    set.answersTrigger = b.answersTrigger;
+    if (!ctx.created) {
+      await audit(tx, viewer, { subjectUserId: row.userId, entryId: row.id, action: "trigger_link",
+        detail: answersTriggerMessage(b.answersTrigger as AnswersTrigger | null) });
     }
   }
 

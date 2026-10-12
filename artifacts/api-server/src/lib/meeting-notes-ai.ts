@@ -19,7 +19,7 @@
  * be the one tool's fields — which a person then reads before saving.
  */
 import { z } from "zod";
-import { ACTION_OWNERS, MAX_NOTES_CHARS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
+import { ACTION_OWNERS, ANSWERS_TRIGGER, MAX_NOTES_CHARS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
 
 export const LIMITS = { title: 120, summary: 4000, what: 300, detail: 2000, ownerName: 80, items: 20 } as const;
 
@@ -222,6 +222,9 @@ export const SaveMeetingNotesBody = z.object({
     url: z.string().max(2000).nullable(),
     text: z.string().min(1).max(MAX_NOTES_CHARS),
   }),
+  /** "Does this review deal with the attendance trigger?" (0183) — only
+   *  sent when it was asked; null = automatic. */
+  answersTrigger: z.enum(ANSWERS_TRIGGER).nullable().optional(),
 });
 export type SaveMeetingNotes = z.infer<typeof SaveMeetingNotesBody>;
 

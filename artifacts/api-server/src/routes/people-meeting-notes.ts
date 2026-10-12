@@ -32,7 +32,7 @@ import {
 } from "@workspace/db";
 import {
   meetingNotesRows, actionTodos, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
-  linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS,
+  linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS, answersTriggerMessage,
   type MeetingStatus, type Classification, type EvidenceKind,
 } from "@workspace/people-reviews";
 import { validate } from "../middleware/validate";
@@ -152,6 +152,12 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
         set.classificationId = to.id;
         await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "reclassify",
           detail: reclassify(classifications.find(c => c.id === entry.classificationId), to).message });
+      }
+      // "Does this review deal with the attendance trigger?" — only when asked.
+      if (b.answersTrigger !== undefined && b.answersTrigger !== (entry.answersTrigger ?? null)) {
+        set.answersTrigger = b.answersTrigger;
+        await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "trigger_link",
+          detail: answersTriggerMessage(b.answersTrigger) });
       }
       // Notes from the meeting mean it happened.
       const prev = (entry.meetingStatus ?? null) as MeetingStatus | null;

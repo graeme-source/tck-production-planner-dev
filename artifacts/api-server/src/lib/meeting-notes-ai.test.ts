@@ -128,5 +128,9 @@ describe("request bodies", () => {
     expect(SaveMeetingNotesBody.safeParse({ ...ok, actions: [{ ...ok.actions[0], owner: "boss" }] }).success).toBe(false);
     expect(SaveMeetingNotesBody.safeParse({ ...ok, agreements: [{ what: "a", detail: null, date: "4 May" }] }).success).toBe(false);
     expect(SaveMeetingNotesBody.safeParse({ ...ok, source: { kind: "text", url: null, text: "" } }).success).toBe(false);
+    // The attendance-trigger link is optional; only the four values (or null).
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, answersTrigger: "sickness" }).success).toBe(true);
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, answersTrigger: null }).success).toBe(true);
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, answersTrigger: "maternity" }).success).toBe(false);
   });
 });
