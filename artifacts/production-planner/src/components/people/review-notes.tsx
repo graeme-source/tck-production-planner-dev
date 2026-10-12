@@ -173,7 +173,7 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
               </div>
             </div>
           )}
-          {!isPrivate && (
+          {!inReport && !isPrivate && (
             <button type="button" disabled={busy} onClick={() => void act(() => save({ visibility: "private" }), "Private again", "Couldn't save")}
               className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
               <EyeOff className="w-5 h-5" /> Make it private again
