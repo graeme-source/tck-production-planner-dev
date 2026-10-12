@@ -19,7 +19,7 @@ import { useMemo, useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
+  CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
   HeartPulse, Loader2, Lock, PenLine, Plus, RefreshCw, Sun, Target, History, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -58,6 +58,8 @@ import { PersonEmergencyContactPanel } from "@/components/emergency-contacts/per
 import { PeopleSheet } from "@/components/people-sheet";
 import { RecordPanel, RecordTimelineCard, useRecordFacts } from "@/components/people/record-panel";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
+import { PolicyTriggerBanner } from "@/components/people/policy-trigger-banner";
+import { needsPolicyReview, type PolicyReviewRef } from "@workspace/people-reviews";
 import { defaultHoursRange } from "@/components/hours-range-picker";
 import type { PersonHoursResponse } from "@/lib/hours-worked-view";
 import {
@@ -519,6 +521,8 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const refreshReviews = () => {
     void queryClient.invalidateQueries({ queryKey: reviewsKey });
     void queryClient.invalidateQueries({ queryKey: ["people-list"] });
+    // A meeting booked, held or cancelled changes the policy trigger banner.
+    void queryClient.invalidateQueries({ queryKey: ["people-record", userId] });
   };
 
   const openFormById = async (id: number) => {
@@ -612,6 +616,18 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   // something is open.
   const agreedNow = grouped?.agreedNow ?? [];
   const showRecord = recordEntries.data != null || (recordEntries.isLoading && ready);
+  // The review a policy trigger line names: a meeting scrolls to its card in
+  // the timeline; an employment-record entry opens in the record panel.
+  const openPolicyReview = (r: PolicyReviewRef) => {
+    if (r.source === "entry") {
+      if (!showRecord) return;
+      setOpenEntry(r.id);
+      setSection("record");
+      return;
+    }
+    setFilter("all");
+    requestAnimationFrame(() => document.getElementById(`person-meeting-${r.id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+  };
   const sections: Array<{ key: RecordSection; summary: SectionSummary }> = [
     ...(showRecord ? [{ key: "record" as const, summary: recordEntriesSummary(recordEntries.facts?.summary, recordEntries.isLoading, !!recordEntries.error) }] : []),
     { key: "hours", summary: hoursSummary(hours.data, hours.isLoading || !ready) },
@@ -695,22 +711,17 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         ) : (
           <>
             <div className="grid gap-3 grid-cols-2 @2xl/main:grid-cols-4">
-              <Tile label="Sickness instances" value={s.sickInstances} sub={`Trigger at ${s.policy.sickInstances}`} alert={s.triggers.sickness} />
+              <Tile label="Sickness instances" value={s.sickInstances} sub={`Trigger at ${s.policy.sickInstances}`} alert={needsPolicyReview(data.triggerReview?.sickness)} />
               <Tile label="Sick days" value={s.sickDays} />
-              <Tile label="Lates" value={s.lates} sub={`Trigger at ${s.policy.lates}`} alert={s.triggers.lates} />
+              <Tile label="Lates" value={s.lates} sub={`Trigger at ${s.policy.lates}`} alert={needsPolicyReview(data.triggerReview?.lates)} />
               <Tile label="Other absence" value={s.otherAbsenceDays} sub={`day${s.otherAbsenceDays === 1 ? "" : "s"} — Absent, dependants' or emergency leave`} />
             </div>
-            {(s.triggers.sickness || s.triggers.lates) && (
-              <div className="rounded-2xl border-2 border-rose-400 dark:border-rose-700 bg-rose-50 dark:bg-rose-950/30 p-4 flex items-center gap-3 flex-wrap">
-                <AlertTriangle className="w-6 h-6 text-rose-600 shrink-0" />
-                <p className="flex-1 min-w-0 text-base font-semibold text-rose-900 dark:text-rose-200">
-                  Policy trigger reached — {s.triggers.sickness ? `${s.sickInstances} sickness instances` : ""}{s.triggers.sickness && s.triggers.lates ? " and " : ""}{s.triggers.lates ? `${s.lates} lates` : ""} in 12 months. The policy calls for a review meeting.
-                </p>
-                {canManage && (
-                  <button onClick={() => setModal("book")} className="h-12 px-4 rounded-xl bg-rose-600 text-white font-bold">Book a review</button>
-                )}
-              </div>
-            )}
+            {/* Each trigger: red while a review is still needed (due / due
+                again); calm once one is booked or held (Graeme, 2026-10-12). */}
+            {([data.triggerReview?.sickness, data.triggerReview?.lates] as const).map(t => t && (
+              <PolicyTriggerBanner key={t.kind} status={t} months={s.policy.months} canManage={canManage}
+                onBook={() => setModal("book")} onOpenReview={openPolicyReview} />
+            ))}
             <p className="text-sm text-muted-foreground">
               {fmtDay(s.windowStart, true)} to today. Policy: {s.policy.sickInstances} sickness instances or {s.policy.lates} lates in a rolling {s.policy.months} months → review meeting.
               {data.attendance.stale && " Couldn't reach Planday just now — showing attendance as last synced."}
@@ -768,7 +779,11 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           }
           if (e.kind === "form") return <FormEntryCard key={e.key} form={e.form} onOpen={id => void openFormById(id)} />;
           if (e.kind === "meeting") {
-            return <MeetingCard key={e.key} meeting={e.meeting} notes={byMeeting.get(e.meeting.id) ?? []} {...meetingCardProps} />;
+            return (
+              <div key={e.key} id={`person-meeting-${e.meeting.id}`} className="scroll-mt-4">
+                <MeetingCard meeting={e.meeting} notes={byMeeting.get(e.meeting.id) ?? []} {...meetingCardProps} />
+              </div>
+            );
           }
           if (e.kind === "contract") return <ContractEntryCard key={e.key} entry={e.contract.entry} onOpen={setOpenContract} />;
           if (e.kind === "document") return <DocumentEntryCard key={e.key} entry={e.document.entry} onOpen={setOpenDocument} />;

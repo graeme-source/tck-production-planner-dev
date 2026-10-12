@@ -148,6 +148,9 @@ export function useRefreshEntries(userId: number) {
   return () => {
     void qc.invalidateQueries({ queryKey: personEntriesKey(userId) });
     void qc.invalidateQueries({ queryKey: recordBadgesKey });
+    // A Timekeeping / Attendance entry can answer a policy trigger.
+    void qc.invalidateQueries({ queryKey: ["people-record", userId] });
+    void qc.invalidateQueries({ queryKey: ["people-list"] });
   };
 }
 

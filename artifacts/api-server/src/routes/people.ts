@@ -36,7 +36,8 @@ import { normaliseJobTitle, JOB_TITLE_MAX } from "../lib/job-title";
 import { hasPeopleAccess } from "../lib/people-access";
 import { loadClassifiedShifts, loadFormCovers, todayIso } from "../lib/rtw-detect";
 import { absenceSpells, dueSpells, type AbsenceSpell } from "../lib/absence-spells";
-import { summariseAttendance, rollingWindowStart } from "../lib/attendance-summary";
+import { summariseAttendance, rollingWindowStart, policyTriggerReview } from "../lib/attendance-summary";
+import { loadPolicyReviews } from "../lib/policy-trigger-reviews";
 import { outstandingFormsForViewer, sortPeopleForList } from "../lib/people-list";
 import { isLateName } from "../services/attendance-classify";
 import { getAttendanceFromCache } from "../services/planday-attendance-cache";
@@ -154,7 +155,7 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
       ORDER BY u.name
     `);
     const ids = users.rows.map(u => Number(u.id));
-    const [shiftsByUser, formsByUser, meetings] = await Promise.all([
+    const [shiftsByUser, formsByUser, meetings, reviewsByUser] = await Promise.all([
       loadClassifiedShifts(ids, windowStart, { includeInactive: includeLeavers }),
       loadFormCovers(ids),
       ids.length === 0 ? Promise.resolve({ rows: [] as Array<{ subject_user_id: number; kind: string; title: string | null; scheduled_for: string }> }) :
@@ -164,6 +165,7 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
            WHERE status = 'booked' AND scheduled_for >= ${today}
            ORDER BY subject_user_id, scheduled_for ASC
         `),
+      loadPolicyReviews(ids, today),
     ]);
     const nextMeeting = new Map(meetings.rows.map(m => [Number(m.subject_user_id), { date: m.scheduled_for, kind: m.kind, title: m.title }]));
 
@@ -180,6 +182,8 @@ router.get("/", validateQuery(listQuery), async (req: Request, res: Response) =>
         formsNeeded: due.length,
         awayNow: spells.some(s => s.formState === "away"),
         triggers: summary.triggers,
+        // Due / booked / handled / due again — only due and due again nag.
+        triggerReview: policyTriggerReview(summary, reviewsByUser.get(id) ?? []),
         sickInstances: summary.sickInstances,
         lates: summary.lates,
         nextMeeting: nextMeeting.get(id) ?? null,
@@ -302,10 +306,11 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
     // The summary always needs the full 12 months, even if the timeline asks for less.
     const loadFrom = from < defaultFrom ? from : defaultFrom;
     const attendance = await syncAttendance(loadFrom, today);
-    const [shiftsByUser, formsByUser, formRows] = await Promise.all([
+    const [shiftsByUser, formsByUser, formRows, reviewsByUser] = await Promise.all([
       loadClassifiedShifts([userId], loadFrom, { includeInactive: true }),
       loadFormCovers([userId]),
       db.execute<FormRow>(sql`${formSelect} WHERE f.user_id = ${userId} ORDER BY f.absence_start DESC`),
+      loadPolicyReviews([userId], today),
     ]);
     const shifts = shiftsByUser.get(userId) ?? [];
     const spells = absenceSpells(shifts, formsByUser.get(userId) ?? [], today)
@@ -316,6 +321,7 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
       .map(s => ({ date: s.date, label: s.typeName as string }))
       .sort((a, b) => b.date.localeCompare(a.date));
 
+    const summary = summariseAttendance(shifts, today);
     res.json({
       // canWrite / readOnlyNote: may the viewer change this record at all
       // (lib/people-write-access.ts) — the screen hides its write controls.
@@ -324,7 +330,8 @@ router.get("/:userId", validateQuery(recordQuery), async (req: Request, res: Res
       spells: spells.map(spellOut),
       lates,
       forms: formRows.rows.map(shapeForm),
-      summary: summariseAttendance(shifts, today),
+      summary,
+      triggerReview: policyTriggerReview(summary, reviewsByUser.get(userId) ?? []),
       attendance: { ...attendance, linked: user.planday_employee_id != null },
     });
   } catch (err) {
