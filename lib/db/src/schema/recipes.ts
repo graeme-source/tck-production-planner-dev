@@ -52,6 +52,10 @@ export const recipesTable = pgTable("recipes", {
   ovenTempC: integer("oven_temp_c"),
   ovenTimeSeconds: integer("oven_time_seconds"),
   color: text("color"),
+  // Optional second identity colour (migration 0185). NULL = single colour,
+  // shown exactly as before. Drawn beside the primary everywhere through the
+  // frontend's recipe-colour helper (split dots, stacked bands).
+  secondaryColor: text("secondary_color"),
   cookingLossPercent: numeric("cooking_loss_percent", { precision: 5, scale: 2 }).notNull().default("3"),
   // Grams trimmed off the filling weight shown to the builders, per batch.
   // Display only: costing, prep quantities, the filling mix and the printed

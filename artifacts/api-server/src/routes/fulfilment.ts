@@ -409,8 +409,8 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
       // every mapping row joined to its recipe colour, then build lookup
       // maps by both variant id and SKU so a line item can be coloured
       // even when only one of those two is set.
-      db.execute<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null }>(sql`
-        SELECT m.shopify_variant_id, m.shopify_sku, r.color
+      db.execute<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null; secondary_color: string | null }>(sql`
+        SELECT m.shopify_variant_id, m.shopify_sku, r.color, r.secondary_color
         FROM recipe_shopify_mappings m
         JOIN recipes r ON r.id = m.recipe_id
         WHERE r.color IS NOT NULL
@@ -436,20 +436,23 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
     // products never claim one — so a clashing code can never tick the
     // wrong line. The row is still read for the image.
     const barcodeRowByVariantId = new Map(allBarcodes.map(b => [b.variantId, b]));
-    const colorByVariantId = new Map<string, string>();
-    const colorBySku = new Map<string, string>();
-    for (const row of recipeMappings.rows as Array<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null }>) {
+    // Recipe identity colours: primary + optional secondary (migration 0185).
+    type RecipeColours = { color: string; secondary: string | null };
+    const colorByVariantId = new Map<string, RecipeColours>();
+    const colorBySku = new Map<string, RecipeColours>();
+    for (const row of recipeMappings.rows as Array<{ shopify_variant_id: string | null; shopify_sku: string | null; color: string | null; secondary_color: string | null }>) {
       if (!row.color) continue;
-      if (row.shopify_variant_id) colorByVariantId.set(row.shopify_variant_id, row.color);
-      if (row.shopify_sku) colorBySku.set(row.shopify_sku, row.color);
+      const colours = { color: row.color, secondary: row.secondary_color ?? null };
+      if (row.shopify_variant_id) colorByVariantId.set(row.shopify_variant_id, colours);
+      if (row.shopify_sku) colorBySku.set(row.shopify_sku, colours);
     }
 
     const enriched = orders.map(order => {
       const lineItems = order.line_items.map(item => {
         const variantKey = item.variant_id != null ? String(item.variant_id) : null;
-        const recipeColor =
-          (variantKey && colorByVariantId.get(variantKey)) ??
-          (item.sku && colorBySku.get(item.sku)) ??
+        const recipeColours =
+          (variantKey && colorByVariantId.get(variantKey)) ||
+          (item.sku && colorBySku.get(item.sku)) ||
           null;
         const barcodeRow = variantKey ? (barcodeRowByVariantId.get(variantKey) ?? null) : null;
         return {
@@ -461,7 +464,8 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
           barcode: variantKey ? (ownership.ownership.barcodeOf.get(variantKey) ?? null) : null,
           identityKey: variantKey ? (ownership.identities.get(variantKey)?.key ?? null) : null,
           imageUrl: barcodeRow?.imageUrl ?? null,
-          recipeColor,
+          recipeColor: recipeColours ? recipeColours.color : null,
+          recipeSecondaryColor: recipeColours ? recipeColours.secondary : null,
         };
       });
       return { ...order, line_items: lineItems };

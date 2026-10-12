@@ -13,6 +13,7 @@ import userToursRouter from "./user-tours";
 import testRequestsRouter from "./test-requests";
 import recipesRouter from "./recipes";
 import recipeArchiveRouter from "./recipe-archive";
+import recipeColoursRouter from "./recipe-colours";
 import recipeQuidRouter from "./recipe-quid";
 import productionPlansRouter from "./production-plans";
 import buildingTablesRouter from "./building-tables";
@@ -227,6 +228,9 @@ router.use("/upf", upfRouter);
 router.use("/sub-recipes", subRecipePrepTimeRouter);
 router.use("/sub-recipes", subRecipeLabelUsageRouter);
 router.use("/sub-recipes", subRecipesRouter);
+// Identity colours (primary + optional secondary, migration 0185) — before
+// the main router so /colours is not taken for a recipe id.
+router.use("/recipes", recipeColoursRouter);
 router.use("/recipes", recipeArchiveRouter);
 // Automatic QUID: /recipes/:id/quid, /quid-terms, /quid-backfill.
 router.use(recipeQuidRouter);

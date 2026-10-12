@@ -17,6 +17,7 @@ import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
 import { packBarcodeFor } from "../lib/barcode-store";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { parseOvenOverride } from "../lib/recipe-oven-override";
+import { parseSecondaryColour } from "../lib/recipe-secondary-colour";
 import { decideCreateStage, decideMenuTick } from "../lib/recipe-archive-rules";
 import * as z from "zod";
 
@@ -76,6 +77,7 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
     isCurrentSpecial: r.isCurrentSpecial ?? false,
     isFridgeProduct: r.isFridgeProduct ?? false,
     color: r.color ?? null,
+    secondaryColor: r.secondaryColor ?? null,
     cookingLossPercent: r.cookingLossPercent != null ? Number(r.cookingLossPercent) : 3,
     builderFillingDeductionGrams: r.builderFillingDeductionGrams != null ? Number(r.builderFillingDeductionGrams) : 0,
     dietaryCategory: r.dietaryCategory ?? null,
@@ -259,6 +261,10 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
   // generated CreateRecipeBody doesn't know these keys yet.
   const oven = parseOvenOverride(req.body);
   if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
+  // Optional second identity colour (migration 0185): absent = unchanged,
+  // null / "" = None. Not in the generated body schemas yet.
+  const secondary = parseSecondaryColour(req.body);
+  if (!secondary.ok) { res.status(400).json({ error: secondary.error }); return; }
 
   const rawLines = rawBody<{ ingredients?: unknown[]; subRecipes?: unknown[] }>(req);
 
@@ -295,6 +301,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     isDraft: stage.isDraft,
     draftedAt: stage.isDraft ? new Date() : null,
     ...oven.fields,
+    ...secondary.fields,
   };
 
   // Everything in ONE transaction — a failed ingredient/sub-recipe/marinade
@@ -604,6 +611,10 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
 
   const oven = parseOvenOverride(req.body);
   if (!oven.ok) { res.status(400).json({ error: oven.error }); return; }
+  // Optional second identity colour (migration 0185): absent = unchanged,
+  // null / "" = None. Not in the generated body schemas yet.
+  const secondary = parseSecondaryColour(req.body);
+  if (!secondary.ok) { res.status(400).json({ error: secondary.error }); return; }
 
   // A draft can't be Core menu or the special (migration 0142): ticking
   // either on a draft only saves when this save puts it on the menu.
@@ -645,6 +656,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     // Only the oven keys the body actually carries — a client that doesn't
     // send them never wipes a saved override.
     ...oven.fields,
+    ...secondary.fields,
   };
 
   const [updated] = await db.transaction(async (tx) => {
