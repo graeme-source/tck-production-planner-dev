@@ -8,7 +8,9 @@
  *   • People access (the founder's per-person grant + private PIN): the
  *     contact on that person's People record, also logged;
  *   • anyone else asking for someone else's: 403.
- * Managers and admins may correct someone's (logged as an edit).
+ * Correcting someone else's (logged as an edit) needs a manager/admin role
+ * here AND the employment-record lock on the route (Graeme, or People
+ * access on anyone's but their own — middleware/employment-record-write.ts).
  *
  * Pure: the route hands in the database calls (EmergencyContactStore), so
  * the access decisions and "every view writes a log row" are tested

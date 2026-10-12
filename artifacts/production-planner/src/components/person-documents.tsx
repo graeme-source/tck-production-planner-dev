@@ -140,22 +140,26 @@ export function DocumentEntryCard({ entry, onOpen }: { entry: DocumentEntry; onO
   );
 }
 
-export function PersonDocumentsSection({ data, isLoading, error, onOpen, onAdd }: {
+export function PersonDocumentsSection({ data, isLoading, error, onOpen, onAdd, readOnly = false }: {
   data: PersonDocumentsResponse | undefined;
   isLoading: boolean;
   error: unknown;
   onOpen: (o: OpenDocument) => void;
   onAdd: () => void;
+  /** The viewer may read but not change this record. */
+  readOnly?: boolean;
 }) {
   const entries = data ? documentEntries(data.documents, data.onboarding) : [];
   return (
     <section className="rounded-3xl border-2 border-border bg-card p-4 sm:p-5 space-y-3">
       <div className="flex items-center gap-3 flex-wrap">
         <h2 className="flex-1 min-w-0 text-xl font-bold flex items-center gap-2"><FolderOpen className="w-5 h-5 text-primary" /> Documents</h2>
-        <button onClick={onAdd}
-          className="h-12 px-4 rounded-xl bg-primary text-primary-foreground font-bold flex items-center gap-2 hover:opacity-90">
-          <FilePlus2 className="w-5 h-5" /> Add a document
-        </button>
+        {!readOnly && (
+          <button onClick={onAdd}
+            className="h-12 px-4 rounded-xl bg-primary text-primary-foreground font-bold flex items-center gap-2 hover:opacity-90">
+            <FilePlus2 className="w-5 h-5" /> Add a document
+          </button>
+        )}
       </div>
       {data?.onboardingForm && <OnboardingFormCard form={data.onboardingForm} />}
       {isLoading ? (
@@ -387,11 +391,13 @@ export function AddDocumentModal({ userId, personName, canSetVisibility, onClose
 
 // ── Open one ───────────────────────────────────────────────────────────────
 
-export function DocumentOpenModal({ target, userId, personName, onClose }: {
+export function DocumentOpenModal({ target, userId, personName, onClose, readOnly = false }: {
   target: OpenDocument;
   userId: number;
   personName: string;
   onClose: () => void;
+  /** The viewer may read but not change this record. */
+  readOnly?: boolean;
 }) {
   if (target.source === "onboarding") {
     const d = target.doc;
@@ -408,11 +414,11 @@ export function DocumentOpenModal({ target, userId, personName, onClose }: {
       </PeopleModal>
     );
   }
-  return <FiledDocumentModal id={target.id} userId={userId} personName={personName} onClose={onClose} />;
+  return <FiledDocumentModal id={target.id} userId={userId} personName={personName} onClose={onClose} readOnly={readOnly} />;
 }
 
-function FiledDocumentModal({ id, userId, personName, onClose }: {
-  id: number; userId: number; personName: string; onClose: () => void;
+function FiledDocumentModal({ id, userId, personName, onClose, readOnly }: {
+  id: number; userId: number; personName: string; onClose: () => void; readOnly: boolean;
 }) {
   const meId = useMeId();
   const queryClient = useQueryClient();
@@ -460,12 +466,19 @@ function FiledDocumentModal({ id, userId, personName, onClose }: {
           <InlineDocument src={personDocumentFileUrl(row.id)} downloadSrc={personDocumentFileUrl(row.id, true)}
             mime={row.mime} title={row.title} />
           {/* Keyed by id so moving between documents never carries a draft across. */}
-          <DocumentDetails key={row.id} row={row} personName={personName} save={patch} />
+          {readOnly ? (
+            <div className="space-y-1 text-base">
+              <p><span className="font-bold">{kindLabel(row.kind)}</span> · {fmtDay(row.documentDate, true)}</p>
+              {row.notes && <p className="text-muted-foreground whitespace-pre-wrap">{row.notes}</p>}
+            </div>
+          ) : (
+            <DocumentDetails key={row.id} row={row} personName={personName} save={patch} />
+          )}
           <p className="text-sm text-muted-foreground">
             Added {new Date(row.uploadedAt).toLocaleString("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
             {row.uploadedByName ? ` by ${row.uploadedByName}` : ""} · {row.fileName ?? "file"} · {fmtBytes(row.byteSize)}
           </p>
-          {removing ? (
+          {readOnly ? null : removing ? (
             <div className="rounded-2xl border-2 border-destructive/50 bg-destructive/5 p-4 space-y-3">
               <p className="text-base font-semibold">
                 Remove "{row.title}" from {personName}'s record? It disappears from the record{row.sharedWithEmployee ? " and their Employee Hub" : ""}; a copy is kept behind the scenes with who removed it and when.

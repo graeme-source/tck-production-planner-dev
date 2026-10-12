@@ -4,17 +4,17 @@
  * nothing to who can open it. The contact itself is fetched only when
  * "Show emergency contact" is tapped, through a route the server logs
  * (/api/staff-emergency-contacts/people/:userId/view) — the onboarding form
- * card no longer carries it. Managers and admins can correct it here too.
+ * card no longer carries it. Graeme and Lorna can correct it here (never
+ * their own) — the server says so with each reveal (canCorrect).
  */
 import { useState } from "react";
 import { AlertTriangle, EyeOff, HeartPulse, Loader2, Lock, Pencil } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { useRevealEmergencyContact, type Revealed } from "./emergency-contacts-api";
-import { CorrectContact, RevealedContact, useCanSeeTeamEmergencyContacts } from "./team-emergency-contacts";
+import { CorrectContact, RevealedContact } from "./team-emergency-contacts";
 
 export function PersonEmergencyContactPanel({ userId, personName }: { userId: number; personName: string }) {
   const reveal = useRevealEmergencyContact();
-  const canCorrect = useCanSeeTeamEmergencyContacts();
   const [shown, setShown] = useState<Revealed | null>(null);
   const [editing, setEditing] = useState(false);
   const first = personName.split(" ")[0];
@@ -53,7 +53,7 @@ export function PersonEmergencyContactPanel({ userId, personName }: { userId: nu
       ) : (
         <>
           <RevealedContact contact={shown.contact} personName={personName} />
-          {canCorrect && (
+          {shown.canCorrect === true && (
             <button onClick={() => setEditing(true)}
               className="h-11 px-3.5 rounded-xl border-2 border-border text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-secondary/60">
               <Pencil className="w-4 h-4" /> {shown.contact ? "Correct it" : "Add one for them"}

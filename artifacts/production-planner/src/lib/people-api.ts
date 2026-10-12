@@ -55,7 +55,10 @@ export interface AttendanceSummary {
 }
 
 export interface PersonRecordResponse {
-  person: PersonBasics;
+  /** canWrite: may the viewer change this record at all (the server's
+   *  employment-record lock — Graeme, and People access on anyone's but
+   *  their own); readOnlyNote says why not. */
+  person: PersonBasics & { canWrite?: boolean; readOnlyNote?: string | null };
   window: { from: string; to: string; defaultFrom: string };
   spells: TimelineSpell[];
   lates: TimelineLate[];
@@ -75,6 +78,8 @@ export interface JobTitlesResponse {
     isActive: boolean;
     jobTitle: string | null;
     contractJobTitle: string | null;
+    /** False = the viewer may not change this person's record (e.g. their own). */
+    canWrite?: boolean;
   }>;
 }
 

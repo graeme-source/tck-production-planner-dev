@@ -504,6 +504,10 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   }
 
   const p = data.person;
+  // The employment-record lock (server: lib/people-write-access.ts): only
+  // Graeme, and People access on anyone's record but their own. Read-only
+  // otherwise — the server refuses the writes regardless.
+  const canWrite = p.canWrite !== false;
   const s = data.summary;
   const canManage = reviews.data?.canManage ?? false;
   const startDate = p.contractStartDate
@@ -540,7 +544,12 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         </div>
         {/* Their job title — what they do, not their app access. Keyed by
             person so moving between records never carries a draft across. */}
-        <JobTitleField key={p.id} userId={p.id} initial={p.jobTitle} />
+        <JobTitleField key={p.id} userId={p.id} initial={p.jobTitle} readOnly={!canWrite} />
+        {!canWrite && p.readOnlyNote && (
+          <p className="rounded-2xl bg-secondary/50 px-4 py-3 text-base font-semibold flex items-center gap-2">
+            <Lock className="w-5 h-5 shrink-0" /> {p.readOnlyNote}
+          </p>
+        )}
         <div className="grid gap-3 sm:grid-cols-3">
           <button onClick={() => setModal("rtw")}
             className={cn("h-16 rounded-2xl text-lg font-bold flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
@@ -622,16 +631,19 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         error={documents.error}
         onOpen={setOpenDocument}
         onAdd={() => setAddingDocument(true)}
+        readOnly={!canWrite}
       />
 
       {/* Everything, in one line of time. */}
       <section className="space-y-3">
         <div className="flex items-center gap-3 flex-wrap">
           <h2 className="flex-1 min-w-0 text-xl font-bold flex items-center gap-2"><History className="w-5 h-5 text-primary" /> The record</h2>
-          <button onClick={() => setAddingDocument(true)}
-            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/50">
-            <FilePlus2 className="w-5 h-5" /> Add a document
-          </button>
+          {canWrite && (
+            <button onClick={() => setAddingDocument(true)}
+              className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/50">
+              <FilePlus2 className="w-5 h-5" /> Add a document
+            </button>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           {TIMELINE_FILTERS.filter(f => f.key !== "contracts" || counts.contracts > 0).map(f => (
@@ -735,7 +747,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         />
       )}
       {openDocument && (
-        <DocumentOpenModal target={openDocument} userId={p.id} personName={p.name} onClose={() => setOpenDocument(null)} />
+        <DocumentOpenModal target={openDocument} userId={p.id} personName={p.name} onClose={() => setOpenDocument(null)} readOnly={!canWrite} />
       )}
       {openForm && (
         <PeopleModal title="Return-to-work form" onClose={() => { setOpenForm(null); refreshAll(); }} wide>
