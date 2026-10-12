@@ -21,6 +21,7 @@ import { Factory, Tablet, ShieldAlert, Camera, Image as ImageIcon, Loader2, X, A
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
+import { DictateButton } from "@/components/dictate-button";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -185,6 +186,9 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
                 placeholder={area === "system" ? "What were you doing, and what happened?" : "What's the problem, and where?"}
                 className="w-full px-4 py-3 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
               />
+              {/* Saying it is quicker than typing it on an iPad mid-shift
+                  (Graeme, 2026-10-12). Same dictate-and-tidy as improvements. */}
+              <DictateButton value={description} onChange={setDescription} context="note" size="lg" className="mt-3" />
             </div>
 
             <button

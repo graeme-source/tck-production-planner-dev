@@ -45,6 +45,7 @@ import ImprovementsPage from "@/pages/improvements";
 import { creditLabel } from "@/lib/improvement-credits";
 import { defectHeadline, pctText, plural } from "@/lib/defects-view";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
+import { DictateButton } from "@/components/dictate-button";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -2974,6 +2975,7 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
           placeholder="What's the concern?"
           className="w-full min-h-[80px] bg-background border border-border rounded-xl p-3 text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
         />
+        <DictateButton value={description} onChange={setDescription} context="note" size="lg" className="mt-3" />
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2">
             <button onClick={() => setSeverity("yellow")} className={cn("px-3 py-1.5 rounded-lg text-base font-medium border", severity === "yellow" ? "bg-amber-500/20 border-amber-500/50 text-amber-700 dark:text-amber-300" : "border-border")}>Yellow</button>
