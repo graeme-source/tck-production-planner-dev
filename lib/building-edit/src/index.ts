@@ -22,6 +22,17 @@
  *   Extra packs = loose packs not in any batch row (≥ 0): Σ extra_packs plus
  *                 the part-batch shortfall that was taken off them;
  *   Total packs = Batches × packsPerBatch − part-batch shortfall + Extra packs.
+ *
+ * Builders own their numbers (Graeme, 12 Oct 2026, fix-queue #318 from Jane:
+ * "The builders need to be able to minus off batches and packs as they see
+ * fit"). There is no floor at what the ovens have recorded: the Ovens "From
+ * Building" count is its own batch_completions rows (station 'ovens'), one
+ * per tray the oven person taps through. If the builders' corrected count is
+ * below it, the same save takes the ovens' newest rows off so Ovens never
+ * shows more than was built — the oven person doesn't have to find and fix a
+ * mistake they didn't make. The only floors left are 0 and the packs already
+ * wrapped into the fridge/freezer (real stock, moved only by Wrapping's own
+ * confirmed "take back out").
  */
 
 export const BUILDING_LINES = ["building_1", "building_2"] as const;
@@ -44,6 +55,10 @@ export interface BuildEditState {
   packsPerBatch: number;
   /** Batches the ovens have already cooked for this item. */
   ovenBatches: number;
+  /** The ovens' own rows for this item (server side), so a save that takes
+   *  building below the ovens can say which oven rows come off. Optional:
+   *  the count alone is enough to work out and show the new number. */
+  ovenCompletions?: BuildCompletion[];
   /** Packs already wrapped into the Production Fridge / Product Freezer. */
   packsStored: number;
 }
@@ -69,8 +84,22 @@ export interface EditPlan {
   addBatches: number;
   /** Change to each line's extra_packs. Lines with no change are omitted. */
   extrasDelta: Partial<Record<string, number>>;
+  /** Batches added (+) / taken off (−) each line. Lines with no change omitted. */
+  batchesByLine: Partial<Record<string, number>>;
+  /** Loose packs added (+) / taken off (−) each line. Lines with no change omitted. */
+  extraPacksByLine: Partial<Record<string, number>>;
+  /** The ovens' "From Building" count follows the builders down: never more
+   *  oven rows than building rows. */
+  ovens: OvenFollow;
   before: BuildNumbers;
   after: BuildNumbers;
+}
+
+export interface OvenFollow {
+  before: number;
+  after: number;
+  /** Oven rows to delete (newest first) — only when ovenCompletions given. */
+  removeCompletionIds: number[];
 }
 
 function ppbOf(state: BuildEditState): number {
@@ -143,37 +172,89 @@ export function removalOrder(completions: BuildCompletion[], line: string): Buil
     .sort((a, b) => ((a.partialPacks == null ? 0 : 1) - (b.partialPacks == null ? 0 : 1)) || newestFirst(a, b));
 }
 
+/** The chosen line first, then the other building lines (and any other
+ *  line that has rows), so a typed-in number can come off both lines. */
+function lineOrder(first: string, state: BuildEditState): string[] {
+  const others = [...BUILDING_LINES, ...state.completions.map(c => c.stationType), ...Object.keys(state.stationExtras)];
+  return [...new Set([first, ...others])];
+}
+
 /**
- * Turn the staged numbers into exactly what to change, on the chosen line(s).
+ * How many oven rows a building count of `batches` leaves: the ovens can't
+ * have cooked more than was built, so they come down to match; going up
+ * leaves them alone.
+ */
+export function ovensAfterEdit(state: BuildEditState, batches: number): OvenFollow {
+  const before = Math.max(0, state.ovenBatches);
+  const after = Math.max(0, Math.min(before, Math.trunc(batches)));
+  const rows = [...(state.ovenCompletions ?? [])].sort(newestFirst);
+  return { before, after, removeCompletionIds: rows.slice(0, before - after).map(c => c.id) };
+}
+
+/**
+ * Turn the staged numbers into exactly what to change. Batches come off the
+ * chosen line first (its newest full batch first), then the other line if the
+ * chosen one hasn't enough — so a builder can just type the right number.
  * Removing a part batch gives its line back the shortfall that was taken off
  * its extras, so the batch disappears with its own packs and that line's
- * loose-pack count is untouched. A line can only give up what it has —
- * editBlockReason says so in words; this never takes from the other line.
+ * loose-pack count is untouched. Extra packs likewise: the chosen line's
+ * loose packs first, then the other line's; additions go on the chosen line.
+ * If the new batch count is below the ovens' count, `ovens` says which oven
+ * rows come off with it.
  */
 export function planBuildEdit(state: BuildEditState, target: EditTarget, lines: EditLines | string): EditPlan {
   const { batches: batchLine, extraPacks: packLine } = linesOf(lines);
   const ppb = ppbOf(state);
   const before = buildNumbers(state);
   const extrasDelta: Record<string, number> = {};
-  const bump = (station: string, d: number) => {
+  const batchesByLine: Record<string, number> = {};
+  const extraPacksByLine: Record<string, number> = {};
+  const bump = (into: Record<string, number>, station: string, d: number) => {
     if (d === 0) return;
-    extrasDelta[station] = (extrasDelta[station] ?? 0) + d;
+    into[station] = (into[station] ?? 0) + d;
   };
 
   const batchChange = Math.trunc(target.batches) - before.batches;
   const removeCompletionIds: number[] = [];
   let addBatches = 0;
   if (batchChange < 0) {
-    for (const c of removalOrder(state.completions, batchLine).slice(0, -batchChange)) {
+    const order = lineOrder(batchLine, state).flatMap(l => removalOrder(state.completions, l));
+    for (const c of order.slice(0, -batchChange)) {
       removeCompletionIds.push(c.id);
-      bump(c.stationType, shortfallOf(c, ppb));
+      bump(extrasDelta, c.stationType, shortfallOf(c, ppb));
+      bump(batchesByLine, c.stationType, -1);
     }
   } else {
     addBatches = batchChange;
+    bump(batchesByLine, batchLine, addBatches);
   }
 
   const extraChange = Math.trunc(target.extraPacks) - before.extraPacks;
-  bump(packLine, extraChange);
+  if (extraChange >= 0) {
+    bump(extrasDelta, packLine, extraChange);
+    bump(extraPacksByLine, packLine, extraChange);
+  } else {
+    // Each line's loose packs once the batch change above is applied: its
+    // extra_packs (with any part-batch shortfall given back) plus the
+    // shortfall of the part batches it still has.
+    const loose = (l: string) => {
+      const shortfall = state.completions
+        .filter(c => c.stationType === l && !removeCompletionIds.includes(c.id))
+        .reduce((t, c) => t + shortfallOf(c, ppb), 0);
+      return (state.stationExtras[l] ?? 0) + (extrasDelta[l] ?? 0) + shortfall;
+    };
+    let need = -extraChange;
+    for (const l of lineOrder(packLine, state)) {
+      if (need <= 0) break;
+      const take = Math.min(need, Math.max(0, loose(l)));
+      if (take <= 0) continue;
+      bump(extrasDelta, l, -take);
+      bump(extraPacksByLine, l, -take);
+      need -= take;
+    }
+    // Only reachable below the floor, which editBlockReason refuses.
+    if (need > 0) { bump(extrasDelta, packLine, -need); bump(extraPacksByLine, packLine, -need); }
+  }
   for (const k of Object.keys(extrasDelta)) if (extrasDelta[k] === 0) delete extrasDelta[k];
 
   const afterState: BuildEditState = {
@@ -189,7 +270,12 @@ export function planBuildEdit(state: BuildEditState, target: EditTarget, lines: 
         .map(k => [k, (state.stationExtras[k] ?? 0) + (extrasDelta[k] ?? 0)]),
     ),
   };
-  return { removeCompletionIds, addBatches, extrasDelta, before, after: buildNumbers(afterState) };
+  const after = buildNumbers(afterState);
+  return {
+    removeCompletionIds, addBatches, extrasDelta, batchesByLine, extraPacksByLine,
+    ovens: ovensAfterEdit(state, after.batches),
+    before, after,
+  };
 }
 
 /**
@@ -203,9 +289,12 @@ export function lineCanGive(state: BuildEditState, line: string, field: keyof Ed
 
 /**
  * Why a staged edit can't be saved, in words for the builder — or null when
- * it's fine. The chosen line must have what's being taken off it; then the
- * downstream floors: nothing below what the ovens have already cooked, and
- * the pack total never below what is already wrapped into the fridge/freezer.
+ * it's fine. Builders can set any number from 0 up (Graeme, 12 Oct 2026):
+ * nothing stops them going below what the ovens recorded — the ovens follow
+ * (planBuildEdit().ovens, said before Save by ovensFollowNote) — and a
+ * change that one line can't cover comes off the other line too. The one
+ * downstream floor left is real stock: the pack total never below what is
+ * already wrapped into the fridge/freezer.
  */
 export function editBlockReason(state: BuildEditState, target: EditTarget, lines: EditLines | string, unit: UnitWords = BATCH_WORDS): string | null {
   const chosen = linesOf(lines);
@@ -215,24 +304,22 @@ export function editBlockReason(state: BuildEditState, target: EditTarget, lines
   // the old Undo left its shortfall behind) and isn't being lowered further.
   const extrasFloor = Math.min(0, before.extraPacks);
   if (!Number.isInteger(target.extraPacks) || target.extraPacks < extrasFloor) return `Extra packs can't go below ${extrasFloor}.`;
-  if (target.batches < state.ovenBatches) {
-    return `${count(state.ovenBatches, unit)} ${state.ovenBatches === 1 ? "has" : "have"} already gone through the ovens, so this can't go below ${state.ovenBatches}. If the ovens recorded one by mistake, the oven station takes it off first.`;
-  }
-  const batchesOff = before.batches - target.batches;
-  if (!lineCanGive(state, chosen.batches, "batches", batchesOff)) {
-    const has = lineNumbers(state, chosen.batches).batches;
-    return `${lineLabel(chosen.batches)} has only ${count(has, unit)} of this recipe recorded.`;
-  }
-  const packsOff = before.extraPacks - target.extraPacks;
-  if (packsOff > 0 && !lineCanGive(state, chosen.extraPacks, "extraPacks", packsOff)) {
-    const has = Math.max(0, lineNumbers(state, chosen.extraPacks).extraPacks);
-    return `${lineLabel(chosen.extraPacks)} has only ${count(has, { singular: "extra pack", plural: "extra packs" })} on this recipe.`;
-  }
   const { after } = planBuildEdit(state, target, chosen);
   if (after.totalPacks < state.packsStored) {
     return `${count(state.packsStored, PACK_WORDS)} ${state.packsStored === 1 ? "is" : "are"} already wrapped and in the fridge or freezer, so the total can't drop below ${state.packsStored}. Wrapping takes packs back out first.`;
   }
   return null;
+}
+
+/**
+ * What the save will do to the ovens, in words, shown before Save — or null
+ * when the ovens aren't affected. e.g. "Ovens has 10 batches recorded from
+ * Building — saving will also set Ovens to 9."
+ */
+export function ovensFollowNote(state: BuildEditState, target: EditTarget, unit: UnitWords = BATCH_WORDS): string | null {
+  const o = ovensAfterEdit(state, target.batches);
+  if (o.after === o.before) return null;
+  return `Ovens has ${count(o.before, unit)} recorded from Building — saving will also set Ovens to ${o.after}.`;
 }
 
 /**
@@ -266,6 +353,32 @@ export function editSummary(before: EditTarget, after: EditTarget, unit: UnitWor
   const parts: string[] = [];
   if (before.batches !== after.batches) parts.push(`${cap(unit.plural)} ${before.batches} → ${after.batches}${where(before.batches, after.batches, chosen?.batches)}`);
   if (before.extraPacks !== after.extraPacks) parts.push(`Extra packs ${before.extraPacks} → ${after.extraPacks}${where(before.extraPacks, after.extraPacks, chosen?.extraPacks)}`);
+  return parts.join(", ");
+}
+
+/**
+ * The summary for the Save button and the audit log, from the plan itself,
+ * so it names where each change landed and what the ovens did, e.g.
+ * "Batches 10 → 5 (4 off Line 1, 1 off Line 2), Ovens 10 → 5".
+ */
+export function describeEdit(plan: EditPlan, unit: UnitWords = BATCH_WORDS): string {
+  const where = (byLine: Partial<Record<string, number>>) => {
+    const entries = Object.entries(byLine).filter((e): e is [string, number] => !!e[1]);
+    if (entries.length === 0) return "";
+    if (entries.length === 1) {
+      const [l, d] = entries[0];
+      return ` (${d < 0 ? "taken off" : "added to"} ${lineLabel(l)})`;
+    }
+    return ` (${entries.map(([l, d]) => `${Math.abs(d)} ${d < 0 ? "off" : "on"} ${lineLabel(l)}`).join(", ")})`;
+  };
+  const parts: string[] = [];
+  if (plan.before.batches !== plan.after.batches) {
+    parts.push(`${cap(unit.plural)} ${plan.before.batches} → ${plan.after.batches}${where(plan.batchesByLine)}`);
+  }
+  if (plan.before.extraPacks !== plan.after.extraPacks) {
+    parts.push(`Extra packs ${plan.before.extraPacks} → ${plan.after.extraPacks}${where(plan.extraPacksByLine)}`);
+  }
+  if (plan.ovens.after !== plan.ovens.before) parts.push(`Ovens ${plan.ovens.before} → ${plan.ovens.after}`);
   return parts.join(", ");
 }
 

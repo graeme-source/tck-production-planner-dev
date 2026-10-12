@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildNumbers, planBuildEdit, editBlockReason, lowestAllowed, editSummary, removalOrder,
   lineNumbers, lineCanGive, lineLabel, PACK_WORDS, linesByRecentWork, planExtraPackTap, type BuildCompletion, type BuildEditState,
+  ovensAfterEdit, ovensFollowNote, describeEdit,
 } from "./index";
 
 const at = (min: number) => new Date(Date.UTC(2026, 9, 9, 8, min)).toISOString();
@@ -91,16 +92,32 @@ describe("planBuildEdit", () => {
     expect(plan.after).toMatchObject({ extraPacks: 2, totalPacks: 17 });
   });
 
-  it("−extra packs come off the chosen line only, and a line can't give more than it holds", () => {
+  it("−extra packs come off the chosen line first, then the other line (a typed-in number just works)", () => {
     const s = state({ stationExtras: { building_1: 1, building_2: 2 } });
     expect(planBuildEdit(s, { batches: 3, extraPacks: 1 }, "building_2").extrasDelta).toEqual({ building_2: -2 });
-    expect(editBlockReason(s, { batches: 3, extraPacks: 1 }, "building_1")).toBe("Line 1 has only 1 extra pack on this recipe.");
-    expect(editBlockReason(s, { batches: 3, extraPacks: 1 }, "building_2")).toBeNull();
+    const plan = planBuildEdit(s, { batches: 3, extraPacks: 1 }, "building_1");
+    expect(plan.extrasDelta).toEqual({ building_1: -1, building_2: -1 });
+    expect(plan.after.extraPacks).toBe(1);
+    expect(editBlockReason(s, { batches: 3, extraPacks: 1 }, "building_1")).toBeNull();
+    expect(describeEdit(plan)).toBe("Extra packs 3 → 1 (1 off Line 1, 1 off Line 2)");
   });
 
-  it("a line can't give up more batches than it recorded", () => {
-    expect(editBlockReason(state(), { batches: 1, extraPacks: 0 }, "building_2")).toBe("Line 2 has only 1 batch of this recipe recorded.");
-    expect(editBlockReason(state(), { batches: 1, extraPacks: 0 }, "building_1")).toBeNull();
+  it("taking off more batches than the chosen line has takes the rest off the other line", () => {
+    // state(): Line 1 has ids 1 and 3, Line 2 has id 2.
+    const plan = planBuildEdit(state(), { batches: 1, extraPacks: 0 }, "building_2");
+    expect(plan.removeCompletionIds).toEqual([2, 3]);
+    expect(plan.after.batches).toBe(1);
+    expect(editBlockReason(state(), { batches: 1, extraPacks: 0 }, "building_2")).toBeNull();
+    expect(describeEdit(plan)).toBe("Batches 3 → 1 (1 off Line 2, 1 off Line 1)");
+  });
+
+  it("extra packs can be set straight to 0 across both lines, never below", () => {
+    const s = state({ stationExtras: { building_1: 2, building_2: 3 } });
+    const plan = planBuildEdit(s, { batches: 3, extraPacks: 0 }, "building_1");
+    expect(plan.extrasDelta).toEqual({ building_1: -2, building_2: -3 });
+    expect(plan.after.extraPacks).toBe(0);
+    expect(editBlockReason(s, { batches: 3, extraPacks: 0 }, "building_1")).toBeNull();
+    expect(editBlockReason(s, { batches: 3, extraPacks: -1 }, "building_1")).toBe("Extra packs can't go below 0.");
   });
 
   it("removing a part batch takes its own packs with it and leaves extra packs alone", () => {
@@ -122,12 +139,56 @@ describe("planBuildEdit", () => {
   });
 });
 
-describe("editBlockReason / lowestAllowed (downstream floors)", () => {
-  it("can't drop below batches already through the ovens", () => {
-    const s = state({ ovenBatches: 3 });
-    expect(editBlockReason(s, { batches: 2, extraPacks: 0 }, "building_1")).toMatch(/3 batches have already gone through the ovens/);
-    expect(lowestAllowed(s, { batches: 3, extraPacks: 0 }, "batches")).toBe(3);
+// Regression, fix-queue #318 (Jane, 12 Oct 2026): "The system won't let me
+// minus a batch or packs" — Edit numbers refused to go below what the Ovens
+// had recorded from Building. Builders now set the number; the ovens follow.
+describe("ovens follow the builders (fix-queue #318)", () => {
+  const ten = Array.from({ length: 10 }, (_, i) => full(i + 1, i % 2 ? "building_2" : "building_1", i));
+  const ovenRows = Array.from({ length: 10 }, (_, i) => full(101 + i, "ovens", 20 + i));
+  const s = state({ completions: ten, ovenBatches: 10, ovenCompletions: ovenRows });
+
+  it("building 10 → 9 with ovens 10 is allowed and sets ovens to 9 (newest oven row off)", () => {
+    expect(editBlockReason(s, { batches: 9, extraPacks: 0 }, "building_1")).toBeNull();
+    const plan = planBuildEdit(s, { batches: 9, extraPacks: 0 }, "building_1");
+    expect(plan.removeCompletionIds).toHaveLength(1);
+    expect(plan.ovens).toEqual({ before: 10, after: 9, removeCompletionIds: [110] });
+    expect(ovensFollowNote(s, { batches: 9, extraPacks: 0 })).toBe("Ovens has 10 batches recorded from Building — saving will also set Ovens to 9.");
+    expect(describeEdit(plan)).toBe("Batches 10 → 9 (taken off Line 1), Ovens 10 → 9");
   });
+
+  it("takes off oven tray rows only — weight records (HACCP) are never part of the edit", () => {
+    const plan = planBuildEdit(s, { batches: 7, extraPacks: 0 }, "building_1");
+    expect(plan.ovens.removeCompletionIds).toEqual([110, 109, 108]);
+    expect(plan.ovens.removeCompletionIds.every(id => ovenRows.some(r => r.id === id))).toBe(true);
+    expect(Object.keys(plan.ovens).sort()).toEqual(["after", "before", "removeCompletionIds"]);
+  });
+
+  it("building 10 → 12 leaves ovens at 10", () => {
+    const plan = planBuildEdit(s, { batches: 12, extraPacks: 0 }, "building_1");
+    expect(plan.ovens).toEqual({ before: 10, after: 10, removeCompletionIds: [] });
+    expect(ovensFollowNote(s, { batches: 12, extraPacks: 0 })).toBeNull();
+    expect(describeEdit(plan)).toBe("Batches 10 → 12 (added to Line 1)");
+  });
+
+  it("building can go all the way to 0, and the ovens with it", () => {
+    expect(editBlockReason(s, { batches: 0, extraPacks: 0 }, "building_2")).toBeNull();
+    expect(planBuildEdit(s, { batches: 0, extraPacks: 0 }, "building_2").ovens.after).toBe(0);
+    expect(lowestAllowed(s, { batches: 10, extraPacks: 0 }, "batches")).toBe(0);
+  });
+
+  it("ovens below building are left alone", () => {
+    const fewer = state({ completions: ten, ovenBatches: 4 });
+    expect(ovensAfterEdit(fewer, 6)).toEqual({ before: 4, after: 4, removeCompletionIds: [] });
+    expect(ovensAfterEdit(fewer, 3)).toEqual({ before: 4, after: 3, removeCompletionIds: [] }); // ids only when rows given
+  });
+
+  it("uses pack words for recipes counted in packs", () => {
+    expect(ovensFollowNote(state({ ovenBatches: 1 }), { batches: 0, extraPacks: 0 }, PACK_WORDS))
+      .toBe("Ovens has 1 pack recorded from Building — saving will also set Ovens to 0.");
+  });
+});
+
+describe("editBlockReason / lowestAllowed (floors)", () => {
 
   it("can't drop the pack total below what's already wrapped into storage", () => {
     const s = state({ stationExtras: { building_1: 2 }, packsStored: 16 });
@@ -139,7 +200,7 @@ describe("editBlockReason / lowestAllowed (downstream floors)", () => {
   it("never below zero", () => {
     expect(editBlockReason(state(), { batches: -1, extraPacks: 0 }, "building_1")).not.toBeNull();
     expect(editBlockReason(state(), { batches: 0, extraPacks: -1 }, "building_1")).not.toBeNull();
-    expect(lowestAllowed(state(), { batches: 3, extraPacks: 0 }, "batches")).toBe(1); // one line per save: Line 1 holds 2 of the 3
+    expect(lowestAllowed(state(), { batches: 3, extraPacks: 0 }, "batches")).toBe(0); // both lines' batches can come off in one save
   });
 
   it("a negative extra-pack count left by the old Undo can be kept or raised, not lowered", () => {
@@ -152,7 +213,7 @@ describe("editBlockReason / lowestAllowed (downstream floors)", () => {
   });
 
   it("uses pack words for recipes counted in packs", () => {
-    expect(editBlockReason(state({ ovenBatches: 1 }), { batches: 0, extraPacks: 0 }, "building_1", PACK_WORDS)).toMatch(/^1 pack has already/);
+    expect(editBlockReason(state(), { batches: -1, extraPacks: 0 }, "building_1", PACK_WORDS)).toBe("Packs can't go below 0.");
   });
 });
 
