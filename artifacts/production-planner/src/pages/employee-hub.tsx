@@ -23,6 +23,7 @@ import { EmployeeReviewsSection } from "@/components/employee-reviews";
 import { Car, Plus, Trash2, FileDown, Mail, Lightbulb, AlertTriangle, BookOpen, Loader2, Receipt, Camera, Upload, X, FileText, ScrollText, ChevronRight, ListTodo, ClipboardList, FileSignature, UsersRound, FolderOpen } from "lucide-react";
 import { MyContractSection } from "@/components/my-contract";
 import { MyDocumentsSection } from "@/components/my-documents";
+import { MyLettersSection } from "@/components/people/my-letters";
 import { StarterFormsList } from "@/components/starter-forms";
 import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
@@ -1305,6 +1306,7 @@ export default function EmployeeHub() {
                   Letters, certificates and other documents kept on your record that have been shared with you. Read-only.
                 </p>
               </div>
+              <MyLettersSection />
               <MyDocumentsSection />
             </>
           )}

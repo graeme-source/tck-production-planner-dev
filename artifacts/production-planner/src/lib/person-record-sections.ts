@@ -11,12 +11,15 @@ import type { PersonHoursResponse } from "./hours-worked-view";
 import type { ContractHistoryResponse } from "./contract-history";
 import type { PersonDocumentsResponse } from "./person-documents";
 
-export const RECORD_SECTIONS = ["hours", "holiday", "contracts", "documents", "emergency", "agreed"] as const;
+export const RECORD_SECTIONS = ["hours", "holiday", "contracts", "documents", "emergency", "agreed", "record"] as const;
 export type RecordSection = (typeof RECORD_SECTIONS)[number];
 
-/** `?section=holiday` opens that panel when the record loads. */
+/** `?section=holiday` opens that panel when the record loads; `?entry=12`
+ *  (a to-do's link back to a record entry) opens Reviews & records. */
 export function sectionFromSearch(search: string): RecordSection | null {
-  const raw = new URLSearchParams(search).get("section");
+  const params = new URLSearchParams(search);
+  if (params.get("entry") && !params.get("section")) return "record";
+  const raw = params.get("section");
   return raw && (RECORD_SECTIONS as readonly string[]).includes(raw) ? (raw as RecordSection) : null;
 }
 
@@ -103,4 +106,18 @@ export function documentsSummary(data: PersonDocumentsResponse | undefined, load
 /** What we agreed — open objectives from meetings. */
 export function agreedSummary(count: number): SectionSummary {
   return count === 0 ? plain("Nothing open") : { line: `${count} thing${count === 1 ? "" : "s"} agreed`, tone: "warn" };
+}
+
+/** Reviews & records — the badge's wording when something is open, else a
+ *  live warning, else how many entries. `badgeLabel` from reviewBadge. */
+export function recordEntriesSummary(
+  data: { count: number; badgeLabel: string | null; formal: boolean; liveWarningUntil: string | null } | undefined,
+  loading: boolean,
+  failed: boolean,
+): SectionSummary {
+  if (!data) return plain(loading ? "Loading the record…" : failed ? "Couldn't load the record" : "Nothing on the record yet");
+  if (data.badgeLabel) return { line: data.badgeLabel, tone: data.formal ? "alert" : "warn" };
+  if (data.liveWarningUntil) return { line: `Live warning until ${fmtDay(data.liveWarningUntil, true)}`, tone: "warn" };
+  if (data.count === 0) return plain("Nothing on the record yet");
+  return plain(`${data.count} entr${data.count === 1 ? "y" : "ies"}`);
 }

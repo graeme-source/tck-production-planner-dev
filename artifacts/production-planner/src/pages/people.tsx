@@ -31,6 +31,9 @@ import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { usePeopleReady, peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { usePeopleKeepAlive } from "@/hooks/use-people-keep-alive";
+import { useRecordBadges, type BadgeRow } from "@/components/people/reviews-api";
+import { ReviewStatusBadge } from "@/components/people/review-status-badge";
+import { NeedsAttention } from "@/components/people/needs-attention";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { UserAvatar } from "@/components/user-avatar";
 import { PersonRecord } from "@/components/people-record";
@@ -44,6 +47,9 @@ export default function PeopleSection() {
   const isPeople = useIsRtwManager();
   const [onRecord, params] = useRoute<{ userId: string }>("/people/:userId");
   const [onJobTitles] = useRoute("/people/job-titles");
+  // The private HR queue — where the generic "Your attention is required in
+  // HR" to-do lands, behind the same PIN gate as everything else here.
+  const [onAttention] = useRoute("/people/attention");
   useSensitivePinGate({ enabled: isPeople, includeAdmins: true, fresh: true, entryKey: "people", scope: "people" });
   const ready = usePeopleReady(isPeople);
   // Typing keeps the PIN lock open; a write refused by the lock asks for the
@@ -81,6 +87,7 @@ export default function PeopleSection() {
   }
 
   if (onJobTitles) return <JobTitlesBulk ready={ready} />;
+  if (onAttention) return <NeedsAttention ready={ready} />;
 
   const userId = onRecord && params ? Number(params.userId) : null;
   if (userId != null && Number.isInteger(userId) && userId > 0) {
@@ -103,7 +110,7 @@ function Flag({ tone, icon: Icon, children }: { tone: "amber" | "rose" | "sky" |
   );
 }
 
-function PersonCardView({ p, policy }: { p: PersonCard; policy: PeopleListResponse["policy"] }) {
+function PersonCardView({ p, policy, review }: { p: PersonCard; policy: PeopleListResponse["policy"]; review?: BadgeRow }) {
   return (
     <Link
       href={`/people/${p.id}`}
@@ -124,6 +131,8 @@ function PersonCardView({ p, policy }: { p: PersonCard; policy: PeopleListRespon
         </div>
         <ChevronRight className="w-6 h-6 text-muted-foreground shrink-0" />
       </div>
+      {/* Reviews & records — only ever sent for people this viewer may open. */}
+      {review && <ReviewStatusBadge badge={review.badge} liveWarningUntil={review.liveWarningUntil} size="sm" className="mt-3" />}
       {(p.formsNeeded > 0 || p.triggers.sickness || p.triggers.lates || p.nextMeeting || p.awayNow || !p.isActive) && (
         <div className="flex flex-wrap gap-2 mt-3">
           {!p.isActive && <Flag tone="slate">Leaver</Flag>}
@@ -158,6 +167,9 @@ function PeopleList({ ready }: { ready: boolean }) {
   const isFounder = state.status === "authenticated" && isFounderEmail(state.user.email);
   const [search, setSearch] = useState("");
   const [leavers, setLeavers] = useState(false);
+  const [inReviewOnly, setInReviewOnly] = useState(false);
+  const badges = useRecordBadges(ready);
+  const badgeByUser = useMemo(() => new Map((badges.data?.badges ?? []).map(b => [b.userId, b])), [badges.data]);
   // "Hours vs contract" lives in the URL (?view=hours) so Back from
   // someone's record returns to it.
   const [, navigate] = useLocation();
@@ -171,10 +183,11 @@ function PeopleList({ ready }: { ready: boolean }) {
 
   const shown = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const people = data?.people ?? [];
+    const all = data?.people ?? [];
+    const people = inReviewOnly ? all.filter(p => badgeByUser.get(p.id)?.badge) : all;
     if (!q) return people;
     return people.filter(p => p.name.toLowerCase().includes(q) || (p.jobTitle ?? "").toLowerCase().includes(q));
-  }, [data, search]);
+  }, [data, search, inReviewOnly, badgeByUser]);
 
   if (error instanceof PeopleLockedError) return <PeopleLockedCard error={error} />;
 
@@ -266,6 +279,24 @@ function PeopleList({ ready }: { ready: boolean }) {
         >
           {leavers ? "Showing leavers" : "Include leavers"}
         </button>
+        {badges.data && (
+          <Link href="/people/attention"
+            className="h-14 px-5 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
+            Needs attention
+          </Link>
+        )}
+        {badges.data && (
+          <button
+            onClick={() => setInReviewOnly(v => !v)}
+            aria-pressed={inReviewOnly}
+            className={cn(
+              "h-14 px-5 rounded-2xl border-2 text-lg font-bold transition-colors",
+              inReviewOnly ? "border-primary bg-primary/10 text-primary" : "border-border hover:bg-secondary/50",
+            )}
+          >
+            In review{inReviewOnly ? " only" : ""}
+          </button>
+        )}
       </div>
 
       {!ready || isLoading ? (
@@ -276,7 +307,7 @@ function PeopleList({ ready }: { ready: boolean }) {
         <p className="text-center py-12 text-lg text-muted-foreground">{search ? "Nobody matches that." : "Nobody here yet."}</p>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
-          {shown.map(p => <PersonCardView key={p.id} p={p} policy={data!.policy} />)}
+          {shown.map(p => <PersonCardView key={p.id} p={p} policy={data!.policy} review={badgeByUser.get(p.id)} />)}
         </div>
       )}
 

@@ -20,7 +20,7 @@ import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
-  HeartPulse, Loader2, Lock, PenLine, Plus, RefreshCw, Sun, Target, History,
+  HeartPulse, Loader2, Lock, PenLine, Plus, RefreshCw, Sun, Target, History, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -56,10 +56,12 @@ import {
 import { documentEntries, isFiledFounderOnly } from "@/lib/person-documents";
 import { PersonEmergencyContactPanel } from "@/components/emergency-contacts/person-emergency-contact-panel";
 import { PeopleSheet } from "@/components/people-sheet";
+import { RecordPanel, RecordTimelineCard, useRecordFacts } from "@/components/people/record-panel";
+import { ReviewStatusBadge } from "@/components/people/review-status-badge";
 import { defaultHoursRange } from "@/components/hours-range-picker";
 import type { PersonHoursResponse } from "@/lib/hours-worked-view";
 import {
-  fmtAmount, sectionFromSearch, hoursSummary, holidaySummary, contractsSummary, documentsSummary, agreedSummary,
+  fmtAmount, sectionFromSearch, recordEntriesSummary, hoursSummary, holidaySummary, contractsSummary, documentsSummary, agreedSummary,
   type RecordSection, type SectionSummary,
 } from "@/lib/person-record-sections";
 
@@ -387,6 +389,7 @@ const SECTION_TITLE: Record<RecordSection, string> = {
   documents: "Documents",
   emergency: "Emergency contact",
   agreed: "What we agreed",
+  record: "Reviews & records",
 };
 
 const SECTION_ICON: Record<RecordSection, React.ComponentType<{ className?: string }>> = {
@@ -396,6 +399,7 @@ const SECTION_ICON: Record<RecordSection, React.ComponentType<{ className?: stri
   documents: FolderOpen,
   emergency: HeartPulse,
   agreed: Target,
+  record: ClipboardList,
 };
 
 /** One big tappable card: the section's name and one plain line about
@@ -462,6 +466,11 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const [openDocument, setOpenDocument] = useState<OpenDocument | null>(null);
   // The side panel open in a sheet — ?section=holiday opens one from a link.
   const [section, setSection] = useState<RecordSection | null>(() => sectionFromSearch(search));
+  // Reviews & records (components/people/record-panel.tsx). The server only
+  // answers for the founder / People access and never on your own record —
+  // anyone else gets an error here and the section simply doesn't show.
+  const recordEntries = useRecordFacts(userId, ready);
+  const [openEntry, setOpenEntry] = useState<number | null>(null);
   // Same query (and cache) as the Hours worked panel's default range, for
   // the one-line summary on its button.
   const hoursRange = useMemo(defaultHoursRange, []);
@@ -556,9 +565,10 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
       documents: documents.data
         ? documentEntries(documents.data.documents, documents.data.onboarding).map(entry => ({ key: entry.key, date: entry.date, entry }))
         : [],
+      reviews: recordEntries.facts?.events.map(event => ({ key: event.key, date: event.date, event })) ?? [],
     });
     return withinWindow(all, windowFrom);
-  }, [data, reviews.data, grouped, windowFrom, canContracts, contracts.data, documents.data]);
+  }, [data, reviews.data, grouped, windowFrom, canContracts, contracts.data, documents.data, recordEntries.facts]);
 
   const lockedError = [record.error, reviews.error, documents.error].find(e => e instanceof PeopleLockedError) as PeopleLockedError | undefined;
   if (lockedError) return <PeopleLockedCard error={lockedError} />;
@@ -601,7 +611,9 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   // for the founder/HR account (they carry pay); What we agreed only when
   // something is open.
   const agreedNow = grouped?.agreedNow ?? [];
+  const showRecord = recordEntries.data != null || (recordEntries.isLoading && ready);
   const sections: Array<{ key: RecordSection; summary: SectionSummary }> = [
+    ...(showRecord ? [{ key: "record" as const, summary: recordEntriesSummary(recordEntries.facts?.summary, recordEntries.isLoading, !!recordEntries.error) }] : []),
     { key: "hours", summary: hoursSummary(hours.data, hours.isLoading || !ready) },
     { key: "holiday", summary: holidaySummary(employment.data, employment.isLoading || !ready) },
     ...(agreedNow.length > 0 ? [{ key: "agreed" as const, summary: agreedSummary(agreedNow.length) }] : []),
@@ -612,7 +624,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const sectionCards = (compact: boolean) => sections.map(x => (
     <SectionCard key={x.key} section={x.key} summary={x.summary} compact={compact} onOpen={() => setSection(x.key)} />
   ));
-  const openSection = section === "contracts" && !canContracts ? null : section;
+  const openSection = (section === "contracts" && !canContracts) || (section === "record" && !showRecord) ? null : section;
 
   return (
     <div className="@container/page max-w-4xl lg:max-w-7xl mx-auto space-y-5 pb-24">
@@ -636,6 +648,11 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             <h1 className="font-display text-3xl font-bold leading-tight break-words">{p.name}{!p.isActive && <span className="text-lg text-muted-foreground font-sans"> · Leaver</span>}</h1>
             {startDate && (
               <p className="text-base text-muted-foreground">Started {fmtDay(startDate, true)}{service ? ` · ${service}` : ""}</p>
+            )}
+            {recordEntries.facts && (
+              <button type="button" onClick={() => setSection("record")} className="mt-1 text-left">
+                <ReviewStatusBadge badge={recordEntries.facts.badge} liveWarningUntil={recordEntries.facts.liveWarningUntil} size="sm" />
+              </button>
             )}
           </div>
         </div>
@@ -755,6 +772,9 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           }
           if (e.kind === "contract") return <ContractEntryCard key={e.key} entry={e.contract.entry} onOpen={setOpenContract} />;
           if (e.kind === "document") return <DocumentEntryCard key={e.key} entry={e.document.entry} onOpen={setOpenDocument} />;
+          if (e.kind === "review") {
+            return <RecordTimelineCard key={e.key} event={e.review.event} onOpen={id => { setOpenEntry(id); setSection("record"); }} />;
+          }
           return <NoteCard key={e.key} note={e.note} canManage={canManage} currentUserId={currentUserId} onChanged={refreshReviews} />;
         })}
 
@@ -806,6 +826,10 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
               onAdd={() => setAddingDocument(true)}
               readOnly={!canWrite}
             />
+          )}
+          {openSection === "record" && (
+            <RecordPanel userId={userId} ready={ready} openEntryId={openEntry} onOpenEntry={setOpenEntry}
+              person={{ id: p.id, name: p.name, email: recordEntries.data?.person.email ?? null, isActive: p.isActive }} />
           )}
           {openSection === "agreed" && (
             <section className="space-y-3">

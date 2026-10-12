@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  agreedSummary, contractsSummary, documentsSummary, fmtAmount, holidaySummary, hoursSummary, sectionFromSearch,
+  agreedSummary, recordEntriesSummary, contractsSummary, documentsSummary, fmtAmount, holidaySummary, hoursSummary, sectionFromSearch,
 } from "./person-record-sections";
 import type { PersonHoursResponse, HoursReport } from "./hours-worked-view";
 import type { EmploymentResponse } from "./people-api";
@@ -112,5 +112,20 @@ describe("agreedSummary", () => {
   it("says how many things are open", () => {
     expect(agreedSummary(0).line).toBe("Nothing open");
     expect(agreedSummary(2)).toEqual({ line: "2 things agreed", tone: "warn" });
+  });
+});
+
+describe("Reviews & records", () => {
+  it("opens from a to-do's ?entry= link", () => {
+    expect(sectionFromSearch("?entry=12")).toBe("record");
+    expect(sectionFromSearch("?section=hours&entry=12")).toBe("hours");
+  });
+  it("shows the most serious open entry, else a live warning, else the count", () => {
+    expect(recordEntriesSummary({ count: 3, badgeLabel: "Formal · Verbal warning · Attendance", formal: true, liveWarningUntil: null }, false, false))
+      .toEqual({ line: "Formal · Verbal warning · Attendance", tone: "alert" });
+    expect(recordEntriesSummary({ count: 3, badgeLabel: "In review · Timekeeping", formal: false, liveWarningUntil: null }, false, false).tone).toBe("warn");
+    expect(recordEntriesSummary({ count: 3, badgeLabel: null, formal: false, liveWarningUntil: null }, false, false).line).toBe("3 entries");
+    expect(recordEntriesSummary({ count: 0, badgeLabel: null, formal: false, liveWarningUntil: null }, false, false).line).toBe("Nothing on the record yet");
+    expect(recordEntriesSummary(undefined, true, false).line).toBe("Loading the record…");
   });
 });

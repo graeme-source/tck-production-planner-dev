@@ -48,7 +48,7 @@ describe("filters", () => {
     expect(filterTimeline(timeline, "rtw").map(e => e.key)).toEqual(["a-2026-09-14", "a-2026-08-17", "f-9"]);
     expect(filterTimeline(timeline, "meetings").map(e => e.key)).toEqual(["m-1", "m-2"]);
     expect(filterTimeline(timeline, "notes").map(e => e.key)).toEqual(["n-5", "n-7"]);
-    expect(timelineCounts(timeline)).toEqual({ all: 8, attendance: 3, rtw: 3, meetings: 2, notes: 2, documents: 0, contracts: 0 });
+    expect(timelineCounts(timeline)).toEqual({ all: 8, attendance: 3, rtw: 3, meetings: 2, notes: 2, documents: 0, contracts: 0, reviews: 0 });
   });
 });
 
@@ -120,5 +120,17 @@ describe("helpers", () => {
     expect(lengthOfService("2025-09-25", "2026-09-25")).toBe("1 year");
     expect(lengthOfService("2026-10-06", "2026-09-25")).toBe("Starts 6 Oct 2026");
     expect(lengthOfService(null, "2026-09-25")).toBeNull();
+  });
+});
+
+describe("employment-record entries on the timeline", () => {
+  it("sit on their day, count under Reviews & records, and lead the same day", () => {
+    const t = buildPersonTimeline({
+      spells: [], lates: [{ date: "2026-10-01", label: "Late" }], forms: [], meetings: [], looseNotes: [],
+      reviews: [{ key: "re-1", date: "2026-10-01" }, { key: "re-1-m", date: "2026-10-20" }],
+    });
+    expect(t.map(e => e.kind)).toEqual(["review", "review", "late"]);
+    expect(timelineCounts(t).reviews).toBe(2);
+    expect(filterTimeline(t, "reviews").map(e => e.key)).toEqual(["re-1-m", "re-1"]);
   });
 });
