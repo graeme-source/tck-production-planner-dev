@@ -75,12 +75,18 @@ export default function ProductLabelsPage() {
   );
 
   return (
-    <div className="space-y-5 max-w-5xl">
+    <div className="space-y-5">
       <PageHeader
         title="Product Labels"
         description="Each recipe's pack label, ingredient deck and nutrition. The live label is what gets printed — recipe changes never alter it until someone checks the new one and updates it."
-        action={canEdit ? (
-          <div className="flex flex-wrap gap-2">
+      />
+
+      {/* The two editor links sit beside the tabs, not on the top bar, where
+          they ran off the edge at iPad width. */}
+      <div className="flex flex-wrap items-center gap-3">
+        {tabs.length > 1 && <HubTabs tabs={tabs} value={tab} onChange={setTab} />}
+        {canEdit && (
+          <div className="flex flex-wrap gap-2 ml-auto">
             <Link href="/labels/quid" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">
               <Percent className="w-5 h-5" /> QUID words
             </Link>
@@ -88,10 +94,8 @@ export default function ProductLabelsPage() {
               <Settings2 className="w-5 h-5" /> Label design & type
             </Link>
           </div>
-        ) : undefined}
-      />
-
-      {tabs.length > 1 && <HubTabs tabs={tabs} value={tab} onChange={setTab} />}
+        )}
+      </div>
 
       {tab === "health" ? <DataHealthPanel /> : (<>
       <div className="flex flex-wrap gap-2">
@@ -163,9 +167,9 @@ function LabelTable({ rows, sort, onSort }: {
         <thead>
           <tr className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
             {th("Product", "name")}
-            {th("Category", "category", "hidden md:table-cell")}
+            {th("Category", "category", "hidden lg:table-cell whitespace-nowrap")}
             {th("Status", "status")}
-            {th("Live version", "live", "hidden sm:table-cell")}
+            {th("Live version", "live", "hidden lg:table-cell whitespace-nowrap")}
             {th("What needs doing", "todo")}
             <th className="w-8" />
           </tr>
@@ -188,16 +192,19 @@ function LabelTable({ rows, sort, onSort }: {
                     {r.name}
                   </Link>
                   {r.status === "draft-recipe" && <RecipeDraftBadge className="ml-2 align-middle" />}
-                  {r.category && <p className="md:hidden text-xs text-muted-foreground mt-0.5">{r.category}</p>}
+                  {r.category && <p className="lg:hidden text-xs text-muted-foreground mt-0.5">{r.category}</p>}
                 </td>
-                <td className="py-3 px-3 text-muted-foreground hidden md:table-cell">{r.category ?? "—"}</td>
+                <td className="py-3 px-3 text-muted-foreground hidden lg:table-cell whitespace-nowrap">{r.category ?? "—"}</td>
                 <td className="py-3 px-3">
                   <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-xs font-bold whitespace-nowrap", STATUS_TONE[r.status])}>
                     {r.status === "live" ? <CheckCircle2 className="w-3.5 h-3.5" /> : r.status === "update-needed" || r.status === "doesnt-fit" ? <AlertTriangle className="w-3.5 h-3.5" /> : null}
                     {r.statusLabel}
                   </span>
+                  {r.liveVersion && (
+                    <p className="lg:hidden text-xs text-muted-foreground mt-1 whitespace-nowrap">Live v{r.liveVersion.versionNo} · {fmtDateTime(r.liveVersion.publishedAt)}</p>
+                  )}
                 </td>
-                <td className="py-3 px-3 text-muted-foreground hidden sm:table-cell">
+                <td className="py-3 px-3 text-muted-foreground hidden lg:table-cell">
                   {r.liveVersion ? (
                     <span className="block leading-snug">
                       <span className="font-semibold text-foreground">v{r.liveVersion.versionNo}</span> · {fmtDateTime(r.liveVersion.publishedAt)}
@@ -205,7 +212,7 @@ function LabelTable({ rows, sort, onSort }: {
                     </span>
                   ) : "—"}
                 </td>
-                <td className="py-3 px-3 max-w-[18rem]">
+                <td className="py-3 px-3 max-w-[18rem] xl:max-w-none">
                   {todo.short ? (
                     <span
                       title={todo.full}
