@@ -29,7 +29,8 @@ import {
   queueTabFor,
   QUEUE_TABS,
   SNOOZE_DAYS,
-  canReply,
+  replyToClaudePlan,
+  reopenNote,
   canReviewMove,
   noticeAckVerdict,
   type TriageStatus,
@@ -97,7 +98,8 @@ router.get("/review", requireFounder, async (req, res) => {
       snapshot: issueTriageEventsTable.snapshot,
     }).from(issueTriageEventsTable)
       .where(inArray(issueTriageEventsTable.triageId, rows.map(r => r.id)))
-      .orderBy(issueTriageEventsTable.createdAt);
+      // id breaks ties: events written in one transaction share createdAt.
+      .orderBy(issueTriageEventsTable.createdAt, issueTriageEventsTable.id);
     const eventsByTriage = new Map<number, typeof eventRows>();
     for (const e of eventRows) {
       const list = eventsByTriage.get(e.triageId) ?? [];
@@ -139,7 +141,7 @@ router.get("/review", requireFounder, async (req, res) => {
 
 // ── POST /review/:id/approve | reject | reply ───────────────────────────────
 const decisionBody = z.object({ note: z.string().trim().max(2000).nullable().optional() });
-const replyBody = z.object({ note: z.string().trim().min(1).max(2000) });
+const replyBody = z.object({ note: z.string().trim().min(1).max(4000) });
 
 async function decide(req: Request, res: Response, action: "approve" | "reject" | "reply") {
   const id = parseId(req.params.id);
@@ -155,11 +157,31 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
 
       let row: IssueTriage;
       if (action === "reply") {
-        if (!canReply(from)) return { status: 409 as const, error: `Can't reply to a '${from}' recommendation`, triage: current };
-        // Stays 'proposed'; the flag puts it back in the session's inbox.
+        // "Reply to Claude" works on every card (replyToClaudePlan): the card
+        // goes back to 'proposed' with the flag that puts it in the hourly
+        // session's inbox, and his words are its newest instruction.
+        const plan = replyToClaudePlan({ status: from, noActionAt: current.noActionAt });
+        const now = new Date();
+        if (plan.restoreSetAside && current.noActionAt) {
+          // Reopen the report only if the quiet dismissal is what closed it
+          // (same rule as Restore).
+          const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
+          if (issue?.resolvedAt && issue.resolvedAt.getTime() === current.noActionAt.getTime()) {
+            await tx.update(andonIssuesTable)
+              .set({ resolvedBy: null, resolvedByName: null, resolvedAt: null })
+              .where(eq(andonIssuesTable.id, issue.id));
+          }
+        }
         [row] = await tx.update(issueTriageTable).set({
-          awaitingRetriage: true, decisionNote: note, decidedBy: name, decidedByUserId: userId, decidedAt: new Date(), updatedAt: new Date(),
+          awaitingRetriage: true, decisionNote: note, decidedBy: name, decidedByUserId: userId, decidedAt: now, updatedAt: now,
+          snoozedUntil: null,
+          ...(plan.restoreSetAside ? { noActionAt: null, noActionBy: null, noActionByUserId: null } : {}),
+          // Back for a fresh decision; the old one stays in the history. The
+          // fix reference is kept so Claude can see what was already built.
+          ...(plan.reopen ? { status: "proposed", fixedAt: null, issueResolvedAt: null } : {}),
         }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+        const reopened = reopenNote(plan);
+        if (reopened) await recordEvent(tx, row, "reopened", name, reopened);
         await recordEvent(tx, row, "replied", name, note);
       } else {
         const to: TriageStatus = action === "approve" ? "approved" : "rejected";

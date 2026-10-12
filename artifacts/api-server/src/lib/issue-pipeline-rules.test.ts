@@ -7,7 +7,10 @@ import {
   matchesAreaFilter,
   retriageVerdict,
   canReviewMove,
-  canReply,
+  replyToClaudePlan,
+  reopenNote,
+  repliesFirst,
+  unansweredReplies,
   canMessageReporter,
   buildThread,
   queueTabFor,
@@ -103,9 +106,81 @@ describe("review moves (Graeme)", () => {
     expect(canReviewMove("fixed", "approved")).toBe(false);
     expect(canReviewMove("proposed", "fixed")).toBe(false);
   });
-  it("replies only while an item is waiting on him", () => {
-    expect(canReply("proposed")).toBe(true);
-    expect(canReply("approved")).toBe(false);
+});
+
+// Regression (Graeme, 2026-10-12): he could only talk to Claude when Claude
+// asked him something; on an approved / done card his correction had nowhere
+// to go, and the reviewer's re-triage would have hit a 409 anyway.
+describe("Reply to Claude — works on every card", () => {
+  const ALL = ["proposed", "approved", "rejected", "in_progress", "fixed", "wont_fix", "answered", "dismissed"] as const;
+
+  it("re-opens any decided or closed card to 'proposed', so the reviewer can re-triage it", () => {
+    for (const s of ALL) {
+      const plan = replyToClaudePlan({ status: s });
+      expect(plan.reopen).toBe(s !== "proposed");
+      expect(plan.previousStatus).toBe(s);
+      // After the reopen the reviewer's POST /triage is a plain update, never a 409.
+      expect(retriageVerdict("proposed", false).kind).toBe("update");
+    }
+  });
+
+  it("a proposed card stays put, and nothing is noted as reopened", () => {
+    const plan = replyToClaudePlan({ status: "proposed", noActionAt: null });
+    expect(plan).toEqual({ reopen: false, previousStatus: "proposed", restoreSetAside: false });
+    expect(reopenNote(plan)).toBeNull();
+  });
+
+  it("lifts a 'Dismissed — no action' so the reply reaches Claude", () => {
+    const plan = replyToClaudePlan({ status: "proposed", noActionAt: new Date() });
+    expect(plan.restoreSetAside).toBe(true);
+    expect(reopenNote(plan)).toContain("Dismissed — no action");
+  });
+
+  it("says what it was reopened from", () => {
+    expect(reopenNote(replyToClaudePlan({ status: "approved" }))).toBe("Reopened by your reply (was: Approved) — back to Claude for another look");
+  });
+
+  it("a reopened, replied card is in the reviewer's inbox even though its report was closed", () => {
+    const closedApp = { area: "system", station: "App / iPad", category: "other", resolvedAt: new Date() };
+    expect(machineIssueWanted("app", closedApp, { awaitingRetriage: true, noActionAt: null }, false, false)).toBe(true);
+    // …and a closed report with no reply waiting stays out.
+    expect(machineIssueWanted("app", closedApp, { awaitingRetriage: false, noActionAt: null }, true, false)).toBe(false);
+    expect(machineIssueWanted("app", closedApp, null, false, false)).toBe(false);
+    expect(machineIssueWanted("app", { ...closedApp, resolvedAt: null }, null, false, false)).toBe(true);
+  });
+
+  it("puts Graeme's replies first so the limit can't cut them off", () => {
+    const rows = [{ id: 1 }, { id: 2 }, { id: 3 }, { id: 4 }];
+    const awaiting = new Set([3]);
+    expect(repliesFirst(rows, r => ({ awaitingRetriage: awaiting.has(r.id) })).map(r => r.id)).toEqual([3, 1, 2, 4]);
+    expect(repliesFirst(rows, () => null).map(r => r.id)).toEqual([1, 2, 3, 4]);
+  });
+
+  it("the thread shows the reopen and 'You: …', and the reviewer gets every reply since its last recommendation", () => {
+    const ev = (event: string, note: string | null, snapshot: unknown = {}) => ({ event, note, createdAt: "2026-10-12T10:00:00Z", snapshot });
+    const thread = buildThread([
+      ev("triaged", null, { verdictSummary: "Not a bug: the stock figure is right" }),
+      ev("approved", null),
+      ev("reopened", "Reopened by your reply (was: Approved) — back to Claude for another look"),
+      ev("replied", "Your understanding is wrong — it's the wrapping count, not stock"),
+      ev("claude_note", "Looking at the wrapping count now"),
+      ev("replied", "And it only happens on the iPad"),
+    ]);
+    expect(thread.map(t => [t.who, t.kind])).toEqual([
+      ["claude", "recommendation"], ["you", "decision"], ["you", "decision"], ["you", "reply"], ["claude", "message"], ["you", "reply"],
+    ]);
+    expect(thread[2].text).toContain("Reopened by your reply");
+    // A Claude note doesn't count as answering him; both replies go to the reviewer.
+    expect(unansweredReplies(thread).map(r => r.text)).toEqual([
+      "Your understanding is wrong — it's the wrapping count, not stock",
+      "And it only happens on the iPad",
+    ]);
+    // Once Claude re-triages, those replies are answered.
+    const answered = buildThread([
+      ev("replied", "Old reply"),
+      ev("retriaged", null, { verdictSummary: "Updated: it's the wrapping count" }),
+    ]);
+    expect(unansweredReplies(answered)).toEqual([]);
   });
 });
 
