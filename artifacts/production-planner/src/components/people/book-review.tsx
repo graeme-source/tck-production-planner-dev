@@ -21,7 +21,8 @@
 import { useState } from "react";
 import { CalendarDays, ChevronDown } from "lucide-react";
 import {
-  sortClassifications, evidenceLine, startingMeetingStatus, fmtDayIso, defaultMeetingClassification, type MeetingStatus,
+  sortClassifications, evidenceLine, startingMeetingStatus, fmtDayIso, defaultMeetingClassification,
+  ANSWERS_TRIGGER_LABEL, type AnswersTrigger, type MeetingStatus,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -30,8 +31,10 @@ import { recordSend, type PersonRecordEntries } from "./reviews-api";
 
 type When = "booked" | "held" | "none";
 
-export function BookReviewForm({ data, onCreated, onCancel }: {
+export function BookReviewForm({ data, onCreated, onCancel, answersTrigger = null }: {
   data: PersonRecordEntries;
+  /** Booked from a trigger banner: the review answers that trigger (0183). */
+  answersTrigger?: AnswersTrigger | null;
   onCreated: (id: number) => void;
   onCancel: () => void;
 }) {
@@ -59,6 +62,7 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
       const r = await recordSend<{ id: number }>("POST", `/person/${data.person.id}/entries`, {
         classificationId, title: title.trim(), entryDate: date, status: inReview ? "open" : "closed",
         meetingStatus: status,
+        ...(answersTrigger ? { answersTrigger } : {}),
         ...(status ? { meetingDate: date, meetingTime: time || null } : {}),
       });
       onCreated(r.id);
@@ -90,6 +94,12 @@ export function BookReviewForm({ data, onCreated, onCancel }: {
           </label>
         )}
       </div>
+      {answersTrigger && answersTrigger !== "none" && (
+        <p className="rounded-2xl bg-secondary/50 p-4 text-base">
+          <span className="font-bold">For the attendance trigger: </span>
+          this meeting will count as the {answersTrigger === "both" ? "sickness and lates" : ANSWERS_TRIGGER_LABEL[answersTrigger].toLowerCase()} review. You can change that in the meeting under More options.
+        </p>
+      )}
       {when === "booked" && status === "held" && date && (
         <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">{fmtDayIso(date)} has already gone, so it'll be saved as held.</p>
       )}

@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Classification, EntryStatus, FitForWork, LetterStatus, LetterTemplate, MeetingStatus, MeetingType, NoteKind, ProbationOutcome, Rating,
-  ReviewBadge, Stage,
+  ReviewBadge, Stage, AnswersTrigger, PolicyTriggerReview,
 } from "@workspace/people-reviews";
 import { peopleFetch, peopleRetry } from "@/hooks/use-people-gate";
 import { api } from "@/components/employee-reviews";
@@ -78,6 +78,8 @@ export interface RecordEntry {
   fitForWork: FitForWork | null;
   /** The review itself (migration 0178): booked | held | cancelled; null = no meeting. */
   meetingStatus: MeetingStatus | null;
+  /** Which attendance trigger it deals with (0183); null = automatic. */
+  answersTrigger: AnswersTrigger | null;
   heldAt: string | null;
   meetingType: MeetingType | null;
   meetingDate: string | null;
@@ -122,6 +124,8 @@ export interface PersonRecordEntries {
   classifications: Classification[];
   stages: Stage[];
   attendance: RecordAttendance | null;
+  /** Where each policy trigger stands (same rule as the banner). */
+  triggerReview: PolicyTriggerReview;
   entries: RecordEntry[];
   probation: ProbationFact | null;
   periodMonths: number[];

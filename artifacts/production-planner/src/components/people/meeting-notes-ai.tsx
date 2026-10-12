@@ -27,12 +27,14 @@ import {
 } from "lucide-react";
 import {
   sortClassifications, whatHappenedText, linkOnly, linkPastedMessage, ACTION_OWNERS, MAX_NOTES_CHARS,
-  type ActionOwner, type MeetingNotesDraft,
+  ANSWERS_TRIGGER, ANSWERS_TRIGGER_LABEL, ANSWERS_TRIGGER_QUESTION, needsPolicyReview,
+  type ActionOwner, type MeetingNotesDraft, type AnswersTrigger,
 } from "@workspace/people-reviews";
+import { TRIGGER_HINT } from "./trigger-link";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { DictateButton } from "@/components/dictate-button";
-import { FieldLabel, PillButton } from "./review-fields";
+import { ChoiceButton, FieldLabel, PillButton } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 
 type Action = MeetingNotesDraft["actions"][number] & { todo: boolean };
@@ -74,6 +76,11 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
   const [repaired, setRepaired] = useState<string[]>(start?.repaired ?? []);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // "Does this review deal with the attendance trigger?" — asked only while
+  // a trigger is due for them, or when this review is already linked.
+  const askTrigger = entry.answersTrigger != null
+    || needsPolicyReview(data.triggerReview?.sickness) || needsPolicyReview(data.triggerReview?.lates);
+  const [link, setLink] = useState<AnswersTrigger | null>(entry.answersTrigger);
   const existing = whatHappenedText(entry);
   const classifications = sortClassifications(data.classifications).filter(c => c.active || c.id === entry.classificationId);
 
@@ -113,6 +120,8 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       agreements: d.agreements.map(a => ({ what: a.what, detail: a.detail || null, date: a.date || null })),
       actions: d.actions.map(a => ({ what: a.what, owner: a.owner, ownerName: a.owner === "other" ? (a.ownerName || null) : null, date: a.date || null, todo: a.owner === "me" && a.todo })),
       source,
+      // Only sent when the question was asked (otherwise left as it is).
+      ...(askTrigger ? { answersTrigger: link } : {}),
     }),
     onSuccess: r => {
       heldDrafts.delete(entry.id);
@@ -211,6 +220,22 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
           ))}
         </div>
       </div>
+
+      {askTrigger && (
+        <div className="space-y-1.5">
+          <FieldLabel>{ANSWERS_TRIGGER_QUESTION}</FieldLabel>
+          <p className="text-sm text-muted-foreground">
+            {first}'s attendance trigger is due. Pick one if this meeting was that review — otherwise it only counts if it's classified as attendance or timekeeping.
+          </p>
+          <div className="grid gap-2 grid-cols-2 lg:grid-cols-4">
+            {ANSWERS_TRIGGER.map(v => (
+              <ChoiceButton key={v} selected={link === v} onClick={() => setLink(link === v ? null : v)} hint={TRIGGER_HINT[v]}>
+                {ANSWERS_TRIGGER_LABEL[v]}
+              </ChoiceButton>
+            ))}
+          </div>
+        </div>
+      )}
 
       <label className="block space-y-1.5">
         <FieldLabel>Summary</FieldLabel>

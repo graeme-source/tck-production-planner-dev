@@ -24,7 +24,7 @@ import { useState } from "react";
 import { AlertTriangle, CalendarDays, ChevronDown, History, Info, Undo2 } from "lucide-react";
 import {
   usesField, entryWarning, periodEnd, PERIOD_MONTHS, warningStatusLabel, evidenceLine, meetingChecklist, isFormalHearing, fmtDayIso,
-  sortClassifications, sortStages, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
+  sortClassifications, sortStages, showTriggerChoice, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
   FIT_FOR_WORK_LABEL, FIT_FOR_WORK, MEETING_TYPE_LABEL, MEETING_TYPES, MEETING_STATUSES, MEETING_STATUS_LABEL, isReview as entryIsReview,
   type Classification, type MeetingType, type MeetingStatus,
 } from "@workspace/people-reviews";
@@ -34,6 +34,7 @@ import { AutoText, AutoDate, AutoTime, AutoChoice, AutoChecklist, FieldLabel } f
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 import { LettersBlock } from "./letter-editor";
 import { WhatHappened } from "./what-happened";
+import { TriggerLinkField } from "./trigger-link";
 
 type Patch = Partial<Omit<RecordEntry, "id" | "history" | "letters" | "writeUp" | "heldAt">>;
 
@@ -78,7 +79,7 @@ export function EntryEditor({ entry, data, onChanged, person }: {
     .map((c: Classification) => ({ value: c.id, label: c.label }));
   // A meeting's extras sit under More options — opened by itself when
   // something in there is already in use, so nothing filled in is hidden.
-  const extrasInUse = entry.status === "open" || entry.stageId != null || !!entry.meetingType || !!entry.meetingAttendees
+  const extrasInUse = entry.status === "open" || entry.answersTrigger != null || entry.stageId != null || !!entry.meetingType || !!entry.meetingAttendees
     || !!(entry.outcome ?? "").trim() || entry.nextReviewDate != null || entry.letters.length > 0
     || entry.rating != null || !!(entry.payFrom || entry.payTo) || entry.probationOutcome != null || entry.fitForWork != null;
   const [more, setMore] = useState(extrasInUse);
@@ -118,6 +119,12 @@ export function EntryEditor({ entry, data, onChanged, person }: {
 
   const extras = (
     <>
+      {showTriggerChoice(data.triggerReview, entry.answersTrigger) && (
+        <Block title="Attendance trigger" icon={AlertTriangle}>
+          <TriggerLinkField entry={entry} data={data} onChanged={onChanged} />
+        </Block>
+      )}
+
       {isReview && (
         <Block title="What it's about">
           {classificationField}
