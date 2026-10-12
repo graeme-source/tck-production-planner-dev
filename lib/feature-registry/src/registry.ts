@@ -77,7 +77,7 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // founder.sales.
   // Back-label printing from the wrapping station (Graeme, 2026-10-12):
   // founder only while he tests it; grant it here when the team takes over.
-  { key: "labels.print_back", name: "Print back labels", description: "Wrapping station: make the pack back labels (a print-ready PDF of the live label) for the recipe on the bench.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
+  { key: "labels.print_back", name: "Test-print labels", description: "Label review page: Test print, including a stamped proof of a label that isn't approved yet. (Back labels at the wrapping station are open to everyone.)", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
   { key: "marketing.approve_emails", name: "Approve marketing emails", description: "Sales & Marketing: approve (or undo approval of) planned emails and Klaviyo campaigns before they go out, and get the \"need your approval\" reminder.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
 ];
 
