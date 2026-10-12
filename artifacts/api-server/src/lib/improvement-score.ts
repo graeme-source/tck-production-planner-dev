@@ -1,9 +1,8 @@
 /**
  * Improvement score (Graeme, 2026-10-12; Objectives E and H).
  *
- * The Leaner-board ranked people by how MANY improvements they'd logged, so
- * the incentive drifted to "as many as possible". What we actually want is
- * one small, meaningful improvement per shift. So each person's score is:
+ * The aim is one small, meaningful improvement per shift, so beside the
+ * plain count each person gets a score:
  *
  *     credits in the last 30 days ÷ shifts worked in the last 30 days
  *
@@ -150,11 +149,15 @@ export function buildScores(input: {
 }
 
 /**
- * Leaner-board order: best score first; anyone without a score ("—") after
- * everyone who has one; ties broken by the all-time count, then name.
+ * Leaner-board order (Graeme, 2026-10-12: "the number of improvements ...
+ * I wanted to be the main thing on the leaderboard. I want both"):
+ *   1. most improvements in the last 30 days (the plain count, no ×2/×3);
+ *   2. then the better score — anyone without one ("—") after everyone with;
+ *   3. then the all-time count, then name.
  */
-export function rankByScore<T extends { scorePct: number | null; count: number; name: string }>(rows: ReadonlyArray<T>): T[] {
+export function rankLeanerBoard<T extends { improvements30: number; scorePct: number | null; count: number; name: string }>(rows: ReadonlyArray<T>): T[] {
   return [...rows].sort((a, b) => {
+    if (a.improvements30 !== b.improvements30) return b.improvements30 - a.improvements30;
     if (a.scorePct == null && b.scorePct != null) return 1;
     if (b.scorePct == null && a.scorePct != null) return -1;
     if (a.scorePct != null && b.scorePct != null && a.scorePct !== b.scorePct) return b.scorePct - a.scorePct;

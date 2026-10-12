@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildScores, creditsByUser, improvementScorePct, normaliseCreditWeight, rankByScore,
+  buildScores, creditsByUser, improvementScorePct, normaliseCreditWeight, rankLeanerBoard,
   scoreWindow, shiftsWorkedByEmployee, type CreditPair, type RotaShift,
 } from "./improvement-score";
 
@@ -95,6 +95,31 @@ describe("credits", () => {
   });
 });
 
+describe("the rolling 30 days moves with today", () => {
+  const pairs: CreditPair[] = [
+    { improvementId: 1, userId: 1, weight: 3, doneDate: "2026-09-20" },
+    { improvementId: 2, userId: 1, weight: 1, doneDate: "2026-10-11" },
+  ];
+  it("counts both while they're inside the last 30 days — the plain count ignores ×3", () => {
+    expect(creditsByUser(pairs, scoreWindow("2026-10-12")).get(1)).toEqual({ credits: 4, improvements: 2 });
+  });
+  it("drops the older one once it's 31 days ago", () => {
+    // 20 Sep is day 31 counting back from 20 Oct.
+    expect(scoreWindow("2026-10-20")).toEqual({ from: "2026-09-21", to: "2026-10-20" });
+    expect(creditsByUser(pairs, scoreWindow("2026-10-20")).get(1)).toEqual({ credits: 1, improvements: 1 });
+  });
+  it("a newcomer's shifts and improvements both build up from their first day", () => {
+    const users = [{ userId: 5, plandayEmployeeId: 505 }];
+    const out = buildScores({
+      users,
+      pairs: [{ improvementId: 3, userId: 5, weight: 1, doneDate: "2026-10-11" }],
+      shifts: worked(505, 4),
+      window: scoreWindow("2026-10-12"),
+    });
+    expect(out[0]).toMatchObject({ improvements: 1, shifts: 4, scorePct: 25 });
+  });
+});
+
 describe("shifts worked", () => {
   it("counts only shifts someone actually clocked in to (or that were approved)", () => {
     const shifts: RotaShift[] = [
@@ -156,15 +181,31 @@ describe("buildScores", () => {
 });
 
 describe("Leaner-board order", () => {
-  it("ranks by score, puts '—' last, then breaks ties on count and name", () => {
+  it("ranks by improvements in the last 30 days first", () => {
     const rows = [
-      { name: "Busy", count: 40, scorePct: 160 },
-      { name: "None", count: 99, scorePct: null },
-      { name: "Part-timer", count: 12, scorePct: 200 },
-      { name: "Bea", count: 5, scorePct: 100 },
-      { name: "Al", count: 5, scorePct: 100 },
-      { name: "Zed", count: 7, scorePct: 100 },
+      { name: "High score, few", improvements30: 2, count: 2, scorePct: 200 },
+      { name: "Most", improvements30: 9, count: 9, scorePct: 30 },
+      { name: "Middle", improvements30: 4, count: 50, scorePct: 8 },
     ];
-    expect(rankByScore(rows).map(r => r.name)).toEqual(["Part-timer", "Busy", "Zed", "Al", "Bea", "None"]);
+    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Most", "Middle", "High score, few"]);
+  });
+
+  it("breaks a tie on the count with the score, '—' after any score", () => {
+    const rows = [
+      { name: "No shifts", improvements30: 3, count: 3, scorePct: null },
+      { name: "Lower", improvements30: 3, count: 3, scorePct: 15 },
+      { name: "Higher", improvements30: 3, count: 3, scorePct: 25 },
+    ];
+    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Higher", "Lower", "No shifts"]);
+  });
+
+  it("then the all-time count, then name", () => {
+    const rows = [
+      { name: "Bea", improvements30: 1, count: 5, scorePct: 10 },
+      { name: "Al", improvements30: 1, count: 5, scorePct: 10 },
+      { name: "Zed", improvements30: 1, count: 7, scorePct: 10 },
+      { name: "Quiet month", improvements30: 0, count: 40, scorePct: 0 },
+    ];
+    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Zed", "Al", "Bea", "Quiet month"]);
   });
 });
