@@ -23,7 +23,7 @@
  */
 import { dotsToMm, mmToDots, ptToDots } from "@workspace/units";
 import { fieldParagraphs, type LabelContent } from "./content";
-import { barcodeModuleDots, type ModuleChoice } from "./ean13";
+import { EAN13_QUIET_LEFT, EAN13_QUIET_RIGHT, EAN13_TOTAL_MODULES, largestFittingModule, minModuleDots, moduleChoice, type ModuleChoice } from "./ean13";
 import { legalMinPt, PT_STEP, xHeightMmAt } from "./legal";
 import type { BodyWeight, FieldKey, FieldStyle, LabelTemplate, WidthVariant } from "./template";
 import { allowedWidths, dividerDots, FIELD_LABEL, WIDTH_ORDER } from "./template";
@@ -438,17 +438,44 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Barcode block at the bottom of the left column. Space is reserved even
   // when there's no barcode yet, so adding one never re-flows the label.
-  const module = barcodeModuleDots(left.w, dpi, page.barcodeSizePct);
-  const md = module.ok ? module.moduleDots : Math.ceil(d(0.264));
+  //
+  // Quiet zones are blank by definition, so they may sit where ink can't
+  // (2026-10-12, to give the ingredients more width): the LEFT quiet zone
+  // (11 modules) may run into the page margin — but not off the label, and
+  // the first human-readable digit, printed in that zone, keeps its ink
+  // inside the margin line — and the RIGHT quiet zone (7 modules) may run
+  // into the column gap, ending before the right column's text starts. The
+  // bars themselves stay inside the ink-safe area. The module is the
+  // requested size if it fits like that, else the widest that does (the
+  // proof states the real printed %), never under 80%.
   // Human-readable digits: about 2.4 mm tall at nominal size, scaled with the
   // bars; each must fit under its own 7 modules; never under the legal minimum.
   const digitFace: Face = { width: "normal", weight: 500 };
   const digitMet = m.metrics(digitFace);
   const unitInk = m.ink("0123456789", digitFace, 1, 0);
   const unitDigitW = Math.max(...[..."0123456789"].map(c => m.advance(c, digitFace, 1, 0)));
-  const byHeight = d(2.4 * ((module.ok ? module.magnificationPct : 100) / 100)) / Math.max(unitInk.top, 0.01);
-  const byWidth = (6.5 * md) / Math.max(unitDigitW, 0.01);
-  const digitSize = Math.max(ptToDots(legalMinPt(digitMet.xHeight, page.smallPack), dpi), Math.min(byHeight, byWidth));
+  const digitSizeFor = (moduleDots: number) => {
+    const byHeight = d(2.4 * (moduleChoice(moduleDots, dpi) as { magnificationPct: number }).magnificationPct / 100) / Math.max(unitInk.top, 0.01);
+    const byWidth = (6.5 * moduleDots) / Math.max(unitDigitW, 0.01);
+    return Math.max(ptToDots(legalMinPt(digitMet.xHeight, page.smallPack), dpi), Math.min(byHeight, byWidth));
+  };
+  // Where the bars start: after the full left quiet zone (measured from the
+  // label edge), and far enough in that the first digit — centred 4 modules
+  // left of the bars — stays inside the margin line.
+  const barsStartFor = (moduleDots: number) =>
+    Math.ceil(Math.max(EAN13_QUIET_LEFT * moduleDots, innerX + 4 * moduleDots + (unitDigitW * digitSizeFor(moduleDots)) / 2));
+  const barcodeFits = (moduleDots: number) =>
+    barsStartFor(moduleDots) + (95 + EAN13_QUIET_RIGHT) * moduleDots <= Math.floor(right.x);
+  const chosenMd = largestFittingModule(dpi, page.barcodeSizePct, barcodeFits);
+  const minMd = minModuleDots(dpi);
+  const module: ModuleChoice = chosenMd != null ? moduleChoice(chosenMd, dpi) : {
+    ok: false,
+    reason: `The barcode doesn't fit even at 80% (${dotsToMm(minMd, dpi).toFixed(2)} mm bars) — widen the left column`,
+    neededMm: dotsToMm(barsStartFor(minMd) + (95 + EAN13_QUIET_RIGHT) * minMd - innerX, dpi),
+  };
+  const md = module.ok ? module.moduleDots : minMd;
+  const barsX = barsStartFor(md);
+  const digitSize = digitSizeFor(md);
   const digitTop = unitInk.top * digitSize;
   const digitBottom = unitInk.bottom * digitSize;
   const barsH = Math.round(d(page.barcodeHeightMm));
@@ -456,8 +483,14 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   const barcodeBlockH = barsH + digitGap + digitTop + digitBottom;
   // Whole dots, rounded UP the column, so the block can't creep into the margin.
   const barcodeTop = Math.floor(left.y + left.h - barcodeBlockH);
-  const barcode = layoutBarcode(content.barcode, { x: left.x, y: barcodeTop, w: left.w, h: barcodeBlockH }, module, barsH, digitGap, digitTop, digitFace, digitSize, m);
-  if (!module.ok) problems.push({ field: "barcode", message: module.reason, overflowMm: Math.round((module.neededMm - dotsToMm(left.w, dpi)) * 10) / 10 });
+  // The box spans the quiet zones: x is where the left one starts (maybe in
+  // the margin), so the bars begin exactly at barsX.
+  const barcode = layoutBarcode(content.barcode, { x: barsX - EAN13_QUIET_LEFT * md, y: barcodeTop, w: EAN13_TOTAL_MODULES * md, h: barcodeBlockH }, module, barsH, digitGap, digitTop, digitFace, digitSize, m);
+  if (!module.ok) problems.push({ field: "barcode", message: module.reason, overflowMm: Math.round((module.neededMm - dotsToMm(right.x - innerX, dpi)) * 10) / 10 });
+  else if (module.moduleDots < Math.min(Math.round(d((0.33 * page.barcodeSizePct) / 100)), Math.floor(d(0.66)))) {
+    // The asked-for size didn't fit: say so rather than shrink it silently.
+    problems.push({ field: "barcode", message: `The barcode only fits at ${module.magnificationPct}% (asked for ${page.barcodeSizePct}%) — widen the left column or ask for a smaller size` });
+  }
   const leftText: Rect = { x: left.x, y: left.y, w: left.w, h: Math.max(0, barcodeTop - d(page.fieldGapMm) - left.y) };
 
   // Missing glyphs anywhere = can't print that character.

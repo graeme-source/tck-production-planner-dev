@@ -455,3 +455,47 @@ describe("step numbers as tall as the step text (default)", () => {
     for (const c of p.layout.circles) expect(2 * c.r).toBeCloseTo(mmToDots(5.5, 203), 5);
   });
 });
+
+
+describe("barcode quiet zones may sit in the margin and the column gap (2026-10-12)", () => {
+  const when = { printDate: "2026-10-10", productionDate: "2026-10-10" };
+  const margin = mmToDots(DEFAULT_TEMPLATE.page.marginMm, 203);
+  it("keeps 151% (4-dot modules) beside the narrower left column, bars and digits inside the ink-safe area", () => {
+    const p = proofLabel(snapshot(), when, fonts);
+    const b = p.layout.barcode;
+    expect(b.module.ok).toBe(true);
+    if (!b.module.ok) return;
+    const md = b.module.moduleDots;
+    expect(md).toBe(4);
+    expect(p.layout.problems.filter(x => x.field === "barcode")).toEqual([]);
+    // Left quiet zone: whole, on the label, starting inside the margin.
+    expect(b.x - 11 * md).toBeGreaterThanOrEqual(0);
+    expect(b.x - 11 * md).toBeLessThan(margin);
+    // Bars inside the margin line; right quiet zone ends before the ingredients.
+    expect(b.x).toBeGreaterThanOrEqual(margin);
+    expect(b.x + (95 + 7) * md).toBeLessThanOrEqual(p.layout.columns.right.x);
+    // Every digit's ink inside the margin line.
+    for (const r of b.digitRuns) expect(r.x + fonts.ink(r.text, r.face, r.sizeDots, 0).left).toBeGreaterThanOrEqual(margin);
+    // And nothing at all is printed in the left margin.
+    for (let y = 0; y < p.bitmap.height; y++) for (let x = 0; x < Math.floor(margin); x++) {
+      if (p.bitmap.get(x, y)) throw new Error(`ink in the margin at ${x},${y}`);
+    }
+  });
+  it("too narrow for the asked-for size: shrinks only as far as needed and says so (no silent 113%)", () => {
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...DEFAULT_TEMPLATE.page, columnSplitPct: 33 } });
+    const p = proofLabel({ ...snapshot(), template: t }, when, fonts);
+    const b = p.layout.barcode;
+    expect(b.module.ok).toBe(true);
+    if (!b.module.ok) return;
+    expect(b.module.moduleDots).toBe(3);
+    expect(p.layout.fits).toBe(false);
+    expect(p.layout.problems.some(x => x.field === "barcode" && x.message.includes("only fits at"))).toBe(true);
+    expect(b.x + 102 * b.module.moduleDots).toBeLessThanOrEqual(p.layout.columns.right.x);
+  });
+  it("far too narrow even for 80%: a fit problem, never a cramped barcode", () => {
+    const t = normaliseTemplate({ ...DEFAULT_TEMPLATE, page: { ...DEFAULT_TEMPLATE.page, columnSplitPct: 20 } });
+    const p = proofLabel({ ...snapshot(), template: t }, when, fonts);
+    expect(p.layout.barcode.module.ok).toBe(false);
+    expect(p.layout.problems.some(x => x.field === "barcode")).toBe(true);
+  });
+});

@@ -83,6 +83,29 @@ export type ModuleChoice =
   | { ok: true; moduleDots: number; moduleMm: number; magnificationPct: number; widthDots: number }
   | { ok: false; reason: string; neededMm: number };
 
+/** The widest whole-dot module, from the requested size (% of nominal, held
+ *  to 80–200%) down to 80%, for which `fits(moduleDots)` holds — or null
+ *  when even 80% doesn't fit. For layouts whose room depends on the module
+ *  (e.g. a quiet zone allowed into the page margin). */
+export function largestFittingModule(dpi: number, targetPct: number, fits: (moduleDots: number) => boolean): number | null {
+  const minDots = Math.ceil(mmToDots(EAN13_MIN_MODULE_MM, dpi) - 1e-9);
+  const maxDots = Math.max(minDots, Math.floor(mmToDots(EAN13_MAX_MODULE_MM, dpi) + 1e-9));
+  const target = Math.min(maxDots, Math.max(minDots, Math.round(mmToDots((EAN13_NOMINAL_MODULE_MM * targetPct) / 100, dpi))));
+  for (let md = target; md >= minDots; md--) if (fits(md)) return md;
+  return null;
+}
+
+/** A module size as a ModuleChoice (its real printed size and magnification). */
+export function moduleChoice(moduleDots: number, dpi: number): ModuleChoice {
+  const moduleMm = dotsToMm(moduleDots, dpi);
+  return { ok: true, moduleDots, moduleMm, magnificationPct: Math.round((moduleMm / EAN13_NOMINAL_MODULE_MM) * 100), widthDots: moduleDots * EAN13_TOTAL_MODULES };
+}
+
+/** The smallest module allowed (80%), in whole dots. */
+export function minModuleDots(dpi: number): number {
+  return Math.ceil(mmToDots(EAN13_MIN_MODULE_MM, dpi) - 1e-9);
+}
+
 /** Module width in WHOLE printer dots: the nearest to the requested size
  *  (% of nominal), never under 80% or over 200%, and narrowed (not below
  *  80%) if the box can't take the requested size with its quiet zones. */

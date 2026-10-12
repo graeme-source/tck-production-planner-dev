@@ -198,7 +198,11 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // Graeme's label stock: 140 × 94 mm on a 203 dpi printer, with ~4.5 mm
     // clear all round (rounded corners; ink closer to the edge gets cut off).
     widthMm: 140, heightMm: 94, dpi: 203, marginMm: 4.5,
-    columnSplitPct: 44, columnGapMm: 4,
+    // Left column 41% (was 44), gap 3 mm (was 4): ~5 mm more width for the
+    // ingredients, so a big deck reads wide and short rather than tall
+    // (Graeme, 2026-10-12). The 151% barcode still fits because its blank
+    // quiet zones may sit in the margin and the column gap (layout.ts).
+    columnSplitPct: 41, columnGapMm: 3,
     // Gaps 3 mm (2026-10-12, were 2): the printed label looked crowded —
     // the steps sat on STORAGE INSTRUCTIONS and the use-by lines ran on
     // from the storage text like one paragraph. The band gap also holds the
