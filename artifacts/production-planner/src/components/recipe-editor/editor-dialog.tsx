@@ -17,14 +17,12 @@
  * (lib/editor-dirty). Panels that save themselves (QUID, Shopify links,
  * label design, prep time) are not part of the form and never count.
  */
-import { createContext, useContext, useState, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { useState, type ReactNode } from "react";
 import { Check, Loader2 } from "lucide-react";
+import { PinnedBody, PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
-
-const FooterSlot = createContext<HTMLElement | null>(null);
 
 export function EditorDialog({
   open, onClose, title, dirty, onSaveRequest, entityLabel, widthClassName, children,
@@ -42,7 +40,6 @@ export function EditorDialog({
   widthClassName?: string;
   children: ReactNode;
 }) {
-  const [footerEl, setFooterEl] = useState<HTMLElement | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
 
   function handleOpenChange(v: boolean) {
@@ -91,10 +88,10 @@ export function EditorDialog({
           <DialogHeader className="px-5 sm:px-6 pt-5 pb-3 pr-14 border-b border-border/60 shrink-0">
             <DialogTitle className="font-display text-xl flex items-center gap-2 flex-wrap">{title}</DialogTitle>
           </DialogHeader>
-          <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-5 sm:px-6 pb-6" data-testid="editor-body">
-            <FooterSlot.Provider value={footerEl}>{children}</FooterSlot.Provider>
-          </div>
-          <div ref={setFooterEl} className="shrink-0 border-t border-border bg-card px-5 sm:px-6 py-3 empty:hidden" data-testid="editor-footer" />
+          <PinnedBody bodyClassName="px-5 sm:px-6 pb-6" bodyTestId="editor-body"
+            footerClassName="px-5 sm:px-6 py-3" footerTestId="editor-footer">
+            {children}
+          </PinnedBody>
         </DialogContent>
       </Dialog>
     </>
@@ -117,7 +114,6 @@ export function EditorSaveBar({
   /** Optional line above the button (e.g. "this save puts it on the menu"). */
   notice?: ReactNode;
 }) {
-  const slot = useContext(FooterSlot);
   const enabled = mode === "create" || dirty;
   const bar = (
     <div className="flex flex-col gap-2" data-testid="editor-save-bar" data-dirty={dirty ? "true" : "false"}>
@@ -143,5 +139,5 @@ export function EditorSaveBar({
       </button>
     </div>
   );
-  return slot ? createPortal(bar, slot) : <div className="sticky bottom-0 bg-card pt-3">{bar}</div>;
+  return <PinnedFooter fallback="sticky">{bar}</PinnedFooter>;
 }
