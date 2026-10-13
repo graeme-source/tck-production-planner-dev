@@ -332,3 +332,6 @@ export function conversationTitle(
   if (stations && a.userIds.length) return `${stations} + ${people}`;
   return stations || people;
 }
+
+// Photos and videos in messages — rules in media.ts.
+export * from "./media";
