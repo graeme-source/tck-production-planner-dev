@@ -84,6 +84,35 @@ export function todoFormValid(form: TodoForm): boolean {
   return form.title.trim() !== "";
 }
 
+const PRIORITY_RANK: Record<TodoFormPriority, number> = { urgent: 0, high: 1, normal: 2, low: 3 };
+
+export interface TodoSortable {
+  id: number;
+  priority: TodoFormPriority;
+  due_date: string | null;
+  scheduled_for: string | null;
+  created_at: string;
+}
+
+/**
+ * Put a just-added task where the server will list it, so it appears in
+ * place straight away (and the highlight scrolls to the right spot) rather
+ * than jumping when the list refreshes. Same order as GET /api/todos/mine:
+ * priority, due date (none last), "do it on" date (none last), oldest first.
+ */
+export function insertOpenTodo<T extends TodoSortable>(open: T[], task: T): T[] {
+  const nullsLast = (a: string | null, b: string | null) =>
+    a === b ? 0 : a === null ? 1 : b === null ? -1 : a < b ? -1 : 1;
+  const cmp = (a: T, b: T) =>
+    PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority]
+    || nullsLast(a.due_date, b.due_date)
+    || nullsLast(a.scheduled_for, b.scheduled_for)
+    || (a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id);
+  const rest = open.filter(t => t.id !== task.id);
+  const at = rest.findIndex(t => cmp(task, t) < 0);
+  return at === -1 ? [...rest, task] : [...rest.slice(0, at), task, ...rest.slice(at)];
+}
+
 export function todoCreateBody(form: TodoForm, assigneeId: number) {
   return {
     assigneeId,

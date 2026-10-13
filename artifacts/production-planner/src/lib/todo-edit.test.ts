@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EMPTY_TODO_FORM, todoCreateBody, todoEditPatch, todoFormFrom, todoFormValid, type TodoEditable } from "./todo-edit";
+import { EMPTY_TODO_FORM, insertOpenTodo, todoCreateBody, todoEditPatch, todoFormFrom, todoFormValid, type TodoEditable } from "./todo-edit";
 
 const task = (over: Partial<TodoEditable> = {}): TodoEditable => ({
   title: "Deep-clean the pass fridge",
@@ -37,6 +37,29 @@ describe("todoEditPatch", () => {
 
   it("trims a changed title", () => {
     expect(todoEditPatch(task(), { ...todoFormFrom(task()), title: "  Order gloves " })).toEqual({ title: "Order gloves" });
+  });
+});
+
+describe("insertOpenTodo", () => {
+  type P = "urgent" | "high" | "normal" | "low";
+  const row = (id: number, over: Partial<{ priority: P; due_date: string | null; scheduled_for: string | null; created_at: string }> = {}) => ({
+    id, priority: "normal" as P, due_date: null as string | null, scheduled_for: null as string | null, created_at: `2026-10-0${id} 09:00:00`, ...over,
+  });
+
+  it("puts a new normal task with no dates at the end of the normals, before low", () => {
+    const list = [row(1, { priority: "urgent" }), row(2, { due_date: "2026-10-14" }), row(3), row(4, { priority: "low" })];
+    const added = row(9, { created_at: "2026-10-13 12:00:00" });
+    expect(insertOpenTodo(list, added).map(t => t.id)).toEqual([1, 2, 3, 9, 4]);
+  });
+
+  it("an urgent task goes to the top; a dated one before undated", () => {
+    const list = [row(1), row(2)];
+    expect(insertOpenTodo(list, row(9, { priority: "urgent" })).map(t => t.id)).toEqual([9, 1, 2]);
+    expect(insertOpenTodo(list, row(9, { due_date: "2026-10-20" })).map(t => t.id)).toEqual([9, 1, 2]);
+  });
+
+  it("never duplicates a task already on the list", () => {
+    expect(insertOpenTodo([row(1), row(9)], row(9)).map(t => t.id)).toEqual([1, 9]);
   });
 });
 
