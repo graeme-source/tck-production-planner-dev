@@ -164,6 +164,28 @@ export function describeRule(rule: RecurrenceRule): string {
   }
 }
 
+/** One canonical shape per rule — days sorted and de-duplicated, interval
+ *  only when it's more than 1, anchor only when it matters — so two rules
+ *  that mean the same compare equal however they were built or stored
+ *  (Postgres jsonb reorders keys). */
+export function normaliseRule(rule: RecurrenceRule): RecurrenceRule {
+  switch (rule.kind) {
+    case "weekly": {
+      const days = [...new Set(rule.days)].sort((a, b) => a - b) as Weekday[];
+      const interval = Math.max(1, Math.floor(rule.interval ?? 1));
+      return interval > 1
+        ? { kind: "weekly", days, interval, anchor: rule.anchor ?? null }
+        : { kind: "weekly", days };
+    }
+    case "monthly": return { kind: "monthly", dayOfMonth: Math.floor(rule.dayOfMonth) };
+    default: return { kind: rule.kind };
+  }
+}
+
+export function sameRule(a: RecurrenceRule, b: RecurrenceRule): boolean {
+  return JSON.stringify(normaliseRule(a)) === JSON.stringify(normaliseRule(b));
+}
+
 /** Every day or every weekday — a rhythm where tomorrow's occurrence comes
  *  round before a missed one is worth chasing. Team lists use it for the
  *  "carry over if missed" default (off for these, on for the rest). */

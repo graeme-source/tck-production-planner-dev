@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  addDays, describeRule, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, mondayOf,
+  addDays, describeRule, isDailyRhythm, normaliseRule, sameRule, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, mondayOf,
   nextOccurrenceAfter, occurrencesBetween, weekdayFromName, weekdayOf, type RecurrenceRule,
 } from "./index";
 
@@ -119,5 +119,17 @@ describe("isRecurrenceRule", () => {
   it("maps stored weekday names", () => {
     expect(weekdayFromName("Thursday")).toBe(4);
     expect(weekdayFromName("funday")).toBeNull();
+  });
+});
+
+describe("normaliseRule / sameRule", () => {
+  it("treats key order, day order and a redundant interval as the same rule", () => {
+    expect(sameRule({ kind: "weekly", days: [4, 1, 1] }, { days: [1, 4], kind: "weekly", interval: 1 } as never)).toBe(true);
+    expect(sameRule({ kind: "weekly", days: [1], interval: 2, anchor: "2026-10-12" }, { kind: "weekly", days: [1], interval: 2, anchor: "2026-10-19" })).toBe(false);
+    expect(normaliseRule({ kind: "weekly", days: [1], interval: 1, anchor: "2026-10-12" })).toEqual({ kind: "weekly", days: [1] });
+  });
+  it("daily and weekdays are the daily rhythms", () => {
+    expect(isDailyRhythm({ kind: "weekdays" })).toBe(true);
+    expect(isDailyRhythm({ kind: "weekly", days: [1, 2, 3, 4, 5] })).toBe(false);
   });
 });

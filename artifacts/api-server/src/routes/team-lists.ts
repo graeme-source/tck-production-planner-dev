@@ -31,7 +31,7 @@ import {
   db, usersTable, teamListsTable, teamListItemsTable, teamListCompletionsTable,
   type TeamList, type TeamListItem,
 } from "@workspace/db";
-import { isDailyRhythm, type RecurrenceRule } from "@workspace/recurrence";
+import { isDailyRhythm, normaliseRule, sameRule, type RecurrenceRule } from "@workspace/recurrence";
 import { rawBody, validate } from "../middleware/validate";
 import { resolveRole } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
@@ -251,7 +251,7 @@ router.post("/:id/items", validate(itemBody), async (req: Request, res: Response
   const list = await listFor(req, res, intParam(req.params.id));
   if (!list) return;
   const body = req.body as z.infer<typeof itemBody>;
-  const rule = body.recurrence as RecurrenceRule;
+  const rule = normaliseRule(body.recurrence as RecurrenceRule);
   const [{ next }] = (await db.execute<{ next: number }>(
     sql`SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM team_list_items WHERE list_id = ${list.id}`,
   )).rows;
@@ -299,7 +299,7 @@ router.post("/:id/import", validate(importBody), async (req: Request, res: Respo
     title: it.title,
     notes: it.notes,
     priority: it.priority,
-    recurrence: it.recurrence,
+    recurrence: normaliseRule(it.recurrence),
     timeOfDay: it.timeOfDay,
     carryOver: !isDailyRhythm(it.recurrence),
     startDate: today,
@@ -329,8 +329,8 @@ router.patch("/items/:itemId", validate(itemPatch), async (req: Request, res: Re
   if (body.timeOfDay !== undefined) updates.timeOfDay = body.timeOfDay;
   if (body.carryOver !== undefined) updates.carryOver = body.carryOver;
   if (body.active !== undefined) updates.active = body.active;
-  if (body.recurrence !== undefined && JSON.stringify(body.recurrence) !== JSON.stringify(found.item.recurrence)) {
-    updates.recurrence = body.recurrence;
+  if (body.recurrence !== undefined && !sameRule(body.recurrence as RecurrenceRule, found.item.recurrence as RecurrenceRule)) {
+    updates.recurrence = normaliseRule(body.recurrence as RecurrenceRule);
     // A new rhythm starts today: no "overdue" from days the old rule chose.
     updates.startDate = londonDateString();
   }
