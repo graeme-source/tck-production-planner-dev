@@ -218,7 +218,7 @@ export function IncidentAttachments({ incidentId, onChanged }: { incidentId: num
       ) : live.length === 0 ? (
         <p className="text-sm text-muted-foreground">No photos yet — a photo of what was found is the best evidence the report can hold.</p>
       ) : (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-3">
           {live.map(a => <Thumb key={a.id} a={a} onOpen={() => setLightbox(a)} onRemove={() => askRemove(a)} removing={remove.isPending && remove.variables?.id === a.id} />)}
         </div>
       )}
@@ -230,7 +230,7 @@ export function IncidentAttachments({ incidentId, onChanged }: { incidentId: num
             {removed.length} removed — kept on record
           </button>
           {showRemoved && (
-            <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+            <div className="mt-2 grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-3">
               {removed.map(a => <Thumb key={a.id} a={a} onOpen={() => setLightbox(a)} />)}
             </div>
           )}
