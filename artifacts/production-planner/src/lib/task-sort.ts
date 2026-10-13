@@ -89,6 +89,13 @@ export function parseSortSpec(raw: string | null | undefined, fallback: SortSpec
   }
 }
 
+/** My To-dos keep the order they always had: priority first, then date. */
+export const TODO_DEFAULT_SORT: SortSpec = { primary: "priority", secondary: "time" };
+
+/** Remembered-choice key for one person's to-do list (the same list on the
+ *  sheet, the station strip and the founder's Schedule). */
+export const todoSortListKey = (assigneeId: number) => `todos-${assigneeId}`;
+
 /** Personal to-dos: urgent/high/normal/low → 1–4. */
 export const TODO_PRIORITY_RANK: Record<string, number> = { urgent: 1, high: 2, normal: 3, low: 4 };
 
