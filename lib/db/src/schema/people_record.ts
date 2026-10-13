@@ -105,7 +105,7 @@ export const peopleReviewNotesTable = pgTable("people_review_notes", {
   id: serial("id").primaryKey(),
   entryId: integer("entry_id").references(() => peopleRecordEntriesTable.id, { onDelete: "cascade" }),
   userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
-  /** note | feedback | objective */
+  /** note | feedback | objective | agreement (0186 — one bulleted "What was agreed" per review) */
   kind: text("kind").notNull().default("note"),
   title: text("title"),
   body: text("body").notNull(),
