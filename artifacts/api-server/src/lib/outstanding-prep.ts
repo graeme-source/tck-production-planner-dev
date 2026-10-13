@@ -30,7 +30,8 @@ import { londonDateString } from "./london-time";
 // two days ago is a missed tick, not future consumption).
 //
 // Scope: tin-tracked prep only (main prep, veg and raw meat stations — the
-// same reconstruction /prep-progress uses, plus raw_meat). Base/sauce
+// direct-ingredient reconstruction the old /prep-progress endpoint used,
+// plus raw_meat; that endpoint was retired 2026-10-13). Base/sauce
 // sub-recipe production and dough are out: their raw consumption isn't
 // tin-tracked, so there's nothing reliable to deduct from.
 
@@ -101,7 +102,7 @@ export async function computeOutstandingPrepRaw(
   }
 
   // A tin ticked under any sub-recipe origin counts once — mirror
-  // /prep-progress's dedupe, keeping the EARLIEST tick for the timing rule.
+  // the old /prep-progress dedupe, keeping the EARLIEST tick for the timing rule.
   const completionsRes = await db.execute(sql`
     SELECT plan_id, recipe_id, ingredient_id, tin_number, MIN(completed_at) AS completed_at
     FROM prep_completions
