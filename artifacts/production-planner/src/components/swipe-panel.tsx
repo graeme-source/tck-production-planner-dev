@@ -31,6 +31,7 @@ import { dragProgress, panelWidth, snapAfterDrag, PANEL_DRAG_SLOP_PX, TAP_SLOP_P
 import { blockedByAncestors, inStartZone } from "@/lib/edge-swipe";
 import { fullScreenOverlayShowing } from "@/lib/prompt-presence";
 import { ancestorChain, useSideSwipe } from "@/hooks/use-side-swipe";
+import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 
 export type PanelChange = "drag" | "tap" | "close" | "backdrop" | "escape" | "action";
 
@@ -38,19 +39,6 @@ export type PanelChange = "drag" | "tap" | "close" | "backdrop" | "escape" | "ac
 const HANDLE_HIT_WIDTH = 32;
 /** The visible handle: a slim strip with three dots. */
 const HANDLE_WIDTH = 10;
-
-function usePrefersReducedMotion(): boolean {
-  const query = "(prefers-reduced-motion: reduce)";
-  const [reduced, setReduced] = useState(() => typeof window !== "undefined" && window.matchMedia?.(query).matches);
-  useEffect(() => {
-    const mq = window.matchMedia?.(query);
-    if (!mq) return;
-    const on = () => setReduced(mq.matches);
-    mq.addEventListener("change", on);
-    return () => mq.removeEventListener("change", on);
-  }, []);
-  return reduced;
-}
 
 function useViewportWidth(): number {
   const [w, setW] = useState(() => (typeof window === "undefined" ? 1080 : window.innerWidth));
