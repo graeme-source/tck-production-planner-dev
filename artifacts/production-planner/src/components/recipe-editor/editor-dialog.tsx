@@ -1,6 +1,8 @@
 /**
  * The shell both recipe editors open in — Final Products (recipes) and
  * Sub-Recipes, create and edit (Graeme, 2026-10-12). Objective F.
+ * Also the to-do pop-up (components/todo-lists.tsx, 2026-10-13), which
+ * draws its own footer with <PinnedFooter>.
  *
  *   • The card is capped at 92dvh; the body scrolls INSIDE it, so the save
  *     bar pinned to the bottom is always in view (iPad portrait and
@@ -25,7 +27,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { cn } from "@/lib/utils";
 
 export function EditorDialog({
-  open, onClose, title, dirty, onSaveRequest, entityLabel, widthClassName, children,
+  open, onClose, title, dirty, onSaveRequest, entityLabel, widthClassName, noAutoFocus, onCloseAutoFocus, children,
 }: {
   open: boolean;
   /** Really close (after any unsaved-changes question). */
@@ -38,6 +40,11 @@ export function EditorDialog({
   /** "recipe" / "sub-recipe" — for the guard's wording. */
   entityLabel: string;
   widthClassName?: string;
+  /** Don't put the cursor in the first field on open (an iPad would throw
+   *  up its keyboard over a pop-up that's mostly opened to be read). */
+  noAutoFocus?: boolean;
+  /** Where the cursor goes once it has closed (default: back to whatever opened it). */
+  onCloseAutoFocus?: (e: Event) => void;
   children: ReactNode;
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -79,6 +86,8 @@ export function EditorDialog({
 
       <Dialog open={open} onOpenChange={handleOpenChange}>
         <DialogContent
+          onOpenAutoFocus={noAutoFocus ? e => e.preventDefault() : undefined}
+          onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             "p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl",
             "[&>button:last-child]:p-2 [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child>svg]:h-5 [&>button:last-child>svg]:w-5",
