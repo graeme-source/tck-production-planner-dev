@@ -27,6 +27,19 @@ export interface StashedCapture {
   improvementId: number;
   phase: string | null;
   at: number; // epoch ms
+  /** Which kind of record the capture was for. Absent on stashes written
+   *  before incident photos existed — those were all improvements. The
+   *  recovery card only appears on the same kind of record, so an
+   *  improvement clip is never offered for upload onto an incident report
+   *  (or the other way round). improvementId holds the target record's id. */
+  target?: CaptureTarget;
+}
+
+export type CaptureTarget = "improvement" | "incident";
+
+/** Whether a stash belongs to the given kind of record. */
+export function stashMatchesTarget(entry: Pick<StashedCapture, "target">, target: CaptureTarget): boolean {
+  return (entry.target ?? "improvement") === target;
 }
 
 export function stashIsFresh(at: number, now: number): boolean {
@@ -54,7 +67,7 @@ function tx<T>(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequ
 
 /** Best-effort — storage being unavailable (private mode, quota) must never
  *  break the capture flow itself. */
-export async function stashCapture(file: File, improvementId: number, phase: string | null): Promise<void> {
+export async function stashCapture(file: File, improvementId: number, phase: string | null, target: CaptureTarget = "improvement"): Promise<void> {
   try {
     const entry: StashedCapture = {
       blob: file,
@@ -63,6 +76,7 @@ export async function stashCapture(file: File, improvementId: number, phase: str
       improvementId,
       phase,
       at: Date.now(),
+      target,
     };
     await tx("readwrite", s => s.put(entry, SLOT));
   } catch {
@@ -71,11 +85,13 @@ export async function stashCapture(file: File, improvementId: number, phase: str
 }
 
 /** The stashed capture, if one exists and is fresh. Stale entries are
- *  cleaned up on read. */
-export async function readStash(): Promise<StashedCapture | null> {
+ *  cleaned up on read. Only a stash for the given kind of record is
+ *  returned (the default keeps the improvement callers unchanged). */
+export async function readStash(target: CaptureTarget = "improvement"): Promise<StashedCapture | null> {
   try {
     const entry = await tx<StashedCapture | undefined>("readonly", s => s.get(SLOT));
     if (!entry) return null;
+    if (!stashMatchesTarget(entry, target)) return null;
     if (!stashIsFresh(entry.at, Date.now())) {
       await clearStash();
       return null;

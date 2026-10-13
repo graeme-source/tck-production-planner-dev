@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { IncidentAttachments } from "@/components/incident-attachments";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -42,6 +43,8 @@ interface IncidentReport {
   signedByName: string | null;
   signedAt: string | null;
   closedAt: string | null;
+  /** Live (not removed) photos/videos on the report. */
+  attachmentCount?: number;
 }
 
 const KIND_META: Record<IncidentReport["kind"], { label: string; chip: string }> = {
@@ -165,6 +168,7 @@ function ReportCard({ report, open, onToggle, onChanged }: {
           <p className="text-xs text-muted-foreground">
             {report.reportedByName ? `Reported by ${report.reportedByName}` : ""}
             {" · "}{stepsDone}/{STEPS.length} containment steps
+            {report.attachmentCount ? ` · ${report.attachmentCount} photo${report.attachmentCount === 1 ? "" : "s"}` : ""}
             {report.signedAt && report.signedByName ? ` · Signed by ${report.signedByName}, ${format(new Date(report.signedAt), "d MMM HH:mm")}` : " · not signed yet"}
           </p>
         </div>
@@ -267,6 +271,14 @@ function ReportDetail({ report, onChanged }: { report: IncidentReport; onChanged
       <AutosaveField label="What happened (one line)" value={report.title} placeholder="e.g. Tempered glass oven door shattered onto the floor" onSave={v => patch({ title: v })} />
       <AutosaveField label="Full description" value={report.description ?? ""} multiline placeholder="What happened, how, and what was affected…" onSave={v => patch({ description: v || null })} />
 
+      {/* Photos & videos — HACCP evidence (Graeme, 2026-10-13: a foreign
+          object report needed its photo). Can be added after signing; those
+          are marked as such and the signed report itself is untouched. */}
+      <div>
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Photos &amp; videos</p>
+        <IncidentAttachments incidentId={report.id} onChanged={onChanged} />
+      </div>
+
       {/* The standard containment steps — big tickable cards. */}
       <div>
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Containment — the standard steps</p>
@@ -321,7 +333,7 @@ function ReportDetail({ report, onChanged }: { report: IncidentReport; onChanged
           </p>
         )}
         <div className="flex items-center gap-2 flex-wrap">
-          {!report.signedAt && (
+          {!report.signedAt && !report.attachmentCount && (
             <button onClick={remove} disabled={busyAction !== null}
               className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:text-destructive hover:bg-destructive/10 inline-flex items-center gap-1.5">
               <Trash2 className="w-4 h-4" /> Delete draft
