@@ -33,6 +33,14 @@ export const issueTriageTable = pgTable("issue_triage", {
   noActionAt: timestamp("no_action_at", { withTimezone: true }),
   noActionBy: text("no_action_by"),
   noActionByUserId: integer("no_action_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  /** Graeme messaged the reporter and is waiting for their answer (migration
+   *  0191). Set by "Message <name>", cleared when they reply or acknowledge,
+   *  or when the card is closed. The card stays in its tab meanwhile. */
+  awaitingReporterSince: timestamp("awaiting_reporter_since", { withTimezone: true }),
+  /** The reporter answered (a reply, or "Got it" on a question) and Graeme
+   *  hasn't looked yet (migration 0191). While set the card sits in To review
+   *  with "New reply from <name>"; any action of his on the card clears it. */
+  reporterReplyAt: timestamp("reporter_reply_at", { withTimezone: true }),
   /** The day the fix/feature went live — the credited improvement's done date. */
   completedOn: date("completed_on"),
   /** The improvement credited to the reporter when this closed. */
