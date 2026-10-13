@@ -144,6 +144,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/recurrence':
+        specifier: workspace:*
+        version: link:../../lib/recurrence
       '@workspace/revenue-targets':
         specifier: workspace:*
         version: link:../../lib/revenue-targets
@@ -626,6 +629,9 @@ importers:
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
+      '@workspace/recurrence':
+        specifier: workspace:*
+        version: link:../../lib/recurrence
       '@workspace/revenue-targets':
         specifier: workspace:*
         version: link:../../lib/revenue-targets
@@ -781,6 +787,8 @@ importers:
         version: 25.5.0
 
   lib/production-schedule: {}
+
+  lib/recurrence: {}
 
   lib/revenue-targets: {}
 

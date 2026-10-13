@@ -58,6 +58,7 @@
     "@workspace/marketing-calendar": "workspace:*",
     "@workspace/messages": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
+    "@workspace/recurrence": "workspace:*",
     "@workspace/revenue-targets": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
     "@workspace/people-reviews": "workspace:*",
