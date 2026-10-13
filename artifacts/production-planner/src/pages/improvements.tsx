@@ -29,7 +29,9 @@ import { ImprovementsTab } from "@/pages/reports";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
-import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
+import { ImprovementFeedMedia, improvementMediaUrl } from "@/components/improvement-feed-media";
+import { BeforeAfterFade } from "@/components/before-after-fade";
+import { pickFadePair } from "@/lib/before-after-fade";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen, useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { useSeenOnScroll } from "@/hooks/use-seen-on-scroll";
@@ -815,6 +817,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
   const item = items.find(i => i.id === id);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["improvements"] });
+  const fadePair = pickFadePair(item?.media);
 
   // "Create SOP from this improvement" — the server copies title, text and
   // media in as draft steps; the editor opens on the result for the tidy.
@@ -1005,6 +1008,18 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             ? "This is what makes an improvement count. A photo is fine — a short clip is better."
             : "A photo is fine. A short clip is better."}
         </p>
+        {/* Both photos in: the two fade into each other in one frame, so the
+            change shows without scrolling (Graeme, 2026-10-13). The halves
+            stay below to re-shoot or remove. */}
+        {fadePair && (
+          <div className="mb-6">
+            <BeforeAfterFade
+              beforeSrc={improvementMediaUrl(fadePair.before.id)}
+              afterSrc={improvementMediaUrl(fadePair.after.id)}
+              maxHeight="70vh"
+            />
+          </div>
+        )}
         {/* Stacked and full width — side-by-side thumbnails were too small
             to see what had changed (Graeme, 2026-09-25). */}
         <div className="space-y-6">

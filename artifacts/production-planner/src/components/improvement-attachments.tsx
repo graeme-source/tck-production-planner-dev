@@ -5,6 +5,8 @@
 import { useEffect, useState } from "react";
 import { Loader2, Camera, Upload, Trash2, X, Play, AlertTriangle, Download, RotateCcw } from "lucide-react";
 import { stashCapture, readStash, clearStash, saveFileToDevice, type StashedCapture } from "@/lib/capture-safety";
+import { BeforeAfterFade } from "@/components/before-after-fade";
+import { pickFadePair } from "@/lib/before-after-fade";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -135,6 +137,10 @@ export function ImprovementAttachments({
     />
   );
 
+  const fadePair = phase ? null : pickFadePair(
+    (items ?? []).map(a => ({ id: a.id, kind: a.kind === "video" ? ("video" as const) : ("image" as const), phase: a.phase })),
+  );
+
   /** The failure / recovery card's shared actions. */
   const saveToPhone = async (file: File) => {
     const ok = await saveFileToDevice(file);
@@ -215,6 +221,15 @@ export function ImprovementAttachments({
               Discard
             </button>
           </div>
+        </div>
+      )}
+
+      {/* Everything at once (no phase filter — the report pop-up): a before
+          and an after photo also fade into each other in one frame, so the
+          change shows at a glance (Graeme, 2026-10-13). */}
+      {!phase && fadePair && (
+        <div className="mb-3">
+          <BeforeAfterFade beforeSrc={attachmentUrl(fadePair.before.id)} afterSrc={attachmentUrl(fadePair.after.id)} maxHeight="60vh" />
         </div>
       )}
 
