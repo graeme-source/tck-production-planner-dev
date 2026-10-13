@@ -27,7 +27,7 @@ import {
 } from "lucide-react";
 import {
   sortClassifications, whatHappenedText, linkOnly, linkPastedMessage, ACTION_OWNERS, MAX_NOTES_CHARS,
-  ANSWERS_TRIGGER, ANSWERS_TRIGGER_LABEL, ANSWERS_TRIGGER_QUESTION, needsPolicyReview, entryClassIds, entryClassification,
+  ANSWERS_TRIGGER, ANSWERS_TRIGGER_LABEL, ANSWERS_TRIGGER_QUESTION, needsPolicyReview, entryClassIds, entryClassification, meetingNotesSaveParts as saveDraftParts,
   type ActionOwner, type MeetingNotesDraft, type AnswersTrigger,
 } from "@workspace/people-reviews";
 import { TRIGGER_HINT } from "./trigger-link";
@@ -116,7 +116,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       setNotice(null);
       setSource(r.source);
       setRepaired(r.repaired);
-      setDraft({ ...r.draft, actions: r.draft.actions.map(a => ({ ...a, todo: a.owner === "me" })) });
+      setDraft({ ...r.draft, objectives: r.draft.objectives ?? [], actions: r.draft.actions.map(a => ({ ...a, todo: a.owner === "me" })) });
     },
     onError: (e: unknown) => setNotice(e instanceof Error ? e.message : "Couldn't read the notes"),
   });
@@ -126,7 +126,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       title: d.title, classificationId: d.classificationId,
       classificationIds: d.classificationIds ?? (d.classificationId != null ? [d.classificationId] : entryClassIds(entry)),
       summary: d.summary,
-      agreements: d.agreements.map(a => ({ what: a.what, detail: a.detail || null, date: a.date || null })),
+      ...saveDraftParts(d),
       actions: d.actions.map(a => ({ what: a.what, owner: a.owner, ownerName: a.owner === "other" ? (a.ownerName || null) : null, date: a.date || null, todo: a.owner === "me" && a.todo })),
       source,
       // Only sent when the question was asked (otherwise left as it is).
@@ -267,30 +267,54 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
 
       <div className="space-y-2">
         <FieldLabel>What was agreed</FieldLabel>
-        <p className="text-sm text-muted-foreground -mt-1">These show under "What we agreed" on the record — and to {first} once shared.</p>
+        <p className="text-sm text-muted-foreground -mt-1">
+          One list of bullet points — what's going to happen from here. Not objectives, not to-dos. It shows under "What we agreed" on the record — and to {first} once shared.
+        </p>
         {draft.agreements.length === 0 && <p className="text-base text-muted-foreground">Nothing agreed — that's fine.</p>}
-        {draft.agreements.map((a, i) => (
-          <div key={i} className="rounded-2xl border-2 border-border p-3 space-y-2">
-            <div className="flex items-start gap-2">
-              <input value={a.what} placeholder="e.g. Return date" maxLength={300}
-                onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? { ...v, what: e.target.value } : v)) })}
-                className={cn(input, "flex-1 min-w-0 font-bold")} />
-              <button type="button" aria-label="Remove this agreement" onClick={() => set({ agreements: draft.agreements.filter((_, j) => j !== i) })}
+        <ul className="space-y-2">
+          {draft.agreements.map((a, i) => (
+            <li key={i} className="flex items-start gap-2">
+              <span className="pt-3 text-xl font-bold text-primary select-none" aria-hidden>•</span>
+              <textarea value={a} rows={2} maxLength={500} placeholder="e.g. Back on 4 May 2027, 24 hours a week over 3 days"
+                aria-label={`Agreed point ${i + 1}`}
+                onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? e.target.value : v)) })}
+                className={cn(box, "flex-1 min-w-0 resize-y text-base")} />
+              <button type="button" aria-label="Remove this point" onClick={() => set({ agreements: draft.agreements.filter((_, j) => j !== i) })}
                 className="p-3 text-muted-foreground hover:text-destructive"><Trash2 className="w-5 h-5" /></button>
+            </li>
+          ))}
+        </ul>
+        <button type="button" onClick={() => set({ agreements: [...draft.agreements, ""] })}
+          className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add a point</button>
+      </div>
+
+      <div className="space-y-2">
+        <FieldLabel>Performance objectives</FieldLabel>
+        <p className="text-sm text-muted-foreground -mt-1">
+          Only goals {first} is to achieve at work (e.g. "Wrap 240 packs an hour by 1 December"). Most meetings have none. These can be marked done later.
+        </p>
+        {draft.objectives.length === 0 && <p className="text-base text-muted-foreground">None — that's normal for this kind of meeting.</p>}
+        {draft.objectives.map((o, i) => {
+          const upd = (p: Partial<Draft["objectives"][number]>) => set({ objectives: draft.objectives.map((v, j) => (j === i ? { ...v, ...p } : v)) });
+          return (
+            <div key={i} className="rounded-2xl border-2 border-border p-3 space-y-2">
+              <div className="flex items-start gap-2">
+                <input value={o.title} placeholder="e.g. Wrapping speed" maxLength={300} onChange={e => upd({ title: e.target.value })}
+                  className={cn(input, "flex-1 min-w-0 font-bold")} />
+                <button type="button" aria-label="Remove this objective" onClick={() => set({ objectives: draft.objectives.filter((_, j) => j !== i) })}
+                  className="p-3 text-muted-foreground hover:text-destructive"><Trash2 className="w-5 h-5" /></button>
+              </div>
+              <textarea value={o.detail ?? ""} rows={2} maxLength={2000} placeholder="What it means in practice, and how we'll know"
+                onChange={e => upd({ detail: e.target.value })} className={cn(box, "resize-y text-base")} />
+              <label className="block space-y-1">
+                <span className="text-sm font-bold">Target date (optional)</span>
+                <input type="date" value={o.date ?? ""} onChange={e => upd({ date: e.target.value || null })} className={cn(input, "text-base font-bold")} />
+              </label>
             </div>
-            <textarea value={a.detail ?? ""} rows={2} maxLength={2000} placeholder="The details — dates, hours, amounts"
-              onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? { ...v, detail: e.target.value } : v)) })}
-              className={cn(box, "resize-y text-base")} />
-            <label className="block space-y-1">
-              <span className="text-sm font-bold">Date (optional)</span>
-              <input type="date" value={a.date ?? ""}
-                onChange={e => set({ agreements: draft.agreements.map((v, j) => (j === i ? { ...v, date: e.target.value || null } : v)) })}
-                className={cn(input, "text-base font-bold")} />
-            </label>
-          </div>
-        ))}
-        <button type="button" onClick={() => set({ agreements: [...draft.agreements, { what: "", detail: null, date: null }] })}
-          className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add an agreement</button>
+          );
+        })}
+        <button type="button" onClick={() => set({ objectives: [...draft.objectives, { title: "", detail: null, date: null }] })}
+          className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add a performance objective</button>
       </div>
 
       <div className="space-y-2">

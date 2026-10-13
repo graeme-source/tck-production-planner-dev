@@ -26,13 +26,73 @@ export const MEETING_STATUS_LABEL: Record<MeetingStatus, string> = {
   cancelled: "Cancelled",
 };
 
-export const NOTE_KINDS = ["note", "feedback", "objective"] as const;
+/** A write-up's parts. "agreement" (migration 0186, Graeme 2026-10-13) is
+ *  ONE per review: a bulleted list of what was agreed — not objectives, not
+ *  to-dos, never "done". An objective is a PERFORMANCE goal the colleague is
+ *  working towards. */
+export const NOTE_KINDS = ["note", "feedback", "objective", "agreement"] as const;
 export type NoteKind = (typeof NOTE_KINDS)[number];
 export const NOTE_KIND_LABEL: Record<NoteKind, string> = {
   note: "Note",
   feedback: "Feedback",
   objective: "Objective",
+  agreement: "What was agreed",
 };
+
+// ── What was agreed: one bulleted list per review ──────────────────────────
+
+export const AGREEMENT_TITLE = "What was agreed";
+
+/** The bullet points stored in an agreement's body ("• one\n• two"). Lines
+ *  typed without a bullet count too; blank lines are dropped. */
+export function agreementBullets(body: string | null | undefined): string[] {
+  return (body ?? "")
+    .split(/\r?\n/)
+    // "• x", "- x", "* x", "1. x" — but never "2.5 days" or "-3°C".
+    .map(l => l.replace(/^\s*(?:•\s*|[-*–]\s+|\d+[.)]\s+)/, "").trim())
+    .filter(Boolean);
+}
+
+/** Bullet points → the stored body. Blanks dropped; "" when none. */
+export function agreementBody(bullets: readonly string[]): string {
+  return bullets.map(b => b.replace(/\s+/g, " ").trim()).filter(Boolean).map(b => `• ${b}`).join("\n");
+}
+
+/** Add bullets to an existing agreement — one list per review. Points
+ *  already there (same words, any case) aren't added twice. */
+export function appendAgreementBullets(existingBody: string | null | undefined, more: readonly string[]): string {
+  const have = agreementBullets(existingBody);
+  const seen = new Set(have.map(b => b.toLowerCase()));
+  const add: string[] = [];
+  for (const raw of more) {
+    const b = raw.replace(/\s+/g, " ").trim();
+    if (!b || seen.has(b.toLowerCase())) continue;
+    seen.add(b.toLowerCase());
+    add.push(b);
+  }
+  return agreementBody([...have, ...add]);
+}
+
+/** "What we agreed" for a person: the agreement list(s) from the most
+ *  recent review that has one. `reviews` newest first (any order is fine if
+ *  `day` is given). Older agreements stay on their own review. */
+export function latestAgreements<N extends { kind: string; entryId: number | null; createdAt: string }>(
+  notes: readonly N[],
+  reviews: ReadonlyArray<{ id: number; day: string }>,
+): N[] {
+  const agreements = notes.filter(n => n.kind === "agreement" && n.entryId != null);
+  if (agreements.length === 0) return [];
+  const day = new Map(reviews.map(r => [r.id, r.day]));
+  let best: { id: number; day: string } | null = null;
+  for (const n of agreements) {
+    const d = day.get(n.entryId as number);
+    if (d == null) continue;
+    if (!best || d > best.day || (d === best.day && (n.entryId as number) > best.id)) best = { id: n.entryId as number, day: d };
+  }
+  if (!best) return [];
+  const id = best.id;
+  return agreements.filter(n => n.entryId === id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
 
 export interface ReviewLike {
   entryDate: string;
@@ -230,8 +290,12 @@ export interface MeetingNotesDraft {
   title: string;
   /** Short and factual. */
   summary: string;
-  /** What was agreed — dates, hours, amounts kept in the words. */
-  agreements: Array<{ what: string; detail: string | null; date: string | null }>;
+  /** What was agreed — one bullet each, dates, hours and amounts kept in
+   *  the words. Saved as ONE "What was agreed" list, never as objectives. */
+  agreements: string[];
+  /** PERFORMANCE objectives the colleague is to achieve (rare outside a
+   *  probation or performance review). Saved as objectives (Mark as done). */
+  objectives: Array<{ title: string; detail: string | null; date: string | null }>;
   /** Follow-ups: me = whoever is recording it, colleague = the person whose
    *  record it is, other = someone else (ownerName says who). */
   actions: Array<{ what: string; owner: ActionOwner; ownerName: string | null; date: string | null }>;
@@ -242,23 +306,28 @@ export interface MeetingNotesDraft {
 export const SUMMARY_TITLE = "Summary";
 export const ACTIONS_TITLE = "Follow-up actions";
 
-/** The write-up rows a checked draft saves: the summary, each agreement as
- *  an objective (so it lands in "What we agreed"), then the actions as one
- *  note. Blank parts are dropped. Names belong to the record — they never
- *  go near a to-do (see actionTodos). */
-export function meetingNotesRows(d: Pick<MeetingNotesDraft, "summary" | "agreements" | "actions">, who: {
+/** The write-up rows a checked draft saves: the summary, what was agreed
+ *  as ONE bulleted "agreement" (Graeme, 2026-10-13: "we should just have a
+ *  list of agreed points… in one section"), each real performance objective
+ *  as an objective, then the actions as one note. Blank parts are dropped.
+ *  Names belong to the record — they never go near a to-do (actionTodos). */
+export function meetingNotesRows(d: Pick<MeetingNotesDraft, "summary" | "agreements" | "actions"> & {
+  objectives?: MeetingNotesDraft["objectives"];
+}, who: {
   me: string; colleague: string;
 }): WriteUpRow[] {
   const rows: WriteUpRow[] = [];
   const summary = d.summary.trim();
   if (summary) rows.push({ kind: "note", title: SUMMARY_TITLE, body: summary, dueDate: null });
-  for (const a of d.agreements) {
-    const what = a.what.trim();
-    const detail = (a.detail ?? "").trim();
-    if (!what && !detail) continue;
-    rows.push(what && detail
-      ? { kind: "objective", title: what, body: detail, dueDate: a.date ?? null }
-      : { kind: "objective", title: null, body: what || detail, dueDate: a.date ?? null });
+  const agreed = agreementBody(d.agreements);
+  if (agreed) rows.push({ kind: "agreement", title: AGREEMENT_TITLE, body: agreed, dueDate: null });
+  for (const o of d.objectives ?? []) {
+    const title = o.title.trim();
+    const detail = (o.detail ?? "").trim();
+    if (!title && !detail) continue;
+    rows.push(title && detail
+      ? { kind: "objective", title, body: detail, dueDate: o.date ?? null }
+      : { kind: "objective", title: null, body: title || detail, dueDate: o.date ?? null });
   }
   const lines = d.actions
     .filter(a => a.what.trim())
@@ -268,6 +337,20 @@ export function meetingNotesRows(d: Pick<MeetingNotesDraft, "summary" | "agreeme
     });
   if (lines.length) rows.push({ kind: "note", title: ACTIONS_TITLE, body: lines.join("\n"), dueDate: null });
   return rows;
+}
+
+/** What the checked draft sends to be saved: agreed points as trimmed
+ *  bullets (blank ones dropped), and only objectives with something in them. */
+export function meetingNotesSaveParts(d: Pick<MeetingNotesDraft, "agreements" | "objectives">): {
+  agreements: string[];
+  objectives: Array<{ title: string; detail: string | null; date: string | null }>;
+} {
+  return {
+    agreements: d.agreements.map(a => a.replace(/\s+/g, " ").trim()).filter(Boolean),
+    objectives: (d.objectives ?? [])
+      .map(o => ({ title: o.title.trim(), detail: (o.detail ?? "").trim() || null, date: o.date || null }))
+      .filter(o => o.title || o.detail),
+  };
 }
 
 /** The booker's own actions become discreet to-dos (generic title, no names
@@ -316,13 +399,15 @@ export interface OwnRecordReview<N> {
  * what they may read (shared only, unless they wrote it). Only reviews with
  * something they can read show — the review itself (its classification,
  * summary, stage) is never theirs to see; they get the day and the write-up.
- * "What we agreed" = open objectives from the most recent review that set
- * any, plus any loose ones.
+ * "What we agreed" = the agreement list from the most recent review that
+ * has one (`agreement`), plus the open performance objectives from the most
+ * recent review that set any, and any loose ones (`agreed`).
  */
 export function ownRecordView<N extends OwnNoteLike>(reviews: readonly OwnReviewLike[], notes: readonly N[]): {
   reviews: Array<OwnRecordReview<N>>;
   loose: N[];
   agreed: N[];
+  agreement: N[];
 } {
   const byEntry = new Map<number, N[]>();
   const loose: N[] = [];
@@ -341,5 +426,6 @@ export function ownRecordView<N extends OwnNoteLike>(reviews: readonly OwnReview
     reviews: out,
     loose: [...loose].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     agreed: [...loose.filter(open), ...(latest ? latest.notes.filter(open) : [])],
+    agreement: latestAgreements(out.flatMap(r => r.notes), out.map(r => ({ id: r.entryId, day: r.date }))),
   };
 }

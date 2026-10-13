@@ -14,7 +14,11 @@
  *          only kept as the source reference. A paste that is nothing but a
  *          link is told to paste the notes instead.
  *   POST /api/people-reviews/entries/:id/meeting-notes        the checked draft
- *        → the write-up (private to the author until shared), the source
+ *        → the write-up (private to the author until shared): the summary,
+ *          what was agreed as ONE bulleted list per review (kind
+ *          "agreement", 0186 — added to the author's private list if the
+ *          review already has one), performance objectives, the actions;
+ *          the source
  *          kept for audit, the meeting marked held, and a generic to-do for
  *          each of the author's own actions. Never shared automatically —
  *          "Share with <name>" is the existing share-write-up route.
@@ -24,14 +28,14 @@
  * audited without its content.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
-import { eq } from "drizzle-orm";
+import { and, eq, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import {
   db, usersTable, peopleRecordEntriesTable, peopleReviewNotesTable, peopleRecordAuditTable, peopleRecordClassificationsTable,
   peopleRecordEntrySourcesTable,
 } from "@workspace/db";
 import {
-  meetingNotesRows, actionTodos, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
+  meetingNotesRows, actionTodos, appendAgreementBullets, agreementBullets, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
   linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS, answersTriggerMessage,
   cleanClassIds, entryClassIds, entryClassification,
   type MeetingStatus, type Classification, type EvidenceKind,
@@ -179,8 +183,27 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
         await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "meeting_status", detail: change.message });
       }
       await tx.update(peopleRecordEntriesTable).set(set).where(eq(peopleRecordEntriesTable.id, entry.id));
-
-      const created = await tx.insert(peopleReviewNotesTable).values(rows.map(r => ({
+      // What was agreed is ONE list per review: if this author already has a
+      // private one on it, the new points join it. A shared one is never
+      // changed behind the colleague's back — a new private list starts.
+      let toInsert = rows;
+      const agreementRow = rows.find(r => r.kind === "agreement");
+      let mergedInto: number | null = null;
+      if (agreementRow) {
+        const [mine] = await tx.select().from(peopleReviewNotesTable).where(and(
+          eq(peopleReviewNotesTable.entryId, entry.id), eq(peopleReviewNotesTable.kind, "agreement"),
+          eq(peopleReviewNotesTable.authorId, viewer.actor.id), eq(peopleReviewNotesTable.visibility, "private"),
+          isNull(peopleReviewNotesTable.deletedAt),
+        )).orderBy(peopleReviewNotesTable.id).limit(1);
+        if (mine) {
+          await tx.update(peopleReviewNotesTable)
+            .set({ body: appendAgreementBullets(mine.body, agreementBullets(agreementRow.body)), updatedAt: now })
+            .where(eq(peopleReviewNotesTable.id, mine.id));
+          mergedInto = mine.id;
+          toInsert = rows.filter(r => r !== agreementRow);
+        }
+      }
+      const created = toInsert.length === 0 ? [] : await tx.insert(peopleReviewNotesTable).values(toInsert.map(r => ({
         entryId: entry.id, userId: entry.userId, kind: r.kind, title: r.title, body: r.body, dueDate: r.dueDate,
         visibility: "private", sharedAt: null, authorId: viewer.actor.id, authorName: viewer.name,
       }))).returning({ id: peopleReviewNotesTable.id });
@@ -202,8 +225,8 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
       }
 
       await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "write_up",
-        detail: `Meeting notes added with AI from pasted text${b.source.url ? " (source link kept)" : ""} (${created.length} part${created.length === 1 ? "" : "s"}, private${todos.length ? `, ${todos.length} to-do${todos.length === 1 ? "" : "s"}` : ""})` });
-      return { created: created.length, todos: todos.length };
+        detail: `Meeting notes added with AI from pasted text${b.source.url ? " (source link kept)" : ""} (${created.length} part${created.length === 1 ? "" : "s"}${mergedInto ? ", agreed points added to the existing list" : ""}, private${todos.length ? `, ${todos.length} to-do${todos.length === 1 ? "" : "s"}` : ""})` });
+      return { created: created.length + (mergedInto ? 1 : 0), todos: todos.length };
     });
     resyncAttentionSoon();
     res.status(201).json(result);

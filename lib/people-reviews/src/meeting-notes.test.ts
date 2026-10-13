@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   whatHappened, whatHappenedText, meetingWrittenUp, meetingNotesRows, actionTodos, recordTodo,
   SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, heldByNotes, linkOnly, linkPastedMessage, isWisprFlowLink, cleanSourceLink,
-  WISPR_LOGIN_MESSAGE, LINK_ONLY_MESSAGE, type MeetingNotesDraft,
+  WISPR_LOGIN_MESSAGE, LINK_ONLY_MESSAGE, AGREEMENT_TITLE, meetingNotesSaveParts, type MeetingNotesDraft,
 } from "./index";
 
 describe("one write-up per meeting", () => {
@@ -76,9 +76,13 @@ describe("saving an AI draft", () => {
     title: "Maternity review meeting",
     summary: "  Talked through leave and return.  ",
     agreements: [
-      { what: "Return date", detail: "Back on 4 May 2027, 24 hours a week", date: "2027-05-04" },
-      { what: "Keeping-in-touch days", detail: null, date: null },
-      { what: " ", detail: "", date: null },
+      "Back on 4 May 2027, 24 hours a week",
+      "Two keeping-in-touch days",
+      "  ",
+    ],
+    objectives: [
+      { title: "Wrapping speed", detail: "240 packs an hour", date: "2027-01-01" },
+      { title: " ", detail: "", date: null },
     ],
     actions: [
       { what: "Send the leave letter", owner: "me", ownerName: null, date: "2026-10-19" },
@@ -89,14 +93,25 @@ describe("saving an AI draft", () => {
     classificationId: null,
   };
 
-  it("summary, then each agreement as an objective, then the actions as one note", () => {
+  it("summary, then ONE agreed list, then real objectives, then the actions as one note", () => {
     const rows = meetingNotesRows(draft, { me: "Alex", colleague: "Jo" });
     expect(rows).toEqual([
       { kind: "note", title: SUMMARY_TITLE, body: "Talked through leave and return.", dueDate: null },
-      { kind: "objective", title: "Return date", body: "Back on 4 May 2027, 24 hours a week", dueDate: "2027-05-04" },
-      { kind: "objective", title: null, body: "Keeping-in-touch days", dueDate: null },
+      { kind: "agreement", title: AGREEMENT_TITLE, body: "• Back on 4 May 2027, 24 hours a week\n• Two keeping-in-touch days", dueDate: null },
+      { kind: "objective", title: "Wrapping speed", body: "240 packs an hour", dueDate: "2027-01-01" },
       { kind: "note", title: ACTIONS_TITLE, body: "• Send the leave letter — Alex (by 19 Oct 2026)\n• Confirm the dates — Jo\n• Update the rota — Sam", dueDate: null },
     ]);
+  });
+  it("agreed points never become objectives", () => {
+    const rows = meetingNotesRows({ summary: "", agreements: ["A", "B", "C"], objectives: [], actions: [] }, { me: "A", colleague: "B" });
+    expect(rows.filter(r => r.kind === "objective")).toEqual([]);
+    expect(rows.filter(r => r.kind === "agreement")).toHaveLength(1);
+  });
+  it("what the checked draft sends: trimmed bullets, filled-in objectives only", () => {
+    expect(meetingNotesSaveParts({
+      agreements: ["  Back  on 4 May ", "", "  "],
+      objectives: [{ title: " Speed ", detail: " ", date: "" }, { title: "", detail: null, date: null }],
+    })).toEqual({ agreements: ["Back on 4 May"], objectives: [{ title: "Speed", detail: null, date: null }] });
   });
   it("an empty draft saves nothing", () => {
     expect(meetingNotesRows({ summary: "", agreements: [], actions: [] }, { me: "A", colleague: "B" })).toEqual([]);

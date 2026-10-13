@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   parseMeetingDraft, cleanDate, fenceNotes, meetingNotesSystemPrompt, meetingNotesUserMessage,
-  SaveMeetingNotesBody, ReadMeetingNotesBody, LIMITS, MEETING_NOTES_TOOL,
+  SaveMeetingNotesBody, ReadMeetingNotesBody, LIMITS, MEETING_NOTES_TOOL, agreementText,
 } from "./meeting-notes-ai";
 
 const LIST = [
@@ -15,7 +15,8 @@ describe("the model's answer", () => {
     const r = parseMeetingDraft({
       title: "Maternity review meeting",
       summary: "Talked through leave dates and the return.",
-      agreements: [{ what: "Return date", detail: "Back 4 May 2027, 24 hours a week", date: "2027-05-04" }],
+      agreements: ["Back on 4 May 2027, 24 hours a week", "Two keeping-in-touch days, dates to be agreed"],
+      objectives: [],
       actions: [{ what: "Send the confirmation letter", owner: "me", ownerName: null, date: "2026-10-19" }],
       classification: "health",
     }, LIST);
@@ -24,7 +25,8 @@ describe("the model's answer", () => {
       draft: {
         title: "Maternity review meeting",
         summary: "Talked through leave dates and the return.",
-        agreements: [{ what: "Return date", detail: "Back 4 May 2027, 24 hours a week", date: "2027-05-04" }],
+        agreements: ["Back on 4 May 2027, 24 hours a week", "Two keeping-in-touch days, dates to be agreed"],
+        objectives: [],
         actions: [{ what: "Send the confirmation letter", owner: "me", ownerName: null, date: "2026-10-19" }],
         classificationId: 7,
       },
@@ -42,10 +44,18 @@ describe("the model's answer", () => {
       title: "",
       summary: `  ${"word ".repeat(2000)}  `,
       agreements: [
+        "  Back on   4 May 2027  ",
         { what: "Hours", detail: "16 a week", date: "2027-02-30" },
-        "not an object",
         { what: " ", detail: " " },
         { detail: "Phased return over four weeks" },
+        42,
+        { nonsense: true },
+      ],
+      objectives: [
+        { title: "Wrapping speed", detail: "240 packs an hour", date: "2027-02-30" },
+        { what: "Food hygiene Level 2" },
+        { title: " ", detail: " " },
+        "not an object",
       ],
       actions: [
         { what: "Update the rota", owner: "Manager", ownerName: "Sam", date: "next week" },
@@ -58,9 +68,16 @@ describe("the model's answer", () => {
     if (!r.ok) return;
     expect(r.draft.title).toBe("Meeting notes");
     expect(r.draft.summary.length).toBeLessThanOrEqual(LIMITS.summary);
+    // Agreements are bullets — an old { what, detail } shape becomes "What — detail".
     expect(r.draft.agreements).toEqual([
-      { what: "Hours", detail: "16 a week", date: null },
-      { what: "Phased return over four weeks", detail: null, date: null },
+      "Back on 4 May 2027",
+      "Hours — 16 a week",
+      "Phased return over four weeks",
+      "42",
+    ]);
+    expect(r.draft.objectives).toEqual([
+      { title: "Wrapping speed", detail: "240 packs an hour", date: null },
+      { title: "Food hygiene Level 2", detail: null, date: null },
     ]);
     expect(r.draft.actions).toEqual([
       { what: "Update the rota", owner: "other", ownerName: "Sam", date: null },
@@ -105,7 +122,17 @@ describe("the notes are data, not instructions", () => {
     expect(p).toContain("2026-10-12");
   });
   it("the tool can only answer in the draft's fields", () => {
-    expect(Object.keys(MEETING_NOTES_TOOL.input_schema.properties).sort()).toEqual(["actions", "agreements", "classification", "summary", "title"]);
+    expect(Object.keys(MEETING_NOTES_TOOL.input_schema.properties).sort()).toEqual(["actions", "agreements", "classification", "objectives", "summary", "title"]);
+  });
+  it("agreements are bullet strings; objectives are performance goals, kept apart", () => {
+    const props = MEETING_NOTES_TOOL.input_schema.properties;
+    expect(props.agreements.items).toEqual({ type: "string" });
+    expect(props.objectives.description).toMatch(/PERFORMANCE objectives only/);
+    expect(props.objectives.description).toMatch(/Never put an agreement/);
+    const p = meetingNotesSystemPrompt({ recorderFirstName: "Alex", colleagueFirstName: "Jo", meetingDate: "2026-10-12", classificationLabels: [] });
+    expect(p).toMatch(/agreements: what was agreed/);
+    expect(p).toMatch(/objectives: PERFORMANCE goals Jo/);
+    expect(p).toMatch(/Never turn an agreement into an objective/);
   });
 });
 
@@ -120,13 +147,20 @@ describe("request bodies", () => {
   it("saving checks every field", () => {
     const ok = {
       title: "Maternity review meeting", classificationId: 7, summary: "s",
-      agreements: [{ what: "a", detail: null, date: "2027-05-04" }],
+      agreements: ["Back on 4 May 2027"],
+      objectives: [{ title: "Wrapping speed", detail: null, date: "2027-01-01" }],
       actions: [{ what: "b", owner: "me", ownerName: null, date: null, todo: true }],
       source: { kind: "text", url: null, text: "raw" },
     };
     expect(SaveMeetingNotesBody.safeParse(ok).success).toBe(true);
     expect(SaveMeetingNotesBody.safeParse({ ...ok, actions: [{ ...ok.actions[0], owner: "boss" }] }).success).toBe(false);
-    expect(SaveMeetingNotesBody.safeParse({ ...ok, agreements: [{ what: "a", detail: null, date: "4 May" }] }).success).toBe(false);
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, objectives: [{ title: "a", detail: null, date: "4 May" }] }).success).toBe(false);
+    // Objectives may be left out (an older tab); an old-shape agreement becomes a bullet.
+    const old = SaveMeetingNotesBody.safeParse({ ...ok, objectives: undefined, agreements: [{ what: "Return date", detail: "4 May", date: null }] });
+    expect(old.success && old.data.objectives).toEqual([]);
+    expect(old.success && old.data.agreements).toEqual(["Return date — 4 May"]);
+    expect(agreementText("  two   spaces ")).toBe("two spaces");
+    expect(agreementText({})).toBeNull();
     expect(SaveMeetingNotesBody.safeParse({ ...ok, source: { kind: "text", url: null, text: "" } }).success).toBe(false);
     // Several classifications ticked: optional, but never an empty set.
     expect(SaveMeetingNotesBody.safeParse({ ...ok, classificationIds: [7, 1] }).success).toBe(true);
