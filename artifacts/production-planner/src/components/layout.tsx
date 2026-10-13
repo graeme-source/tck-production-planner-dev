@@ -1,5 +1,6 @@
 import React, { ReactNode, useCallback, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
+import { TeamListsPanelSection } from "@/components/team-lists/team-lists-dashboard";
 import { motion, AnimatePresence } from "framer-motion";
 import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
@@ -1049,6 +1050,10 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
   // Choosing an action puts the panel away, then opens the action.
   const run = (action: () => void) => () => { setOpen(false); action(); };
+  // Team lists are management routines — never on a station screen
+  // (Graeme, 2026-10-13), even when a manager has the panel out there.
+  const [location] = useLocation();
+  const onStation = /\/station\//.test(location);
 
   const actions: Array<{ key: string; label: string; hint: string; icon: typeof ListTodo; tone: string; onClick: () => void; badge?: number; hidden?: boolean }> = [
     { key: "todos", label: "My to-dos", hint: "What's on your list", icon: ListTodo, tone: "bg-primary text-primary-foreground shadow-primary/30", onClick: run(onOpenTodos), badge: openTodoCount },
@@ -1093,6 +1098,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
             </button>
           ))}
         </div>
+        {!onStation && <TeamListsPanelSection onNavigate={() => setOpen(false)} />}
       </SwipePanel>
       <SwipePanelTourCard tour={tour} />
     </>

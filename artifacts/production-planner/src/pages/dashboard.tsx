@@ -3,6 +3,7 @@ import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } f
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
+import { TeamListsDashboardSection } from "@/components/team-lists/team-lists-dashboard";
 import { DispatchOrdersPanel, fetchWeeklyOrders, getMonday } from "@/components/dispatch-orders-panel";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { format, isToday, addDays } from "date-fns";
@@ -895,6 +896,11 @@ export default function Dashboard() {
         />
         </div>
       </div>
+
+      {/* Team lists (Graeme, 2026-10-13): the shared management routines —
+          Production planner, Scheduling manager… — with today's progress.
+          Managers/admins only; nothing renders for anyone else. */}
+      <TeamListsDashboardSection />
 
       {/* The core calzone line — log in, tap where you work, no
           production-plan detour (Graeme, 2026-09-16). Exit Station brings
