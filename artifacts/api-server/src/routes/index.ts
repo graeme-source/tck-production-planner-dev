@@ -67,6 +67,7 @@ import returnToWorkRouter from "./return-to-work";
 import stationMessagesRouter from "./station-messages";
 import messagesRouter from "./messages";
 import contactsRouter from "./contacts";
+import teamListsRouter from "./team-lists";
 import apcPostcodeOverridesRouter from "./apc-postcode-overrides";
 import staffEmergencyContactsRouter from "./staff-emergency-contacts";
 import employeeReviewsRouter from "./employee-reviews";
@@ -388,6 +389,10 @@ router.use("/messages", messagesRouter);
 // Contacts directory: anyone signed in reads; managers/admins edit (guarded
 // inside routes/contacts.ts).
 router.use("/contacts", contactsRouter);
+// Team lists — shared recurring routines (Production Planner, Scheduling
+// Manager…) any manager can open and tick. Managers/admins only; per-list
+// members enforced inside (routes/team-lists.ts).
+router.use("/team-lists", teamListsRouter);
 // What APC customer service said about a postcode restriction: anyone
 // signed in records (the packer makes the call); clearing is guarded inside.
 router.use("/apc-postcode-overrides", apcPostcodeOverridesRouter);
