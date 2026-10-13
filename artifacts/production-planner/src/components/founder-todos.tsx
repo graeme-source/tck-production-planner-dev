@@ -17,15 +17,21 @@ import {
   PRIORITY_META,
   type TodoTask,
 } from "@/components/todo-lists";
+import { useAuth } from "@/contexts/auth-context";
+import { sortTodos, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
+import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 
 export function FounderTodos() {
   // taskId set = the sheet opens straight onto that task's notes/comments.
   const [sheet, setSheet] = useState<{ open: boolean; taskId: number | null }>({ open: false, taskId: null });
   const { data, isLoading } = useMyTodos();
   const completeMut = useCompleteTodo();
+  const { state } = useAuth();
+  // The same choice as on My To-dos — it's the same list.
+  const [sort, setSort] = useTaskSort(todoSortListKey(state.status === "authenticated" ? state.user.id : 0), TODO_DEFAULT_SORT);
 
   const todayIso = format(new Date(), "yyyy-MM-dd");
-  const open = data?.open ?? [];
+  const open = sortTodos(data?.open ?? [], sort, isOverdue);
   // Anything not deliberately pushed to a future day is on today's plate.
   const nowList = open.filter(t => !t.scheduled_for || t.scheduled_for <= todayIso);
   const laterList = open.filter(t => t.scheduled_for && t.scheduled_for > todayIso);
@@ -49,6 +55,7 @@ export function FounderTodos() {
       </header>
 
       <div className="px-4 pb-5 space-y-2">
+        {open.length > 1 && <TaskSortControl spec={sort} onChange={setSort} manualLabel="Order added" className="px-2 pb-1" />}
         {nowList.map(task => (
           <TodoRow
             key={task.id}

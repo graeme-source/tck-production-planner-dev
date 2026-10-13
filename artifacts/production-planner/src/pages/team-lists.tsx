@@ -19,7 +19,9 @@ import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { dayHeading, doneByLabel, overdueLabel } from "@/lib/team-list-view";
+import { dayHeading, doneByLabel, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields } from "@/lib/team-list-view";
+import { sortTasks } from "@/lib/task-sort";
+import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 import {
   PRIORITY_STYLES, progressText, useAddItem, useReorderItems, useTeamList, useTeamLists, useTick,
   type DayEntry, type Progress, type TeamListItem, type TeamListSummary,
@@ -111,6 +113,8 @@ function ListDetail({ id }: { id: number }) {
   const [importOpen, setImportOpen] = useState(false);
   const [showComing, setShowComing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  // Time, then Priority unless this person picked otherwise for this list.
+  const [sort, setSort] = useTaskSort(`team-list-${id}`, TEAM_LIST_DEFAULT_SORT);
   // Adding stays on the list (Graeme, 2026-10-13, same as My To-dos): the
   // new task glows for a moment, and keeps a "Set days" chip for the rest of
   // this visit so its repeat is one tap away — the editor isn't forced open.
@@ -141,8 +145,12 @@ function ListDetail({ id }: { id: number }) {
   }
 
   const { list, entries, progress, today } = data;
-  const overdue = entries.filter(e => e.overdue);
-  const todays = entries.filter(e => !e.overdue);
+  // Overdue keeps its own section; both sections follow the chosen sort.
+  const sortEntries = (rows: DayEntry[]) => sortTasks(
+    rows.filter(e => byId.has(e.itemId)), sort, e => teamTaskSortFields(byId.get(e.itemId)!, e),
+  );
+  const overdue = sortEntries(entries.filter(e => e.overdue));
+  const todays = sortEntries(entries.filter(e => !e.overdue));
   const todayLabel = new Date(`${today}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
 
   return (
@@ -172,6 +180,8 @@ function ListDetail({ id }: { id: number }) {
         {progress.total > 0 && <ProgressBar progress={progress} color={list.color} />}
       </div>
 
+      <TaskSortControl spec={sort} onChange={setSort} />
+
       {overdue.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-sm font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Overdue</h3>
@@ -197,7 +207,7 @@ function ListDetail({ id }: { id: number }) {
               <div key={day.date}>
                 <p className="font-bold mb-1">{dayHeading(day.date, today)}</p>
                 <ul className="space-y-1">
-                  {day.itemIds.map(itemId => {
+                  {sortTasks(day.itemIds.filter(i => byId.has(i)), sort, i => teamTaskSortFields(byId.get(i)!)).map(itemId => {
                     const it = byId.get(itemId);
                     return it ? (
                       <li key={itemId}>
@@ -377,7 +387,7 @@ function AllTasks({ listId, items, onEdit }: { listId: number; items: TeamListIt
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-muted-foreground">Every task on this list, whatever day it's due. Same-priority, untimed tasks show in this order.</p>
+        <p className="text-sm text-muted-foreground">Every task on this list, whatever day it&apos;s due. This is the “List order” in Sort, and breaks any ties.</p>
         <button onClick={() => setOrdering(o => !o)} className={cn("min-h-[44px] px-4 rounded-xl border-2 font-semibold shrink-0", ordering ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
           {ordering ? "Done" : "Reorder"}
         </button>

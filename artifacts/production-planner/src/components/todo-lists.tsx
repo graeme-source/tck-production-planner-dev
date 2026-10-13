@@ -28,6 +28,8 @@ import {
   EMPTY_TODO_FORM, insertOpenTodo, todoCreateBody, todoEditPatch, todoFormFrom, todoFormValid,
   type TodoEditable, type TodoForm, type TodoPatch,
 } from "@/lib/todo-edit";
+import { sortTodos, TODO_DEFAULT_SORT, todoSortListKey } from "@/lib/task-sort";
+import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
 import { PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
@@ -462,6 +464,9 @@ function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quick
   const activeUsers = (users ?? []).filter(u => u.isActive);
 
   const [showDone, setShowDone] = useState(false);
+  // Priority, then date unless this person picked otherwise for this list.
+  const [sort, setSort] = useTaskSort(todoSortListKey(viewUserId), TODO_DEFAULT_SORT);
+  const openSorted = useMemo(() => sortTodos(data?.open ?? [], sort, isOverdue), [data, sort]);
 
   return (
     <div className="space-y-4">
@@ -511,8 +516,10 @@ function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quick
         </div>
       )}
 
+      {data && data.open.length > 1 && <TaskSortControl spec={sort} onChange={setSort} manualLabel="Order added" />}
+
       <div className="space-y-3">
-        {data?.open.map(task => (
+        {openSorted.map(task => (
           <TodoCard
             key={task.id}
             task={task}
@@ -1354,9 +1361,11 @@ export function PersonalTodosStrip() {
   // screens, where people swap in by PIN all day — a shared cache entry is
   // exactly how Lorna's to-dos rendered under Major's name (2026-09-04).
   const { data } = useMyTodos();
+  // Same order the person chose on their My To-dos list.
+  const [sort] = useTaskSort(todoSortListKey(me?.id ?? 0), TODO_DEFAULT_SORT);
 
   const todayIso = format(new Date(), "yyyy-MM-dd");
-  const todays = (data?.open ?? []).filter(t => !t.scheduled_for || t.scheduled_for <= todayIso);
+  const todays = sortTodos((data?.open ?? []).filter(t => !t.scheduled_for || t.scheduled_for <= todayIso), sort, isOverdue);
 
   const completeMut = useCompleteTodo();
 

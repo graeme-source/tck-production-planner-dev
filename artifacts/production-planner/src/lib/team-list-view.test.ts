@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { dayHeading, defaultCarryOver, doneByLabel, overdueLabel, presetOf, ruleForPreset } from "./team-list-view";
+import {
+  dayHeading, defaultCarryOver, doneByLabel, overdueLabel, presetOf, ruleForPreset, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+} from "./team-list-view";
+import { sortTasks } from "./task-sort";
 
 const TUE = "2026-10-13";
 
@@ -44,5 +47,29 @@ describe("labels", () => {
   it("names the coming-up days", () => {
     expect(dayHeading("2026-10-14", TUE)).toBe("Tomorrow");
     expect(dayHeading("2026-10-15", TUE)).toBe("Thursday 15 Oct");
+  });
+});
+
+describe("team list sorting", () => {
+  const item = (title: string, priority: number, timeOfDay: string | null, sortOrder: number) => ({ title, priority, timeOfDay, sortOrder });
+  it("defaults to Time, then Priority — Graeme's two reds at 15:00 and 16:00, then the rest", () => {
+    const items = [
+      item("P4 untimed", 4, null, 1),
+      item("Red 16:00", 1, "16:00", 2),
+      item("Blue 16:00", 3, "16:00", 3),
+      item("Red 15:00", 1, "15:00", 4),
+      item("Red untimed", 1, null, 5),
+    ];
+    expect(sortTasks(items, TEAM_LIST_DEFAULT_SORT, i => teamTaskSortFields(i)).map(i => i.title))
+      .toEqual(["Red 15:00", "Red 16:00", "Blue 16:00", "Red untimed", "P4 untimed"]);
+  });
+  it("sorts the Overdue section oldest day first, by time within a day", () => {
+    const rows = [
+      { it: item("Mon 09:00", 2, "09:00", 1), e: { dueDate: "2026-10-12", overdue: true } },
+      { it: item("Fri untimed", 1, null, 2), e: { dueDate: "2026-10-09", overdue: true } },
+      { it: item("Mon 08:00", 4, "08:00", 3), e: { dueDate: "2026-10-12", overdue: true } },
+    ];
+    expect(sortTasks(rows, TEAM_LIST_DEFAULT_SORT, r => teamTaskSortFields(r.it, r.e)).map(r => r.it.title))
+      .toEqual(["Fri untimed", "Mon 08:00", "Mon 09:00"]);
   });
 });
