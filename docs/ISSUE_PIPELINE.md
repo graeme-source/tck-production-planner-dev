@@ -184,6 +184,34 @@ and the instruction to re-triage answering him). The reviewer's next
 brings the card back to To review. The andon report and its reporter are not
 touched.
 
+### Talking with the reporter (2026-10-13)
+
+Issue #323: Graeme asked the reporter a question from the card and it closed
+(the message box's "this answers it" tick was on by default), crediting an
+improvement and dropping the card out of To review. Now
+(`messagePlan` / `reporterResponsePlan` in `lib/issue-pipeline-rules.ts`,
+migration `0191`):
+
+- **"Message <name>"** (`POST /review/:id/message {close:false}`) sends the
+  message and keeps the card exactly where it is — event `messaged_reporter`,
+  `awaiting_reporter_since` set ("Waiting for <name>'s reply · asked 12:09"),
+  no resolve, no improvement credit. As many times as he likes.
+- **"Send and close"** (`close:true`) is the old behaviour: `answered`, report
+  resolved, improvement credited if due.
+- **The reporter answers** from their pop-up (an optional typed reply sent with
+  the acknowledgement, `POST /my-fixed-notices/:id/ack {action, reply?}`) or by
+  commenting on their own report in the issue log. A typed reply — or "Got it"
+  on a question Graeme is waiting on — records `reporter_replied` /
+  `notice_ack`, sets `reporter_reply_at`, and the card sits in **To review**
+  with "New reply from <name>" whatever its status. It is for Graeme only: the
+  reply flag (`awaitingRetriage`) is not set, so Claude isn't asked. Any action
+  of his on the card, or `POST /review/:id/seen`, clears it. Graeme instructs
+  Claude about it with Reply to Claude, as on any card.
+- **Search:** `GET /review?q=` searches every tab by issue number, reporter or
+  words (`fixQueueMatches`); each item carries the `tab` it's in.
+- The reviewer sees reporter replies in each card's `thread` (who
+  `reporter`).
+
 ### People side (session auth)
 
 - `/founder/fix-queue` — Graeme's Fix queue (founder account only, page and
