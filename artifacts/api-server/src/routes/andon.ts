@@ -3,6 +3,7 @@ import { singleFileUpload } from "../middleware/upload";
 import { db, andonIssuesTable, andonCommentsTable, usersTable, notificationsTable, improvementSubmissionsTable } from "@workspace/db";
 import { eq, isNull, desc, asc, and, SQL, sql } from "drizzle-orm";
 import type { AndonIssue } from "@workspace/db";
+import { onAndonComment } from "../lib/issue-pipeline-data";
 
 const router: IRouter = Router();
 
@@ -317,6 +318,10 @@ router.post("/:id/comments", async (req: Request, res: Response) => {
 
     try { if (userId) await notifyReporter(id, userId, userName ?? "Someone", "comment"); }
     catch (e) { console.warn("[notifications] Failed:", e); }
+    // The reporter answering on the issue log reaches the Fix queue card
+    // ("New reply from <name>" in To review) — Graeme, 2026-10-13.
+    try { if (userId) await onAndonComment(id, userId, comment.trim()); }
+    catch (e) { console.warn("[issue-pipeline] reporter comment not linked to the Fix queue:", e instanceof Error ? e.message : String(e)); }
   } catch (err) {
     console.error("Error creating andon comment:", err);
     res.status(500).json({ error: "Failed to create comment" });

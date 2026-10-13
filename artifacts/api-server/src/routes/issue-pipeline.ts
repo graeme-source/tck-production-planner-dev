@@ -13,7 +13,7 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, usersTable, issueTriageTable, issueTriageEventsTable, issueFixNoticesTable, andonIssuesTable, type IssueTriage } from "@workspace/db";
+import { db, usersTable, issueTriageTable, issueTriageEventsTable, issueFixNoticesTable, andonIssuesTable, andonCommentsTable, type IssueTriage } from "@workspace/db";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { requireFounder } from "../middleware/founder-access";
@@ -33,6 +33,8 @@ import {
   reopenNote,
   canReviewMove,
   noticeAckVerdict,
+  fixQueueMatches,
+  messagePlan,
   type TriageStatus,
 } from "../lib/issue-pipeline-rules";
 import {
@@ -43,6 +45,7 @@ import {
   noticesByTriageId,
   pendingNoticesFor,
   recordEvent,
+  recordReporterResponse,
   triageByIssueId,
 } from "../lib/issue-pipeline-data";
 import { decideSuggestion, listSuggestions, scanNewIdeas } from "../lib/improvement-suggestions-data";
@@ -64,12 +67,15 @@ async function sessionUserName(userId: number): Promise<string> {
 // ── GET /review — the Fix queue ─────────────────────────────────────────────
 // Tabs: proposed | approved | in_progress | fixed | rejected (rejected also
 // shows wont_fix — both are "not being built").
-const reviewQuery = z.object({ tab: z.enum(QUEUE_TABS).optional() });
+// q (2026-10-13): search EVERY tab by issue number, reporter or words, so a
+// card that moved is always findable; each result says which tab it's in.
+const reviewQuery = z.object({ tab: z.enum(QUEUE_TABS).optional(), q: z.string().trim().max(200).optional() });
 
 router.get("/review", requireFounder, async (req, res) => {
   const parsed = reviewQuery.safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
   const tab = parsed.data.tab ?? "proposed";
+  const q = parsed.data.q ?? "";
   try {
     const countRows = await db.execute<{ status: string; n: number; awaiting: number }>(sql`
       SELECT status, COUNT(*)::int AS n, COUNT(*) FILTER (WHERE awaiting_retriage)::int AS awaiting
@@ -86,7 +92,24 @@ router.get("/review", requireFounder, async (req, res) => {
     const all = await db.select().from(issueTriageTable).orderBy(desc(issueTriageTable.triagedAt)).limit(1000);
     const tabCounts: Record<string, number> = Object.fromEntries(QUEUE_TABS.map(t => [t, 0]));
     for (const r of all) tabCounts[queueTabFor({ ...r, status: r.status as TriageStatus }, now)]++;
-    const rows = all.filter(r => queueTabFor({ ...r, status: r.status as TriageStatus }, now) === tab).slice(0, 200);
+    const tabOf = (r: IssueTriage) => queueTabFor({ ...r, status: r.status as TriageStatus }, now);
+    let rows: IssueTriage[];
+    if (q) {
+      const cards = all.length === 0 ? [] : await db.select({
+        id: andonIssuesTable.id, reporterName: andonIssuesTable.reportedByName,
+        description: andonIssuesTable.description, station: andonIssuesTable.station,
+      }).from(andonIssuesTable).where(inArray(andonIssuesTable.id, all.map(r => r.andonIssueId)));
+      const cardById = new Map(cards.map(c => [c.id, c]));
+      rows = all.filter(r => {
+        const c = cardById.get(r.andonIssueId);
+        return fixQueueMatches(q, {
+          issueId: r.andonIssueId, reporterName: c?.reporterName ?? null, description: c?.description ?? null,
+          verdictSummary: r.verdictSummary, station: c?.station ?? null,
+        });
+      }).slice(0, 50);
+    } else {
+      rows = all.filter(r => tabOf(r) === tab).slice(0, 200);
+    }
 
     const relatedIds = [...new Set(rows.flatMap(r => r.relatedIssueIds))];
     // The back-and-forth on each card, oldest first (buildThread).
@@ -118,10 +141,12 @@ router.get("/review", requireFounder, async (req, res) => {
 
     res.json({
       tab,
+      q: q || null,
       counts: { ...counts, awaitingReply },
       tabCounts,
       items: rows.map(t => ({
         triage: t,
+        tab: tabOf(t),
         issue: issueById.get(t.andonIssueId) ?? null,
         notices: notices.get(t.id) ?? [],
         thread: buildThread(eventsByTriage.get(t.id) ?? []),
@@ -174,7 +199,7 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
         }
         [row] = await tx.update(issueTriageTable).set({
           awaitingRetriage: true, decisionNote: note, decidedBy: name, decidedByUserId: userId, decidedAt: now, updatedAt: now,
-          snoozedUntil: null,
+          snoozedUntil: null, reporterReplyAt: null,
           ...(plan.restoreSetAside ? { noActionAt: null, noActionBy: null, noActionByUserId: null } : {}),
           // Back for a fresh decision; the old one stays in the history. The
           // fix reference is kept so Claude can see what was already built.
@@ -188,6 +213,7 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
         if (!canReviewMove(from, to)) return { status: 409 as const, error: `Can't ${action} a '${from}' recommendation`, triage: current };
         [row] = await tx.update(issueTriageTable).set({
           status: to, awaitingRetriage: false, decisionNote: note, decidedBy: name, decidedByUserId: userId, decidedAt: new Date(), updatedAt: new Date(),
+          reporterReplyAt: null,
         }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
         await recordEvent(tx, row, to, name, note);
       }
@@ -220,7 +246,7 @@ router.post("/review/:id/snooze", requireFounder, validate(snoozeBody), async (r
     res.status(409).json({ error: "Only a card waiting on you can be snoozed" }); return;
   }
   const until = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
-  const [row] = await db.update(issueTriageTable).set({ snoozedUntil: until, updatedAt: new Date() })
+  const [row] = await db.update(issueTriageTable).set({ snoozedUntil: until, reporterReplyAt: null, updatedAt: new Date() })
     .where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
   await recordEvent(db, row, "snoozed", await sessionUserName(req.session.userId!), `Snoozed for ${days} day${days === 1 ? "" : "s"}`);
   res.json({ triage: row });
@@ -268,6 +294,7 @@ router.post("/review/:id/dismiss", requireFounder, async (req, res) => {
       const [row] = await tx.update(issueTriageTable).set({
         status: "dismissed", awaitingRetriage: false, decidedBy: name, decidedByUserId: userId,
         decidedAt: new Date(), issueResolvedAt: new Date(), updatedAt: new Date(),
+        awaitingReporterSince: null, reporterReplyAt: null,
       }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
       await recordEvent(tx, row, "dismissed", name, reply ? "Dismissed — reply sent to the reporter" : "Dismissed — already done");
       await creditImprovementIfDue(tx, row, name);
@@ -309,6 +336,7 @@ router.post("/review/:id/no-action", requireFounder, validate(z.object({}).passt
     }
     const [r] = await tx.update(issueTriageTable).set({
       noActionAt: now, noActionBy: name, noActionByUserId: userId, awaitingRetriage: false, updatedAt: now,
+      awaitingReporterSince: null, reporterReplyAt: null,
     }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
     await recordEvent(tx, r, "no_action", name, "Dismissed — no action (nobody was messaged; report closed quietly)");
     return r;
@@ -374,11 +402,14 @@ for (const action of ["add", "dismiss", "restore"] as const) {
   });
 }
 
-// ── POST /review/:id/message — "Message the reporter" ───────────────────────
+// ── POST /review/:id/message — "Message <name>" / "Send and close" ─────────
 // Graeme's words go to the person who reported it (issue comment, bell, and
-// a full-screen "A reply to your report"). close=true means "this answers
-// it": the report is resolved and the recommendation marked 'answered' —
-// e.g. no fix needed, they can set it themselves on the recipe form.
+// a full-screen "A reply to your report", where they can type an answer).
+// close=false ("Message <name>", 2026-10-13): the card stays exactly where
+// it is, marked "Waiting for <name>'s reply" — no resolve, no credit — and
+// he can message again any number of times (messagePlan). close=true
+// ("Send and close"): the report is resolved and the recommendation marked
+// 'answered' — e.g. no fix needed, they can set it themselves.
 const messageBody = z.object({
   message: z.string().trim().min(1).max(4000),
   close: z.boolean(),
@@ -400,16 +431,20 @@ router.post("/review/:id/message", requireFounder, validate(messageBody), async 
       }
       const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, current.andonIssueId));
       if (!issue) return { status: 404 as const, error: "The report no longer exists" };
-      const sent = await messageReporter(tx, issue, { triageId: current.id, senderUserId: userId, senderName: name, message, close });
-      let row = current;
-      if (close) {
-        [row] = await tx.update(issueTriageTable).set({
-          status: "answered", awaitingRetriage: false, decisionNote: message, decidedBy: name, decidedByUserId: userId,
-          decidedAt: new Date(), issueResolvedAt: new Date(), updatedAt: new Date(),
-        }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
-      }
-      await recordEvent(tx, row, close ? "answered" : "messaged", name, message);
-      if (close) await creditImprovementIfDue(tx, row, name);
+      const plan = messagePlan(close);
+      const sent = await messageReporter(tx, issue, { triageId: current.id, senderUserId: userId, senderName: name, message, close: plan.resolveIssue });
+      const now = new Date();
+      const [row] = await tx.update(issueTriageTable).set(plan.statusTo
+        ? {
+          status: plan.statusTo, awaitingRetriage: false, decisionNote: message, decidedBy: name, decidedByUserId: userId,
+          decidedAt: now, issueResolvedAt: now, updatedAt: now, awaitingReporterSince: null, reporterReplyAt: null,
+        }
+        // Status untouched: the card stays in its tab, now waiting for them.
+        // Sending it counts as Graeme having seen any reply they'd sent.
+        : { awaitingReporterSince: now, reporterReplyAt: null, updatedAt: now },
+      ).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+      await recordEvent(tx, row, plan.event, name, message);
+      if (plan.creditImprovement) await creditImprovementIfDue(tx, row, name);
       return { status: 200 as const, triage: row, ...sent };
     });
     if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
@@ -419,6 +454,22 @@ router.post("/review/:id/message", requireFounder, validate(messageBody), async 
     console.error("[issue-pipeline] message failed:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: "Failed to send the message" });
   }
+});
+
+// ── POST /review/:id/seen — "Seen — leave it where it was" ─────────────────
+// Clears "New reply from <name>" without doing anything else, so the card
+// goes back to the tab its status puts it in (any other action on the card
+// clears it too).
+router.post("/review/:id/seen", requireFounder, validate(z.object({}).passthrough()), async (req, res) => {
+  const id = parseId(req.params.id);
+  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const [current] = await db.select().from(issueTriageTable).where(eq(issueTriageTable.id, id));
+  if (!current) { res.status(404).json({ error: "Recommendation not found" }); return; }
+  if (!current.reporterReplyAt) { res.json({ triage: current }); return; }
+  const [row] = await db.update(issueTriageTable).set({ reporterReplyAt: null, updatedAt: new Date() })
+    .where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
+  await recordEvent(db, row, "reporter_reply_seen", await sessionUserName(req.session.userId!), null);
+  res.json({ triage: row });
 });
 
 // ── Reporter: "Your report has been fixed" ─────────────────────────────────
@@ -432,13 +483,15 @@ router.get("/my-fixed-notices", async (req, res) => {
   }
 });
 
-const ackBody = z.object({ action: z.enum(NOTICE_ACK_ACTIONS) });
+// reply (2026-10-13): the reporter can answer Graeme from the pop-up; it
+// lands on the issue log and back on his Fix queue card.
+const ackBody = z.object({ action: z.enum(NOTICE_ACK_ACTIONS), reply: z.string().trim().max(2000).optional() });
 
 router.post("/my-fixed-notices/:id/ack", validate(ackBody), async (req, res) => {
   const id = parseId(req.params.id);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const userId = req.session.userId!;
-  const { action } = req.body as z.infer<typeof ackBody>;
+  const { action, reply } = req.body as z.infer<typeof ackBody>;
   try {
     const out = await db.transaction(async (tx) => {
       const [notice] = await tx.select().from(issueFixNoticesTable).where(eq(issueFixNoticesTable.id, id)).for("update");
@@ -447,12 +500,15 @@ router.post("/my-fixed-notices/:id/ack", validate(ackBody), async (req, res) => 
       const [row] = await tx.update(issueFixNoticesTable)
         .set({ acknowledgedAt: new Date(), ackAction: action })
         .where(eq(issueFixNoticesTable.id, id)).returning();
+      const [who] = await tx.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      const text = reply?.trim() || null;
+      // Their words go on the issue itself too, so the issue log shows them.
+      if (text) {
+        await tx.insert(andonCommentsTable).values({ andonId: notice!.andonIssueId, userId, userName: who?.name ?? null, comment: text });
+      }
       if (notice!.triageId) {
         const [t] = await tx.select().from(issueTriageTable).where(eq(issueTriageTable.id, notice!.triageId));
-        if (t) {
-          const [who] = await tx.select({ name: andonIssuesTable.reportedByName }).from(andonIssuesTable).where(eq(andonIssuesTable.id, notice!.andonIssueId));
-          await recordEvent(tx, t, "notice_ack", who?.name ?? null, action === "test_now" ? `Issue #${notice!.andonIssueId}: testing it now` : `Issue #${notice!.andonIssueId}: will test later`);
-        }
+        if (t) await recordReporterResponse(tx, t, who?.name ?? null, { kind: notice!.kind, action, reply: text });
       }
       return { ok: true as const, notice: row };
     });

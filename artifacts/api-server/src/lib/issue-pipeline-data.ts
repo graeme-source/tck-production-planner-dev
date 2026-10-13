@@ -16,7 +16,10 @@ import {
   type IssueTriage,
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, type IssueAreaClass, type TriageStatus } from "./issue-pipeline-rules";
+import {
+  classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, reporterResponsePlan,
+  type IssueAreaClass, type NoticeAckAction, type TriageStatus,
+} from "./issue-pipeline-rules";
 import { pinLeadCredit } from "./improvement-credits-data";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
@@ -124,6 +127,51 @@ export async function recordEvent(
     note,
     snapshot: triage as unknown as Record<string, unknown>,
   });
+}
+
+/**
+ * The reporter answered (Graeme, 2026-10-13) — from their pop-up (a typed
+ * reply, or "Got it" / "I'll test it later") or a comment on the issue log.
+ * Writes the history line the card's Conversation shows and, when the rule
+ * says so (reporterResponsePlan), flags the card "New reply from <name>" so
+ * it sits in To review until Graeme acts on it. Nothing goes to Claude: the
+ * awaiting-retriage flag is untouched. The caller stores any comment text on
+ * the andon issue itself.
+ */
+export async function recordReporterResponse(
+  conn: Db,
+  triage: IssueTriage,
+  reporterName: string | null,
+  response: { kind: string; action: NoticeAckAction | "comment"; reply?: string | null },
+): Promise<{ triage: IssueTriage; flagged: boolean }> {
+  const plan = reporterResponsePlan(triage, response);
+  // An answer to a message (typed, or "Got it" on it) ends the wait.
+  const answers = plan.event === "reporter_replied" || response.kind === "message";
+  let row = triage;
+  if (plan.flagForGraeme || (answers && triage.awaitingReporterSince)) {
+    const now = new Date();
+    [row] = await conn.update(issueTriageTable).set({
+      ...(plan.flagForGraeme ? { reporterReplyAt: now } : {}),
+      ...(answers ? { awaitingReporterSince: null } : {}),
+      updatedAt: now,
+    }).where(eq(issueTriageTable.id, triage.id)).returning() as [IssueTriage];
+  }
+  await recordEvent(conn, row, plan.event, reporterName, plan.note);
+  return { triage: row, flagged: plan.flagForGraeme };
+}
+
+/**
+ * A comment on the issue log by the person who reported it, on a report
+ * that has a Fix queue card — it reaches the card like a reply from their
+ * pop-up. Anyone else's comment (a manager's, Graeme's own) changes nothing.
+ */
+export async function onAndonComment(issueId: number, userId: number, comment: string): Promise<void> {
+  const [issue] = await db.select({ reportedBy: andonIssuesTable.reportedBy, reportedByName: andonIssuesTable.reportedByName })
+    .from(andonIssuesTable).where(eq(andonIssuesTable.id, issueId));
+  if (!issue || issue.reportedBy == null || issue.reportedBy !== userId) return;
+  const [triage] = await db.select().from(issueTriageTable).where(eq(issueTriageTable.andonIssueId, issueId));
+  if (!triage) return;
+  await recordReporterResponse(db, triage, issue.reportedByName, { kind: "comment", action: "comment", reply: comment });
 }
 
 export interface ResolveOutcome {
