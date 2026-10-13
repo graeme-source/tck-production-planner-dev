@@ -3,8 +3,8 @@
   "short_name": "TCK",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#8a8f5b",
-  "theme_color": "#8a8f5b",
+  "background_color": "#7cb342",
+  "theme_color": "#7cb342",
   "icons": [
     {
       "src": "/icon-192.png",
