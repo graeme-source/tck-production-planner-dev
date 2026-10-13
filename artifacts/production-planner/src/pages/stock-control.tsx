@@ -376,7 +376,9 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
   const enterBulkEdit = () => {
     const initial: Record<number, string> = {};
     for (const item of location.items) {
-      initial[item.stockEntryIds[0]] = String(item.qty);
+      // Same key saveAll reads — a zero-stock core recipe has no entry id,
+      // and keying it by `undefined` meant an untouched 0 was never saved.
+      initial[rowKeyOf(item)] = String(item.qty);
     }
     setBulkValues(initial);
     setBulkEdit(true);
@@ -429,13 +431,18 @@ function FocusPanel({ location, onRefresh }: FocusPanelProps) {
           continue;
         }
 
-        if (qtyChanged) {
+        // Save All on the production fridge IS the Factory Number count: a
+        // product whose number was already right is still counted, so send
+        // it too — the server logs "Counted — no change" and today's count
+        // (Packing/Wrapping reminder) sees it as done.
+        const countUnchanged = isFridgeLocation && item.type === "recipe" && !hasDuplicates;
+        if (qtyChanged || countUnchanged) {
           ops.push(
             updateStockEntry(primaryId, {
               recipeId: item.recipeId,
               ingredientId: item.ingredientId,
               itemType: item.type,
-              quantity: parsed,
+              quantity: qtyChanged ? parsed : item.qty,
               unit: item.unit,
               location: location.key,
             })

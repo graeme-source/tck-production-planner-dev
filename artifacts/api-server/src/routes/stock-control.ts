@@ -7,6 +7,8 @@ import { latestRowPerKey, stockRowKey, isBagRow, bagRowName } from "../lib/stock
 import { EIGHT_PACK_SIZE } from "../lib/eight-pack-bags";
 import { z } from "zod";
 import { validateQuery } from "../middleware/validate";
+import { londonDateString, londonDaysWindowUtc } from "../lib/london-time";
+import { expectedCountProducts, factoryCountStatus, type CountProduct } from "../lib/factory-count";
 
 const router: IRouter = Router();
 
@@ -410,6 +412,48 @@ router.get("/history", validateQuery(HistoryQuery), async (req: Request, res: Re
     baselineQuantity: baseline,
     entries: withDeltas.reverse(), // newest first for UI
   });
+});
+
+// ── Today's factory count ────────────────────────────────────────────────────
+// Whether the Factory Number update (Stock Control → Production fridge, the
+// packing/wrapping teams' daily count) has been done for a London day, and
+// which products are still to count. Drives the Packing/Wrapping timed
+// reminder "only while today's count is outstanding". See lib/factory-count.ts.
+const FactoryCountQuery = z.object({
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
+
+router.get("/factory-count-today", validateQuery(FactoryCountQuery), async (req: Request, res: Response) => {
+  const date = typeof req.query.date === "string" ? req.query.date : londonDateString(new Date());
+  const { start, end } = londonDaysWindowUtc(date, date);
+  const rowsOf = (r: unknown) => ((r as { rows?: any[] }).rows ?? (r as any[]));
+
+  const core = rowsOf(await db.execute(sql`
+    SELECT id AS recipe_id, name FROM recipes WHERE is_core_menu = true
+  `)) as Array<{ recipe_id: number; name: string }>;
+  // Latest 2-pack production-fridge level per recipe — the panel lists a
+  // recipe for counting while it holds stock, core menu or not.
+  const stocked = rowsOf(await db.execute(sql`
+    SELECT r.id AS recipe_id, r.name
+    FROM (
+      SELECT DISTINCT ON (recipe_id) recipe_id, quantity
+      FROM stock_entries
+      WHERE item_type = 'recipe' AND location = 'production_fridge'
+        AND recipe_id IS NOT NULL AND COALESCE(pack_size, 2) <> 8
+      ORDER BY recipe_id, checked_at DESC
+    ) latest
+    JOIN recipes r ON r.id = latest.recipe_id
+    WHERE latest.quantity::numeric > 0
+  `)) as Array<{ recipe_id: number; name: string }>;
+  const counted = rowsOf(await db.execute(sql`
+    SELECT DISTINCT recipe_id FROM fridge_stock_changes
+    WHERE source = 'manual' AND pack_size <> 8
+      AND created_at >= ${start} AND created_at < ${end}
+  `)) as Array<{ recipe_id: number }>;
+
+  const toProduct = (r: { recipe_id: number; name: string }): CountProduct => ({ recipeId: Number(r.recipe_id), name: r.name });
+  const expected = expectedCountProducts(core.map(toProduct), stocked.map(toProduct));
+  res.json({ date, ...factoryCountStatus(expected, counted.map(r => Number(r.recipe_id))) });
 });
 
 export default router;

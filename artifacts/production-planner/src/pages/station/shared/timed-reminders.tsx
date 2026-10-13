@@ -4,6 +4,12 @@ import { AlarmClock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import type { StationType } from "./constants";
+import {
+  resolveReminderDisplay,
+  stockCheckConditionApplies,
+  factoryCountConditionApplies,
+  type FactoryCountState,
+} from "./reminder-conditions";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Timed station reminders
@@ -28,8 +34,12 @@ export interface TimedReminder {
   /** …and counts down to here, then disappears. */
   endTime: string;
   enabled: boolean;
-  /** Prep-only condition: hide unless today still has unrecorded stock checks. */
+  /** Prep-only condition: hide unless today still has unrecorded stock
+   *  checks. Ignored on any non-prep station (reminder-conditions.ts). */
   onlyIfStockChecksOutstanding?: boolean;
+  /** Packing/Wrapping-only condition: hide once today's Factory Number count
+   *  (Stock Control → Production fridge) is complete. Ignored elsewhere. */
+  onlyIfFactoryCountOutstanding?: boolean;
 }
 
 export function parseReminders(raw: string | null | undefined): TimedReminder[] {
@@ -97,6 +107,24 @@ function useOutstandingStockChecks(enabled: boolean, dateStr: string, dayName: s
   return due.filter(it => !checkedIds.has(it.id)).length;
 }
 
+/** Today's Factory Number count — complete, and how many products are still
+ *  to count (GET /api/stock-control/factory-count-today). Only polled while
+ *  `enabled`. */
+function useFactoryCountToday(enabled: boolean, dateStr: string): FactoryCountState | null {
+  const { data } = useQuery({
+    queryKey: ["reminder-factory-count", dateStr],
+    enabled,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const res = await fetch(`/api/stock-control/factory-count-today?date=${dateStr}`, { credentials: "include" });
+      if (!res.ok) return null;
+      return res.json() as Promise<{ complete: boolean; outstanding: number }>;
+    },
+  });
+  if (!enabled || !data) return null;
+  return { complete: !!data.complete, outstanding: typeof data.outstanding === "number" ? data.outstanding : null };
+}
+
 export function StationReminderBanner({ stationType, plan }: {
   stationType: StationType;
   plan: ProductionPlanDetail | undefined;
@@ -133,19 +161,23 @@ export function StationReminderBanner({ stationType, plan }: {
 
   const candidates = planLive ? reminders.filter(inWindow) : [];
 
-  // Only hit the stock-check endpoint while a conditional reminder is showing.
-  const needsStockCheckCount = candidates.some(r => r.onlyIfStockChecksOutstanding);
-  const outstanding = useOutstandingStockChecks(needsStockCheckCount, nowParts.dateStr, nowParts.dayName);
+  // Only hit each endpoint while a reminder that needs it is in its window
+  // on a station where its condition applies — prep numbers are never
+  // fetched for Packing/Wrapping.
+  const needsStockCheckCount = candidates.some(r => stockCheckConditionApplies(r, stationType));
+  const stockChecksOutstanding = useOutstandingStockChecks(needsStockCheckCount, nowParts.dateStr, nowParts.dayName);
+  const needsFactoryCount = candidates.some(r => factoryCountConditionApplies(r, stationType));
+  const factoryCount = useFactoryCountToday(needsFactoryCount, nowParts.dateStr);
 
-  const active = candidates.filter(r =>
-    !r.onlyIfStockChecksOutstanding || (outstanding !== null && outstanding > 0),
-  );
+  const active = candidates
+    .map(r => ({ r, display: resolveReminderDisplay(r, stationType, { stockChecksOutstanding, factoryCount }) }))
+    .filter(x => x.display.show);
 
   if (active.length === 0) return null;
 
   return (
     <div className="space-y-3 mb-4">
-      {active.map(r => {
+      {active.map(({ r, display }) => {
         const remaining = Math.max(0, toMinutes(r.endTime) * 60 - nowSeconds);
         const mm = Math.floor(remaining / 60);
         const ss = remaining % 60;
@@ -170,8 +202,8 @@ export function StationReminderBanner({ stationType, plan }: {
                 urgent ? "text-red-800 dark:text-red-200" : "text-amber-800 dark:text-amber-200",
               )}>
                 {r.title}
-                {r.onlyIfStockChecksOutstanding && outstanding !== null && (
-                  <span className="font-semibold"> — {outstanding} outstanding</span>
+                {display.suffix && (
+                  <span className="font-semibold"> — {display.suffix}</span>
                 )}
               </p>
               <p className={cn(
