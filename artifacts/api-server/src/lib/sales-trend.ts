@@ -107,6 +107,7 @@ interface Tally {
   paidOrders: number;
   newCustomerRevenueP: number;
   newCustomerOrders: number;
+  newCustomerPaidOrders: number;
   recurringSubOrders: number;
   newSubOrders: number;
   subscriptionRevenueP: number;
@@ -115,7 +116,7 @@ interface Tally {
 
 const emptyTally = (): Tally => ({
   revenueP: 0, orders: 0, paidOrders: 0,
-  newCustomerRevenueP: 0, newCustomerOrders: 0,
+  newCustomerRevenueP: 0, newCustomerOrders: 0, newCustomerPaidOrders: 0,
   recurringSubOrders: 0, newSubOrders: 0,
   subscriptionRevenueP: 0, subscriptionOrders: 0,
 });
@@ -132,6 +133,14 @@ export interface TrendFigures {
   aov: number | null;
   newCustomerRevenue: number;
   newCustomerOrders: number;
+  /** New vs returning, over PAID orders (see newCustomerSplit). */
+  newCustomerPaidOrders: number;
+  /** Paid orders without the new-customer tag. */
+  returningOrders: number;
+  /** New-customer share of paid orders, 0–100 unrounded; null with none. */
+  newCustomerSharePercent: number | null;
+  /** New-customer share of net revenue, 0–100 unrounded; null with no revenue. */
+  newCustomerRevenueSharePercent: number | null;
   recurringSubOrders: number;
   newSubOrders: number;
   /** Orders carrying either subscription tag, each counted once. */
@@ -197,10 +206,51 @@ function addOrder(t: Tally, o: TrendOrder): void {
   t.revenueP += p;
   t.orders += 1;
   if (isPaidOrder(o)) t.paidOrders += 1;
-  if (orderHasTag(o, NEW_CUSTOMER_TAG)) { t.newCustomerRevenueP += p; t.newCustomerOrders += 1; }
+  if (orderHasTag(o, NEW_CUSTOMER_TAG)) {
+    t.newCustomerRevenueP += p;
+    t.newCustomerOrders += 1;
+    if (isPaidOrder(o)) t.newCustomerPaidOrders += 1;
+  }
   if (orderHasTag(o, RECURRING_SUB_TAG)) t.recurringSubOrders += 1;
   if (orderHasTag(o, NEW_SUB_TAG)) t.newSubOrders += 1;
   if (SUBSCRIPTION_TAGS.some(tag => orderHasTag(o, tag))) { t.subscriptionRevenueP += p; t.subscriptionOrders += 1; }
+}
+
+/**
+ * New vs returning customers (Graeme, 2026-10-13: "of the orders I
+ * received, what percentage were new customers… a 25/75, for example").
+ *
+ *   new        carries the Shopify "new-customer" tag — the SAME rule as the
+ *              New Customers tile and new-customer revenue / ROAS
+ *   returning  every other paid order (subscriptions and wholesale included)
+ *   out of     PAID orders — AOV's divisor. £0 resends are replacements for
+ *              an order already counted, not a customer choosing to buy, so
+ *              they would only inflate "returning".
+ *
+ * Shares are null (not 0%) when there is nothing to divide by.
+ */
+export interface NewCustomerSplit {
+  newOrders: number;
+  returningOrders: number;
+  newSharePercent: number | null;
+  newRevenueSharePercent: number | null;
+}
+
+export function newCustomerSplit(input: {
+  paidOrders: number;
+  newCustomerPaidOrders: number;
+  revenue: number;
+  newCustomerRevenue: number;
+}): NewCustomerSplit {
+  const newOrders = Math.min(input.newCustomerPaidOrders, input.paidOrders);
+  return {
+    newOrders,
+    returningOrders: input.paidOrders - newOrders,
+    newSharePercent: input.paidOrders > 0 ? (newOrders / input.paidOrders) * 100 : null,
+    newRevenueSharePercent: input.revenue > 0
+      ? Math.min(100, Math.max(0, (input.newCustomerRevenue / input.revenue) * 100))
+      : null,
+  };
 }
 
 /** ROAS over a set of days — the page's windowRoas rule, as a whole %. */
@@ -221,6 +271,12 @@ function figures(t: Tally, days: string[], spendByDate: Map<string, number>): Tr
   }
   const adSpend = recorded > 0 ? pounds(spendP) : null;
   const newCustomerRevenue = pounds(t.newCustomerRevenueP);
+  const split = newCustomerSplit({
+    paidOrders: t.paidOrders,
+    newCustomerPaidOrders: t.newCustomerPaidOrders,
+    revenue: pounds(t.revenueP),
+    newCustomerRevenue,
+  });
   return {
     revenue: pounds(t.revenueP),
     orders: t.orders,
@@ -228,6 +284,10 @@ function figures(t: Tally, days: string[], spendByDate: Map<string, number>): Tr
     aov: averageOrderValue(pounds(t.revenueP), t.paidOrders),
     newCustomerRevenue,
     newCustomerOrders: t.newCustomerOrders,
+    newCustomerPaidOrders: split.newOrders,
+    returningOrders: split.returningOrders,
+    newCustomerSharePercent: split.newSharePercent,
+    newCustomerRevenueSharePercent: split.newRevenueSharePercent,
     recurringSubOrders: t.recurringSubOrders,
     newSubOrders: t.newSubOrders,
     subscriptionRevenue: pounds(t.subscriptionRevenueP),

@@ -6,6 +6,7 @@ import {
   dayCountBetween,
   granularityOptions,
   mondayOf,
+  newCustomerSplit,
   resolveGranularity,
   roasPercentFor,
   type BuildTrendInput,
@@ -358,5 +359,60 @@ describe("ad spend and ROAS", () => {
     expect(s.buckets.every(b => b.adSpend === null && b.roasPercent === null)).toBe(true);
     expect(s.totals.adSpend).toBe(20);
     expect(s.totals.roasPercent).toBe(450);
+  });
+});
+
+describe("new vs returning customers", () => {
+  it("splits paid orders: new = new-customer tag, returning = every other paid order", () => {
+    expect(newCustomerSplit({ paidOrders: 1248, newCustomerPaidOrders: 312, revenue: 1000, newCustomerRevenue: 210 })).toEqual({
+      newOrders: 312,
+      returningOrders: 936,
+      newSharePercent: 25,
+      newRevenueSharePercent: 21,
+    });
+  });
+
+  it("shares are null, not 0%, with nothing to divide by", () => {
+    expect(newCustomerSplit({ paidOrders: 0, newCustomerPaidOrders: 0, revenue: 0, newCustomerRevenue: 0 })).toEqual({
+      newOrders: 0, returningOrders: 0, newSharePercent: null, newRevenueSharePercent: null,
+    });
+  });
+
+  it("all new and all returning are 100% and 0%", () => {
+    expect(newCustomerSplit({ paidOrders: 4, newCustomerPaidOrders: 4, revenue: 80, newCustomerRevenue: 80 }).newSharePercent).toBe(100);
+    expect(newCustomerSplit({ paidOrders: 4, newCustomerPaidOrders: 0, revenue: 80, newCustomerRevenue: 0 }).newSharePercent).toBe(0);
+  });
+
+  it("from orders: £0 resends, cancelled and refunded orders are in neither side", () => {
+    const orders = [
+      order("2026-10-06T10:00:00+01:00", "50.00", "new-customer"),
+      order("2026-10-06T11:00:00+01:00", "30.00", "New-Customer, Small Box"), // tag case-insensitive
+      order("2026-10-06T12:00:00+01:00", "60.00", "Subscription Recurring Order"),
+      order("2026-10-06T13:00:00+01:00", "200.00", "wholesale"),
+      order("2026-10-07T09:00:00+01:00", "40.00", ""),
+      order("2026-10-07T10:00:00+01:00", "0.00", "dispatch, resend"), // £0 resend
+      order("2026-10-07T11:00:00+01:00", "45.00", "new-customer", { cancelled_at: "2026-10-07T12:00:00+01:00" }),
+      order("2026-10-07T12:00:00+01:00", "45.00", "new-customer", { financial_status: "refunded" }),
+    ];
+    const s = buildTrendSeries({ from: "2026-10-06", to: "2026-10-07", orders, spend: [], now: LATER });
+    expect(s.totals.orders).toBe(6);
+    expect(s.totals.paidOrders).toBe(5);
+    expect(s.totals.newCustomerPaidOrders).toBe(2);
+    expect(s.totals.returningOrders).toBe(3);
+    expect(s.totals.newCustomerSharePercent).toBeCloseTo(40, 10);
+    expect(s.totals.newCustomerRevenueSharePercent).toBeCloseTo((80 / 380) * 100, 10);
+    // Day by day, and the days add up to the period.
+    const [mon, tue] = s.buckets;
+    expect([mon.newCustomerPaidOrders, mon.returningOrders, mon.newCustomerSharePercent]).toEqual([2, 2, 50]);
+    expect([tue.newCustomerPaidOrders, tue.returningOrders, tue.newCustomerSharePercent]).toEqual([0, 1, 0]);
+    expect(sum(s.buckets.map(b => b.newCustomerPaidOrders + b.returningOrders))).toBe(s.totals.paidOrders);
+  });
+
+  it("a bucket with no paid orders has no share (a gap, not 0%)", () => {
+    const s = buildTrendSeries({
+      from: "2026-10-06", to: "2026-10-07", spend: [], now: LATER,
+      orders: [order("2026-10-06T10:00:00+01:00", "50.00", "new-customer")],
+    });
+    expect(s.buckets[1].newCustomerSharePercent).toBeNull();
   });
 });
