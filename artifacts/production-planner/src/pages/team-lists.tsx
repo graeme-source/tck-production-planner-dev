@@ -8,7 +8,7 @@
  * station screen. Reached from the dashboard's Team lists card and the
  * quick-actions panel — no menu entry, no button on every page.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
   ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, FileUp,
@@ -111,6 +111,20 @@ function ListDetail({ id }: { id: number }) {
   const [importOpen, setImportOpen] = useState(false);
   const [showComing, setShowComing] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  // Adding stays on the list (Graeme, 2026-10-13, same as My To-dos): the
+  // new task glows for a moment, and keeps a "Set days" chip for the rest of
+  // this visit so its repeat is one tap away — the editor isn't forced open.
+  const [justAddedId, setJustAddedId] = useState<number | null>(null);
+  const [addedIds, setAddedIds] = useState<Set<number>>(() => new Set());
+  useEffect(() => {
+    if (justAddedId == null) return;
+    const t = setTimeout(() => setJustAddedId(null), 2500);
+    return () => clearTimeout(t);
+  }, [justAddedId]);
+  const onAdded = (itemId: number) => {
+    setJustAddedId(itemId);
+    setAddedIds(prev => new Set(prev).add(itemId));
+  };
 
   const byId = useMemo(() => new Map((data?.items ?? []).map(i => [i.id, i])), [data]);
   const editing = editingId != null ? byId.get(editingId) ?? null : null;
@@ -161,7 +175,7 @@ function ListDetail({ id }: { id: number }) {
       {overdue.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-sm font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Overdue</h3>
-          {overdue.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={() => setEditingId(e.itemId)} />)}
+          {overdue.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={() => setEditingId(e.itemId)} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
         </section>
       )}
 
@@ -172,8 +186,8 @@ function ListDetail({ id }: { id: number }) {
             {data.items.length === 0 ? "No tasks yet — add the first one below." : "Nothing due today."}
           </p>
         )}
-        {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={() => setEditingId(e.itemId)} />)}
-        <AddTask listId={list.id} onAdded={setEditingId} />
+        {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={() => setEditingId(e.itemId)} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
+        <AddTask listId={list.id} onAdded={onAdded} />
       </section>
 
       <Collapsible open={showComing} onToggle={() => setShowComing(s => !s)} title="Coming up this week" count={data.comingUp.reduce((n, d) => n + d.itemIds.length, 0)}>
@@ -239,8 +253,18 @@ function TaskTitle({ item, done }: { item: TeamListItem; done: boolean }) {
   );
 }
 
-function TaskRow({ item, entry, today, onEdit }: { item: TeamListItem; entry: DayEntry; today: string; onEdit: () => void }) {
+function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false }: {
+  item: TeamListItem; entry: DayEntry; today: string; onEdit: () => void;
+  /** Glows for a moment after being added. */
+  justAdded?: boolean;
+  /** Added this visit: offer "Set days" (it was created as every day). */
+  isNew?: boolean;
+}) {
   const tick = useTick();
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (justAdded) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [justAdded]);
   const c = entry.completion;
   const run = (args: { status?: "done" | "skipped"; undo?: boolean }) =>
     tick.mutate({ itemId: item.id, dueDate: entry.dueDate, ...args }, {
@@ -248,7 +272,10 @@ function TaskRow({ item, entry, today, onEdit }: { item: TeamListItem; entry: Da
     });
 
   return (
-    <div className={cn("rounded-2xl border-2 bg-card p-3 sm:p-4 flex items-start gap-3", entry.overdue && !c ? "border-amber-300 dark:border-amber-700" : "border-border", c && "bg-muted/40")}>
+    <div ref={ref} data-just-added={justAdded ? "true" : undefined}
+      className={cn("rounded-2xl border-2 bg-card p-3 sm:p-4 flex items-start gap-3 transition-all duration-500 scroll-mb-28",
+        justAdded ? "border-primary ring-4 ring-primary/30 bg-primary/5" : entry.overdue && !c ? "border-amber-300 dark:border-amber-700" : "border-border",
+        c && "bg-muted/40")}>
       <button
         type="button"
         onClick={() => run(c ? { undo: true } : { status: "done" })}
@@ -262,6 +289,13 @@ function TaskRow({ item, entry, today, onEdit }: { item: TeamListItem; entry: Da
       <div className="min-w-0 flex-1 pt-1 space-y-1">
         <TaskTitle item={item} done={!!c} />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+          {justAdded && <span className="font-bold text-primary">Just added</span>}
+          {isNew && !c && (
+            <button type="button" onClick={onEdit}
+              className="min-h-[36px] px-3 rounded-full border-2 border-primary/40 text-primary font-semibold inline-flex items-center gap-1 hover:bg-primary/10">
+              <Repeat className="w-4 h-4" /> {describeRule(item.recurrence)} · Set days
+            </button>
+          )}
           {item.priority < 4 && <span className="font-bold"><span className={cn("inline-block w-2.5 h-2.5 rounded-full mr-1", PRIORITY_STYLES[item.priority].dot)} />{PRIORITY_STYLES[item.priority].label}</span>}
           {item.timeOfDay && <span className="inline-flex items-center gap-1"><Clock className="w-4 h-4" />{item.timeOfDay}</span>}
           {entry.overdue && !c && <span className="font-semibold text-amber-700 dark:text-amber-400">{overdueLabel(entry.dueDate, today)}</span>}
@@ -290,21 +324,30 @@ function TaskRow({ item, entry, today, onEdit }: { item: TeamListItem; entry: Da
   );
 }
 
-/** "Add a task": type and press Enter; it's added as every day and opened
- *  so its days, time and priority can be set straight away. */
+/** "Add a task": type and press Enter; it's added as every day and you
+ *  stay on the list — the box clears and keeps the cursor for the next one
+ *  (Graeme, 2026-10-13). The new row's "Set days" chip opens its editor. */
 function AddTask({ listId, onAdded }: { listId: number; onAdded: (id: number) => void }) {
   const [title, setTitle] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
   const add = useAddItem(listId);
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const t = title.trim();
-    if (!t) return;
-    add.mutate({ title: t }, { onSuccess: row => { setTitle(""); onAdded(row.id); } });
+    if (!t || add.isPending) return;
+    add.mutate({ title: t }, {
+      onSuccess: row => {
+        // Only clear what was sent — anything typed meanwhile stays.
+        setTitle(cur => (cur.trim() === t ? "" : cur));
+        onAdded(row.id);
+        inputRef.current?.focus({ preventScroll: true });
+      },
+    });
   }
   return (
     <form onSubmit={submit} className="space-y-1">
       <div className="flex gap-2">
-        <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Add a task"
+        <input ref={inputRef} value={title} onChange={e => setTitle(e.target.value)} placeholder="Add a task" enterKeyHint="done"
           className="flex-1 h-14 rounded-2xl border-2 border-dashed border-border bg-background px-4 text-lg focus:outline-none focus:border-primary focus:border-solid" aria-label="Add a task" maxLength={300} />
         <button type="submit" disabled={!title.trim() || add.isPending}
           className="h-14 px-5 rounded-2xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40">
