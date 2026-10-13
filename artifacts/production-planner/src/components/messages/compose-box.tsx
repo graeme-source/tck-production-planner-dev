@@ -5,13 +5,22 @@
  * Nothing typed is lost: the draft is kept per chat while the app is open
  * (close the panel, come back, it's still there), and a send that fails
  * keeps the text and says so in red until it goes.
+ *
+ * Photos and videos (2026-10-13): the paperclip offers Take photo, Record
+ * video and Choose from library (several at once). Each starts uploading
+ * straight away with its own progress (media-drafts.ts); the text becomes
+ * the caption and is optional. Send waits for the uploads; one that failed
+ * keeps its Try again and the caption stays put.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, Loader2, X, Reply, ShieldAlert, Pencil } from "lucide-react";
+import { Send, Loader2, X, Reply, ShieldAlert, Pencil, Paperclip, Camera, Video, Images } from "lucide-react";
 import { activeMentionQuery, encodeMentions, decodeMentions, MAX_BODY_LENGTH, type NamedPerson } from "@workspace/messages";
 import { cn } from "@/lib/utils";
+import { toast } from "@/hooks/use-toast";
 import { UserAvatar } from "@/components/user-avatar";
 import type { Person } from "./messages-api";
+import { useDraftMedia, addDraftMedia, retryDraftMedia, removeDraftMedia, clearDraftMedia, settleDraftMedia } from "./media-drafts";
+import { DraftMediaTray } from "./message-media";
 
 // Drafts survive closing the panel (module-level: lives as long as the tab).
 const drafts = new Map<string, { text: string; picked: NamedPerson[] }>();
@@ -31,7 +40,7 @@ export function ComposeBox({
   onClearTarget: () => void;
   showAckToggle: boolean;
   defaultAck: boolean;
-  onSend: (body: string, requiresAck: boolean) => Promise<void>;
+  onSend: (body: string, requiresAck: boolean, attachmentIds: number[]) => Promise<void>;
   onSaveEdit: (id: number, body: string) => Promise<void>;
 }) {
   const saved = drafts.get(draftKey);
@@ -41,7 +50,19 @@ export function ComposeBox({
   const [requiresAck, setRequiresAck] = useState(defaultAck);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [phase, setPhase] = useState<string | null>(null);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const media = useDraftMedia(draftKey);
+  const hasMedia = media.length > 0 && !target.editing;
+
+  const addPicked = (files: FileList | null) => {
+    setAttachOpen(false);
+    if (!files || files.length === 0) return;
+    setError(null);
+    const note = addDraftMedia(draftKey, [...files]);
+    if (note) toast({ title: "Some were left out", description: note });
+  };
 
   // A different chat: load its draft.
   useEffect(() => {
@@ -109,13 +130,26 @@ export function ComposeBox({
 
   const submit = async () => {
     const trimmed = text.trim();
-    if (!trimmed || sending) return;
-    const body = encodeMentions(trimmed, picked);
+    if ((!trimmed && !hasMedia) || sending) return;
+    if (target.editing && !trimmed) return;
+    const body = trimmed ? encodeMentions(trimmed, picked) : "";
     setSending(true);
     setError(null);
     try {
       if (target.editing) await onSaveEdit(target.editing.id, body);
-      else await onSend(body, showAckToggle && !target.replyTo ? requiresAck : false);
+      else {
+        let ids: number[] = [];
+        if (hasMedia) {
+          const still = media.filter(m => m.status === "uploading").length;
+          if (still) setPhase(`Uploading ${still} ${still === 1 ? "file" : "files"}…`);
+          const settled = await settleDraftMedia(draftKey);
+          setPhase(null);
+          if (settled.problem) { setError(settled.problem); return; }
+          ids = settled.ids;
+        }
+        await onSend(body, showAckToggle && !target.replyTo ? requiresAck : false, ids);
+        clearDraftMedia(draftKey);
+      }
       setText("");
       setPicked([]);
       drafts.delete(draftKey);
@@ -124,6 +158,7 @@ export function ComposeBox({
       setError(err instanceof Error ? err.message : "Not sent — check the connection and tap Send again");
     } finally {
       setSending(false);
+      setPhase(null);
     }
   };
 
@@ -180,7 +215,43 @@ export function ComposeBox({
         </button>
       )}
 
+      {!target.editing && (
+        <DraftMediaTray
+          items={media}
+          onRetry={id => { setError(null); retryDraftMedia(draftKey, id); }}
+          onRemove={id => { setError(null); removeDraftMedia(draftKey, id); }}
+        />
+      )}
+
+      {attachOpen && !target.editing && (
+        <div className="grid grid-cols-3 gap-2">
+          <label className="h-16 rounded-xl border-2 border-border bg-background hover:bg-secondary/60 flex flex-col items-center justify-center gap-1 text-sm font-semibold cursor-pointer">
+            <Camera className="w-5 h-5 text-primary" /> Take photo
+            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={e => { addPicked(e.target.files); e.target.value = ""; }} />
+          </label>
+          <label className="h-16 rounded-xl border-2 border-border bg-background hover:bg-secondary/60 flex flex-col items-center justify-center gap-1 text-sm font-semibold cursor-pointer">
+            <Video className="w-5 h-5 text-primary" /> Record video
+            <input type="file" accept="video/*" capture="environment" className="hidden" onChange={e => { addPicked(e.target.files); e.target.value = ""; }} />
+          </label>
+          <label className="h-16 rounded-xl border-2 border-border bg-background hover:bg-secondary/60 flex flex-col items-center justify-center gap-1 text-sm font-semibold cursor-pointer text-center leading-tight px-1">
+            <Images className="w-5 h-5 text-primary" /> Choose from library
+            <input type="file" accept="image/*,video/*" multiple className="hidden" onChange={e => { addPicked(e.target.files); e.target.value = ""; }} />
+          </label>
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
+        {!target.editing && (
+          <button
+            type="button"
+            onClick={() => setAttachOpen(o => !o)}
+            className={cn("h-12 w-12 rounded-2xl border flex items-center justify-center flex-shrink-0", attachOpen ? "bg-primary/15 text-primary border-primary" : "border-border bg-background hover:bg-secondary")}
+            aria-label="Add a photo or video"
+            aria-expanded={attachOpen}
+          >
+            <Paperclip className="w-5 h-5" />
+          </button>
+        )}
         <textarea
           ref={ref}
           value={text}
@@ -189,22 +260,23 @@ export function ComposeBox({
           onKeyDown={e => {
             if (e.key === "Enter" && !e.shiftKey && matches.length === 0) { e.preventDefault(); void submit(); }
           }}
-          placeholder="Type a message — @ to tag someone"
+          placeholder={hasMedia ? "Add a caption (optional)" : "Type a message — @ to tag someone"}
           rows={1}
           maxLength={MAX_BODY_LENGTH}
           className="flex-1 min-h-[48px] resize-none px-4 py-3 bg-background border border-border rounded-2xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
         />
         <button
           onClick={() => void submit()}
-          disabled={sending || !text.trim()}
+          disabled={sending || (!text.trim() && !hasMedia)}
           className="h-12 px-5 rounded-2xl bg-primary text-primary-foreground font-bold flex items-center gap-2 disabled:opacity-50 flex-shrink-0"
         >
           {sending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}
           <span className="hidden sm:inline">{target.editing ? "Save" : "Send"}</span>
         </button>
       </div>
+      {phase && <p className="text-sm text-muted-foreground flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> {phase}</p>}
       {error && (
-        <p className="text-sm font-semibold text-red-600" role="alert">Not sent: {error}. Your message is still here — tap Send to try again.</p>
+        <p className="text-sm font-semibold text-red-600" role="alert">Not sent: {error}. Your message is still here{hasMedia ? ", with its photos and videos" : ""} — tap Send to try again.</p>
       )}
     </div>
   );

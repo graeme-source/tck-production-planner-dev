@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import {
   conversationTitle, normaliseAudience, conversationKey, parseConversationKey, defaultRequiresAck,
-  canEditMessage, canDeleteMessage, previewText, isDirect, type Audience, type Viewer,
+  canEditMessage, canDeleteMessage, previewText, isDirect, bodyOrMediaPreview, type Audience, type Viewer,
 } from "@workspace/messages";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
@@ -32,6 +32,7 @@ import {
 } from "./messages-api";
 import { MessageBody } from "./message-body";
 import { ComposeBox, type ComposeTarget } from "./compose-box";
+import { MessageMediaGrid, MediaViewer } from "./message-media";
 
 const LONDON_TIME = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
 const LONDON_DAY = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "long", day: "numeric", month: "long" });
@@ -187,7 +188,7 @@ function ChatRow({ chat, active, myId, nameOf, people, onOpen }: {
     ? "No messages yet"
     : last.deleted
       ? "Message deleted"
-      : `${last.senderUserId === myId ? "You" : (last.senderName ?? "Someone").split(" ")[0]}: ${previewText(last.body ?? "", nameOf, 70)}`;
+      : `${last.senderUserId === myId ? "You" : (last.senderName ?? "Someone").split(" ")[0]}: ${bodyOrMediaPreview(previewText(last.body ?? "", nameOf, 70), last.mediaKinds ?? [])}`;
   return (
     <button
       onClick={onOpen}
@@ -330,6 +331,8 @@ function ChatView({ convKey, at, viewer, people, nameOf, extraNames, onBack }: {
   const del = useDeleteMessage();
   const [target, setTarget] = useState<ComposeTarget>({ replyTo: null, editing: null });
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  // The full-screen photo/video viewer: which message, which item.
+  const [viewing, setViewing] = useState<{ message: ApiMessage; index: number } | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const audience: Audience = chat.data?.pages[0]?.audience ?? parseConversationKey(convKey) ?? { everyone: false, stations: [], userIds: [] };
@@ -388,8 +391,8 @@ function ChatView({ convKey, at, viewer, people, nameOf, extraNames, onBack }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastId, convKey]);
 
-  const doSend = async (body: string, requiresAck: boolean) => {
-    await send.mutateAsync({ conversationKey: convKey, body, parentId: target.replyTo?.id, requiresAck });
+  const doSend = async (body: string, requiresAck: boolean, attachmentIds: number[]) => {
+    await send.mutateAsync({ conversationKey: convKey, body, parentId: target.replyTo?.id, requiresAck, attachmentIds });
     nearBottom.current = true;
   };
   const doEdit = async (id: number, body: string) => { await edit.mutateAsync({ id, body }); };
@@ -429,6 +432,8 @@ function ChatView({ convKey, at, viewer, people, nameOf, extraNames, onBack }: {
               )}
               <Bubble
                 m={m}
+                at={at}
+                onOpenMedia={index => setViewing({ message: m, index })}
                 audience={audience}
                 viewer={viewer}
                 groupStart={newDay || startsGroup(prev, m)}
@@ -437,7 +442,7 @@ function ChatView({ convKey, at, viewer, people, nameOf, extraNames, onBack }: {
                 canDelete={canDeleteMessage({ senderUserId: m.senderUserId, createdAt: m.createdAt, deleted: m.deleted }, viewer, now)}
                 confirmingDelete={confirmDelete === m.id}
                 acking={ack.isPending && ack.variables?.id === m.id}
-                onReply={() => setTarget({ editing: null, replyTo: { id: m.id, senderName: m.senderName, preview: previewText(m.body ?? "", nameOfAll, 80) } })}
+                onReply={() => setTarget({ editing: null, replyTo: { id: m.id, senderName: m.senderName, preview: bodyOrMediaPreview(previewText(m.body ?? "", nameOfAll, 80), m.attachments.map(a => a.kind)) } })}
                 onEdit={() => setTarget({ replyTo: null, editing: { id: m.id, body: m.body ?? "" } })}
                 onDelete={() => setConfirmDelete(m.id)}
                 onCancelDelete={() => setConfirmDelete(null)}
@@ -466,15 +471,25 @@ function ChatView({ convKey, at, viewer, people, nameOf, extraNames, onBack }: {
         onSend={doSend}
         onSaveEdit={doEdit}
       />
+
+      {viewing && (
+        <MediaViewer
+          attachments={viewing.message.attachments}
+          startIndex={viewing.index}
+          at={at}
+          caption={viewing.message.body ? previewText(viewing.message.body, nameOfAll, 2000) : null}
+          onClose={() => setViewing(null)}
+        />
+      )}
     </div>
   );
 }
 
 function Bubble({
-  m, audience, viewer, groupStart, nameOf, canEdit, canDelete, confirmingDelete, acking,
+  m, at, onOpenMedia, audience, viewer, groupStart, nameOf, canEdit, canDelete, confirmingDelete, acking,
   onReply, onEdit, onDelete, onCancelDelete, onConfirmDelete, onAck,
 }: {
-  m: ApiMessage; audience: Audience; viewer: Viewer; groupStart: boolean; nameOf: (id: number) => string | undefined;
+  m: ApiMessage; at: string[]; onOpenMedia: (index: number) => void; audience: Audience; viewer: Viewer; groupStart: boolean; nameOf: (id: number) => string | undefined;
   canEdit: boolean; canDelete: boolean; confirmingDelete: boolean; acking: boolean;
   onReply: () => void; onEdit: () => void; onDelete: () => void; onCancelDelete: () => void; onConfirmDelete: () => void; onAck: () => void;
 }) {
@@ -505,7 +520,7 @@ function Bubble({
               {m.parent ? (
                 <>
                   <p className="font-semibold text-xs">{m.parent.senderName ?? "Someone"}</p>
-                  <p className="line-clamp-2 opacity-90">{m.parent.deleted ? "Message deleted" : previewText(m.parent.body ?? "", nameOf, 140)}</p>
+                  <p className="line-clamp-2 opacity-90">{m.parent.deleted ? "Message deleted" : bodyOrMediaPreview(previewText(m.parent.body ?? "", nameOf, 140), m.parent.mediaKinds ?? [])}</p>
                 </>
               ) : (
                 <p className="opacity-80 text-xs">Replying to a message</p>
@@ -517,7 +532,10 @@ function Bubble({
               <ShieldAlert className="w-3.5 h-3.5" /> Must be confirmed
             </p>
           )}
-          {m.deleted ? <p>This message was deleted</p> : <MessageBody body={m.body ?? ""} nameOf={nameOf} onDark={mine} className="text-base" />}
+          {!m.deleted && m.attachments.length > 0 && (
+            <MessageMediaGrid attachments={m.attachments} at={at} onOpen={onOpenMedia} className={cn("-mx-1.5", m.body ? "mb-1.5" : "")} />
+          )}
+          {m.deleted ? <p>This message was deleted</p> : m.body ? <MessageBody body={m.body} nameOf={nameOf} onDark={mine} className="text-base" /> : null}
           <p className={cn("text-[11px] mt-1 flex items-center gap-1 justify-end", mine ? "text-primary-foreground/80" : "text-muted-foreground")}>
             {m.editedAt && !m.deleted && <span>edited ·</span>}
             <span>{time}</span>

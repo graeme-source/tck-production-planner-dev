@@ -19,12 +19,13 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { MessageSquare, Loader2, ShieldAlert, Reply } from "lucide-react";
-import { stationTarget } from "@workspace/messages";
+import { stationTarget, mediaPreview, previewText } from "@workspace/messages";
 import { feedTimestamp } from "@/lib/feed-time";
 import { toast } from "@/hooks/use-toast";
 import { routeStationMessages, messageShowsOnScreen } from "@/lib/station-message-rules";
 import { useStationBanner, useAckMessage, usePeople, openMessages, type ApiMessage } from "@/components/messages/messages-api";
 import { MessageBody } from "@/components/messages/message-body";
+import { MessageMediaGrid, MediaViewer } from "@/components/messages/message-media";
 
 interface BannerMessage extends ApiMessage { requiresAck: boolean }
 
@@ -32,7 +33,9 @@ export function StationMessagesBanner({ stationType }: { stationType: string }) 
   const { data } = useStationBanner(stationType);
   const ack = useAckMessage([stationType]);
   const [acking, setAcking] = useState(false);
+  const [viewing, setViewing] = useState<{ message: ApiMessage; index: number } | null>(null);
   const people = usePeople();
+  const at = [stationType];
 
   const confirm = async (id: number, thenReplyKey?: string) => {
     setAcking(true);
@@ -64,7 +67,10 @@ export function StationMessagesBanner({ stationType }: { stationType: string }) 
           <h2 className="font-display font-bold text-lg flex-1">Read this before carrying on</h2>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          <MessageBody body={blocking.body ?? ""} nameOf={nameOf} className="text-xl font-semibold" />
+          {blocking.attachments?.length > 0 && (
+            <MessageMediaGrid attachments={blocking.attachments} at={at} onOpen={index => setViewing({ message: blocking, index })} />
+          )}
+          {blocking.body ? <MessageBody body={blocking.body} nameOf={nameOf} className="text-xl font-semibold" /> : null}
           <p className="text-sm text-muted-foreground">
             {blocking.senderName ?? "Someone"} · {feedTimestamp(blocking.createdAt)}
           </p>
@@ -99,11 +105,19 @@ export function StationMessagesBanner({ stationType }: { stationType: string }) 
   return (
     <div className="space-y-2">
       {blockingOverlay}
+      {viewing && (
+        <MediaViewer attachments={viewing.message.attachments} startIndex={viewing.index} at={at} caption={viewing.message.body ? previewText(viewing.message.body, nameOf, 2000) : null} onClose={() => setViewing(null)} />
+      )}
       {banners.map(m => (
         <div key={m.id} className="rounded-xl border-2 border-sky-300 dark:border-sky-800 bg-sky-50/80 dark:bg-sky-950/30 px-4 py-3 flex items-start gap-3">
           <MessageSquare className="w-5 h-5 text-sky-600 flex-shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1">
-            <MessageBody body={m.body ?? ""} nameOf={nameOf} className="text-base font-medium text-sky-950 dark:text-sky-100" />
+            {m.attachments?.length > 0 && (
+              <MessageMediaGrid attachments={m.attachments} at={at} onOpen={index => setViewing({ message: m, index })} className="mb-1.5" />
+            )}
+            {m.body
+              ? <MessageBody body={m.body} nameOf={nameOf} className="text-base font-medium text-sky-950 dark:text-sky-100" />
+              : <p className="text-base font-medium text-sky-950 dark:text-sky-100">{mediaPreview((m.attachments ?? []).map(a => a.kind))}</p>}
             <p className="text-xs text-sky-800/80 dark:text-sky-300/80 mt-1">
               {m.senderName ?? "Someone"} · {feedTimestamp(m.createdAt)}
             </p>

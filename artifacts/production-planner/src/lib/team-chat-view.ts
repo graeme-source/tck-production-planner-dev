@@ -8,7 +8,7 @@ import { isDirect, stationTarget, type Audience } from "@workspace/messages";
 export interface ChatListEntry {
   key: string;
   audience: Audience;
-  lastMessage: { id: number; senderUserId: number | null; senderName: string | null; body: string | null; deleted: boolean; createdAt: string } | null;
+  lastMessage: { id: number; senderUserId: number | null; senderName: string | null; body: string | null; deleted: boolean; createdAt: string; mediaKinds?: Array<"image" | "video"> } | null;
   unread: number;
   pendingAck: boolean;
 }

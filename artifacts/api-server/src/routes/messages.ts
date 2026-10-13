@@ -22,14 +22,15 @@ import { sql } from "drizzle-orm";
 import { validate, validateQuery } from "../middleware/validate";
 import {
   normaliseAudience, audienceProblem, parseConversationKey, canStartTo, defaultRequiresAck,
-  canEditMessage, canDeleteMessage, pendingAckTargets, MAX_BODY_LENGTH, STATION_KEY_RE,
-  type Audience,
+  canEditMessage, canDeleteMessage, pendingAckTargets, attachProblem, MAX_BODY_LENGTH, STATION_KEY_RE,
+  MAX_ATTACHMENTS_PER_MESSAGE, type Audience,
 } from "@workspace/messages";
 import {
   loadViewer, parseAtStations, chatPage, conversationList, unreadSummary, markRead, namesFor,
   sendMessage, notifyByPush, messageById, visibleMessageRow, resetMentions, ackTargets,
-  notifySenderOfAck, stationBanner, activeUserIds, type TeamViewer,
+  notifySenderOfAck, stationBanner, activeUserIds, uploadsByIds, claimUploads, type TeamViewer,
 } from "../lib/team-messages";
+import messageMediaRouter from "./message-media";
 
 const router: IRouter = Router();
 
@@ -37,6 +38,9 @@ router.use((req: Request, res: Response, next: NextFunction) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   next();
 });
+
+// Photos and videos: upload, stream, take back (routes/message-media.ts).
+router.use("/media", messageMediaRouter);
 
 async function viewerOr401(req: Request, res: Response, at: unknown): Promise<TeamViewer | null> {
   const v = await loadViewer(req, parseAtStations(at));
@@ -124,7 +128,9 @@ const audienceSchema = z.object({
 });
 
 const sendSchema = z.object({
-  body: z.string().trim().min(1).max(MAX_BODY_LENGTH),
+  // May be empty when photos/videos are attached (the caption is optional).
+  body: z.string().trim().max(MAX_BODY_LENGTH),
+  attachmentIds: z.array(z.number().int().positive()).max(MAX_ATTACHMENTS_PER_MESSAGE).optional(),
   // Either a new audience, an existing chat, or a reply (which always goes
   // to the replied-to message's chat).
   audience: audienceSchema.optional(),
@@ -139,6 +145,11 @@ router.post("/", validate(sendSchema), async (req: Request, res: Response) => {
   const input = req.body as z.infer<typeof sendSchema>;
   const v = await viewerOr401(req, res, input.at);
   if (!v) return;
+  const attachmentIds = input.attachmentIds ?? [];
+  if (!input.body && attachmentIds.length === 0) { res.status(400).json({ error: "Type a message or add a photo" }); return; }
+  const uploads = await uploadsByIds(attachmentIds);
+  const notAttachable = attachProblem(attachmentIds, uploads, v.userId);
+  if (notAttachable) { res.status(400).json({ error: notAttachable }); return; }
 
   let audience: Audience;
   let parent: { id: number; senderUserId: number | null } | null = null;
@@ -167,12 +178,14 @@ router.post("/", validate(sendSchema), async (req: Request, res: Response) => {
 
   const requiresAck = input.requiresAck ?? (parent ? false : defaultRequiresAck(audience));
   const sent = await sendMessage(v, { audience, body: input.body, requiresAck, parent });
+  await claimUploads(v, sent.id, attachmentIds);
   const message = await messageById(v, sent.id);
   res.status(201).json({ message, conversationKey: sent.key });
   // Station and Everyone messages push only to mentions; person-addressed
   // ones also to the people in the chat. After the response — never slows
   // or fails the send.
-  void notifyByPush(v, audience, sent.mentionIds, sent.key, input.body);
+  const kinds = attachmentIds.map(id => uploads.find(u => u.id === id)!.kind);
+  void notifyByPush(v, audience, sent.mentionIds, sent.key, input.body, false, kinds);
 });
 
 const editSchema = z.object({ body: z.string().trim().min(1).max(MAX_BODY_LENGTH) });
