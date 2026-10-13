@@ -212,6 +212,43 @@ const REOPEN_WORDS: Record<TriageStatus, string> = {
   fixed: "Fixed", wont_fix: "Won't fix", answered: "Answered", dismissed: "Dismissed — already done",
 };
 
+/**
+ * Putting a card that closed by mistake back in To review — the one-off
+ * repair script (scripts/reopen-fix-card.ts; #323 closed because the old
+ * message box closed by default). Back to 'proposed' and the andon report
+ * reopened; the decision stays in the event history. A credited improvement
+ * is NOT touched here.
+ */
+export interface ReopenCardPlan {
+  ok: boolean;
+  reason?: string;
+  previousStatus: TriageStatus;
+  setProposed: boolean;
+  clearIssueResolved: boolean;
+  note: string;
+}
+
+export function reopenCardPlan(
+  t: { status: TriageStatus; noActionAt?: Date | string | null },
+  issue: { resolvedAt: Date | string | null },
+  why?: string | null,
+): ReopenCardPlan {
+  const setProposed = t.status !== "proposed";
+  const clearIssueResolved = !!issue.resolvedAt;
+  const base = { previousStatus: t.status, setProposed, clearIssueResolved };
+  if (isSetAside(t)) {
+    return { ...base, ok: false, setProposed: false, clearIssueResolved: false, note: "", reason: "Dismissed with no action — use Restore on the Fix queue instead" };
+  }
+  if (t.status === "in_progress" || t.status === "fixed") {
+    return { ...base, ok: false, setProposed: false, clearIssueResolved: false, note: "", reason: `It's '${t.status}' — Claude's work is under way; use Reply to Claude on the card instead` };
+  }
+  if (!setProposed && !clearIssueResolved) {
+    return { ...base, ok: false, note: "", reason: "Already open in To review — nothing to do" };
+  }
+  const note = `Reopened to To review (was: ${REOPEN_WORDS[t.status]})${why?.trim() ? ` — ${why.trim()}` : ""}`;
+  return { ...base, ok: true, note };
+}
+
 /** The history line written when a reply re-opens a card; null = nothing re-opened. */
 export function reopenNote(plan: ReplyPlan): string | null {
   if (!plan.reopen && !plan.restoreSetAside) return null;
@@ -226,6 +263,69 @@ export function unansweredReplies(thread: ThreadEntry[]): ThreadEntry[] {
   let lastClaude = -1;
   thread.forEach((e, i) => { if (e.who === "claude" && e.kind !== "message") lastClaude = i; });
   return thread.slice(lastClaude + 1).filter(e => e.who === "you" && e.kind === "reply");
+}
+
+// ── Messaging the reporter (Graeme, 2026-09-24; reworked 2026-10-13) ───────
+// Issue #323: Graeme asked Jane a question from the card and the card closed
+// (answered, report resolved, improvement credited) and left To review. "We
+// should be able to just constantly go and message whenever we want because
+// new information has come to light." So a message is a conversation, and
+// closing is a separate, explicit "Send and close".
+
+export interface MessagePlan {
+  /** The history event: 'messaged_reporter' (keeps the card) or 'answered'. */
+  event: "messaged_reporter" | "answered";
+  /** New status, or null = the card stays exactly where it is. */
+  statusTo: "answered" | null;
+  /** Resolve the andon report. */
+  resolveIssue: boolean;
+  /** Run creditImprovementIfDue (only a real close can complete anything). */
+  creditImprovement: boolean;
+  /** Now waiting for the reporter's answer (shown on the card). */
+  awaitReporter: boolean;
+}
+
+/** What "Message <name>" (close=false) and "Send and close" (close=true) do.
+ *  Either way Graeme has now acted on the card, so an unread reply from the
+ *  reporter counts as seen. */
+export function messagePlan(close: boolean): MessagePlan {
+  return close
+    ? { event: "answered", statusTo: "answered", resolveIssue: true, creditImprovement: true, awaitReporter: false }
+    : { event: "messaged_reporter", statusTo: null, resolveIssue: false, creditImprovement: false, awaitReporter: true };
+}
+
+export interface ReporterResponsePlan {
+  event: "reporter_replied" | "notice_ack";
+  note: string;
+  /** Put the card back in To review with "New reply from <name>" (for
+   *  Graeme only — it is never handed to Claude by itself). */
+  flagForGraeme: boolean;
+}
+
+/**
+ * The reporter answering, from their pop-up (a typed reply, or just "Got
+ * it" / "I'll test it later") or a comment on the issue log.
+ *  - Anything they TYPE always comes back to Graeme.
+ *  - "Got it" on a message comes back only when he was waiting for an answer
+ *    (he asked something with "Message <name>"); "Got it" on a "Send and
+ *    close" is just the loop closing, so the card stays in Done.
+ *  - Acknowledging a fix ("testing it now" / "will test later") is recorded
+ *    on the thread but doesn't pull the card back.
+ */
+export function reporterResponsePlan(
+  t: { andonIssueId: number; awaitingReporterSince?: Date | string | null },
+  r: { kind: string; action: NoticeAckAction | "comment"; reply?: string | null },
+): ReporterResponsePlan {
+  const reply = r.reply?.trim();
+  if (reply) return { event: "reporter_replied", note: reply, flagForGraeme: true };
+  if (r.kind === "message") {
+    return { event: "notice_ack", note: `Issue #${t.andonIssueId}: read your message`, flagForGraeme: !!t.awaitingReporterSince };
+  }
+  return {
+    event: "notice_ack",
+    note: r.action === "test_now" ? `Issue #${t.andonIssueId}: testing it now` : `Issue #${t.andonIssueId}: will test later`,
+    flagForGraeme: false,
+  };
 }
 
 /** "Message the reporter" (Graeme, 2026-09-24). A message on its own can go
@@ -269,10 +369,16 @@ export const QUEUE_TABS = ["proposed", "in_progress", "snoozed", "approved", "fi
 export type QueueTab = (typeof QUEUE_TABS)[number];
 
 export function queueTabFor(
-  t: { status: TriageStatus; awaitingRetriage: boolean; snoozedUntil: Date | string | null; noActionAt?: Date | string | null },
+  t: {
+    status: TriageStatus; awaitingRetriage: boolean; snoozedUntil: Date | string | null; noActionAt?: Date | string | null;
+    reporterReplyAt?: Date | string | null;
+  },
   now: Date,
 ): QueueTab {
   if (isSetAside(t)) return "no_action";
+  // The reporter answered and Graeme hasn't looked: it needs him now,
+  // whatever its status (2026-10-13) — until he acts on the card.
+  if (t.reporterReplyAt) return "proposed";
   switch (t.status) {
     case "proposed":
       if (t.awaitingRetriage) return "in_progress";
@@ -357,8 +463,10 @@ export function buildThread(events: EventLike[]): ThreadEntry[] {
       out.push({ at, who: "claude", kind: "message", text: e.note });
     } else if (e.event === "replied" && e.note) {
       out.push({ at, who: "you", kind: "reply", text: e.note });
-    } else if ((e.event === "messaged" || e.event === "answered") && e.note) {
+    } else if ((e.event === "messaged" || e.event === "messaged_reporter" || e.event === "answered") && e.note) {
       out.push({ at, who: "you", kind: "message", text: e.note });
+    } else if (e.event === "reporter_replied" && e.note) {
+      out.push({ at, who: "reporter", kind: "reply", text: e.note });
     } else if (DECISION_WORDS[e.event]) {
       const word = DECISION_WORDS[e.event];
       // Some notes already say it ("Snoozed for 3 days") — don't double up.
@@ -372,6 +480,40 @@ export function buildThread(events: EventLike[]): ThreadEntry[] {
   // Consecutive identical Claude lines (a refine that didn't change the
   // headline) add nothing.
   return out.filter((x, i) => !(i > 0 && x.who === "claude" && out[i - 1].who === "claude" && out[i - 1].text === x.text));
+}
+
+// ── Find a card wherever it went (Graeme, 2026-10-13) ───────────────────────
+// A card that moved tab (#323 jumped to Done) must always be findable: one
+// box searches every tab by issue number, reporter name or words.
+
+export interface SearchableCard {
+  issueId: number;
+  reporterName: string | null;
+  description: string | null;
+  verdictSummary: string | null;
+  station: string | null;
+}
+
+/** Lower-case words of the query; "#323" and "323" are the same. */
+export function searchTerms(query: string): string[] {
+  return query.toLowerCase().split(/\s+/).map(w => w.replace(/^#/, "")).filter(Boolean);
+}
+
+/**
+ * Does this card match? Every term must match: a number matches the issue
+ * number exactly (or appears as a whole number in the words); anything else
+ * is found anywhere in the reporter's name, their report, Claude's verdict
+ * or the station. An empty query matches nothing (the tabs show everything).
+ */
+export function fixQueueMatches(query: string, card: SearchableCard): boolean {
+  const terms = searchTerms(query);
+  if (terms.length === 0) return false;
+  const text = [card.reporterName, card.description, card.verdictSummary, card.station]
+    .filter(Boolean).join(" \n ").toLowerCase();
+  return terms.every(term => {
+    if (/^\d+$/.test(term)) return Number(term) === card.issueId || new RegExp(`(^|\\D)${term}(\\D|$)`).test(text);
+    return text.includes(term);
+  });
 }
 
 export const NOTICE_KINDS = ["fixed", "message"] as const;
