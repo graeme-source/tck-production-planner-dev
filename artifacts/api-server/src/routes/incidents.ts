@@ -6,10 +6,16 @@
 // shows due diligence at a glance, and a signature records who stands
 // behind the report. Mounted behind the admin-or-manager guard in
 // routes/index.ts — this is a manager's tool.
+//
+// Lock (migration 0190, Graeme 2026-10-13): once signed, the report's
+// fields are read-only (PATCH → 409) until a manager unlocks it with a
+// reason; signing again re-locks it as the next version. Each signed
+// version and each unlock is kept in incident_report_history. Rules:
+// lib/incident-lock-rules.ts.
 
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, incidentReportsTable, incidentAttachmentsTable, usersTable } from "@workspace/db";
-import { eq, desc, asc, sql } from "drizzle-orm";
+import { db, incidentReportsTable, incidentAttachmentsTable, incidentReportHistoryTable, usersTable, type IncidentReport } from "@workspace/db";
+import { eq, desc, asc, sql, and } from "drizzle-orm";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
@@ -21,8 +27,19 @@ import {
   canDeleteIncidentReport,
   INCIDENT_VIDEO_MAX_MB,
 } from "../lib/incident-attachment-rules";
+import {
+  incidentEditRefusal,
+  incidentSignRefusal,
+  incidentUnlockRefusal,
+  snapshotIncident,
+  buildIncidentHistory,
+  LOCKED_EDIT_ERROR,
+} from "../lib/incident-lock-rules";
 
 const router: IRouter = Router();
+
+/** What a sign/unlock transaction ends with: the updated row, or a refusal. */
+type TxOutcome = { row: IncidentReport } | { status: number; error: string };
 
 async function sessionUser(req: Request): Promise<{ id: number; name: string } | null> {
   const id = req.session.userId ?? null;
@@ -93,13 +110,31 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const body = req.body as z.infer<typeof PatchBody>;
+    // Signed reports are locked (migration 0190): edits only after a
+    // manager unlocks it with a reason.
+    const [existing] = await db
+      .select({ signedAt: incidentReportsTable.signedAt, unlockedAt: incidentReportsTable.unlockedAt })
+      .from(incidentReportsTable)
+      .where(eq(incidentReportsTable.id, id));
+    if (!existing) { res.status(404).json({ error: "Report not found" }); return; }
+    const refusal = incidentEditRefusal(existing);
+    if (refusal) { res.status(refusal.status).json({ error: refusal.error }); return; }
     const set: Record<string, unknown> = { updatedAt: new Date() };
     for (const [k, v] of Object.entries(body)) {
       if (v === undefined) continue;
       set[k] = k === "occurredAt" ? new Date(v as string) : v;
     }
-    const [row] = await db.update(incidentReportsTable).set(set).where(eq(incidentReportsTable.id, id)).returning();
-    if (!row) { res.status(404).json({ error: "Report not found" }); return; }
+    // The WHERE repeats the lock rule, so a signature landing between the
+    // check and this write can't be overwritten.
+    const [row] = await db
+      .update(incidentReportsTable)
+      .set(set)
+      .where(and(
+        eq(incidentReportsTable.id, id),
+        sql`(${incidentReportsTable.signedAt} IS NULL OR ${incidentReportsTable.unlockedAt} IS NOT NULL)`,
+      ))
+      .returning();
+    if (!row) { res.status(409).json({ error: LOCKED_EDIT_ERROR }); return; }
     res.json(row);
   } catch (err) {
     console.error("[incidents] patch failed:", err);
@@ -108,22 +143,116 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
 });
 
 // POST /:id/sign — the signed-in manager puts their name to the report.
+// Each signature is the next version (v1, v2…); its wording is kept as a
+// snapshot in incident_report_history and the report locks. Signing a
+// locked report is refused — unlock it first.
 router.post("/:id/sign", validate(z.object({})), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const user = await sessionUser(req);
     if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
-    const [row] = await db
-      .update(incidentReportsTable)
-      .set({ signedByUserId: user.id, signedByName: user.name, signedAt: new Date(), updatedAt: new Date() })
-      .where(eq(incidentReportsTable.id, id))
-      .returning();
-    if (!row) { res.status(404).json({ error: "Report not found" }); return; }
-    res.json(row);
+    const result = await db.transaction(async (tx): Promise<TxOutcome> => {
+      const [existing] = await tx.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id)).for("update");
+      if (!existing) return { status: 404, error: "Report not found" } as const;
+      const refusal = incidentSignRefusal(existing);
+      if (refusal) return refusal;
+      const now = new Date();
+      const version = (existing.signedVersion ?? 0) + 1;
+      const [row] = await tx
+        .update(incidentReportsTable)
+        .set({
+          signedByUserId: user.id, signedByName: user.name, signedAt: now, signedVersion: version,
+          unlockedAt: null, unlockedByUserId: null, unlockedByName: null, unlockReason: null,
+          updatedAt: now,
+        })
+        .where(eq(incidentReportsTable.id, id))
+        .returning();
+      await tx.insert(incidentReportHistoryTable).values({
+        incidentId: id, event: "signed", version, snapshot: snapshotIncident(row),
+        actorUserId: user.id, actorName: user.name, createdAt: now,
+      });
+      return { row };
+    });
+    if ("error" in result) { res.status(result.status).json({ error: result.error }); return; }
+    res.json(result.row);
   } catch (err) {
     console.error("[incidents] sign failed:", err);
     res.status(500).json({ error: "Failed to sign" });
+  }
+});
+
+// POST /:id/unlock — a manager/admin (the whole router is behind that
+// guard) opens a signed report for updating, with a short reason. The
+// signed version stays on record as a snapshot; the report shows "needs
+// signing again" until it is re-signed.
+router.post("/:id/unlock", validate(z.object({ reason: z.string().trim().min(1).max(500) })), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const user = await sessionUser(req);
+    if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+    const reason = (req.body as { reason: string }).reason.trim();
+    const result = await db.transaction(async (tx): Promise<TxOutcome> => {
+      const [existing] = await tx.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id)).for("update");
+      if (!existing) return { status: 404, error: "Report not found" } as const;
+      const refusal = incidentUnlockRefusal(existing, reason);
+      if (refusal) return refusal;
+      const version = Math.max(existing.signedVersion ?? 0, 1);
+      const snapshot = snapshotIncident(existing);
+      // Belt and braces: the version being unlocked must be on record
+      // (0190 backfills signed reports; this covers anything it missed).
+      const [hasSigned] = await tx
+        .select({ id: incidentReportHistoryTable.id })
+        .from(incidentReportHistoryTable)
+        .where(and(
+          eq(incidentReportHistoryTable.incidentId, id),
+          eq(incidentReportHistoryTable.event, "signed"),
+          eq(incidentReportHistoryTable.version, version),
+        ));
+      if (!hasSigned) {
+        await tx.insert(incidentReportHistoryTable).values({
+          incidentId: id, event: "signed", version, snapshot,
+          actorUserId: existing.signedByUserId, actorName: existing.signedByName,
+          createdAt: existing.signedAt ?? new Date(),
+        });
+      }
+      const now = new Date();
+      await tx.insert(incidentReportHistoryTable).values({
+        incidentId: id, event: "unlocked", version, snapshot,
+        actorUserId: user.id, actorName: user.name, reason, createdAt: now,
+      });
+      const [row] = await tx
+        .update(incidentReportsTable)
+        .set({ unlockedAt: now, unlockedByUserId: user.id, unlockedByName: user.name, unlockReason: reason, signedVersion: version, updatedAt: now })
+        .where(eq(incidentReportsTable.id, id))
+        .returning();
+      return { row };
+    });
+    if ("error" in result) { res.status(result.status).json({ error: result.error }); return; }
+    console.log(`[incidents] report ${id} unlocked by ${user.name} (${user.id}): ${reason}`);
+    res.json(result.row);
+  } catch (err) {
+    console.error("[incidents] unlock failed:", err);
+    res.status(500).json({ error: "Failed to unlock" });
+  }
+});
+
+// GET /:id/history — signed versions and unlocks, oldest first, each
+// signed version after the first carrying what changed since the last.
+router.get("/:id/history", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const rows = await db
+      .select()
+      .from(incidentReportHistoryTable)
+      .where(eq(incidentReportHistoryTable.incidentId, id))
+      .orderBy(asc(incidentReportHistoryTable.createdAt), asc(incidentReportHistoryTable.id));
+    res.json(buildIncidentHistory(rows));
+  } catch (err) {
+    console.error("[incidents] history failed:", err);
+    res.status(500).json({ error: "Failed to load the history" });
   }
 });
 

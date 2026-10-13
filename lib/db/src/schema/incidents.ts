@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, boolean, integer, customType } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, boolean, integer, customType, jsonb } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
 // Accident & incident diary for HACCP due diligence (Graeme, 2026-09-11:
@@ -29,12 +29,38 @@ export const incidentReportsTable = pgTable("incident_reports", {
   signedByUserId: integer("signed_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   signedByName: text("signed_by_name"),
   signedAt: timestamp("signed_at"),
+  // Lock & unlock (migration 0190, Graeme 2026-10-13). Each signature is a
+  // version; a signed report is read-only until a manager unlocks it with
+  // a reason, and signing again re-locks it. Rules:
+  // api-server/src/lib/incident-lock-rules.ts.
+  signedVersion: integer("signed_version").notNull().default(0),
+  unlockedAt: timestamp("unlocked_at"),
+  unlockedByUserId: integer("unlocked_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  unlockedByName: text("unlocked_by_name"),
+  unlockReason: text("unlock_reason"),
   closedAt: timestamp("closed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
 export type IncidentReport = typeof incidentReportsTable.$inferSelect;
+
+// Signature and unlock history (migration 0190): 'signed' rows keep a JSON
+// snapshot of each signed version, 'unlocked' rows keep who/when/why. Never
+// deleted, so the original signed wording is always on record.
+export const incidentReportHistoryTable = pgTable("incident_report_history", {
+  id: serial("id").primaryKey(),
+  incidentId: integer("incident_id").notNull().references(() => incidentReportsTable.id, { onDelete: "restrict" }),
+  event: text("event").notNull(), // 'signed' | 'unlocked'
+  version: integer("version").notNull(),
+  snapshot: jsonb("snapshot").notNull(),
+  actorUserId: integer("actor_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  actorName: text("actor_name"),
+  reason: text("reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export type IncidentReportHistory = typeof incidentReportHistoryTable.$inferSelect;
 
 // Photos / short videos on a report (migration 0188, Graeme 2026-10-13: a
 // foreign-object report needed its photo). HACCP evidence, so a row is
