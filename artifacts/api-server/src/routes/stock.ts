@@ -12,6 +12,24 @@ import {
   invalidateShopifyFreezerSyncFlagCache,
 } from "../lib/inventory-sync";
 import { adjustFridgeStock } from "../lib/fridge-stock";
+import { logFridgeStockChange } from "../lib/fridge-stock-log";
+
+/** A manual count that matches the fridge record changes nothing, but it is
+ *  still a count: log a zero-delta 'manual' row so today's Factory Number
+ *  update can see the product was counted (lib/factory-count.ts) and the
+ *  Stock Control history shows "Counted — no change". */
+async function logUnchangedCount(recipeId: number, packSize: number, qty: number, userId: number | null) {
+  await logFridgeStockChange(db, {
+    recipeId,
+    packSize,
+    delta: 0,
+    resultingQty: qty,
+    source: "manual",
+    userId,
+    note: "Counted — no change",
+    keepZero: true,
+  });
+}
 
 /** Returns the latest stock_entries row for a (recipe, production_fridge,
  *  packSize) tuple — the same row the factory-number calc and the
@@ -152,6 +170,7 @@ router.post("/", validate(CreateStockEntryBody), async (req, res) => {
     const existing = await readLatestProductionFridgeRow(recipeId, packSize);
     const currentQty = existing ? Number(existing.quantity) : 0;
     const delta = Math.round(Number(quantity)) - Math.round(currentQty);
+    if (delta === 0) await logUnchangedCount(recipeId, packSize, Math.round(currentQty), req.session.userId ?? null);
     await adjustFridgeStock({
       recipeId,
       delta,
@@ -393,6 +412,7 @@ router.put("/:id", validate(UpdateStockEntryBody), async (req, res) => {
     // bag delta to the recipe's 2-pack stock.
     const packSize = Number(target.packSize) || 2;
     const delta = Math.round(Number(quantity)) - Math.round(Number(target.quantity));
+    if (delta === 0) await logUnchangedCount(recipeId, packSize, Math.round(Number(target.quantity)), req.session.userId ?? null);
     await adjustFridgeStock({
       recipeId,
       delta,
