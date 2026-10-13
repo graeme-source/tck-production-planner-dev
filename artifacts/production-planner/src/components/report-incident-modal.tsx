@@ -82,9 +82,9 @@ export function ReportIncidentModal({ open, onClose }: { open: boolean; onClose:
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3 px-5 pt-5 pb-3 border-b border-border shrink-0">
-          <h2 className="text-2xl font-bold flex items-center gap-2 min-w-0">
+          <h2 className="text-xl sm:text-2xl font-bold leading-tight flex items-center gap-2 min-w-0">
             <ShieldAlert className="w-6 h-6 text-red-700 shrink-0" />
-            <span className="truncate">{title}</span>
+            <span>{title}</span>
           </h2>
           <button onClick={onClose} className="w-11 h-11 rounded-2xl bg-secondary flex items-center justify-center flex-shrink-0" aria-label="Close">
             <X className="w-5 h-5" />
@@ -158,7 +158,7 @@ export function ReportIncidentModal({ open, onClose }: { open: boolean; onClose:
             <PinnedFooter>
               <div className="flex flex-col sm:flex-row gap-2">
                 <button type="button" onClick={openDiary}
-                  className="min-h-14 px-5 rounded-2xl border-2 border-border text-base font-semibold inline-flex items-center justify-center gap-2 hover:bg-secondary/40 sm:w-auto">
+                  className="min-h-14 px-5 rounded-2xl border-2 border-border text-base font-semibold inline-flex items-center justify-center gap-2 hover:bg-secondary/40 whitespace-nowrap shrink-0">
                   <ExternalLink className="w-5 h-5" /> Open the diary
                 </button>
                 <button type="button" onClick={onClose} className={pinnedPrimaryClass}>

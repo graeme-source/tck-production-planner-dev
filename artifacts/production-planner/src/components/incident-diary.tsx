@@ -351,7 +351,7 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
                 Why does it need updating?
                 <textarea rows={2} autoFocus value={unlockReason} onChange={e => setUnlockReason(e.target.value)}
                   placeholder="e.g. Adding the hospital visit / supplier's reply"
-                  className="mt-1 block w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm font-normal normal-case" />
+                  className="mt-1 block w-full px-3 py-2.5 bg-background border border-border rounded-lg text-sm text-foreground font-normal normal-case" />
               </label>
               <p className="text-xs text-muted-foreground">Your name, the time and this reason go in the report's History, with the signed version kept exactly as it was. It must be signed again afterwards.</p>
               <div className="flex gap-2 flex-wrap">
