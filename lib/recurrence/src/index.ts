@@ -164,6 +164,13 @@ export function describeRule(rule: RecurrenceRule): string {
   }
 }
 
+/** Every day or every weekday — a rhythm where tomorrow's occurrence comes
+ *  round before a missed one is worth chasing. Team lists use it for the
+ *  "carry over if missed" default (off for these, on for the rest). */
+export function isDailyRhythm(rule: RecurrenceRule): boolean {
+  return rule.kind === "daily" || rule.kind === "weekdays";
+}
+
 /** Is this a rule the engine understands? (For validating stored JSON.) */
 export function isRecurrenceRule(value: unknown): value is RecurrenceRule {
   if (!value || typeof value !== "object") return false;
