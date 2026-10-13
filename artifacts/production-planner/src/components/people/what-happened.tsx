@@ -14,14 +14,40 @@
  *   • the original notes the AI read, kept for audit.
  * Display only merges (whatHappened) — nothing stored is moved or dropped.
  */
-import { useState } from "react";
-import { ChevronDown, FileText, Lock, Plus, Sparkles } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { AlertTriangle, Check, ChevronDown, FileText, Loader2, Lock, Plus, Sparkles } from "lucide-react";
 import { whatHappened, fmtDayIso } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { AutoText } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 import { ReviewNoteCard, ShareWriteUp, WriteUpComposer } from "./review-notes";
 import { MeetingNotesAI, hasHeldDraft } from "./meeting-notes-ai";
+import { PinnedFooter } from "@/components/ui/pinned-save-bar";
+import { useAutosaveSummary } from "@/hooks/autosave-summary";
+import { reviewFooterMode, showShareInFooter, SAVE_SUMMARY_LABEL } from "@/lib/review-footer";
+
+/** The review editor's footer when nothing needs a Save press: every field
+ *  saves itself, so it says how that's going — and offers Share. */
+function AutosaveFooter({ share }: { share: ReactNode }) {
+  const summary = useAutosaveSummary();
+  const state = summary?.state ?? "saved";
+  return (
+    <div className="space-y-2" data-testid="footer-autosave" data-state={state}>
+      {state === "error" ? (
+        <button type="button" onClick={summary?.retry} className="min-h-11 text-base font-bold text-destructive underline flex items-center gap-2" role="status">
+          <AlertTriangle className="w-5 h-5 shrink-0" /> {SAVE_SUMMARY_LABEL.error}
+        </button>
+      ) : (
+        <p className={cn("min-h-11 text-base font-bold flex items-center gap-2", state === "saved" ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground")} role="status">
+          {state === "saved" ? <Check className="w-5 h-5 shrink-0" /> : <Loader2 className="w-5 h-5 shrink-0 animate-spin" />}
+          {state === "saved" ? "All changes saved" : SAVE_SUMMARY_LABEL[state]}
+          <span className="font-normal text-sm text-muted-foreground">· everything here saves as you type</span>
+        </p>
+      )}
+      {share}
+    </div>
+  );
+}
 
 export function WhatHappened({ entry, data, person, onChanged }: {
   entry: RecordEntry;
@@ -37,6 +63,7 @@ export function WhatHappened({ entry, data, person, onChanged }: {
   const cancelled = entry.meetingStatus === "cancelled";
   const myPrivate = w.parts.some(n => n.visibility !== "shared" && n.authorId === data.viewerId);
   const sources = entry.sources ?? [];
+  const mode = reviewFooterMode({ aiOpen: ai, hasDraft: hasHeldDraft(entry.id), byHand: !cancelled && byHand });
 
   return (
     <section className="rounded-3xl border-2 border-border bg-card p-4 space-y-4">
@@ -74,7 +101,13 @@ export function WhatHappened({ entry, data, person, onChanged }: {
         </div>
       )}
 
-      {myPrivate && !ai && <ShareWriteUp entryId={entry.id} personName={person.name} onChanged={onChanged} />}
+      {mode === "autosave" && (
+        <PinnedFooter>
+          <AutosaveFooter share={showShareInFooter(mode, myPrivate)
+            ? <ShareWriteUp entryId={entry.id} personName={person.name} onChanged={onChanged} />
+            : null} />
+        </PinnedFooter>
+      )}
 
       {!cancelled && !ai && (byHand ? (
         <WriteUpComposer entryId={entry.id} personName={person.name} hideNotes

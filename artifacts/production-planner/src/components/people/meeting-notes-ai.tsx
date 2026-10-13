@@ -37,6 +37,8 @@ import { toast } from "@/hooks/use-toast";
 import { DictateButton } from "@/components/dictate-button";
 import { ChoiceButton, FieldLabel } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
+import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-bar";
+import { usePeopleModalCloseGuard } from "@/components/people-modal";
 
 type Action = MeetingNotesDraft["actions"][number] & { todo: boolean };
 interface Draft extends Omit<MeetingNotesDraft, "actions"> {
@@ -144,6 +146,18 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
   });
 
   const discard = () => { heldDrafts.delete(entry.id); onClose(); };
+
+  // Closing the review (X, Escape, tapping outside) with a draft that isn't
+  // on the record asks Save / Discard / Keep editing (Graeme, 2026-10-13).
+  usePeopleModalCloseGuard(draft ? {
+    title: "This draft isn't saved",
+    description: `The AI's write-up of this meeting isn't on ${first}'s record yet. Save it now, or throw it away?`,
+    saveLabel: "Save to record",
+    onSave: async () => {
+      try { await save.mutateAsync(draft); return true; } catch { return false; }
+    },
+    onDiscard: () => { heldDrafts.delete(entry.id); },
+  } : null);
   const set = (patch: Partial<Draft>) => setDraft(d => (d ? { ...d, ...patch } : d));
 
   // ── Step 1: paste the notes ──────────────────────────────────────────────
@@ -187,11 +201,16 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
           <span className="block text-sm text-muted-foreground">Kept on the record as where the notes came from. The app doesn't open it — Wispr Flow links need a login.</span>
         </label>
 
-        <button type="button" disabled={!canRead || read.isPending} onClick={() => read.mutate()}
-          className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-          {read.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6" />}
-          {read.isPending ? "Reading the notes… about 20 seconds" : "Read the notes"}
-        </button>
+        <PinnedFooter>
+          <div className="space-y-1.5" data-testid="footer-ai-paste">
+            {!canRead && <p className="text-sm text-muted-foreground">Paste or dictate the notes first, then read them.</p>}
+            <button type="button" disabled={!canRead || read.isPending} onClick={() => read.mutate()}
+              className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+              {read.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Sparkles className="w-6 h-6" />}
+              {read.isPending ? "Reading the notes… about 20 seconds" : "Read the notes"}
+            </button>
+          </div>
+        </PinnedFooter>
       </div>
     );
   }
@@ -204,9 +223,12 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
   const draftTicks = draft.classificationIds ?? (draft.classificationId != null ? [draft.classificationId] : nowTicked);
   return (
     <div className="rounded-3xl border-2 border-primary/50 bg-card p-4 space-y-5">
-      <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-300 dark:border-amber-800 px-4 py-3 flex items-center gap-3" role="status">
-        <AlertTriangle className="w-5 h-5 text-amber-700 shrink-0" />
-        <p className="text-base font-bold text-amber-950 dark:text-amber-100">Not saved yet — check it, then press Save to record.</p>
+      <div className="flex items-start gap-3">
+        <Sparkles className="w-6 h-6 text-primary shrink-0 mt-1" />
+        <div className="flex-1 min-w-0">
+          <h4 className="text-xl font-bold">Check the AI's draft</h4>
+          <p className="text-base text-muted-foreground">Change anything that's wrong. Save to record is at the bottom, always in view.</p>
+        </div>
       </div>
 
       {repaired.length > 0 && (
@@ -314,32 +336,38 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
         Saving marks the meeting held and keeps the pasted notes{source?.url ? " and the link" : ""} on it (People access only). It stays private to you until you tap Share with {first}.
       </p>
 
-      {confirmDiscard ? (
-        <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
-          <p className="text-lg font-bold">Throw this draft away?</p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <button type="button" onClick={discard} className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold">Yes, throw it away</button>
-            <button type="button" onClick={() => setConfirmDiscard(false)} className="h-14 rounded-2xl border-2 border-border text-lg font-bold">Keep it</button>
-          </div>
+      <PinnedFooter>
+        <div className="space-y-2" data-testid="footer-ai-draft">
+          <p className="text-base font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2" role="status">
+            <AlertTriangle className="w-5 h-5 shrink-0" /> Not saved yet — check it, then Save to record.
+          </p>
+          {confirmDiscard ? (
+            <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-3 space-y-2">
+              <p className="text-lg font-bold">Throw this draft away?</p>
+              <div className="grid gap-2 grid-cols-2">
+                <button type="button" onClick={discard} className="min-h-12 rounded-2xl bg-destructive text-destructive-foreground text-base font-bold">Yes, throw it away</button>
+                <button type="button" onClick={() => setConfirmDiscard(false)} className="min-h-12 rounded-2xl border-2 border-border text-base font-bold">Keep it</button>
+              </div>
+            </div>
+          ) : (
+            <>
+              <button type="button" disabled={save.isPending} onClick={() => save.mutate(draft)} className={pinnedPrimaryClass}>
+                {save.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Check className="w-6 h-6" />} Save to record
+              </button>
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => { setDraft(null); setSource(null); }}
+                  className="min-h-12 rounded-2xl border-2 border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
+                  <RotateCcw className="w-5 h-5" /> Read again
+                </button>
+                <button type="button" onClick={() => setConfirmDiscard(true)}
+                  className="min-h-12 rounded-2xl border-2 border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
+                  <X className="w-5 h-5" /> Discard
+                </button>
+              </div>
+            </>
+          )}
         </div>
-      ) : (
-        <div className="space-y-3">
-          <button type="button" disabled={save.isPending} onClick={() => save.mutate(draft)}
-            className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-            {save.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Check className="w-6 h-6" />} Save to record
-          </button>
-          <div className="grid grid-cols-2 gap-3">
-            <button type="button" onClick={() => { setDraft(null); setSource(null); }}
-              className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
-              <RotateCcw className="w-5 h-5" /> Read again
-            </button>
-            <button type="button" onClick={() => setConfirmDiscard(true)}
-              className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50">
-              <X className="w-5 h-5" /> Discard
-            </button>
-          </div>
-        </div>
-      )}
+      </PinnedFooter>
     </div>
   );
 }

@@ -27,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { AutoText, AutoDate } from "./review-fields";
+import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-bar";
 import { recordSend, recordDelete, type RecordEntry, type ReviewNote } from "./reviews-api";
 
 const NOTE_ICON = { note: MessageSquare, feedback: MessageSquare, objective: Target } as const;
@@ -307,16 +308,25 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel, hideNot
           <span className="block text-sm font-normal text-muted-foreground">Otherwise it stays private to you, and you can share it later.</span>
         </span>
       </label>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <button type="button" onClick={onCancel} disabled={busy}
-          className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50 sm:order-1">
-          <X className="w-5 h-5" /> Cancel
-        </button>
-        <button type="button" onClick={() => void save()} disabled={!hasSomething || busy}
-          className="h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50 sm:order-2">
-          {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />} {share ? "Save and share" : "Save write-up"}
-        </button>
-      </div>
+      {/* In a People modal this sits in the pinned footer, always in view. */}
+      <PinnedFooter>
+        <div className="space-y-2" data-testid="footer-by-hand">
+          {hasSomething && (
+            <p className="text-base font-bold text-amber-800 dark:text-amber-300 flex items-center gap-2" role="status">
+              <span className="w-2 h-2 rounded-full bg-amber-500" aria-hidden /> Not saved yet
+            </p>
+          )}
+          <div className="grid gap-2 grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+            <button type="button" onClick={() => void save()} disabled={!hasSomething || busy} className={pinnedPrimaryClass}>
+              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />} {share ? "Save and share" : "Save write-up"}
+            </button>
+            <button type="button" onClick={onCancel} disabled={busy}
+              className="min-h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+              <X className="w-5 h-5" /> Cancel
+            </button>
+          </div>
+        </div>
+      </PinnedFooter>
     </div>
   );
 }
