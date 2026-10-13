@@ -23,10 +23,11 @@
  * station's must-confirm lock — those are work to do now; this is
  * good news that can wait its turn.
  */
+import { useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Clock, Loader2, MessageSquareText, PlayCircle, X } from "lucide-react";
+import { CheckCircle2, Clock, Loader2, MessageSquareText, PlayCircle, Send, X } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { feedTimestamp } from "@/lib/feed-time";
@@ -55,13 +56,19 @@ export function FixedNoticeInterstitial() {
     staleTime: 30_000,
   });
 
+  // Replies typed into a message pop-up, by notice id (2026-10-13): the
+  // reporter can answer Graeme right here — it goes on the issue log and
+  // back to his Fix queue card.
+  const [replies, setReplies] = useState<Record<number, string>>({});
+  const setReply = (id: number, text: string) => setReplies(r => ({ ...r, [id]: text }));
+
   const ack = useMutation({
-    mutationFn: async ({ id, action }: { id: number; action: "test_now" | "later" }) => {
+    mutationFn: async ({ id, action, reply }: { id: number; action: "test_now" | "later"; reply?: string }) => {
       const r = await fetch(`${BASE}/api/issue-pipeline/my-fixed-notices/${id}/ack`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action }),
+        body: JSON.stringify(reply?.trim() ? { action, reply: reply.trim() } : { action }),
       });
       // 409 = already acknowledged (another tab/device) — the goal is met.
       if (!r.ok && r.status !== 409) {
@@ -69,19 +76,23 @@ export function FixedNoticeInterstitial() {
         throw new Error(body.error ?? "Couldn't save");
       }
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["issue-pipeline", "my-fixed-notices"] }),
+    onSuccess: (_d, { reply }) => {
+      if (reply?.trim()) toast({ title: "Reply sent", description: "Thank you — it's with Graeme." });
+      return qc.invalidateQueries({ queryKey: ["issue-pipeline", "my-fixed-notices"] });
+    },
+    // The notice (and what they typed) stays on screen, so nothing is lost.
     onError: (e: Error) => toast({ title: "Couldn't save — try again", description: e.message, variant: "destructive" }),
   });
 
   // Clear a whole batch in one go: the chosen one (if they tapped "Test")
-  // as test_now, the rest as later.
+  // as test_now, the rest as later; any typed replies go with them.
   const ackAll = useMutation({
     mutationFn: async ({ ids, testId }: { ids: number[]; testId?: number }) => {
       const results = await Promise.all(ids.map(id => fetch(`${BASE}/api/issue-pipeline/my-fixed-notices/${id}/ack`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: id === testId ? "test_now" : "later" }),
+        body: JSON.stringify({ action: id === testId ? "test_now" : "later", ...(replies[id]?.trim() ? { reply: replies[id].trim() } : {}) }),
       })));
       if (results.some(r => !r.ok && r.status !== 409)) throw new Error("Couldn't save — some updates will show again");
     },
@@ -92,7 +103,7 @@ export function FixedNoticeInterstitial() {
   const queue = data?.notices ?? [];
   const notice = queue[0] ?? null;
   if (!loggedIn || !notice) return null;
-  if (queue.length > 1) return <BatchedNotices queue={queue} busy={ackAll.isPending} onDone={(testId, path) => {
+  if (queue.length > 1) return <BatchedNotices queue={queue} busy={ackAll.isPending} replies={replies} onReply={setReply} onDone={(testId, path) => {
     ackAll.mutate({ ids: queue.map(n => n.id), testId }, { onSuccess: () => { if (path) navigate(path); } });
   }} />;
 
@@ -102,7 +113,8 @@ export function FixedNoticeInterstitial() {
   const isMessage = notice.kind === "message";
   const busy = ack.isPending;
 
-  const later = () => ack.mutate({ id: notice.id, action: "later" });
+  const reply = replies[notice.id] ?? "";
+  const later = () => ack.mutate({ id: notice.id, action: "later", reply: isMessage ? reply : undefined });
   const testNow = async () => {
     if (!testPath) return;
     try {
@@ -152,6 +164,22 @@ export function FixedNoticeInterstitial() {
             <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">{isMessage ? "Reply" : "What's different"}</p>
             <p className="text-lg md:text-xl font-semibold whitespace-pre-wrap">{notice.whatChanged}</p>
           </div>
+          {isMessage && (
+            <div>
+              <label htmlFor={`notice-reply-${notice.id}`} className="block text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
+                Your reply (optional)
+              </label>
+              <textarea
+                id={`notice-reply-${notice.id}`}
+                value={reply}
+                onChange={e => setReply(notice.id, e.target.value)}
+                maxLength={2000}
+                rows={3}
+                placeholder="Answer here if you were asked something"
+                className="w-full px-3 py-2.5 bg-background border-2 border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+            </div>
+          )}
           {!isMessage && (
             <p className="text-base text-muted-foreground">
               Please test it and let us know if it's still not working — just report it again.
@@ -179,8 +207,8 @@ export function FixedNoticeInterstitial() {
                 : "w-full h-16 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50"
             }
           >
-            {busy && !testPath ? <Loader2 className="w-5 h-5 animate-spin" /> : isMessage ? <CheckCircle2 className="w-5 h-5" /> : <Clock className="w-5 h-5" />}
-            {isMessage ? "Got it" : "I'll test it later"}
+            {busy && !testPath ? <Loader2 className="w-5 h-5 animate-spin" /> : isMessage ? (reply.trim() ? <Send className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />) : <Clock className="w-5 h-5" />}
+            {isMessage ? (reply.trim() ? "Send reply" : "Got it") : "I'll test it later"}
           </button>
         </div>
       </div>
@@ -190,9 +218,12 @@ export function FixedNoticeInterstitial() {
 }
 
 /** Several updates at once: one pop-up, a card per report, one way out. */
-function BatchedNotices({ queue, busy, onDone }: {
+function BatchedNotices({ queue, busy, replies, onReply, onDone }: {
   queue: MyFixedNotice[];
   busy: boolean;
+  /** Typed answers to messages, by notice id — sent with the acknowledgement. */
+  replies: Record<number, string>;
+  onReply: (id: number, text: string) => void;
   /** testId/path set when they tapped one report's "Test it". */
   onDone: (testId?: number, path?: string) => void;
 }) {
@@ -235,6 +266,17 @@ function BatchedNotices({ queue, busy, onDone }: {
                   “{n.quote}”
                 </blockquote>
                 <p className="text-lg font-semibold whitespace-pre-wrap">{n.whatChanged}</p>
+                {isMessage && (
+                  <textarea
+                    value={replies[n.id] ?? ""}
+                    onChange={e => onReply(n.id, e.target.value)}
+                    maxLength={2000}
+                    rows={2}
+                    aria-label="Your reply (optional)"
+                    placeholder="Your reply (optional) — answer here if you were asked something"
+                    className="w-full px-3 py-2 bg-background border-2 border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                )}
                 {path && !isMessage && (
                   <button
                     onClick={() => onDone(n.id, path)}
