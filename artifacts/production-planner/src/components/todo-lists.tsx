@@ -8,8 +8,9 @@
  *
  * Three exports:
  *   TodoSheet        — full-screen overlay: my list (or, for managers,
- *                      anyone's), task detail with comment timeline, and
- *                      the add/edit form.
+ *                      anyone's) with a quick-add box; tapping a task pops
+ *                      it open over the list, already editable, with its
+ *                      photos and comment timeline (Graeme, 2026-10-13).
  *   TodoInterstitial — app-wide takeover shown when someone ELSE has put
  *                      a task on my list that I haven't acknowledged.
  *                      Rendered once in Layout; polls quietly.
@@ -24,9 +25,16 @@ import { ToastAction } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
 import { resolveTodoLink } from "@/lib/todo-link";
 import {
-  ArrowLeft, CalendarDays, Camera, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
+  EMPTY_TODO_FORM, insertOpenTodo, todoCreateBody, todoEditPatch, todoFormFrom, todoFormValid,
+  type TodoEditable, type TodoForm, type TodoPatch,
+} from "@/lib/todo-edit";
+import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
+import { PinnedFooter } from "@/components/ui/pinned-save-bar";
+import { useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
+import {
+  CalendarDays, Camera, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
   ExternalLink, Flag, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
-  Send, Trash2, X,
+  Send, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -243,51 +251,77 @@ function LinkButton({ url, big }: { url: string; big?: boolean }) {
 }
 
 // ── The full-screen sheet ───────────────────────────────────────────────────
+// The list never goes away (Graeme, 2026-10-13: "As we add items, we want to
+// stay on the list. As we edit items, we also want to stay on the list").
+// Adding happens in the box at the top and leaves you there, ready for the
+// next one; tapping a task pops it open OVER the list, already editable;
+// closing the pop-up drops you back exactly where you were in the list.
 
-type SheetView =
-  | { kind: "list" }
-  | { kind: "detail"; taskId: number }
-  | { kind: "edit"; task: TodoTask }
-  | { kind: "create" };
+type Popup = { kind: "task"; taskId: number } | { kind: "create"; title: string } | null;
+
+function listKeyFor(meId: number, userId: number) {
+  // Both branches carry the user id — see the note in useMyTodos.
+  return userId === meId ? ["todos", "mine", meId] : ["todos", "user", userId];
+}
 
 export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onClose: () => void; initialTaskId?: number | null }) {
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const canManage = me?.role === "admin" || me?.role === "manager";
+  const qc = useQueryClient();
 
-  const [view, setView] = useState<SheetView>({ kind: "list" });
+  const [popup, setPopup] = useState<Popup>(null);
   const [viewUserId, setViewUserId] = useState<number | null>(null); // null = me
+  const [justAddedId, setJustAddedId] = useState<number | null>(null);
+  const quickAddRef = useRef<HTMLInputElement>(null);
+  // The add box's text lives here so "Add with more details" can clear it
+  // once the detailed task is saved (its title came from the box).
+  const [quickTitle, setQuickTitle] = useState("");
 
-  // Every open starts fresh: straight into the named task's detail when the
-  // caller gave one (checklist strip rows), otherwise the list.
+  // Every open starts on the list. A caller that names a task (a checklist
+  // strip row, the founder's Schedule, the marketing calendar) gets the list
+  // with that task's pop-up already open on top of it.
   useEffect(() => {
     if (open) {
-      setView(initialTaskId ? { kind: "detail", taskId: initialTaskId } : { kind: "list" });
+      setPopup(initialTaskId ? { kind: "task", taskId: initialTaskId } : null);
       setViewUserId(null);
+      setJustAddedId(null);
+      setQuickTitle("");
     }
   }, [open, initialTaskId]);
+
+  // The "just added" glow fades after a moment.
+  useEffect(() => {
+    if (justAddedId == null) return;
+    const t = setTimeout(() => setJustAddedId(null), 2500);
+    return () => clearTimeout(t);
+  }, [justAddedId]);
 
   if (!open || !me) return null;
 
   const effectiveUserId = viewUserId ?? me.id;
 
+  /** A task was just added: show it in place at once, glow it, and put the
+   *  cursor back in the add box for the next one. Never opens the task. */
+  const onAdded = (task: TodoTask) => {
+    if (task.assignee_id === effectiveUserId) {
+      const key = listKeyFor(me.id, effectiveUserId);
+      qc.setQueryData<{ open: TodoTask[]; done: TodoTask[] }>(key, prev =>
+        prev ? { ...prev, open: insertOpenTodo(prev.open, task) } : prev);
+      setJustAddedId(task.id);
+    }
+    void qc.invalidateQueries({ queryKey: ["todos"] });
+    requestAnimationFrame(() => quickAddRef.current?.focus({ preventScroll: true }));
+  };
+
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 md:px-6 py-3 border-b border-border flex-shrink-0">
-        {view.kind !== "list" ? (
-          <button
-            onClick={() => setView({ kind: "list" })}
-            className="flex items-center gap-2 px-4 h-14 rounded-2xl bg-secondary hover:bg-secondary/70 text-lg font-bold transition-colors"
-          >
-            <ArrowLeft className="w-6 h-6" /> Back
-          </button>
-        ) : (
-          <h2 className="font-display font-bold text-2xl md:text-3xl flex items-center gap-3">
-            <ClipboardList className="w-8 h-8 text-primary" />
-            {viewUserId === null ? "My To-dos" : "To-do list"}
-          </h2>
-        )}
+        <h2 className="font-display font-bold text-2xl md:text-3xl flex items-center gap-3">
+          <ClipboardList className="w-8 h-8 text-primary" />
+          {viewUserId === null ? "My To-dos" : "To-do list"}
+        </h2>
         <div className="flex-1" />
         <button
           onClick={onClose}
@@ -298,57 +332,74 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
         </button>
       </div>
 
-      {/* Body */}
+      {/* Body — stays mounted under the pop-up, so its scroll position is
+          exactly where it was when the pop-up closes. */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-3xl mx-auto px-4 md:px-6 py-5 pb-24">
-          {view.kind === "list" && (
-            <TodoList
-              meId={me.id}
-              canManage={canManage}
-              viewUserId={effectiveUserId}
-              onSwitchUser={id => setViewUserId(id === me.id ? null : id)}
-              onOpenTask={id => setView({ kind: "detail", taskId: id })}
-              onCreate={() => setView({ kind: "create" })}
-            />
-          )}
-          {view.kind === "detail" && (
-            <TodoDetail
-              taskId={view.taskId}
-              meId={me.id}
-              canManage={canManage}
-              onEdit={task => setView({ kind: "edit", task })}
-              onGone={() => setView({ kind: "list" })}
-            />
-          )}
-          {(view.kind === "create" || view.kind === "edit") && (
-            <TodoEditor
-              meId={me.id}
-              canManage={canManage}
-              defaultAssigneeId={effectiveUserId}
-              task={view.kind === "edit" ? view.task : null}
-              onDone={task => setView(task ? { kind: "detail", taskId: task.id } : { kind: "list" })}
-            />
-          )}
+          <TodoList
+            meId={me.id}
+            canManage={canManage}
+            viewUserId={effectiveUserId}
+            justAddedId={justAddedId}
+            quickAddRef={quickAddRef}
+            quickTitle={quickTitle}
+            setQuickTitle={setQuickTitle}
+            onSwitchUser={id => setViewUserId(id === me.id ? null : id)}
+            onOpenTask={id => setPopup({ kind: "task", taskId: id })}
+            onCreateWithDetails={title => setPopup({ kind: "create", title })}
+            onAdded={onAdded}
+          />
         </div>
       </div>
+
+      {popup?.kind === "task" && (
+        <TodoTaskDialog
+          key={popup.taskId}
+          taskId={popup.taskId}
+          meId={me.id}
+          canManage={canManage}
+          onClose={() => setPopup(null)}
+        />
+      )}
+      {popup?.kind === "create" && (
+        <TodoCreateDialog
+          meId={me.id}
+          canManage={canManage}
+          defaultAssigneeId={effectiveUserId}
+          initialTitle={popup.title}
+          focusAfterClose={quickAddRef}
+          onClose={() => setPopup(null)}
+          onAdded={task => {
+            const sentTitle = popup.title;
+            setPopup(null);
+            setQuickTitle(cur => (cur.trim() === sentTitle ? "" : cur));
+            onAdded(task);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 // ── List view ───────────────────────────────────────────────────────────────
 
-function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCreate }: {
+function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quickTitle, setQuickTitle, onSwitchUser, onOpenTask, onCreateWithDetails, onAdded }: {
   meId: number;
   canManage: boolean;
   viewUserId: number;
+  justAddedId: number | null;
+  quickAddRef: React.RefObject<HTMLInputElement | null>;
+  quickTitle: string;
+  setQuickTitle: React.Dispatch<React.SetStateAction<string>>;
   onSwitchUser: (id: number) => void;
   onOpenTask: (id: number) => void;
-  onCreate: () => void;
+  onCreateWithDetails: (title: string) => void;
+  onAdded: (task: TodoTask) => void;
 }) {
   const isMine = viewUserId === meId;
+  const listKey = listKeyFor(meId, viewUserId);
   const { data, isLoading, error } = useQuery({
-    // Both branches carry the user id — see the note in useMyOpenTodoCount.
-    queryKey: isMine ? ["todos", "mine", meId] : ["todos", "user", viewUserId],
+    queryKey: listKey,
     queryFn: () => fetchList(isMine ? "mine" : viewUserId),
     staleTime: 15_000,
   });
@@ -356,7 +407,6 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
   // Tick straight from the list, several in a row, without opening each one
   // (Graeme, 2026-10-08). Moves the card to "done" at once; Undo reopens.
   const qc = useQueryClient();
-  const listKey = isMine ? ["todos", "mine", meId] : ["todos", "user", viewUserId];
   const quickTick = useMutation({
     mutationFn: ({ id, done }: { id: number; done: boolean }) => post(`/api/todos/${id}/${done ? "complete" : "reopen"}`),
     onMutate: async ({ id, done }) => {
@@ -418,13 +468,15 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
         </div>
       )}
 
-      <button
-        onClick={onCreate}
-        className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all shadow-lg shadow-primary/20"
-      >
-        <Plus className="w-7 h-7" />
-        {isMine ? "Add a to-do" : "Add to this list"}
-      </button>
+      <QuickAdd
+        inputRef={quickAddRef}
+        title={quickTitle}
+        setTitle={setQuickTitle}
+        assigneeId={viewUserId}
+        isMine={isMine}
+        onAdded={onAdded}
+        onMoreDetails={onCreateWithDetails}
+      />
 
       {isLoading && (
         <div className="flex items-center justify-center py-16 text-muted-foreground gap-3 text-lg">
@@ -446,7 +498,15 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
       )}
 
       <div className="space-y-3">
-        {data?.open.map(task => <TodoCard key={task.id} task={task} onOpen={() => onOpenTask(task.id)} onTick={() => tickTask(task)} />)}
+        {data?.open.map(task => (
+          <TodoCard
+            key={task.id}
+            task={task}
+            highlight={task.id === justAddedId}
+            onOpen={() => onOpenTask(task.id)}
+            onTick={() => tickTask(task)}
+          />
+        ))}
       </div>
 
       {data && data.done.length > 0 && (
@@ -468,12 +528,92 @@ function TodoList({ meId, canManage, viewUserId, onSwitchUser, onOpenTask, onCre
   );
 }
 
-function TodoCard({ task, onOpen, onTick }: { task: TodoTask; onOpen: () => void; onTick?: () => void }) {
+/**
+ * The add box. Type, press Enter (or Add), and it's on the list — the box
+ * clears and keeps the cursor for the next one. "More details" opens the
+ * full form in a pop-up (notes, link, priority, dates, who it's for) with
+ * whatever was typed carried across. Sticky, so it stays in reach while
+ * the list scrolls to show what was just added.
+ */
+function QuickAdd({ inputRef, title, setTitle, assigneeId, isMine, onAdded, onMoreDetails }: {
+  inputRef: React.RefObject<HTMLInputElement | null>;
+  title: string;
+  setTitle: React.Dispatch<React.SetStateAction<string>>;
+  assigneeId: number;
+  isMine: boolean;
+  onAdded: (task: TodoTask) => void;
+  onMoreDetails: (title: string) => void;
+}) {
+  const addMut = useMutation({
+    mutationFn: (t: string): Promise<TodoTask> => post("/api/todos", todoCreateBody({ ...EMPTY_TODO_FORM, title: t }, assigneeId)),
+    onSuccess: (saved: TodoTask, t) => {
+      // Only clear what was sent — anything typed meanwhile stays.
+      setTitle(cur => (cur.trim() === t ? "" : cur));
+      if (!isMine) toast({ title: "Added to their list — they'll be shown it", description: saved.title });
+      onAdded(saved);
+    },
+    onError: (e: Error) => toast({ title: "Couldn't add it", description: `${e.message} — your text is still in the box.`, variant: "destructive" }),
+  });
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const t = title.trim();
+    if (!t || addMut.isPending) return;
+    addMut.mutate(t);
+  };
+
+  return (
+    <div className="sticky top-0 z-10 -mx-4 md:-mx-6 px-4 md:px-6 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+      <form onSubmit={submit} className="flex gap-2">
+        <input
+          ref={inputRef}
+          value={title}
+          onChange={e => setTitle(e.target.value)}
+          placeholder={isMine ? "Add a to-do…" : "Add to this list…"}
+          aria-label={isMine ? "Add a to-do" : "Add to this list"}
+          maxLength={300}
+          enterKeyHint="done"
+          className="flex-1 min-w-0 h-16 px-5 rounded-2xl border-2 border-border bg-card text-xl font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40"
+        />
+        <button
+          type="submit"
+          disabled={!title.trim() || addMut.isPending}
+          className="h-16 px-5 md:px-6 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 shadow-lg shadow-primary/20 flex-shrink-0"
+        >
+          {addMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Plus className="w-7 h-7" />}
+          Add
+        </button>
+      </form>
+      <button
+        type="button"
+        onClick={() => { onMoreDetails(title.trim()); }}
+        className="mt-1 min-h-11 px-2 inline-flex items-center gap-2 text-base font-semibold text-primary hover:underline"
+      >
+        <SlidersHorizontal className="w-4 h-4" /> Add with more details<span className="hidden sm:inline font-normal text-muted-foreground"> — notes, dates, priority</span>
+      </button>
+    </div>
+  );
+}
+
+function TodoCard({ task, onOpen, onTick, highlight }: { task: TodoTask; onOpen: () => void; onTick?: () => void; highlight?: boolean }) {
   const meta = PRIORITY_META[task.priority];
   const overdue = isOverdue(task);
   const done = task.status === "done";
+  const ref = useRef<HTMLDivElement>(null);
+  // Just added: bring it into view (under the sticky add box) so you can see
+  // it landed, without moving the cursor out of the add box.
+  useEffect(() => {
+    if (highlight) ref.current?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [highlight]);
   return (
-    <div className="w-full rounded-2xl border-2 border-border bg-card hover:border-primary/50 transition-all overflow-hidden flex shadow-sm">
+    <div
+      ref={ref}
+      data-just-added={highlight ? "true" : undefined}
+      className={cn(
+        "w-full rounded-2xl border-2 bg-card hover:border-primary/50 transition-all duration-500 overflow-hidden flex shadow-sm scroll-mt-36 scroll-mb-6",
+        highlight ? "border-primary ring-4 ring-primary/30 bg-primary/5" : "border-border",
+      )}
+    >
       <div className={cn("w-2.5 flex-shrink-0", meta.bar)} />
       {onTick && (
         <button
@@ -500,9 +640,10 @@ function TodoCard({ task, onOpen, onTick }: { task: TodoTask; onOpen: () => void
           )}>
             {task.title}
           </p>
-          <ChevronRight className="w-6 h-6 text-muted-foreground flex-shrink-0 mt-1" />
+          <Pencil className="w-5 h-5 text-muted-foreground flex-shrink-0 mt-1.5" aria-hidden />
         </div>
         <div className="flex flex-wrap items-center gap-2 mt-3">
+          {highlight && <span className="text-sm font-bold text-primary">Just added</span>}
           {task.priority !== "normal" && <PriorityChip p={task.priority} />}
           {task.scheduled_for && <DateChip label="Do" iso={task.scheduled_for} />}
           {task.due_date && <DateChip label="Due" iso={task.due_date} overdue={overdue} />}
@@ -520,14 +661,25 @@ function TodoCard({ task, onOpen, onTick }: { task: TodoTask; onOpen: () => void
   );
 }
 
-// ── Detail view ─────────────────────────────────────────────────────────────
+// ── The task pop-up: view + edit in one ─────────────────────────────────────
+// Opens over the list ALREADY editable (Graeme, 2026-10-13: "I actually just
+// want to be able to edit it from the main to-do list, and then save, and
+// then it goes back to the to-do list"). Saving is explicit — the pinned
+// green "Save changes" — not autosave, matching how to-dos always saved:
+// every save writes "… edited the task" on the timeline, and autosave would
+// write one per pause in typing. Closing with unsaved changes asks
+// Save / Discard / Keep editing (the shared EditorDialog guard).
+//
+// "Mark as done" is deliberately NOT the primary: it was the big green
+// button on the old detail page, and people pressed it thinking it saved.
+// It's an outlined button on the left of the footer; the list row's tick
+// circle is still the quick way.
 
-function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
+function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
   taskId: number;
   meId: number;
   canManage: boolean;
-  onEdit: (task: TodoTask) => void;
-  onGone: () => void;
+  onClose: () => void;
 }) {
   const qc = useQueryClient();
   const { data: task, isLoading, error } = useQuery({
@@ -535,6 +687,28 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
     queryFn: () => fetchTask(taskId),
     staleTime: 5_000,
   });
+
+  // The form starts from the task as first loaded. Comparing against that
+  // (not the latest refetch) means a save only sends what THIS person
+  // changed, never undoing someone else's edit made meanwhile.
+  const [baseline, setBaseline] = useState<TodoForm | null>(null);
+  const [form, setForm] = useState<TodoForm | null>(null);
+  useEffect(() => {
+    if (task && baseline === null) {
+      const f = todoFormFrom(task);
+      setBaseline(f);
+      setForm(f);
+    }
+  }, [task, baseline]);
+
+  const baselineTask = baseline && {
+    title: baseline.title, notes: baseline.notes, url: baseline.url, priority: baseline.priority,
+    scheduled_for: baseline.scheduledFor || null, due_date: baseline.dueDate || null,
+  };
+  const patch = baselineTask && form ? todoEditPatch(baselineTask, form) : null;
+  const dirty = patch !== null;
+  const valid = form ? todoFormValid(form) : false;
+
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [comment, setComment] = useState("");
   const commentsEndRef = useRef<HTMLDivElement>(null);
@@ -549,6 +723,16 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
     qc.invalidateQueries({ queryKey: ["todos"] });
   }
 
+  const saveMut = useMutation({
+    mutationFn: (p: TodoPatch): Promise<TodoTask> => fetch(`${BASE}/api/todos/${taskId}`, {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(p),
+    }).then(jsonOrThrow),
+    onSuccess: () => invalidate(),
+    onError: (e: Error) => toast({ title: "Couldn't save the task", description: `${e.message} — your changes are still here.`, variant: "destructive" }),
+  });
   const completeMut = useMutation({
     mutationFn: (done: boolean) => post(`/api/todos/${taskId}/${done ? "complete" : "reopen"}`),
     onSuccess: invalidate,
@@ -556,7 +740,7 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
   });
   const deleteMut = useMutation({
     mutationFn: () => fetch(`${BASE}/api/todos/${taskId}`, { method: "DELETE", credentials: "include" }).then(jsonOrThrow),
-    onSuccess: () => { invalidate(); onGone(); toast({ title: "Task deleted" }); },
+    onSuccess: () => { invalidate(); onClose(); toast({ title: "Task deleted" }); },
     onError: (e: Error) => toast({ title: "Couldn't delete the task", description: e.message, variant: "destructive" }),
   });
   const commentMut = useMutation({
@@ -564,18 +748,18 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
     onSuccess: () => {
       setComment("");
       invalidate();
-      setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth" }), 150);
+      setTimeout(() => commentsEndRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 150);
     },
     onError: (e: Error) => toast({ title: "Comment didn't send", description: e.message, variant: "destructive" }),
   });
   const uploadMut = useMutation({
     mutationFn: async (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
+      const fd = new FormData();
+      fd.append("file", file);
       const res = await fetch(`${BASE}/api/todos/${taskId}/attachments`, {
         method: "POST",
         credentials: "include",
-        body: form,
+        body: fd,
       });
       return jsonOrThrow(res);
     },
@@ -601,6 +785,35 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
     onError: (e: Error) => toast({ title: "Couldn't log it", description: e.message, variant: "destructive" }),
   });
 
+  /** Save what changed (if anything), then back to the list. */
+  async function saveAndClose() {
+    if (patch) {
+      if (!valid) { toast({ title: "It needs a title", description: "Type what needs doing, then save.", variant: "destructive" }); return; }
+      try { await saveMut.mutateAsync(patch); } catch { return; }
+      toast({ title: "Task updated" });
+    }
+    onClose();
+  }
+
+  /** Mark as done from the pop-up: keep any edits, tick it, back to the list. */
+  async function markDone() {
+    if (!task) return;
+    try {
+      if (patch && valid) await saveMut.mutateAsync(patch);
+      await completeMut.mutateAsync(true);
+    } catch { return; }
+    onClose();
+    toast({
+      title: "Done ✓",
+      description: form?.title.trim() || task.title,
+      action: (
+        <ToastAction altText="Undo" onClick={() => { void post(`/api/todos/${taskId}/reopen`).then(invalidate); }}>
+          Undo
+        </ToastAction>
+      ),
+    });
+  }
+
   /**
    * "Mark it done, and it's an improvement" — the moment someone finishes a
    * job is the one moment they're standing in front of the evidence, so this
@@ -618,281 +831,323 @@ function TodoDetail({ taskId, meId, canManage, onEdit, onGone }: {
     await tagImprovementMut.mutateAsync();
   };
 
-  if (isLoading) {
-    return <div className="flex items-center justify-center py-16 text-muted-foreground gap-3 text-lg"><Loader2 className="w-6 h-6 animate-spin" /> Loading…</div>;
-  }
-  if (error != null || !task) {
-    return <div className="p-5 rounded-2xl bg-destructive/10 text-destructive text-lg font-semibold">This task is gone — it may have been deleted.</div>;
-  }
-
-  const meta = PRIORITY_META[task.priority];
-  const canEdit = canManage || task.assignee_id === meId;
-  const canDelete = canManage || task.created_by === meId;
-  const isDone = task.status === "done";
+  const canEdit = !!task && (canManage || task.assignee_id === meId);
+  const canDelete = !!task && (canManage || task.created_by === meId);
+  const isDone = task?.status === "done";
+  const busy = saveMut.isPending || completeMut.isPending || pendingImprovement;
 
   return (
-    <div className="space-y-5">
-      {/* Title block with priority bar */}
-      <div className="rounded-2xl border-2 border-border bg-card overflow-hidden flex shadow-sm">
-        <div className={cn("w-3 flex-shrink-0", meta.bar)} />
-        <div className="p-5 md:p-6 flex-1 min-w-0">
-          <h1 className={cn("text-3xl md:text-4xl font-display font-bold leading-tight break-words", isDone && "line-through text-muted-foreground")}>
-            {task.title}
-          </h1>
-          <div className="flex flex-wrap items-center gap-2.5 mt-4">
-            <PriorityChip p={task.priority} big />
-            {task.scheduled_for && <DateChip label="Do" iso={task.scheduled_for} big />}
-            {task.due_date && <DateChip label="Due" iso={task.due_date} overdue={isOverdue(task)} big />}
-          </div>
-          <p className="text-base text-muted-foreground mt-4 font-medium">
+    <EditorDialog
+      open
+      onClose={onClose}
+      title={<><ClipboardList className="w-6 h-6 text-primary" /> {canEdit ? "Edit to-do" : "To-do"}</>}
+      dirty={dirty}
+      onSaveRequest={() => void saveAndClose()}
+      entityLabel="to-do"
+      widthClassName="sm:max-w-3xl"
+      noAutoFocus
+    >
+      {isLoading && (
+        <div className="flex items-center justify-center py-16 text-muted-foreground gap-3 text-lg"><Loader2 className="w-6 h-6 animate-spin" /> Loading…</div>
+      )}
+      {!isLoading && (error != null || !task) && (
+        <div className="my-5 p-5 rounded-2xl bg-destructive/10 text-destructive text-lg font-semibold">This task is gone — it may have been deleted.</div>
+      )}
+
+      {task && form && (
+        <div className="space-y-5 pt-4" data-testid="todo-popup">
+          <p className="text-base text-muted-foreground font-medium">
             For <strong className="text-foreground">{task.assignee_name}</strong>
             {task.created_by_name ? <> · added by <strong className="text-foreground">{task.created_by_name}</strong></> : null}
             {task.acknowledged_at ? <> · <span className="text-primary font-semibold">seen ✓</span></> : null}
+            {isDone ? <> · <span className="text-primary font-semibold">done ✓</span></> : null}
           </p>
-        </div>
-      </div>
 
-      {task.notes && (
-        <div className="rounded-2xl bg-secondary/40 p-5">
-          <p className="text-xl leading-relaxed whitespace-pre-wrap">{task.notes}</p>
-        </div>
-      )}
-
-      {task.url && <LinkButton url={task.url} big />}
-
-      {/* Photos & videos — evidence of the job or the problem. */}
-      <div className="space-y-3">
-        {task.attachments.length > 0 && (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-            {task.attachments.map(att => (
-              <div key={att.id} className="relative rounded-2xl overflow-hidden border-2 border-border bg-black/5 group">
-                {att.kind === "image" ? (
-                  <a href={`${BASE}/api/todos/attachments/${att.id}`} target="_blank" rel="noopener noreferrer">
-                    <img
-                      src={`${BASE}/api/todos/attachments/${att.id}`}
-                      alt={att.file_name ?? "Task photo"}
-                      className="w-full h-40 object-cover"
-                      loading="lazy"
-                    />
-                  </a>
-                ) : (
-                  <video
-                    src={`${BASE}/api/todos/attachments/${att.id}`}
-                    controls
-                    preload="metadata"
-                    className="w-full h-40 object-cover bg-black"
-                  />
-                )}
-                {(canManage || att.uploaded_by === meId) && (
-                  <button
-                    type="button"
-                    onClick={() => deleteAttMut.mutate(att.id)}
-                    disabled={deleteAttMut.isPending}
-                    className="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-destructive transition-colors"
-                    aria-label="Delete this photo or video"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-                {att.uploaded_by_name && (
-                  <span className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] font-semibold text-white bg-gradient-to-t from-black/70 to-transparent truncate">
-                    {att.uploaded_by_name}
-                  </span>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*,video/*"
-          className="hidden"
-          onChange={e => {
-            const file = e.target.files?.[0];
-            if (file) uploadMut.mutate(file);
-            e.target.value = "";
-          }}
-        />
-        <button
-          type="button"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={uploadMut.isPending}
-          className="w-full h-14 rounded-2xl border-2 border-dashed border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
-        >
-          {uploadMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
-          {uploadMut.isPending ? "Uploading…" : "Add a photo or video"}
-        </button>
-      </div>
-
-      {/* Camera for the "done + improvement" path. Completing the job is
-          chained onto the upload so the photo and the sign-off are one
-          action from the person's point of view. */}
-      <input
-        ref={improvementCameraRef}
-        type="file"
-        accept="image/*,video/*"
-        capture="environment"
-        className="hidden"
-        onChange={async e => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (!file) { setPendingImprovement(false); return; }
-          try {
-            await uploadMut.mutateAsync(file);
-            await completeMut.mutateAsync(true);
-            await tagImprovementMut.mutateAsync();
-          } finally {
-            setPendingImprovement(false);
-          }
-        }}
-      />
-
-      {task.improvement_id && (
-        <div className="flex items-center gap-2 text-base font-bold text-primary bg-primary/10 rounded-2xl px-5 py-3.5">
-          <Lightbulb className="w-5 h-5 flex-shrink-0" />
-          In the improvement library ✓
-        </div>
-      )}
-
-      {/* Actions. Finishing a job is the moment someone is standing in front
-          of what they changed, so the improvement option lives here, next to
-          "done", rather than as a separate step they'd have to remember. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <button
-          onClick={() => completeMut.mutate(!isDone)}
-          disabled={completeMut.isPending || pendingImprovement}
-          className={cn(
-            "h-16 rounded-2xl text-xl font-bold flex items-center justify-center gap-3 transition-all active:scale-[0.99] disabled:opacity-50 sm:col-span-2",
-            isDone ? "bg-secondary hover:bg-secondary/70" : "bg-primary text-primary-foreground hover:opacity-90 shadow-lg shadow-primary/20",
-          )}
-        >
-          {completeMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : isDone ? <RotateCcw className="w-6 h-6" /> : <Check className="w-7 h-7" />}
-          {isDone ? "Put it back on the list" : "Mark it done"}
-        </button>
-
-        {!isDone && !task.improvement_id && (canManage || task.assignee_id === meId) && (
-          <button
-            onClick={completeAsImprovement}
-            disabled={completeMut.isPending || tagImprovementMut.isPending || pendingImprovement}
-            className="h-16 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xl font-bold flex flex-col items-center justify-center gap-0.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50 active:scale-[0.99] sm:col-span-2"
-          >
-            <span className="flex items-center gap-3">
-              {pendingImprovement || tagImprovementMut.isPending
-                ? <Loader2 className="w-6 h-6 animate-spin" />
-                : <Lightbulb className="w-6 h-6" />}
-              Done — and it's an improvement
-            </span>
-            <span className="text-sm font-semibold opacity-80">
-              {(task.attachments?.length ?? 0) === 0 ? "Takes a photo first" : "Sends it for sign-off"}
-            </span>
-          </button>
-        )}
-
-        {isDone && !task.improvement_id && (canManage || task.assignee_id === meId) && (
-          <button
-            onClick={() => tagImprovementMut.mutate()}
-            disabled={tagImprovementMut.isPending}
-            className="h-14 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50 sm:col-span-2"
-          >
-            {tagImprovementMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lightbulb className="w-5 h-5" />}
-            This was an improvement
-          </button>
-        )}
-        {canEdit && (
-          <button
-            onClick={() => onEdit(task)}
-            className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors"
-          >
-            <Pencil className="w-5 h-5" /> Edit
-          </button>
-        )}
-        {canDelete && (
-          confirmDelete ? (
-            <button
-              onClick={() => deleteMut.mutate()}
-              disabled={deleteMut.isPending}
-              className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50"
-            >
-              {deleteMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
-              Really delete?
-            </button>
+          {canEdit ? (
+            <TodoFields form={form} onChange={setForm} onEnter={() => void saveAndClose()} />
           ) : (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="h-14 rounded-2xl border-2 border-destructive/40 text-destructive text-lg font-bold flex items-center justify-center gap-2 hover:bg-destructive/10 transition-colors"
-            >
-              <Trash2 className="w-5 h-5" /> Delete
-            </button>
-          )
-        )}
-      </div>
-
-      {/* Timeline */}
-      <div className="pt-2">
-        <h3 className="text-lg font-bold text-muted-foreground mb-3">What's happened</h3>
-        <div className="space-y-3">
-          {task.comments.map(c =>
-            c.kind === "event" ? (
-              <p key={c.id} className="text-center text-base text-muted-foreground font-medium">
-                {c.body} · {format(parseTs(c.created_at), "EEE d MMM, HH:mm")}
-              </p>
-            ) : (
-              <div key={c.id} className={cn(
-                "rounded-2xl p-4 max-w-[85%]",
-                c.user_id === meId ? "bg-primary/10 ml-auto" : "bg-secondary/60",
-              )}>
-                <p className="text-sm font-bold text-muted-foreground mb-1">
-                  {c.user_name ?? "Someone"} · {format(parseTs(c.created_at), "EEE d MMM, HH:mm")}
-                </p>
-                <p className="text-lg leading-relaxed whitespace-pre-wrap">{c.body}</p>
+            <div className="rounded-2xl border-2 border-border bg-card overflow-hidden flex shadow-sm">
+              <div className={cn("w-3 flex-shrink-0", PRIORITY_META[task.priority].bar)} />
+              <div className="p-5 flex-1 min-w-0 space-y-3">
+                <h3 className={cn("text-2xl md:text-3xl font-display font-bold leading-tight break-words", isDone && "line-through text-muted-foreground")}>{task.title}</h3>
+                <div className="flex flex-wrap items-center gap-2.5">
+                  <PriorityChip p={task.priority} big />
+                  {task.scheduled_for && <DateChip label="Do" iso={task.scheduled_for} big />}
+                  {task.due_date && <DateChip label="Due" iso={task.due_date} overdue={isOverdue(task)} big />}
+                </div>
+                {task.notes && <p className="text-xl leading-relaxed whitespace-pre-wrap">{task.notes}</p>}
               </div>
-            ),
+            </div>
           )}
-          <div ref={commentsEndRef} />
-        </div>
 
-        <form
-          className="flex gap-2 mt-4"
-          onSubmit={e => { e.preventDefault(); if (comment.trim()) commentMut.mutate(comment.trim()); }}
-        >
+          {task.url && <LinkButton url={task.url} big />}
+
+          {/* Photos & videos — evidence of the job or the problem. */}
+          <div className="space-y-3">
+            {task.attachments.length > 0 && (
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                {task.attachments.map(att => (
+                  <div key={att.id} className="relative rounded-2xl overflow-hidden border-2 border-border bg-black/5 group">
+                    {att.kind === "image" ? (
+                      <a href={`${BASE}/api/todos/attachments/${att.id}`} target="_blank" rel="noopener noreferrer">
+                        <img
+                          src={`${BASE}/api/todos/attachments/${att.id}`}
+                          alt={att.file_name ?? "Task photo"}
+                          className="w-full h-40 object-cover"
+                          loading="lazy"
+                        />
+                      </a>
+                    ) : (
+                      <video
+                        src={`${BASE}/api/todos/attachments/${att.id}`}
+                        controls
+                        preload="metadata"
+                        className="w-full h-40 object-cover bg-black"
+                      />
+                    )}
+                    {(canManage || att.uploaded_by === meId) && (
+                      <button
+                        type="button"
+                        onClick={() => deleteAttMut.mutate(att.id)}
+                        disabled={deleteAttMut.isPending}
+                        className="absolute top-2 right-2 w-9 h-9 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-destructive transition-colors"
+                        aria-label="Delete this photo or video"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                    {att.uploaded_by_name && (
+                      <span className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] font-semibold text-white bg-gradient-to-t from-black/70 to-transparent truncate">
+                        {att.uploaded_by_name}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,video/*"
+              className="hidden"
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) uploadMut.mutate(file);
+                e.target.value = "";
+              }}
+            />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploadMut.isPending}
+              className="w-full h-14 rounded-2xl border-2 border-dashed border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+            >
+              {uploadMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Camera className="w-5 h-5" />}
+              {uploadMut.isPending ? "Uploading…" : "Add a photo or video"}
+            </button>
+          </div>
+
+          {/* Camera for the "done + improvement" path. Completing the job is
+              chained onto the upload so the photo and the sign-off are one
+              action from the person's point of view. */}
           <input
-            value={comment}
-            onChange={e => setComment(e.target.value)}
-            placeholder="Ask a question or leave an update…"
-            className="flex-1 h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40"
+            ref={improvementCameraRef}
+            type="file"
+            accept="image/*,video/*"
+            capture="environment"
+            className="hidden"
+            onChange={async e => {
+              const file = e.target.files?.[0];
+              e.target.value = "";
+              if (!file) { setPendingImprovement(false); return; }
+              try {
+                await uploadMut.mutateAsync(file);
+                await completeMut.mutateAsync(true);
+                await tagImprovementMut.mutateAsync();
+              } finally {
+                setPendingImprovement(false);
+              }
+            }}
           />
-          <button
-            type="submit"
-            disabled={!comment.trim() || commentMut.isPending}
-            className="w-14 h-14 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40 hover:opacity-90 transition-all flex-shrink-0"
-            aria-label="Send comment"
-          >
-            {commentMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
-          </button>
-        </form>
-      </div>
-    </div>
+
+          {task.improvement_id && (
+            <div className="flex items-center gap-2 text-base font-bold text-primary bg-primary/10 rounded-2xl px-5 py-3.5">
+              <Lightbulb className="w-5 h-5 flex-shrink-0" />
+              In the improvement library ✓
+            </div>
+          )}
+
+          {/* Improvement + delete. Finishing a job is the moment someone is
+              standing in front of what they changed, so the improvement
+              option lives here rather than as a step they'd have to remember. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {!isDone && !task.improvement_id && canEdit && (
+              <button
+                type="button"
+                onClick={() => void completeAsImprovement()}
+                disabled={busy || tagImprovementMut.isPending}
+                className="h-16 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-lg font-bold flex flex-col items-center justify-center gap-0.5 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50 active:scale-[0.99]"
+              >
+                <span className="flex items-center gap-2">
+                  {pendingImprovement || tagImprovementMut.isPending
+                    ? <Loader2 className="w-5 h-5 animate-spin" />
+                    : <Lightbulb className="w-5 h-5" />}
+                  Done — and it's an improvement
+                </span>
+                <span className="text-sm font-semibold opacity-80">
+                  {(task.attachments?.length ?? 0) === 0 ? "Takes a photo first" : "Sends it for sign-off"}
+                </span>
+              </button>
+            )}
+            {isDone && !task.improvement_id && canEdit && (
+              <button
+                type="button"
+                onClick={() => tagImprovementMut.mutate()}
+                disabled={tagImprovementMut.isPending}
+                className="h-14 rounded-2xl border-2 border-amber-400 dark:border-amber-600 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-lg font-bold flex items-center justify-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors disabled:opacity-50"
+              >
+                {tagImprovementMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lightbulb className="w-5 h-5" />}
+                This was an improvement
+              </button>
+            )}
+            {canDelete && (
+              confirmDelete ? (
+                <button
+                  type="button"
+                  onClick={() => deleteMut.mutate()}
+                  disabled={deleteMut.isPending}
+                  className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold flex items-center justify-center gap-2 hover:opacity-90 disabled:opacity-50"
+                >
+                  {deleteMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+                  Really delete?
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setConfirmDelete(true)}
+                  className="h-14 rounded-2xl border-2 border-destructive/40 text-destructive text-lg font-bold flex items-center justify-center gap-2 hover:bg-destructive/10 transition-colors"
+                >
+                  <Trash2 className="w-5 h-5" /> Delete
+                </button>
+              )
+            )}
+          </div>
+
+          {/* Timeline */}
+          <div className="pt-2">
+            <h3 className="text-lg font-bold text-muted-foreground mb-3">What's happened</h3>
+            <div className="space-y-3">
+              {task.comments.map(c =>
+                c.kind === "event" ? (
+                  <p key={c.id} className="text-center text-base text-muted-foreground font-medium">
+                    {c.body} · {format(parseTs(c.created_at), "EEE d MMM, HH:mm")}
+                  </p>
+                ) : (
+                  <div key={c.id} className={cn(
+                    "rounded-2xl p-4 max-w-[85%]",
+                    c.user_id === meId ? "bg-primary/10 ml-auto" : "bg-secondary/60",
+                  )}>
+                    <p className="text-sm font-bold text-muted-foreground mb-1">
+                      {c.user_name ?? "Someone"} · {format(parseTs(c.created_at), "EEE d MMM, HH:mm")}
+                    </p>
+                    <p className="text-lg leading-relaxed whitespace-pre-wrap">{c.body}</p>
+                  </div>
+                ),
+              )}
+              <div ref={commentsEndRef} />
+            </div>
+
+            <form
+              className="flex gap-2 mt-4"
+              onSubmit={e => { e.preventDefault(); if (comment.trim()) commentMut.mutate(comment.trim()); }}
+            >
+              <input
+                value={comment}
+                onChange={e => setComment(e.target.value)}
+                placeholder="Ask a question or leave an update…"
+                className="flex-1 min-w-0 h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40"
+              />
+              <button
+                type="submit"
+                disabled={!comment.trim() || commentMut.isPending}
+                className="w-14 h-14 rounded-2xl bg-primary text-primary-foreground flex items-center justify-center disabled:opacity-40 hover:opacity-90 transition-all flex-shrink-0"
+                aria-label="Send comment"
+              >
+                {commentMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Send className="w-6 h-6" />}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Pinned footer: Mark as done (outlined, left) · Save changes / Close (right). */}
+      <PinnedFooter fallback="sticky">
+        <div className="flex flex-col gap-2" data-testid="todo-popup-footer" data-dirty={dirty ? "true" : "false"}>
+          {dirty && (
+            <p className="text-sm font-semibold text-amber-700 dark:text-amber-400 flex items-center gap-1.5" role="status">
+              <span className="w-2 h-2 rounded-full bg-amber-500" aria-hidden /> Unsaved changes
+            </p>
+          )}
+          <div className="flex gap-3">
+            {task && (
+              isDone ? (
+                <button
+                  type="button"
+                  onClick={() => completeMut.mutate(false)}
+                  disabled={busy}
+                  className="min-h-14 px-4 rounded-2xl border-2 border-border bg-card text-base sm:text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+                >
+                  {completeMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <RotateCcw className="w-5 h-5" />}
+                  Put it back on the list
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void markDone()}
+                  disabled={busy}
+                  className="min-h-14 px-4 rounded-2xl border-2 border-border bg-card text-base sm:text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors disabled:opacity-50"
+                >
+                  {completeMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
+                  Mark as done
+                </button>
+              )
+            )}
+            <button
+              type="button"
+              onClick={() => void saveAndClose()}
+              disabled={saveMut.isPending}
+              className={cn(
+                "flex-1 min-h-14 rounded-2xl text-lg font-bold flex items-center justify-center gap-2 transition-colors disabled:opacity-60",
+                dirty ? "bg-[#7cb342] text-white hover:bg-[#6a9c37]" : "bg-secondary text-foreground hover:bg-secondary/70",
+              )}
+            >
+              {saveMut.isPending && <Loader2 className="w-5 h-5 animate-spin" />}
+              {saveMut.isPending ? "Saving…" : dirty ? "Save changes" : "Close"}
+            </button>
+          </div>
+        </div>
+      </PinnedFooter>
+    </EditorDialog>
   );
 }
 
-// ── Create / edit form ──────────────────────────────────────────────────────
+// ── Add with more details ───────────────────────────────────────────────────
 
-function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
+function TodoCreateDialog({ meId, canManage, defaultAssigneeId, initialTitle, focusAfterClose, onClose, onAdded }: {
   meId: number;
   canManage: boolean;
   defaultAssigneeId: number;
-  task: TodoTask | null; // null = create
-  onDone: (task: TodoTask | null) => void;
+  initialTitle: string;
+  /** The add box — the cursor goes back there, ready for the next one. */
+  focusAfterClose: React.RefObject<HTMLInputElement | null>;
+  onClose: () => void;
+  onAdded: (task: TodoTask) => void;
 }) {
-  const qc = useQueryClient();
-  const [title, setTitle] = useState(task?.title ?? "");
-  const [notes, setNotes] = useState(task?.notes ?? "");
-  const [url, setUrl] = useState(task?.url ?? "");
-  const [priority, setPriority] = useState<TodoPriority>(task?.priority ?? "normal");
-  const [scheduledFor, setScheduledFor] = useState(task?.scheduled_for ?? "");
-  const [dueDate, setDueDate] = useState(task?.due_date ?? "");
-  const [assigneeId, setAssigneeId] = useState(task?.assignee_id ?? defaultAssigneeId);
+  const [form, setForm] = useState<TodoForm>({ ...EMPTY_TODO_FORM, title: initialTitle });
+  const [assigneeId, setAssigneeId] = useState(defaultAssigneeId);
+  const start: TodoEditable = { title: initialTitle, notes: null, url: null, priority: "normal", scheduled_for: null, due_date: null };
+  const dirty = todoEditPatch(start, form) !== null || assigneeId !== defaultAssigneeId;
+  const valid = todoFormValid(form);
 
   const { data: users } = useQuery({
     queryKey: ["todo-users"],
@@ -903,75 +1158,107 @@ function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
   const activeUsers = (users ?? []).filter(u => u.isActive);
 
   const saveMut = useMutation({
-    mutationFn: async (): Promise<TodoTask> => {
-      const common = {
-        title: title.trim(),
-        notes: notes.trim() || null,
-        url: url.trim() || null,
-        priority,
-        scheduledFor: scheduledFor || null,
-        dueDate: dueDate || null,
-      };
-      if (task) {
-        return fetch(`${BASE}/api/todos/${task.id}`, {
-          method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(common),
-        }).then(jsonOrThrow);
-      }
-      return post("/api/todos", { ...common, assigneeId });
-    },
+    mutationFn: (): Promise<TodoTask> => post("/api/todos", todoCreateBody(form, assigneeId)),
     onSuccess: (saved) => {
-      qc.invalidateQueries({ queryKey: ["todos"] });
-      if (task) qc.invalidateQueries({ queryKey: ["todo", task.id] });
-      toast({ title: task ? "Task updated" : assigneeId === meId ? "Added to your list" : "Added to their list — they'll be shown it" });
-      onDone(saved);
+      toast({ title: assigneeId === meId ? "Added to your list" : "Added to their list — they'll be shown it", description: saved.title });
+      onAdded(saved);
     },
-    onError: (e: Error) => toast({ title: "Couldn't save the task", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Couldn't add the task", description: `${e.message} — it's all still here.`, variant: "destructive" }),
   });
+  const save = () => { if (valid && !saveMut.isPending) saveMut.mutate(); };
 
   return (
-    <form
-      className="space-y-5"
-      onSubmit={e => { e.preventDefault(); if (title.trim()) saveMut.mutate(); }}
+    <EditorDialog
+      open
+      onClose={onClose}
+      title={<><Plus className="w-6 h-6 text-primary" /> New to-do</>}
+      dirty={dirty}
+      onSaveRequest={save}
+      entityLabel="to-do"
+      widthClassName="sm:max-w-3xl"
+      noAutoFocus
+      onCloseAutoFocus={e => { e.preventDefault(); focusAfterClose.current?.focus({ preventScroll: true }); }}
     >
-      <h2 className="text-2xl md:text-3xl font-display font-bold">{task ? "Edit task" : "New to-do"}</h2>
-
-      {/* Who — managers only, create only (reassigning an existing task is
-          a delete-and-recreate; keeps the acknowledge story honest). */}
-      {canManage && !task && (
-        <div>
-          <label className="block text-lg font-bold mb-2">Who's it for?</label>
-          <select
-            value={assigneeId}
-            onChange={e => setAssigneeId(Number(e.target.value))}
-            className="w-full h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
+      <div className="space-y-5 pt-4">
+        {/* Who — managers only, create only (reassigning an existing task is
+            a delete-and-recreate; keeps the acknowledge story honest). */}
+        {canManage && (
+          <div>
+            <label className="block text-lg font-bold mb-2">Who's it for?</label>
+            <select
+              value={assigneeId}
+              onChange={e => setAssigneeId(Number(e.target.value))}
+              className="w-full h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
+            >
+              <option value={meId}>Me</option>
+              {activeUsers.filter(u => u.id !== meId).map(u => (
+                <option key={u.id} value={u.id}>{u.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <TodoFields form={form} onChange={setForm} autoFocusTitle={!initialTitle} onEnter={save} />
+      </div>
+      <PinnedFooter fallback="sticky">
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="min-h-14 px-5 rounded-2xl border-2 border-border bg-card text-lg font-bold hover:bg-secondary/50 transition-colors"
           >
-            <option value={meId}>Me</option>
-            {activeUsers.filter(u => u.id !== meId).map(u => (
-              <option key={u.id} value={u.id}>{u.name}</option>
-            ))}
-          </select>
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={save}
+            disabled={!valid || saveMut.isPending}
+            className={cn(
+              "flex-1 min-h-14 rounded-2xl text-lg font-bold flex items-center justify-center gap-2 transition-colors",
+              valid ? "bg-[#7cb342] text-white hover:bg-[#6a9c37] disabled:opacity-60" : "bg-muted text-muted-foreground cursor-not-allowed",
+            )}
+          >
+            {saveMut.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />}
+            {saveMut.isPending ? "Adding…" : "Add it"}
+          </button>
         </div>
-      )}
+      </PinnedFooter>
+    </EditorDialog>
+  );
+}
 
+// ── The fields, shared by the edit pop-up and "add with more details" ──────
+
+function TodoFields({ form, onChange, autoFocusTitle = false, onEnter }: {
+  form: TodoForm;
+  onChange: (f: TodoForm) => void;
+  autoFocusTitle?: boolean;
+  /** Enter in the title box — saves. */
+  onEnter?: () => void;
+}) {
+  const titleRef = useNoScrollAutoFocus<HTMLInputElement>(autoFocusTitle);
+  const set = (p: Partial<TodoForm>) => onChange({ ...form, ...p });
+  return (
+    <div className="space-y-5">
       <div>
-        <label className="block text-lg font-bold mb-2">What needs doing?</label>
+        <label htmlFor="todo-title" className="block text-lg font-bold mb-2">What needs doing?</label>
         <input
-          value={title}
-          onChange={e => setTitle(e.target.value)}
+          id="todo-title"
+          ref={titleRef}
+          value={form.title}
+          onChange={e => set({ title: e.target.value })}
+          onKeyDown={e => { if (e.key === "Enter" && onEnter) { e.preventDefault(); onEnter(); } }}
           placeholder="e.g. Deep-clean the pass fridge"
-          autoFocus
+          maxLength={300}
           className="w-full h-16 px-5 rounded-2xl border-2 border-border bg-card text-xl font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
       </div>
 
       <div>
-        <label className="block text-lg font-bold mb-2">Instructions / notes <span className="font-normal text-muted-foreground">(optional)</span></label>
+        <label htmlFor="todo-notes" className="block text-lg font-bold mb-2">Instructions / notes <span className="font-normal text-muted-foreground">(optional)</span></label>
         <textarea
-          value={notes}
-          onChange={e => setNotes(e.target.value)}
+          id="todo-notes"
+          value={form.notes}
+          onChange={e => set({ notes: e.target.value })}
           rows={4}
           placeholder="Anything they need to know to do it right."
           className="w-full px-5 py-4 rounded-2xl border-2 border-border bg-card text-lg leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -979,10 +1266,11 @@ function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
       </div>
 
       <div>
-        <label className="block text-lg font-bold mb-2">Link <span className="font-normal text-muted-foreground">(optional — SOP, form, page)</span></label>
+        <label htmlFor="todo-url" className="block text-lg font-bold mb-2">Link <span className="font-normal text-muted-foreground">(optional — SOP, form, page)</span></label>
         <input
-          value={url}
-          onChange={e => setUrl(e.target.value)}
+          id="todo-url"
+          value={form.url}
+          onChange={e => set({ url: e.target.value })}
           placeholder="https://…"
           inputMode="url"
           className="w-full h-14 px-5 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40"
@@ -990,16 +1278,17 @@ function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
       </div>
 
       <div>
-        <label className="block text-lg font-bold mb-2">Priority</label>
+        <p className="block text-lg font-bold mb-2">Priority</p>
         <div className="grid grid-cols-4 gap-2">
           {(Object.keys(PRIORITY_META) as TodoPriority[]).map(p => (
             <button
               key={p}
               type="button"
-              onClick={() => setPriority(p)}
+              onClick={() => set({ priority: p })}
+              aria-pressed={form.priority === p}
               className={cn(
                 "h-14 rounded-2xl border-2 text-base md:text-lg font-bold transition-all",
-                priority === p ? PRIORITY_META[p].solid : "border-border bg-card hover:bg-secondary/50",
+                form.priority === p ? PRIORITY_META[p].solid : "border-border bg-card hover:bg-secondary/50",
               )}
             >
               {PRIORITY_META[p].label}
@@ -1010,34 +1299,27 @@ function TodoEditor({ meId, canManage, defaultAssigneeId, task, onDone }: {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className="block text-lg font-bold mb-2">Do it on <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <label htmlFor="todo-do-on" className="block text-lg font-bold mb-2">Do it on <span className="font-normal text-muted-foreground">(optional)</span></label>
           <input
+            id="todo-do-on"
             type="date"
-            value={scheduledFor}
-            onChange={e => setScheduledFor(e.target.value)}
+            value={form.scheduledFor}
+            onChange={e => set({ scheduledFor: e.target.value })}
             className="w-full h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
         <div>
-          <label className="block text-lg font-bold mb-2">Due by <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <label htmlFor="todo-due" className="block text-lg font-bold mb-2">Due by <span className="font-normal text-muted-foreground">(optional)</span></label>
           <input
+            id="todo-due"
             type="date"
-            value={dueDate}
-            onChange={e => setDueDate(e.target.value)}
+            value={form.dueDate}
+            onChange={e => set({ dueDate: e.target.value })}
             className="w-full h-14 px-4 rounded-2xl border-2 border-border bg-card text-lg font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40"
           />
         </div>
       </div>
-
-      <button
-        type="submit"
-        disabled={!title.trim() || saveMut.isPending}
-        className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-3 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 shadow-lg shadow-primary/20"
-      >
-        {saveMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Check className="w-7 h-7" />}
-        {task ? "Save changes" : "Add it"}
-      </button>
-    </form>
+    </div>
   );
 }
 
