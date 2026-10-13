@@ -30,7 +30,7 @@ import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-
 import { UserAvatar } from "@/components/user-avatar";
 import { PeopleModal } from "@/components/people-modal";
 import { FormEditor, type RtwForm } from "@/components/rtw-form-editor";
-import { ReviewTimelineCard, ReviewNoteCard, AgreedObjectiveCard } from "@/components/people/review-notes";
+import { ReviewTimelineCard, ReviewNoteCard, AgreedObjectiveCard, AgreedListCard } from "@/components/people/review-notes";
 import { BookReviewForm } from "@/components/people/book-review";
 import { useRefreshEntries } from "@/components/people/reviews-api";
 import { groupRecordNotes, currentObjectives } from "@/lib/employee-record-grouping";
@@ -60,7 +60,7 @@ import { PeopleSheet } from "@/components/people-sheet";
 import { RecordPanel, RecordTimelineCard, useRecordFacts } from "@/components/people/record-panel";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
 import { PolicyTriggerBanner } from "@/components/people/policy-trigger-banner";
-import { needsPolicyReview, bookingLinkFor, type AnswersTrigger, type PolicyReviewRef } from "@workspace/people-reviews";
+import { needsPolicyReview, bookingLinkFor, latestAgreements, agreementBullets, type AnswersTrigger, type PolicyReviewRef } from "@workspace/people-reviews";
 import { defaultHoursRange } from "@/components/hours-range-picker";
 import type { PersonHoursResponse } from "@/lib/hours-worked-view";
 import {
@@ -553,7 +553,9 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
     if (!r) return null;
     const notes = [...r.entries.flatMap(e => e.writeUp), ...r.looseNotes].map(n => ({ ...n, meetingId: n.entryId }));
     const g = groupRecordNotes(notes, new Set(r.entries.map(e => e.id)));
-    return { ...g, agreedNow: currentObjectives(g.openObjectives, reviewCards) };
+    // What was agreed (0186): the one bulleted list from the latest review that has one.
+    const agreements = latestAgreements(notes, r.entries.map(e => ({ id: e.id, day: e.meetingDate ?? e.entryDate })));
+    return { ...g, agreedNow: currentObjectives(g.openObjectives, reviewCards), agreements };
   }, [recordEntries.data, reviewCards]);
 
   const timeline = useMemo(() => {
@@ -615,6 +617,8 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   // for the founder/HR account (they carry pay); What we agreed only when
   // something is open.
   const agreedNow = grouped?.agreedNow ?? [];
+  const agreedList = grouped?.agreements ?? [];
+  const agreedCount = agreedNow.length + agreedList.reduce((n, a) => n + agreementBullets(a.body).length, 0);
   const showRecord = recordEntries.data != null || (recordEntries.isLoading && ready);
   // The review a policy trigger line names: scroll to its card in the
   // timeline, or (older than the window shown) open it in the record panel.
@@ -633,7 +637,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
     ...(showRecord ? [{ key: "record" as const, summary: recordEntriesSummary(recordEntries.facts?.summary, recordEntries.isLoading, !!recordEntries.error) }] : []),
     { key: "hours", summary: hoursSummary(hours.data, hours.isLoading || !ready) },
     { key: "holiday", summary: holidaySummary(employment.data, employment.isLoading || !ready) },
-    ...(agreedNow.length > 0 ? [{ key: "agreed" as const, summary: agreedSummary(agreedNow.length) }] : []),
+    ...(agreedCount > 0 ? [{ key: "agreed" as const, summary: agreedSummary(agreedCount) }] : []),
     { key: "documents", summary: documentsSummary(documents.data, documents.isLoading, !!documents.error) },
     ...(canContracts ? [{ key: "contracts" as const, summary: contractsSummary(contracts.data, contracts.isLoading, !!contracts.error) }] : []),
     { key: "emergency", summary: { line: "Tap to show — every look is recorded", tone: "plain" } },
@@ -849,11 +853,21 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           )}
           {openSection === "agreed" && (
             <section className="space-y-3">
-              {agreedNow.length === 0 ? (
-                <p className="text-base text-muted-foreground py-2">Nothing agreed is open right now.</p>
-              ) : agreedNow.map(n => (
-                <AgreedObjectiveCard key={n.id} note={n} viewerId={viewerId} canWrite={canManage} onChanged={refreshReviews} />
-              ))}
+              {agreedCount === 0 && <p className="text-base text-muted-foreground py-2">Nothing agreed is open right now.</p>}
+              {agreedList.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-sm text-muted-foreground">From the most recent review. It also stays on that review.</p>
+                  {agreedList.map(n => <AgreedListCard key={n.id} note={n} personName={p.name} />)}
+                </div>
+              )}
+              {agreedNow.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-base font-bold flex items-center gap-2 pt-1">Objectives</h4>
+                  {agreedNow.map(n => (
+                    <AgreedObjectiveCard key={n.id} note={n} viewerId={viewerId} canWrite={canManage} onChanged={refreshReviews} />
+                  ))}
+                </div>
+              )}
             </section>
           )}
         </PeopleSheet>

@@ -227,6 +227,10 @@ router.patch("/review-notes/:id", onNote, validate(NotePatch), async (req: Reque
   try {
     const note = await loadOwnNote(viewer, req.params["id"], res);
     if (!note) return;
+    // Only an objective is ever done or due — what was agreed is neither (0186).
+    if (note.kind !== "objective" && (b.done !== undefined || (b.dueDate !== undefined && b.dueDate !== null))) {
+      res.status(400).json({ error: "Only an objective can be marked done or given a due date." }); return;
+    }
     const set: Partial<typeof peopleReviewNotesTable.$inferInsert> = { updatedAt: new Date() };
     if (b.title !== undefined) set.title = b.title || null;
     if (b.body !== undefined) set.body = b.body;

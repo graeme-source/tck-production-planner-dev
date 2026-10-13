@@ -19,6 +19,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { CalendarDays, Loader2, MessageSquare, Target } from "lucide-react";
 import { fmtDayIso, NOTE_KIND_LABEL, MEETING_STATUS_LABEL, type MeetingStatus, type NoteKind } from "@workspace/people-reviews";
+import { AgreementBullets } from "@/components/people/review-notes";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -63,6 +64,8 @@ interface MyRecord {
   reviews: Array<{ entryId: number; date: string; status: MeetingStatus | null; notes: MyNote[] }>;
   loose: MyNote[];
   agreed: MyNote[];
+  /** What was agreed at the latest review that has a list (0186). */
+  agreement?: MyNote[];
 }
 
 function MyNoteCard({ note }: { note: MyNote }) {
@@ -74,8 +77,14 @@ function MyNoteCard({ note }: { note: MyNote }) {
         <p className="text-sm font-bold uppercase tracking-wide text-muted-foreground mb-1">
           {NOTE_KIND_LABEL[note.kind] ?? "Note"}{note.doneAt ? " · done" : ""}
         </p>
-        {note.title && <p className="text-xl font-bold leading-snug break-words">{note.title}</p>}
-        <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+        {note.kind === "agreement" ? (
+          <AgreementBullets body={note.body} className="text-xl" />
+        ) : (
+          <>
+            {note.title && <p className="text-xl font-bold leading-snug break-words">{note.title}</p>}
+            <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+          </>
+        )}
         <p className="text-base text-muted-foreground mt-2">
           {note.authorName ?? "Your manager"} · {fmtDayIso(note.createdAt.slice(0, 10))}{note.dueDate ? ` · due ${fmtDayIso(note.dueDate)}` : ""}
         </p>
@@ -105,10 +114,16 @@ export function EmployeeReviewsSection() {
         <p className="text-base text-muted-foreground mt-1">Feedback, objectives and notes your manager has shared with you from your reviews.</p>
       </div>
 
-      {data.agreed.length > 0 && (
+      {(data.agreed.length > 0 || (data.agreement?.length ?? 0) > 0) && (
         <section className="space-y-3">
           <h3 className="text-lg font-bold flex items-center gap-2"><Target className="w-5 h-5 text-primary" /> What we agreed</h3>
           <p className="text-sm text-muted-foreground -mt-1">From your most recent review. They also stay on the review that set them.</p>
+          {(data.agreement ?? []).map(n => (
+            <div key={n.id} className="rounded-2xl border-2 border-border bg-card px-4 py-3">
+              <AgreementBullets body={n.body} className="text-lg" />
+            </div>
+          ))}
+          {data.agreed.length > 0 && (data.agreement?.length ?? 0) > 0 && <h4 className="text-base font-bold pt-1">Objectives</h4>}
           {data.agreed.map(n => (
             <div key={n.id} className="rounded-2xl border-2 border-border bg-card px-4 py-3 flex items-start gap-3">
               <Target className="w-5 h-5 text-primary shrink-0 mt-1" />

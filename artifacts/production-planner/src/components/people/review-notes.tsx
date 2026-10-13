@@ -18,10 +18,10 @@
  */
 import { useState } from "react";
 import {
-  CalendarDays, CheckCircle2, ChevronRight, Eye, EyeOff, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
+  CalendarDays, CheckCircle2, ChevronRight, Eye, EyeOff, Handshake, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
 } from "lucide-react";
 import {
-  NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened, entryClassLabels,
+  NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened, entryClassLabels, agreementBullets,
   type Classification, type Stage,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
@@ -30,7 +30,18 @@ import { AutoText, AutoDate } from "./review-fields";
 import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-bar";
 import { recordSend, recordDelete, type RecordEntry, type ReviewNote } from "./reviews-api";
 
-const NOTE_ICON = { note: MessageSquare, feedback: MessageSquare, objective: Target } as const;
+const NOTE_ICON = { note: MessageSquare, feedback: MessageSquare, objective: Target, agreement: Handshake } as const;
+
+/** What was agreed, as the plain bullet list it is (0186). */
+export function AgreementBullets({ body, className }: { body: string; className?: string }) {
+  const points = agreementBullets(body);
+  if (points.length === 0) return null;
+  return (
+    <ul className={cn("list-disc pl-6 space-y-1.5 marker:text-primary", className)}>
+      {points.map((p, i) => <li key={i} className="leading-relaxed break-words">{p}</li>)}
+    </ul>
+  );
+}
 
 // ── One part of a write-up ─────────────────────────────────────────────────
 
@@ -48,6 +59,7 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
   const [confirm, setConfirm] = useState<null | "share" | "remove">(null);
   const [busy, setBusy] = useState(false);
   const Icon = NOTE_ICON[note.kind] ?? MessageSquare;
+  const isAgreement = note.kind === "agreement";
   const isPrivate = note.visibility !== "shared";
   // The server only lets an author touch their own note; the buttons follow.
   const mine = canWrite && viewerId != null && note.authorId === viewerId;
@@ -91,10 +103,13 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
           {editing ? (
             // Autosaves as you type, with its own save state per field.
             <div className="space-y-3 mt-2">
-              <AutoText label="Headline (optional)" initial={note.title} maxLength={200}
-                placeholder={note.kind === "objective" ? "e.g. Increase in output speed" : undefined}
-                onSave={v => save({ title: v.trim() || null })} />
-              <AutoText label={note.kind === "objective" ? "What it means in practice" : "What was said"} initial={note.body} rows={5} maxLength={10_000}
+              {!isAgreement && (
+                <AutoText label="Headline (optional)" initial={note.title} maxLength={200}
+                  placeholder={note.kind === "objective" ? "e.g. Increase in output speed" : undefined}
+                  onSave={v => save({ title: v.trim() || null })} />
+              )}
+              <AutoText label={isAgreement ? "Agreed points — one per line" : note.kind === "objective" ? "What it means in practice" : "What was said"}
+                initial={note.body} rows={isAgreement ? 6 : 5} maxLength={10_000}
                 onSave={v => (v.trim() ? save({ body: v }) : Promise.reject(new Error("It can't be empty — type something, or remove it.")))} />
               {note.kind === "objective" && (
                 <AutoDate label="Due by (optional)" initial={note.dueDate} onSave={v => save({ dueDate: v })} />
@@ -105,10 +120,14 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
               </button>
             </div>
           ) : (
-            <div className="space-y-1">
-              {note.title && <p className="text-xl font-bold leading-snug break-words">{note.title}</p>}
-              <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
-            </div>
+            isAgreement ? (
+              <AgreementBullets body={note.body} className="text-xl" />
+            ) : (
+              <div className="space-y-1">
+                {note.title && <p className="text-xl font-bold leading-snug break-words">{note.title}</p>}
+                <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
+              </div>
+            )
           )}
           <p className="text-base text-muted-foreground mt-2">
             {note.authorName ?? "Someone"} · {fmtDayIso(note.createdAt.slice(0, 10))}
@@ -182,6 +201,23 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+/** The agreed points in "What we agreed" — one list from the latest review
+ *  that has one (0186). Not done, not due: just what's going to happen. */
+export function AgreedListCard({ note, personName }: { note: ReviewNote; personName: string }) {
+  return (
+    <div className="rounded-2xl border-2 border-border bg-card px-4 py-3 space-y-2">
+      <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
+        <Handshake className="w-4 h-4 text-primary shrink-0" />
+        {note.authorName ?? "Someone"} · {fmtDayIso(note.createdAt.slice(0, 10))}
+        {note.visibility !== "shared"
+          ? <span className="inline-flex items-center gap-1 font-bold"><Lock className="w-3.5 h-3.5" /> Private to you</span>
+          : <span className="inline-flex items-center gap-1 font-bold text-primary"><Eye className="w-3.5 h-3.5" /> Shared with {personName.split(" ")[0]}</span>}
+      </p>
+      <AgreementBullets body={note.body} className="text-lg" />
     </div>
   );
 }
