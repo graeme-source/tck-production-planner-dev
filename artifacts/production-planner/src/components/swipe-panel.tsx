@@ -19,18 +19,24 @@
  *   - Up/down still scrolls the panel's content.
  *   - Respects "reduce motion": it moves without the slide.
  *
- * About 85% of the screen on an iPad, the full width on a phone. Below
- * every modal (z-150) — choosing an action shuts the panel, then the
- * action's own modal opens.
+ *   - WITH A MOUSE OR TRACKPAD (2026-10-13): a big green "Quick actions"
+ *     tab replaces the slim handle — click to open, click again (or Esc,
+ *     or the dimmed strip) to close. Touchscreen laptops get the tab AND
+ *     keep the swipe. Rule: quickActionsHandleStyle in lib/edge-swipe.ts.
+ *
+ * About 85% of the screen on an iPad, the full width on a phone. Shut, the
+ * handle sits below every pop-up and hides while one is up; choosing an
+ * action shuts the panel, then the action's own modal opens.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { X } from "lucide-react";
+import { ChevronLeft, ChevronRight, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { dragProgress, panelWidth, snapAfterDrag, PANEL_DRAG_SLOP_PX, TAP_SLOP_PX } from "@/lib/swipe-snap";
-import { blockedByAncestors, inStartZone } from "@/lib/edge-swipe";
-import { fullScreenOverlayShowing } from "@/lib/prompt-presence";
+import { blockedByAncestors, inStartZone, quickActionsHandleStyle, quickActionsHandleVisible } from "@/lib/edge-swipe";
+import { fullScreenOverlayShowing, useFullScreenOverlayShowing } from "@/lib/prompt-presence";
 import { ancestorChain, useSideSwipe } from "@/hooks/use-side-swipe";
+import { usePointerKind } from "@/hooks/use-touch-primary";
 
 export type PanelChange = "drag" | "tap" | "close" | "backdrop" | "escape" | "action";
 
@@ -38,6 +44,8 @@ export type PanelChange = "drag" | "tap" | "close" | "backdrop" | "escape" | "ac
 const HANDLE_HIT_WIDTH = 32;
 /** The visible handle: a slim strip with three dots. */
 const HANDLE_WIDTH = 10;
+/** The mouse/trackpad tab: 44 px wide (w-11), this tall. */
+const TAB_HEIGHT = 128;
 
 function usePrefersReducedMotion(): boolean {
   const query = "(prefers-reduced-motion: reduce)";
@@ -83,6 +91,10 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
   const handleRef = useRef<HTMLButtonElement>(null);
   const startProgress = useRef(0);
   const progress = live ?? (open ? 1 : 0);
+  const handleStyle = quickActionsHandleStyle(usePointerKind());
+  // Another pop-up up while the panel's shut: no handle at all.
+  const overlayShowing = useFullScreenOverlayShowing(progress === 0);
+  const handleVisible = quickActionsHandleVisible({ style: handleStyle, progress, overlayShowing });
 
   // Escape closes it.
   useEffect(() => {
@@ -142,7 +154,10 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
         />
       )}
       <div
-        className="fixed top-0 bottom-0 right-0 z-[95]"
+        // Shut, it sits BELOW every pop-up (they start at z-50), so a modal's
+        // backdrop and pinned save bar always cover the handle; out, or
+        // moving, it rises above its own dimmed backdrop (z-90).
+        className={cn("fixed top-0 bottom-0 right-0", progress > 0 ? "z-[95]" : "z-[40]")}
         // While it's out (or moving), the founder's left swipe stays off.
         data-side-swipe-busy={progress > 0 ? "" : undefined}
         style={{
@@ -151,11 +166,49 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
           transition: animate ? "transform 260ms cubic-bezier(0.22, 1, 0.36, 1)" : undefined,
         }}
       >
-        {/* The handle: a slim strip with three coloured dots on the right
-            edge — just a reminder the quick actions are there. The button
-            round it is wider than it looks, so it's easy to tap open. Hidden
-            while the panel is out (the X and a swipe close it). */}
-        {progress < 1 && (
+        {/* With a mouse or trackpad: a big green "Quick actions" tab on the
+            right edge (Graeme, 2026-10-13: the slim strip was "a tiny button,
+            hard to click"). It rides on the panel's edge, so a second click
+            puts the panel away. */}
+        {handleStyle === "tab" && handleVisible && (
+          <button
+            ref={handleRef}
+            type="button"
+            aria-label={open ? `Close ${title.toLowerCase()}` : tabLabel}
+            aria-expanded={open}
+            title={open ? `Close ${title.toLowerCase()}` : title}
+            onClick={() => onOpenChange(!open, "tap")}
+            className={cn(
+              "group absolute top-1/2 -translate-y-1/2 flex flex-col items-center justify-center gap-2 py-3 select-none cursor-pointer",
+              "rounded-l-2xl bg-primary text-primary-foreground shadow-lg shadow-black/20 border border-r-0 border-primary",
+              "transition-[width,background-color] duration-150 hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-primary/40",
+              highlightTab && !open && "swipe-tab-pulse",
+            )}
+            style={{ right: "100%", height: TAB_HEIGHT }}
+            data-testid="quick-actions-handle"
+            data-handle-style="tab"
+          >
+            {/* 44 px wide; grows a little leftwards on hover, so it reads as clickable. */}
+            <span aria-hidden="true" className={cn("flex flex-col items-center gap-2 w-11 transition-[width] duration-150", !open && "group-hover:w-[52px]")}>
+              {open ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+              <span className="text-xs font-bold tracking-wide whitespace-nowrap" style={{ writingMode: "vertical-rl", transform: "rotate(180deg)" }}>
+                {title}
+              </span>
+            </span>
+            {badge != null && badge > 0 && !open && (
+              <span className="absolute -top-2 -left-2 min-w-[20px] h-5 px-1 rounded-full bg-orange-500 text-white text-[11px] font-bold flex items-center justify-center tabular-nums shadow">
+                {badge > 99 ? "99+" : badge}
+              </span>
+            )}
+          </button>
+        )}
+
+        {/* On a touch screen: a slim strip with three coloured dots on the
+            right edge — just a reminder the quick actions are there (the
+            whole right half swipes). The button round it is wider than it
+            looks, so it's easy to tap open. Hidden while the panel is out
+            (the X and a swipe close it). */}
+        {handleStyle === "slim" && handleVisible && (
           <button
             ref={handleRef}
             type="button"
@@ -166,6 +219,7 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
             className="absolute top-1/2 -translate-y-1/2 h-24 flex items-center justify-end select-none cursor-pointer"
             style={{ left: -HANDLE_HIT_WIDTH, width: HANDLE_HIT_WIDTH, touchAction: "none" }}
             data-testid="quick-actions-handle"
+            data-handle-style="slim"
           >
             <span
               className={cn(
@@ -210,7 +264,9 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
               dialog's own pan-y doesn't reach the buttons inside this one. */}
           <div className="flex-1 overflow-y-auto overscroll-contain px-5 py-5" style={{ touchAction: "pan-y" }}>{children}</div>
           <p className="px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 text-sm text-muted-foreground text-center">
-            Swipe right to put it away — it works on top of the buttons too
+            {handleStyle === "tab"
+              ? "Click the green tab, press Esc or click outside to put it away"
+              : "Swipe right to put it away — it works on top of the buttons too"}
           </p>
         </div>
       </div>

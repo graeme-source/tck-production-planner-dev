@@ -12,7 +12,7 @@ import { useAnyPromptShowing } from "@/lib/prompt-presence";
 import { BusinessSwipe } from "@/components/business-swipe";
 import { MobileHeaderMenu, usePhoneHeader } from "@/components/mobile-header-menu";
 import { usePointerKind } from "@/hooks/use-touch-primary";
-import { showBusinessInNav } from "@/lib/edge-swipe";
+import { quickActionsHandleStyle, showBusinessInNav } from "@/lib/edge-swipe";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
@@ -926,7 +926,9 @@ export function Layout({ children }: { children: ReactNode }) {
             lib/scroll.ts and the modal scroll-keeper target it. overscroll-
             contain stops a top-of-page drag chaining into the browser's
             pull-to-refresh (which reloaded mid-shift — Graeme, 2026-09-07). */}
-        <div id="app-main-scroll" ref={mainScrollRef} className="flex-1 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative">
+        {/* With a mouse, the right gutter clears the green Quick actions
+            tab (44 px) so it never sits on top of a page's controls. */}
+        <div id="app-main-scroll" ref={mainScrollRef} className={cn("flex-1 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative", !accountantOnly && quickActionsHandleStyle(pointerKind) === "tab" && "pr-14 md:pr-14")}>
           {/* Weekly lean lesson reminder — every main page, until completed.
               Not for accountants: they're external, the lean curriculum and
               the rest of the team machinery aren't theirs (Graeme,

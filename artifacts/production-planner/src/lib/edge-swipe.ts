@@ -148,3 +148,28 @@ export function showBusinessInNav(o: { isFounder: boolean; coarsePointer: boolea
 export function businessSwipeEnabled(o: { isFounder: boolean; coarsePointer: boolean; canHover: boolean; onBusinessPage: boolean }): boolean {
   return o.isFounder && isTouchPrimary(o) && !o.onBusinessPage;
 }
+
+/**
+ * Which handle pulls out the quick-actions panel (Graeme, 2026-10-13;
+ * Objective F). On a pure touch screen (iPad, phone) the whole right half
+ * is the swipe, so a slim dotted handle is only a reminder. With a mouse or
+ * trackpad nobody swipes, and that slim strip was "a tiny button, hard to
+ * click" — so any fine pointer gets the big green "Quick actions" tab. A
+ * touchscreen laptop (touch AND a trackpad) gets the tab and keeps the swipe.
+ */
+export type QuickActionsHandleStyle = "slim" | "tab";
+
+export function quickActionsHandleStyle(o: { coarsePointer: boolean; canHover: boolean; anyFinePointer?: boolean }): QuickActionsHandleStyle {
+  if (o.anyFinePointer) return "tab";
+  return isTouchPrimary(o) ? "slim" : "tab";
+}
+
+/**
+ * Is the handle on screen? The slim one hides once the panel is fully out
+ * (the X and a swipe close it); the tab stays on the panel's edge so a
+ * second click puts it away. Neither shows over another pop-up.
+ */
+export function quickActionsHandleVisible(o: { style: QuickActionsHandleStyle; progress: number; overlayShowing: boolean }): boolean {
+  if (o.progress <= 0 && o.overlayShowing) return false;
+  return o.style === "tab" || o.progress < 1;
+}

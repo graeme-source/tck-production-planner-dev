@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  blockedByAncestors, businessSwipeEnabled, classifyMove, inStartZone, leftSwipeCommits, showBusinessInNav,
+  blockedByAncestors, businessSwipeEnabled, classifyMove, inStartZone, leftSwipeCommits, quickActionsHandleStyle, quickActionsHandleVisible, showBusinessInNav,
   type AncestorInfo,
 } from "./edge-swipe";
 
@@ -104,5 +104,35 @@ describe("The Business on touch screens", () => {
     expect(businessSwipeEnabled({ isFounder: true, ...ipad, onBusinessPage: true })).toBe(false);
     expect(businessSwipeEnabled({ isFounder: false, ...ipad, onBusinessPage: false })).toBe(false);
     expect(businessSwipeEnabled({ isFounder: true, ...desktop, onBusinessPage: false })).toBe(false);
+  });
+});
+
+describe("quick-actions handle style", () => {
+  it("a desktop mouse gets the big tab", () => {
+    expect(quickActionsHandleStyle({ coarsePointer: false, canHover: true, anyFinePointer: true })).toBe("tab");
+  });
+  it("an iPad or phone (touch only) keeps the slim handle", () => {
+    expect(quickActionsHandleStyle({ coarsePointer: true, canHover: false, anyFinePointer: false })).toBe("slim");
+    expect(quickActionsHandleStyle({ coarsePointer: true, canHover: false })).toBe("slim");
+  });
+  it("a touchscreen laptop or an iPad with a trackpad gets the tab, even reporting a coarse primary pointer", () => {
+    expect(quickActionsHandleStyle({ coarsePointer: true, canHover: true, anyFinePointer: true })).toBe("tab");
+    expect(quickActionsHandleStyle({ coarsePointer: true, canHover: false, anyFinePointer: true })).toBe("tab");
+  });
+  it("a hover-capable fine primary pointer with no any-pointer report still gets the tab", () => {
+    expect(quickActionsHandleStyle({ coarsePointer: false, canHover: true })).toBe("tab");
+  });
+});
+
+describe("quick-actions handle visibility", () => {
+  it("the slim handle hides once the panel is fully out; the tab stays so a second click closes it", () => {
+    expect(quickActionsHandleVisible({ style: "slim", progress: 1, overlayShowing: false })).toBe(false);
+    expect(quickActionsHandleVisible({ style: "tab", progress: 1, overlayShowing: false })).toBe(true);
+    expect(quickActionsHandleVisible({ style: "slim", progress: 0.4, overlayShowing: false })).toBe(true);
+  });
+  it("neither shows over another pop-up while the panel is shut", () => {
+    expect(quickActionsHandleVisible({ style: "tab", progress: 0, overlayShowing: true })).toBe(false);
+    expect(quickActionsHandleVisible({ style: "slim", progress: 0, overlayShowing: true })).toBe(false);
+    expect(quickActionsHandleVisible({ style: "tab", progress: 0, overlayShowing: false })).toBe(true);
   });
 });
