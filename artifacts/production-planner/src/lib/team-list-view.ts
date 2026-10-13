@@ -6,6 +6,7 @@
 import {
   addDays, daysBetween, isDailyRhythm, weekdayOf, WEEKDAY_SHORT, type RecurrenceRule, type Weekday,
 } from "@workspace/recurrence";
+import type { SortSpec, TaskSortFields } from "./task-sort";
 
 export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly";
 
@@ -85,4 +86,18 @@ export function dayHeading(date: string, today: string): string {
   if (daysBetween(today, date) === 1) return "Tomorrow";
   const d = new Date(`${date}T12:00:00Z`);
   return d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
+}
+
+/** Team lists open on "Time, then Priority" (Graeme, 2026-10-13: the 3:00
+ *  red before the 4:00 red, then on through the day). */
+export const TEAM_LIST_DEFAULT_SORT: SortSpec = { primary: "time", secondary: "priority" };
+
+/** One task's sort fields. An overdue entry's time carries its due day too,
+ *  so the Overdue section runs oldest first. */
+export function teamTaskSortFields(
+  item: { title: string; priority: number; timeOfDay: string | null; sortOrder: number },
+  entry?: { dueDate: string; overdue: boolean },
+): TaskSortFields {
+  const time = entry?.overdue ? `${entry.dueDate} ${item.timeOfDay ?? "99:99"}` : item.timeOfDay;
+  return { priority: item.priority, time, overdue: entry?.overdue ?? false, order: item.sortOrder, title: item.title };
 }
