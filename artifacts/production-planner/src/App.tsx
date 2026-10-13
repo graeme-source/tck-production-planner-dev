@@ -15,6 +15,7 @@ import { NetworkStatusBanner } from "@/components/network-status-banner";
 import { StagingEnvBanner } from "@/components/staging-env-banner";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
+import TeamListsPage from "@/pages/team-lists";
 import MeetingPage from "@/pages/meeting";
 import VisitorCheckIn from "@/pages/visitor-check-in";
 import PackReport from "@/pages/pack-report";
@@ -224,6 +225,10 @@ function Router() {
               <Route path="/case-orders" component={CaseOrders} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/contacts" component={ContactsPage} />
+              {/* Team lists — shared recurring routines (Graeme, 2026-10-13). Managers/admins;
+                  server-enforced. Reached from the dashboard card and quick actions. */}
+              <Route path="/lists" component={TeamListsPage} />
+              <Route path="/lists/:id" component={TeamListsPage} />
               <Route path="/finance" component={FinancePage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />
