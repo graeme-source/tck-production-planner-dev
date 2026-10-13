@@ -13,6 +13,8 @@ import { cn } from "@/lib/utils";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { SubRecipeMakeFlow } from "./prep-bases-station";
+import { usePrepProgress } from "@/hooks/use-prep-progress";
+import { progressPct, tasksLine } from "@/lib/prep-progress";
 
 const PREP_SUB_STATIONS = [
   { key: "main_prep",  label: "Main Prep",      short: "Main",   icon: ClipboardList, activeClass: "bg-emerald-500 dark:bg-emerald-600 text-white", inactiveClass: "text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" },
@@ -374,6 +376,9 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
   const [showReplenish, setShowReplenish] = useState(false);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
+  // Tasks done per section — the same shared count as each section's header
+  // and the dashboard tile (lib/prep-progress.ts).
+  const { data: progress } = usePrepProgress(nextPlan?.planId ?? null, { refetchInterval: 15_000 });
 
   const subStations = [
     {
@@ -467,9 +472,16 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
       />
 
       <div>
-        <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground mb-3">
-          Select prep station
-        </p>
+        <div className="flex items-baseline justify-between gap-3 mb-3">
+          <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+            Select prep station
+          </p>
+          {progress && progress.total > 0 && (
+            <p className="text-sm font-semibold tabular-nums text-muted-foreground">
+              {tasksLine(progress)} done · {progress.pct}%
+            </p>
+          )}
+        </div>
         <div className="grid gap-4">
           {subStations.map(s => {
             const Icon = s.icon;
@@ -504,6 +516,21 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
                   <p className={cn("text-sm font-semibold mt-1.5", nextPlan?.planDate ? s.color : "text-muted-foreground")}>
                     {prepDateLabel}
                   </p>
+                  {(() => {
+                    const sec = progress?.bySection[s.key];
+                    if (!sec || sec.total === 0) return null;
+                    const pct = progressPct(sec);
+                    return (
+                      <div className="mt-2">
+                        <p className="text-sm tabular-nums text-muted-foreground">
+                          {tasksLine(sec)} done{pct >= 100 ? " ✓" : ""}
+                        </p>
+                        <div className="w-full h-1.5 bg-background rounded-full overflow-hidden mt-1">
+                          <div className={cn("h-full rounded-full transition-all", pct >= 100 ? "bg-emerald-500" : "bg-current", s.color)} style={{ width: `${pct}%` }} />
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
               </button>

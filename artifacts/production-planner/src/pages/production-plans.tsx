@@ -52,6 +52,7 @@ import type { PlanStartStock } from "@workspace/stock-prediction";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { useSlowMeatProfile } from "@/hooks/use-slow-meat-profile";
+import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { applySlowMeatCap, slowMeatCountForRows } from "@/lib/slow-meat-plan";
 import { BagsInFridgeNote } from "@/components/eight-pack-bags-on-hand";
 import {
@@ -5207,15 +5208,9 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
     query: { enabled: nextPlanId !== planId, refetchInterval: 15000, queryKey: getGetProductionPlanQueryKey(nextPlanId) },
   }) as { data: ProductionPlanDetail | undefined };
 
-  const { data: prepProgress } = useQuery<{ totalTins: number; completedTins: number; pct: number }>({
-    queryKey: ["prep-progress", nextPlanId],
-    queryFn: async () => {
-      const res = await fetch(`/api/production-plans/${nextPlanId}/prep-progress`, { credentials: "include" });
-      if (!res.ok) return { totalTins: 0, completedTins: 0, pct: 0 };
-      return res.json();
-    },
-    refetchInterval: 15000,
-  });
+  // Prep tasks done — the one shared definition (lib/prep-progress.ts) the
+  // dashboard tile and the prep section headers use.
+  const { data: prepProgress } = usePrepProgress(nextPlanId);
 
   // Dispatch progress for packing station — orders fulfilled for next day (delivery day)
   const dispatchTag = plan?.planDate ? format(addDays(parseISO(plan.planDate), 1), "yyyy-MM-dd") : null;

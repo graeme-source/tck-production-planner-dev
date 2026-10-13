@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
 import { doughTileSummary } from "@/lib/dough-mix-status";
 import { doughMixProgressKey, fetchDoughMixProgress } from "@/hooks/use-dough-mix-progress";
+import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
@@ -526,7 +527,7 @@ export default function Dashboard() {
 
   // Prep card — prep stations work ahead of production, so this follows the
   // same next-plan-by-prep_date resolver the prep stations themselves use.
-  // Headline = batches on the plan being prepped; bar = tins prepped.
+  // Headline = batches on the plan being prepped; bar = prep tasks done.
   const { data: prepTarget } = useQuery({
     queryKey: ["dashboard-next-prep", todayStr],
     refetchInterval: 60000,
@@ -618,16 +619,10 @@ export default function Dashboard() {
     staleTime: 5 * 60 * 1000,
     queryFn: () => fetchTodayBatchCount([prepPlanId!]),
   });
-  const { data: prepProgress } = useQuery({
-    queryKey: ["dashboard-prep-progress", prepPlanId],
-    enabled: prepPlanId != null,
-    refetchInterval: 30000,
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/production-plans/${prepPlanId}/prep-progress`, { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json() as Promise<{ totalTins: number; completedTins: number; pct: number }>;
-    },
-  });
+  // Prep progress in TASKS — the same shared helper and the same responses
+  // as the prep section headers (lib/prep-progress.ts), so the tile can't
+  // read "28 / 31" while the station says everything is done (13 Oct).
+  const { data: prepProgress } = usePrepProgress(prepPlanId);
 
 
   // Core Production tiles, keyed so their ORDER lives in one tested place
@@ -693,10 +688,10 @@ export default function Dashboard() {
         // (tomorrow's prep), which is only wanted when arriving from a
         // production plan's page, not from this date-based card.
         href={stationHref("prep")}
-        progress={prepProgress && prepProgress.totalTins > 0 ? {
-          done: prepProgress.completedTins,
-          total: prepProgress.totalTins,
-          label: "tins prepped",
+        progress={prepProgress && prepProgress.total > 0 ? {
+          done: prepProgress.done,
+          total: prepProgress.total,
+          label: "tasks",
           barClass: "bg-green-500",
         } : undefined}
       />
