@@ -4,7 +4,7 @@
  * widening access happens here and nowhere else (Graeme, 2026-09-07).
  *
  * The gate is the ACCOUNT, not the role — admins and managers do NOT
- * qualify. Today that means the founder's account only.
+ * qualify. Today that means the founder and Lorna.
  */
 import type { NextFunction, Request, Response } from "express";
 import { db } from "@workspace/db";
@@ -12,6 +12,8 @@ import { sql } from "drizzle-orm";
 
 const HR_RECORD_EMAILS = new Set([
   "graeme@thecalzonekitchen.co.uk",
+  // Lorna — starter forms and P45s too (Graeme, 2026-10-13).
+  "lornabrown17@icloud.com",
   // Finance director: add their account email here when they join.
 ]);
 
