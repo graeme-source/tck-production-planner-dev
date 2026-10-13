@@ -6,6 +6,7 @@ import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
 import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
+import { ReportIncidentModal } from "@/components/report-incident-modal";
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAnyPromptShowing } from "@/lib/prompt-presence";
@@ -988,7 +989,11 @@ export function QuickActionsDock() {
   const [issueOpen, setIssueOpen] = useState(false);
   const [kanbanOpen, setKanbanOpen] = useState(false);
   const [defectOpen, setDefectOpen] = useState(false);
+  const [incidentOpen, setIncidentOpen] = useState(false);
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
+  // Accident & incident reports are managers and admins only (the
+  // /api/incidents router and the HACCP tab are behind the same guard).
+  const canReportIncident = user?.role === "admin" || user?.role === "manager";
 
   if (!user) return null;
 
@@ -1003,7 +1008,9 @@ export function QuickActionsDock() {
         onOpenIssue={() => setIssueOpen(true)}
         onOpenKanban={() => setKanbanOpen(true)}
         onOpenDefect={() => setDefectOpen(true)}
+        onOpenIncident={canReportIncident ? () => setIncidentOpen(true) : undefined}
       />
+      {canReportIncident && <ReportIncidentModal open={incidentOpen} onClose={() => setIncidentOpen(false)} />}
       <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
       <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
       <PullKanbanModal open={kanbanOpen} onClose={() => setKanbanOpen(false)} />
@@ -1024,9 +1031,6 @@ export function QuickActionsDock() {
   );
 }
 
-/** The HACCP Accident & Incident Diary (Reports → HACCP → Accidents & Incidents). */
-const INCIDENT_DIARY_PATH = "/reports?tab=haccp&haccp=incidents";
-
 // The quick actions, in a panel that swipes out from the right (Graeme,
 // 2026-10-09 — it was a small stack of pills; 2026-10-10 — swipe left from
 // anywhere on the right half, a slim dotted handle instead of the big
@@ -1035,7 +1039,7 @@ const INCIDENT_DIARY_PATH = "/reports?tab=haccp&haccp=incidents";
 // opens it. ALWAYS starts
 // shut: a shared iPad must never greet the next person with it open
 // (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
-function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect }: {
+function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenIncident }: {
   assistantOpen: boolean;
   onOpenAssistant: () => void;
   onOpenTodos: () => void;
@@ -1043,6 +1047,8 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   onOpenIssue: () => void;
   onOpenKanban: () => void;
   onOpenDefect: () => void;
+  /** Managers and admins only; absent → no "Report accident / incident" button. */
+  onOpenIncident?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const openTodoCount = useMyOpenTodoCount();
@@ -1050,27 +1056,20 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   const onOpenChange = useCallback((next: boolean) => setOpen(next), []);
   // Swiping it open from the right is off while the PIN lock or a
   // must-answer prompt is up (other pop-ups are caught at the swipe itself).
-  const { state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
+  const { pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
   const promptShowing = useAnyPromptShowing();
   const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
   // Choosing an action puts the panel away, then opens the action.
   const run = (action: () => void) => () => { setOpen(false); action(); };
   // Team lists are management routines — never on a station screen
   // (Graeme, 2026-10-13), even when a manager has the panel out there.
-  const [location, navigate] = useLocation();
+  const [location] = useLocation();
   const onStation = /\/station\//.test(location);
-  // Report accident / incident (Graeme, 2026-10-13): opens the HACCP
-  // Accident & Incident Diary, where "New report" starts one. Same people
-  // who can create one today — the /api/incidents router and the HACCP tab
-  // are managers and admins only.
-  const role = state.status === "authenticated" ? state.user.role : "viewer";
-  const canReportIncident = role === "admin" || role === "manager";
-  // Already somewhere in Reports: the page only reads its tab from the
-  // address when it first loads, so load it afresh on the diary.
-  const openIncidentDiary = () => {
-    if (location === "/reports") window.location.assign(`${import.meta.env.BASE_URL.replace(/\/$/, "")}${INCIDENT_DIARY_PATH}`);
-    else navigate(INCIDENT_DIARY_PATH);
-  };
+  // Report accident / incident (Graeme, 2026-10-13): asks "Is it an
+  // accident or an incident?" and starts that report straight away
+  // (report-incident-modal.tsx). Managers and admins only — the parent
+  // passes onOpenIncident only to them.
+  const canReportIncident = !!onOpenIncident;
 
   const actions: Array<{ key: string; label: string; hint: string; icon: typeof ListTodo; tone: string; onClick: () => void; badge?: number; hidden?: boolean }> = [
     { key: "todos", label: "My to-dos", hint: "What's on your list", icon: ListTodo, tone: "bg-primary text-primary-foreground shadow-primary/30", onClick: run(onOpenTodos), badge: openTodoCount },
@@ -1078,7 +1077,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
     // Issue sits beside it — a safety issue is often both.
     { key: "improvement", label: "Improvement", hint: "Before & after photo", icon: Lightbulb, tone: "bg-blue-500 text-white shadow-blue-500/30", onClick: run(onOpenImprovement) },
     { key: "issue", label: "Report issue", hint: "Something's wrong or unsafe", icon: AlertTriangle, tone: "bg-rose-500 text-white shadow-rose-500/30", onClick: run(onOpenIssue) },
-    { key: "incident", label: "Report accident / incident", hint: "HACCP diary — injury, breakage, near miss", icon: ShieldAlert, tone: "bg-red-700 text-white shadow-red-700/30", onClick: run(openIncidentDiary), hidden: !canReportIncident },
+    { key: "incident", label: "Report accident / incident", hint: "Someone hurt, or something went wrong", icon: ShieldAlert, tone: "bg-red-700 text-white shadow-red-700/30", onClick: run(() => onOpenIncident?.()), hidden: !canReportIncident },
     // Defects & waste (2026-10-01, waste 2026-10-09): product that can't go
     // out, or anything binned — from anywhere, never a station button.
     { key: "defect", label: REPORT_DEFECT_LABEL, hint: "Mislabel, binned, left out…", icon: AlertOctagon, tone: "bg-amber-600 text-white shadow-amber-600/30", onClick: run(onOpenDefect) },

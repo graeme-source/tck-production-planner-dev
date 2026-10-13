@@ -82,9 +82,10 @@ async function errorText(res: Response, fallback: string): Promise<string> {
 }
 
 /** The diary, newest first. */
-export function useIncidentReports() {
+export function useIncidentReports(enabled = true) {
   return useQuery<IncidentReport[]>({
     queryKey: INCIDENT_REPORTS_KEY,
+    enabled,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/incidents`, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load the diary");
