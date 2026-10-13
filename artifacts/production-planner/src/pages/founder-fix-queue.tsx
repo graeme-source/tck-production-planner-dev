@@ -11,23 +11,24 @@
  * Founder account only (same email gate as the rest of /founder; the API
  * enforces it too). Big cards, not a table — it's read on a phone or iPad.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ClipboardCheck, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Loader2,
-  MessageCircleQuestion, MessageSquareText, OctagonAlert, RotateCcw, Scale, Send, Video, Wrench, X, XCircle,
+  AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ClipboardCheck, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Hourglass, Loader2,
+  MessageCircleQuestion, MessageSquareReply, MessageSquareText, OctagonAlert, RotateCcw, Scale, Send, Video, Wrench, X, XCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { MarkdownBlock } from "@/components/lesson-media";
 import { ImprovementSuggestions, NoActionButton, useNoAction } from "@/components/fix-queue-extras";
+import { FixQueueSearch, MessageReporterDialog, ReporterReplyBox } from "@/components/fix-queue-conversation";
 import { DictateButton } from "@/components/dictate-button";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import {
-  LANE_LABELS, cardActions, noticeStatusLine, tabCount, withReplySent,
+  LANE_LABELS, QUEUE_TAB_LABELS, cardActions, noticeStatusLine, tabCount, waitingForReporterLabel, withMessageSent, withReplySent,
   type FixQueueItem, type FixQueueResponse, type FixQueueTab, type TriageLane, type TriageStatus,
 } from "@/lib/issue-pipeline";
 
@@ -150,83 +151,16 @@ function NoteDialog({ mode, reopens = false, onCancel, onSubmit }: {
   );
 }
 
-/** "Message the reporter": Graeme's own words to whoever reported it,
- *  pre-filled with Claude's suggested reply (step-by-step instructions when
- *  they can fix it themselves in the app). "This answers it" closes the
- *  report — the usual case when no code change is needed. */
-function MessageDialog({ reporterName, suggested, canClose, onCancel, onSubmit }: {
-  reporterName: string;
-  suggested: string | null;
-  canClose: boolean;
-  onCancel: () => void;
-  onSubmit: (message: string, close: boolean) => void;
-}) {
-  const [message, setMessage] = useState(suggested ?? "");
-  const [close, setClose] = useState(canClose);
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 md:p-8" onClick={onCancel}>
-      <div
-        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <MessageSquareText className="w-5 h-5 text-primary" />
-          <h2 className="font-display font-bold text-lg flex-1">Message {reporterName}</h2>
-          <button onClick={onCancel} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          <p className="text-sm text-muted-foreground">
-            {suggested
-              ? "Claude drafted this — check it, change anything, then send. It pops up full-screen for them next time they use the app."
-              : "Write to them directly. It pops up full-screen for them next time they use the app."}
-          </p>
-          <textarea
-            value={message}
-            onChange={e => setMessage(e.target.value)}
-            autoFocus
-            maxLength={4000}
-            placeholder="e.g. No fix needed — you can set this yourself: open Product → Recipes, pick the recipe, and fill in the oven override."
-            className="w-full min-h-[200px] px-3 py-2.5 bg-background border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          {canClose ? (
-            <label className="flex items-start gap-3 rounded-xl border border-border p-3 cursor-pointer">
-              <input type="checkbox" checked={close} onChange={e => setClose(e.target.checked)} className="mt-1 w-5 h-5 accent-[hsl(var(--primary))]" />
-              <span>
-                <span className="block font-semibold">This answers it — close the report</span>
-                <span className="block text-sm text-muted-foreground">Untick to keep it open (e.g. you're asking them something).</span>
-              </span>
-            </label>
-          ) : (
-            <p className="text-sm text-muted-foreground">This report is already closed or being fixed, so the message won't change that.</p>
-          )}
-        </div>
-        <div className="p-5 pt-0 flex gap-2">
-          <button onClick={onCancel} className="flex-1 h-12 rounded-xl border border-border font-semibold hover:bg-secondary/60">
-            Cancel
-          </button>
-          <button
-            onClick={() => onSubmit(message.trim(), canClose && close)}
-            disabled={!message.trim()}
-            className="flex-1 h-12 rounded-xl bg-primary text-primary-foreground font-bold flex items-center justify-center gap-2 disabled:opacity-50"
-          >
-            <Send className="w-4 h-4" /> {canClose && close ? "Send & close" : "Send"}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── One recommendation ──────────────────────────────────────────────────────
 
 function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
   return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
 }
 
-function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, saving }: {
+function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, saving, showTab = false }: {
   item: FixQueueItem;
+  /** Search results: say which tab the card is in now. */
+  showTab?: boolean;
   /** "Dismiss — no action" (restore = put it back). */
   onNoAction: (restore: boolean) => void;
   onDecide: (action: DecisionAction, note?: string) => void;
@@ -244,6 +178,10 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
   const actions = cardActions(t);
   const thread = item.thread ?? [];
   const firstName = issue?.reporter.name?.split(" ")[0] ?? "the reporter";
+  const reporterName = issue?.reporter.name ?? "the reporter";
+  const waitingLabel = waitingForReporterLabel(t, firstName);
+  // Claude's draft pre-fills only the first message; follow-ups start blank.
+  const alreadyMessaged = thread.some(e => e.who === "you" && e.kind === "message");
   const status = t.status;
   const images = issue?.attachments.filter(a => a.kind === "image") ?? [];
   const videos = issue?.attachments.filter(a => a.kind !== "image") ?? [];
@@ -265,6 +203,15 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
         {snoozedUntil && status === "proposed" && (
           <Chip className="bg-secondary text-foreground"><AlarmClock className="w-3.5 h-3.5" /> Snoozed until {snoozedUntil.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</Chip>
         )}
+        {showTab && item.tab && (
+          <Chip className="bg-primary text-primary-foreground">In: {QUEUE_TAB_LABELS[item.tab]}</Chip>
+        )}
+        {t.reporterReplyAt && (
+          <Chip className="bg-emerald-600 text-white"><MessageSquareReply className="w-3.5 h-3.5" /> New reply from {firstName}</Chip>
+        )}
+        {waitingLabel && !t.reporterReplyAt && (
+          <Chip className="bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200"><Hourglass className="w-3.5 h-3.5" /> {waitingLabel}</Chip>
+        )}
         {t.awaitingRetriage && (
           <Chip className="bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"><MessageCircleQuestion className="w-3.5 h-3.5" /> Waiting for Claude to reply</Chip>
         )}
@@ -272,6 +219,18 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
         {t.noActionAt && <Chip className="bg-foreground text-background">Dismissed — no action{t.noActionBy ? ` · ${t.noActionBy}` : ""} · {feedTimestamp(t.noActionAt)}</Chip>}
         <span className="ml-auto text-xs text-muted-foreground">Issue #{t.andonIssueId} · triaged {feedTimestamp(t.triagedAt)}</span>
       </div>
+
+      {/* The reporter answered — it's back here for you (not Claude). */}
+      {t.reporterReplyAt && (
+        <ReporterReplyBox
+          triageId={t.id}
+          reporterName={reporterName}
+          firstName={firstName}
+          thread={thread}
+          saving={saving}
+          onMessage={() => setDialog("message")}
+        />
+      )}
 
       {/* Claude's question — the conversation to finish before there's a
           plan. Reply lives right here, on the thing it answers. */}
@@ -432,7 +391,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
 
       {/* Claude's draft to the reporter — Message lives here. Sending it
           never approves or closes anything unless you choose to. */}
-      {t.suggestedReply?.trim() && issue?.reporter.id != null && (
+      {t.suggestedReply?.trim() && issue?.reporter.id != null && !alreadyMessaged && (
         <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 space-y-3">
           <div>
             <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-primary mb-1">
@@ -547,10 +506,12 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
             <AlarmClock className="w-5 h-5" /> Bring back now
           </button>
         )}
-        {!t.suggestedReply?.trim() && issue?.reporter.id != null && (
+        {/* Message the reporter as often as you like (2026-10-13) — it never
+            closes the card by itself. */}
+        {issue?.reporter.id != null && (
           <button onClick={() => setDialog("message")} disabled={saving}
             className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            <MessageSquareText className="w-5 h-5" /> Message {firstName}
+            <MessageSquareText className="w-5 h-5" /> {alreadyMessaged ? `Message ${firstName} again` : `Message ${firstName}`}
           </button>
         )}
         {t.noActionAt ? (
@@ -573,9 +534,10 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
       </div>
 
       {dialog === "message" && (
-        <MessageDialog
-          reporterName={issue?.reporter.name ?? "the reporter"}
-          suggested={t.suggestedReply}
+        <MessageReporterDialog
+          reporterName={reporterName}
+          firstName={firstName}
+          suggested={alreadyMessaged ? null : t.suggestedReply}
           canClose={["proposed", "approved", "rejected", "wont_fix"].includes(status)}
           onCancel={() => setDialog(null)}
           onSubmit={(message, close) => { setDialog(null); onMessage(message, close); }}
@@ -605,12 +567,20 @@ export default function FounderFixQueue() {
   // "Sent" state) after the refetch files them under In progress, so the
   // card he was looking at doesn't vanish. Cleared when he changes tab.
   const [sentItems, setSentItems] = useState<Map<number, FixQueueItem>>(new Map());
+  // Find a card across every tab (2026-10-13). Typed text settles for a
+  // moment before it's searched.
+  const [search, setSearch] = useState("");
+  const [q, setQ] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setQ(search.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [search]);
   const qc = useQueryClient();
-  const queryKey = ["issue-pipeline", "review", tab, meId] as const;
+  const queryKey = ["issue-pipeline", "review", q ? "search" : tab, q, meId] as const;
 
   const { data, isLoading, error } = useQuery<FixQueueResponse>({
     queryKey,
-    queryFn: () => fetch(`${BASE}/api/issue-pipeline/review?tab=${tab}`, { credentials: "include" }).then(jsonOrThrow),
+    queryFn: () => fetch(`${BASE}/api/issue-pipeline/review?${new URLSearchParams(q ? { q } : { tab })}`, { credentials: "include" }).then(jsonOrThrow),
     enabled: isFounder,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
@@ -682,12 +652,32 @@ export default function FounderFixQueue() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message, close }),
       }).then(jsonOrThrow),
-    onMutate: ({ id }) => setSavingIds(s => new Set(s).add(id)),
+    // Optimistic: the card shows the message (and "Waiting for <name>'s
+    // reply") straight away and stays on screen — even "Send and close",
+    // which the server files under Done, stays here until you change tab.
+    onMutate: async ({ id, message, close }) => {
+      setSavingIds(s => new Set(s).add(id));
+      await qc.cancelQueries({ queryKey });
+      const previous = qc.getQueryData<FixQueueResponse>(queryKey);
+      const item = previous?.items.find(i => i.triage.id === id);
+      if (previous && item) {
+        const sent = withMessageSent(item, message, close);
+        qc.setQueryData<FixQueueResponse>(queryKey, { ...previous, items: previous.items.map(i => (i.triage.id === id ? sent : i)) });
+        setSentItems(m => new Map(m).set(id, sent));
+      }
+      return { previous };
+    },
     onSuccess: (_d, { close }) => toast({
-      title: close ? "Sent — report closed" : "Message sent",
-      description: "It pops up for them next time they use the app.",
+      title: close ? "Sent — report closed" : "Message sent — the card stays here",
+      description: close
+        ? "It pops up for them next time they use the app. The card is now under Done."
+        : "It pops up for them next time they use the app. Their answer brings the card back to To review.",
     }),
-    onError: (err: Error) => toast({ title: "Not sent", description: err.message, variant: "destructive" }),
+    onError: (err: Error, { id }, ctx) => {
+      if (ctx?.previous) qc.setQueryData(queryKey, ctx.previous);
+      setSentItems(m => { const n = new Map(m); n.delete(id); return n; });
+      toast({ title: "Not sent", description: err.message, variant: "destructive" });
+    },
     onSettled: (_d, _e, { id }) => {
       setSavingIds(s => { const n = new Set(s); n.delete(id); return n; });
       void qc.invalidateQueries({ queryKey: ["issue-pipeline", "review"] });
@@ -765,9 +755,10 @@ export default function FounderFixQueue() {
   const saving = savingIds.size > 0;
   // Just-replied cards the server has moved to In progress stay at the top
   // here, showing "Sent — Claude will look at this on its next pass".
+  // Search results are exactly what matched, wherever each card is now.
   const listedIds = new Set(items.map(i => i.triage.id));
-  const needsYou = [...[...sentItems.values()].filter(s => !listedIds.has(s.triage.id)), ...items];
-  const changeTab = (next: FixQueueTab) => { setSentItems(new Map()); setTab(next); };
+  const needsYou = q ? items : [...[...sentItems.values()].filter(s => !listedIds.has(s.triage.id)), ...items];
+  const changeTab = (next: FixQueueTab) => { setSentItems(new Map()); setSearch(""); setQ(""); setTab(next); };
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -783,11 +774,14 @@ export default function FounderFixQueue() {
         <span className="font-semibold text-foreground">Nothing gets built without your approval.</span>
       </p>
 
+      {/* Find a card in ANY tab — one that moved is never lost (2026-10-13). */}
+      <FixQueueSearch value={search} onChange={setSearch} />
+
       {/* Status tabs with counts */}
       <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
         {TABS.map(t => {
           const n = tabCount(data, t.key);
-          const active = t.key === tab;
+          const active = !q && t.key === tab;
           return (
             <button key={t.key} onClick={() => changeTab(t.key)}
               className={cn(
@@ -806,13 +800,15 @@ export default function FounderFixQueue() {
           ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving your decision…</>
           : decide.isSuccess
             ? <><CheckCircle2 className="w-4 h-4 text-emerald-600" /> All decisions saved</>
-            : TAB_HINTS[tab] ?? null}
+            : q
+              ? (isLoading ? "Searching every tab…" : `${items.length === 50 ? "First 50" : items.length} card${items.length === 1 ? "" : "s"} matching “${q}” across every tab`)
+              : TAB_HINTS[tab] ?? null}
       </div>
 
       {/* Ideas from the improvements board that look like app changes —
           suggestions only, Graeme adds or dismisses each one. */}
-      {tab === "proposed" && <ImprovementSuggestions status="suggested" />}
-      {tab === "no_action" && <ImprovementSuggestions status="dismissed" />}
+      {!q && tab === "proposed" && <ImprovementSuggestions status="suggested" />}
+      {!q && tab === "no_action" && <ImprovementSuggestions status="dismissed" />}
 
       {isLoading && <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>}
       {error != null && (
@@ -824,9 +820,11 @@ export default function FounderFixQueue() {
       {!isLoading && !error && needsYou.length === 0 && (
         <div className="rounded-3xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
           <CheckCircle2 className="w-10 h-10 mx-auto mb-3 text-emerald-600" />
-          <p className="text-lg font-semibold text-foreground">Nothing here</p>
+          <p className="text-lg font-semibold text-foreground">{q ? "No card matches" : "Nothing here"}</p>
           <p className="text-sm mt-1">
-            {tab === "proposed"
+            {q
+              ? "Try the issue number, the reporter's first name, or a word from their report."
+              : tab === "proposed"
               ? ((data?.tabCounts?.in_progress ?? 0) > 0
                 ? "Nothing needs you right now — the rest are waiting on Claude (see In progress)."
                 : "No recommendations waiting for you. New ones appear as Claude reviews the issue log.")
@@ -840,6 +838,7 @@ export default function FounderFixQueue() {
           <FixCard
             key={item.triage.id}
             item={item}
+            showTab={!!q}
             saving={savingIds.has(item.triage.id)}
             onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
             onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}

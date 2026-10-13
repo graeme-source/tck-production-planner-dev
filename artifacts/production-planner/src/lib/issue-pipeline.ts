@@ -47,6 +47,10 @@ export interface Triage {
   issueResolvedAt: string | null;
   triagedAt: string;
   triagedBy: string;
+  /** Graeme messaged the reporter and is waiting for their answer. */
+  awaitingReporterSince?: string | null;
+  /** The reporter answered and Graeme hasn't looked yet — "New reply". */
+  reporterReplyAt?: string | null;
 }
 
 export interface IssueView {
@@ -83,6 +87,8 @@ export interface ThreadEntry {
 
 export interface FixQueueItem {
   triage: Triage;
+  /** Which tab the card is in now (shown on search results). */
+  tab?: FixQueueTab;
   issue: IssueView | null;
   notices: FixNoticeSummary[];
   /** The back-and-forth on this card, oldest first. */
@@ -92,6 +98,8 @@ export interface FixQueueItem {
 
 export interface FixQueueResponse {
   tab: FixQueueTab;
+  /** Set when this is a search across every tab. */
+  q?: string | null;
   counts: Record<TriageStatus, number> & { awaitingReply: number };
   /** Cards per tab, bucketed server-side by the same rule as the lists. */
   tabCounts?: Partial<Record<FixQueueTab, number>>;
@@ -196,6 +204,65 @@ export function withReplySent(item: FixQueueItem, note: string, now: Date = new 
       decidedAt: at,
     },
     thread: [...(item.thread ?? []), { at, who: "you", kind: "reply", text: note }],
+  };
+}
+
+// ── Talking with the reporter (Graeme, 2026-10-13) ──────────────────────────
+
+/** Tab names as the Fix queue shows them — also on search results, so a card
+ *  that moved (#323 went to Done) says where it is now. */
+export const QUEUE_TAB_LABELS: Record<FixQueueTab, string> = {
+  proposed: "To review",
+  in_progress: "In progress",
+  snoozed: "Snoozed",
+  approved: "Approved",
+  fixed: "Done",
+  rejected: "Rejected",
+  no_action: "Dismissed",
+};
+
+const LONDON_DAY = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" });
+const LONDON_TIME = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+const LONDON_DATE = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short" });
+
+/** "12:09" today, "Mon 12 Oct, 12:09" any other day (London clock). */
+export function clockLabel(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return LONDON_DAY.format(d) === LONDON_DAY.format(now) ? LONDON_TIME.format(d) : `${LONDON_DATE.format(d)}, ${LONDON_TIME.format(d)}`;
+}
+
+/** "Waiting for Jane's reply · asked 12:09", or null when not waiting. */
+export function waitingForReporterLabel(t: Pick<Triage, "awaitingReporterSince">, firstName: string, now: Date = new Date()): string | null {
+  if (!t.awaitingReporterSince) return null;
+  return `Waiting for ${firstName}'s reply · asked ${clockLabel(t.awaitingReporterSince, now)}`;
+}
+
+/** What the reporter has said since Graeme last wrote to them — the "New
+ *  reply" box shows these (oldest first). */
+export function newReporterWords(thread: ThreadEntry[]): ThreadEntry[] {
+  let lastMine = -1;
+  thread.forEach((e, i) => { if (e.who === "you" && e.kind === "message") lastMine = i; });
+  return thread.slice(lastMine + 1).filter(e => e.who === "reporter");
+}
+
+/**
+ * The card the moment Graeme sends a message — mirrors the server
+ * (messagePlan): "Message <name>" keeps the status and starts waiting for
+ * them; "Send and close" marks it answered. Either way any "New reply" is
+ * now seen and his words join the conversation.
+ */
+export function withMessageSent(item: FixQueueItem, message: string, close: boolean, now: Date = new Date()): FixQueueItem {
+  const at = now.toISOString();
+  return {
+    ...item,
+    triage: {
+      ...item.triage,
+      reporterReplyAt: null,
+      awaitingReporterSince: close ? null : at,
+      ...(close ? { status: "answered" as const, decisionNote: message, decidedAt: at, issueResolvedAt: at } : {}),
+    },
+    thread: [...(item.thread ?? []), { at, who: "you", kind: "message", text: message }],
   };
 }
 
