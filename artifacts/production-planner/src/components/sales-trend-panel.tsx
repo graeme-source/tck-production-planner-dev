@@ -151,6 +151,7 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
           compareName={showCompare ? compare?.name : undefined}
           reference={reference}
           perBasket={m.perBasket}
+          orderSplit={m.id === "newCustomerShare"}
         />
       )}
 

@@ -34,17 +34,21 @@ interface Props {
   reference?: { value: number; label: string } | null;
   /** An average over baskets (AOV): the tooltip shows paid orders and revenue. */
   perBasket?: boolean;
+  /** New-customer share: the tooltip also shows the order counts behind
+   *  the % (Graeme, 2026-10-13). */
+  orderSplit?: boolean;
 }
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function TipBox({ active, payload, format, seriesName, compareName, perBasket }: {
+function TipBox({ active, payload, format, seriesName, compareName, perBasket, orderSplit }: {
   active?: boolean;
   payload?: Array<{ payload: ChartPoint }>;
   format: MetricFormat;
   seriesName: string;
   compareName?: string;
   perBasket?: boolean;
+  orderSplit?: boolean;
 }) {
   if (!active || !payload?.length) return null;
   const p = payload[0].payload;
@@ -75,6 +79,17 @@ function TipBox({ active, payload, format, seriesName, compareName, perBasket }:
           )}
         </>
       )}
+      {orderSplit && (
+        <>
+          <p className="text-muted-foreground">
+            New: <span className="font-semibold text-foreground tabular-nums">{p.newCustomerPaidOrders.toLocaleString("en-GB")}</span>
+            {" · "}Returning: <span className="font-semibold text-foreground tabular-nums">{p.returningOrders.toLocaleString("en-GB")}</span>
+          </p>
+          <p className="text-muted-foreground">
+            of <span className="font-semibold text-foreground tabular-nums">{p.paidOrders.toLocaleString("en-GB")}</span> paid orders
+          </p>
+        </>
+      )}
       {compareName && (
         <p className="text-muted-foreground">
           {compareName}: <span className="font-semibold text-foreground tabular-nums">{formatMetric(format, p.compare)}</span>
@@ -99,7 +114,7 @@ function makeDot(showAll: boolean) {
   };
 }
 
-export function SalesTrendChart({ points, format, seriesName, compareName, reference, perBasket }: Props) {
+export function SalesTrendChart({ points, format, seriesName, compareName, reference, perBasket, orderSplit }: Props) {
   const showAllDots = points.length <= 31;
   const hasBridge = points.some((p) => p.bridge != null);
   return (
@@ -122,7 +137,7 @@ export function SalesTrendChart({ points, format, seriesName, compareName, refer
             />
           )}
           <Tooltip
-            content={<TipBox format={format} seriesName={seriesName} compareName={compareName} perBasket={perBasket} />}
+            content={<TipBox format={format} seriesName={seriesName} compareName={compareName} perBasket={perBasket} orderSplit={orderSplit} />}
             cursor={{ stroke: "hsl(var(--muted-foreground))", strokeOpacity: 0.4 }}
           />
           {compareName && (

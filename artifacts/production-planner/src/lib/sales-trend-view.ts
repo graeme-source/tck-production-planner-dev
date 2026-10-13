@@ -165,6 +165,9 @@ export interface ChartPoint {
   revenue: number;
   orders: number;
   paidOrders: number;
+  /** For the new-vs-returning tooltip: the bucket's split of paid orders. */
+  newCustomerPaidOrders: number;
+  returningOrders: number;
   /** Per-basket metric resting on 1–2 paid orders: drawn lighter, flagged in the tooltip. */
   fewOrders: boolean;
   /** Has a value but no drawn neighbour on either side — needs its own visible dot. */
@@ -212,6 +215,8 @@ export function chartPoints(series: TrendSeries, metric: TrendMetricId, comparis
       revenue: b.revenue,
       orders: b.orders,
       paidOrders: b.paidOrders,
+      newCustomerPaidOrders: b.newCustomerPaidOrders ?? 0,
+      returningOrders: b.returningOrders ?? 0,
       fewOrders: !!m.perBasket && value != null && b.paidOrders > 0 && b.paidOrders <= FEW_ORDERS,
       isolated: value != null && (values[i - 1] ?? null) == null && (values[i + 1] ?? null) == null,
       bridge: bridge[i],
