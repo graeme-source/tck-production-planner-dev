@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { prepTinTileLabel, recipeNameWithTinSize } from "../shared/prep-tin-labels";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -490,6 +491,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     const map = new Map<number, {
       recipeId: number;
       recipeName: string;
+      tinSize: string | null;
       batchesTarget: number;
       items: Array<{ ing: MainPrepIngredient; qtyForRecipe: number }>;
     }>();
@@ -503,7 +505,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       const seenInGroup = new Set<number>();
       for (const r of ing.recipes) {
         if (!map.has(r.recipeId)) {
-          map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, batchesTarget: r.batchesTarget, items: [] });
+          map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, tinSize: r.tinSize ?? null, batchesTarget: r.batchesTarget, items: [] });
         }
         if (seenInGroup.has(r.recipeId)) continue;
         seenInGroup.add(r.recipeId);
@@ -870,7 +872,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                     {/* Recipe section header */}
                     <div className="px-4 py-2 bg-emerald-50/60 dark:bg-emerald-950/20 flex items-center justify-between">
                       <p className="text-sm font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300 truncate">
-                        {group.recipeName}
+                        {recipeNameWithTinSize(group.recipeName, group.tinSize)}
                       </p>
                       <span className="text-sm text-emerald-600 dark:text-emerald-400 ml-2 whitespace-nowrap">
                         {formatBatches(group.batchesTarget)} batch{group.batchesTarget !== 1 ? "es" : ""}
@@ -1415,7 +1417,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                         ) : (
                                           <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                         )}
-                                        <span className="text-base font-bold">Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}</span>
+                                        <span className="text-base font-bold">{prepTinTileLabel(tn)}</span>
                                       </div>
                                       <span className={cn(
                                         "text-2xl font-bold tabular-nums",
