@@ -8,8 +8,12 @@
  *   - A code we know belongs to another product → "Wrong item — this is
  *     <product>", never a tick.
  *   - A code that matches lines of two different products → refused, check.
- *   - Typed text (not digits) may tick a line by its exact SKU or exact
- *     title — a deliberate manual entry — unless that is ambiguous.
+ *   - ONLY a barcode ticks a line (Graeme, 13 Oct 2026): "Typing a SKU or
+ *     product name into the packing scan box should not take products off
+ *     that have a barcode. The only thing that should tick products off on
+ *     the packing screen is scanning a barcode." Typed text (a SKU, a name)
+ *     never ticks anything, whatever Settings → "Allow manual tap to pick"
+ *     says — that setting governs TAPPING a row only.
  *   - A line with no barcode on record is never ticked by a guess. With the
  *     manual setting off it can't be ticked by hand either: the packer
  *     checks it by eye and scans the pack to SET its barcode (packer.ts).
@@ -37,8 +41,6 @@ export interface ScanLine {
   /** Product identity (identity.ts); null when unknown — the line key is used. */
   identityKey: string | null;
   name: string;
-  sku: string | null;
-  title: string | null;
   /** Units still to pick on this line. */
   remaining: number;
   /** Other codes this line accepts, each with the product it belongs to —
@@ -55,21 +57,21 @@ export type ScanDecision =
   | { kind: "wrong-item"; product: string }
   | { kind: "ambiguous"; products: string[] }
   | { kind: "unknown-barcode" }
+  /** Text that isn't a barcode (a SKU, a product name) — never ticks. */
+  | { kind: "typed-not-scanned" }
   | { kind: "no-match" };
 
 const isDigits = (s: string) => /^\d+$/.test(s);
 
-/** `manualTick`: Settings → "Allow manual tap to pick". When it is off, a
- *  typed SKU/title can never tick a line that has no barcode — typing it is
- *  a hand check, and those lines must have their barcode set instead
- *  (packer.ts). Lines with a barcode keep today's typed behaviour. */
-export function decideScan(input: string, lines: ScanLine[], known: KnownCodes, opts: { manualTick?: boolean } = {}): ScanDecision {
-  const manualTick = opts.manualTick ?? true;
+/** What a value entered in the packing scan box means. Only a barcode
+ *  (digits, compared as GTINs) can tick a line; anything else is
+ *  "typed-not-scanned" and ticks nothing — there is deliberately no option
+ *  to change that. */
+export function decideScan(input: string, lines: ScanLine[], known: KnownCodes): ScanDecision {
   const raw = input.trim();
   if (!raw) return { kind: "no-match" };
   const compact = raw.replace(/[\s-]+/g, "");
   const idOf = (l: ScanLine) => l.identityKey ?? `line:${l.key}`;
-  const distinctProducts = (ls: ScanLine[]) => [...new Map(ls.map(l => [idOf(l), l.name])).values()];
 
   if (isDigits(compact)) {
     const k = gtinKey(compact);
@@ -95,14 +97,12 @@ export function decideScan(input: string, lines: ScanLine[], known: KnownCodes, 
     return { kind: "unknown-barcode" };
   }
 
-  // Typed by hand: exact SKU or exact title only.
-  const lower = raw.toLowerCase();
-  const matches = lines.filter(l => l.remaining > 0 && (manualTick || !!l.barcode) && (l.sku?.toLowerCase() === lower || (l.title ?? "").toLowerCase() === lower));
-  const products = distinctProducts(matches);
-  if (products.length > 1) return { kind: "ambiguous", products };
-  if (matches.length) return { kind: "tick", key: matches[0].key };
-  return { kind: "no-match" };
+  // Not a barcode — a typed SKU or product name. Never a tick.
+  return { kind: "typed-not-scanned" };
 }
+
+/** Shown when someone types a SKU or name into the scan box. */
+export const TYPED_NOT_SCANNED_MESSAGE = "Scan the barcode on the pack — typing a name or SKU doesn't tick it off.";
 
 /** Plain words for the red flash, and the reason logged for a refusal. */
 export function scanMessage(d: ScanDecision): string | null {
@@ -112,6 +112,7 @@ export function scanMessage(d: ScanDecision): string | null {
     case "wrong-item": return `Wrong item — this is ${d.product}.`;
     case "ambiguous": return `This code matches ${d.products.join(" and ")} — check the pack by eye.`;
     case "unknown-barcode": return "Barcode not recognised — check the pack by eye.";
+    case "typed-not-scanned": return TYPED_NOT_SCANNED_MESSAGE;
     case "no-match": return "No exact match on this order.";
   }
 }

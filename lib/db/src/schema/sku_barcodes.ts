@@ -83,7 +83,7 @@ export const packingScanRejectionsTable = pgTable("packing_scan_rejections", {
   orderId: text("order_id"),
   orderName: text("order_name"),
   code: text("code").notNull(),
-  /** 'wrong-item' | 'ambiguous' | 'unknown-barcode' | 'no-match' | 'already-picked' */
+  /** 'wrong-item' | 'ambiguous' | 'unknown-barcode' | 'typed-not-scanned' | 'no-match' | 'already-picked' */
   kind: text("kind").notNull(),
   message: text("message"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

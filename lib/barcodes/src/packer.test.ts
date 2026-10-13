@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canTickByHand, decideScan, linesNeedingBarcode, needsBarcodeMessage, planPackerBarcode,
+  TYPED_NOT_SCANNED_MESSAGE, canTickByHand, decideScan, linesNeedingBarcode, needsBarcodeMessage, planPackerBarcode, scanMessage,
   type BarcodeHolder, type ScanLine,
 } from "./index";
 
@@ -38,18 +38,40 @@ describe("server completion gate — lines with no barcode", () => {
   });
 });
 
-describe("typed SKU/title can't tick a no-barcode line with the setting off", () => {
-  const line = (key: string, barcode: string | null, sku: string): ScanLine =>
-    ({ key, barcode, identityKey: `id-${key}`, name: key, sku, title: key, remaining: 1 });
-  const lines = [line("Insert", null, "INS"), line("Godfather", "5065018206054", "GF")];
+// Regression (Graeme, 13 Oct 2026): typing a SKU or product name into the
+// packing scan box ticked lines that HAVE a barcode. Only a scanned barcode
+// may tick; the manual-tap setting governs tapping a row, never typing.
+describe("only a barcode ticks — typed SKU or name never does", () => {
+  const line = (key: string, barcode: string | null): ScanLine =>
+    ({ key, barcode, identityKey: `id-${key}`, name: key, remaining: 1 });
+  const lines = [line("Insert", null), line("Godfather", "5065018206054"), line("Margherita", "5065018206061")];
 
-  it("off: refused for the no-barcode line, still works for a barcoded one", () => {
-    expect(decideScan("INS", lines, {}, { manualTick: false })).toEqual({ kind: "no-match" });
-    expect(decideScan("GF", lines, {}, { manualTick: false })).toEqual({ kind: "tick", key: "Godfather" });
+  it("a typed SKU doesn't tick a line that has a barcode", () => {
+    expect(decideScan("GF", lines, {})).toEqual({ kind: "typed-not-scanned" });
+    expect(decideScan("4a", lines, {})).toEqual({ kind: "typed-not-scanned" });
   });
-  it("on: unchanged", () => {
-    expect(decideScan("INS", lines, {}, { manualTick: true })).toEqual({ kind: "tick", key: "Insert" });
-    expect(decideScan("INS", lines, {})).toEqual({ kind: "tick", key: "Insert" });
+  it("a typed product name doesn't tick it either (exact, any case)", () => {
+    expect(decideScan("Godfather", lines, {})).toEqual({ kind: "typed-not-scanned" });
+    expect(decideScan("godfather", lines, {})).toEqual({ kind: "typed-not-scanned" });
+  });
+  it("nor a line with no barcode", () => {
+    expect(decideScan("Insert", lines, {})).toEqual({ kind: "typed-not-scanned" });
+  });
+  it("the matching barcode ticks its line", () => {
+    expect(decideScan("5065018206054", lines, {})).toEqual({ kind: "tick", key: "Godfather" });
+    expect(decideScan(" 5065018206061 ", lines, {})).toEqual({ kind: "tick", key: "Margherita" });
+  });
+  it("manual setting on still doesn't make a typed SKU or name tick", () => {
+    // The setting only governs tapping a row. decideScan takes no such
+    // option; an old-style caller passing { manualTick: true } is ignored.
+    expect(canTickByHand(true)).toBe(true);
+    const legacy = decideScan as unknown as (i: string, l: ScanLine[], k: object, o: object) => unknown;
+    expect(legacy("GF", lines, {}, { manualTick: true })).toEqual({ kind: "typed-not-scanned" });
+    expect(legacy("Godfather", lines, {}, { manualTick: true })).toEqual({ kind: "typed-not-scanned" });
+  });
+  it("tells the packer to scan instead", () => {
+    expect(scanMessage({ kind: "typed-not-scanned" })).toBe(TYPED_NOT_SCANNED_MESSAGE);
+    expect(TYPED_NOT_SCANNED_MESSAGE).toBe("Scan the barcode on the pack — typing a name or SKU doesn't tick it off.");
   });
 });
 
