@@ -16,8 +16,10 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
+import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
+import { prepTargetOf } from "../shared/stock-check-alarm";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
@@ -741,6 +743,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
+      {/* Stock check records for today — top of every prep screen; flashes
+          red from 14:45 on a prep day until they're all in. */}
+      <StockCheckStatusPanel checkDate={checkDate} prepTarget={prepTargetOf(nextPlan, plan)} />
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
@@ -766,8 +771,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           a refetch of this station's data picks up the new completion on
           the next 5s poll (clearing the "deferred" badge from the tile). */}
       <DeferredPrepBanner onResolved={refetch} />
-
-      <StockCheckStatusPanel checkDate={checkDate} />
 
       {activeStockCheckModalIng && (() => {
         const ing = activeStockCheckModalIng;

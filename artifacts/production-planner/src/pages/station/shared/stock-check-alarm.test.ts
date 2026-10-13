@@ -5,6 +5,7 @@ import {
   deadlineLabel,
   isPrepDayToday,
   londonClock,
+  prepTargetOf,
   minutesLeftText,
   outstandingStockChecks,
   stockCheckAlarmHeadline,
@@ -73,6 +74,23 @@ describe("isPrepDayToday — prep-day gating", () => {
     expect(isPrepDayToday({ planDate: "2026-10-14", prepDate: "2026-10-13", status: "draft" }, today)).toBe(false);
     expect(isPrepDayToday({ planDate: "2026-10-14", prepDate: "2026-10-13", status: "complete" }, today)).toBe(false);
     expect(isPrepDayToday(null, today)).toBe(false);
+  });
+});
+
+describe("prepTargetOf", () => {
+  const url = { planDate: "2026-10-13", prepDate: "2026-10-12", status: "active" };
+  it("uses the resolved next prep plan when there is one", () => {
+    expect(prepTargetOf({ planDate: "2026-10-14", prepDate: "2026-10-13", status: "active" }, url))
+      .toEqual({ planDate: "2026-10-14", prepDate: "2026-10-13", status: "active" });
+  });
+  it("falls back to the URL plan (direct flow)", () => {
+    expect(prepTargetOf(null, url)).toEqual(url);
+    expect(prepTargetOf(null, { planDate: "2026-10-13" })).toEqual({ planDate: "2026-10-13", prepDate: null, status: null });
+    expect(prepTargetOf(null, null)).toBeNull();
+  });
+  it("'no future plan' (planId null) is never a prep day", () => {
+    const none = prepTargetOf({ planDate: null, prepDate: null, status: null }, url);
+    expect(isPrepDayToday(none, "2026-10-12")).toBe(false);
   });
 });
 

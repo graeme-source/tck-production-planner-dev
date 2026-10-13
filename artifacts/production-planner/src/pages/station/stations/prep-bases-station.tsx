@@ -17,7 +17,9 @@ import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked, StockCheckStatusPanel } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked } from "../shared/prep-helpers";
+import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
+import { prepTargetOf } from "../shared/stock-check-alarm";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
@@ -994,6 +996,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
 
   return (
     <div className="space-y-4">
+      {/* Stock check records for today — top of every prep screen; flashes
+          red from 14:45 on a prep day until they're all in. */}
+      <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} prepTarget={prepTargetOf(nextPlan, plan)} />
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
@@ -1019,7 +1024,6 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
         ingredientIds={(data?.ingredients ?? []).filter(i => !i.isSubRecipe).map(i => i.ingredientId)}
       />
 
-      <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
       {/* Progress bar — sauce tins plus base sub-recipes (one unit each) */}
       <div className="bg-card border border-border rounded-xl p-4">

@@ -112,6 +112,20 @@ export interface PrepTarget {
   status: string | null;
 }
 
+interface PlanDates {
+  planDate?: string | null;
+  prepDate?: string | null;
+  status?: string | null;
+}
+
+/** The plan a prep screen is working on: the resolved next prep plan when
+ *  there is one (/next-active?for=prep), else the URL plan (?direct=1). */
+export function prepTargetOf(nextPlan: PlanDates | null | undefined, urlPlan: PlanDates | null | undefined): PrepTarget | null {
+  const p = nextPlan ?? urlPlan;
+  if (!p) return null;
+  return { planDate: p.planDate ?? null, prepDate: p.prepDate ?? null, status: p.status ?? null };
+}
+
 /** True when the plan the prep screen is working on is live and its prep
  *  happens today — same date rule as /next-active?for=prep
  *  (COALESCE(prep_date, plan_date)). Drafts aren't live: prep is locked. */

@@ -13,7 +13,9 @@ import { format } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, StockCheckStatusPanel, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
+import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
+import { prepTargetOf } from "../shared/stock-check-alarm";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
@@ -254,9 +256,12 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   if (recipes.length === 0) {
     return (
-      <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
-        <p className="font-medium">No raw meat ingredients to prep</p>
-        <p className="text-sm mt-1">Set ingredient category to "raw_meat" in the ingredients library</p>
+      <div className="space-y-4">
+        <StockCheckStatusPanel checkDate={checkDate} prepTarget={prepTargetOf(nextPlan, plan)} />
+        <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
+          <p className="font-medium">No raw meat ingredients to prep</p>
+          <p className="text-sm mt-1">Set ingredient category to "raw_meat" in the ingredients library</p>
+        </div>
       </div>
     );
   }
@@ -289,6 +294,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
+      {/* Stock check records for today — top of every prep screen; flashes
+          red from 14:45 on a prep day until they're all in. */}
+      <StockCheckStatusPanel checkDate={checkDate} prepTarget={prepTargetOf(nextPlan, plan)} />
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
@@ -304,7 +312,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
         <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
       )}
 
-      <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} />
 
       {/* Summary bar */}
       <div className="bg-card border border-border rounded-xl p-4">
