@@ -23,7 +23,7 @@
  * lib/before-after-fade.ts.
  */
 import { useEffect, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { Pause } from "lucide-react";
+import { Loader2, Pause } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import {
@@ -168,6 +168,11 @@ export function BeforeAfterFade({
           </span>
         </div>
       ))}
+
+      {/* Big photos take a moment on kitchen Wi-Fi — show it's coming. */}
+      {!loaded[shown] && (
+        <Loader2 className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-8 h-8 animate-spin text-white/70 pointer-events-none" />
+      )}
 
       {paused && (
         <span
