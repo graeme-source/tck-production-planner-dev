@@ -14,7 +14,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Sparkles, Trophy } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  SCORE_EXPLAINER, SCORE_SMALL_PRINT, leanerStep, scoreDetail, scoreText, stepBarFill,
+  SCORE_EXPLAINER, SCORE_SMALL_PRINT, leanerStep, scoreDetail, scoreText,
   type LeanerStepKey,
 } from "@/lib/improvement-score";
 
@@ -40,13 +40,6 @@ const STEP_PILL: Record<LeanerStepKey, string> = {
   started: "bg-amber-50 text-amber-900 border-amber-200 dark:bg-amber-950/40 dark:text-amber-200 dark:border-amber-800",
   rolling: "bg-primary/10 text-foreground border-primary/30",
   legend: "bg-primary text-primary-foreground border-primary",
-};
-
-const STEP_BAR: Record<LeanerStepKey, string> = {
-  waiting: "bg-amber-400",
-  started: "bg-amber-400",
-  rolling: "bg-primary",
-  legend: "bg-primary",
 };
 
 export function LeanerBoard() {
@@ -81,61 +74,66 @@ export function LeanerBoard() {
           approved by anyone.
         </p>
       )}
-      {/* One list, most improvements at the top — not columns (Graeme,
-          2026-09-25). The server sends it already in order. */}
-      <div className="space-y-2.5">
-        {data.map(row => <LeanerCard key={row.userId ?? row.name} row={row} />)}
+      {/* A leaderboard table, one row each, most improvements at the top
+          (Graeme, 2026-10-13: "condense this back down into something more
+          of a table… score, percentage and number of improvements all on one
+          line… get rid of the progress bar"). The server sends it in order. */}
+      <div className="rounded-2xl border-2 border-border bg-card overflow-hidden">
+        <table className="w-full text-left">
+          <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
+            <tr>
+              <th className="px-3 py-2 w-10 text-center">#</th>
+              <th className="px-3 py-2">Name</th>
+              <th className="px-3 py-2 text-right">Improvements</th>
+              <th className="px-3 py-2 text-right">Score</th>
+              <th className="px-3 py-2 hidden md:table-cell">Next step</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.map((row, i) => <LeanerRow key={row.userId ?? row.name} row={row} rank={i + 1} />)}
+          </tbody>
+        </table>
       </div>
     </section>
   );
 }
 
-function LeanerCard({ row }: { row: LeanerBoardRow }) {
-  const step = leanerStep(row);
-  const fill = step ? stepBarFill(row.scorePct, step.nextPct) : 0;
-  return (
-    <div className="rounded-2xl border-2 border-border bg-card px-4 py-4 min-w-0">
-      <div className="flex items-start justify-between gap-4 min-w-0">
-        <div className="min-w-0 flex-1">
-          <p className="text-xl font-bold truncate">{row.name}</p>
-          <p className="text-sm text-muted-foreground">{row.count} all-time</p>
-        </div>
-        {/* The main figure: improvements in the last 30 days. */}
-        <div className="text-right flex-shrink-0">
-          <p className={cn("text-5xl font-extrabold tabular-nums leading-none", row.improvements30 > 0 ? "text-primary" : "text-muted-foreground")}>
-            {row.improvements30}
-          </p>
-          <p className="text-sm font-semibold text-muted-foreground mt-1">
-            {row.improvements30 === 1 ? "improvement" : "improvements"}
-          </p>
-        </div>
-      </div>
+const MEDAL = ["🥇", "🥈", "🥉"];
 
-      <div className="mt-3 rounded-xl bg-muted/40 px-3 py-2.5">
-        {/* No shifts to divide by = no % at all, just the count and why. */}
-        {row.scorePct != null && (
-          <div className="flex items-baseline justify-between gap-3">
-            <p className="text-base font-semibold">
-              Score <span className="text-2xl font-extrabold tabular-nums">{scoreText(row.scorePct)}</span>
-            </p>
-            {step?.nextPct != null && (
-              <p className="text-sm font-semibold text-muted-foreground">Next stop {step.nextPct}%</p>
-            )}
-          </div>
+function LeanerRow({ row, rank }: { row: LeanerBoardRow; rank: number }) {
+  const step = leanerStep(row);
+  return (
+    <tr className="border-t border-border align-middle">
+      <td className="px-3 py-2.5 text-center text-lg font-bold tabular-nums text-muted-foreground">
+        {rank <= 3 && row.improvements30 > 0 ? MEDAL[rank - 1] : rank}
+      </td>
+      <td className="px-3 py-2.5 min-w-0">
+        <p className="text-base font-bold truncate">{row.name}</p>
+        <p className="text-xs text-muted-foreground">{row.count} all-time</p>
+      </td>
+      {/* The main figure: improvements in the last 30 days. */}
+      <td className={cn("px-3 py-2.5 text-right text-2xl font-extrabold tabular-nums", row.improvements30 > 0 ? "text-primary" : "text-muted-foreground")}>
+        {row.improvements30}
+      </td>
+      {/* No shifts to divide by = no % at all, just why. */}
+      <td className="px-3 py-2.5 text-right" title={scoreDetail(row)}>
+        {row.scorePct != null ? (
+          <>
+            <p className="text-xl font-extrabold tabular-nums">{scoreText(row.scorePct)}</p>
+            <p className="text-xs text-muted-foreground tabular-nums">{row.shifts30 ?? 0} shifts</p>
+          </>
+        ) : (
+          <p className="text-xs text-muted-foreground">{scoreDetail(row)}</p>
         )}
+      </td>
+      <td className="px-3 py-2.5 hidden md:table-cell">
         {step && (
-          <div className="mt-1.5 h-2.5 rounded-full bg-secondary overflow-hidden" aria-hidden>
-            <div className={cn("h-full rounded-full", STEP_BAR[step.key])} style={{ width: `${fill}%` }} />
-          </div>
-        )}
-        <p className="text-sm text-muted-foreground mt-1.5">{scoreDetail(row)}</p>
-        {step && (
-          <p className={cn("mt-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm font-semibold", STEP_PILL[step.key])}>
-            {step.key === "legend" && <Sparkles className="w-4 h-4" />}
+          <span className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold", STEP_PILL[step.key])}>
+            {step.key === "legend" && <Sparkles className="w-3.5 h-3.5" />}
             {step.message}
-          </p>
+          </span>
         )}
-      </div>
-    </div>
+      </td>
+    </tr>
   );
 }
