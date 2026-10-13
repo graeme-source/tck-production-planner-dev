@@ -27,6 +27,7 @@
     "@workspace/messages": "workspace:*",
     "@workspace/product-labels": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
+    "@workspace/recurrence": "workspace:*",
     "@workspace/revenue-targets": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
     "@workspace/people-reviews": "workspace:*",

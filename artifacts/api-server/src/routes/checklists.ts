@@ -23,6 +23,7 @@ import {
 import { eq, and, or, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString, londonStartOfDay, londonEndOfDay } from "../lib/london-time";
+import { templateMatchesDay } from "../lib/checklist-schedule";
 import { LOCATION_DEFS } from "../lib/storage-location-defs";
 import { computeClosingFridgeActions, addCalendarDays } from "../lib/fridge-expiry";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
@@ -79,50 +80,8 @@ export function resolveChecklistStation(stationType: string): string {
   return SHARED_CHECKLIST_STATIONS[stationType] ?? stationType;
 }
 
-function getDayName(date: Date): string {
-  return ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"][date.getUTCDay()];
-}
-
-/** Monday 12:00Z of the week containing the given ISO date. */
-function mondayOfWeek(iso: string): Date {
-  const d = new Date(`${iso}T12:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - ((d.getUTCDay() + 6) % 7));
-  return d;
-}
-
-function templateMatchesDay(
-  template: { schedule: string; scheduleDays: string | null; scheduleAnchorDate?: string | null; createdAt?: Date | null },
-  planDate: string,
-): boolean {
-  if (template.schedule === "daily") return true;
-  const day = getDayName(new Date(`${planDate}T12:00:00Z`));
-  if (template.schedule === "weekly") {
-    // Weekly defaults to monday if no days specified
-    const days: string[] = template.scheduleDays ? JSON.parse(template.scheduleDays) : ["monday"];
-    return days.includes(day);
-  }
-  if (template.schedule === "specific_days") {
-    if (!template.scheduleDays) return false;
-    const days: string[] = JSON.parse(template.scheduleDays);
-    return days.includes(day);
-  }
-  if (template.schedule === "periodic") {
-    // Every 4 weeks (TCK runs 13 four-week periods a year): due on its
-    // scheduleDays in every week that's a whole multiple of 4 weeks from
-    // the anchor's week. The anchor picks which week of the period the
-    // task lands, so periodic tasks can be staggered; a template without
-    // an anchor cycles from its creation week.
-    const days: string[] = template.scheduleDays ? JSON.parse(template.scheduleDays) : ["monday"];
-    if (!days.includes(day)) return false;
-    const anchorIso = template.scheduleAnchorDate
-      ?? (template.createdAt ? template.createdAt.toISOString().slice(0, 10) : planDate);
-    const weeks = Math.round(
-      (mondayOfWeek(planDate).getTime() - mondayOfWeek(anchorIso).getTime()) / (7 * 86_400_000),
-    );
-    return ((weeks % 4) + 4) % 4 === 0;
-  }
-  return true;
-}
+// Which days a template is due: lib/checklist-schedule.ts (the shared
+// recurrence engine, lib/recurrence — one copy of the day rules).
 
 // ─── Template CRUD (admin-only) ──────────────────────────────────────
 

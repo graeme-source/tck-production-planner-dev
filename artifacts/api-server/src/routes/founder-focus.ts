@@ -12,6 +12,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lt, sql } from "drizzle-orm";
 import { z } from "zod";
+import { isDueOn, type RecurrenceRule, type Weekday } from "@workspace/recurrence";
 import { requireFounder } from "../middleware/founder-access";
 import { verifyCaldav, getDayEvents, resetCaldavCache, type CalendarEvent } from "../lib/caldav";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
@@ -781,21 +782,20 @@ function nextDateForWeekday(scheduleDay: number): string {
 }
 
 /** Does a recurring item fall on this date? (Pillar-blocked rule applies
- *  separately on the client.) */
-function recurringMatchesDate(item: { schedule: string; scheduleDay: number | null; anchorDate: string | null }, dateStr: string, weekday: number): boolean {
+ *  separately on the client.) The day rules are the shared engine's
+ *  (lib/recurrence); the anchor is always a date on scheduleDay, so its
+ *  week parity is the same as the old day-count parity. */
+function recurringMatchesDate(item: { schedule: string; scheduleDay: number | null; anchorDate: string | null }, dateStr: string, _weekday?: number): boolean {
+  return isDueOn(founderRecurringRule(item), dateStr);
+}
+
+function founderRecurringRule(item: { schedule: string; scheduleDay: number | null; anchorDate: string | null }): RecurrenceRule {
+  const days: Weekday[] = item.scheduleDay != null && item.scheduleDay >= 0 && item.scheduleDay <= 6 ? [item.scheduleDay as Weekday] : [];
   switch (item.schedule) {
-    case "weekdays":
-      return weekday >= 1 && weekday <= 5;
-    case "weekly":
-      return item.scheduleDay === weekday;
-    case "biweekly": {
-      if (item.scheduleDay !== weekday) return false;
-      if (!item.anchorDate) return true;
-      const diffDays = Math.round((Date.parse(`${dateStr}T12:00:00Z`) - Date.parse(`${item.anchorDate}T12:00:00Z`)) / 86_400_000);
-      return ((Math.floor(diffDays / 7) % 2) + 2) % 2 === 0;
-    }
-    default:
-      return true; // daily
+    case "weekdays": return { kind: "weekdays" };
+    case "weekly": return { kind: "weekly", days };
+    case "biweekly": return { kind: "weekly", days, interval: 2, anchor: item.anchorDate };
+    default: return { kind: "daily" };
   }
 }
 
