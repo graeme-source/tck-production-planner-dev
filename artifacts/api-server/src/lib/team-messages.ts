@@ -15,8 +15,8 @@ import type { Request } from "express";
 import {
   canSeeMessage, countsAsUnread, pendingAckTargets, pushRecipients, previewText,
   normaliseAudience, conversationKey, parseMentionIds, isManager, STATION_KEY_RE,
-  STATION_BANNER_HOURS, UNREAD_WINDOW_DAYS, stationTarget,
-  type Audience, type Viewer, type MessageFacts,
+  STATION_BANNER_HOURS, UNREAD_WINDOW_DAYS, stationTarget, bodyOrMediaPreview,
+  type Audience, type Viewer, type MessageFacts, type MediaKind,
 } from "@workspace/messages";
 import { intArrayLiteral } from "./int-array-literal";
 import { rosteredStationsForUser } from "./station-rota";
@@ -120,12 +120,24 @@ type FullRow = FactRow & {
   deleted_at: Date | null;
 };
 
+/** A photo or video on a message — metadata only; the bytes stream from
+ *  GET /api/messages/media/:id (routes/message-media.ts). */
+export interface ApiAttachment {
+  id: number;
+  kind: MediaKind;
+  mime: string;
+  sizeBytes: number;
+  durationSeconds: number | null;
+  width: number | null;
+  height: number | null;
+}
+
 export interface ApiMessage {
   id: number;
   conversationKey: string;
   audience: Audience;
   parentId: number | null;
-  parent: { id: number; senderName: string | null; body: string | null; deleted: boolean } | null;
+  parent: { id: number; senderName: string | null; body: string | null; deleted: boolean; mediaKinds: MediaKind[] } | null;
   senderUserId: number | null;
   senderName: string | null;
   senderAvatarUrl: string | null;
@@ -138,6 +150,8 @@ export interface ApiMessage {
   readers: Array<{ id: number; name: string }>;
   acks: Array<{ target: string; byName: string | null; at: string }>;
   myPendingAcks: string[];
+  /** Photos and videos, in the order they were picked ([] when deleted). */
+  attachments: ApiAttachment[];
 }
 
 const iso = (d: Date | string | null) => (d == null ? null : new Date(d).toISOString());
@@ -149,7 +163,8 @@ async function hydrate(rows: FullRow[], v: TeamViewer): Promise<ApiMessage[]> {
   if (visible.length === 0) return [];
   const ids = intArrayLiteral(visible.map(r => r.id));
 
-  const [reads, acks, parents] = await Promise.all([
+  const parentIds = visible.map(r => r.parent_id).filter((x): x is number => x != null);
+  const [reads, acks, parents, media] = await Promise.all([
     db.execute<{ message_id: number; user_id: number; name: string }>(sql`
       SELECT r.message_id, r.user_id, u.name FROM team_message_reads r JOIN app_users u ON u.id = r.user_id
       WHERE r.message_id = ANY(${ids}::int[]) ORDER BY r.read_at
@@ -162,10 +177,29 @@ async function hydrate(rows: FullRow[], v: TeamViewer): Promise<ApiMessage[]> {
     db.execute<FactRow & { sender_name: string | null; body: string; deleted_at: Date | null }>(sql`
       SELECT ${FACT_COLUMNS}, m.sender_name, m.body, m.deleted_at
       FROM team_messages m JOIN team_message_conversations c ON c.id = m.conversation_id
-      WHERE m.id = ANY(${intArrayLiteral(visible.map(r => r.parent_id).filter((x): x is number => x != null))}::int[])
+      WHERE m.id = ANY(${intArrayLiteral(parentIds)}::int[])
         AND ${visibleWhere(v)}
     `),
+    // Photos/videos on these messages AND on their quoted parents (a reply
+    // to a photo quotes "📷 Photo"). Metadata only — never the bytes.
+    db.execute<{ id: number; message_id: number; kind: MediaKind; mime: string; size_bytes: number; duration_seconds: number | null; width: number | null; height: number | null }>(sql`
+      SELECT id, message_id, kind, mime, size_bytes, duration_seconds, width, height
+      FROM team_message_attachments
+      WHERE message_id = ANY(${intArrayLiteral([...visible.map(r => Number(r.id)), ...parentIds])}::int[])
+      ORDER BY message_id, position, id
+    `),
   ]);
+  const mediaFor = (messageId: number): ApiAttachment[] => media.rows
+    .filter(a => Number(a.message_id) === messageId)
+    .map(a => ({
+      id: Number(a.id),
+      kind: a.kind,
+      mime: a.mime,
+      sizeBytes: Number(a.size_bytes),
+      durationSeconds: a.duration_seconds == null ? null : Number(a.duration_seconds),
+      width: a.width == null ? null : Number(a.width),
+      height: a.height == null ? null : Number(a.height),
+    }));
   const parentById = new Map(parents.rows.filter(p => canSeeMessage(factsOf(p), v)).map(p => [Number(p.id), p]));
 
   return visible.map(r => {
@@ -179,7 +213,10 @@ async function hydrate(rows: FullRow[], v: TeamViewer): Promise<ApiMessage[]> {
       conversationKey: r.key,
       audience: facts.audience,
       parentId: r.parent_id == null ? null : Number(r.parent_id),
-      parent: p ? { id: Number(p.id), senderName: p.sender_name, body: p.deleted_at ? null : p.body, deleted: p.deleted_at != null } : null,
+      parent: p ? {
+        id: Number(p.id), senderName: p.sender_name, body: p.deleted_at ? null : p.body, deleted: p.deleted_at != null,
+        mediaKinds: p.deleted_at ? [] : mediaFor(Number(p.id)).map(a => a.kind),
+      } : null,
       senderUserId: facts.senderUserId,
       senderName: r.sender_name,
       senderAvatarUrl: r.sender_avatar_url,
@@ -194,6 +231,7 @@ async function hydrate(rows: FullRow[], v: TeamViewer): Promise<ApiMessage[]> {
         .map(x => ({ id: Number(x.user_id), name: x.name })),
       acks: myAcks.map(a => ({ target: a.target, byName: a.acked_by_name, at: iso(a.acked_at)! })),
       myPendingAcks: pendingAckTargets({ ...facts, requiresAck: Boolean(r.requires_ack), deleted, ackedTargets: myAcks.map(a => a.target) }, v),
+      attachments: deleted ? [] : mediaFor(id),
     };
   });
 }
@@ -266,10 +304,11 @@ export async function unreadSummary(v: TeamViewer) {
 }
 
 export async function conversationList(v: TeamViewer) {
-  const latest = await db.execute<FullRow>(sql`
+  const latest = await db.execute<FullRow & { media_kinds: MediaKind[] | null }>(sql`
     SELECT DISTINCT ON (m.conversation_id)
       ${FACT_COLUMNS}, m.parent_id, m.sender_name, NULL::text AS sender_avatar_url, m.body,
-      m.requires_ack, m.created_at, m.edited_at, m.deleted_at
+      m.requires_ack, m.created_at, m.edited_at, m.deleted_at,
+      (SELECT array_agg(a.kind ORDER BY a.position, a.id) FROM team_message_attachments a WHERE a.message_id = m.id) AS media_kinds
     FROM team_messages m JOIN team_message_conversations c ON c.id = m.conversation_id
     WHERE ${visibleWhere(v)}
     ORDER BY m.conversation_id, m.id DESC
@@ -287,6 +326,8 @@ export async function conversationList(v: TeamViewer) {
         body: r.deleted_at ? null : r.body,
         deleted: r.deleted_at != null,
         createdAt: iso(r.created_at)!,
+        // "📷 Photo" in the list when there's no caption.
+        mediaKinds: r.deleted_at ? [] : (r.media_kinds ?? []),
       },
       unread: recent.filter(x => x.key === r.key && x.unread).length,
       pendingAck: recent.some(x => x.key === r.key && x.pendingAck),
@@ -383,7 +424,7 @@ export async function resetMentions(messageId: number, body: string): Promise<nu
  *  anyone mentioned (lib/messages pushRecipients). Only devices whose owner
  *  turned push on get it (push_subscriptions — the existing opt-in). Never
  *  throws: a push hiccup must not fail the send. */
-export async function notifyByPush(v: TeamViewer, audience: Audience, mentionIds: number[], key: string, body: string, onlyMentions = false): Promise<void> {
+export async function notifyByPush(v: TeamViewer, audience: Audience, mentionIds: number[], key: string, body: string, onlyMentions = false, mediaKinds: MediaKind[] = []): Promise<void> {
   try {
     const wanted = onlyMentions ? mentionIds.filter(id => id !== v.userId) : pushRecipients(audience, mentionIds, v.userId);
     const active = await activeUserIds(wanted);
@@ -391,7 +432,8 @@ export async function notifyByPush(v: TeamViewer, audience: Audience, mentionIds
     if (recipients.length === 0) return;
     const names = await namesFor(parseMentionIds(body));
     const { sendPushToUsers } = await import("../services/push");
-    const text = previewText(body, id => names[id], 140);
+    // No caption → "📷 Photo" / "🎥 Video", as WhatsApp does.
+    const text = bodyOrMediaPreview(previewText(body, id => names[id], 140), mediaKinds);
     const mentioned = new Set(mentionIds);
     // Mentioned people get "mentioned you"; the rest a plain message.
     const groups: Array<[number[], string]> = [
@@ -431,7 +473,7 @@ export async function ackTargets(v: TeamViewer, messageId: number, targets: stri
 export async function notifySenderOfAck(v: TeamViewer, row: { sender_user_id: number | null; body: string; requires_ack: boolean }, closed: string[]): Promise<void> {
   if (!row.requires_ack || !row.sender_user_id || row.sender_user_id === v.userId || closed.length === 0) return;
   const names = await namesFor(parseMentionIds(row.body));
-  const preview = previewText(row.body, id => names[id], 60);
+  const preview = previewText(row.body, id => names[id], 60) || "a photo or video";
   const where = closed.map(t => (t.startsWith("station:") ? t.slice(8).replace(/_/g, " ") : "you")).filter(w => w !== "you");
   const message = where.length
     ? `${v.name ?? "Someone"} confirmed your message to ${where.join(", ")}: "${preview}"`
@@ -444,6 +486,62 @@ export async function notifySenderOfAck(v: TeamViewer, row: { sender_user_id: nu
   } catch (err) {
     // A missed bell must never fail the confirmation itself.
     console.warn("[team-messages] ack notification failed:", err);
+  }
+}
+
+// ── Photos and videos ───────────────────────────────────────────────────────
+
+/** The facts the access rule (canFetchMessageMedia) needs about one
+ *  attachment, or null when there's no such file. The message's facts come
+ *  WITHOUT the viewer filter here — the pure rule decides, so the test of
+ *  that rule is the test of what the server serves. */
+export async function mediaAccessFacts(attId: number) {
+  const r = await db.execute<FactRow & {
+    att_id: number; uploaded_by: number | null; message_id: number | null; kind: MediaKind; mime: string;
+    size_bytes: number; file_name: string | null; deleted_at: Date | null;
+  }>(sql`
+    SELECT a.id AS att_id, a.uploaded_by, a.message_id, a.kind, a.mime, a.size_bytes, a.file_name,
+           ${FACT_COLUMNS}, m.deleted_at
+    FROM team_message_attachments a
+    LEFT JOIN team_messages m ON m.id = a.message_id
+    LEFT JOIN team_message_conversations c ON c.id = m.conversation_id
+    WHERE a.id = ${attId}
+  `);
+  const row = r.rows[0];
+  if (!row) return null;
+  const sent = row.message_id != null && row.id != null;
+  return {
+    file: { id: Number(row.att_id), kind: row.kind, mime: row.mime, sizeBytes: Number(row.size_bytes), fileName: row.file_name },
+    access: {
+      uploadedBy: row.uploaded_by == null ? null : Number(row.uploaded_by),
+      messageId: row.message_id == null ? null : Number(row.message_id),
+      message: sent ? { ...factsOf(row), deleted: row.deleted_at != null } : null,
+    },
+  };
+}
+
+/** Uploads named in a send, for attachProblem to check. */
+export async function uploadsByIds(ids: number[]) {
+  if (ids.length === 0) return [];
+  const r = await db.execute<{ id: number; uploaded_by: number | null; message_id: number | null; kind: MediaKind }>(sql`
+    SELECT id, uploaded_by, message_id, kind FROM team_message_attachments WHERE id = ANY(${intArrayLiteral(ids)}::int[])
+  `);
+  return r.rows.map(x => ({
+    id: Number(x.id),
+    uploadedBy: x.uploaded_by == null ? null : Number(x.uploaded_by),
+    messageId: x.message_id == null ? null : Number(x.message_id),
+    kind: x.kind,
+  }));
+}
+
+/** Put the sender's checked uploads on the message they just sent, in the
+ *  order they were picked. */
+export async function claimUploads(v: TeamViewer, messageId: number, ids: number[]): Promise<void> {
+  for (const [position, id] of ids.entries()) {
+    await db.execute(sql`
+      UPDATE team_message_attachments SET message_id = ${messageId}, position = ${position}
+      WHERE id = ${id} AND uploaded_by = ${v.userId} AND message_id IS NULL
+    `);
   }
 }
 
