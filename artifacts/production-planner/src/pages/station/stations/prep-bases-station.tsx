@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { prepTinTileLabel, recipeNameWithTinSize } from "../shared/prep-tin-labels";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { toGrams, formatPrepWeight, packsToOpen } from "@workspace/units";
 import {
@@ -921,13 +922,14 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     const map = new Map<number, {
       recipeId: number;
       recipeName: string;
+      tinSize: string | null;
       batchesTarget: number;
       items: Array<{ ing: MainPrepIngredient; qtyForRecipe: number }>;
     }>();
     for (const ing of ingredients) {
       for (const r of ing.recipes) {
         if (!map.has(r.recipeId)) {
-          map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, batchesTarget: r.batchesTarget, items: [] });
+          map.set(r.recipeId, { recipeId: r.recipeId, recipeName: r.recipeName, tinSize: r.tinSize ?? null, batchesTarget: r.batchesTarget, items: [] });
         }
         map.get(r.recipeId)!.items.push({ ing, qtyForRecipe: r.qtyForRecipe });
       }
@@ -1119,7 +1121,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                 <div key={group.recipeId} className={cn(gi > 0 && "border-t border-border")}>
                   <div className="px-4 py-2 bg-yellow-50/60 dark:bg-yellow-950/20 flex items-center justify-between">
                     <p className="text-sm font-bold uppercase tracking-wider text-yellow-800 dark:text-yellow-300 truncate">
-                      {group.recipeName}
+                      {recipeNameWithTinSize(group.recipeName, group.tinSize)}
                     </p>
                     <span className="text-sm text-yellow-600 dark:text-yellow-400 ml-2 whitespace-nowrap">
                       {formatBatches(group.batchesTarget)} batch{group.batchesTarget !== 1 ? "es" : ""}
@@ -1466,7 +1468,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                                 ) : (
                                   <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                 )}
-                                <span className="text-base font-bold">Tin {tn}{recipe.tinSize ? ` (${recipe.tinSize})` : ""}</span>
+                                <span className="text-base font-bold">{prepTinTileLabel(tn)}</span>
                               </div>
                               <span className={cn("text-xl font-bold tabular-nums", done ? "text-yellow-700 dark:text-yellow-300" : "text-foreground")}>
                                 {fmtPrepQty(recipe.qtyPerTin, ing.unit)}
