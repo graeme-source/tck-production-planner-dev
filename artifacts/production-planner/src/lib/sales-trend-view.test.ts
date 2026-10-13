@@ -6,6 +6,7 @@ import {
   granularityLabel,
   headlineNote,
   partialBucketNote,
+  splitPercents,
   unavailableReason,
   type TrendBucket,
   type TrendFigures,
@@ -14,6 +15,7 @@ import {
 
 const zero: TrendFigures = {
   revenue: 0, orders: 0, paidOrders: 0, aov: null, newCustomerRevenue: 0, newCustomerOrders: 0,
+  newCustomerPaidOrders: 0, returningOrders: 0, newCustomerSharePercent: null, newCustomerRevenueSharePercent: null,
   recurringSubOrders: 0, newSubOrders: 0, subscriptionRevenue: 0, subscriptionOrders: 0,
   adSpend: null, spendDaysRecorded: 0, spendDays: 0, roasPercent: null,
 };
@@ -139,5 +141,28 @@ describe("formatting", () => {
     expect(formatAxis("money", 2000)).toBe("£2k");
     expect(formatAxis("money", 350)).toBe("£350");
     expect(formatAxis("count", 2.5)).toBe("");
+  });
+});
+
+describe("new vs returning split", () => {
+  it("two whole percentages that always add to 100", () => {
+    expect(splitPercents(25)).toEqual({ new: 25, returning: 75 });
+    expect(splitPercents(37.06)).toEqual({ new: 37, returning: 63 });
+    expect(splitPercents(62.5)).toEqual({ new: 63, returning: 37 });
+    expect(splitPercents(0)).toEqual({ new: 0, returning: 100 });
+    expect(splitPercents(100)).toEqual({ new: 100, returning: 0 });
+  });
+  it("nothing to split is null, never 0% / 100%", () => {
+    expect(splitPercents(null)).toBeNull();
+    expect(splitPercents(undefined)).toBeNull();
+  });
+  it("the share graph leaves a gap for a bucket with no paid orders and spells out the counts", () => {
+    const s = series(
+      [bucket(9, { newCustomerSharePercent: 50 }), bucket(10, { newCustomerSharePercent: null }), bucket(11, { newCustomerSharePercent: 0 })],
+      { newCustomerPaidOrders: 312, returningOrders: 936, paidOrders: 1248, newCustomerSharePercent: 25 },
+    );
+    expect(chartPoints(s, "newCustomerShare").map(p => p.value)).toEqual([50, null, 0]);
+    expect(headlineNote(s, "newCustomerShare")).toBe("312 new · 936 returning (75%) of 1,248 paid orders — the dashed line");
+    expect(headlineNote(series([]), "newCustomerShare")).toBe("No paid orders in this period");
   });
 });

@@ -21,6 +21,12 @@ export interface TrendFigures {
   aov: number | null;
   newCustomerRevenue: number;
   newCustomerOrders: number;
+  /** New vs returning, out of PAID orders (server: newCustomerSplit). */
+  newCustomerPaidOrders: number;
+  returningOrders: number;
+  /** 0–100 unrounded; null when there are no paid orders / no sales. */
+  newCustomerSharePercent: number | null;
+  newCustomerRevenueSharePercent: number | null;
   recurringSubOrders: number;
   newSubOrders: number;
   subscriptionRevenue: number;
@@ -62,6 +68,7 @@ export type TrendMetricId =
   | "aov"
   | "newCustomerOrders"
   | "newCustomerRevenue"
+  | "newCustomerShare"
   | "roas"
   | "adSpend"
   | "recurringSubOrders"
@@ -94,6 +101,7 @@ export const TREND_METRICS: Record<TrendMetricId, TrendMetric> = {
   aov: { id: "aov", label: "Average order value", format: "money", kind: "ratio", daily: false, perBasket: true, value: f => f.aov },
   newCustomerOrders: { id: "newCustomerOrders", label: "New customers", format: "count", kind: "total", daily: false, value: f => f.newCustomerOrders },
   newCustomerRevenue: { id: "newCustomerRevenue", label: "New customer revenue", format: "money", kind: "total", daily: false, value: f => f.newCustomerRevenue },
+  newCustomerShare: { id: "newCustomerShare", label: "New customers, % of orders", format: "percent", kind: "ratio", daily: false, value: f => f.newCustomerSharePercent },
   roas: { id: "roas", label: "New customer ROAS", format: "percent", kind: "ratio", daily: true, value: f => f.roasPercent },
   adSpend: { id: "adSpend", label: "Ad spend", format: "money", kind: "total", daily: true, value: f => f.adSpend },
   recurringSubOrders: { id: "recurringSubOrders", label: "Recurring subscriptions", format: "count", kind: "total", daily: false, value: f => f.recurringSubOrders },
@@ -257,6 +265,12 @@ export function headlineNote(series: TrendSeries, metric: TrendMetricId): string
         : `All ${t.spendDays} days recorded`;
     case "subscriptionRevenue":
       return `${t.subscriptionOrders.toLocaleString("en-GB")} subscription orders, recurring and new combined`;
+    case "newCustomerShare": {
+      const split = splitPercents(t.newCustomerSharePercent);
+      return split
+        ? `${t.newCustomerPaidOrders.toLocaleString("en-GB")} new · ${t.returningOrders.toLocaleString("en-GB")} returning (${split.returning}%) of ${t.paidOrders.toLocaleString("en-GB")} paid orders${dashed}`
+        : "No paid orders in this period";
+    }
     case "newCustomerRevenue":
       return `${t.newCustomerOrders.toLocaleString("en-GB")} new-customer orders`;
     default:
@@ -270,4 +284,15 @@ export function unavailableReason(series: TrendSeries, metric: TrendMetricId): s
     return "Ad spend is recorded per day, so this can't be split by the hour. Pick Last 7 days or longer to see it over time.";
   }
   return null;
+}
+
+/**
+ * A new-customer share as two whole percentages that always add up to 100
+ * ("25% new · 75% returning" — never 25% and 74%). null when there is no
+ * share to split (no paid orders, or no sales for the revenue split).
+ */
+export function splitPercents(newSharePercent: number | null | undefined): { new: number; returning: number } | null {
+  if (newSharePercent == null || !Number.isFinite(newSharePercent)) return null;
+  const n = Math.min(100, Math.max(0, Math.round(newSharePercent)));
+  return { new: n, returning: 100 - n };
 }

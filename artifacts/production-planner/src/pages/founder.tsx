@@ -48,6 +48,7 @@ import type { TrendMetricId } from "@/lib/sales-trend-view";
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
 import { AdEfficiencyRow } from "@/components/ad-efficiency/ad-efficiency-row";
+import { NewVsReturningCard } from "@/components/new-vs-returning-card";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -1459,6 +1460,15 @@ function FounderDashboard() {
                 trend={periodToggle("aov")}
               />
               {periodPanel(["aov"])}
+              {/* New vs returning, full width under the two totals (Graeme, 2026-10-13). */}
+              <NewVsReturningCard
+                from={from}
+                to={to}
+                periodLabel={period.label}
+                trendOpen={periodTrend === "newCustomerShare"}
+                onToggleTrend={periodToggle("newCustomerShare").onToggle}
+              />
+              {periodPanel(["newCustomerShare"])}
             </div>
             <div className="mb-6" />
 
