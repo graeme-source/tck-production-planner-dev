@@ -135,7 +135,7 @@ async function loadCompletions(pairs: Array<{ itemId: number; dueDate: string }>
     .where(and(inArray(teamListCompletionsTable.itemId, ids), inArray(teamListCompletionsTable.dueDate, dates)));
   return rows
     .filter(r => wanted.has(`${r.itemId}|${r.dueDate}`))
-    .map(r => ({ itemId: r.itemId, dueDate: r.dueDate, status: r.status, byName: r.byName, at: r.at }));
+    .map(r => ({ itemId: r.itemId, dueDate: r.dueDate, status: r.status, byName: r.byName, at: r.at, atDate: londonDateString(r.at) }));
 }
 
 async function listFor(req: Request, res: Response, id: number | null): Promise<TeamList | null> {

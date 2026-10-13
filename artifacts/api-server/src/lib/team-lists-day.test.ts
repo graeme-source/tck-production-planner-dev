@@ -57,8 +57,13 @@ describe("today's view", () => {
     const weekly = item({ id: 1, recurrence: { kind: "weekly", days: [1] }, carryOver: true });
     expect(buildDay([weekly], [], WED).entries).toEqual([{ itemId: 1, dueDate: MON, overdue: true, completion: null }]);
     expect(buildDay([weekly], [], WED).progress).toEqual({ total: 1, done: 0, overdue: 1 });
-    // Ticked late (on Wednesday) → it closes Monday's occurrence and leaves the view.
-    expect(buildDay([weekly], [done(1, MON)], WED).entries).toEqual([]);
+    // Ticked late on Wednesday → closes Monday's occurrence; it stays in
+    // Wednesday's view as done (so the count reads 1 of 1), then leaves.
+    const lateTick = { ...done(1, MON), atDate: WED };
+    expect(buildDay([weekly], [lateTick], WED).entries[0]).toMatchObject({ dueDate: MON, overdue: true, completion: { status: "done" } });
+    expect(buildDay([weekly], [lateTick], WED).progress).toEqual({ total: 1, done: 1, overdue: 0 });
+    expect(buildDay([weekly], [lateTick], THU).entries).toEqual([]);
+    expect(buildDay([weekly], [{ ...done(1, MON), atDate: MON }], WED).entries).toEqual([]);
   });
 
   it("an overdue item ticked today stays visible while it is still today's", () => {
@@ -142,6 +147,8 @@ describe("coming up", () => {
       item({ id: 1, recurrence: { kind: "weekly", days: [4] } }),
       item({ id: 2, recurrence: { kind: "weekly", days: [4] }, priority: 1 }),
       item({ id: 3, recurrence: { kind: "monthly", dayOfMonth: 1 } }),
+      item({ id: 4 }), // daily: left out
+      item({ id: 5, recurrence: { kind: "weekdays" } }),
     ];
     expect(comingUp(items, TUE)).toEqual([{ date: THU, itemIds: [2, 1] }]);
   });

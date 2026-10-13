@@ -16,7 +16,7 @@
  *               skipped; overdue = carried over and still open.
  */
 import {
-  addDays, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, type RecurrenceRule,
+  addDays, isDailyRhythm, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, type RecurrenceRule,
 } from "@workspace/recurrence";
 
 export interface ListAccessUser { id: number; role: string }
@@ -50,6 +50,9 @@ export interface DayCompletion {
   status: string;
   byName: string | null;
   at: string | Date;
+  /** London date the tick was made on. A carried-over task closed TODAY
+   *  stays in today's view (as done), so the count reads "3 of 3". */
+  atDate?: string;
 }
 
 export interface DayEntry {
@@ -67,14 +70,17 @@ function ruleOf(item: DayItem): RecurrenceRule | null {
 }
 
 /** Which occurrence (if any) belongs in today's view for this item. */
-export function occurrenceForToday(item: DayItem, today: string, isClosed: (dueDate: string) => boolean): { dueDate: string; overdue: boolean } | null {
+export function occurrenceForToday(item: DayItem, today: string, closedOn: (dueDate: string) => string | null | undefined): { dueDate: string; overdue: boolean } | null {
   if (!item.active) return null;
   const rule = ruleOf(item);
   if (!rule) return null;
   const occ = lastOccurrenceOnOrBefore(rule, today, item.startDate);
   if (!occ) return null;
   if (occ === today) return { dueDate: occ, overdue: false };
-  if (item.carryOver && !isClosed(occ)) return { dueDate: occ, overdue: true };
+  if (!item.carryOver) return null;
+  const closed = closedOn(occ);
+  if (closed === undefined || closed === today) return { dueDate: occ, overdue: true };
+  return null;
   return null;
 }
 
@@ -109,7 +115,11 @@ export function buildDay(items: DayItem[], completions: DayCompletion[], today: 
   for (const c of completions) byKey.set(`${c.itemId}|${c.dueDate}`, c);
   const entries: DayEntry[] = [];
   for (const item of [...items].sort(compareItems)) {
-    const occ = occurrenceForToday(item, today, d => byKey.has(`${item.id}|${d}`));
+    // undefined = still open; otherwise the London day it was closed (null if unknown).
+    const occ = occurrenceForToday(item, today, d => {
+      const c = byKey.get(`${item.id}|${d}`);
+      return c ? (c.atDate ?? null) : undefined;
+    });
     if (!occ) continue;
     const c = byKey.get(`${item.id}|${occ.dueDate}`);
     entries.push({
@@ -130,9 +140,11 @@ export function buildDay(items: DayItem[], completions: DayCompletion[], today: 
 }
 
 /** The next `days` days after today, with the items due on each (in list
- *  order) — the collapsed "Coming up" section. Days with nothing are left out. */
+ *  order) — the collapsed "Coming up" section. Every-day and weekday tasks
+ *  are left out (they would fill every day and hide the weekly ones), and so
+ *  are days with nothing. */
 export function comingUp(items: DayItem[], today: string, days = 7): Array<{ date: string; itemIds: number[] }> {
-  const sorted = [...items].filter(i => i.active).sort(compareItems);
+  const sorted = [...items].filter(i => i.active && !(ruleOf(i) && isDailyRhythm(ruleOf(i)!))).sort(compareItems);
   const out: Array<{ date: string; itemIds: number[] }> = [];
   for (let i = 1; i <= days; i++) {
     const date = addDays(today, i);
