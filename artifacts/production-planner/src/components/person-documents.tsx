@@ -28,6 +28,7 @@ import { useAutosave } from "@/hooks/use-autosave";
 import { peopleFetch, peopleRetry } from "@/hooks/use-people-gate";
 import { SaveChip } from "@/components/save-chip";
 import { PeopleModal } from "@/components/people-modal";
+import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-bar";
 import { InlineDocument } from "@/components/inline-document";
 import { fmtBytes } from "@/lib/contract-history";
 import { fmtDay } from "@/lib/people-api";
@@ -385,11 +386,13 @@ export function AddDocumentModal({ userId, personName, canSetVisibility, onClose
           </p>
         )}
 
-        <button onClick={() => upload.mutate()} disabled={!ready}
-          className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-          {upload.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
-          {upload.isPending ? "Uploading…" : "File this document"}
-        </button>
+        {/* Pinned to the bottom of the pop-up, always in view (2026-10-13). */}
+        <PinnedFooter>
+          <button onClick={() => upload.mutate()} disabled={!ready} className={pinnedPrimaryClass} data-testid="footer-add-document">
+            {upload.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <FileUp className="w-5 h-5" />}
+            {upload.isPending ? "Uploading…" : file ? "File this document" : "Choose a file first"}
+          </button>
+        </PinnedFooter>
       </div>
     </PeopleModal>
   );

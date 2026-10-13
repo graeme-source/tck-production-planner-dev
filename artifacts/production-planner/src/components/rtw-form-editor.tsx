@@ -13,6 +13,7 @@ import { useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, CheckCircle2, ChevronLeft, FileText, Lock, LockOpen, Paperclip, PenLine, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { rtwFieldsLocked, rtwCanOfferAmend } from "@/lib/rtw-edit-rules";
@@ -347,10 +348,14 @@ export function FormEditor({ form, isRtwManager: isRtwManagerProp, onDone, onBac
       <FormAttachments formId={f.id} formStatus={f.status} isRtwManager={isRtwManager} />
 
       {f.status !== "complete" && (
-        <button onClick={sign} disabled={signing}
-          className="w-full h-14 rounded-xl bg-primary text-primary-foreground font-bold text-lg flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50">
-          {signing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PenLine className="w-5 h-5" />} Sign & complete together
-        </button>
+        // In the People pop-up this is pinned to the bottom, always in view
+        // (2026-10-13); on the Return-to-work page it stays here.
+        <PinnedFooter>
+          <button onClick={sign} disabled={signing} data-testid="footer-rtw-sign"
+            className="w-full h-14 rounded-xl bg-primary text-primary-foreground font-bold text-lg flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50">
+            {signing ? <Loader2 className="w-5 h-5 animate-spin" /> : <PenLine className="w-5 h-5" />} Sign & complete together
+          </button>
+        </PinnedFooter>
       )}
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">

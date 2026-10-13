@@ -29,6 +29,7 @@ import { toast } from "@/hooks/use-toast";
 import { FieldLabel } from "./review-fields";
 import { ClassTicks } from "./class-ticks";
 import { recordSend, type PersonRecordEntries } from "./reviews-api";
+import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-bar";
 
 type When = "booked" | "held" | "none";
 
@@ -151,13 +152,15 @@ export function BookReviewForm({ data, onCreated, onCancel, answersTrigger = nul
         </div>
       )}
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <button type="button" disabled={!classificationId || !date || busy} onClick={() => void submit()}
-          className="h-16 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-          <CalendarDays className="w-6 h-6" /> {status === "booked" ? "Schedule it" : "Save it"}
-        </button>
-        <button type="button" onClick={onCancel} className="h-16 rounded-2xl border-2 border-border text-xl font-bold">Cancel</button>
-      </div>
+      {/* Pinned to the bottom of the pop-up, always in view (2026-10-13). */}
+      <PinnedFooter>
+        <div className="grid gap-2 grid-cols-[minmax(0,2fr)_minmax(0,1fr)]" data-testid="footer-book-review">
+          <button type="button" disabled={!classificationId || !date || busy} onClick={() => void submit()} className={pinnedPrimaryClass}>
+            <CalendarDays className="w-6 h-6" /> {status === "booked" ? "Schedule it" : "Save it"}
+          </button>
+          <button type="button" onClick={onCancel} className="min-h-14 rounded-2xl border-2 border-border text-lg font-bold">Cancel</button>
+        </div>
+      </PinnedFooter>
       <p className="text-sm text-muted-foreground">
         {status === "booked" ? "A to-do goes on your own list for that day. " : ""}
         After the meeting, open it and tap "Add meeting notes (AI)" — paste your notes (from Wispr Flow or anywhere), check what it drafts, save.
