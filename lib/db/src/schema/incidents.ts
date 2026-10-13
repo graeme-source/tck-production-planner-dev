@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, boolean, integer } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, boolean, integer, customType } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 
 // Accident & incident diary for HACCP due diligence (Graeme, 2026-09-11:
@@ -35,3 +35,34 @@ export const incidentReportsTable = pgTable("incident_reports", {
 });
 
 export type IncidentReport = typeof incidentReportsTable.$inferSelect;
+
+// Photos / short videos on a report (migration 0188, Graeme 2026-10-13: a
+// foreign-object report needed its photo). HACCP evidence, so a row is
+// never hard-deleted: "remove" stamps deleted_at/by/reason and keeps the
+// bytes. added_after_signing is fixed at upload from the report's
+// signed_at; an upload never touches the signed report row itself.
+const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
+  dataType() {
+    return "bytea";
+  },
+});
+
+export const incidentAttachmentsTable = pgTable("incident_attachments", {
+  id: serial("id").primaryKey(),
+  incidentId: integer("incident_id").notNull().references(() => incidentReportsTable.id, { onDelete: "restrict" }),
+  kind: text("kind").notNull(), // 'image' | 'video'
+  mime: text("mime").notNull(),
+  data: bytea("data").notNull(),
+  fileName: text("file_name"),
+  sizeBytes: integer("size_bytes"),
+  uploadedByUserId: integer("uploaded_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  uploadedByName: text("uploaded_by_name"),
+  addedAfterSigning: boolean("added_after_signing").notNull().default(false),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+  deletedByUserId: integer("deleted_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  deletedByName: text("deleted_by_name"),
+  deleteReason: text("delete_reason"),
+});
+
+export type IncidentAttachment = typeof incidentAttachmentsTable.$inferSelect;
