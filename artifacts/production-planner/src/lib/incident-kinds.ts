@@ -66,6 +66,41 @@ export const INCIDENT_NOT_SURE_TITLE = "Not sure?";
 export const INCIDENT_NOT_SURE_RULE = "Was anyone hurt or made ill? Yes → Accident. No → Incident.";
 export const INCIDENT_NOT_SURE_NOTE = "A near miss counts as an incident — you can mark it as \"Near miss\" in the report's Type.";
 
+/**
+ * The diary's "New report" button (Graeme, 2026-10-13: it asks the same
+ * question before starting a report). The button only ever opens the
+ * chooser; a report is created when a card is picked, then opens inline.
+ */
+export type NewReportFlow =
+  | { step: "idle" }
+  | { step: "choosing" }
+  | { step: "creating"; kind: IncidentKind };
+
+export type NewReportEvent =
+  | { type: "newReport" }
+  | { type: "choose"; kind: IncidentKind }
+  | { type: "created" }
+  | { type: "failed" }
+  | { type: "cancel" };
+
+export const NEW_REPORT_IDLE: NewReportFlow = { step: "idle" };
+
+export function newReportFlow(state: NewReportFlow, event: NewReportEvent): NewReportFlow {
+  switch (event.type) {
+    case "newReport":
+      return state.step === "idle" ? { step: "choosing" } : state;
+    case "choose":
+      return state.step === "choosing" ? { step: "creating", kind: event.kind } : state;
+    case "created":
+      return NEW_REPORT_IDLE;
+    case "failed":
+      return state.step === "creating" ? { step: "choosing" } : state;
+    case "cancel":
+      // Can't back out mid-create — the report is already on its way.
+      return state.step === "creating" ? state : NEW_REPORT_IDLE;
+  }
+}
+
 /** The diary type a chooser card starts a new report as. */
 export function kindForChoice(choice: IncidentChoice): IncidentKind {
   const card = INCIDENT_CHOICES.find(c => c.choice === choice);

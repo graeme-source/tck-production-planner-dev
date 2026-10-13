@@ -18,7 +18,7 @@
  * signed version, every unlock, and what changed. Photos can always be
  * added. Server rules: api-server/src/lib/incident-lock-rules.ts.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useReducer, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
@@ -29,7 +29,10 @@ import {
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { IncidentAttachments } from "@/components/incident-attachments";
-import { INCIDENT_KIND_LABEL, INCIDENT_KIND_OPTIONS, type IncidentKind } from "@/lib/incident-kinds";
+import {
+  INCIDENT_KIND_LABEL, INCIDENT_KIND_OPTIONS, NEW_REPORT_IDLE, newReportFlow, type IncidentKind,
+} from "@/lib/incident-kinds";
+import { IncidentKindChooserModal } from "@/components/incident-kind-chooser";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -95,7 +98,7 @@ export function useIncidentReports(enabled = true) {
 }
 
 /** Start a report, auto-dated to now (optionally as a given type). */
-export function useCreateIncidentReport(onCreated: (row: IncidentReport) => void) {
+export function useCreateIncidentReport(onCreated: (row: IncidentReport) => void, onFailed?: () => void) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (kind?: IncidentKind) => {
@@ -111,7 +114,10 @@ export function useCreateIncidentReport(onCreated: (row: IncidentReport) => void
       void queryClient.invalidateQueries({ queryKey: INCIDENT_REPORTS_KEY });
       onCreated(row);
     },
-    onError: (e) => toast({ title: "Couldn't start a report", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
+    onError: (e) => {
+      onFailed?.();
+      toast({ title: "Couldn't start a report", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    },
   });
 }
 
@@ -130,10 +136,19 @@ export function IncidentDiaryTab() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: INCIDENT_REPORTS_KEY });
 
+  // "New report" asks "Is it an accident or an incident?" first (Graeme,
+  // 2026-10-13) — the same chooser as the quick action; the picked card
+  // starts the report and it opens inline below.
+  const [flow, dispatchFlow] = useReducer(newReportFlow, NEW_REPORT_IDLE);
   const createMutation = useCreateIncidentReport((row) => {
+    dispatchFlow({ type: "created" });
     setOpenId(row.id);
     toast({ title: "Report started", description: "Auto-dated to now — fill it in below, everything saves as you go." });
-  });
+  }, () => dispatchFlow({ type: "failed" }));
+  const choose = (kind: IncidentKind) => {
+    dispatchFlow({ type: "choose", kind });
+    createMutation.mutate(kind);
+  };
 
   return (
     <div className="space-y-4">
@@ -148,7 +163,7 @@ export function IncidentDiaryTab() {
           </p>
         </div>
         <button
-          onClick={() => createMutation.mutate(undefined)}
+          onClick={() => dispatchFlow({ type: "newReport" })}
           disabled={createMutation.isPending}
           className="px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 disabled:opacity-60 inline-flex items-center gap-2"
         >
@@ -156,6 +171,13 @@ export function IncidentDiaryTab() {
           New report
         </button>
       </div>
+      {flow.step !== "idle" && (
+        <IncidentKindChooserModal
+          onChoose={choose}
+          onClose={() => dispatchFlow({ type: "cancel" })}
+          busyKind={flow.step === "creating" ? flow.kind : null}
+        />
+      )}
 
       {isLoading ? (
         <div className="flex justify-center py-10"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
