@@ -33,7 +33,7 @@ import { PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import {
   CalendarDays, Camera, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
-  ExternalLink, Flag, Lightbulb, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
+  ExternalLink, Flag, Lightbulb, ListChecks, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
   Send, SlidersHorizontal, Trash2, X,
 } from "lucide-react";
 
@@ -323,6 +323,20 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
           {viewUserId === null ? "My To-dos" : "To-do list"}
         </h2>
         <div className="flex-1" />
+        {/* Team lists — the shared recurring lists (Production planner,
+            Scheduling manager…) live on their own page, not on anyone's
+            personal list; this is the way in from here for managers
+            (Graeme, 2026-10-13: "I'm on my to-dos… where do I find that?").
+            A plain link, like LinkButton: a full load closes this sheet. */}
+        {canManage && (
+          <a
+            href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/lists`}
+            className="h-14 px-4 rounded-2xl border-2 border-primary/40 bg-primary/10 text-primary font-bold inline-flex items-center gap-2 hover:bg-primary/15 transition-colors"
+          >
+            <ListChecks className="w-6 h-6" />
+            <span className="hidden sm:inline">Team lists</span>
+          </a>
+        )}
         <button
           onClick={onClose}
           aria-label="Close to-dos"
