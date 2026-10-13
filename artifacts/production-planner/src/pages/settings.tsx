@@ -16,11 +16,11 @@ import {
   Camera, User, CircleDot, ToggleRight, Boxes, UtensilsCrossed,
   AlertTriangle, Scale, ThermometerSnowflake, BookOpen, Megaphone, CalendarDays,
   Check, FileText, Bell, RefreshCw, Smartphone, Thermometer,
-  AlarmClock, Search, ShieldAlert, Image as ImageIcon,
+  Search, ShieldAlert, Image as ImageIcon,
 } from "lucide-react";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { DEFAULT_IDLE_TIMEOUTS, MIN_IDLE_MINUTES, MAX_IDLE_MINUTES } from "@/lib/idle-timeout";
-import { TIMED_REMINDERS_KEY, parseReminders, type TimedReminder } from "@/pages/station/shared/timed-reminders";
+import { TimedRemindersSettings } from "@/components/timed-reminders-settings";
 import {
   isPushSupported, isStandalone, isSubscribedOnThisDevice,
   enablePushOnThisDevice, disablePushOnThisDevice, sendTestPush,
@@ -953,7 +953,7 @@ export default function Settings() {
             <div className="space-y-8">
               {canSection("production") && <AdminDateOverrideSection />}
               {canSection("production") && <NonDispatchDatesSection />}
-              {canSection("production") && <TimedRemindersSection />}
+              {canSection("production") && <TimedRemindersSettings />}
               {canSection("production") && <StationIdleTimeoutSection />}
               {canSection("production") && <PrepDoughScheduleSection />}
               <div ref={dptRef}>
@@ -3571,181 +3571,6 @@ function StationIdleTimeoutSection() {
         </>
       )}
     </section>
-  );
-}
-
-function TimedRemindersSection() {
-  const [reminders, setReminders] = useState<TimedReminder[]>([]);
-  const [loaded, setLoaded] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [savedMsg, setSavedMsg] = useState<string | null>(null);
-  const [dirty, setDirty] = useState(false);
-
-  useEffect(() => {
-    fetch(`/api/app-settings/${TIMED_REMINDERS_KEY}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : null)
-      .then(j => { setReminders(parseReminders(j?.value)); setLoaded(true); })
-      .catch(() => setLoaded(true));
-  }, []);
-
-  const update = (id: string, patch: Partial<TimedReminder>) => {
-    setReminders(prev => prev.map(r => r.id === id ? { ...r, ...patch } : r));
-    setDirty(true);
-  };
-
-  const addReminder = () => {
-    setReminders(prev => [...prev, {
-      id: `reminder_${Date.now()}`,
-      title: "New reminder",
-      message: "",
-      stations: [],
-      startTime: "14:45",
-      endTime: "15:00",
-      enabled: false,
-    }]);
-    setDirty(true);
-  };
-
-  const removeReminder = (id: string) => {
-    setReminders(prev => prev.filter(r => r.id !== id));
-    setDirty(true);
-  };
-
-  const save = async () => {
-    setSaving(true);
-    try {
-      const res = await fetch(`/api/app-settings/${TIMED_REMINDERS_KEY}`, {
-        method: "PUT", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ value: JSON.stringify(reminders) }),
-      });
-      if (!res.ok) throw new Error("save failed");
-      setDirty(false);
-      setSavedMsg("Saved");
-      setTimeout(() => setSavedMsg(null), 2000);
-    } catch {
-      setSavedMsg("Error saving");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <AlarmClock className="w-4 h-4 text-primary" /> Timed reminders
-          </h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Daily warnings on station screens with a countdown to a deadline —
-            e.g. stock checks due by 3pm. Shown between the start and end time
-            (UK clock) on the chosen stations, only while a plan is live.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          {savedMsg && <span className="text-xs text-green-600 font-medium">{savedMsg}</span>}
-          <button
-            onClick={save}
-            disabled={saving || !dirty}
-            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-          >
-            {saving ? "Saving…" : "Save changes"}
-          </button>
-        </div>
-      </div>
-
-      {!loaded ? (
-        <div className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">Loading…</div>
-      ) : (
-        <div className="space-y-3">
-          {reminders.map(r => (
-            <div key={r.id} className="rounded-2xl border border-border bg-card p-5 space-y-3">
-              <div className="flex items-center gap-3">
-                <Switch checked={r.enabled} onCheckedChange={v => update(r.id, { enabled: v })} />
-                <input
-                  type="text"
-                  value={r.title}
-                  onChange={e => update(r.id, { title: e.target.value })}
-                  placeholder="Title shown in bold"
-                  className="flex-1 px-3 py-2 border border-border rounded-lg text-sm font-semibold bg-background"
-                />
-                <button
-                  onClick={() => removeReminder(r.id)}
-                  className="text-muted-foreground hover:text-destructive transition-colors p-1.5"
-                  title="Delete reminder"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-              <input
-                type="text"
-                value={r.message}
-                onChange={e => update(r.id, { message: e.target.value })}
-                placeholder="Message shown under the title"
-                className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-              <div className="flex flex-wrap items-center gap-4">
-                <label className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Show from</span>
-                  <input
-                    type="time"
-                    value={r.startTime}
-                    onChange={e => update(r.id, { startTime: e.target.value })}
-                    className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
-                  />
-                </label>
-                <label className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">Count down to</span>
-                  <input
-                    type="time"
-                    value={r.endTime}
-                    onChange={e => update(r.id, { endTime: e.target.value })}
-                    className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
-                  />
-                </label>
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={!!r.onlyIfStockChecksOutstanding}
-                    onChange={e => update(r.id, { onlyIfStockChecksOutstanding: e.target.checked })}
-                    className="w-4 h-4"
-                  />
-                  <span className="text-muted-foreground">Only if stock checks are still outstanding</span>
-                </label>
-              </div>
-              <div className="flex flex-wrap gap-1.5">
-                {STATIONS.map(s => {
-                  const on = r.stations.includes(s.key);
-                  return (
-                    <button
-                      key={s.key}
-                      onClick={() => update(r.id, {
-                        stations: on ? r.stations.filter(k => k !== s.key) : [...r.stations, s.key],
-                      })}
-                      className={cn(
-                        "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
-                        on
-                          ? "bg-primary text-primary-foreground border-primary"
-                          : "border-border text-muted-foreground hover:bg-secondary/60",
-                      )}
-                    >
-                      {s.label}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-          <button
-            onClick={addReminder}
-            className="w-full py-2.5 rounded-2xl border-2 border-dashed border-border text-sm font-medium text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors flex items-center justify-center gap-1.5"
-          >
-            <Plus className="w-4 h-4" /> Add reminder
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
