@@ -2986,6 +2986,10 @@ async function runStartupMigrations() {
               startTime: "14:45",
               endTime: "15:00",
               enabled: true,
+              // Packing/Wrapping chase the Factory Number count, never prep
+              // stock checks (Graeme, 13 Oct 2026). Existing databases were
+              // seeded before this flag and are updated by hand.
+              onlyIfFactoryCountOutstanding: true,
             },
           ]).replace(/'/g, "''"))}', NOW()
           WHERE NOT EXISTS (SELECT 1 FROM app_settings WHERE key = 'timed_station_reminders');
