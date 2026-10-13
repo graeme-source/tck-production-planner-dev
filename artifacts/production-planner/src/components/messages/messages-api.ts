@@ -8,17 +8,28 @@
  * station iPad shows that station's messages to whoever is signed in there.
  */
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Audience } from "@workspace/messages";
+import type { Audience, MediaKind } from "@workspace/messages";
 import { STATIONS } from "@/pages/station/shared/constants";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/** A photo or video on a message (metadata; bytes via mediaUrl). */
+export interface ApiAttachment {
+  id: number;
+  kind: MediaKind;
+  mime: string;
+  sizeBytes: number;
+  durationSeconds: number | null;
+  width: number | null;
+  height: number | null;
+}
 
 export interface ApiMessage {
   id: number;
   conversationKey: string;
   audience: Audience;
   parentId: number | null;
-  parent: { id: number; senderName: string | null; body: string | null; deleted: boolean } | null;
+  parent: { id: number; senderName: string | null; body: string | null; deleted: boolean; mediaKinds: MediaKind[] } | null;
   senderUserId: number | null;
   senderName: string | null;
   senderAvatarUrl: string | null;
@@ -31,12 +42,13 @@ export interface ApiMessage {
   readers: Array<{ id: number; name: string }>;
   acks: Array<{ target: string; byName: string | null; at: string }>;
   myPendingAcks: string[];
+  attachments: ApiAttachment[];
 }
 
 export interface ConversationSummary {
   key: string;
   audience: Audience;
-  lastMessage: { id: number; senderUserId: number | null; senderName: string | null; body: string | null; deleted: boolean; createdAt: string } | null;
+  lastMessage: { id: number; senderUserId: number | null; senderName: string | null; body: string | null; deleted: boolean; createdAt: string; mediaKinds: MediaKind[] } | null;
   unread: number;
   pendingAck: boolean;
 }
@@ -141,7 +153,7 @@ function useInvalidateMessages() {
   return () => qc.invalidateQueries({ queryKey: messagesKeys.all });
 }
 
-export interface SendArgs { conversationKey: string; body: string; parentId?: number; requiresAck?: boolean }
+export interface SendArgs { conversationKey: string; body: string; parentId?: number; requiresAck?: boolean; attachmentIds?: number[] }
 
 export function useSendMessage(at: string[]) {
   const invalidate = useInvalidateMessages();
@@ -207,4 +219,49 @@ export function useDeleteMessage() {
 export const OPEN_MESSAGES_EVENT = "tck:open-messages";
 export function openMessages(conversationKey?: string) {
   window.dispatchEvent(new CustomEvent(OPEN_MESSAGES_EVENT, { detail: { conversationKey } }));
+}
+
+// ── Photos and videos ───────────────────────────────────────────────────────
+
+/** Where a message photo/video streams from. `at` = this screen's stations,
+ *  exactly as for reading the chat (a station iPad sees its station's media). */
+export function mediaUrl(id: number, at: string[], download = false): string {
+  const qs = [atParam(at), download ? "download=1" : ""].filter(Boolean).join("&");
+  return `${BASE}/api/messages/media/${id}${qs ? `?${qs}` : ""}`;
+}
+
+export interface UploadMeta { durationSeconds?: number | null; width?: number | null; height?: number | null }
+
+/**
+ * Upload one photo or video, reporting progress (0–1). XMLHttpRequest, not
+ * fetch, because only XHR reports upload progress. Rejects with the
+ * server's own words ("Video too long — max 100 MB…") when it refuses.
+ */
+export function uploadMessageMedia(file: File, meta: UploadMeta, onProgress: (fraction: number) => void, signal?: AbortSignal): Promise<ApiAttachment> {
+  return new Promise((resolve, reject) => {
+    const form = new FormData();
+    if (meta.durationSeconds != null) form.append("durationSeconds", String(meta.durationSeconds));
+    if (meta.width) form.append("width", String(meta.width));
+    if (meta.height) form.append("height", String(meta.height));
+    form.append("file", file, file.name || (file.type.startsWith("video") ? "video.mov" : "photo.jpg"));
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/api/messages/media`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let body: unknown = null;
+      try { body = JSON.parse(xhr.responseText); } catch { /* not JSON — use the status below */ }
+      if (xhr.status >= 200 && xhr.status < 300 && body) { onProgress(1); resolve(body as ApiAttachment); return; }
+      reject(new Error((body as { error?: string } | null)?.error ?? `Upload failed (${xhr.status})`));
+    };
+    xhr.onerror = () => reject(new Error("The upload didn't reach the server — check the Wi-Fi and try again"));
+    xhr.onabort = () => reject(new DOMException("Upload cancelled", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
+    xhr.send(form);
+  });
+}
+
+/** Take an unsent upload back out (the X on a compose-box thumbnail). */
+export async function discardMessageMedia(id: number): Promise<void> {
+  await jsonOrThrow(await fetch(`${BASE}/api/messages/media/${id}`, { method: "DELETE", credentials: "include" }));
 }
