@@ -271,11 +271,11 @@ describe("pull / hourly check classification", () => {
 });
 
 describe("packing scan — safety", () => {
-  const line = (key: string, barcode: string | null, identityKey: string | null, name: string, remaining = 1, sku: string | null = null): ScanLine =>
-    ({ key, barcode, identityKey, name, sku, title: name, remaining });
+  const line = (key: string, barcode: string | null, identityKey: string | null, name: string, remaining = 1): ScanLine =>
+    ({ key, barcode, identityKey, name, remaining });
   const lines = [
-    line("v11", "5065018206054", "r1:pack", "Margherita", 2, "6"),
-    line("v21", null, "r2:pack", "Garlic Cheese", 1, "4a"),
+    line("v11", "5065018206054", "r1:pack", "Margherita", 2),
+    line("v21", null, "r2:pack", "Garlic Cheese", 1),
     line("v31", "5065018206061", "r3:pack", "Godfather", 0),
   ];
   const known: KnownCodes = { [gtinKey("5065018206344")]: { identityKey: "r9:pack", name: "The Don · 2-pack" } };
@@ -299,7 +299,7 @@ describe("packing scan — safety", () => {
   it("a fully picked line says so", () => {
     expect(decideScan("5065018206061", lines, known)).toMatchObject({ kind: "already-picked", key: "v31" });
   });
-  it("digits never fall back to SKU or title", () => {
+  it("digits that aren't a line's barcode never tick (no SKU fallback)", () => {
     expect(decideScan("6", lines, known)).toEqual({ kind: "unknown-barcode" });
     expect(decideScan("5065018206", lines, known)).toEqual({ kind: "unknown-barcode" });
   });
@@ -307,15 +307,11 @@ describe("packing scan — safety", () => {
     const d = decideScan("5065018206054", [...lines, line("v41", "5065018206054", "r4:pack", "Pepperoni")], known);
     expect(d).toEqual({ kind: "ambiguous", products: ["Margherita", "Pepperoni"] });
   });
-  it("typed text needs an EXACT SKU or title — no partial title match", () => {
-    expect(decideScan("4A", lines, known)).toEqual({ kind: "tick", key: "v21" });
-    expect(decideScan("garlic cheese", lines, known)).toEqual({ kind: "tick", key: "v21" });
-    expect(decideScan("marg", lines, known)).toEqual({ kind: "no-match" });
+  it("typed text (a SKU, a name, part of a name) never ticks", () => {
+    expect(decideScan("4A", lines, known)).toEqual({ kind: "typed-not-scanned" });
+    expect(decideScan("garlic cheese", lines, known)).toEqual({ kind: "typed-not-scanned" });
+    expect(decideScan("marg", lines, known)).toEqual({ kind: "typed-not-scanned" });
     expect(decideScan("   ", lines, known)).toEqual({ kind: "no-match" });
-  });
-  it("a typed SKU shared by two products is refused (SKUs are shelf labels)", () => {
-    const shelf = [line("a", null, "r1:pack", "Garlic Cheese", 1, "4a"), line("b", null, "r5:pack", "Big Nanny's", 1, "4a")];
-    expect(decideScan("4a", shelf, {})).toMatchObject({ kind: "ambiguous" });
   });
   it("scan queue: our table first; Shopify only for variants we hold no row for", () => {
     const plan = planScanBarcodes(["11", "21", "31"], new Map<string, string | null>([["11", "5065018206054"], ["21", null]]));
@@ -363,16 +359,16 @@ describe("Calzone Club Special — follows the current special", () => {
     expect(clubSpecialScan(null, null, null, known)).toMatchObject({ barcode: null, alsoAccepts: [] });
   });
   it("the scanner ticks the Club Special line with either special during a changeover, and refuses anything else", () => {
-    const club: ScanLine = { key: "cs", barcode: "5065018206399", identityKey: "r26:pack", name: "Calzone Club Special", sku: null, title: "Calzone Club Special", remaining: 1,
+    const club: ScanLine = { key: "cs", barcode: "5065018206399", identityKey: "r26:pack", name: "Calzone Club Special", remaining: 1,
       alsoAccepts: [{ code: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack" }] };
     expect(decideScan("5065018206399", [club], known)).toEqual({ kind: "tick", key: "cs" });
     expect(decideScan("5065018206467", [club], known)).toEqual({ kind: "tick", key: "cs" });
     expect(decideScan("5065018206146", [club], known)).toEqual({ kind: "wrong-item", product: "BBQ Pulled Pork · 8-pack bag" });
   });
   it("Club Special next to the incoming special's own 2-pack: same product, so no 'ambiguous'", () => {
-    const club: ScanLine = { key: "cs", barcode: "5065018206399", identityKey: "r26:pack", name: "Calzone Club Special", sku: null, title: null, remaining: 1,
+    const club: ScanLine = { key: "cs", barcode: "5065018206399", identityKey: "r26:pack", name: "Calzone Club Special", remaining: 1,
       alsoAccepts: [{ code: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack" }] };
-    const benji: ScanLine = { key: "b", barcode: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack", sku: null, title: null, remaining: 1 };
+    const benji: ScanLine = { key: "b", barcode: "5065018206467", identityKey: "r25:pack", name: "The Benji · 2-pack", remaining: 1 };
     expect(decideScan("5065018206467", [club, benji], known)).toEqual({ kind: "tick", key: "cs" });
   });
 });

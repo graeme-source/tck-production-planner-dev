@@ -8,12 +8,12 @@
  *    product, they can set the product's barcode themselves."
  *
  * So:
- *   - Ticking a line by hand (tapping the row, or typing its SKU/title) is
- *     allowed ONLY when Settings → "Allow manual tap to pick"
+ *   - Ticking a line by hand (tapping the row) is allowed ONLY when Settings → "Allow manual tap to pick"
  *     (app_settings fulfilment_manual_tick_enabled) is on. A line with no
  *     barcode used to be tappable even with the setting off — that hole is
  *     closed here and enforced again by the server when the order is
- *     completed (an old cached iPad can't get round it).
+ *     completed (an old cached iPad can't get round it). Typing a SKU or
+ *     name into the scan box never ticks anything, setting or not (scan.ts).
  *   - Instead the packer checks the pack by eye, scans the barcode printed
  *     on it, and confirms — which saves that barcode for the product, but
  *     only when the product has none. Changing a barcode stays manager-only

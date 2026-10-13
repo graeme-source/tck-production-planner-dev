@@ -140,7 +140,7 @@ const RejectionBody = z.object({
   orderId: z.union([z.string(), z.number()]).transform(String).nullable().optional(),
   orderName: z.string().max(60).nullable().optional(),
   code: z.string().min(1).max(200),
-  kind: z.enum(["wrong-item", "ambiguous", "unknown-barcode", "no-match", "already-picked"]),
+  kind: z.enum(["wrong-item", "ambiguous", "unknown-barcode", "typed-not-scanned", "no-match", "already-picked"]),
   message: z.string().max(500).nullable().optional(),
 });
 

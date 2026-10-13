@@ -2391,25 +2391,23 @@ export default function Fulfilment() {
       return;
     }
 
-    // Safety rules (lib/barcodes scan.ts, tested): digits must match a
-    // barcode EXACTLY — no SKU/title fallback; another product's code is
-    // "Wrong item — this is …"; a code on two products is refused; typed text
-    // needs an exact SKU or title. A miss refreshes the live barcode map once
-    // and tries again, so a barcode saved seconds ago still scans.
+    // Safety rules (lib/barcodes scan.ts, tested): ONLY a barcode ticks —
+    // digits must match a line's barcode EXACTLY; a typed SKU or name never
+    // ticks, whatever the manual-tap setting (Graeme, 13 Oct 2026); another
+    // product's code is "Wrong item — this is …"; a code on two products is
+    // refused. A miss refreshes the live barcode map once and tries again, so
+    // a barcode saved seconds ago still scans.
     const code = raw.trim();
     const linesFor = (map: ScanMapData | undefined): ScanLine[] => groupedItems.map(g => ({
       key: g._groupKey,
       barcode: map ? barcodeFor(g.variantId, g.orderBarcode, map.barcodes) : g.barcode,
       identityKey: (g.variantId && map?.identities[g.variantId]) || g.identityKey,
       name: [g.title, g.variant_title].filter(Boolean).join(" — "),
-      sku: g.sku || null,
-      title: g.title,
       remaining: g.totalQty - (pickedCounts.get(g._groupKey) ?? 0),
       // The Calzone Club Special during a changeover: also the incoming special.
       alsoAccepts: g.variantId ? map?.alsoAccepts?.[g.variantId] : undefined,
     }));
-    const scanOpts = { manualTick: noBarcodeTapAllowed };
-    const first = decideScan(code, linesFor(scanMap), scanMap?.known ?? {}, scanOpts);
+    const first = decideScan(code, linesFor(scanMap), scanMap?.known ?? {});
     if (first.kind === "tick") {
       applyScanTick(first.key);
     } else if (shouldRefreshOnMiss(code, scanMapRefreshedAt.current, Date.now())) {
@@ -2419,7 +2417,7 @@ export default function Fulfilment() {
         // The packer may have moved on to the next order in the meantime —
         // never tick a line of an order the code wasn't scanned for.
         if (activeOrderIdRef.current !== orderAtScan) { playScanWrong(); return; }
-        const again = decideScan(code, linesFor(r.data ?? scanMap), (r.data ?? scanMap)?.known ?? {}, scanOpts);
+        const again = decideScan(code, linesFor(r.data ?? scanMap), (r.data ?? scanMap)?.known ?? {});
         if (again.kind === "tick") applyScanTick(again.key);
         else rejectScan(code, again);
       });
@@ -3671,7 +3669,7 @@ export default function Fulfilment() {
               ref={barcodeRef}
               data-scan-input="true"
               defaultValue=""
-              placeholder={labelGateOpen ? "Scan the APC label…" : "Scan barcode, or type the exact SKU…"}
+              placeholder={labelGateOpen ? "Scan the APC label…" : "Scan the barcode on the pack…"}
               className={`w-full pl-12 pr-4 py-4 text-lg bg-background border rounded-xl focus:outline-none focus:ring-2 font-mono ${
                 labelGateOpen ? "border-primary/50 focus:ring-primary/40" : "border-border focus:ring-primary/30"
               }`}
