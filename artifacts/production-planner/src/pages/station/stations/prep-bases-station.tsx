@@ -26,6 +26,7 @@ import { StationStockChecks } from "../shared/station-stock-checks";
 import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
+import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, tasksLine } from "@/lib/prep-progress";
 
 interface SubRecipePlanRequirement {
   subRecipeId: number;
@@ -806,14 +807,13 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   };
 
   // Tomato Base is "done" when every base sub-recipe in the plan has been completed
-  const baseSubRecipes = planSubRecipes.filter(r => r.isBase !== false);
+  const baseSubRecipes = planSubRecipes.filter(isBaseSubRecipe);
   const tomatoBaseDone = baseSubRecipes.length > 0 && baseSubRecipes.every(r => completedSubRecipeIds.has(r.subRecipeId));
   const { data, loading, refetch } = useMainPrepData(targetPlanId, "prep_bases");
 
-  // "Normal Base" is represented by the top-level Tomato Base item — exclude from sauce list
-  const ingredients = (data?.ingredients ?? []).filter(
-    i => !i.ingredientName.toLowerCase().includes("normal base")
-  );
+  // "Normal Base" is represented by the top-level Tomato Base item — exclude
+  // from sauce list (rule shared with the progress count, lib/prep-progress.ts)
+  const ingredients = (data?.ingredients ?? []).filter(isBasesSauceLine);
   const completions = data?.completions ?? [];
   const linkedItems = data?.linkedItems ?? {};
 
@@ -959,18 +959,18 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     refetch();
   };
 
-  const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
-  const completedTins = ingredients.reduce((s, ing) => {
-    const status = ingredientDoneStatus(ing);
-    return s + status.completedTinCount;
-  }, 0);
-  // Base sub-recipes count as one unit each alongside the sauce tins, so the
-  // bar only reaches 100% once the bases are ticked off too.
-  const baseUnitsTotal = baseSubRecipes.length;
-  const baseUnitsDone = baseSubRecipes.filter(r => completedSubRecipeIds.has(r.subRecipeId)).length;
-  const totalUnits = totalTins + baseUnitsTotal;
-  const completedUnits = completedTins + baseUnitsDone;
-  const overallPct = totalUnits > 0 ? Math.round((Math.min(completedUnits, totalUnits) / totalUnits) * 100) : 0;
+  // Header progress in TASKS — each sauce row and each base sub-recipe is one
+  // task; the shared helper the dashboard tile and Prepping For hub use, fed
+  // the same responses, so they can never disagree (13 Oct).
+  const progress = basesProgress({
+    ingredients: data?.ingredients ?? [],
+    completions,
+    subRecipes: planSubRecipes,
+    completedSubRecipeIds,
+  });
+  const totalUnits = progress.total;
+  const overallPct = progressPct(progress);
+  const baseUnitsTotal = progress.bases?.total ?? 0;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -1030,8 +1030,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
               <h2 className="font-semibold text-base">Bases & Sauces</h2>
               <p className="text-sm text-muted-foreground">
                 {totalUnits > 0
-                  ? `${completedUnits} of ${totalUnits} completed`
-                    + (baseUnitsTotal > 0 ? ` (${completedTins}/${totalTins} tins · ${baseUnitsDone}/${baseUnitsTotal} base${baseUnitsTotal !== 1 ? "s" : ""})` : "")
+                  ? `${tasksLine(progress)} done · ${progress.units.done} of ${progress.units.total} tins`
+                    + (baseUnitsTotal > 0 ? ` · ${progress.bases!.done}/${baseUnitsTotal} base${baseUnitsTotal !== 1 ? "s" : ""}` : "")
                   : "Nothing to prep"}
               </p>
             </div>

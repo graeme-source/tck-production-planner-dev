@@ -20,6 +20,7 @@ import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-repl
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { StationStockChecks } from "../shared/station-stock-checks";
 import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
+import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
 
 interface PrepTrayCompletion {
   id: number;
@@ -179,7 +180,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     return true;
   };
 
-  const totalTrays = recipes.reduce((sum, r) => sum + (r.trayCount ?? 0), 0);
 
   // Completion helpers
   const isCompleted = (ingredientId: number, recipeId: number, trayNum: number) =>
@@ -188,16 +188,11 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const getCompletion = (ingredientId: number, recipeId: number, trayNum: number) =>
     completions.find(c => c.ingredientId === ingredientId && c.recipeId === recipeId && c.tinNumber === trayNum);
 
-  // Counts
-  const completedTrays = recipes.reduce((sum, r) => {
-    return sum + r.ingredients.filter(i => i.isRawMeat).reduce((s, ing) => {
-      if (!ing.trayCount) return s;
-      return s + Array.from({ length: ing.trayCount }, (_, i) => i + 1)
-        .filter(tn => isCompleted(ing.ingredientId, r.recipeId, tn)).length;
-    }, 0);
-  }, 0);
-
-  const overallPct = totalTrays > 0 ? Math.round((completedTrays / totalTrays) * 100) : 0;
+  // Header progress in TASKS — each raw-meat ingredient per recipe is one
+  // task (trays as detail); the shared helper the dashboard tile and
+  // Prepping For hub use, fed the same responses (13 Oct).
+  const progress = rawMeatProgress({ recipes, completions });
+  const overallPct = progressPct(progress);
 
   // Auto-select first recipe
   useEffect(() => {
@@ -319,7 +314,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
             <div>
               <h2 className="font-semibold text-base">Raw Meat Prep</h2>
               <p className="text-sm text-muted-foreground">
-                {completedTrays} of {totalTrays} tray{totalTrays !== 1 ? "s" : ""} completed
+                {tasksLine(progress)} done · {progress.units.done} of {progress.units.total} tray{progress.units.total !== 1 ? "s" : ""}
               </p>
             </div>
           </div>

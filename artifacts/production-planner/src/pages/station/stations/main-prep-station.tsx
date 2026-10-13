@@ -22,6 +22,7 @@ import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { mainPrepProgress, progressPct, tasksLine } from "@/lib/prep-progress";
 
 export interface MainPrepIngredient {
   ingredientId: number;
@@ -677,21 +678,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     }
   };
 
-  const totalTins = ingredients.reduce((s, ing) => s + ing.totalTinCount, 0);
-  // resolvedTins includes deferred tins so the source-day view can show 100%
-  // — same logic as the backend /prep-progress endpoint. Kept actuallyDoneTins
-  // around in case any UI element later wants to distinguish.
-  const resolvedTins = ingredients.reduce((s, ing) => {
-    const status = ingredientDoneStatus(ing);
-    return s + status.resolvedTinCount;
-  }, 0);
-  const actuallyDoneTins = ingredients.reduce((s, ing) => {
-    const status = ingredientDoneStatus(ing);
-    return s + status.completedTinCount;
-  }, 0);
-  const deferredTinsTotal = resolvedTins - actuallyDoneTins;
-  const completedTins = resolvedTins;
-  const overallPct = totalTins > 0 ? Math.round((Math.min(completedTins, totalTins) / totalTins) * 100) : 0;
+  // Header progress in TASKS (one row = one task; tins resolved = ticked or
+  // deferred) — the shared helper the dashboard tile and Prepping For hub
+  // use too, fed the same response, so they can never disagree (13 Oct).
+  const progress = mainPrepProgress({ ingredients, completions, deferrals, linkedItems, linkedDone });
+  const overallPct = progressPct(progress);
+  const deferredTinsTotal = progress.deferredUnits ?? 0;
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -824,8 +816,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             <div>
               <h2 className="font-semibold text-lg">Main Prep</h2>
               <p className="text-sm text-muted-foreground">
-                {completedTins} of {totalTins} tins resolved
-                {deferredTinsTotal > 0 ? ` (${actuallyDoneTins} done · ${deferredTinsTotal} deferred)` : ""}
+                {tasksLine(progress)} done · {progress.units.done} of {progress.units.total} tins
+                {deferredTinsTotal > 0 ? ` (${deferredTinsTotal} deferred)` : ""}
               </p>
             </div>
           </div>
