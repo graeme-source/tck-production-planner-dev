@@ -38,6 +38,13 @@ export function factoryCountConditionApplies(r: ReminderConditionFlags, stationT
   return !!r.onlyIfFactoryCountOutstanding && isFactoryCountStation(stationType);
 }
 
+/** On a prep station the stock-check reminder is shown by the "Stock check
+ *  records for today" panel (flashing red from the reminder's start time,
+ *  stock-check-alarm.ts), so the generic banner stands down there. */
+export function reminderShownByPrepPanel(r: ReminderConditionFlags, stationType: string): boolean {
+  return stockCheckConditionApplies(r, stationType);
+}
+
 /** Whether the editor should offer each condition, given the chosen stations. */
 export function conditionsOffered(stations: readonly string[]): { stockChecks: boolean; factoryCount: boolean } {
   return {

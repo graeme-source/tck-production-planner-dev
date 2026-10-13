@@ -12,6 +12,8 @@ import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
+import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
+import { prepTargetOf } from "../shared/stock-check-alarm";
 import { SubRecipeMakeFlow } from "./prep-bases-station";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { progressPct, tasksLine } from "@/lib/prep-progress";
@@ -455,6 +457,11 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
 
   return (
     <div className="space-y-5">
+      {/* Stock check records for today — top of every prep screen; flashes
+          red from 14:45 on a prep day until they're all in. */}
+      {nextPlan?.planDate && (
+        <StockCheckStatusPanel checkDate={nextPlan.planDate} prepTarget={prepTargetOf(nextPlan, null)} />
+      )}
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}

@@ -4,6 +4,7 @@ import {
   stockCheckConditionApplies,
   factoryCountConditionApplies,
   conditionsOffered,
+  reminderShownByPrepPanel,
   type ReminderLiveCounts,
 } from "./reminder-conditions";
 
@@ -68,5 +69,22 @@ describe("conditionsOffered (editor)", () => {
     expect(conditionsOffered(["wrapping", "packing"])).toEqual({ stockChecks: false, factoryCount: true });
     expect(conditionsOffered(["prep"])).toEqual({ stockChecks: true, factoryCount: false });
     expect(conditionsOffered([])).toEqual({ stockChecks: false, factoryCount: false });
+  });
+});
+
+describe("reminderShownByPrepPanel — one warning on prep screens, not two (13 Oct 2026)", () => {
+  const prepStockCheck = { onlyIfStockChecksOutstanding: true };
+
+  it("the prep stock-check reminder stands down on every prep screen (the panel shows it)", () => {
+    for (const station of ["prep", "main_prep", "prep_bases", "prep_meat"]) {
+      expect(reminderShownByPrepPanel(prepStockCheck, station)).toBe(true);
+    }
+  });
+
+  it("other reminders still show on prep, and packing/wrapping are untouched", () => {
+    expect(reminderShownByPrepPanel({}, "prep")).toBe(false);
+    expect(reminderShownByPrepPanel({ onlyIfFactoryCountOutstanding: true }, "prep")).toBe(false);
+    expect(reminderShownByPrepPanel(prepStockCheck, "packing")).toBe(false);
+    expect(reminderShownByPrepPanel({ onlyIfFactoryCountOutstanding: true }, "wrapping")).toBe(false);
   });
 });

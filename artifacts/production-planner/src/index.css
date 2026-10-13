@@ -277,3 +277,16 @@ html.dev-env.dark {
   .swipe-demo-panel { transform: translateX(30%); }
   .swipe-demo-finger { opacity: 1; transform: translate(-40px, 0); }
 }
+
+/* Prep stock-check alarm (stock-check-status-panel.tsx): the "Stock check
+   records for today" panel flashes red from 14:45 until every check is
+   recorded. White text stays readable at both ends of the flash. Reduced
+   motion → no flash, solid red (the panel's own bg-red-600). */
+@keyframes stock-alarm-flash {
+  0%, 100% { background-color: rgb(220 38 38); box-shadow: 0 0 0 0 rgb(220 38 38 / 0.55); }
+  50% { background-color: rgb(153 27 27); box-shadow: 0 0 0 6px rgb(220 38 38 / 0); }
+}
+.stock-alarm-flash { animation: stock-alarm-flash 1.2s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .stock-alarm-flash { animation: none; }
+}

@@ -188,7 +188,10 @@ export function TimedRemindersSettings() {
                         onChange={e => update(r.id, { onlyIfStockChecksOutstanding: e.target.checked })}
                         className="w-4 h-4"
                       />
-                      <span className="text-muted-foreground">Only if stock checks are still outstanding (Prep)</span>
+                      <span className="text-muted-foreground">
+                        Only if stock checks are still outstanding (Prep) — on prep screens this shows as the
+                        stock check panel turning red from the start time, deadline at the end time
+                      </span>
                     </label>
                   )}
                   {offered.factoryCount && (

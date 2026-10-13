@@ -6,8 +6,8 @@ import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import type { StationType } from "./constants";
 import {
   resolveReminderDisplay,
-  stockCheckConditionApplies,
   factoryCountConditionApplies,
+  reminderShownByPrepPanel,
   type FactoryCountState,
 } from "./reminder-conditions";
 
@@ -35,7 +35,10 @@ export interface TimedReminder {
   endTime: string;
   enabled: boolean;
   /** Prep-only condition: hide unless today still has unrecorded stock
-   *  checks. Ignored on any non-prep station (reminder-conditions.ts). */
+   *  checks. Ignored on any non-prep station (reminder-conditions.ts). On
+   *  prep screens it isn't shown as a banner: its start/end times drive the
+   *  "Stock check records for today" panel's red alarm instead
+   *  (stock-check-alarm.ts). */
   onlyIfStockChecksOutstanding?: boolean;
   /** Packing/Wrapping-only condition: hide once today's Factory Number count
    *  (Stock Control → Production fridge) is complete. Ignored elsewhere. */
@@ -83,30 +86,6 @@ const toMinutes = (hhmm: string) => {
   return h * 60 + m;
 };
 
-/** Live count of today's unrecorded stock checks — same maths as the prep
- *  stations' StockCheckStatusPanel. Only polled while `enabled`. */
-function useOutstandingStockChecks(enabled: boolean, dateStr: string, dayName: string): number | null {
-  const { data } = useQuery({
-    queryKey: ["reminder-stock-checks", dateStr],
-    enabled,
-    refetchInterval: 30_000,
-    queryFn: async () => {
-      const res = await fetch(`/api/production-plans/stock-checks?date=${dateStr}`, { credentials: "include" });
-      if (!res.ok) return null;
-      return res.json() as Promise<{
-        checks: Array<{ ingredientId: number }>;
-        stockIngredients: Array<{ id: number; stockCheckFrequency: string; stockCheckDay: string | null }>;
-      }>;
-    },
-  });
-  if (!enabled || !data) return null;
-  const due = (data.stockIngredients ?? []).filter(
-    it => it.stockCheckFrequency !== "weekly" || it.stockCheckDay === dayName,
-  );
-  const checkedIds = new Set((data.checks ?? []).map(c => c.ingredientId));
-  return due.filter(it => !checkedIds.has(it.id)).length;
-}
-
 /** Today's Factory Number count — complete, and how many products are still
  *  to count (GET /api/stock-control/factory-count-today). Only polled while
  *  `enabled`. */
@@ -125,10 +104,9 @@ function useFactoryCountToday(enabled: boolean, dateStr: string): FactoryCountSt
   return { complete: !!data.complete, outstanding: typeof data.outstanding === "number" ? data.outstanding : null };
 }
 
-export function StationReminderBanner({ stationType, plan }: {
-  stationType: StationType;
-  plan: ProductionPlanDetail | undefined;
-}) {
+/** The configured timed reminders (app_settings), shared by the banner and
+ *  the prep stock-check panel (which takes its alarm times from them). */
+export function useTimedReminders(): TimedReminder[] {
   const { data: remindersRaw } = useQuery({
     queryKey: ["app-setting", TIMED_REMINDERS_KEY],
     refetchInterval: 60_000,
@@ -139,6 +117,14 @@ export function StationReminderBanner({ stationType, plan }: {
       return (j?.value as string) ?? null;
     },
   });
+  return parseReminders(remindersRaw);
+}
+
+export function StationReminderBanner({ stationType, plan }: {
+  stationType: StationType;
+  plan: ProductionPlanDetail | undefined;
+}) {
+  const reminders = useTimedReminders();
 
   // 1s tick drives the countdown display and the window check.
   const [nowParts, setNowParts] = useState(londonNowParts);
@@ -147,7 +133,6 @@ export function StationReminderBanner({ stationType, plan }: {
     return () => clearInterval(id);
   }, []);
 
-  const reminders = parseReminders(remindersRaw);
   const nowSeconds = nowParts.h * 3600 + nowParts.m * 60 + nowParts.s;
 
   // Reminders only fire inside a live production day — never on completed plans.
@@ -159,13 +144,18 @@ export function StationReminderBanner({ stationType, plan }: {
     nowSeconds >= toMinutes(r.startTime) * 60 &&
     nowSeconds < toMinutes(r.endTime) * 60;
 
-  const candidates = planLive ? reminders.filter(inWindow) : [];
+  // On prep screens the stock-check reminder is shown by the "Stock check
+  // records for today" panel itself (flashing red from its start time), so
+  // the banner would only repeat it — one clear warning, not two.
+  const candidates = planLive
+    ? reminders.filter(r => inWindow(r) && !reminderShownByPrepPanel(r, stationType))
+    : [];
 
   // Only hit each endpoint while a reminder that needs it is in its window
-  // on a station where its condition applies — prep numbers are never
-  // fetched for Packing/Wrapping.
-  const needsStockCheckCount = candidates.some(r => stockCheckConditionApplies(r, stationType));
-  const stockChecksOutstanding = useOutstandingStockChecks(needsStockCheckCount, nowParts.dateStr, nowParts.dayName);
+  // on a station where its condition applies.
+  // (No stock-check count is needed here: the only reminders that use it
+  // are the prep ones, and the prep panel shows those — see above.)
+  const stockChecksOutstanding = null;
   const needsFactoryCount = candidates.some(r => factoryCountConditionApplies(r, stationType));
   const factoryCount = useFactoryCountToday(needsFactoryCount, nowParts.dateStr);
 
