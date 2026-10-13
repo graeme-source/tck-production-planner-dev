@@ -41,7 +41,7 @@ function AutosaveFooter({ share }: { share: ReactNode }) {
         <p className={cn("min-h-11 text-base font-bold flex items-center gap-2", state === "saved" ? "text-emerald-700 dark:text-emerald-400" : "text-muted-foreground")} role="status">
           {state === "saved" ? <Check className="w-5 h-5 shrink-0" /> : <Loader2 className="w-5 h-5 shrink-0 animate-spin" />}
           {state === "saved" ? "All changes saved" : SAVE_SUMMARY_LABEL[state]}
-          <span className="font-normal text-sm text-muted-foreground">· everything here saves as you type</span>
+          <span className="hidden sm:inline font-normal text-sm text-muted-foreground">· everything here saves as you type</span>
         </p>
       )}
       {share}

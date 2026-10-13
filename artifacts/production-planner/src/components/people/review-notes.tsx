@@ -120,9 +120,8 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
               </button>
             </div>
           ) : (
-            isAgreement ? (
-              <AgreementBullets body={note.body} className="text-xl" />
-            ) : (
+            // The agreed points sit full width under this row (narrow phones).
+            isAgreement ? null : (
               <div className="space-y-1">
                 {note.title && <p className="text-xl font-bold leading-snug break-words">{note.title}</p>}
                 <p className="text-xl leading-relaxed whitespace-pre-wrap break-words">{note.body}</p>
@@ -147,6 +146,8 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
           </div>
         )}
       </div>
+
+      {isAgreement && !editing && <AgreementBullets body={note.body} className="text-lg sm:text-xl" />}
 
       {confirm === "remove" && (
         <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
