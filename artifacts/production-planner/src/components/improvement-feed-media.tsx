@@ -1,7 +1,9 @@
 /**
- * Inline media for an improvement, feed-post style: the stitched
- * before/after clip IS the story when it exists; otherwise a before/after
- * image pair stacks (before above after — Graeme, 2026-09-25: side by side
+ * Inline media for an improvement, feed-post style. A before PHOTO and an
+ * after PHOTO become one frame fading between them (BeforeAfterFade —
+ * Graeme, 2026-10-13: see the change without scrolling); that IS the story,
+ * like the stitched clip is when either half is a video. Otherwise a
+ * before/after pair stacks (before above after — Graeme, 2026-09-25: side by side
  * was too small to see) — except on the meeting slide, where two stacked
  * photos wouldn't fit the TV — videos play in place, and anything past
  * three tiles collapses to "+N".
@@ -14,6 +16,9 @@
  * Videos are wrapped in data-no-swipe so a drag on the scrub bar can't
  * change the meeting slide.
  */
+import { BeforeAfterFade } from "@/components/before-after-fade";
+import { pickFadePair } from "@/lib/before-after-fade";
+
 export interface ImprovementMediaItem {
   id: number;
   kind: "image" | "video";
@@ -36,6 +41,32 @@ export function ImprovementFeedMedia({
   const items = media ?? [];
   if (items.length === 0) return null;
 
+  const labelCls = large
+    ? "absolute top-3 left-3 text-sm font-bold px-3 py-1 rounded-full bg-black/60 text-white uppercase tracking-wide"
+    : "absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white uppercase tracking-wide";
+
+  // Two photos: the fade is the whole story. Older re-shoots and a
+  // stitched clip of two stills add nothing to it — open the item for those.
+  const fadePair = pickFadePair(items);
+  if (fadePair) {
+    const others = items.filter(m => m !== fadePair.before && m !== fadePair.after && m.phase !== "stitched").length;
+    return (
+      <div className={large ? "mt-4 space-y-3" : "mt-3 space-y-2"}>
+        <BeforeAfterFade
+          beforeSrc={improvementMediaUrl(fadePair.before.id)}
+          afterSrc={improvementMediaUrl(fadePair.after.id)}
+          large={large}
+          maxHeight={large ? "56vh" : "75vh"}
+        />
+        {others > 0 && onOpen && (
+          <button onClick={onOpen} className="w-full py-2 rounded-xl bg-secondary text-sm font-semibold text-muted-foreground hover:bg-secondary/70">
+            +{others} more photo{others === 1 ? "" : "s"} — open to see all
+          </button>
+        )}
+      </div>
+    );
+  }
+
   const stitched = items.find(m => m.kind === "video" && m.phase === "stitched");
   const shown = stitched ? [stitched] : items.slice(0, 3);
   const hidden = stitched ? 0 : items.length - shown.length;
@@ -47,9 +78,6 @@ export function ImprovementFeedMedia({
 
   const imgMax = large ? "max-h-[44vh] object-cover" : "max-h-[75vh] object-contain bg-black/5";
   const vidMax = large ? "max-h-[48vh]" : "max-h-96";
-  const labelCls = large
-    ? "absolute top-3 left-3 text-sm font-bold px-3 py-1 rounded-full bg-black/60 text-white uppercase tracking-wide"
-    : "absolute top-2 left-2 text-[11px] font-bold px-2 py-0.5 rounded-full bg-black/60 text-white uppercase tracking-wide";
 
   const img = (m: ImprovementMediaItem, label?: string) => (
     <button key={m.id} onClick={onOpen} disabled={!onOpen} className="relative block w-full overflow-hidden rounded-xl">
