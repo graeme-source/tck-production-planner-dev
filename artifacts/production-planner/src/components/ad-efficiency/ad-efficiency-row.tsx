@@ -149,15 +149,18 @@ function Sparkline({ points, target, band, caption }: { points: SparkPoint[]; ta
   );
 }
 
-/** The card's figure for each of the last 7 days, oldest → newest (Graeme,
- *  2026-10-12: "I should see 7 actual numbers… I like looking at each day as
- *  it comes through"), coloured against target like the line. The graph
- *  still shows all 30 days on hover/drag. */
+/** Each of the last 7 days ON ITS OWN, newest first — that day's spend
+ *  against that day's sales, not the rolling figure as it stood that day
+ *  (Graeme, 2026-10-13: "the individual squares are just the new customer
+ *  ROAS for that particular day only, not the average on that day"). The big
+ *  number above stays the window's figure; the line still shows the rolling
+ *  figure across 30 days on hover/drag. Coloured against the card's target. */
 function LastSevenDays({ points, target }: { points: SparkPoint[]; target: number }) {
   const last = points.slice(-7);
   if (last.length === 0) return null;
   return (
-    <div className="space-y-px" aria-label="Last 7 days">
+    <div className="space-y-px" aria-label="Last 7 days, each day on its own">
+      <p className="px-1 pb-0.5 text-xs text-muted-foreground">Each day on its own</p>
       {[...last].reverse().map(p => {
         const shade = roasShade(p.percent, target);
         const d = new Date(`${p.date}T12:00:00Z`);
@@ -176,7 +179,7 @@ function LastSevenDays({ points, target }: { points: SparkPoint[]; target: numbe
 }
 
 function RoasCard({
-  title, qualifier, result, target, settings, spark, sparkCaption, window: win, revenueLabel,
+  title, qualifier, result, target, settings, spark, daily, sparkCaption, window: win, revenueLabel,
 }: {
   title: string;
   /** The window, under the title: "Last 7 days". */
@@ -185,6 +188,8 @@ function RoasCard({
   target: number;
   settings: AdEfficiencySettings;
   spark: SparkPoint[];
+  /** Each day's own figure (a 1-day window), for the 7-day list. */
+  daily: SparkPoint[];
   sparkCaption: string;
   window: RoasWindow;
   revenueLabel: string;
@@ -226,7 +231,7 @@ function RoasCard({
           </div>
         </div>
         <Sparkline points={spark} target={target} band={band} caption={sparkCaption} />
-        <LastSevenDays points={spark} target={target} />
+        <LastSevenDays points={daily} target={target} />
         {result.available && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-secondary/50 px-3 py-2">
@@ -281,6 +286,8 @@ export function AdEfficiencyRow() {
       spark7: rollingSeries(days, "newCustomer", 7, lastDay),
       sparkNc30: rollingSeries(days, "newCustomer", 30, lastDay),
       spark30: rollingSeries(days, "total", 30, lastDay),
+      dailyNc: rollingSeries(days, "newCustomer", 1, lastDay, 7),
+      dailyTotal: rollingSeries(days, "total", 1, lastDay, 7),
       advice: recommend({ days, windows, settings }),
     };
   }, [days, windows, settings, trend.data, lastDay]);
@@ -319,6 +326,7 @@ export function AdEfficiencyRow() {
               target={settings.ncRoas7dTargetPct}
               settings={settings}
               spark={view.spark7}
+              daily={view.dailyNc}
               sparkCaption="Rolling 7-day, last 30 days"
               window={windows.last7}
               revenueLabel="New customers"
@@ -330,6 +338,7 @@ export function AdEfficiencyRow() {
               target={settings.ncRoasMtdTargetPct}
               settings={settings}
               spark={view.sparkNc30}
+              daily={view.dailyNc}
               sparkCaption="Rolling 30-day, last 30 days"
               window={windows.last30}
               revenueLabel="New customers"
@@ -341,6 +350,7 @@ export function AdEfficiencyRow() {
               target={settings.totalRoas30dTargetPct}
               settings={settings}
               spark={view.spark30}
+              daily={view.dailyTotal}
               sparkCaption="Rolling 30-day, last 30 days"
               window={windows.last30}
               revenueLabel="Total sales"
