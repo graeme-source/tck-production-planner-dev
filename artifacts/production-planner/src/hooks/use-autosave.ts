@@ -11,9 +11,18 @@
  * If the component unmounts with something unsaved (a quick tap away, the
  * modal closed), the save still goes out — the typed value is never lost.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 
 export type AutosaveState = "idle" | "dirty" | "saving" | "saved" | "error";
+
+/** Optional: something around these fields that wants their combined state
+ *  (a People modal's pinned footer — hooks/autosave-summary.tsx). Fields
+ *  outside one behave exactly as before. */
+export interface AutosaveRegistry {
+  report(id: symbol, state: AutosaveState, flush: () => Promise<boolean>): void;
+  remove(id: symbol): void;
+}
+export const AutosaveRegistryContext = createContext<AutosaveRegistry | null>(null);
 
 export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800) {
   const [state, setState] = useState<AutosaveState>("idle");
@@ -63,6 +72,15 @@ export function useAutosave<T>(save: (value: T) => Promise<unknown>, delay = 800
     const p = pending.current;
     if (p) saveRef.current(p.value).catch(err => console.error("[autosave] save on leave failed:", err));
   }, []);
+
+  // Tell the surrounding summary (if any) how this field stands.
+  const registry = useContext(AutosaveRegistryContext);
+  const idRef = useRef<symbol>(Symbol("autosave"));
+  useEffect(() => { registry?.report(idRef.current, state, flush); }, [registry, state, flush]);
+  useEffect(() => {
+    const id = idRef.current;
+    return () => registry?.remove(id);
+  }, [registry]);
 
   return { state, error, schedule, flush, discard, hasPending: () => pending.current != null };
 }
