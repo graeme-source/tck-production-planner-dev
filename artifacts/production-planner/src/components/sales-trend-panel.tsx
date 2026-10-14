@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertCircle, LineChart as LineChartIcon, RefreshCw, X } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { SalesTrendChart } from "@/components/sales-trend-chart";
+import { NewReturningChart } from "@/components/new-returning-chart";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import {
   chartPoints, formatMetric, granularityLabel, headlineNote, partialBucketNote, TREND_METRICS, unavailableReason,
@@ -143,6 +144,8 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
         </div>
       ) : reason ? (
         <div className="h-32 flex items-center justify-center text-center text-sm text-muted-foreground px-4">{reason}</div>
+      ) : m.id === "newCustomerShare" ? (
+        <NewReturningChart points={points} seriesName={seriesName ?? m.label} reference={reference} />
       ) : (
         <SalesTrendChart
           points={points}
@@ -151,7 +154,6 @@ export function SalesTrendPanel({ metric, from, to, title, periodCaption, series
           compareName={showCompare ? compare?.name : undefined}
           reference={reference}
           perBasket={m.perBasket}
-          orderSplit={m.id === "newCustomerShare"}
         />
       )}
 

@@ -41,7 +41,7 @@ interface Props {
 
 const GBP = new Intl.NumberFormat("en-GB", { style: "currency", currency: "GBP", minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-function TipBox({ active, payload, format, seriesName, compareName, perBasket, orderSplit }: {
+export function TipBox({ active, payload, format, seriesName, compareName, perBasket, orderSplit }: {
   active?: boolean;
   payload?: Array<{ payload: ChartPoint }>;
   format: MetricFormat;
@@ -101,7 +101,7 @@ function TipBox({ active, payload, format, seriesName, compareName, perBasket, o
 
 /** Dots: all of them on short series, and always on a point with no drawn
  *  neighbour; hollow and lighter where an average rests on 1–2 baskets. */
-function makeDot(showAll: boolean) {
+export function makeDot(showAll: boolean) {
   return function Dot(props: { cx?: number; cy?: number; payload?: ChartPoint; index?: number }) {
     const { cx, cy, payload, index } = props;
     const key = `dot-${index ?? 0}`;
