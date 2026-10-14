@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dayHeading, defaultCarryOver, doneByLabel, filterListPeople, membersSummary, overdueLabel, presetOf, ruleForPreset, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+  comingUpOpen, completionLabel, dayHeading, defaultCarryOver, doneByLabel, doneEarly, filterListPeople, membersSummary, overdueLabel, presetOf, ruleForPreset, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
 } from "./team-list-view";
 import { sortTasks } from "./task-sort";
 
@@ -90,5 +90,31 @@ describe("who can use this list", () => {
     expect(membersSummary(0)).toBe("Nobody ticked — only admins can open it.");
     expect(membersSummary(1)).toBe("1 person ticked, plus admins.");
     expect(membersSummary(3)).toBe("3 people ticked, plus admins.");
+  });
+});
+
+describe("ticked early (Graeme, 2026-10-14)", () => {
+  // Tuesday 13 Oct, 08:12 London = 07:12 UTC (BST).
+  const at = "2026-10-13T07:12:00.000Z";
+  it("knows a tick made before its day", () => {
+    expect(doneEarly(at, "2026-10-16")).toBe(true);
+    expect(doneEarly(at, TUE)).toBe(false);
+    // 23:30 UTC on the 15th is already the 16th in London.
+    expect(doneEarly("2026-10-15T23:30:00.000Z", "2026-10-16")).toBe(false);
+  });
+  it("says 'Done early · Tue 08:12 · Lorna' — before and on the day", () => {
+    const c = { status: "done" as const, byName: "Lorna", at };
+    expect(completionLabel(c, "2026-10-16", TUE)).toBe("Done early · Tue 08:12 · Lorna");
+    expect(completionLabel(c, "2026-10-16", "2026-10-16")).toBe("Done early · Tue 08:12 · Lorna");
+    expect(completionLabel({ ...c, status: "skipped" }, "2026-10-16", TUE)).toBe("Skipped early · Tue 08:12 · Lorna");
+  });
+  it("an on-the-day tick keeps the usual wording", () => {
+    expect(completionLabel({ status: "done", byName: "Lorna", at }, TUE, TUE)).toBe("Done · Lorna · 08:12");
+    expect(completionLabel({ status: "skipped", byName: null, at }, TUE, TUE)).toBe("Skipped · Someone · 08:12");
+  });
+  it("Coming up is open unless the person closed it", () => {
+    expect(comingUpOpen(null)).toBe(true);
+    expect(comingUpOpen("1")).toBe(true);
+    expect(comingUpOpen("0")).toBe(false);
   });
 });

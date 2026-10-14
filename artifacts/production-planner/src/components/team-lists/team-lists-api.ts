@@ -55,7 +55,9 @@ export interface TeamListDetail {
   items: TeamListItem[];
   entries: DayEntry[];
   progress: Progress;
-  comingUp: Array<{ date: string; itemIds: number[] }>;
+  /** The next 7 days (weekly-and-rarer tasks only). Each entry can be ticked
+   *  early; the tick is stored against that day (Graeme, 2026-10-14). */
+  comingUp: Array<{ date: string; itemIds: number[]; entries: DayEntry[] }>;
 }
 
 export interface ListInput {

@@ -118,3 +118,32 @@ export function membersSummary(tickedCount: number): string {
   if (tickedCount === 0) return "Nobody ticked — only admins can open it.";
   return `${tickedCount} ${tickedCount === 1 ? "person" : "people"} ticked, plus admins.`;
 }
+
+function londonDateOf(at: string): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(at));
+}
+
+/** Was this tick made before the day it's for (ticked early from Coming up)? */
+export function doneEarly(at: string, dueDate: string): boolean {
+  return londonDateOf(at) < dueDate;
+}
+
+/** The line under a ticked task. Normally "Done · Lorna · 08:12"; ticked
+ *  ahead of its day (Graeme, 2026-10-14) it reads "Done early · Wed 08:12 ·
+ *  Lorna" — always with the day it was really done. */
+export function completionLabel(
+  c: { status: "done" | "skipped"; byName: string | null; at: string }, dueDate: string, today: string,
+): string {
+  const verb = c.status === "skipped" ? "Skipped" : "Done";
+  if (!doneEarly(c.at, dueDate)) return `${verb} · ${doneByLabel(c.byName, c.at, today)}`;
+  const time = new Date(c.at).toLocaleTimeString("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit" });
+  return `${verb} early · ${WEEKDAY_SHORT[weekdayOf(londonDateOf(c.at))]} ${time} · ${c.byName ?? "Someone"}`;
+}
+
+/** "Coming up this week" is open unless this person closed it (Graeme,
+ *  2026-10-14: "upcoming tasks are open by default"). `stored` is the
+ *  remembered choice ("0" = closed), or null when there isn't one. */
+export const COMING_UP_OPEN_KEY = "team-lists:coming-up-open";
+export function comingUpOpen(stored: string | null): boolean {
+  return stored !== "0";
+}

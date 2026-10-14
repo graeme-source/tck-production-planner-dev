@@ -21,7 +21,9 @@ import { describeRule } from "@workspace/recurrence";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
-import { dayHeading, doneByLabel, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields } from "@/lib/team-list-view";
+import {
+  COMING_UP_OPEN_KEY, comingUpOpen, completionLabel, dayHeading, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+} from "@/lib/team-list-view";
 import { sortTasks } from "@/lib/task-sort";
 import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
 import {
@@ -105,7 +107,15 @@ function ListDetail({ id }: { id: number }) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [showComing, setShowComing] = useState(false);
+  // Open by default; closing it is remembered on this device (Graeme, 2026-10-14).
+  const [showComing, setShowComing] = useState(() => {
+    try { return comingUpOpen(localStorage.getItem(COMING_UP_OPEN_KEY)); } catch { return true; }
+  });
+  const toggleComing = () => {
+    const next = !showComing;
+    try { localStorage.setItem(COMING_UP_OPEN_KEY, next ? "1" : "0"); } catch { /* private mode: just this visit */ }
+    setShowComing(next);
+  };
   const [showAll, setShowAll] = useState(false);
   // Time, then Priority unless this person picked otherwise for this list.
   const [sort, setSort] = useTaskSort(`team-list-${id}`, TEAM_LIST_DEFAULT_SORT);
@@ -196,26 +206,21 @@ function ListDetail({ id }: { id: number }) {
         {list.canEdit && <AddTask listId={list.id} onAdded={onAdded} />}
       </section>
 
-      <Collapsible open={showComing} onToggle={() => setShowComing(s => !s)} title="Coming up this week" count={data.comingUp.reduce((n, d) => n + d.itemIds.length, 0)}>
+      {/* Open by default, grouped by day. Anything here can be ticked early
+          (Graeme, 2026-10-14) — it's recorded against its own day, so it
+          shows as done when that day comes and counts in that day's progress. */}
+      <Collapsible open={showComing} onToggle={toggleComing} title="Coming up this week"
+        count={data.comingUp.reduce((n, d) => n + d.itemIds.length, 0)}
+        hint={data.comingUp.length > 0 ? "Done one already? Tick it off early." : undefined}>
         {data.comingUp.length === 0 ? <p className="text-muted-foreground">Nothing else in the next seven days.</p> : (
-          <div className="space-y-4">
+          <div className="space-y-5">
             {data.comingUp.map(day => (
-              <div key={day.date}>
-                <p className="font-bold mb-1">{dayHeading(day.date, today)}</p>
-                <ul className="space-y-1">
-                  {sortTasks(day.itemIds.filter(i => byId.has(i)), sort, i => teamTaskSortFields(byId.get(i)!)).map(itemId => {
-                    const it = byId.get(itemId);
-                    return it ? (
-                      <li key={itemId}>
-                        <button onClick={() => setEditingId(itemId)} disabled={!list.canEdit} className="w-full text-left min-h-[44px] px-3 rounded-xl enabled:hover:bg-secondary/60 flex items-center gap-3 disabled:cursor-default">
-                          <span className={cn("w-3 h-3 rounded-full shrink-0", PRIORITY_STYLES[it.priority].dot)} />
-                          <span className="flex-1">{it.title}</span>
-                          {it.timeOfDay && <span className="text-sm text-muted-foreground">{it.timeOfDay}</span>}
-                        </button>
-                      </li>
-                    ) : null;
-                  })}
-                </ul>
+              <div key={day.date} className="space-y-3">
+                <h3 className="font-bold text-lg">{dayHeading(day.date, today)}</h3>
+                {sortTasks(day.entries.filter(e => byId.has(e.itemId)), sort, e => teamTaskSortFields(byId.get(e.itemId)!)).map(e => (
+                  <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} upcoming
+                    onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} />
+                ))}
               </div>
             ))}
           </div>
@@ -233,12 +238,15 @@ function ListDetail({ id }: { id: number }) {
   );
 }
 
-function Collapsible({ open, onToggle, title, count, children }: { open: boolean; onToggle: () => void; title: string; count: number; children: React.ReactNode }) {
+function Collapsible({ open, onToggle, title, count, hint, children }: { open: boolean; onToggle: () => void; title: string; count: number; hint?: string; children: React.ReactNode }) {
   return (
     <section className="rounded-3xl border-2 border-border bg-card">
       <button onClick={onToggle} aria-expanded={open} className="w-full min-h-[60px] px-5 flex items-center gap-3 text-left">
         {open ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />}
-        <span className="text-lg font-bold flex-1">{title}</span>
+        <span className="flex-1">
+          <span className="block text-lg font-bold">{title}</span>
+          {hint && open && <span className="block text-sm text-muted-foreground">{hint}</span>}
+        </span>
         <span className="text-muted-foreground font-semibold tabular-nums">{count}</span>
       </button>
       {open && <div className="px-5 pb-5">{children}</div>}
@@ -259,8 +267,10 @@ function TaskTitle({ item, done }: { item: TeamListItem; done: boolean }) {
   );
 }
 
-function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false }: {
+function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false, upcoming = false }: {
   item: TeamListItem; entry: DayEntry; today: string;
+  /** In Coming up: ticking it now is ticking it early, for entry.dueDate. */
+  upcoming?: boolean;
   /** Absent for people who can tick but not change the list. */
   onEdit?: () => void;
   /** Glows for a moment after being added. */
@@ -288,7 +298,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false 
         type="button"
         onClick={() => run(c ? { undo: true } : { status: "done" })}
         disabled={tick.isPending}
-        aria-label={c ? `Undo ${item.title}` : `Mark ${item.title} done`}
+        aria-label={c ? `Undo ${item.title}` : upcoming ? `Mark ${item.title} done early` : `Mark ${item.title} done`}
         className={cn("w-14 h-14 rounded-full border-4 flex items-center justify-center shrink-0 transition-colors",
           c?.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : c?.status === "skipped" ? "bg-muted border-muted-foreground/40 text-muted-foreground" : PRIORITY_STYLES[item.priority].ring)}
       >
@@ -307,7 +317,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false 
           {item.priority < 4 && <span className="font-bold"><span className={cn("inline-block w-2.5 h-2.5 rounded-full mr-1", PRIORITY_STYLES[item.priority].dot)} />{PRIORITY_STYLES[item.priority].label}</span>}
           {item.timeOfDay && <span className="inline-flex items-center gap-1"><Clock className="w-4 h-4" />{item.timeOfDay}</span>}
           {entry.overdue && !c && <span className="font-semibold text-amber-700 dark:text-amber-400">{overdueLabel(entry.dueDate, today)}</span>}
-          {c && <span className={c.status === "done" ? "text-emerald-700 dark:text-emerald-400" : ""}>{c.status === "skipped" ? "Skipped" : "Done"} · {doneByLabel(c.byName, c.at, today)}</span>}
+          {c && <span className={c.status === "done" ? "text-emerald-700 dark:text-emerald-400" : ""}>{completionLabel(c, entry.dueDate, today)}</span>}
         </div>
         {item.notes && !c && <p className="text-sm text-muted-foreground whitespace-pre-line">{item.notes}</p>}
         {tick.error && <p className="text-sm text-red-600">{(tick.error as Error).message}</p>}
@@ -315,7 +325,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false 
       <div className="flex flex-col sm:flex-row gap-1 shrink-0">
         {!c ? (
           <button type="button" onClick={() => run({ status: "skipped" })} disabled={tick.isPending}
-            className="min-h-[48px] px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:bg-secondary/60 inline-flex items-center gap-1" aria-label={`Skip ${item.title} today`}>
+            className="min-h-[48px] px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:bg-secondary/60 inline-flex items-center gap-1" aria-label={upcoming ? `Skip ${item.title} on ${dayHeading(entry.dueDate, today)}` : `Skip ${item.title} today`}>
             <SkipForward className="w-4 h-4" /> Skip
           </button>
         ) : (
