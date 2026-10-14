@@ -39,8 +39,9 @@ describe("cycle maths: which offer runs which week", () => {
     expect(offerIndexForWeek("2026-12-14", config)).toBe(0);
   });
 
-  it("works backwards before the start, and any day of the week gives its week", () => {
-    expect(offerIndexForWeek("2026-10-05", config)).toBe(3);
+  it("no cycle before it starts; any day of the week gives its week", () => {
+    expect(offerIndexForWeek("2026-10-05", config)).toBeNull();
+    expect(cycleSlotsForWeek("2026-10-05", config).every(x => x == null)).toBe(true);
     expect(offerIndexForWeek("2026-10-16", config)).toBe(0);
   });
 

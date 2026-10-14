@@ -35,6 +35,13 @@ describe("matching Klaviyo campaigns to planned emails and cycle slots", () => {
     expect(matchCampaignsToTargets({ targets, campaigns: [c] }).matches).toMatchObject([{ campaignId: "c", targetKey: "plan:7" }]);
   });
 
+  it("an untouched cycle slot never takes a weak match, even alone that day", () => {
+    const slot = { key: "slot:2026-09-17", date: "2026-09-17", expectedName: "17 Sep – O1 Free Pack £39.95 – 3 New Angle", subject: "Family night sorted, free pack included", strict: true };
+    const c = camp("w", "Free pack this weekend... + Next day delivery available", "2026-09-17");
+    expect(matchCampaignsToTargets({ targets: [slot], campaigns: [c] }).matches).toEqual([]);
+    expect(matchCampaignsToTargets({ targets: [{ ...slot, strict: false }], campaigns: [c] }).matches).toHaveLength(1);
+  });
+
   it("leaves it unmatched when nothing is alike, or on another day", () => {
     const r = matchCampaignsToTargets({
       targets,

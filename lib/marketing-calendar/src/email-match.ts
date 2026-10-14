@@ -18,7 +18,8 @@
  *     its words (name and subject line) look like the target's (suggested
  *     name and subject): similarity SIMILAR_MIN or more, and clearly the best
  *     target that day. When the day has exactly one target and one campaign
- *     left, ONLY_ONE_MIN is enough.
+ *     left, ONLY_ONE_MIN is enough — except for a "strict" target (a cycle
+ *     slot nobody has touched), which always needs SIMILAR_MIN.
  *  3. Otherwise nothing — the page shows it as an "Unplanned Klaviyo email".
  * Never touches a campaign already linked, a target already linked, or a
  * pair someone unlinked on purpose.
@@ -36,6 +37,9 @@ export interface MatchTarget {
   date: string;
   expectedName: string;
   subject: string;
+  /** Never matched on the lower only-one-that-day bar — for cycle slots
+   *  nobody has touched, which are ideas rather than emails someone wrote. */
+  strict?: boolean;
 }
 
 export interface MatchCampaign {
@@ -158,7 +162,7 @@ export function matchCampaignsToTargets(input: {
     const dayTargets = input.targets.filter(t => t.date === p.c.date && !takenTargets.has(t.key));
     const dayCampaigns = open.filter(c => c.date === p.c.date && !takenCampaigns.has(c.id));
     const onlyOne = dayTargets.length === 1 && dayCampaigns.length === 1;
-    if (p.score < (onlyOne ? ONLY_ONE_MIN : SIMILAR_MIN)) continue;
+    if (p.score < (onlyOne && !p.t.strict ? ONLY_ONE_MIN : SIMILAR_MIN)) continue;
     // Clearly this campaign's best target, and this target's best campaign.
     const rivalT = pairs.find(q => q.c === p.c && q.t !== p.t && !takenTargets.has(q.t.key));
     const rivalC = pairs.find(q => q.t === p.t && q.c !== p.c && !takenCampaigns.has(q.c.id));

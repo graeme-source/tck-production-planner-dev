@@ -186,7 +186,8 @@ const MAX_WEEKS = 5200; // a century — guards the loops below
 
 /**
  * Which offer runs in the week starting `monday`: its index in
- * config.offers, or null when the week is paused (or there are no offers).
+ * config.offers, or null when the week is paused, before the cycle's first
+ * week, or there are no offers.
  * Paused weeks between the cycle start and this week don't use up an offer.
  */
 export function offerIndexForWeek(monday: string, config: Pick<CycleConfig, "startDate" | "weeklyPlan" | "pauses" | "offers">): number | null {
@@ -196,15 +197,12 @@ export function offerIndexForWeek(monday: string, config: Pick<CycleConfig, "sta
   if (weekPause(week, config)) return null;
   const start = startOfWeek(config.startDate);
   const w = cycleWeekNumber(week, start);
-  if (Math.abs(w) > MAX_WEEKS) return mod(w, n);
+  // Before the cycle starts there is no cycle (those weeks are the planner's).
+  if (w < 0) return null;
+  if (w > MAX_WEEKS) return mod(w, n);
   let active = 0;
-  if (w >= 0) {
-    for (let j = 0; j < w; j++) if (!weekPause(addDays(start, j * 7), config)) active++;
-    return mod(active, n);
-  }
-  // Before the start: count back the same way.
-  for (let j = w; j < 0; j++) if (!weekPause(addDays(start, j * 7), config)) active++;
-  return mod(-active, n);
+  for (let j = 0; j < w; j++) if (!weekPause(addDays(start, j * 7), config)) active++;
+  return mod(active, n);
 }
 
 /** The Saturday (free slot) idea for the week — rotates every week. */
@@ -265,7 +263,7 @@ export interface CycleSlot {
 export function cycleSlotsForWeek(monday: string, config: CycleConfig, product?: string | null): Array<CycleSlot | null> {
   const week = startOfWeek(monday);
   const days: Array<CycleSlot | null> = Array(7).fill(null);
-  if (weekPause(week, config)) return days;
+  if (weekPause(week, config) || week < startOfWeek(config.startDate)) return days;
   const oi = offerIndexForWeek(week, config);
   const offer = oi == null ? null : config.offers[oi];
   const idea = freeIdeaForWeek(week, config);

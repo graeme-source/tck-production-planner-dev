@@ -56,7 +56,7 @@ export async function linkByCampaignName(campaigns: readonly KlaviyoCalendarEmai
   }
   for (const s of cycleSlotsBetween(from, to, cycle.config, products)) {
     if (taken.has(s.date)) continue;
-    targets.push({ key: `slot:${s.date}`, date: s.date, subject: s.subject, expectedName: s.campaignName });
+    targets.push({ key: `slot:${s.date}`, date: s.date, subject: s.subject, expectedName: s.campaignName, strict: true });
   }
   if (targets.length === 0) return [];
 
