@@ -46,8 +46,9 @@ import { sql } from "drizzle-orm";
 import {
   db, usersTable, peopleRecordClassificationsTable, peopleReviewStagesTable, peopleRecordEntriesTable, peopleRecordAuditTable,
   peopleLetterTemplatesTable, peopleLettersTable, personDocumentsTable, peopleHrSettingsTable, peopleReviewNotesTable,
-  peopleRecordEntrySourcesTable, visibleNotes,
+  peopleRecordEntrySourcesTable, visibleNotes, visibleSources,
 } from "@workspace/db";
+import { recordReaders, namesById } from "../lib/record-readers";
 import {
   FIELD_SETS, EVIDENCE_KINDS, STAGE_TYPES, RATINGS, PROBATION_OUTCOMES, FIT_FOR_WORK, ENTRY_STATUSES, MEETING_TYPES,
   canEditLists, cleanFieldSets, cleanChecklist, checkWarningDates, expiryForStage, reclassify, reviewBadge,
@@ -390,20 +391,33 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
     const allNotes = await db.select().from(peopleReviewNotesTable)
       .where(and(eq(peopleReviewNotesTable.userId, userId), isNull(peopleReviewNotesTable.deletedAt)))
       .orderBy(asc(peopleReviewNotesTable.createdAt), asc(peopleReviewNotesTable.id));
-    const notes = visibleNotes(allNotes, { id: viewer.actor.id, role: viewer.role, hasPeopleAccess: true }, userId).map(n => ({
+    // "Shared with HR" (0192): a private note its author let named
+    // People-access colleagues read too — the same rule decides, here.
+    const seen = visibleNotes(allNotes, { id: viewer.actor.id, role: viewer.role, hasPeopleAccess: true }, userId);
+    const [names, readers] = await Promise.all([
+      namesById(seen.flatMap(n => n.sharedWithUserIds ?? [])),
+      recordReaders(userId),
+    ]);
+    const notes = seen.map(n => ({
       id: n.id, entryId: n.entryId, kind: n.kind, title: n.title, body: n.body, visibility: n.visibility, sharedAt: n.sharedAt,
+      sharedWith: (n.sharedWithUserIds ?? []).map(id => ({ id, name: names.get(id) ?? "Someone" })),
       dueDate: n.dueDate, doneAt: n.doneAt, authorId: n.authorId, authorName: n.authorName, createdAt: n.createdAt, updatedAt: n.updatedAt,
     }));
-    // The meeting notes AI drafts were made from (0182) — People access only,
-    // like everything on this route.
+    // The meeting notes AI drafts were made from (0182) — private to whoever
+    // pasted them, like the private write-up they became (2026-10-14: they
+    // used to go to everyone with People access on the record).
     const sources = ids.length
-      ? await db.select().from(peopleRecordEntrySourcesTable)
-        .where(inArray(peopleRecordEntrySourcesTable.entryId, ids)).orderBy(asc(peopleRecordEntrySourcesTable.createdAt))
+      ? visibleSources(await db.select().from(peopleRecordEntrySourcesTable)
+        .where(inArray(peopleRecordEntrySourcesTable.entryId, ids)).orderBy(asc(peopleRecordEntrySourcesTable.createdAt)), viewer.actor.id)
       : [];
     const [probation] = await loadProbations([userId]);
     await audit(db, viewer, { subjectUserId: userId, action: "view", detail: `${entries.length} entr${entries.length === 1 ? "y" : "ies"}` });
     res.json({
-      person, today, viewerId: viewer.actor.id, probation: probation ?? null, periodMonths: PERIOD_MONTHS, canEditLists: mayEditLists(viewer), classifications, stages, attendance, triggerReview,
+      person, today, viewerId: viewer.actor.id,
+      // Who else can open this record (founder + People access, never on
+      // their own): the only people a note can be shared with as HR.
+      recordReaders: readers.filter(r => r.id !== viewer.actor.id),
+      probation: probation ?? null, periodMonths: PERIOD_MONTHS, canEditLists: mayEditLists(viewer), classifications, stages, attendance, triggerReview,
       entries: entries.map(e => ({
         id: e.id, userId: e.userId, classificationId: e.classificationId,
         classificationIds: entryClassIds({ classificationId: e.classificationId, classificationIds: classIds.get(e.id) }),
