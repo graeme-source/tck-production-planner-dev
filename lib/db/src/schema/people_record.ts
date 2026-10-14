@@ -112,6 +112,10 @@ export const peopleReviewNotesTable = pgTable("people_review_notes", {
   /** private | shared */
   visibility: text("visibility").notNull().default("private"),
   sharedAt: timestamp("shared_at"),
+  /** "Shared with HR" (0192): People-access colleagues the author picked to
+   *  read a PRIVATE note too. Empty = private to the author. Never the
+   *  subject. Ignored once visibility is 'shared' (they see it anyway). */
+  sharedWithUserIds: integer("shared_with_user_ids").array().notNull().default([]),
   dueDate: date("due_date"),
   doneAt: timestamp("done_at"),
   authorId: integer("author_id").references(() => usersTable.id, { onDelete: "set null" }),
