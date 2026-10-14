@@ -10,7 +10,7 @@
  * the Numbers trend series by the day — the same data as Order Analysis.
  */
 import { useId, useMemo, useState } from "react";
-import { ArrowDownRight, ArrowUpRight, HelpCircle, Megaphone, Minus } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, HelpCircle, History, Megaphone, Minus } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
@@ -22,6 +22,7 @@ import { yesterdayLondon, type RoasResult, type RoasWindow } from "@/lib/roas";
 import { BAND_HEADER_CLASS, BAND_TEXT_CLASS, type KpiBand } from "@/lib/station-kpi-bands";
 import { useAdEfficiencySettings, useSpendSources } from "./api";
 import { RoasTargetsButton } from "./targets-dialog";
+import { RoasHistoryDialog } from "./roas-history-dialog";
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const dayLabel = (d: string) => `${Number(d.slice(8, 10))} ${MONTHS[Number(d.slice(5, 7)) - 1]}`;
@@ -200,7 +201,7 @@ function LastSevenDays({ points, dayOnly, target, caption }: {
 }
 
 function RoasCard({
-  title, qualifier, result, target, settings, spark, daily, dailyCaption, sparkCaption, window: win, revenueLabel,
+  title, qualifier, result, target, settings, spark, daily, dailyCaption, sparkCaption, window: win, revenueLabel, onShowHistory,
 }: {
   title: string;
   /** The window, under the title: "Last 7 days". */
@@ -216,6 +217,8 @@ function RoasCard({
   daily?: SparkPoint[];
   /** Caption over the list when it shows the rolling figure. */
   dailyCaption?: string;
+  /** Shows a "Last 90 days" button that opens the full history. */
+  onShowHistory?: () => void;
   sparkCaption: string;
   window: RoasWindow;
   revenueLabel: string;
@@ -258,6 +261,15 @@ function RoasCard({
         </div>
         <Sparkline points={spark} target={target} band={band} caption={sparkCaption} />
         <LastSevenDays points={spark} dayOnly={daily} target={target} caption={dailyCaption ?? "Average as it stood each day"} />
+        {onShowHistory && (
+          <button
+            type="button"
+            onClick={onShowHistory}
+            className="self-start inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-semibold hover:bg-secondary"
+          >
+            <History className="w-3.5 h-3.5" /> Last 90 days
+          </button>
+        )}
         {result.available && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-secondary/50 px-3 py-2">
@@ -288,6 +300,7 @@ export function AdEfficiencyRow() {
   const from = earliestDayNeeded(lastDay);
   const trend = useSalesTrend(from, lastDay, "day");
   const settingsQ = useAdEfficiencySettings();
+  const [historyOpen, setHistoryOpen] = useState(false);
   const windows = useMemo(() => adWindows(lastDay), [lastDay]);
   const sources = useSpendSources(windows.last30.from, lastDay);
 
@@ -353,6 +366,7 @@ export function AdEfficiencyRow() {
               spark={view.spark7}
               daily={view.dailyNc}
               dailyCaption="7-day avg"
+              onShowHistory={() => setHistoryOpen(true)}
               sparkCaption="Rolling 7-day, last 30 days"
               window={windows.last7}
               revenueLabel="New customers"
@@ -383,6 +397,9 @@ export function AdEfficiencyRow() {
             />
           </div>
           <AdviceCard advice={view.advice} sourceLine={sourceLine} />
+          {historyOpen && (
+            <RoasHistoryDialog lastDay={lastDay} target={settings.ncRoas7dTargetPct} onClose={() => setHistoryOpen(false)} />
+          )}
         </>
       )}
     </div>

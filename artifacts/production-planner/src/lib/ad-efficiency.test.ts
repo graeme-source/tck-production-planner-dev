@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, roasShade, roasVerdict, shadeAtRatio, ROAS_SHADE_STEPS, rollingSeries,
+  adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, summariseRoasHistory, roasShade, roasVerdict, shadeAtRatio, ROAS_SHADE_STEPS, rollingSeries,
   spendSourceLine, windowOf, zeroSpendDays, type AdDay, type AdEfficiencySettings,
 } from "./ad-efficiency";
 import { addDays } from "./roas";
@@ -300,5 +300,22 @@ describe("ROAS shade scale", () => {
     expect(roasVerdict(271, 210, 10)).toBe("Well above target");
     expect(roasVerdict(215, 210, 10)).toBe("On or above target");
     expect(roasVerdict(195, 210, 10)).toBe("Just under target");
+  });
+});
+
+describe("summariseRoasHistory", () => {
+  const pts = (vals: Array<number | null>) => vals.map((percent, i) => ({ date: `2026-10-${String(i + 1).padStart(2, "0")}`, percent }));
+  it("counts days on target, the longest run and the current run", () => {
+    const avg = pts([220, 230, 200, 215, 211, 212, 190]);
+    const day = pts([250, 180, 210, null, 300, 150, 205]);
+    const s = summariseRoasHistory(avg, day, 210);
+    expect(s).toMatchObject({ avgDays: 7, avgOnTarget: 5, dayDays: 6, dayOnTarget: 3, longestRun: 3, currentRun: 0, currentBelow: 1 });
+  });
+  it("reports the run on target when the latest day is on target, and skips gaps", () => {
+    const s = summariseRoasHistory(pts([100, 220, null, 230]), pts([]), 210);
+    expect(s).toMatchObject({ avgDays: 3, avgOnTarget: 2, currentRun: 2, currentBelow: 0, longestRun: 2 });
+  });
+  it("exactly on target counts as on target", () => {
+    expect(summariseRoasHistory(pts([210]), pts([210]), 210)).toMatchObject({ avgOnTarget: 1, dayOnTarget: 1 });
   });
 });

@@ -395,3 +395,51 @@ export function spendSourceLine(rows: SpendSourceRow[], googleFirstDate: DayStri
     : "";
   return `${parts.join(" · ")}.${gapNote}`;
 }
+
+// ── 90-day history summary (Graeme, 2026-10-14) ──────────────────────────
+// How consistently the 7-day new-customer ROAS stays on target: days on or
+// above target (rolling and single-day), the longest run of rolling days on
+// target, and the run we're in now (on target, or below). Days with no
+// figure are skipped, never counted as misses.
+
+export interface RoasHistorySummary {
+  avgDays: number;
+  avgOnTarget: number;
+  dayDays: number;
+  dayOnTarget: number;
+  longestRun: number;
+  /** Days on target in a row, ending with the most recent day with a figure. */
+  currentRun: number;
+  /** Days below target in a row, ending with the most recent day with a figure. */
+  currentBelow: number;
+}
+
+export function summariseRoasHistory(avg7: SparkPoint[], daily: SparkPoint[], targetPct: number): RoasHistorySummary {
+  const on = (v: number) => v + EPS >= targetPct;
+  const avgVals = avg7.map(p => p.percent).filter((v): v is number => v != null && Number.isFinite(v));
+  const dayVals = daily.map(p => p.percent).filter((v): v is number => v != null && Number.isFinite(v));
+  let longestRun = 0;
+  let run = 0;
+  for (const v of avgVals) {
+    run = on(v) ? run + 1 : 0;
+    longestRun = Math.max(longestRun, run);
+  }
+  let currentRun = 0;
+  let currentBelow = 0;
+  for (let i = avgVals.length - 1; i >= 0; i--) {
+    const hit = on(avgVals[i]!);
+    if (i === avgVals.length - 1) { if (hit) currentRun = 1; else currentBelow = 1; continue; }
+    if (hit && currentRun > 0) currentRun++;
+    else if (!hit && currentBelow > 0) currentBelow++;
+    else break;
+  }
+  return {
+    avgDays: avgVals.length,
+    avgOnTarget: avgVals.filter(on).length,
+    dayDays: dayVals.length,
+    dayOnTarget: dayVals.filter(on).length,
+    longestRun,
+    currentRun,
+    currentBelow,
+  };
+}
