@@ -10,6 +10,7 @@
 import { daysBetween } from "./calendar";
 import { diffFields, joinWithAnd, type FieldChange, type FieldValue } from "./history";
 import { EMAIL_STAGES } from "./approvals";
+import { EMAIL_TYPE_LABELS } from "./email-cycle";
 
 export interface CampaignWindow { id: number; startDate: string; endDate: string }
 
@@ -181,6 +182,8 @@ export const EMAIL_FIELD_LABELS: Record<string, string> = {
   metaChange: "Meta change",
   notes: "notes",
   status: "stage",
+  emailType: "email type",
+  skipped: "skipped",
 };
 
 export function diffEmailFields(before: Record<string, FieldValue>, patch: Record<string, FieldValue>): Record<string, FieldChange> {
@@ -197,6 +200,10 @@ export function describeEmailFieldChanges(changes: Record<string, FieldChange>):
     if (key === "audiences") {
       const list = Array.isArray(to) ? to : [];
       parts.push(list.length ? `set the audience to ${list.map(audienceLabel).join(", ")}` : "cleared the audience");
+    } else if (key === "skipped") {
+      parts.push(to === "true" ? "skipped it this week" : "put it back in the plan");
+    } else if (key === "emailType" && !empty) {
+      parts.push(`made it a ${(EMAIL_TYPE_LABELS as Record<string, string>)[String(to)] ?? String(to)} email`);
     } else if (empty) parts.push(`cleared the ${label}`);
     else if (key === "subject") parts.push(`changed the subject line to “${String(to)}”`);
     else if (key === "status") parts.push(`changed the stage to ${stageLabel(String(to))}`);
