@@ -7,8 +7,10 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, Loader2, X } from "lucide-react";
+import { Archive, ArchiveRestore, Check, Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { filterListPeople, membersSummary } from "@/lib/team-list-view";
+import { useAuth } from "@/contexts/auth-context";
 import { useAutosave } from "@/hooks/use-autosave";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { SaveChip } from "@/components/save-chip";
@@ -38,6 +40,10 @@ export function ListSettingsModal({ list, onClose, onCreated }: {
     memberIds: list?.memberIds ?? [],
   }));
   const people = useTeamListPeople(true);
+  const [search, setSearch] = useState("");
+  const { state } = useAuth();
+  const myId = state.status === "authenticated" ? state.user.id : null;
+  const myRole = state.status === "authenticated" ? state.user.role : null;
   const create = useCreateList();
   const update = useUpdateList();
   // One save at a time, in order (see item-edit-modal.tsx).
@@ -86,6 +92,9 @@ export function ListSettingsModal({ list, onClose, onCreated }: {
   }
 
   const members = new Set(form.memberIds);
+  const allPeople = people.data ?? [];
+  const shownPeople = filterListPeople(allPeople, search, members);
+  const tickedCount = allPeople.filter(p => p.role !== "admin" && members.has(p.id)).length;
   const toggleMember = (id: number) => {
     const next = members.has(id) ? form.memberIds.filter(m => m !== id) : [...form.memberIds, id];
     change({ memberIds: next }, true);
@@ -135,22 +144,49 @@ export function ListSettingsModal({ list, onClose, onCreated }: {
             </div>
           </div>
 
+          {/* Who can use this list (Graeme, 2026-10-14): "If I tick, you've
+              got access." Everyone active, any role; admins always can. */}
           <div className="space-y-2">
-            <span className="text-sm font-semibold">Who can open it</span>
+            <span className="text-sm font-semibold">Who can use this list</span>
             <p className="text-sm text-muted-foreground">
-              {form.memberIds.length === 0
-                ? "Every manager and admin (nobody picked). Pick people to keep it to them — admins can always open it."
-                : "Only the people picked, plus admins."}
+              Tick anyone — they'll see this list and can tick its tasks. Managers ticked here can also change it. {membersSummary(tickedCount)}
             </p>
+            {myId != null && myRole !== "admin" && list && !members.has(myId) && (
+              <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">You're not ticked — you'll lose access to this list when you close this.</p>
+            )}
+            <div className="relative">
+              <Search className="w-5 h-5 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+              <input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search people"
+                className={cn(inputCls, "pl-10")} aria-label="Search people" />
+            </div>
             {people.isLoading && <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>}
-            <div className="flex flex-wrap gap-2">
-              {(people.data ?? []).map(p => (
-                <button key={p.id} type="button" onClick={() => toggleMember(p.id)} aria-pressed={members.has(p.id)}
-                  className={cn("min-h-[44px] px-4 rounded-full border-2 text-sm font-semibold",
-                    members.has(p.id) ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-secondary/60")}>
-                  {p.name}{p.role === "admin" ? " (admin)" : ""}
-                </button>
-              ))}
+            {people.error && <p className="text-sm text-red-600">Couldn't load the people — {(people.error as Error).message}</p>}
+            <div className="rounded-2xl border-2 border-border divide-y divide-border overflow-hidden">
+              {shownPeople.map(p => {
+                const isAdmin = p.role === "admin";
+                const on = isAdmin || members.has(p.id);
+                return (
+                  <button key={p.id} type="button" role="checkbox" aria-checked={on} disabled={isAdmin}
+                    onClick={() => toggleMember(p.id)}
+                    className={cn("w-full min-h-[60px] px-4 flex items-center gap-4 text-left",
+                      isAdmin ? "cursor-default" : "hover:bg-secondary/60", on && !isAdmin && "bg-primary/5")}>
+                    <span className={cn("w-8 h-8 rounded-lg border-2 flex items-center justify-center shrink-0",
+                      on ? "bg-primary border-primary text-primary-foreground" : "border-muted-foreground/40",
+                      isAdmin && "opacity-50")}>
+                      {on && <Check className="w-5 h-5" />}
+                    </span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-base font-semibold truncate">{p.name}</span>
+                      <span className="block text-sm text-muted-foreground">
+                        {isAdmin ? "Admin — always has access" : p.role === "manager" ? "Manager" : "Team"}
+                      </span>
+                    </span>
+                  </button>
+                );
+              })}
+              {!people.isLoading && shownPeople.length === 0 && (
+                <p className="px-4 py-4 text-sm text-muted-foreground">Nobody matches "{search.trim()}".</p>
+              )}
             </div>
           </div>
 

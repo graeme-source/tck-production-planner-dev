@@ -101,3 +101,20 @@ export function teamTaskSortFields(
   const time = entry?.overdue ? `${entry.dueDate} ${item.timeOfDay ?? "99:99"}` : item.timeOfDay;
   return { priority: item.priority, time, overdue: entry?.overdue ?? false, order: item.sortOrder, title: item.title };
 }
+
+/** "Who can use this list" search (Graeme, 2026-10-14): every active person
+ *  is listed; the box narrows by any part of the name, ignoring case. People
+ *  already ticked stay in view so an untick is never hidden by a search. */
+export function filterListPeople<T extends { id: number; name: string }>(
+  people: readonly T[], query: string, ticked: ReadonlySet<number>,
+): T[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...people];
+  return people.filter(p => ticked.has(p.id) || p.name.toLowerCase().includes(q));
+}
+
+/** The line under "Who can use this list". */
+export function membersSummary(tickedCount: number): string {
+  if (tickedCount === 0) return "Nobody ticked — only admins can open it.";
+  return `${tickedCount} ${tickedCount === 1 ? "person" : "people"} ticked, plus admins.`;
+}

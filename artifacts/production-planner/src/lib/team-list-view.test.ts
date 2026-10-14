@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  dayHeading, defaultCarryOver, doneByLabel, overdueLabel, presetOf, ruleForPreset, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+  dayHeading, defaultCarryOver, doneByLabel, filterListPeople, membersSummary, overdueLabel, presetOf, ruleForPreset, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
 } from "./team-list-view";
 import { sortTasks } from "./task-sort";
 
@@ -71,5 +71,24 @@ describe("team list sorting", () => {
     ];
     expect(sortTasks(rows, TEAM_LIST_DEFAULT_SORT, r => teamTaskSortFields(r.it, r.e)).map(r => r.it.title))
       .toEqual(["Fri untimed", "Mon 08:00", "Mon 09:00"]);
+  });
+});
+
+describe("who can use this list", () => {
+  const people = [
+    { id: 1, name: "Bohdan Davydov" }, { id: 2, name: "Lorna Smith" }, { id: 3, name: "Dan Brown" },
+  ];
+  it("lists everyone with no search, and narrows by any part of the name", () => {
+    expect(filterListPeople(people, "", new Set()).map(p => p.id)).toEqual([1, 2, 3]);
+    expect(filterListPeople(people, " DAV ", new Set()).map(p => p.id)).toEqual([1]);
+    expect(filterListPeople(people, "brown", new Set()).map(p => p.id)).toEqual([3]);
+  });
+  it("keeps ticked people in view while searching", () => {
+    expect(filterListPeople(people, "brown", new Set([2])).map(p => p.id)).toEqual([2, 3]);
+  });
+  it("says who can open it", () => {
+    expect(membersSummary(0)).toBe("Nobody ticked — only admins can open it.");
+    expect(membersSummary(1)).toBe("1 person ticked, plus admins.");
+    expect(membersSummary(3)).toBe("3 people ticked, plus admins.");
   });
 });
