@@ -48,6 +48,11 @@ export const ingredientsTable = pgTable("ingredients", {
   surplusPercent: numeric("surplus_percent", { precision: 8, scale: 2 }).notNull().default("10"),
   surplusMode: text("surplus_mode").notNull().default("percent"),
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),
+  // Surplus % by the weekday a delivery ARRIVES (ISO 1=Mon … 7=Sun), e.g.
+  // {"1":130,"2":130,"3":130,"4":30,"5":30}. NULL / missing day = the normal
+  // surplusPercent. Read only through surplusFor (@workspace/business-days).
+  // Migration 0193. Objective C.
+  surplusByDeliveryWeekday: jsonb("surplus_by_delivery_weekday"),
   shelfLifeDays: integer("shelf_life_days"),
   requiresUseByDate: boolean("requires_use_by_date").notNull().default(false),
   // Prep-label rules: food-safe days after OPENING (shelfLifeDays stays the
