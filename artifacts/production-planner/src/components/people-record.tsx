@@ -21,7 +21,7 @@ import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
-  HeartPulse, Loader2, Lock, PenLine, RefreshCw, Sun, Target, History, ClipboardList,
+  HeartPulse, Loader2, Lock, PenLine, RefreshCw, Sun, Target, History, ClipboardList, StickyNote,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -32,6 +32,7 @@ import { PeopleModal } from "@/components/people-modal";
 import { FormEditor, type RtwForm } from "@/components/rtw-form-editor";
 import { ReviewTimelineCard, ReviewNoteCard, AgreedObjectiveCard, AgreedListCard } from "@/components/people/review-notes";
 import { BookReviewForm } from "@/components/people/book-review";
+import { AddNoteForm } from "@/components/people/add-note";
 import { useRefreshEntries } from "@/components/people/reviews-api";
 import { groupRecordNotes, currentObjectives } from "@/lib/employee-record-grouping";
 import {
@@ -454,7 +455,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const today = todayIso();
   const [from, setFrom] = useState<string | null>(null); // null = the default 12 months
   const [filter, setFilter] = useState<TimelineFilter>("all");
-  const [modal, setModal] = useState<null | "rtw" | "book">(null);
+  const [modal, setModal] = useState<null | "rtw" | "book" | "note">(null);
   // Booked from a trigger banner: the review starts linked to that trigger.
   const [bookLink, setBookLink] = useState<AnswersTrigger | null>(null);
   const [openForm, setOpenForm] = useState<RtwForm | null>(null);
@@ -686,15 +687,22 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           </p>
         )}
         {/* ONE button for every kind of review — classified as it's booked,
-            and re-classifiable afterwards (Graeme, 2026-10-12). */}
-        <div className="grid gap-3 @sm/main:grid-cols-2">
+            and re-classifiable afterwards (Graeme, 2026-10-12) — plus a
+            plain note or observation, private until shared (2026-10-14).
+            Phone: stacked. Wider: the two outlined side by side with
+            Schedule a meeting full width under them; widest: one row. */}
+        <div className="grid gap-3 @sm/main:grid-cols-2 @3xl/main:grid-cols-3">
           <button onClick={() => setModal("rtw")}
             className={cn("min-h-14 px-3 py-2 rounded-2xl text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 transition-all active:scale-[0.99]",
               formsNeeded > 0 ? "bg-amber-600 text-white hover:bg-amber-700" : "border-2 border-border hover:bg-secondary/50")}>
             <HeartPulse className="w-6 h-6 shrink-0" /> Return-to-work form{formsNeeded > 0 ? ` (${formsNeeded})` : ""}
           </button>
+          <button onClick={() => setModal("note")} disabled={!canManage}
+            className="min-h-14 px-3 py-2 rounded-2xl border-2 border-border text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:bg-secondary/50 active:scale-[0.99] disabled:opacity-50">
+            <StickyNote className="w-6 h-6 shrink-0" /> Add a note
+          </button>
           <button onClick={() => { setBookLink(null); setModal("book"); }} disabled={!canManage}
-            className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50">
+            className="min-h-14 px-3 py-2 rounded-2xl bg-primary text-primary-foreground text-base @3xl/main:text-lg font-bold leading-tight text-center flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] disabled:opacity-50 @sm/main:col-span-2 @3xl/main:col-span-1">
             <CalendarDays className="w-6 h-6 shrink-0" /> Schedule a meeting
           </button>
         </div>
@@ -763,6 +771,12 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           <div className="text-center py-10 rounded-2xl bg-secondary/30">
             <p className="text-2xl font-bold">Nothing here in this period</p>
             <p className="text-base text-muted-foreground mt-1">Try another filter, or show older.</p>
+            {filter === "notes" && canManage && (
+              <button type="button" onClick={() => setModal("note")}
+                className="mt-4 h-14 px-5 rounded-2xl border-2 border-border bg-card text-lg font-bold inline-flex items-center gap-2 hover:bg-secondary/50">
+                <StickyNote className="w-5 h-5" /> Add a note
+              </button>
+            )}
           </div>
         ) : visible.map(e => {
           if (e.kind === "absence") {
@@ -882,6 +896,13 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
           {/* Then the review opens, to write it up or change anything. */}
           <BookReviewForm data={recordEntries.data} answersTrigger={bookLink} onCancel={() => setModal(null)}
             onCreated={id => { setModal(null); refreshReviews(); openEntryInPanel(id); }} />
+        </PeopleModal>
+      )}
+      {modal === "note" && recordEntries.data && (
+        <PeopleModal title={`Add a note — ${p.name}`} onClose={() => setModal(null)}>
+          {/* Then it's in The record as a loose note, with its own Share. */}
+          <AddNoteForm userId={p.id} personName={p.name} today={recordEntries.data.today} onCancel={() => setModal(null)}
+            onSaved={() => { setModal(null); refreshReviews(); }} />
         </PeopleModal>
       )}
       {addingContract && (
