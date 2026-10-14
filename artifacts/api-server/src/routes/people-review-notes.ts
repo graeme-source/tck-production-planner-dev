@@ -144,6 +144,8 @@ const WriteUpBody = z.object({
   notes: z.string().max(BODY_MAX).optional(),
   /** Publish the whole write-up to the colleague as it's saved. */
   share: z.boolean().optional(),
+  /** Or keep it private but let these People-access colleagues read it (0192). */
+  sharedWithUserIds: z.array(z.number().int().positive()).max(20).optional(),
 });
 
 router.post("/entries/:id/write-up", onEntry, validate(WriteUpBody), async (req: Request, res: Response) => {
@@ -154,15 +156,17 @@ router.post("/entries/:id/write-up", onEntry, validate(WriteUpBody), async (req:
     if (!entry) { res.status(404).json({ error: "No such review" }); return; }
     const rows = writeUpRows(b);
     if (rows.length === 0) { res.status(400).json({ error: "Write something first — feedback, an objective, or a note." }); return; }
+    const hr = await checkHrViewers(b.share ? [] : (b.sharedWithUserIds ?? []), viewer, entry.userId);
+    if (!hr.ok) { res.status(400).json({ error: hr.error }); return; }
     const now = new Date();
     const created = await db.transaction(async tx => {
       const out = await tx.insert(peopleReviewNotesTable).values(rows.map(r => ({
         entryId: entry.id, userId: entry.userId, kind: r.kind, title: r.title, body: r.body, dueDate: r.dueDate,
-        visibility: b.share ? "shared" : "private", sharedAt: b.share ? now : null,
+        visibility: b.share ? "shared" : "private", sharedAt: b.share ? now : null, sharedWithUserIds: hr.ids,
         authorId: viewer.actor.id, authorName: viewer.name,
       }))).returning({ id: peopleReviewNotesTable.id });
       await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "write_up",
-        detail: `Written up (${rows.length} part${rows.length === 1 ? "" : "s"}${b.share ? ", shared with them" : ", private"})` });
+        detail: `Written up (${rows.length} part${rows.length === 1 ? "" : "s"}${b.share ? ", shared with them" : hr.ids.length ? `, shared with ${hr.ids.length} HR colleague${hr.ids.length === 1 ? "" : "s"}` : ", private"})` });
       // Writing a booked review up means it happened.
       if (entry.meetingStatus === "booked") {
         const change = meetingStatusChange("booked", "held", entry.heldAt);
@@ -174,6 +178,7 @@ router.post("/entries/:id/write-up", onEntry, validate(WriteUpBody), async (req:
       return out;
     });
     if (b.share) await notifyShared(entry.userId, viewer, "a review write-up");
+    else await notifyHr(hr.ids, entry.userId, viewer);
     resyncAttentionSoon();
     res.status(201).json({ created: created.length });
   } catch (err) {
