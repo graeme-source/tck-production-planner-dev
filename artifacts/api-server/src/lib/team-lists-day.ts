@@ -21,10 +21,18 @@
  *   Order       priority (P1 first), then time of day (untimed last), then
  *               the list's own order.
  *   Progress    shown = everything in today's view; done = done or
- *               skipped; overdue = carried over and still open.
+ *               skipped; overdue = carried over and still open. A task
+ *               ticked early counts on its own day, never today.
+ *   Tick early  (Graeme, 2026-10-14: weekly tasks "just need to be done that
+ *               week") — anything in "Coming up this week" can be ticked or
+ *               skipped now. The tick is stored against that occurrence's
+ *               date (the due day), with who and the real time, so on the
+ *               day it already shows as done. Only days the rule is due on,
+ *               within the same 7-day window; every-day and weekday tasks
+ *               aren't in Coming up, so they can't be ticked early.
  */
 import {
-  addDays, isDailyRhythm, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, type RecurrenceRule,
+  addDays, daysBetween, isDailyRhythm, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, type RecurrenceRule,
 } from "@workspace/recurrence";
 
 export interface ListAccessUser { id: number; role: string }
@@ -109,7 +117,6 @@ export function occurrenceForToday(item: DayItem, today: string, closedOn: (dueD
   const closed = closedOn(occ);
   if (closed === undefined || closed === today) return { dueDate: occ, overdue: true };
   return null;
-  return null;
 }
 
 /** The (item, date) pairs whose completions the day view needs: each
@@ -167,30 +174,83 @@ export function buildDay(items: DayItem[], completions: DayCompletion[], today: 
   };
 }
 
-/** The next `days` days after today, with the items due on each (in list
- *  order) — the collapsed "Coming up" section. Every-day and weekday tasks
- *  are left out (they would fill every day and hide the weekly ones), and so
- *  are days with nothing. */
-export function comingUp(items: DayItem[], today: string, days = 7): Array<{ date: string; itemIds: number[] }> {
-  const sorted = [...items].filter(i => i.active && !(ruleOf(i) && isDailyRhythm(ruleOf(i)!))).sort(compareItems);
-  const out: Array<{ date: string; itemIds: number[] }> = [];
+/** How far ahead "Coming up this week" looks — and so how early a task can
+ *  be ticked. */
+export const UPCOMING_DAYS = 7;
+
+/** Is `date` an occurrence of this item in "Coming up": after today, within
+ *  `days`, on or after its start date, a day its rule is due — and not an
+ *  every-day / weekday task (they would fill every day and hide the weekly
+ *  ones). */
+export function isUpcomingOccurrence(item: DayItem, date: string, today: string, days = UPCOMING_DAYS): boolean {
+  if (!item.active) return false;
+  const rule = ruleOf(item);
+  if (!rule || isDailyRhythm(rule)) return false;
+  const ahead = daysBetween(today, date);
+  if (ahead < 1 || ahead > days) return false;
+  return date >= item.startDate && isDueOn(rule, date);
+}
+
+/** The (item, date) pairs "Coming up" shows, so their early ticks can be
+ *  loaded. */
+export function upcomingOccurrencesToLoad(items: DayItem[], today: string, days = UPCOMING_DAYS): Array<{ itemId: number; dueDate: string }> {
+  const out: Array<{ itemId: number; dueDate: string }> = [];
   for (let i = 1; i <= days; i++) {
     const date = addDays(today, i);
-    const ids = sorted.filter(item => {
-      const rule = ruleOf(item);
-      return rule != null && date >= item.startDate && isDueOn(rule, date);
-    }).map(item => item.id);
-    if (ids.length) out.push({ date, itemIds: ids });
+    for (const item of items) if (isUpcomingOccurrence(item, date, today, days)) out.push({ itemId: item.id, dueDate: date });
   }
   return out;
 }
 
-/** May a tick be recorded against this date? Only the occurrence that is in
- *  today's view — today's, or the carried-over one — never a future day or an
- *  older, replaced cycle. */
-export function canTickOccurrence(item: DayItem, dueDate: string, today: string): boolean {
+export interface UpcomingDay {
+  date: string;
+  itemIds: number[];
+  /** One per item, in the same order — with its early tick, if any. */
+  entries: DayEntry[];
+}
+
+/** The next `days` days after today, with the items due on each (in list
+ *  order) and any early ticks — the "Coming up this week" section. Days with
+ *  nothing are left out. */
+export function comingUp(items: DayItem[], today: string, days = UPCOMING_DAYS, completions: DayCompletion[] = []): UpcomingDay[] {
+  const byKey = new Map<string, DayCompletion>();
+  for (const c of completions) byKey.set(`${c.itemId}|${c.dueDate}`, c);
+  const sorted = [...items].sort(compareItems);
+  const out: UpcomingDay[] = [];
+  for (let i = 1; i <= days; i++) {
+    const date = addDays(today, i);
+    const due = sorted.filter(item => isUpcomingOccurrence(item, date, today, days));
+    if (!due.length) continue;
+    out.push({
+      date,
+      itemIds: due.map(item => item.id),
+      entries: due.map(item => {
+        const c = byKey.get(`${item.id}|${date}`);
+        return {
+          itemId: item.id, dueDate: date, overdue: false,
+          completion: c ? { status: c.status === "skipped" ? "skipped" as const : "done" as const, byName: c.byName, at: iso(c.at) } : null,
+        };
+      }),
+    });
+  }
+  return out;
+}
+
+/** May a tick (or undo) be recorded against this date? The occurrence in
+ *  today's view — today's, or the carried-over one — or one in "Coming up"
+ *  (ticked early). Never an older, replaced cycle, a day the rule isn't due,
+ *  or further ahead than Coming up looks. */
+export function canTickOccurrence(item: DayItem, dueDate: string, today: string, days = UPCOMING_DAYS): boolean {
   if (!item.active) return false;
   const rule = ruleOf(item);
   if (!rule) return false;
+  if (dueDate > today) return isUpcomingOccurrence(item, dueDate, today, days);
   return lastOccurrenceOnOrBefore(rule, today, item.startDate) === dueDate;
+}
+
+/** Why a tick was refused, in words for the person. */
+export function tickRefusal(dueDate: string, today: string): string {
+  return dueDate > today
+    ? "A task can only be ticked early on a day it's due, up to a week ahead — refresh the list"
+    : "That day's task has already moved on — refresh the list";
 }

@@ -16,7 +16,9 @@
  *   POST   /:id/reorder         set the list's own order
  *   POST   /:id/import          Todoist "Export as template" CSV
  *   PATCH  /items/:itemId       edit a task (active: false removes it)
- *   POST   /items/:itemId/tick  done / skipped for an occurrence
+ *   POST   /items/:itemId/tick  done / skipped for an occurrence (today's,
+ *                                a carried-over one, or one in Coming up —
+ *                                ticked early, Graeme 2026-10-14)
  *   POST   /items/:itemId/untick
  *
  * Access (lib/team-lists-day.ts, Graeme 2026-10-14 — "if I tick, you've got
@@ -39,7 +41,7 @@ import { resolveRole } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
 import {
   buildDay, canAccessList, canCreateList, canEditList, canTickOccurrence, comingUp, membersForNewList,
-  occurrencesToLoad, teamListsVisible,
+  occurrencesToLoad, teamListsVisible, tickRefusal, upcomingOccurrencesToLoad, UPCOMING_DAYS,
   type DayCompletion, type DayItem, type ListAccessUser,
 } from "../lib/team-lists-day";
 import { parseTodoistTemplate } from "../lib/todoist-import";
@@ -69,7 +71,8 @@ function intParam(v: unknown): number | null {
 }
 
 // ── Validation ──────────────────────────────────────────────────────────────
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+  .refine(d => { const t = new Date(`${d}T12:00:00Z`); return !Number.isNaN(t.getTime()) && t.toISOString().startsWith(d); }, "Not a real date");
 const weekday = z.number().int().min(0).max(6);
 const recurrenceSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("daily") }),
@@ -244,7 +247,11 @@ router.get("/:id", async (req: Request, res: Response) => {
     .where(and(eq(teamListItemsTable.listId, list.id), eq(teamListItemsTable.active, true)))
     .orderBy(asc(teamListItemsTable.sortOrder), asc(teamListItemsTable.id));
   const dayItems = items.map(toDayItem);
-  const completions = await loadCompletions(occurrencesToLoad(dayItems, today));
+  // Today's occurrences and Coming up's (early ticks), in one query.
+  const completions = await loadCompletions([
+    ...occurrencesToLoad(dayItems, today),
+    ...upcomingOccurrencesToLoad(dayItems, today, UPCOMING_DAYS),
+  ]);
   const day = buildDay(dayItems, completions, today);
   res.json({
     today,
@@ -252,7 +259,7 @@ router.get("/:id", async (req: Request, res: Response) => {
     items: items.map(serialiseItem),
     entries: day.entries,
     progress: day.progress,
-    comingUp: comingUp(dayItems, today, 7),
+    comingUp: comingUp(dayItems, today, UPCOMING_DAYS, completions),
   });
 });
 
@@ -367,8 +374,9 @@ router.post("/items/:itemId/tick", validate(tickBody), async (req: Request, res:
   const found = await itemFor(req, res, "open");
   if (!found) return;
   const { dueDate, status } = req.body as z.infer<typeof tickBody>;
-  if (!canTickOccurrence(toDayItem(found.item), dueDate, londonDateString())) {
-    res.status(409).json({ error: "That day's task has already moved on — refresh the list" });
+  const today = londonDateString();
+  if (!canTickOccurrence(toDayItem(found.item), dueDate, today)) {
+    res.status(409).json({ error: tickRefusal(dueDate, today) });
     return;
   }
   const name = await myName(req);
@@ -386,8 +394,9 @@ router.post("/items/:itemId/untick", validate(untickBody), async (req: Request, 
   const found = await itemFor(req, res, "open");
   if (!found) return;
   const { dueDate } = req.body as z.infer<typeof untickBody>;
-  if (!canTickOccurrence(toDayItem(found.item), dueDate, londonDateString())) {
-    res.status(409).json({ error: "That day's task has already moved on — refresh the list" });
+  const today = londonDateString();
+  if (!canTickOccurrence(toDayItem(found.item), dueDate, today)) {
+    res.status(409).json({ error: tickRefusal(dueDate, today) });
     return;
   }
   await db.delete(teamListCompletionsTable)

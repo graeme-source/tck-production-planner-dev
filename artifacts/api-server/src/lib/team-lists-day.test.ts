@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDay, canAccessList, canCreateList, canEditList, canTickOccurrence, comingUp, membersForNewList, teamListsVisible,
+  tickRefusal, upcomingOccurrencesToLoad,
   type DayCompletion, type DayItem,
 } from "./team-lists-day";
 import { londonDateString } from "./london-time";
@@ -162,13 +163,85 @@ describe("London date edges", () => {
 });
 
 describe("ticking", () => {
-  it("allows today's occurrence and the carried-over one, never the future", () => {
+  it("allows today's occurrence and the carried-over one, never an older replaced cycle", () => {
     const weekly = item({ id: 1, recurrence: { kind: "weekly", days: [1] }, carryOver: true });
     expect(canTickOccurrence(weekly, MON, WED)).toBe(true);
-    expect(canTickOccurrence(weekly, "2026-10-19", WED)).toBe(false);
     expect(canTickOccurrence(weekly, "2026-10-05", WED)).toBe(false);
     expect(canTickOccurrence(item({ id: 2 }), TUE, TUE)).toBe(true);
     expect(canTickOccurrence(item({ id: 2 }), MON, TUE)).toBe(false);
+  });
+});
+
+describe("ticking early (Graeme, 2026-10-14: weekly tasks just need doing that week)", () => {
+  // Today is Tuesday 13 Oct; a Friday task is due 16 Oct, then 23 Oct.
+  const FRI = "2026-10-16", NEXT_TUE = "2026-10-20", NEXT_FRI = "2026-10-23";
+  // Started Monday, so last Friday was never due (no overdue in the way).
+  const friday = item({ id: 1, recurrence: { kind: "weekly", days: [5] }, carryOver: true, startDate: MON });
+
+  it("allows a future occurrence the rule is due on, within the week", () => {
+    expect(canTickOccurrence(friday, FRI, TUE)).toBe(true);
+    // Exactly 7 days ahead is still in Coming up.
+    const tuesday = item({ id: 2, recurrence: { kind: "weekly", days: [2] } });
+    expect(canTickOccurrence(tuesday, NEXT_TUE, TUE)).toBe(true);
+  });
+  it("refuses a day the rule isn't due on", () => {
+    expect(canTickOccurrence(friday, THU, TUE)).toBe(false);
+    expect(canTickOccurrence(friday, WED, TUE)).toBe(false);
+  });
+  it("refuses anything beyond the week Coming up shows", () => {
+    expect(canTickOccurrence(friday, NEXT_FRI, TUE)).toBe(false);
+  });
+  it("refuses every-day and weekday tasks (not in Coming up)", () => {
+    expect(canTickOccurrence(item({ id: 3 }), WED, TUE)).toBe(false);
+    expect(canTickOccurrence(item({ id: 4, recurrence: { kind: "weekdays" } }), WED, TUE)).toBe(false);
+  });
+  it("refuses removed tasks and days before the task started", () => {
+    expect(canTickOccurrence({ ...friday, active: false }, FRI, TUE)).toBe(false);
+    expect(canTickOccurrence({ ...friday, startDate: "2026-10-17" }, FRI, TUE)).toBe(false);
+  });
+  it("says why in plain words", () => {
+    expect(tickRefusal(FRI, TUE)).toMatch(/early/);
+    expect(tickRefusal(MON, TUE)).toMatch(/moved on/);
+  });
+
+  // Ticked on Tuesday at 08:12 London (07:12 UTC), against Friday.
+  const early: DayCompletion = { itemId: 1, dueDate: FRI, status: "done", byName: "Lorna", at: "2026-10-13T07:12:00.000Z", atDate: TUE };
+
+  it("shows as done in Coming up straight away, against its own day", () => {
+    const up = comingUp([friday], TUE, 7, [early]);
+    expect(up).toEqual([{
+      date: FRI, itemIds: [1],
+      entries: [{ itemId: 1, dueDate: FRI, overdue: false, completion: { status: "done", byName: "Lorna", at: "2026-10-13T07:12:00.000Z" } }],
+    }]);
+  });
+  it("doesn't count in today's progress", () => {
+    const daily = item({ id: 2 });
+    const day = buildDay([friday, daily], [early], TUE);
+    expect(day.entries.map(e => e.itemId)).toEqual([2]);
+    expect(day.progress).toEqual({ total: 1, done: 0, overdue: 0 });
+  });
+  it("on its day it's already done, and counts in that day's progress", () => {
+    const day = buildDay([friday, item({ id: 2 })], [early], FRI);
+    const entry = day.entries.find(e => e.itemId === 1)!;
+    expect(entry.completion).toEqual({ status: "done", byName: "Lorna", at: "2026-10-13T07:12:00.000Z" });
+    expect(day.progress).toEqual({ total: 2, done: 1, overdue: 0 });
+  });
+  it("a carry-over task ticked early doesn't come back as overdue after its day", () => {
+    expect(buildDay([friday], [early], "2026-10-17").entries).toEqual([]);
+  });
+  it("undo puts it back: open in Coming up, open on its day", () => {
+    expect(canTickOccurrence(friday, FRI, TUE)).toBe(true); // untick uses the same check
+    expect(comingUp([friday], TUE, 7, [])[0].entries[0].completion).toBeNull();
+    expect(buildDay([friday], [], FRI).progress).toEqual({ total: 1, done: 0, overdue: 0 });
+  });
+  it("skipping early is recorded the same way", () => {
+    const skipped = { ...early, status: "skipped" };
+    expect(comingUp([friday], TUE, 7, [skipped])[0].entries[0].completion?.status).toBe("skipped");
+    expect(buildDay([friday], [skipped], FRI).progress.done).toBe(1);
+  });
+  it("loads completions for exactly the occurrences Coming up shows", () => {
+    const items = [friday, item({ id: 2 }), item({ id: 3, recurrence: { kind: "weekly", days: [4] } })];
+    expect(upcomingOccurrencesToLoad(items, TUE)).toEqual([{ itemId: 3, dueDate: THU }, { itemId: 1, dueDate: FRI }]);
   });
 });
 
@@ -181,6 +254,7 @@ describe("coming up", () => {
       item({ id: 4 }), // daily: left out
       item({ id: 5, recurrence: { kind: "weekdays" } }),
     ];
-    expect(comingUp(items, TUE)).toEqual([{ date: THU, itemIds: [2, 1] }]);
+    expect(comingUp(items, TUE).map(d => ({ date: d.date, itemIds: d.itemIds }))).toEqual([{ date: THU, itemIds: [2, 1] }]);
+    expect(comingUp(items, TUE)[0].entries.map(e => e.completion)).toEqual([null, null]);
   });
 });
