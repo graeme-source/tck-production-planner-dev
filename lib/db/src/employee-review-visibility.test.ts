@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  canManageRecord, canOpenRecord, canReadNote, visibleNotes,
+  canManageRecord, canOpenRecord, canReadNote, visibleNotes, visibleSources,
   type ReviewNoteForVisibility, type ReviewViewer,
 } from "./employee-review-visibility";
 
@@ -195,5 +195,81 @@ describe("shared notes stay visible to whoever shared them", () => {
 
   it("the person it is about reads it whatever their role or email", () => {
     expect(canReadNote(sharedByGraeme, SUBJECT, SUBJECT.id)).toBe(true);
+  });
+});
+
+// ── Three levels (Graeme, 2026-10-14) ──────────────────────────────────────
+// Private to you / Shared with HR (named People-access colleagues) / Shared
+// with the colleague. The matrix: every kind of viewer against every level.
+describe("visibility matrix — private / shared with HR / shared with the colleague", () => {
+  const AUTHOR: ReviewViewer = { id: 1, role: "admin", hasPeopleAccess: true };          // the founder writing
+  const HR_CHOSEN: ReviewViewer = { id: 3, role: "manager", hasPeopleAccess: true };      // People access, picked
+  const HR_NOT_CHOSEN: ReviewViewer = { id: 5, role: "manager", hasPeopleAccess: true };  // People access, not picked
+  const THE_COLLEAGUE: ReviewViewer = { id: 9, role: "viewer" };                          // the record's subject
+  const ANOTHER_EMPLOYEE: ReviewViewer = { id: 10, role: "viewer" };
+  const MANAGER_NO_ACCESS: ReviewViewer = { id: 4, role: "manager" };
+  const ADMIN_NO_ACCESS: ReviewViewer = { id: 2, role: "admin", hasPeopleAccess: false };
+
+  const privateNote: ReviewNoteForVisibility = { authorId: AUTHOR.id, visibility: "private", sharedWithUserIds: [] };
+  const hrNote: ReviewNoteForVisibility = { authorId: AUTHOR.id, visibility: "private", sharedWithUserIds: [HR_CHOSEN.id] };
+  const colleagueNote: ReviewNoteForVisibility = { authorId: AUTHOR.id, visibility: "shared", sharedWithUserIds: [] };
+
+  const rows: Array<[string, ReviewViewer, boolean, boolean, boolean]> = [
+    //  viewer                                     private  HR     colleague
+    ["the author", AUTHOR, true, true, true],
+    ["the chosen HR colleague", HR_CHOSEN, false, true, true],
+    ["a People-access holder not chosen", HR_NOT_CHOSEN, false, false, true],
+    ["the colleague it's about", THE_COLLEAGUE, false, false, true],
+    ["another employee", ANOTHER_EMPLOYEE, false, false, false],
+    ["a manager without People access", MANAGER_NO_ACCESS, false, false, false],
+    ["an admin without People access", ADMIN_NO_ACCESS, false, false, false],
+  ];
+
+  for (const [who, viewer, p, h, c] of rows) {
+    it(`${who}: private ${p ? "yes" : "no"}, HR ${h ? "yes" : "no"}, colleague ${c ? "yes" : "no"}`, () => {
+      expect(canReadNote(privateNote, viewer, THE_COLLEAGUE.id)).toBe(p);
+      expect(canReadNote(hrNote, viewer, THE_COLLEAGUE.id)).toBe(h);
+      expect(canReadNote(colleagueNote, viewer, THE_COLLEAGUE.id)).toBe(c);
+    });
+  }
+
+  it("never shows an HR note to the colleague, even if their id got onto the list", () => {
+    const bad = { ...hrNote, sharedWithUserIds: [HR_CHOSEN.id, THE_COLLEAGUE.id] };
+    expect(canReadNote(bad, THE_COLLEAGUE, THE_COLLEAGUE.id)).toBe(false);
+    // …or if they somehow held People access too.
+    expect(canReadNote(bad, { ...THE_COLLEAGUE, hasPeopleAccess: true }, THE_COLLEAGUE.id)).toBe(false);
+  });
+
+  it("an HR colleague who loses People access loses sight of it at once", () => {
+    expect(canReadNote(hrNote, { ...HR_CHOSEN, hasPeopleAccess: false }, THE_COLLEAGUE.id)).toBe(false);
+  });
+
+  it("someone picked but never given People access can't read it", () => {
+    const toManager = { ...hrNote, sharedWithUserIds: [MANAGER_NO_ACCESS.id] };
+    expect(canReadNote(toManager, MANAGER_NO_ACCESS, THE_COLLEAGUE.id)).toBe(false);
+  });
+
+  it("a missing list reads as private", () => {
+    const legacy = { authorId: AUTHOR.id, visibility: "private" } as ReviewNoteForVisibility;
+    expect(canReadNote(legacy, HR_CHOSEN, THE_COLLEAGUE.id)).toBe(false);
+    expect(canReadNote({ ...legacy, sharedWithUserIds: null }, HR_CHOSEN, THE_COLLEAGUE.id)).toBe(false);
+  });
+
+  it("visibleNotes gives the colleague's Employee Hub only the colleague-shared one", () => {
+    expect(visibleNotes([privateNote, hrNote, colleagueNote], THE_COLLEAGUE, THE_COLLEAGUE.id)).toEqual([colleagueNote]);
+    expect(visibleNotes([privateNote, hrNote, colleagueNote], HR_CHOSEN, THE_COLLEAGUE.id)).toEqual([hrNote, colleagueNote]);
+  });
+});
+
+describe("visibleSources — the pasted meeting notes behind an AI write-up", () => {
+  const sources = [{ id: 1, createdById: 1 }, { id: 2, createdById: 3 }, { id: 3, createdById: null }];
+
+  it("REGRESSION: go only to whoever pasted them, not everyone with People access", () => {
+    // They were sent to every People-access holder on the record, so the raw
+    // notes behind a PRIVATE write-up could be read by someone it was never
+    // shared with (found 2026-10-14).
+    expect(visibleSources(sources, 1).map(s => s.id)).toEqual([1]);
+    expect(visibleSources(sources, 3).map(s => s.id)).toEqual([2]);
+    expect(visibleSources(sources, 5)).toEqual([]);
   });
 });

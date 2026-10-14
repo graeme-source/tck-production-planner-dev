@@ -23,6 +23,10 @@ export interface ReviewNoteForVisibility {
    *  isn't exactly "shared" is treated as private — an unexpected value must
    *  fail CLOSED, never publish a note nobody chose to publish. */
   visibility: string;
+  /** "Shared with HR" (migration 0192): the People-access colleagues the
+   *  author picked. Only ever widens a PRIVATE note to these named people —
+   *  never the subject, never anyone without People access. Missing = none. */
+  sharedWithUserIds?: readonly number[] | null;
 }
 
 export interface ReviewViewer {
@@ -65,6 +69,9 @@ export function canOpenRecord(viewer: ReviewViewer, subjectUserId: number): bool
  *  Private — the author, plus anyone explicitly granted. A manager or admin
  *  who did not write it does NOT qualify: "private" would mean nothing if the
  *  next admin could read it.
+ *  Shared with HR (private + sharedWithUserIds, 0192) — also the colleagues
+ *  the author picked, and only while they have People access. Never the
+ *  person it is about, even if their id were somehow on the list.
  *  Shared  — the person it is about, and whoever looks after their record.
  */
 export function canReadNote(
@@ -74,6 +81,8 @@ export function canReadNote(
 ): boolean {
   if (note.visibility !== "shared") {
     if (note.authorId != null && note.authorId === viewer.id) return true;
+    if (viewer.id === subjectUserId) return false;
+    if (canManageRecord(viewer) && (note.sharedWithUserIds ?? []).includes(viewer.id)) return true;
     return viewer.hasPrivateGrant === true;
   }
   if (viewer.id === subjectUserId) return true;
@@ -88,4 +97,12 @@ export function visibleNotes<T extends ReviewNoteForVisibility>(
   subjectUserId: number,
 ): T[] {
   return notes.filter(n => canReadNote(n, viewer, subjectUserId));
+}
+
+/** The pasted meeting notes an AI write-up was made from (0182) are the
+ *  author's own raw notes — private to whoever pasted them, like the
+ *  private write-up they became (Graeme, 2026-10-14). They used to go to
+ *  everyone with People access on the record. */
+export function visibleSources<T extends { createdById: number | null }>(sources: readonly T[], viewerId: number): T[] {
+  return sources.filter(s => s.createdById != null && s.createdById === viewerId);
 }
