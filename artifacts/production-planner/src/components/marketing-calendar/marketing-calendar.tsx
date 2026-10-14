@@ -23,7 +23,7 @@ import {
   BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, PencilLine, Plus, Sparkles, Square, StickyNote, X, AlertTriangle,
 } from "lucide-react";
 import {
-  addDays, addMonths, filingEvents, formatRange, isNoteEvent, monthGridWeeks, monthStart, overlaps, stageLabel, timelineRange, type DragMode, type TimelineZoom,
+  addDays, addMonths, filingEvents, listFirstMonday, formatRange, isNoteEvent, monthGridWeeks, monthStart, overlaps, stageLabel, timelineRange, type DragMode, type TimelineZoom,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -41,17 +41,30 @@ import { EventModal } from "./event-modal";
 import { ListView } from "./list-view";
 import { PlannedEmailModal } from "./planned-email-modal";
 import { ApprovalBadge, useApprovalIndex } from "./approvals";
+import { EmailWeeks, WEEK_COUNTS } from "./email-weeks";
+import { CycleSetup } from "./cycle-setup";
+import { useCycle } from "./cycle-api";
 
-type View = "month" | "list" | "timeline";
+// "weeks" is the email plan List view (2026-10-14, the default); "phases"
+// is the earlier list grouped by phase, kept with its Needs-approval filter.
+type View = "weeks" | "month" | "timeline" | "phases";
 export type ListFilter = "all" | "needs";
-const VIEW_KEY = "tck_marketing_calendar_view";
+// New key (2026-10-14) so everyone starts on the new List view once.
+const VIEW_KEY = "tck_marketing_calendar_view_v2";
+const WEEKS_KEY = "tck_marketing_calendar_weeks";
 const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 function readView(): View {
   try {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "timeline" || v === "list" ? v : "month";
-  } catch { return "month"; }
+    return v === "timeline" || v === "month" || v === "phases" ? v : "weeks";
+  } catch { return "weeks"; }
+}
+function readWeeks(): number {
+  try {
+    const n = Number(localStorage.getItem(WEEKS_KEY));
+    return (WEEK_COUNTS as readonly number[]).includes(n) ? n : 8;
+  } catch { return 8; }
 }
 function saveView(v: View) {
   try { localStorage.setItem(VIEW_KEY, v); } catch { /* per-device nicety only */ }
@@ -97,7 +110,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   const sectionRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (!reviewSignal) return;
-    setView("list");
+    setView("phases");
     setListFilter("needs");
     // After the List view has rendered, so the jump lands on it.
     const t = window.setTimeout(() => sectionRef.current?.scrollIntoView({ block: "start" }), 150);
@@ -112,18 +125,26 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   const [addChoice, setAddChoice] = useState<string | null>(null);
   const [showPast, setShowPast] = useState(false);
   const localToday = londonToday();
+  // The email plan (List view): its cycle, how many weeks, how far back.
+  const cycleQ = useCycle();
+  const [weekCount, setWeekCount] = useState(readWeeks);
+  const [earlier, setEarlier] = useState(0);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const firstMonday = listFirstMonday(localToday, cycleQ.data?.config.startDate ?? localToday, earlier);
+  const shownWeeks = weekCount + earlier;
 
   const range = useMemo(() => {
     if (view === "month") {
       const weeks = monthGridWeeks(anchor);
       return { from: weeks[0][0], to: weeks[weeks.length - 1][6] };
     }
-    if (view === "list") {
+    if (view === "weeks") return { from: firstMonday, to: addDays(firstMonday, shownWeeks * 7 - 1) };
+    if (view === "phases") {
       // Upcoming: today to a year out; with "Show past", six months back too.
       return { from: showPast ? addMonths(monthStart(localToday), -6) : localToday, to: addDays(localToday, 365) };
     }
     return timelineRange(anchor, timelineMonths(zoom));
-  }, [view, anchor, zoom, showPast, localToday]);
+  }, [view, anchor, zoom, showPast, localToday, firstMonday, shownWeeks]);
 
   const { data, isLoading, isError, error } = useCalendarEvents(range.from, range.to);
   const today = data?.today ?? localToday;
@@ -206,11 +227,11 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           <Link href="/test-boxes" className="px-3.5 py-2 rounded-xl border-2 border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/10">
             <Package className="w-4 h-4" /> Test boxes
           </Link>
-          <button onClick={() => setOpen({ id: null, newOn: view === "list" || (today >= anchor && today < monthEnd) ? today : anchor })}
+          <button onClick={() => setOpen({ id: null, newOn: (view === "phases" || view === "weeks") || (today >= anchor && today < monthEnd) ? today : anchor })}
             className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
             <Plus className="w-4 h-4" /> Add phase
           </button>
-          <button onClick={() => addEmail(view === "list" || (today >= anchor && today < monthEnd) ? today : anchor)}
+          <button onClick={() => addEmail((view === "phases" || view === "weeks") || (today >= anchor && today < monthEnd) ? today : anchor)}
             className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-indigo-700">
             <MailPlus className="w-4 h-4" /> Add email
           </button>
@@ -219,7 +240,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
 
       {/* Navigation row */}
       <div className="flex items-center gap-2 flex-wrap">
-        {view === "list" ? (<>
+        {view === "weeks" ? null : view === "phases" ? (<>
           <Segmented
             value={listFilter}
             onChange={v => setListFilter(v as ListFilter)}
@@ -270,9 +291,10 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           value={view}
           onChange={v => changeView(v as View)}
           options={[
+            { value: "weeks", label: "List", icon: <List className="w-4 h-4" /> },
             { value: "month", label: "Month", icon: <CalendarDays className="w-4 h-4" /> },
-            { value: "list", label: "List", icon: <List className="w-4 h-4" /> },
             { value: "timeline", label: "Timeline", icon: <GanttChartSquare className="w-4 h-4" /> },
+            { value: "phases", label: "By phase", icon: <Megaphone className="w-4 h-4" /> },
           ]}
         />
       </div>
@@ -304,7 +326,37 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         {isLoading && !data && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
         )}
-        {view === "month" ? (
+        {view === "weeks" ? (
+          cycleQ.isError ? (
+            <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Couldn't load the email plan: {(cycleQ.error as Error).message}</p>
+          ) : !cycleQ.data ? (
+            <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          ) : (
+            <EmailWeeks
+              today={today}
+              cycle={cycleQ.data}
+              firstMonday={firstMonday}
+              weeks={shownWeeks}
+              onWeeksChange={n => { setWeekCount(n); try { localStorage.setItem(WEEKS_KEY, String(n)); } catch { /* per-device nicety only */ } }}
+              earlier={earlier}
+              onEarlierChange={setEarlier}
+              planned={planned}
+              klaviyo={emails}
+              linkedCampaignIds={klaviyo.data?.linkedCampaignIds ?? []}
+              klaviyoError={klaviyo.data?.error ?? null}
+              approvals={approvals}
+              notes={notes}
+              todos={todos}
+              events={allEvents.filter(e => !isNoteEvent(e))}
+              onOpenEmail={id => setOpenPlanned({ id, key: id })}
+              onOpenKlaviyo={setOpenEmail}
+              onOpenNote={id => setOpenNote({ id, key: id })}
+              onOpenTodo={t => setOpenTodo(t.id)}
+              onOpenEvent={id => setOpen({ id })}
+              onOpenSetup={() => setSetupOpen(true)}
+            />
+          )
+        ) : view === "month" ? (
           <MonthGrid
             month={anchor}
             today={today}
@@ -321,7 +373,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             onAddOn={setAddChoice}
             onDatesChange={onDatesChange}
           />
-        ) : view === "list" ? (
+        ) : view === "phases" ? (
           <ListView
             today={today}
             events={events}
@@ -356,7 +408,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         )}
       </div>
 
-      {view === "list" && (
+      {view === "phases" && (
         <p className="text-sm text-muted-foreground">
           Emails belong to the phase running on their send day · tap a phase's name to rename it or change its dates.
         </p>
@@ -440,6 +492,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
 
       <Suggestions />
 
+      {setupOpen && cycleQ.data && <CycleSetup cycle={cycleQ.data} onClose={() => setSetupOpen(false)} />}
       {openEmail && <EmailModal email={openEmail} today={today} onClose={() => setOpenEmail(null)} />}
       {addChoice && (
         <AddChoice

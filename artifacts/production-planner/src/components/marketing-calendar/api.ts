@@ -255,6 +255,13 @@ export interface PlannedEmail {
   status: string;
   klaviyoCampaignId: string | null;
   klaviyoCampaignName: string | null;
+  /** Email plan (2026-10-14): the cycle slot this row is (null = not from the cycle). */
+  cycleDate: string | null;
+  emailType: string | null;
+  cycleOfferId: number | null;
+  /** The suggested Klaviyo campaign name, frozen when made from a slot. */
+  campaignName: string | null;
+  skipped: boolean;
   /** The campaign it belongs to by date (worked out by the server). */
   campaignId: number | null;
   campaignTitle: string | null;

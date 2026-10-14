@@ -108,3 +108,35 @@ export const APPROVAL_TONE: Record<"green" | "amber" | "grey", string> = {
 export function firstName(name: string | null | undefined): string {
   return name?.trim().split(/\s+/)[0] || "Someone";
 }
+
+// ── Email plan (2026-10-14) ───────────────────────────────────────────────
+/** Offer colours, by the key stored on each offer (Calendar setup). Light
+ *  and dark both readable; chip = the "Offer N" pill, head = the week
+ *  card's header wash, edge = its left border, big = "Offer N live". */
+export interface OfferTone { label: string; chip: string; head: string; edge: string; big: string; swatch: string }
+export const OFFER_TONES: Record<string, OfferTone> = {
+  green: { label: "Green", chip: "bg-emerald-600 text-white dark:bg-emerald-500/25 dark:text-emerald-200", head: "bg-emerald-500/10", edge: "border-l-emerald-600 dark:border-l-emerald-400", big: "text-emerald-800 dark:text-emerald-300", swatch: "bg-emerald-600" },
+  rust: { label: "Rust", chip: "bg-orange-700 text-white dark:bg-orange-500/25 dark:text-orange-200", head: "bg-orange-500/10", edge: "border-l-orange-700 dark:border-l-orange-400", big: "text-orange-800 dark:text-orange-300", swatch: "bg-orange-700" },
+  plum: { label: "Plum", chip: "bg-fuchsia-800 text-white dark:bg-fuchsia-500/25 dark:text-fuchsia-200", head: "bg-fuchsia-500/10", edge: "border-l-fuchsia-800 dark:border-l-fuchsia-400", big: "text-fuchsia-800 dark:text-fuchsia-300", swatch: "bg-fuchsia-800" },
+  blue: { label: "Blue", chip: "bg-blue-700 text-white dark:bg-blue-500/25 dark:text-blue-200", head: "bg-blue-500/10", edge: "border-l-blue-700 dark:border-l-blue-400", big: "text-blue-800 dark:text-blue-300", swatch: "bg-blue-700" },
+  gold: { label: "Gold", chip: "bg-amber-600 text-white dark:bg-amber-500/25 dark:text-amber-200", head: "bg-amber-500/10", edge: "border-l-amber-600 dark:border-l-amber-400", big: "text-amber-800 dark:text-amber-300", swatch: "bg-amber-600" },
+  teal: { label: "Teal", chip: "bg-teal-700 text-white dark:bg-teal-500/25 dark:text-teal-200", head: "bg-teal-500/10", edge: "border-l-teal-700 dark:border-l-teal-400", big: "text-teal-800 dark:text-teal-300", swatch: "bg-teal-700" },
+  rose: { label: "Rose", chip: "bg-rose-700 text-white dark:bg-rose-500/25 dark:text-rose-200", head: "bg-rose-500/10", edge: "border-l-rose-700 dark:border-l-rose-400", big: "text-rose-800 dark:text-rose-300", swatch: "bg-rose-700" },
+  slate: { label: "Slate", chip: "bg-slate-700 text-white dark:bg-slate-500/25 dark:text-slate-200", head: "bg-slate-500/10", edge: "border-l-slate-700 dark:border-l-slate-400", big: "text-slate-800 dark:text-slate-300", swatch: "bg-slate-700" },
+};
+export function offerTone(colour: string | null | undefined): OfferTone {
+  return OFFER_TONES[colour ?? ""] ?? OFFER_TONES.green;
+}
+/** A paused week (Black Friday …) — warm gold, not an offer colour. */
+export const PAUSE_TONE = { head: "bg-yellow-400/15", edge: "border-l-yellow-600 dark:border-l-yellow-300", big: "text-yellow-900 dark:text-yellow-200", chip: "bg-yellow-200 text-yellow-900 dark:bg-yellow-400/20 dark:text-yellow-100" };
+
+/** Email-type chips: launch solid, last call red, teaser/free slot dashed. */
+export const EMAIL_TYPE_TONE: Record<string, string> = {
+  launch: "bg-primary text-primary-foreground border-primary",
+  follow_up: "bg-secondary text-foreground border-border",
+  new_angle: "bg-secondary text-foreground border-border",
+  last_call: "bg-red-100 text-red-800 border-red-300 dark:bg-red-500/20 dark:text-red-200 dark:border-red-400/40",
+  free_slot: "bg-transparent text-muted-foreground border-dashed border-muted-foreground",
+  teaser: "bg-transparent text-primary border-dashed border-primary",
+  extension: "bg-secondary text-foreground border-border",
+};
