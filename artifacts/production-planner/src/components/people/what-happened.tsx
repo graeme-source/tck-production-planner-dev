@@ -11,7 +11,8 @@
  *     AI or by hand), each private until shared;
  *   • "Add meeting notes (AI)" is the main way in;
  *   • "Share with <name>" once there's something of yours to share;
- *   • the original notes the AI read, kept for audit.
+ *   • the original notes the AI read, kept for audit — private to whoever
+ *     pasted them (the server only sends you your own).
  * Display only merges (whatHappened) — nothing stored is moved or dropped.
  */
 import { useState, type ReactNode } from "react";
@@ -21,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { AutoText } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 import { ReviewNoteCard, ShareWriteUp, WriteUpComposer } from "./review-notes";
+import { RecordReadersProvider } from "./share-dialog";
 import { MeetingNotesAI, hasHeldDraft } from "./meeting-notes-ai";
 import { PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { useAutosaveSummary } from "@/hooks/autosave-summary";
@@ -61,11 +63,13 @@ export function WhatHappened({ entry, data, person, onChanged }: {
   const [byHand, setByHand] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const cancelled = entry.meetingStatus === "cancelled";
-  const myPrivate = w.parts.some(n => n.visibility !== "shared" && n.authorId === data.viewerId);
+  const myUnshared = w.parts.filter(n => n.visibility !== "shared" && n.authorId === data.viewerId);
+  const myPrivate = myUnshared.length > 0;
   const sources = entry.sources ?? [];
   const mode = reviewFooterMode({ aiOpen: ai, hasDraft: hasHeldDraft(entry.id), byHand: !cancelled && byHand });
 
   return (
+    <RecordReadersProvider readers={data.recordReaders}>
     <section className="rounded-3xl border-2 border-border bg-card p-4 space-y-4">
       <h3 className="text-lg font-bold flex items-center gap-2"><FileText className="w-5 h-5 text-primary" /> What happened</h3>
 
@@ -104,7 +108,7 @@ export function WhatHappened({ entry, data, person, onChanged }: {
       {mode === "autosave" && (
         <PinnedFooter>
           <AutosaveFooter share={showShareInFooter(mode, myPrivate)
-            ? <ShareWriteUp entryId={entry.id} personName={person.name} onChanged={onChanged} />
+            ? <div className="flex justify-end"><ShareWriteUp entryId={entry.id} personName={person.name} parts={myUnshared} onChanged={onChanged} /></div>
             : null} />
         </PinnedFooter>
       )}
@@ -124,7 +128,7 @@ export function WhatHappened({ entry, data, person, onChanged }: {
           <button type="button" onClick={() => setShowSources(s => !s)} aria-expanded={showSources}
             className="w-full min-h-11 text-left text-base font-bold flex items-center gap-2">
             <Lock className="w-4 h-4 shrink-0" />
-            <span className="flex-1">Original meeting notes ({sources.length}) — People access only</span>
+            <span className="flex-1">Original meeting notes ({sources.length}) — private to you</span>
             <ChevronDown className={cn("w-5 h-5 transition-transform", showSources && "rotate-180")} />
           </button>
           {showSources && sources.map(s => (
@@ -141,5 +145,6 @@ export function WhatHappened({ entry, data, person, onChanged }: {
         </div>
       )}
     </section>
+    </RecordReadersProvider>
   );
 }

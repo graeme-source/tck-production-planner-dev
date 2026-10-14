@@ -357,7 +357,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Saving marks the meeting held and keeps the pasted notes{source?.url ? " and the link" : ""} on it (People access only). It stays private to you until you tap Share with {first}.
+        Saving marks the meeting held and keeps the pasted notes{source?.url ? " and the link" : ""} on it, private to you. The write-up stays private to you until you share it — with HR, or with {first} after checking it twice.
       </p>
 
       <PinnedFooter>

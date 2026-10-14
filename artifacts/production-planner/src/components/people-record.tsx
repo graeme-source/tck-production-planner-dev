@@ -31,6 +31,7 @@ import { UserAvatar } from "@/components/user-avatar";
 import { PeopleModal } from "@/components/people-modal";
 import { FormEditor, type RtwForm } from "@/components/rtw-form-editor";
 import { ReviewTimelineCard, ReviewNoteCard, AgreedObjectiveCard, AgreedListCard } from "@/components/people/review-notes";
+import { RecordReadersProvider } from "@/components/people/share-dialog";
 import { BookReviewForm } from "@/components/people/book-review";
 import { AddNoteForm } from "@/components/people/add-note";
 import { useRefreshEntries } from "@/components/people/reviews-api";
@@ -649,6 +650,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
   const openSection = (section === "contracts" && !canContracts) || (section === "record" && !showRecord) ? null : section;
 
   return (
+    <RecordReadersProvider readers={recordEntries.data?.recordReaders}>
     <div className="@container/page max-w-4xl lg:max-w-7xl mx-auto space-y-5 pb-24">
       <Link href="/people" className="inline-flex items-center gap-2 px-4 h-14 rounded-2xl bg-secondary hover:bg-secondary/70 text-lg font-bold transition-colors">
         <ChevronLeft className="w-5 h-5" /> Everyone
@@ -871,7 +873,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
               {agreedList.length > 0 && (
                 <div className="space-y-2">
                   <p className="text-sm text-muted-foreground">From the most recent review. It also stays on that review.</p>
-                  {agreedList.map(n => <AgreedListCard key={n.id} note={n} personName={p.name} />)}
+                  {agreedList.map(n => <AgreedListCard key={n.id} note={n} personName={p.name} viewerId={viewerId} />)}
                 </div>
               )}
               {agreedNow.length > 0 && (
@@ -947,5 +949,6 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
         </PeopleModal>
       )}
     </div>
+    </RecordReadersProvider>
   );
 }

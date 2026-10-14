@@ -4,9 +4,12 @@
  * classified). Moved here from the old components/employee-reviews.tsx
  * meetings, onto the employment record (migration 0178).
  *
- *   • Each part is PRIVATE to whoever wrote it until shared. Sharing
- *     publishes it to the employee's own record and tells them. The server
- *     decides who may read what — nothing here hides rows it was sent.
+ *   • Each part is PRIVATE to whoever wrote it until shared. Three levels
+ *     (Graeme, 2026-10-14): Private to you; Shared with HR (People-access
+ *     colleagues picked by name); Shared with the colleague, which publishes
+ *     it to their own record and tells them — only after a two-step
+ *     confirmation in the quiet "Share…" dialog (share-dialog.tsx). The
+ *     server decides who may read what — nothing here hides rows it was sent.
  *   • Only the author can change, share or remove their own part; for them
  *     every field autosaves with a visible save state (charter rule 5).
  *   • A write-up is written in one go and shared as one, so a probation
@@ -18,17 +21,29 @@
  */
 import { useState } from "react";
 import {
-  CalendarDays, CheckCircle2, ChevronRight, Eye, EyeOff, Handshake, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
+  CalendarDays, CheckCircle2, ChevronRight, Handshake, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
 } from "lucide-react";
 import {
   NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened, entryClassLabels, agreementBullets,
-  type Classification, type Stage,
+  noteLevel, levelLabel, patchForLevel,
+  type Classification, type Stage, type ShareLevel,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { AutoText, AutoDate } from "./review-fields";
 import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-bar";
 import { recordSend, recordDelete, type RecordEntry, type ReviewNote } from "./reviews-api";
+import { ShareDialog, ShareButton, LEVEL_ICON } from "./share-dialog";
+
+/** The level a note is at, and its label as this viewer reads it
+ *  ("Private to you", "Shared with Lorna", "Shared with you", "Shared with Major"). */
+export function noteShareView(note: ReviewNote, viewerId: number | null, personName: string) {
+  const hrIds = (note.sharedWith ?? []).map(x => x.id);
+  const level = noteLevel({ visibility: note.visibility, sharedWithUserIds: hrIds });
+  const hrNames = (note.sharedWith ?? []).map(x => (x.id === viewerId ? "you" : x.name.split(" ")[0]));
+  const label = levelLabel(level, { colleagueFirst: personName.split(" ")[0], hrNames, viewerIsAuthor: note.authorId === viewerId });
+  return { level, hrIds, label, Icon: LEVEL_ICON[level] };
+}
 
 const NOTE_ICON = { note: MessageSquare, feedback: MessageSquare, objective: Target, agreement: Handshake } as const;
 
@@ -56,11 +71,14 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
   inReport?: boolean;
 }) {
   const [editing, setEditing] = useState(false);
-  const [confirm, setConfirm] = useState<null | "share" | "remove">(null);
+  const [confirm, setConfirm] = useState<null | "remove">(null);
+  const [sharing, setSharing] = useState(false);
   const [busy, setBusy] = useState(false);
   const Icon = NOTE_ICON[note.kind] ?? MessageSquare;
   const isAgreement = note.kind === "agreement";
-  const isPrivate = note.visibility !== "shared";
+  const share = noteShareView(note, viewerId, personName);
+  const isPrivate = share.level !== "colleague";
+  const first = personName.split(" ")[0];
   // The server only lets an author touch their own note; the buttons follow.
   const mine = canWrite && viewerId != null && note.authorId === viewerId;
   const save = (patch: Record<string, unknown>) => recordSend("PATCH", `/review-notes/${note.id}`, patch);
@@ -85,15 +103,12 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap mb-1">
             <span className="text-sm font-bold uppercase tracking-wide text-muted-foreground">{NOTE_KIND_LABEL[note.kind] ?? "Note"}</span>
-            {isPrivate ? (
-              <span className="inline-flex items-center gap-1 text-sm font-bold px-2.5 py-1 rounded-lg bg-secondary text-muted-foreground">
-                <Lock className="w-3.5 h-3.5" /> Private to you
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 text-sm font-bold px-2.5 py-1 rounded-lg bg-primary/10 text-primary">
-                <Eye className="w-3.5 h-3.5" /> Shared with {personName.split(" ")[0]}
-              </span>
-            )}
+            <span className={cn("inline-flex items-center gap-1 text-sm font-bold px-2.5 py-1 rounded-lg",
+              share.level === "colleague" ? "bg-primary/10 text-primary"
+                : share.level === "hr" ? "bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200"
+                : "bg-secondary text-muted-foreground")}>
+              <share.Icon className="w-3.5 h-3.5" /> {share.label}
+            </span>
             {note.doneAt && (
               <span className="inline-flex items-center gap-1 text-sm font-bold px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-700 dark:text-emerald-400">
                 <CheckCircle2 className="w-3.5 h-3.5" /> Done
@@ -152,7 +167,7 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
       {confirm === "remove" && (
         <div className="rounded-2xl border-2 border-destructive bg-destructive/5 p-4 space-y-3">
           <p className="text-lg font-bold">Remove this {(NOTE_KIND_LABEL[note.kind] ?? "note").toLowerCase()}?</p>
-          <p className="text-base">{isPrivate ? "Nobody else has seen it." : "It's shared — it goes from their record too."} It's kept in the audit, not shown.</p>
+          <p className="text-base">{share.level === "private" ? "Nobody else has seen it." : share.level === "hr" ? `It goes for ${share.label.replace(/^Shared with /, "")} too.` : "It's shared — it goes from their record too."} It's kept in the audit, not shown.</p>
           <div className="grid gap-3 sm:grid-cols-2">
             <button type="button" disabled={busy} onClick={() => void act(() => recordDelete(`/review-notes/${note.id}`), "Removed", "Couldn't remove it")}
               className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
@@ -173,34 +188,26 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
               {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />} {note.doneAt ? "Not done after all" : "Mark as done"}
             </button>
           )}
-          {!inReport && isPrivate && confirm !== "share" && (
-            <button type="button" onClick={() => setConfirm("share")}
-              className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2">
-              <Eye className="w-5 h-5" /> Share this with {personName.split(" ")[0]}
-            </button>
-          )}
-          {!inReport && isPrivate && confirm === "share" && (
-            <div className="rounded-2xl border-2 border-primary bg-primary/5 p-4 space-y-3">
-              <p className="text-lg font-bold">Share this?</p>
-              <p className="text-base">{personName.split(" ")[0]} will be able to read it on their own record from now on, and gets a notification.</p>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <button type="button" disabled={busy} onClick={() => void act(() => save({ visibility: "shared" }), "Shared with them", "Couldn't share it")}
-                  className="h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-                  {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Eye className="w-5 h-5" />} Yes, share it
-                </button>
-                <button type="button" onClick={() => setConfirm(null)} className="h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2">
-                  <X className="w-5 h-5" /> Keep it private
-                </button>
-              </div>
-            </div>
-          )}
-          {!inReport && !isPrivate && (
-            <button type="button" disabled={busy} onClick={() => void act(() => save({ visibility: "private" }), "Private again", "Couldn't save")}
-              className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 disabled:opacity-50">
-              <EyeOff className="w-5 h-5" /> Make it private again
-            </button>
-          )}
+          {/* Quiet on purpose (Graeme, 2026-10-14): sharing is a choice made
+              in the dialog — two steps before it reaches the colleague. */}
+          <div className="flex justify-end">
+            <ShareButton onClick={() => setSharing(true)} label={share.level === "private" ? "Share…" : "Who sees this…"} />
+          </div>
         </div>
+      )}
+      {sharing && (
+        <ShareDialog
+          heading={share.level === "private" ? "Share this note" : "Who sees this note"}
+          parts={[note]} colleagueName={personName} current={share.level} currentHrIds={share.hrIds}
+          // A write-up part reaches the colleague only with the whole
+          // write-up ("Share write-up…"), never as a stray fragment.
+          allow={inReport && share.level !== "colleague" ? ["private", "hr"] : ["private", "hr", "colleague"]}
+          onConfirm={async (level: ShareLevel, ids: number[]) => {
+            await save(patchForLevel(level, ids));
+            toast({ title: level === "colleague" ? `Shared with ${first}` : level === "hr" ? "Shared with HR" : "Private to you again" });
+            onChanged();
+          }}
+          onClose={() => setSharing(false)} />
       )}
     </div>
   );
@@ -208,15 +215,16 @@ export function ReviewNoteCard({ note, viewerId, canWrite, personName, onChanged
 
 /** The agreed points in "What we agreed" — one list from the latest review
  *  that has one (0186). Not done, not due: just what's going to happen. */
-export function AgreedListCard({ note, personName }: { note: ReviewNote; personName: string }) {
+export function AgreedListCard({ note, personName, viewerId = null }: { note: ReviewNote; personName: string; viewerId?: number | null }) {
+  const share = noteShareView(note, viewerId, personName);
   return (
     <div className="rounded-2xl border-2 border-border bg-card px-4 py-3 space-y-2">
       <p className="text-sm text-muted-foreground flex items-center gap-2 flex-wrap">
         <Handshake className="w-4 h-4 text-primary shrink-0" />
         {note.authorName ?? "Someone"} · {fmtDayIso(note.createdAt.slice(0, 10))}
-        {note.visibility !== "shared"
-          ? <span className="inline-flex items-center gap-1 font-bold"><Lock className="w-3.5 h-3.5" /> Private to you</span>
-          : <span className="inline-flex items-center gap-1 font-bold text-primary"><Eye className="w-3.5 h-3.5" /> Shared with {personName.split(" ")[0]}</span>}
+        <span className={cn("inline-flex items-center gap-1 font-bold", share.level === "colleague" && "text-primary")}>
+          <share.Icon className="w-3.5 h-3.5" /> {share.label}
+        </span>
       </p>
       <AgreementBullets body={note.body} className="text-lg" />
     </div>
@@ -268,28 +276,36 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel, hideNot
   const [feedback, setFeedback] = useState("");
   const [objectives, setObjectives] = useState<Array<{ title: string; body: string; dueDate: string }>>([{ title: "", body: "", dueDate: "" }]);
   const [notes, setNotes] = useState("");
-  const [share, setShare] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [busy, setBusy] = useState(false);
   const first = personName.split(" ")[0];
   const hasSomething = !!feedback.trim() || !!notes.trim() || objectives.some(o => o.title.trim() || o.body.trim());
   const box = "w-full px-4 py-3 rounded-2xl border-2 border-border bg-background text-lg leading-relaxed focus:outline-none focus:ring-2 focus:ring-primary/30 resize-y";
 
+  const post = (level: ShareLevel, hrIds: number[]) => recordSend("POST", `/entries/${entryId}/write-up`, {
+    feedback, notes, share: level === "colleague", sharedWithUserIds: level === "hr" ? hrIds : [],
+    objectives: objectives.map(o => ({ title: o.title, body: o.body, dueDate: o.dueDate || null })),
+  });
+  const saved = (level: ShareLevel) => {
+    toast({
+      title: level === "colleague" ? "Written up and shared" : level === "hr" ? "Written up — shared with HR" : "Written up — private to you",
+      description: level === "colleague" ? `${first} can read it now.` : "Share the whole write-up whenever you're ready.",
+    });
+    onDone();
+  };
   const save = async () => {
     setBusy(true);
-    try {
-      await recordSend("POST", `/entries/${entryId}/write-up`, {
-        feedback, notes, share,
-        objectives: objectives.map(o => ({ title: o.title, body: o.body, dueDate: o.dueDate || null })),
-      });
-      toast({
-        title: share ? "Written up and shared" : "Written up — private to you",
-        description: share ? `${first} can read it now.` : "Share the whole write-up whenever you're ready.",
-      });
-      onDone();
-    } catch (e) {
+    try { await post("private", []); saved("private"); }
+    catch (e) {
       toast({ title: "Couldn't save the write-up", description: e instanceof Error ? e.message : "Try again — nothing typed is lost", variant: "destructive" });
     } finally { setBusy(false); }
   };
+  // Exactly what would be shared, for the dialog's step 1.
+  const draftParts = [
+    ...(feedback.trim() ? [{ kind: "feedback", body: feedback.trim() }] : []),
+    ...objectives.filter(o => o.title.trim() || o.body.trim()).map(o => ({ kind: "objective", title: o.title.trim() || null, body: o.body.trim() || o.title.trim() })),
+    ...(notes.trim() ? [{ kind: "note", body: notes.trim() }] : []),
+  ];
 
   return (
     <div className="rounded-2xl border-2 border-primary/40 bg-card p-4 space-y-5">
@@ -338,13 +354,9 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel, hideNot
           <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} className={box} />
         </div>
       )}
-      <label className="flex items-center gap-3 cursor-pointer rounded-2xl border-2 border-border px-4 py-3">
-        <input type="checkbox" checked={share} onChange={e => setShare(e.target.checked)} className="w-5 h-5 accent-emerald-600" />
-        <span className="text-base font-semibold">
-          Share it with {first} as I save
-          <span className="block text-sm font-normal text-muted-foreground">Otherwise it stays private to you, and you can share it later.</span>
-        </span>
-      </label>
+      <p className="text-base text-muted-foreground flex items-start gap-2">
+        <Lock className="w-4 h-4 shrink-0 mt-1" /> It saves private to you. Share it — with HR or with {first} — whenever you're ready.
+      </p>
       {/* In a People modal this sits in the pinned footer, always in view. */}
       <PinnedFooter>
         <div className="space-y-2" data-testid="footer-by-hand">
@@ -355,56 +367,53 @@ export function WriteUpComposer({ entryId, personName, onDone, onCancel, hideNot
           )}
           <div className="grid gap-2 grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
             <button type="button" onClick={() => void save()} disabled={!hasSomething || busy} className={pinnedPrimaryClass}>
-              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />} {share ? "Save and share" : "Save write-up"}
+              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Lock className="w-5 h-5" />} Save — private to you
             </button>
             <button type="button" onClick={onCancel} disabled={busy}
               className="min-h-14 rounded-2xl border-2 border-border text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
               <X className="w-5 h-5" /> Cancel
             </button>
           </div>
+          <ShareButton onClick={() => setSharing(true)} disabled={!hasSomething || busy} label="Save and share…" />
         </div>
       </PinnedFooter>
+      {sharing && (
+        <ShareDialog heading="Save and share this write-up" parts={draftParts} colleagueName={personName}
+          current="private" allow={["hr", "colleague"]}
+          onConfirm={async (level, ids) => { await post(level, ids); saved(level); }}
+          onClose={() => setSharing(false)} />
+      )}
     </div>
   );
 }
 
 /** Share everything YOU wrote on a review in one act (the server never
- *  publishes anyone else's private note). Asks once. */
-export function ShareWriteUp({ entryId, personName, onChanged }: { entryId: number; personName: string; onChanged: () => void }) {
-  const [confirming, setConfirming] = useState(false);
-  const [busy, setBusy] = useState(false);
+ *  publishes anyone else's private note). A quiet "Share write-up…" button;
+ *  the dialog shows every part in full and asks twice before it reaches the
+ *  colleague (Graeme, 2026-10-14). Also shares it with HR only. */
+export function ShareWriteUp({ entryId, personName, parts, onChanged }: {
+  entryId: number; personName: string;
+  /** Your own parts that aren't shared with the colleague yet — what goes. */
+  parts: readonly ReviewNote[];
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
   const first = personName.split(" ")[0];
-  if (!confirming) {
-    return (
-      <button type="button" onClick={() => setConfirming(true)}
-        className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2">
-        <Eye className="w-5 h-5" /> Share with {first}
-      </button>
-    );
-  }
   return (
-    <div className="rounded-2xl border-2 border-primary/40 bg-secondary/30 p-4 space-y-3">
-      <p className="text-base font-semibold">Share it with {first}?</p>
-      <p className="text-sm text-muted-foreground">They'll be able to read what you wrote up on this meeting — the summary, what was agreed and the actions — on their own record, and get a notification in the app. Your private notes and the original meeting notes stay private.</p>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <button type="button" onClick={() => setConfirming(false)} disabled={busy} className="h-12 rounded-2xl border-2 border-border text-base font-bold disabled:opacity-50 sm:order-1">Not yet</button>
-        <button type="button" disabled={busy}
-          onClick={async () => {
-            setBusy(true);
-            try {
-              const r = await recordSend<{ shared: number }>("POST", `/entries/${entryId}/share-write-up`);
-              toast({ title: r.shared > 0 ? "Shared with them" : "Nothing left to share" });
-              setConfirming(false);
-              onChanged();
-            } catch (e) {
-              toast({ title: "Couldn't share it", description: e instanceof Error ? e.message : "Try again", variant: "destructive" });
-            } finally { setBusy(false); }
+    <>
+      <ShareButton onClick={() => setOpen(true)} label="Share write-up…" />
+      {open && (
+        <ShareDialog heading="Share this write-up" parts={parts} colleagueName={personName}
+          current="private" allow={["hr", "colleague"]}
+          onConfirm={async (level, ids) => {
+            const r = await recordSend<{ shared: number }>("POST", `/entries/${entryId}/share-write-up`,
+              level === "hr" ? { to: "hr", userIds: ids } : { to: "colleague" });
+            toast({ title: r.shared > 0 ? (level === "hr" ? "Shared with HR" : `Shared with ${first}`) : "Nothing left to share" });
+            onChanged();
           }}
-          className="h-12 rounded-2xl bg-primary text-primary-foreground text-base font-bold flex items-center justify-center gap-2 disabled:opacity-50 sm:order-2">
-          {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Share it
-        </button>
-      </div>
-    </div>
+          onClose={() => setOpen(false)} />
+      )}
+    </>
   );
 }
 
@@ -423,7 +432,7 @@ export function WriteUpSection({ entry, viewerId, canWrite, personName, onChange
 }) {
   const [writing, setWriting] = useState(false);
   const { recordNotes, parts: notes } = whatHappened(entry);
-  const myPrivate = notes.some(n => n.visibility !== "shared" && n.authorId === viewerId);
+  const myUnshared = notes.filter(n => n.visibility !== "shared" && n.authorId === viewerId);
   return (
     <div className="space-y-3">
       {recordNotes && (
@@ -452,7 +461,9 @@ export function WriteUpSection({ entry, viewerId, canWrite, personName, onChange
         <WriteUpComposer entryId={entry.id} personName={personName}
           onDone={() => { setWriting(false); onChanged(); }} onCancel={() => setWriting(false)} />
       )}
-      {canWrite && !writing && myPrivate && <ShareWriteUp entryId={entry.id} personName={personName} onChanged={onChanged} />}
+      {canWrite && !writing && myUnshared.length > 0 && (
+        <div className="flex justify-end"><ShareWriteUp entryId={entry.id} personName={personName} parts={myUnshared} onChanged={onChanged} /></div>
+      )}
     </div>
   );
 }

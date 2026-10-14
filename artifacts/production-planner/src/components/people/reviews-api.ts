@@ -42,6 +42,9 @@ export interface ReviewNote {
   body: string;
   visibility: "private" | "shared";
   sharedAt: string | null;
+  /** "Shared with HR" (0192): the People-access colleagues picked to read it
+   *  while private. Empty / missing = private to its author. */
+  sharedWith?: Array<{ id: number; name: string }>;
   dueDate: string | null;
   doneAt: string | null;
   authorId: number | null;
@@ -133,6 +136,9 @@ export interface PersonRecordEntries {
   periodMonths: number[];
   /** Old diary notes that were never part of a meeting (migration 0178). */
   looseNotes: ReviewNote[];
+  /** Everyone else who can open this record (founder + People access) —
+   *  the only people a note can be shared with as HR. */
+  recordReaders?: Array<{ id: number; name: string }>;
 }
 
 export interface ProbationFact { userId: number; startDate: string; endDate: string; outcome: "passed" | "not_passed" | null; derived: boolean }
