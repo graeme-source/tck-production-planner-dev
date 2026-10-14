@@ -50,7 +50,7 @@ export const marketingEventHistoryTable = pgTable("marketing_event_history", {
 export type MarketingEvent = typeof marketingEventsTable.$inferSelect;
 export type MarketingEventHistory = typeof marketingEventHistoryTable.$inferSelect;
 
-// ── The email plan's offer cycle (migration 0193, Graeme 2026-10-14) ─────────
+// ── The email plan's offer cycle (migration 0194, Graeme 2026-10-14) ─────────
 // Everything the cycle uses is data, edited in the List view's "Calendar
 // setup" (founder). The maths: @workspace/marketing-calendar email-cycle.ts.
 
@@ -145,7 +145,7 @@ export const marketingEmailsTable = pgTable("marketing_emails", {
   status: text("status").notNull().default("planned"),
   klaviyoCampaignId: text("klaviyo_campaign_id"),
   klaviyoCampaignName: text("klaviyo_campaign_name"),
-  // Email plan (migration 0193): set when this row IS a cycle slot made
+  // Email plan (migration 0194): set when this row IS a cycle slot made
   // real — one live row per slot day. See @workspace/marketing-calendar email-cycle.
   cycleDate: date("cycle_date"),
   // launch | follow_up | new_angle | last_call | free_slot | teaser | extension
