@@ -168,6 +168,11 @@ export interface ChartPoint {
   /** For the new-vs-returning tooltip: the bucket's split of paid orders. */
   newCustomerPaidOrders: number;
   returningOrders: number;
+  /** The same counts as LINES on the new-vs-returning graph: null for a
+   *  bucket still to come, so the lines stop at "now" like the % line. A day
+   *  with no paid orders is a real 0 here (the % line has a gap there). */
+  newLine: number | null;
+  returningLine: number | null;
   /** Per-basket metric resting on 1–2 paid orders: drawn lighter, flagged in the tooltip. */
   fewOrders: boolean;
   /** Has a value but no drawn neighbour on either side — needs its own visible dot. */
@@ -217,6 +222,8 @@ export function chartPoints(series: TrendSeries, metric: TrendMetricId, comparis
       paidOrders: b.paidOrders,
       newCustomerPaidOrders: b.newCustomerPaidOrders ?? 0,
       returningOrders: b.returningOrders ?? 0,
+      newLine: b.future ? null : b.newCustomerPaidOrders ?? 0,
+      returningLine: b.future ? null : b.returningOrders ?? 0,
       fewOrders: !!m.perBasket && value != null && b.paidOrders > 0 && b.paidOrders <= FEW_ORDERS,
       isolated: value != null && (values[i - 1] ?? null) == null && (values[i + 1] ?? null) == null,
       bridge: bridge[i],
