@@ -122,6 +122,7 @@ import founderSalesRouter from "./founder-sales";
 import revenueTargetsRouter from "./revenue-targets";
 import marketingCalendarRouter from "./marketing-calendar";
 import marketingEmailsRouter from "./marketing-emails";
+import marketingEmailCycleRouter from "./marketing-email-cycle";
 import marketingApprovalsRouter from "./marketing-approvals";
 import marketingTodosRouter from "./marketing-todos";
 import testBoxesRouter from "./test-boxes";
@@ -345,6 +346,8 @@ router.use("/revenue-targets", revenueTargetsRouter);
 // grantees, guarded inside the router.
 // Planned emails on the calendar (same access, guarded inside the router).
 router.use("/marketing-calendar/emails", marketingEmailsRouter);
+// The email plan's offer cycle (2026-10-14): same access; setup is founder-only inside.
+router.use("/marketing-calendar/cycle", marketingEmailCycleRouter);
 // Approvals (2026-09-30): see founder.sales; approve = "marketing.approve_emails".
 router.use("/marketing-calendar/approvals", marketingApprovalsRouter);
 // To-dos on the calendar (2026-10-01): your own only; the founder may add

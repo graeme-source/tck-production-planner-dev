@@ -17,7 +17,7 @@ import { z } from "zod";
 import { db, marketingEmailsTable, marketingEmailHistoryTable, marketingEventsTable, usersTable } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lte } from "drizzle-orm";
 import {
-  EMAIL_AUDIENCE_KEYS, EMAIL_STATUSES, PHASE_EVENT_TYPE, campaignForDate, daysBetween, describeEmailFieldChanges,
+  EMAIL_AUDIENCE_KEYS, EMAIL_STATUSES, EMAIL_TYPE_KEYS, PHASE_EVENT_TYPE, campaignForDate, daysBetween, describeEmailFieldChanges,
   describeEmailMove, diffEmailFields, type FieldChange,
 } from "@workspace/marketing-calendar";
 import { validate, validateQuery } from "../middleware/validate";
@@ -90,6 +90,13 @@ function emailJson(e: EmailRow, campaign: { id: number; title: string } | null) 
     status: e.status,
     klaviyoCampaignId: e.klaviyoCampaignId,
     klaviyoCampaignName: e.klaviyoCampaignName,
+    // Email plan (migration 0194): the cycle slot this row is, its type,
+    // the campaign name suggested when it was made, and whether it's skipped.
+    cycleDate: e.cycleDate,
+    emailType: e.emailType,
+    cycleOfferId: e.cycleOfferId,
+    campaignName: e.campaignName,
+    skipped: e.skipped,
     // Derived by date — see campaignForDate.
     campaignId: campaign?.id ?? null,
     campaignTitle: campaign?.title ?? null,
@@ -168,6 +175,7 @@ const CreateBody = z.object({
   sendDate: IsoDate,
   subject: z.string().trim().min(1, "Give it a subject line").max(300),
   ...Fields,
+  emailType: z.enum(EMAIL_TYPE_KEYS).nullish(),
 });
 
 router.post("/", validate(CreateBody), async (req: Request, res: Response) => {
@@ -188,6 +196,7 @@ router.post("/", validate(CreateBody), async (req: Request, res: Response) => {
       metaChange: b.metaChange || null,
       notes: b.notes || null,
       status: b.status ?? "planned",
+      emailType: b.emailType ?? null,
       createdById: user.id, createdByName: user.name,
       updatedById: user.id, updatedByName: user.name,
     }).returning();
@@ -203,6 +212,9 @@ router.post("/", validate(CreateBody), async (req: Request, res: Response) => {
 const PatchBody = z.object({
   subject: z.string().trim().min(1, "The subject line can't be empty").max(300).optional(),
   ...Fields,
+  // Email plan (2026-10-14): the type chip and "skip this week".
+  emailType: z.enum(EMAIL_TYPE_KEYS).nullable().optional(),
+  skipped: z.boolean().optional(),
 });
 
 // One person's run of autosaves within this window folds into one history line.
@@ -224,7 +236,10 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
       if (v !== undefined) patch[key] = key === "subject" || key === "status" ? v : (v || null);
     }
     if (b.audiences !== undefined) patch["audiences"] = b.audiences;
+    if (b.emailType !== undefined) patch["emailType"] = b.emailType;
+    if (b.skipped !== undefined) patch["skipped"] = String(b.skipped);
     const beforeFields: Record<string, string | string[] | null> = {
+      emailType: before.emailType, skipped: String(before.skipped),
       subject: before.subject, sendTime: before.sendTime, offer: before.offer, coreMessage: before.coreMessage,
       smsSuggestion: before.smsSuggestion, cadence: before.cadence, audiences: before.audiences,
       audienceOther: before.audienceOther, websiteChange: before.websiteChange, metaChange: before.metaChange,
@@ -234,7 +249,7 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
     if (Object.keys(changes).length === 0) return before;
 
     const set: Partial<typeof marketingEmailsTable.$inferInsert> = { updatedById: user.id, updatedByName: user.name, updatedAt: new Date() };
-    for (const key of Object.keys(changes)) (set as Record<string, unknown>)[key] = patch[key];
+    for (const key of Object.keys(changes)) (set as Record<string, unknown>)[key] = key === "skipped" ? patch[key] === "true" : patch[key];
     const [after] = await tx.update(marketingEmailsTable).set(set).where(eq(marketingEmailsTable.id, id)).returning();
 
     const [last] = await tx.select().from(marketingEmailHistoryTable)
