@@ -17,13 +17,14 @@ import { addDays } from "@workspace/marketing-calendar";
 import { klaviyoCampaignsForMatching } from "./klaviyo-campaign-calendar";
 import { describeAutoLink, matchKlaviyoToPlans, unlinkedPairsFrom, type PairMatch } from "./klaviyo-auto-link";
 import { setPlannedEmailKlaviyoLink } from "./marketing-email-klaviyo-link";
+import { linkByCampaignName } from "./klaviyo-name-link";
 
 const RUN_EVERY_MS = 60_000;
 /** Plans that sent (or were due) longer ago than this are left alone. */
 const PLAN_LOOKBACK_DAYS = 45;
 /** Same as the matcher's limit for scheduled / sent emails. */
 const SEND_WINDOW_DAYS = 21;
-export const AUTO_LINK_USER = { id: null, name: "Auto-link" } as const;
+export const AUTO_LINK_USER: { id: null; name: string } = { id: null, name: "Auto-link" };
 
 export interface AutoLinkSuggestion {
   emailId: number;
@@ -59,6 +60,10 @@ async function runOnce(): Promise<AutoLinkOutcome> {
   const campaigns = await klaviyoCampaignsForMatching(addDays(since, -SEND_WINDOW_DAYS));
   if (!campaigns || campaigns.length === 0) return EMPTY;
 
+  // First (2026-10-14): the email plan's campaign names — exact name, else
+  // same day + similar name — including cycle slots nobody has touched yet.
+  const autoLinked: AutoLinkOutcome["autoLinked"] = await linkByCampaignName(campaigns, londonToday(), AUTO_LINK_USER);
+
   const [plans, linkedRows] = await Promise.all([
     db.select({
       id: marketingEmailsTable.id, subject: marketingEmailsTable.subject, sendDate: marketingEmailsTable.sendDate,
@@ -68,7 +73,7 @@ async function runOnce(): Promise<AutoLinkOutcome> {
     db.select({ id: marketingEmailsTable.klaviyoCampaignId }).from(marketingEmailsTable)
       .where(and(isNull(marketingEmailsTable.deletedAt), isNotNull(marketingEmailsTable.klaviyoCampaignId))),
   ]);
-  if (plans.length === 0) return EMPTY;
+  if (plans.length === 0) return { autoLinked, suggestions: [] };
   const history = await db.select({ emailId: marketingEmailHistoryTable.emailId, changes: marketingEmailHistoryTable.changes })
     .from(marketingEmailHistoryTable)
     .where(and(
@@ -83,7 +88,6 @@ async function runOnce(): Promise<AutoLinkOutcome> {
     unlinkedPairs: unlinkedPairsFrom(history),
   });
 
-  const autoLinked: AutoLinkOutcome["autoLinked"] = [];
   for (const m of result.links) {
     const matched = matchedText(m);
     const r = await db.transaction(tx => setPlannedEmailKlaviyoLink(tx, {
