@@ -3,6 +3,9 @@
  *
  *   - Nightly (first hourly tick after 02:00 London): recomputes the last
  *     RECENT_DAYS production days, so shifts approved late still land.
+ *   - Hourly: any day in that window still 'pending' (waiting for Planday
+ *     approvals) is recomputed on its own, at most once an hour, so it
+ *     appears within an hour of its shifts being approved.
  *   - Backfill: on first boot after deploy, computes up to 12 months back —
  *     as far as production records exist — oldest first, in ≤ 28-day
  *     Planday windows. Recorded as done in team_efficiency_settings
@@ -30,6 +33,7 @@ import { despatchByDay, type OrderInput, type RecipeInput } from "../lib/team-ef
 import { parseSettings } from "../lib/team-efficiency-settings";
 import { onCostMultiplier } from "../lib/team-efficiency";
 import { loadWasteByDay } from "./waste-by-day";
+import { pendingDaysToRecheck } from "../lib/team-efficiency-recheck";
 
 const CHUNK_DAYS = 28;          // Planday payroll windows stay ≤ 28 days
 const RECENT_DAYS = 10;         // re-computed every night
@@ -202,9 +206,10 @@ export async function mirrorShiftTypes(from: string, to: string): Promise<Map<nu
 
 /**
  * Compute and store every production day in [from, to] (clamped to before
- * today). Returns how many days were written.
+ * today). With `only`, just those days are written (Planday is still read
+ * for the whole span). Returns how many days were written.
  */
-export async function computeRange(from: string, to: string): Promise<number> {
+export async function computeRange(from: string, to: string, only?: string[]): Promise<number> {
   const today = londonDateString();
   const last = addDaysIso(today, -1);
   if (to > last) to = last;
@@ -212,7 +217,8 @@ export async function computeRange(from: string, to: string): Promise<number> {
 
   const settings = await loadSettings();
   const planDates = await planDatesAround(from, to);
-  const targetDays = planDates.filter(d => d >= from && d <= to);
+  const onlySet = only ? new Set(only) : null;
+  const targetDays = planDates.filter(d => d >= from && d <= to && (!onlySet || onlySet.has(d)));
   if (targetDays.length === 0) return 0;
 
   const [positions, sections, shiftTypes, employer] = await Promise.all([
@@ -399,14 +405,41 @@ async function backfillIfNeeded(): Promise<void> {
   console.log(`[team-efficiency] backfill complete — ${days} production day(s) since ${from}`);
 }
 
-async function nightlyIfDue(): Promise<void> {
+/** Returns true when the nightly recompute ran on this tick. */
+async function nightlyIfDue(): Promise<boolean> {
   const today = londonDateString();
-  if (londonHour() < NIGHTLY_HOUR) return;
+  if (londonHour() < NIGHTLY_HOUR) return false;
   const state = await readJobState("job_nightly") as { lastRun?: string } | null;
-  if (state?.lastRun === today) return;
+  if (state?.lastRun === today) return false;
   const n = await computeRange(addDaysIso(today, -RECENT_DAYS), addDaysIso(today, -1));
   await writeJobState("job_nightly", { lastRun: today });
   console.log(`[team-efficiency] nightly: ${n} recent production day(s) recomputed`);
+  return true;
+}
+
+/** Hourly: recompute only the recent days still waiting for Planday
+ *  approvals, so a day lands within an hour of its shifts being approved
+ *  (on 14 Oct, 7–13 Oct sat pending all day after a 02:50 nightly run). */
+async function recheckPendingIfDue(): Promise<void> {
+  const today = londonDateString();
+  const r = await db.execute<{ date: string; status: string }>(sql`
+    SELECT date::text AS date, status FROM team_efficiency_days
+    WHERE status = 'pending' AND date BETWEEN ${addDaysIso(today, -RECENT_DAYS)} AND ${addDaysIso(today, -1)}
+  `);
+  if (r.rows.length === 0) return; // nothing waiting — no Planday call, no state write
+  const state = await readJobState("job_pending_recheck") as { lastRunAt?: string } | null;
+  const plan = pendingDaysToRecheck({
+    days: r.rows, today, windowDays: RECENT_DAYS, now: new Date(), lastRecheckAt: state?.lastRunAt ?? null,
+  });
+  if (!plan) return;
+  // Stamp before the Planday call so a failure still waits an hour.
+  await writeJobState("job_pending_recheck", { lastRunAt: new Date().toISOString() });
+  const n = await computeRange(plan.from, plan.to, plan.dates);
+  const after = await db.execute<{ n: string }>(sql`
+    SELECT count(*)::text AS n FROM team_efficiency_days
+    WHERE status = 'pending' AND date::text IN (${sql.join(plan.dates.map(d => sql`${d}`), sql`, `)})
+  `);
+  console.log(`[team-efficiency] pending recheck: ${plan.dates.length} pending day(s), ${n} recomputed, ${Number(after.rows[0]?.n ?? 0)} still pending`);
 }
 
 /** Recompute all stored history from Planday (after a line-position or
@@ -427,7 +460,8 @@ async function tick(): Promise<void> {
   if (!isPlandayConfigured()) return;
   if (!(await tableReady())) return; // first boot before migrations — next hour
   await backfillIfNeeded();
-  await nightlyIfDue();
+  const nightlyRan = await nightlyIfDue();
+  if (!nightlyRan) await recheckPendingIfDue(); // the nightly run just covered them
 }
 
 export function startTeamEfficiencyScheduler(): void {
