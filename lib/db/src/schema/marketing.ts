@@ -50,6 +50,76 @@ export const marketingEventHistoryTable = pgTable("marketing_event_history", {
 export type MarketingEvent = typeof marketingEventsTable.$inferSelect;
 export type MarketingEventHistory = typeof marketingEventHistoryTable.$inferSelect;
 
+// ── The email plan's offer cycle (migration 0193, Graeme 2026-10-14) ─────────
+// Everything the cycle uses is data, edited in the List view's "Calendar
+// setup" (founder). The maths: @workspace/marketing-calendar email-cycle.ts.
+
+/** ONE row (id = 1): cycle start Monday, weekly plan, Saturday ideas. */
+export const marketingCycleSettingsTable = pgTable("marketing_cycle_settings", {
+  id: integer("id").primaryKey(),
+  startDate: date("start_date").notNull(),
+  // 7 entries Mon..Sun: an email type or null (no email that day).
+  weeklyPlan: text("weekly_plan").array().notNull(),
+  // [{ idea, subject }] — rotate week by week.
+  freeSlotIdeas: jsonb("free_slot_ideas").notNull().default(sql`'[]'::jsonb`),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export const marketingCycleOffersTable = pgTable("marketing_cycle_offers", {
+  id: serial("id").primaryKey(),
+  position: integer("position").notNull().default(0),
+  // Campaign-name code, e.g. "O1 Free Pack £39.95".
+  code: text("code").notNull(),
+  name: text("name").notNull(),
+  tag: text("tag"),
+  colour: text("colour").notNull().default("green"),
+  featuresProduct: boolean("features_product").notNull().default(false),
+  // { launch, follow_up, new_angle, last_call } subject-line ideas.
+  subjects: jsonb("subjects").notNull().default(sql`'{}'::jsonb`),
+  createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdByName: text("created_by_name"),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const marketingCyclePausesTable = pgTable("marketing_cycle_pauses", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  startDate: date("start_date").notNull(),
+  endDate: date("end_date").notNull(),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+export const marketingKeyDatesTable = pgTable("marketing_key_dates", {
+  id: serial("id").primaryKey(),
+  date: date("date").notNull(),
+  name: text("name").notNull(),
+  big: boolean("big").notNull().default(false),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+});
+
+/** Per week (its Monday): the product added that week. */
+export const marketingCycleWeeksTable = pgTable("marketing_cycle_weeks", {
+  weekStart: date("week_start").primaryKey(),
+  product: text("product"),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
 // Planned emails (migration 0137). Each belongs to a campaign automatically
 // by date — the marketing_events row whose dates contain send_date (rule in
 // @workspace/marketing-calendar campaignForDate). Membership is never stored.
@@ -75,6 +145,16 @@ export const marketingEmailsTable = pgTable("marketing_emails", {
   status: text("status").notNull().default("planned"),
   klaviyoCampaignId: text("klaviyo_campaign_id"),
   klaviyoCampaignName: text("klaviyo_campaign_name"),
+  // Email plan (migration 0193): set when this row IS a cycle slot made
+  // real — one live row per slot day. See @workspace/marketing-calendar email-cycle.
+  cycleDate: date("cycle_date"),
+  // launch | follow_up | new_angle | last_call | free_slot | teaser | extension
+  emailType: text("email_type"),
+  cycleOfferId: integer("cycle_offer_id").references(() => marketingCycleOffersTable.id, { onDelete: "set null" }),
+  // The suggested Klaviyo campaign name, frozen when made from a slot.
+  campaignName: text("campaign_name"),
+  // A cycle email someone chose not to send this week.
+  skipped: boolean("skipped").notNull().default(false),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   createdByName: text("created_by_name"),
   updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
