@@ -8,6 +8,8 @@
  *   POST   /api/people-reviews/entries/:id/write-up        { feedback, objectives[], notes, share }
  *   POST   /api/people-reviews/entries/:id/notes           one note / feedback / objective
  *   POST   /api/people-reviews/entries/:id/share-write-up  share all of MY private notes on it
+ *   POST   /api/people-reviews/person/:userId/notes     a LOOSE note — not part of any meeting
+ *                                                     (Graeme, 2026-10-14), private unless shared
  *   PATCH  /api/people-reviews/review-notes/:id            edit, share / unshare, tick done, due date
  *   DELETE /api/people-reviews/review-notes/:id            hide it (never hard-deleted)
  *
@@ -24,9 +26,12 @@ import { z } from "zod";
 import { and, eq, isNull } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { db, peopleRecordEntriesTable, peopleReviewNotesTable, peopleRecordAuditTable } from "@workspace/db";
-import { NOTE_KINDS, NOTE_KIND_LABEL, writeUpRows, meetingStatusChange, type MeetingStatus, type NoteKind } from "@workspace/people-reviews";
+import {
+  NOTE_KINDS, NOTE_KIND_LABEL, writeUpRows, meetingStatusChange, londonTodayIso, looseNoteDate, looseNoteAuditDetail,
+  LOOSE_NOTE_TITLE_MAX, LOOSE_NOTE_BODY_MAX, type MeetingStatus, type NoteKind,
+} from "@workspace/people-reviews";
 import { validate } from "../middleware/validate";
-import { employmentRecordWrite, fromRow, ownerOf, loadRecordSubject } from "../middleware/employment-record-write";
+import { employmentRecordWrite, fromParam, fromRow, ownerOf, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { resyncAttentionSoon } from "../lib/hr-attention";
 
@@ -40,6 +45,7 @@ const BODY_MAX = 10_000;
 
 const onEntry = employmentRecordWrite({ subject: fromRow("id", ownerOf("people_record_entries")), refuseAs404: true });
 const onNote = employmentRecordWrite({ subject: fromRow("id", ownerOf("people_review_notes")), refuseAs404: true });
+const onPerson = employmentRecordWrite({ subject: fromParam("userId"), refuseAs404: true });
 
 function parseId(raw: unknown): number | null {
   const n = Number(raw);
@@ -167,6 +173,51 @@ router.post("/entries/:id/notes", onEntry, validate(NoteBody), async (req: Reque
     res.status(201).json(row);
   } catch (err) {
     fail(res, "add note", err, "Couldn't save the note");
+  }
+});
+
+// ── A loose note, straight onto the record ─────────────────────────────────
+// Notes and observations that aren't part of any meeting (Graeme,
+// 2026-10-14). No entry, so no classification: a private note must never
+// become an entry other People-access holders can see (0178). Private to
+// its author until shared; "Save and share" shares it in the same act,
+// through the same in-app notification as sharing it later.
+
+const LooseNoteBody = z.object({
+  title: z.string().trim().max(LOOSE_NOTE_TITLE_MAX).nullable().optional(),
+  body: z.string().trim().min(1, "Write something first").max(LOOSE_NOTE_BODY_MAX),
+  /** The day it's about — today if left out; an earlier day for an observation. */
+  noteDate: isoDate.nullable().optional(),
+  visibility: z.enum(["private", "shared"]).default("private"),
+});
+
+router.post("/person/:userId/notes", onPerson, validate(LooseNoteBody), async (req: Request, res: Response) => {
+  const viewer = viewerOf(res);
+  const b = req.body as z.infer<typeof LooseNoteBody>;
+  const userId = parseId(req.params["userId"]);
+  try {
+    if (userId == null || !(await mayOpen(viewer, userId))) { res.status(404).json({ error: "Not found" }); return; }
+    const today = londonTodayIso();
+    const when = looseNoteDate(b.noteDate, today);
+    if (!when.ok) { res.status(400).json({ error: when.error }); return; }
+    const shared = b.visibility === "shared";
+    const now = new Date();
+    const [row] = await db.transaction(async tx => {
+      const out = await tx.insert(peopleReviewNotesTable).values({
+        entryId: null, userId, kind: "note", title: b.title || null, body: b.body,
+        visibility: b.visibility, sharedAt: shared ? now : null,
+        authorId: viewer.actor.id, authorName: viewer.name,
+        ...(when.createdAt ? { createdAt: when.createdAt } : {}),
+      }).returning();
+      await audit(tx, viewer, { subjectUserId: userId, entryId: null, action: "write_up",
+        detail: looseNoteAuditDetail(shared, b.noteDate, today) });
+      return out;
+    });
+    if (shared) await notifyShared(userId, viewer, "a note");
+    resyncAttentionSoon();
+    res.status(201).json(row);
+  } catch (err) {
+    fail(res, "add loose note", err, "Couldn't save the note");
   }
 });
 

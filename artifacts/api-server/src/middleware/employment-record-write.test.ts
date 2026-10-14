@@ -265,3 +265,51 @@ describe("employmentRecordWrite", () => {
     expect(res.statusCode).toBe(401);
   });
 });
+
+// ── A loose note straight onto the record (Graeme, 2026-10-14) ─────────────
+
+describe("adding a loose note — POST /person/:userId/notes", () => {
+  beforeEach(() => { facts.actor = null; facts.subject = null; facts.owner = null; });
+
+  async function looseNoteGuard() {
+    const { default: router } = await import("../routes/people-review-notes");
+    const route = writeRoutes(router).find(r => r.key === "POST /person/:userId/notes");
+    expect(route, "the loose-note route exists").toBeDefined();
+    const guard = route!.handles.find(isEmploymentRecordWriteGuard) as ReturnType<typeof employmentRecordWrite>;
+    expect(guard).toBeDefined();
+    return guard;
+  }
+
+  it("judges the person named in the URL, editors only (no self-service)", async () => {
+    const guard = await looseNoteGuard();
+    const opts = employmentRecordGuardOptions(guard)!;
+    expect(opts.selfService).toBeUndefined();
+    expect(await opts.subject({ params: { userId: "40" } } as never)).toBe(40);
+  });
+
+  it("lets a People-access holder add one on someone else's record", async () => {
+    facts.actor = LORNA; facts.subject = SAM;
+    const { next } = await run(await looseNoteGuard(), { session: { userId: 6 }, params: { userId: "40" } });
+    expect(next).toHaveBeenCalled();
+  });
+
+  it("never on their own record — answered as 404", async () => {
+    facts.actor = LORNA; facts.subject = { id: 6, email: LORNA.email, planday_employee_id: LORNA.planday_employee_id };
+    const { res, next } = await run(await looseNoteGuard(), { session: { userId: 6 }, params: { userId: "6" } });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("an admin without People access is refused", async () => {
+    facts.actor = TEST_ADMIN; facts.subject = SAM;
+    const { res, next } = await run(await looseNoteGuard(), { session: { userId: 24 }, params: { userId: "40" } });
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(404);
+  });
+
+  it("the founder may, even on his own record", async () => {
+    facts.actor = GRAEME; facts.subject = { id: 2, email: FOUNDER_EMAIL, planday_employee_id: 100 };
+    const { next } = await run(await looseNoteGuard(), { session: { userId: 2 }, params: { userId: "2" } });
+    expect(next).toHaveBeenCalled();
+  });
+});
