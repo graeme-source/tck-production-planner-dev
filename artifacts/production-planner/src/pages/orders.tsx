@@ -73,10 +73,13 @@ import {
   type TopUpSuggestion,
 } from "@/lib/minimum-order";
 import { MinimumOrderNotice } from "@/components/minimum-order-notice";
+import { suggestedPacks, surplusDependsOnDeliveryDay, withDeliverySurplus, type SurplusLineFields } from "@/lib/order-line-surplus";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type OrderLine = {
+// SurplusLineFields: which surplus applied and why ("Surplus 130% (delivery
+// Tue)") plus the inputs to re-work it when the delivery date moves.
+type OrderLine = SurplusLineFields & {
   // For miscellaneous lines (operator-typed one-offs) this is a synthetic
   // negative id so React key lookups keep working; the backend receives null
   // plus a description string. See isMisc below.
@@ -369,6 +372,11 @@ export default function Orders() {
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});
   const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string; deliveryDate: string; deliveryDateISO: string } | null>(null);
   const [deliveryDates, setDeliveryDates] = useState<Record<number, Date>>({});
+  // Read by the calc-merge effect: a refetch must keep a moved delivery
+  // date's surplus (surplus by delivery day), without re-running the merge
+  // on every date change (changeDeliveryDate re-works the lines itself).
+  const deliveryDatesRef = useRef(deliveryDates);
+  deliveryDatesRef.current = deliveryDates;
 
   const [kanbanSearchOpen, setKanbanSearchOpen] = useState(false);
   // Scan a physical kanban card straight from the orders page — queues the
@@ -642,7 +650,12 @@ export default function Orders() {
         const preservedLocals = existing.filter(l =>
           (l.isManual || l.isMisc || l.isKanban) && !calcIngIds.has(l.ingredientId)
         );
-        const merged = so.lines.map(l => {
+        const movedDate = deliveryDatesRef.current[so.supplier.id];
+        const merged = so.lines.map(calcLine => {
+          // The calc's surplus is for its own estimated delivery; if the
+          // operator moved the date, re-work day-dependent surplus for it.
+          const l = movedDate ? withDeliverySurplus(calcLine, movedDate) : calcLine;
+          if (l !== calcLine) l.packsToOrder = suggestedPacks(l, l.stockOnHand);
           // Preserve in-flight operator edits (pack count, stock count, check
           // toggle) so a refetch doesn't blow away their typing.
           const prior = existing.find(e => e.ingredientId === l.ingredientId);
@@ -1405,20 +1418,9 @@ export default function Orders() {
       const lines = [...(updated[supplierId] || [])];
       const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true };
       // Recalculate packs based on new stock. Mirror the backend: deduct
-      // undelivered inbound on open POs, round up to whole packs, then up to
-      // the nearest whole case when ordered by the case.
-      const rawOrderQty = Math.max(0, line.totalRequired + line.surplusTarget + (line.prepOutstandingQty ?? 0) - Math.max(0, newStock) - (line.inboundQty ?? 0));
-      let packsToOrder = line.packWeight > 0 ? Math.ceil(rawOrderQty / line.packWeight) : 0;
-      // A scanned kanban floors the suggestion regardless of the stock maths
-      // — same rule as the backend, using the floor it computed.
-      if (line.isKanban && (line.kanbanFloorPacks ?? 0) > 0) {
-        packsToOrder = Math.max(packsToOrder, line.kanbanFloorPacks ?? 0);
-      }
-      const caseSizePacks = line.caseSizePacks ?? 0;
-      if (caseSizePacks > 0 && packsToOrder > 0) {
-        packsToOrder = Math.ceil(packsToOrder / caseSizePacks) * caseSizePacks;
-      }
-      line.editedPacks = packsToOrder;
+      // undelivered inbound on open POs, round up to whole packs, kanban
+      // floor, then up to the nearest whole case (lib/order-line-surplus).
+      line.editedPacks = suggestedPacks(line, newStock);
       lines[idx] = line;
       updated[supplierId] = lines;
       return updated;
@@ -1494,6 +1496,25 @@ export default function Orders() {
   // placing come from here, so they can't disagree.
   const getDeliveryDateForSupplier = (supplierId: number): Date =>
     resolveDeliveryDate(supplierId, allPendingSuppliers, supplierDirectory, deliveryDates);
+
+  // Moving a supplier's delivery date re-works the surplus of any line with
+  // a surplus-by-delivery-day setting (same surplusFor the server used) and
+  // its suggested packs from the stock on screen. Other lines are untouched.
+  const changeDeliveryDate = (supplierId: number, date: Date) => {
+    setDeliveryDates(d => ({ ...d, [supplierId]: date }));
+    setEditableLines(prev => {
+      const lines = prev[supplierId];
+      if (!lines || !lines.some(surplusDependsOnDeliveryDay)) return prev;
+      return {
+        ...prev,
+        [supplierId]: lines.map(l => {
+          if (!surplusDependsOnDeliveryDay(l)) return l;
+          const next = withDeliverySurplus(l, date);
+          return { ...next, editedPacks: suggestedPacks(next, next.editedStock) };
+        }),
+      };
+    });
+  };
 
   const handlePlaceOrder = (supplierId: number, supplierName: string) => {
     const date = getDeliveryDateForSupplier(supplierId);
@@ -2281,11 +2302,25 @@ export default function Orders() {
                           <td className="p-3 text-right tabular-nums">
                             {packSizeLabel(line)}
                           </td>
-                          <td className="p-3 text-right tabular-nums">
+                          <td
+                            className="p-3 text-right tabular-nums"
+                            title={!line.isMisc && line.surplusExplanation
+                              ? line.surplusFromDeliveryDay
+                                ? `${line.surplusExplanation} — set per delivery day on this ingredient (normally ${line.surplusBasePercent ?? 10}%)`
+                                : line.surplusExplanation
+                              : undefined}
+                          >
                             {line.isMisc ? "—"
                               : line.stockInPacks && line.packWeight > 0
                               ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight))}`
                               : `${line.surplusTarget.toLocaleString()} ${line.unit}`}
+                            {/* Which surplus applied and why — always shown
+                                when the delivery day chose it. */}
+                            {!line.isMisc && line.surplusFromDeliveryDay && line.surplusExplanation && (
+                              <span className="block text-[11px] font-medium text-primary mt-0.5 whitespace-nowrap">
+                                {line.surplusExplanation}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3 text-right tabular-nums">
                             {line.isMisc ? "—"
@@ -2351,7 +2386,7 @@ export default function Orders() {
                         const today = new Date();
                         today.setHours(0, 0, 0, 0);
                         if (prev >= today) {
-                          setDeliveryDates(d => ({ ...d, [so.supplier.id]: prev }));
+                          changeDeliveryDate(so.supplier.id, prev);
                         }
                       }}
                       className="p-1 rounded hover:bg-secondary transition-colors"
@@ -2374,7 +2409,7 @@ export default function Orders() {
                           if (chosen.getDay() === 0 || chosen.getDay() === 6) {
                             chosen = nextBusinessDay(chosen, 1);
                           }
-                          setDeliveryDates(d => ({ ...d, [so.supplier.id]: chosen }));
+                          changeDeliveryDate(so.supplier.id, chosen);
                         }
                       }}
                       className="px-2 py-1 text-sm border border-border rounded-md bg-background w-[140px]"
@@ -2383,7 +2418,7 @@ export default function Orders() {
                       onClick={() => {
                         const current = getDeliveryDateForSupplier(so.supplier.id);
                         const nxt = nextBusinessDay(current, 1);
-                        setDeliveryDates(d => ({ ...d, [so.supplier.id]: nxt }));
+                        changeDeliveryDate(so.supplier.id, nxt);
                       }}
                       className="p-1 rounded hover:bg-secondary transition-colors"
                       title="Next business day"
