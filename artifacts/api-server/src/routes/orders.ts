@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { calcExpectedDeliveryDate, toISODate } from "@workspace/business-days";
+import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 import {
   db,
   productionPlansTable,
@@ -164,6 +164,7 @@ router.get("/calculate", async (req, res) => {
       surplusPercent: ingredientsTable.surplusPercent,
       surplusMode: ingredientsTable.surplusMode,
       surplusAbsoluteQty: ingredientsTable.surplusAbsoluteQty,
+      surplusByDeliveryWeekday: ingredientsTable.surplusByDeliveryWeekday,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanOrderAmount: ingredientsTable.kanbanOrderAmount,
       kanbanUnit: ingredientsTable.kanbanUnit,
@@ -356,6 +357,20 @@ router.get("/calculate", async (req, res) => {
       totalRequired: number;
       stockOnHand: number;
       surplusTarget: number;
+      // Which surplus applied and why (surplus by delivery day, 14 Oct):
+      // the % used (null = fixed/absolute), the delivery date it was worked
+      // out for, and "Surplus 130% (delivery Tue)"-style wording. The inputs
+      // (daily requirement, normal %, per-day map) ride along so the page's
+      // delivery-date / stock-edit recompute calls the same surplusFor.
+      surplusPercentApplied?: number | null;
+      surplusFromDeliveryDay?: boolean;
+      surplusDeliveryDate?: string | null;
+      surplusExplanation?: string;
+      surplusDailyRequirement?: number;
+      surplusMode?: "percent" | "absolute";
+      surplusBasePercent?: number;
+      surplusAbsoluteQty?: number | null;
+      surplusByDeliveryWeekday?: SurplusByDeliveryWeekday | null;
       packWeight: number;
       costPerPack: number;
       supplierPartNumber: string | null;
@@ -434,17 +449,24 @@ router.get("/calculate", async (req, res) => {
     const packWeight = Number(detail.packWeight) || 1;
     const costPerPack = Number(detail.costPerPack) || 0;
     const stockOnHand = latestStockByIngredient[iid] ?? 0;
-    const surplusPercent = Number(detail.surplusPercent) || 10;
-    const surplusMode = (detail.surplusMode === "absolute" ? "absolute" : "percent");
-    const surplusAbsoluteQty = detail.surplusAbsoluteQty != null ? Number(detail.surplusAbsoluteQty) : null;
     // Use DPT daily requirement if available, otherwise fall back to
     // the current plan's totalRequired for this ingredient.
     const dailyRequirement = dptLookup[iid] ?? ing.totalRequired;
-    // Absolute mode: fixed buffer (in the ingredient's native unit), ignores
-    // daily usage. Percent mode: % of daily requirement (legacy behaviour).
-    const surplusTarget = surplusMode === "absolute"
-      ? Math.max(0, surplusAbsoluteQty ?? 0)
-      : dailyRequirement * (surplusPercent / 100);
+
+    let supplier = supplierLookup[suppId];
+    if (!supplier) {
+      const [s] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, suppId)).limit(1);
+      if (s) { supplier = s; supplierLookup[suppId] = s; }
+    }
+    // The delivery this order would arrive on — the same date the Orders
+    // page shows as "Est. delivery" — picks the surplus when the ingredient
+    // has a surplus-by-delivery-day setting (order Fri → Mon delivery →
+    // Monday's %). Absolute mode: fixed buffer in the native unit. Percent
+    // mode: % of daily requirement. Without the setting this is the old
+    // formula exactly (surplusFor's regression tests).
+    const deliveryDate = calcExpectedDeliveryDate(supplier?.leadTimeDays ?? 1, supplier?.cutoffTime ?? "17:00");
+    const surplus = surplusFor(detail, deliveryDate, dailyRequirement);
+    const surplusTarget = surplus.qty;
 
     // Undelivered stock on open POs counts as already ordered (Graeme,
     // 2026-08-06): once today's order is placed, coming back to the page must
@@ -502,11 +524,6 @@ router.get("/calculate", async (req, res) => {
     const belowRequirement = orderQty <= 0 && !isKanban;
 
     if (!supplierOrderMap[suppId]) {
-      let supplier = supplierLookup[suppId];
-      if (!supplier) {
-        const [s] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, suppId)).limit(1);
-        if (s) { supplier = s; supplierLookup[suppId] = s; }
-      }
       supplierOrderMap[suppId] = {
         supplier: {
           id: suppId,
@@ -530,6 +547,15 @@ router.get("/calculate", async (req, res) => {
       totalRequired: Math.round(ing.totalRequired * 100) / 100,
       stockOnHand: Math.round(stockOnHand * 100) / 100,
       surplusTarget: Math.round(surplusTarget * 100) / 100,
+      surplusPercentApplied: surplus.percent,
+      surplusFromDeliveryDay: surplus.fromDeliveryDay,
+      surplusDeliveryDate: toISODate(deliveryDate),
+      surplusExplanation: surplusLabel(surplus),
+      surplusDailyRequirement: Math.round(dailyRequirement * 10000) / 10000,
+      surplusMode: surplus.mode,
+      surplusBasePercent: surplus.basePercent,
+      surplusAbsoluteQty: detail.surplusAbsoluteQty != null ? Number(detail.surplusAbsoluteQty) : null,
+      surplusByDeliveryWeekday: parseSurplusByDeliveryWeekday(detail.surplusByDeliveryWeekday),
       packWeight,
       costPerPack,
       supplierPartNumber: detail.supplierPartNumber ?? null,
