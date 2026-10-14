@@ -17,6 +17,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import {
@@ -1185,6 +1186,11 @@ export function IngredientFormDialog({
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
                 </div>
               </div>
+              {/* Surplus by delivery day (Graeme, 14 Oct) — autosaves on its
+                  own endpoint, so it needs a saved ingredient. */}
+              {editingItem?.id
+                ? <DeliverySurplusField ingredientId={editingItem.id} normalPercent={watch("surplusPercent")} />
+                : <p className="text-xs text-muted-foreground">Save the ingredient first to set a different surplus for each delivery day.</p>}
             </div>
           )}
 
