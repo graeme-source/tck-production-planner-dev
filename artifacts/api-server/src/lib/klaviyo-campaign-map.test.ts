@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { campaignSnapshot, campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
+import { campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
 
 const camp = (id: string, status: string, send: string | null, msgs: string[], included: string[] = ["L1"]) => ({
   id, relationships: { "campaign-messages": { data: msgs.map(m => ({ id: m })) } },
@@ -67,5 +67,26 @@ describe("Klaviyo campaigns on the marketing calendar", () => {
   it("files a send on its London day, not the UTC one", () => {
     expect(londonDay("2026-09-30T23:30:00+00:00")).toBe("2026-10-01"); // BST
     expect(londonDay("2026-12-31T23:30:00+00:00")).toBe("2026-12-31"); // GMT
+  });
+});
+
+describe("Klaviyo results per campaign (email list view)", () => {
+  it("adds up an A/B test's messages and weights its rates by recipients", () => {
+    const out = campaignResultsFromReport([
+      { groupings: { campaign_id: "c1", campaign_message_id: "m1", send_channel: "email" }, statistics: { recipients: 1000, open_rate: 0.5, click_rate: 0.02, conversions: 10, conversion_value: 400.5 } },
+      { groupings: { campaign_id: "c1", campaign_message_id: "m2", send_channel: "email" }, statistics: { recipients: 3000, open_rate: 0.3, click_rate: 0.01, conversions: 5, conversion_value: 200 } },
+      { groupings: { campaign_id: "c2", send_channel: "sms" }, statistics: { recipients: 50 } },
+      { groupings: {}, statistics: { recipients: 9 } },
+    ]);
+    expect([...out.keys()]).toEqual(["c1"]);
+    const r = out.get("c1")!;
+    expect(r).toMatchObject({ recipients: 4000, orders: 15, revenue: 600.5 });
+    expect(r.openRate).toBeCloseTo(0.35);
+    expect(r.clickRate).toBeCloseTo(0.0125);
+  });
+
+  it("missing statistics count as nothing", () => {
+    const r = campaignResultsFromReport([{ groupings: { campaign_id: "c3" }, statistics: { recipients: null } }]).get("c3")!;
+    expect(r).toEqual({ campaignId: "c3", recipients: 0, openRate: 0, clickRate: 0, orders: 0, revenue: 0 });
   });
 });

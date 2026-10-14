@@ -117,3 +117,58 @@ export function campaignSnapshot(c: RawCampaign, messages: RawMessage[]): {
     date: sendAt ? londonDay(sendAt) : null,
   };
 }
+
+// ── Results per campaign (email list view, 2026-10-14) ──────────────────────
+/** What the list view shows under a sent email. Rates are 0–1. */
+export interface KlaviyoCampaignResult {
+  campaignId: string;
+  recipients: number;
+  openRate: number;
+  clickRate: number;
+  /** Placed orders attributed to the email (Klaviyo's attribution). */
+  orders: number;
+  /** £ of those orders. */
+  revenue: number;
+}
+
+/** One row of Klaviyo's campaign values report (grouped by message). */
+export interface RawCampaignValuesRow {
+  groupings?: { campaign_id?: string | null; campaign_message_id?: string | null; send_channel?: string | null };
+  statistics?: Record<string, number | null | undefined>;
+}
+
+/**
+ * Klaviyo's campaign values report → one result per campaign. An A/B test
+ * comes back as one row per message: recipients, orders and revenue add up;
+ * open and click rates are weighted by each message's recipients.
+ */
+export function campaignResultsFromReport(rows: readonly RawCampaignValuesRow[]): Map<string, KlaviyoCampaignResult> {
+  const acc = new Map<string, { recipients: number; opens: number; clicks: number; orders: number; revenue: number }>();
+  for (const r of rows) {
+    const id = r.groupings?.campaign_id;
+    if (!id) continue;
+    if (r.groupings?.send_channel && r.groupings.send_channel !== "email") continue;
+    const s = r.statistics ?? {};
+    const n = (k: string) => { const v = s[k]; return typeof v === "number" && Number.isFinite(v) ? v : 0; };
+    const recipients = n("recipients");
+    const a = acc.get(id) ?? { recipients: 0, opens: 0, clicks: 0, orders: 0, revenue: 0 };
+    a.recipients += recipients;
+    a.opens += n("open_rate") * recipients;
+    a.clicks += n("click_rate") * recipients;
+    a.orders += n("conversions");
+    a.revenue += n("conversion_value");
+    acc.set(id, a);
+  }
+  const out = new Map<string, KlaviyoCampaignResult>();
+  for (const [campaignId, a] of acc) {
+    out.set(campaignId, {
+      campaignId,
+      recipients: Math.round(a.recipients),
+      openRate: a.recipients > 0 ? a.opens / a.recipients : 0,
+      clickRate: a.recipients > 0 ? a.clicks / a.recipients : 0,
+      orders: Math.round(a.orders),
+      revenue: Math.round(a.revenue * 100) / 100,
+    });
+  }
+  return out;
+}

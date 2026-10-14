@@ -14,17 +14,25 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 import {
-  campaignSnapshot, campaignsToCalendar, londonDay, type KlaviyoCalendarEmail, type RawCampaign, type RawMessage,
+  campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay,
+  type KlaviyoCalendarEmail, type KlaviyoCampaignResult, type RawCampaign, type RawCampaignValuesRow, type RawMessage,
 } from "./klaviyo-campaign-map";
 
-export type { KlaviyoCalendarEmail };
+export type { KlaviyoCalendarEmail, KlaviyoCampaignResult };
 
 // ── Fetching ──────────────────────────────────────────────────────────────
 const REVISION = "2024-10-15";
 
-async function kFetch<T>(apiKey: string, url: string): Promise<T> {
+/** GET by default. The one POST is the read-only campaign values REPORT
+ *  (Klaviyo's reporting queries are POSTs; they change nothing). */
+async function kFetch<T>(apiKey: string, url: string, report?: { body: unknown }): Promise<T> {
   const res = await fetch(url.startsWith("http") ? url : `https://a.klaviyo.com${url}`, {
-    headers: { Authorization: `Klaviyo-API-Key ${apiKey}`, revision: REVISION, Accept: "application/vnd.api+json" },
+    method: report ? "POST" : "GET",
+    headers: {
+      Authorization: `Klaviyo-API-Key ${apiKey}`, revision: REVISION, Accept: "application/vnd.api+json",
+      ...(report ? { "Content-Type": "application/vnd.api+json" } : {}),
+    },
+    ...(report ? { body: JSON.stringify(report.body) } : {}),
   });
   if (!res.ok) throw new Error(`Klaviyo ${res.status}: ${(await res.text()).slice(0, 200)}`);
   return res.json() as Promise<T>;
@@ -169,4 +177,80 @@ export async function klaviyoCampaignsForMatching(since: string): Promise<Klaviy
     campaigns: drafts.campaigns, messages: drafts.messages, audienceNames: new Map(), from: "0000-01-01", to: "9999-12-31",
   });
   return [...sends, ...draftEmails];
+}
+
+// ── Results per sent campaign (email list view, 2026-10-14) ───────────────
+// Klaviyo's campaign values report: recipients, open / click rate, placed
+// orders and their value, per campaign, last 365 days. Klaviyo allows only a
+// couple of these a minute (and ~225 a day), so ONE report is shared by
+// every viewer for 30 minutes; a failed refresh keeps showing the last good
+// one with the error beside it. READ-ONLY — a report query writes nothing.
+const RESULTS_TTL_MS = 30 * 60_000;
+const RESULTS_RETRY_MS = 5 * 60_000;
+let resultsCache: { at: number; ok: boolean; results: Map<string, KlaviyoCampaignResult> } | null = null;
+let resultsRunning: Promise<void> | null = null;
+let resultsError: string | null = null;
+let placedOrderMetric: { key: string; id: string } | null = null;
+
+async function placedOrderMetricId(apiKey: string): Promise<string> {
+  if (placedOrderMetric?.key === apiKey) return placedOrderMetric.id;
+  // Same rule as the surveys feature: "Placed Order", Shopify's if several.
+  const matches: Array<{ id: string; integration: string }> = [];
+  let url: string | null = "/api/metrics";
+  for (let page = 0; url && page < 10; page++) {
+    const r: { data: Array<{ id: string; attributes?: { name?: string; integration?: { name?: string } } }>; links?: { next?: string | null } } = await kFetch(apiKey, url);
+    for (const m of r.data ?? []) if (m.attributes?.name === "Placed Order") matches.push({ id: m.id, integration: m.attributes?.integration?.name ?? "" });
+    url = r.links?.next ?? null;
+  }
+  const chosen = matches.find(m => m.integration.toLowerCase() === "shopify") ?? matches[0];
+  if (!chosen) throw new Error("No 'Placed Order' metric in Klaviyo");
+  placedOrderMetric = { key: apiKey, id: chosen.id };
+  return chosen.id;
+}
+
+async function loadResults(apiKey: string): Promise<Map<string, KlaviyoCampaignResult>> {
+  const conversionMetricId = await placedOrderMetricId(apiKey);
+  const r = await kFetch<{ data?: { attributes?: { results?: RawCampaignValuesRow[] } } }>(apiKey, "/api/campaign-values-reports/", {
+    body: {
+      data: {
+        type: "campaign-values-report",
+        attributes: {
+          statistics: ["recipients", "open_rate", "click_rate", "conversions", "conversion_value"],
+          timeframe: { key: "last_365_days" },
+          conversion_metric_id: conversionMetricId,
+          filter: "equals(send_channel,\"email\")",
+        },
+      },
+    },
+  });
+  return campaignResultsFromReport(r.data?.attributes?.results ?? []);
+}
+
+/** Results for every email campaign sent in the last year. */
+export async function klaviyoCampaignResults(): Promise<{
+  connected: boolean; results: KlaviyoCampaignResult[]; updatedAt: string | null; error?: string;
+}> {
+  const apiKey = await getKlaviyoKey();
+  if (!apiKey) return { connected: false, results: [], updatedAt: null };
+  const age = resultsCache ? Date.now() - resultsCache.at : Infinity;
+  const due = !resultsCache || age >= (resultsCache.ok ? RESULTS_TTL_MS : RESULTS_RETRY_MS);
+  if (due) {
+    resultsRunning ??= loadResults(apiKey)
+      .then(results => { resultsCache = { at: Date.now(), ok: true, results }; resultsError = null; })
+      .catch(err => {
+        resultsError = err instanceof Error ? err.message : String(err);
+        console.error("[klaviyo] campaign results failed:", resultsError);
+        // Keep the last good results; try again in a few minutes, not every call.
+        resultsCache = { at: Date.now(), ok: false, results: resultsCache?.results ?? new Map() };
+      })
+      .finally(() => { resultsRunning = null; });
+    await resultsRunning;
+  }
+  const results = [...(resultsCache?.results.values() ?? [])];
+  return {
+    connected: true,
+    results,
+    updatedAt: resultsCache?.ok ? new Date(resultsCache.at).toISOString() : null,
+    ...(resultsError ? { error: "Couldn't load Klaviyo results just now" } : {}),
+  };
 }
