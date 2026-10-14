@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { buildDay, canAccessList, canCreateList, canTickOccurrence, comingUp, type DayCompletion, type DayItem } from "./team-lists-day";
+import {
+  buildDay, canAccessList, canCreateList, canEditList, canTickOccurrence, comingUp, membersForNewList, teamListsVisible,
+  type DayCompletion, type DayItem,
+} from "./team-lists-day";
 import { londonDateString } from "./london-time";
 
 // 2026-10-13 is a Tuesday.
@@ -15,23 +18,51 @@ function done(itemId: number, dueDate: string, status = "done"): DayCompletion {
   return { itemId, dueDate, status, byName: "Lorna", at: `${dueDate}T08:00:00.000Z` };
 }
 
-describe("access", () => {
-  it("admins always, managers by default, viewers never", () => {
-    const open = { memberIds: [] };
-    expect(canAccessList({ id: 1, role: "admin" }, open)).toBe(true);
-    expect(canAccessList({ id: 2, role: "manager" }, open)).toBe(true);
-    expect(canAccessList({ id: 3, role: "viewer" }, open)).toBe(false);
+describe("access (Graeme, 2026-10-14: if I tick you, you've got access)", () => {
+  const admin = { id: 1, role: "admin" }, manager = { id: 2, role: "manager" }, viewer = { id: 3, role: "viewer" };
+  it("admins can always open every list, even with nobody ticked", () => {
+    expect(canAccessList(admin, { memberIds: [] })).toBe(true);
+    expect(canAccessList(admin, { memberIds: [2] })).toBe(true);
+    expect(canAccessList(admin, { memberIds: null })).toBe(true);
   });
-  it("members set: only they plus admins", () => {
-    const list = { memberIds: [2] };
-    expect(canAccessList({ id: 2, role: "manager" }, list)).toBe(true);
-    expect(canAccessList({ id: 5, role: "manager" }, list)).toBe(false);
-    expect(canAccessList({ id: 1, role: "admin" }, list)).toBe(true);
-    expect(canAccessList({ id: 3, role: "viewer" }, { memberIds: [3] })).toBe(false);
+  it("a ticked person of any role can open it — viewers included", () => {
+    const list = { memberIds: [2, 3] };
+    expect(canAccessList(manager, list)).toBe(true);
+    expect(canAccessList(viewer, list)).toBe(true);
+  });
+  it("not ticked = no access, managers included (no more 'empty means every manager')", () => {
+    expect(canAccessList(manager, { memberIds: [] })).toBe(false);
+    expect(canAccessList(manager, { memberIds: [5] })).toBe(false);
+    expect(canAccessList(viewer, { memberIds: [] })).toBe(false);
+    expect(canAccessList(viewer, { memberIds: null })).toBe(false);
+  });
+  it("editing the list: managers and admins who can open it; ticked viewers only tick", () => {
+    expect(canEditList(admin, { memberIds: [] })).toBe(true);
+    expect(canEditList(manager, { memberIds: [2] })).toBe(true);
+    expect(canEditList(manager, { memberIds: [] })).toBe(false);
+    expect(canEditList(viewer, { memberIds: [3] })).toBe(false);
   });
   it("only managers and admins create lists", () => {
-    expect(canCreateList({ id: 1, role: "manager" })).toBe(true);
-    expect(canCreateList({ id: 1, role: "viewer" })).toBe(false);
+    expect(canCreateList(manager)).toBe(true);
+    expect(canCreateList(admin)).toBe(true);
+    expect(canCreateList(viewer)).toBe(false);
+  });
+  it("a manager who creates a list is ticked on it; an admin isn't added", () => {
+    expect(membersForNewList(manager, [7])).toEqual([7, 2]);
+    expect(membersForNewList(manager, [2, 7])).toEqual([2, 7]);
+    expect(membersForNewList(admin, [7])).toEqual([7]);
+  });
+});
+
+describe("visibility", () => {
+  it("shows the Team lists section only to people with at least one list", () => {
+    expect(teamListsVisible({ id: 3, role: "viewer" }, 1)).toBe(true);
+    expect(teamListsVisible({ id: 3, role: "viewer" }, 0)).toBe(false);
+    expect(teamListsVisible({ id: 2, role: "manager" }, 0)).toBe(false);
+    expect(teamListsVisible({ id: 2, role: "manager" }, 2)).toBe(true);
+  });
+  it("admins always see it, so they can create the first list", () => {
+    expect(teamListsVisible({ id: 1, role: "admin" }, 0)).toBe(true);
   });
 });
 

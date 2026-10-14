@@ -2,8 +2,16 @@
  * Team lists — the pure rules (Graeme, 2026-10-13). No database here; the
  * route loads rows and asks these functions what to show.
  *
- *   Access      admins always; managers when the list has no members set,
- *               or they are one of the members; viewers never.
+ *   Access      (Graeme, 2026-10-14: "If I tick, you've got access.")
+ *               Admins always. Anyone else — any role, viewers included —
+ *               only when they are ticked on the list (member_ids). An
+ *               empty list of members means admins only.
+ *   Editing     rename, tasks, members, archive, import: managers and
+ *               admins who can open the list. Ticking / skipping / undoing
+ *               a task: everyone who can open it.
+ *   Visibility  the Team lists section (dashboard, quick actions, To-dos
+ *               header) shows only when the person can open at least one
+ *               active list — or is an admin, who gets a way to create one.
  *   Today       an item shows when its latest occurrence (on or before
  *               today, not before its start date) is today — or is earlier,
  *               not yet done or skipped, and the item carries over. A newer
@@ -21,16 +29,36 @@ import {
 
 export interface ListAccessUser { id: number; role: string }
 
+/** Open the list and tick its tasks: admins, plus whoever is ticked. */
 export function canAccessList(user: ListAccessUser, list: { memberIds: number[] | null }): boolean {
   if (user.role === "admin") return true;
-  if (user.role !== "manager") return false;
-  const members = list.memberIds ?? [];
-  return members.length === 0 || members.includes(user.id);
+  return (list.memberIds ?? []).includes(user.id);
 }
 
 /** Only managers and admins may create a new list. */
 export function canCreateList(user: ListAccessUser): boolean {
   return user.role === "admin" || user.role === "manager";
+}
+
+/** Change the list itself (name, tasks, who has access, archive, import):
+ *  managers and admins who can open it. */
+export function canEditList(user: ListAccessUser, list: { memberIds: number[] | null }): boolean {
+  return canCreateList(user) && canAccessList(user, list);
+}
+
+/** Whether the Team lists section (dashboard row, quick-actions panel,
+ *  To-dos header button) appears at all. `openListCount` = active lists
+ *  this person can open. Admins also see it with none, to create one. */
+export function teamListsVisible(user: ListAccessUser, openListCount: number): boolean {
+  return openListCount > 0 || user.role === "admin";
+}
+
+/** Members for a newly created list: whoever was picked, plus the creator
+ *  unless they're an admin (admins can always open it) — so a manager never
+ *  creates a list they can't then open. Deduplicated. */
+export function membersForNewList(user: ListAccessUser, picked: number[]): number[] {
+  const ids = user.role === "admin" ? picked : [...picked, user.id];
+  return [...new Set(ids)];
 }
 
 export interface DayItem {

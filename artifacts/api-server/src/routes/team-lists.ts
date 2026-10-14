@@ -4,11 +4,11 @@
  *
  * Shared recurring lists that belong to a role, not a person — the
  * Production Planner's daily list, the Scheduling Manager's weekly one. If
- * the usual person is off, any manager opens the same list and ticks it as
- * themselves. NOT shown on station screens.
+ * the usual person is off, anyone ticked on the list opens it and ticks it
+ * as themselves. NOT shown on station screens.
  *
  *   GET    /                    lists I can open, with today's progress
- *   GET    /people              managers + admins, for the members picker
+ *   GET    /people              every active person, for "Who can use this list"
  *   POST   /                    new list (managers/admins)
  *   GET    /:id                 one list: items, today's view, coming up
  *   PATCH  /:id                 rename, members, archive / restore
@@ -19,10 +19,12 @@
  *   POST   /items/:itemId/tick  done / skipped for an occurrence
  *   POST   /items/:itemId/untick
  *
- * Access (lib/team-lists-day.ts canAccessList): admins always; managers
- * unless the list names members and they aren't one; viewers never. Anyone
- * who can open a list can tick and edit it. The rules for what shows today
- * are pure and tested there too.
+ * Access (lib/team-lists-day.ts, Graeme 2026-10-14 — "if I tick, you've got
+ * access"): admins always; anyone else, any role, only when ticked on the
+ * list. Everyone who can open a list can tick / skip / undo its tasks;
+ * changing the list itself (name, tasks, people, archive, import) is for
+ * managers and admins who can open it (canEditList). Enforced here on every
+ * endpoint. The rules for what shows today are pure and tested there too.
  */
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
@@ -36,20 +38,21 @@ import { rawBody, validate } from "../middleware/validate";
 import { resolveRole } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
 import {
-  buildDay, canAccessList, canCreateList, canTickOccurrence, comingUp, occurrencesToLoad,
+  buildDay, canAccessList, canCreateList, canEditList, canTickOccurrence, comingUp, membersForNewList,
+  occurrencesToLoad, teamListsVisible,
   type DayCompletion, type DayItem, type ListAccessUser,
 } from "../lib/team-lists-day";
 import { parseTodoistTemplate } from "../lib/todoist-import";
 
 const router: IRouter = Router();
 
-async function requireManagerSession(req: Request, res: Response, next: NextFunction) {
+// Any signed-in person may ask; what they get is decided per list below.
+async function requireSessionWithRole(req: Request, res: Response, next: NextFunction) {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
-  const role = await resolveRole(req);
-  if (role !== "admin" && role !== "manager") { res.status(403).json({ error: "Team lists are for managers" }); return; }
+  await resolveRole(req); // fills req.session.userRole for older sessions
   next();
 }
-router.use(requireManagerSession);
+router.use(requireSessionWithRole);
 
 function me(req: Request): ListAccessUser {
   return { id: req.session.userId!, role: req.session.userRole ?? "viewer" };
@@ -93,6 +96,7 @@ const listBody = z.object({
   memberIds: z.array(z.number().int().positive()).max(100).default([]),
 });
 const listPatch = listBody.partial().extend({ archived: z.boolean().optional() });
+const dedupe = (ids: number[]) => [...new Set(ids)];
 
 const itemBody = z.object({
   title: z.string().trim().min(1, "A task needs a title").max(300),
@@ -138,27 +142,41 @@ async function loadCompletions(pairs: Array<{ itemId: number; dueDate: string }>
     .map(r => ({ itemId: r.itemId, dueDate: r.dueDate, status: r.status, byName: r.byName, at: r.at, atDate: londonDateString(r.at) }));
 }
 
-async function listFor(req: Request, res: Response, id: number | null): Promise<TeamList | null> {
+/** "open" = see it and tick its tasks; "edit" = change the list itself. */
+type Need = "open" | "edit";
+
+async function listFor(req: Request, res: Response, id: number | null, need: Need): Promise<TeamList | null> {
   if (!id) { res.status(404).json({ error: "List not found" }); return null; }
   const [list] = await db.select().from(teamListsTable).where(eq(teamListsTable.id, id));
   if (!list) { res.status(404).json({ error: "List not found" }); return null; }
-  if (!canAccessList(me(req), list)) { res.status(403).json({ error: "This list is only open to its members" }); return null; }
+  if (!canAccessList(me(req), list)) { res.status(403).json({ error: "You haven't been given access to this list" }); return null; }
+  if (need === "edit" && !canEditList(me(req), list)) {
+    res.status(403).json({ error: "Only managers and admins can change this list — you can tick its tasks" });
+    return null;
+  }
   return list;
 }
 
-async function itemFor(req: Request, res: Response): Promise<{ item: TeamListItem; list: TeamList } | null> {
+async function itemFor(req: Request, res: Response, need: Need): Promise<{ item: TeamListItem; list: TeamList } | null> {
   const id = intParam(req.params.itemId);
   if (!id) { res.status(404).json({ error: "Task not found" }); return null; }
   const [item] = await db.select().from(teamListItemsTable).where(eq(teamListItemsTable.id, id));
   if (!item) { res.status(404).json({ error: "Task not found" }); return null; }
-  const list = await listFor(req, res, item.listId);
+  const list = await listFor(req, res, item.listId, need);
   return list ? { item, list } : null;
 }
 
-function serialiseList(l: TeamList) {
+function requireCanCreate(req: Request, res: Response): boolean {
+  if (canCreateList(me(req))) return true;
+  res.status(403).json({ error: "Only managers and admins can do that" });
+  return false;
+}
+
+function serialiseList(l: TeamList, user: ListAccessUser) {
   return {
     id: l.id, name: l.name, description: l.description, emoji: l.emoji, color: l.color,
     memberIds: l.memberIds ?? [], sortOrder: l.sortOrder, archived: l.archivedAt != null,
+    canEdit: canEditList(user, l),
   };
 }
 
@@ -178,6 +196,7 @@ router.get("/", async (req: Request, res: Response) => {
     .where(includeArchived ? undefined : isNull(teamListsTable.archivedAt))
     .orderBy(asc(teamListsTable.sortOrder), asc(teamListsTable.name));
   const lists = all.filter(l => canAccessList(me(req), l));
+  const openActive = lists.filter(l => l.archivedAt == null).length;
   const ids = lists.map(l => l.id);
   const items = ids.length
     ? await db.select().from(teamListItemsTable).where(and(inArray(teamListItemsTable.listId, ids), eq(teamListItemsTable.active, true)))
@@ -187,33 +206,38 @@ router.get("/", async (req: Request, res: Response) => {
   res.json({
     today,
     canCreate: canCreateList(me(req)),
+    visible: teamListsVisible(me(req), openActive),
     lists: lists.map(l => {
       const mine = items.filter(i => i.listId === l.id).map(toDayItem);
-      return { ...serialiseList(l), itemCount: mine.length, progress: buildDay(mine, completions, today).progress };
+      return { ...serialiseList(l, me(req)), itemCount: mine.length, progress: buildDay(mine, completions, today).progress };
     }),
   });
 });
 
-router.get("/people", async (_req: Request, res: Response) => {
+// Everyone active, any role (Graeme, 2026-10-14: "just have everyone
+// available in the list"). Only for the people who can set members.
+router.get("/people", async (req: Request, res: Response) => {
+  if (!requireCanCreate(req, res)) return;
   const rows = await db.select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
     .from(usersTable)
-    .where(and(eq(usersTable.isActive, true), inArray(usersTable.role, ["admin", "manager"])))
+    .where(eq(usersTable.isActive, true))
     .orderBy(asc(usersTable.name));
   res.json(rows);
 });
 
 router.post("/", validate(listBody), async (req: Request, res: Response) => {
-  if (!canCreateList(me(req))) { res.status(403).json({ error: "Only managers can create lists" }); return; }
+  if (!requireCanCreate(req, res)) return;
   const body = req.body as z.infer<typeof listBody>;
+  body.memberIds = membersForNewList(me(req), body.memberIds);
   const [{ next }] = (await db.execute<{ next: number }>(sql`SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM team_lists`)).rows;
   const [row] = await db.insert(teamListsTable).values({
     ...body, sortOrder: Number(next) || 0, createdById: req.session.userId!,
   }).returning();
-  res.status(201).json(serialiseList(row));
+  res.status(201).json(serialiseList(row, me(req)));
 });
 
 router.get("/:id", async (req: Request, res: Response) => {
-  const list = await listFor(req, res, intParam(req.params.id));
+  const list = await listFor(req, res, intParam(req.params.id), "open");
   if (!list) return;
   const today = londonDateString();
   const items = await db.select().from(teamListItemsTable)
@@ -224,7 +248,7 @@ router.get("/:id", async (req: Request, res: Response) => {
   const day = buildDay(dayItems, completions, today);
   res.json({
     today,
-    list: serialiseList(list),
+    list: serialiseList(list, me(req)),
     items: items.map(serialiseItem),
     entries: day.entries,
     progress: day.progress,
@@ -233,9 +257,10 @@ router.get("/:id", async (req: Request, res: Response) => {
 });
 
 router.patch("/:id", validate(listPatch), async (req: Request, res: Response) => {
-  const list = await listFor(req, res, intParam(req.params.id));
+  const list = await listFor(req, res, intParam(req.params.id), "edit");
   if (!list) return;
   const { archived, ...fields } = req.body as z.infer<typeof listPatch>;
+  if (fields.memberIds) fields.memberIds = dedupe(fields.memberIds);
   const [row] = await db.update(teamListsTable).set({
     ...fields,
     ...(archived === undefined ? {} : archived
@@ -243,12 +268,12 @@ router.patch("/:id", validate(listPatch), async (req: Request, res: Response) =>
       : { archivedAt: null, archivedById: null }),
     updatedAt: new Date(),
   }).where(eq(teamListsTable.id, list.id)).returning();
-  res.json(serialiseList(row));
+  res.json(serialiseList(row, me(req)));
 });
 
 // ── Items ───────────────────────────────────────────────────────────────────
 router.post("/:id/items", validate(itemBody), async (req: Request, res: Response) => {
-  const list = await listFor(req, res, intParam(req.params.id));
+  const list = await listFor(req, res, intParam(req.params.id), "edit");
   if (!list) return;
   const body = req.body as z.infer<typeof itemBody>;
   const rule = normaliseRule(body.recurrence as RecurrenceRule);
@@ -272,7 +297,7 @@ router.post("/:id/items", validate(itemBody), async (req: Request, res: Response
 });
 
 router.post("/:id/reorder", validate(reorderBody), async (req: Request, res: Response) => {
-  const list = await listFor(req, res, intParam(req.params.id));
+  const list = await listFor(req, res, intParam(req.params.id), "edit");
   if (!list) return;
   const { itemIds } = req.body as z.infer<typeof reorderBody>;
   await db.transaction(async tx => {
@@ -285,7 +310,7 @@ router.post("/:id/reorder", validate(reorderBody), async (req: Request, res: Res
 });
 
 router.post("/:id/import", validate(importBody), async (req: Request, res: Response) => {
-  const list = await listFor(req, res, intParam(req.params.id));
+  const list = await listFor(req, res, intParam(req.params.id), "edit");
   if (!list) return;
   const today = londonDateString();
   const parsed = parseTodoistTemplate((req.body as z.infer<typeof importBody>).csv, today);
@@ -316,7 +341,7 @@ router.post("/:id/import", validate(importBody), async (req: Request, res: Respo
 });
 
 router.patch("/items/:itemId", validate(itemPatch), async (req: Request, res: Response) => {
-  const found = await itemFor(req, res);
+  const found = await itemFor(req, res, "edit");
   if (!found) return;
   const body = req.body as z.infer<typeof itemPatch>;
   const updates: Partial<typeof teamListItemsTable.$inferInsert> = { updatedAt: new Date() };
@@ -339,7 +364,7 @@ router.patch("/items/:itemId", validate(itemPatch), async (req: Request, res: Re
 });
 
 router.post("/items/:itemId/tick", validate(tickBody), async (req: Request, res: Response) => {
-  const found = await itemFor(req, res);
+  const found = await itemFor(req, res, "open");
   if (!found) return;
   const { dueDate, status } = req.body as z.infer<typeof tickBody>;
   if (!canTickOccurrence(toDayItem(found.item), dueDate, londonDateString())) {
@@ -358,7 +383,7 @@ router.post("/items/:itemId/tick", validate(tickBody), async (req: Request, res:
 });
 
 router.post("/items/:itemId/untick", validate(untickBody), async (req: Request, res: Response) => {
-  const found = await itemFor(req, res);
+  const found = await itemFor(req, res, "open");
   if (!found) return;
   const { dueDate } = req.body as z.infer<typeof untickBody>;
   if (!canTickOccurrence(toDayItem(found.item), dueDate, londonDateString())) {

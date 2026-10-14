@@ -2,7 +2,7 @@ import { pgTable, serial, text, integer, smallint, timestamp, date, boolean, jso
 import { usersTable } from "./users";
 
 // Team lists (migration 0187): shared recurring routines that belong to a
-// role, not a person — any manager can open one and tick it as themselves.
+// role, not a person — anyone ticked on one can open it and tick it as themselves.
 // The recurrence JSON is a lib/recurrence RecurrenceRule.
 
 export const teamListsTable = pgTable("team_lists", {
@@ -11,7 +11,8 @@ export const teamListsTable = pgTable("team_lists", {
   description: text("description"),
   emoji: text("emoji"),
   color: text("color"),
-  /** Empty = every manager and admin; set = only these people plus admins. */
+  /** Who can open the list (any role) — admins always can. Empty = admins only
+   *  (Graeme, 2026-10-14: "if I tick, you've got access"). */
   memberIds: integer("member_ids").array().notNull().default([]),
   sortOrder: integer("sort_order").notNull().default(0),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
