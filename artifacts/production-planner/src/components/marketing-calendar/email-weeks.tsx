@@ -214,7 +214,7 @@ function WeekCard(props: WeekCardProps) {
   const days = offerDayIndexes(cycle.config.weeklyPlan);
   const first = days[0], last = days[days.length - 1];
   return (
-    <article className={cn("rounded-2xl border-2 bg-card overflow-hidden border-l-[6px]", tone.edge, w.isThisWeek ? "border-primary ring-1 ring-primary" : "border-border")}>
+    <article className={cn("@container rounded-2xl border-2 bg-card overflow-hidden border-l-[6px]", tone.edge, w.isThisWeek ? "border-primary ring-1 ring-primary" : "border-border")}>
       <div className={cn("px-4 py-3.5 border-b border-border space-y-2", tone.head)}>
         <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
           {w.pause ? (
@@ -259,9 +259,14 @@ function WeekCard(props: WeekCardProps) {
         </div>
       </div>
 
-      {/* Column labels (wide screens) */}
-      <div className="hidden xl:grid grid-cols-[8.5rem_12rem_8rem_minmax(0,1fr)] gap-4 px-4 py-2 border-b border-border text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* Column labels. The columns follow the card's own width (the panel
+          beside the sidebar), not the screen: four columns on a wide panel,
+          offer + email | subject on iPad, stacked only on a phone. */}
+      <div className="hidden @3xl:grid grid-cols-[6.5rem_10rem_8rem_minmax(0,1fr)] @6xl:grid-cols-[8.5rem_12rem_8rem_minmax(0,1fr)] gap-4 px-4 py-2 border-b border-border text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         <span>Day</span><span>Offer</span><span>Email</span><span>Subject idea, campaign name &amp; notes</span>
+      </div>
+      <div className="hidden @md:grid @3xl:hidden grid-cols-[9rem_minmax(0,1fr)] gap-4 px-4 py-2 border-b border-border text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        <span>Offer &amp; email</span><span>Subject idea, campaign name &amp; notes</span>
       </div>
       <div className="divide-y divide-border">
         {w.days.map(d => (
@@ -295,8 +300,8 @@ function DayBlock(props: WeekCardProps & { day: Week["days"][number] }) {
   const rest = d.rows.length === 0;
   const virtualSlot = d.rows.some(r => r.kind === "email" && r.planned == null);
   return (
-    <div className={cn("grid grid-cols-1 xl:grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3", d.weekday === 5 && "bg-secondary/30", d.isToday && "bg-primary/5")}>
-      <div className="flex xl:flex-col flex-wrap items-baseline xl:items-start gap-x-2 gap-y-1">
+    <div className={cn("grid grid-cols-1 @3xl:grid-cols-[6.5rem_minmax(0,1fr)] @6xl:grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3", d.weekday === 5 && "bg-secondary/30", d.isToday && "bg-primary/5")}>
+      <div className="flex @3xl:flex-col flex-wrap items-baseline @3xl:items-start gap-x-2 gap-y-1">
         <span className="font-bold text-base">{WEEKDAYS_SHORT[d.weekday]}{d.isToday && <span className="ml-1.5 text-xs font-bold text-primary">Today</span>}</span>
         <span className="text-sm text-muted-foreground tabular-nums">{dayMonth(d.date)}</span>
         {d.keyDates.map(k => (
@@ -376,9 +381,9 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
   const r = row.result;
 
   return (
-    <div className={cn("flex flex-wrap items-start gap-x-4 gap-y-2 xl:grid xl:grid-cols-[12rem_8rem_minmax(0,1fr)]", row.skipped && "opacity-60")}>
+    <div className={cn("flex flex-wrap items-start gap-x-4 gap-y-2 @md:grid @md:grid-cols-[9rem_minmax(0,1fr)] @md:grid-rows-[auto_1fr] @3xl:grid-cols-[10rem_8rem_minmax(0,1fr)] @3xl:grid-rows-none @6xl:grid-cols-[12rem_8rem_minmax(0,1fr)]", row.skipped && "opacity-60")}>
       {/* Offer */}
-      <div className="flex flex-wrap items-center gap-2 min-w-0">
+      <div className="flex flex-wrap items-center gap-2 min-w-0 @md:col-start-1 @md:row-start-1">
         {phase ? (
           <span className={cn("text-xs font-bold px-2 py-1 rounded-md", w.pause ? PAUSE_TONE.chip : typeStyle("campaign").chip)}>{phase}</span>
         ) : isFree ? (
@@ -392,7 +397,7 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
       </div>
 
       {/* Email type + Scheduled tick */}
-      <div className="flex xl:flex-col flex-wrap items-center xl:items-start gap-2">
+      <div className="flex @md:flex-col flex-wrap items-center @md:items-start gap-2 @md:col-start-1 @md:row-start-2 @3xl:col-start-2 @3xl:row-start-1">
         <TypeSelect value={row.type} disabled={busy != null} onChange={t => run("type", async () => patchEmail(await ensure(), { emailType: t }))} />
         <button type="button" disabled={row.scheduledByKlaviyo || busy != null}
           onClick={() => run("tick", async () => patchEmail(await ensure(), { status: row.scheduled ? "planned" : "scheduled" }))}
@@ -407,7 +412,7 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
       </div>
 
       {/* Subject, campaign name, Klaviyo, results, note */}
-      <div className="min-w-0 space-y-2 basis-full xl:basis-auto">
+      <div className="min-w-0 space-y-2 basis-full @md:basis-auto @md:col-start-2 @md:row-start-1 @md:row-span-2 @3xl:col-start-3 @3xl:row-span-1">
         <p className={cn("text-base font-semibold", row.skipped && "line-through")}>{row.subject}</p>
         <CampaignName name={row.campaignName} />
         <div className="flex flex-wrap items-center gap-2">
