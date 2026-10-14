@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, isBefore, isToday, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/auth-context";
+import { useVisibleTeamLists } from "@/components/team-lists/team-lists-dashboard";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
@@ -270,6 +271,9 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const canManage = me?.role === "admin" || me?.role === "manager";
+  // Team lists button: only for people with a list to open (any role), or
+  // admins — the same rule as the dashboard row (Graeme, 2026-10-14).
+  const teamLists = useVisibleTeamLists();
   const qc = useQueryClient();
 
   const [popup, setPopup] = useState<Popup>(null);
@@ -327,10 +331,11 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
         <div className="flex-1" />
         {/* Team lists — the shared recurring lists (Production planner,
             Scheduling manager…) live on their own page, not on anyone's
-            personal list; this is the way in from here for managers
-            (Graeme, 2026-10-13: "I'm on my to-dos… where do I find that?").
-            A plain link, like LinkButton: a full load closes this sheet. */}
-        {canManage && (
+            personal list; this is the way in from here for anyone with
+            access (Graeme, 2026-10-13: "I'm on my to-dos… where do I find
+            that?"). A plain link, like LinkButton: a full load closes this
+            sheet. */}
+        {teamLists.visible && (
           <a
             href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/lists`}
             className="h-14 px-4 rounded-2xl border-2 border-primary/40 bg-primary/10 text-primary font-bold inline-flex items-center gap-2 hover:bg-primary/15 transition-colors"

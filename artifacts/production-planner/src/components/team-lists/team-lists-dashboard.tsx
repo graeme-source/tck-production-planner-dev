@@ -1,9 +1,12 @@
 /**
  * Team lists on the dashboard and in the quick-actions panel (Graeme,
  * 2026-10-13: "the dashboard is probably the right place"; no new button on
- * every page). Managers and admins only — renders nothing for anyone else,
- * and never fetches for them. Objective G: each list's state at a glance
- * ("Production planner · 3 of 9 done · 1 overdue"), one tap into it.
+ * every page). Objective G: each list's state at a glance ("Production
+ * planner · 3 of 9 done · 1 overdue"), one tap into it.
+ *
+ * Who sees it (Graeme, 2026-10-14): only people ticked on at least one
+ * active list — any role — plus admins, who also get the "create one"
+ * prompt when there are none. Everyone else sees nothing at all.
  */
 import { Link } from "wouter";
 import { ChevronRight, ListChecks, Plus } from "lucide-react";
@@ -11,17 +14,20 @@ import { useAuth } from "@/contexts/auth-context";
 import { ListCard } from "./list-card";
 import { useTeamLists } from "./team-lists-api";
 
-function useIsManager(): boolean {
+/** The lists this person can open, and whether the section shows at all.
+ *  One shared query, so the dashboard, panel and To-dos header agree. */
+export function useVisibleTeamLists() {
   const { state } = useAuth();
-  const role = state.status === "authenticated" ? state.user.role : "viewer";
-  return role === "admin" || role === "manager";
+  const { data } = useTeamLists(state.status === "authenticated");
+  const visible = !!data?.visible;
+  return { visible, data: visible ? data : undefined };
 }
 
 export function TeamListsDashboardSection() {
-  const isManager = useIsManager();
-  const { data } = useTeamLists(isManager);
-  if (!isManager || !data) return null;
-  const lists = data.lists;
+  const { data } = useVisibleTeamLists();
+  if (!data) return null;
+  const lists = data.lists.filter(l => !l.archived);
+  if (lists.length === 0 && !data.canCreate) return null;
   return (
     <div>
       <div className="flex items-center justify-between mb-2">
@@ -35,7 +41,7 @@ export function TeamListsDashboardSection() {
           <ListChecks className="w-8 h-8 text-muted-foreground" />
           <span className="flex-1">
             <span className="block font-bold text-lg">Shared team lists</span>
-            <span className="block text-sm text-muted-foreground">Recurring routines any manager can pick up — e.g. the Production planner's daily list.</span>
+            <span className="block text-sm text-muted-foreground">Recurring routines for the people you tick — e.g. the Production planner's daily list.</span>
           </span>
           <Plus className="w-6 h-6" />
         </Link>
@@ -51,9 +57,9 @@ export function TeamListsDashboardSection() {
 /** The quick-actions panel's section: same lists, compact. Hidden on
  *  station screens by the caller. */
 export function TeamListsPanelSection({ onNavigate }: { onNavigate: () => void }) {
-  const isManager = useIsManager();
-  const { data } = useTeamLists(isManager);
-  if (!isManager || !data || data.lists.length === 0) return null;
+  const { data } = useVisibleTeamLists();
+  const lists = (data?.lists ?? []).filter(l => !l.archived);
+  if (lists.length === 0) return null;
   return (
     <div className="mt-6 space-y-3">
       <div className="flex items-center justify-between">
@@ -63,7 +69,7 @@ export function TeamListsPanelSection({ onNavigate }: { onNavigate: () => void }
         </Link>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {data.lists.map(l => <ListCard key={l.id} list={l} compact onClick={onNavigate} />)}
+        {lists.map(l => <ListCard key={l.id} list={l} compact onClick={onNavigate} />)}
       </div>
     </div>
   );

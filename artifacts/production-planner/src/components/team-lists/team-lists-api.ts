@@ -20,6 +20,9 @@ export interface TeamListSummary {
   memberIds: number[];
   sortOrder: number;
   archived: boolean;
+  /** May change the list itself (managers/admins with access). Everyone who
+   *  can see the list can tick its tasks. */
+  canEdit: boolean;
   itemCount: number;
   progress: Progress;
 }
@@ -83,10 +86,19 @@ function send(path: string, method: string, body?: unknown) {
   });
 }
 
-/** Managers/admins only — pass enabled=false for anyone else so viewers
- *  never fire a request that can only 403. */
+export interface TeamListsResponse {
+  today: string;
+  canCreate: boolean;
+  /** Show the Team lists section at all (server rule teamListsVisible):
+   *  the person can open an active list, or is an admin. */
+  visible: boolean;
+  lists: TeamListSummary[];
+}
+
+/** Lists this person can open. Anyone signed in may ask — the server only
+ *  returns the lists they're ticked on (all of them for admins). */
 export function useTeamLists(enabled = true, archived = false) {
-  return useQuery<{ today: string; canCreate: boolean; lists: TeamListSummary[] }>({
+  return useQuery<TeamListsResponse>({
     queryKey: archived ? [...TEAM_LISTS_KEY, "with-archived"] : TEAM_LISTS_KEY,
     queryFn: async () => json(await send(archived ? "?archived=1" : "", "GET")),
     enabled,

@@ -1061,8 +1061,9 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   const swipeAllowed = !pinLocked && !peoplePinPrompt && !peoplePinSetupPrompt && !promptShowing;
   // Choosing an action puts the panel away, then opens the action.
   const run = (action: () => void) => () => { setOpen(false); action(); };
-  // Team lists are management routines — never on a station screen
-  // (Graeme, 2026-10-13), even when a manager has the panel out there.
+  // Team lists stay off station screens (Graeme, 2026-10-13), even for a
+  // person ticked on a list: station iPads are shared and their session is
+  // often not the person standing there (2026-10-14: kept hidden).
   const [location] = useLocation();
   const onStation = /\/station\//.test(location);
   // Report accident / incident (Graeme, 2026-10-13): asks "Is it an

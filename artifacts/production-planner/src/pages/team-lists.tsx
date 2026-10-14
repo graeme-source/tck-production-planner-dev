@@ -3,10 +3,13 @@
  *
  * Shared recurring routines that belong to a role, not a person (the
  * Production Planner's daily list, the Scheduling Manager's weekly one).
- * If the usual person is off, any manager opens the same list and ticks it
- * as themselves. Managers and admins only (server-enforced); never on a
- * station screen. Reached from the dashboard's Team lists card and the
- * quick-actions panel — no menu entry, no button on every page.
+ * If the usual person is off, anyone ticked on the list opens it and ticks
+ * it as themselves. Access (server-enforced, Graeme 2026-10-14): admins
+ * always; anyone else, any role, only when ticked in the list's Settings.
+ * Changing the list (tasks, people, archive, import) is for managers and
+ * admins with access — everyone else with access just ticks. Never on a
+ * station screen. Reached from the dashboard's Team lists card, the
+ * quick-actions panel and My To-dos — each shown only to people with access.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
@@ -16,7 +19,6 @@ import {
 } from "lucide-react";
 import { describeRule } from "@workspace/recurrence";
 import { PageHeader } from "@/components/page-header";
-import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { dayHeading, doneByLabel, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields } from "@/lib/team-list-view";
@@ -31,24 +33,8 @@ import { ListSettingsModal } from "@/components/team-lists/list-settings-modal";
 import { ListCard, ProgressBar } from "@/components/team-lists/list-card";
 import { ImportModal } from "@/components/team-lists/import-modal";
 
-function useIsManager(): boolean {
-  const { state } = useAuth();
-  const role = state.status === "authenticated" ? state.user.role : "viewer";
-  return role === "admin" || role === "manager";
-}
-
 export default function TeamListsPage() {
   const params = useParams<{ id?: string }>();
-  const isManager = useIsManager();
-  if (!isManager) {
-    return (
-      <div className="max-w-xl rounded-3xl border-2 border-border bg-card p-8 text-center space-y-2">
-        <PageHeader title="Team lists" />
-        <ListChecks className="w-10 h-10 mx-auto text-muted-foreground" />
-        <p className="text-lg font-semibold">Team lists are for managers.</p>
-      </div>
-    );
-  }
   const id = params.id ? Number(params.id) : null;
   return id && Number.isInteger(id) ? <ListDetail id={id} /> : <ListsIndex />;
 }
@@ -77,7 +63,15 @@ function ListsIndex() {
       {isLoading && <p className="text-muted-foreground flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Loading lists…</p>}
       {error && <p className="text-red-600">Couldn't load the lists — {(error as Error).message}</p>}
 
-      {!isLoading && !error && live.length === 0 && (
+      {!isLoading && !error && live.length === 0 && !data?.canCreate && (
+        <div className="max-w-xl rounded-3xl border-2 border-border bg-card p-8 text-center space-y-2">
+          <ListChecks className="w-10 h-10 mx-auto text-muted-foreground" />
+          <p className="text-lg font-semibold">You haven't been given any team lists.</p>
+          <p className="text-muted-foreground">A manager can tick you on a list in its Settings.</p>
+        </div>
+      )}
+
+      {!isLoading && !error && live.length === 0 && data?.canCreate && (
         <button onClick={() => setCreating(true)} className="w-full rounded-3xl border-2 border-dashed border-border p-10 text-center hover:bg-secondary/40">
           <ListChecks className="w-10 h-10 mx-auto mb-2 text-muted-foreground" />
           <span className="block text-xl font-bold">Create your first team list</span>
@@ -160,12 +154,14 @@ function ListDetail({ id }: { id: number }) {
       <div className="flex flex-wrap items-center gap-2">
         <Link href="/lists" className="min-h-[48px] px-3 rounded-xl inline-flex items-center gap-2 font-semibold hover:bg-secondary/60"><ArrowLeft className="w-5 h-5" /> All lists</Link>
         <span className="flex-1" />
+        {list.canEdit && <>
         <button onClick={() => setImportOpen(true)} className="min-h-[48px] px-4 rounded-xl border-2 border-border font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
           <FileUp className="w-5 h-5" /> <span className="hidden sm:inline">Import from Todoist</span><span className="sm:hidden">Import</span>
         </button>
         <button onClick={() => setSettingsOpen(true)} className="min-h-[48px] px-4 rounded-xl border-2 border-border font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
           <Settings2 className="w-5 h-5" /> Settings
         </button>
+        </>}
       </div>
 
       {list.archived && (
@@ -185,7 +181,7 @@ function ListDetail({ id }: { id: number }) {
       {overdue.length > 0 && (
         <section className="space-y-3">
           <h3 className="text-sm font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Overdue</h3>
-          {overdue.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={() => setEditingId(e.itemId)} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
+          {overdue.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
         </section>
       )}
 
@@ -193,11 +189,11 @@ function ListDetail({ id }: { id: number }) {
         {overdue.length > 0 && <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Today</h3>}
         {todays.length === 0 && overdue.length === 0 && (
           <p className="rounded-2xl border-2 border-dashed border-border p-6 text-center text-muted-foreground text-lg">
-            {data.items.length === 0 ? "No tasks yet — add the first one below." : "Nothing due today."}
+            {data.items.length === 0 ? (list.canEdit ? "No tasks yet — add the first one below." : "No tasks yet.") : "Nothing due today."}
           </p>
         )}
-        {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={() => setEditingId(e.itemId)} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
-        <AddTask listId={list.id} onAdded={onAdded} />
+        {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
+        {list.canEdit && <AddTask listId={list.id} onAdded={onAdded} />}
       </section>
 
       <Collapsible open={showComing} onToggle={() => setShowComing(s => !s)} title="Coming up this week" count={data.comingUp.reduce((n, d) => n + d.itemIds.length, 0)}>
@@ -211,7 +207,7 @@ function ListDetail({ id }: { id: number }) {
                     const it = byId.get(itemId);
                     return it ? (
                       <li key={itemId}>
-                        <button onClick={() => setEditingId(itemId)} className="w-full text-left min-h-[44px] px-3 rounded-xl hover:bg-secondary/60 flex items-center gap-3">
+                        <button onClick={() => setEditingId(itemId)} disabled={!list.canEdit} className="w-full text-left min-h-[44px] px-3 rounded-xl enabled:hover:bg-secondary/60 flex items-center gap-3 disabled:cursor-default">
                           <span className={cn("w-3 h-3 rounded-full shrink-0", PRIORITY_STYLES[it.priority].dot)} />
                           <span className="flex-1">{it.title}</span>
                           {it.timeOfDay && <span className="text-sm text-muted-foreground">{it.timeOfDay}</span>}
@@ -227,12 +223,12 @@ function ListDetail({ id }: { id: number }) {
       </Collapsible>
 
       <Collapsible open={showAll} onToggle={() => setShowAll(s => !s)} title="All tasks" count={data.items.length}>
-        <AllTasks listId={list.id} items={data.items} onEdit={setEditingId} />
+        <AllTasks listId={list.id} items={data.items} onEdit={list.canEdit ? setEditingId : undefined} />
       </Collapsible>
 
-      {editing && <ItemEditModal key={editing.id} item={editing} today={today} onClose={() => setEditingId(null)} />}
-      {settingsOpen && <ListSettingsModal list={list} onClose={() => setSettingsOpen(false)} />}
-      {importOpen && <ImportModal listId={list.id} onClose={() => setImportOpen(false)} onEditItem={itemId => { setImportOpen(false); setEditingId(itemId); }} />}
+      {editing && list.canEdit && <ItemEditModal key={editing.id} item={editing} today={today} onClose={() => setEditingId(null)} />}
+      {settingsOpen && list.canEdit && <ListSettingsModal list={list} onClose={() => setSettingsOpen(false)} />}
+      {importOpen && list.canEdit && <ImportModal listId={list.id} onClose={() => setImportOpen(false)} onEditItem={itemId => { setImportOpen(false); setEditingId(itemId); }} />}
     </div>
   );
 }
@@ -264,7 +260,9 @@ function TaskTitle({ item, done }: { item: TeamListItem; done: boolean }) {
 }
 
 function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false }: {
-  item: TeamListItem; entry: DayEntry; today: string; onEdit: () => void;
+  item: TeamListItem; entry: DayEntry; today: string;
+  /** Absent for people who can tick but not change the list. */
+  onEdit?: () => void;
   /** Glows for a moment after being added. */
   justAdded?: boolean;
   /** Added this visit: offer "Set days" (it was created as every day). */
@@ -300,7 +298,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false 
         <TaskTitle item={item} done={!!c} />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
           {justAdded && <span className="font-bold text-primary">Just added</span>}
-          {isNew && !c && (
+          {isNew && !c && onEdit && (
             <button type="button" onClick={onEdit}
               className="min-h-[36px] px-3 rounded-full border-2 border-primary/40 text-primary font-semibold inline-flex items-center gap-1 hover:bg-primary/10">
               <Repeat className="w-4 h-4" /> {describeRule(item.recurrence)} · Set days
@@ -326,9 +324,11 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false 
             <Undo2 className="w-4 h-4" /> Undo
           </button>
         )}
-        <button type="button" onClick={onEdit} className="w-12 h-12 rounded-xl hover:bg-secondary/60 flex items-center justify-center" aria-label={`Edit ${item.title}`}>
-          <Pencil className="w-5 h-5" />
-        </button>
+        {onEdit && (
+          <button type="button" onClick={onEdit} className="w-12 h-12 rounded-xl hover:bg-secondary/60 flex items-center justify-center" aria-label={`Edit ${item.title}`}>
+            <Pencil className="w-5 h-5" />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -369,7 +369,7 @@ function AddTask({ listId, onAdded }: { listId: number; onAdded: (id: number) =>
   );
 }
 
-function AllTasks({ listId, items, onEdit }: { listId: number; items: TeamListItem[]; onEdit: (id: number) => void }) {
+function AllTasks({ listId, items, onEdit }: { listId: number; items: TeamListItem[]; onEdit?: (id: number) => void }) {
   const [ordering, setOrdering] = useState(false);
   const reorder = useReorderItems(listId);
   const sorted = [...items].sort((a, b) => a.sortOrder - b.sortOrder || a.id - b.id);
@@ -388,21 +388,21 @@ function AllTasks({ listId, items, onEdit }: { listId: number; items: TeamListIt
     <div className="space-y-2">
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">Every task on this list, whatever day it&apos;s due. This is the “List order” in Sort, and breaks any ties.</p>
-        <button onClick={() => setOrdering(o => !o)} className={cn("min-h-[44px] px-4 rounded-xl border-2 font-semibold shrink-0", ordering ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
+        {onEdit && <button onClick={() => setOrdering(o => !o)} className={cn("min-h-[44px] px-4 rounded-xl border-2 font-semibold shrink-0", ordering ? "border-primary bg-primary text-primary-foreground" : "border-border")}>
           {ordering ? "Done" : "Reorder"}
-        </button>
+        </button>}
       </div>
       {reorder.isPending && <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Saving order…</p>}
       {sorted.map((it, i) => (
         <div key={it.id} className="rounded-2xl border-2 border-border p-3 flex items-center gap-3">
           <span className={cn("w-3 h-3 rounded-full shrink-0", PRIORITY_STYLES[it.priority].dot)} />
-          <button onClick={() => onEdit(it.id)} className="min-w-0 flex-1 text-left min-h-[44px]">
+          <button onClick={() => onEdit?.(it.id)} disabled={!onEdit} className="min-w-0 flex-1 text-left min-h-[44px] disabled:cursor-default">
             <span className="block font-semibold">{it.title}</span>
             <span className="block text-sm text-muted-foreground">
               <Repeat className="w-3.5 h-3.5 inline mr-1" />{describeRule(it.recurrence)}{it.timeOfDay ? ` · ${it.timeOfDay}` : ""}{it.carryOver ? " · carries over" : ""}
             </span>
           </button>
-          {ordering ? (
+          {!onEdit ? null : ordering ? (
             <div className="flex gap-1">
               <button onClick={() => move(i, -1)} disabled={i === 0 || reorder.isPending} className="w-12 h-12 rounded-xl border-2 border-border flex items-center justify-center disabled:opacity-30" aria-label={`Move ${it.title} up`}><ArrowUp className="w-5 h-5" /></button>
               <button onClick={() => move(i, 1)} disabled={i === sorted.length - 1 || reorder.isPending} className="w-12 h-12 rounded-xl border-2 border-border flex items-center justify-center disabled:opacity-30" aria-label={`Move ${it.title} down`}><ArrowDown className="w-5 h-5" /></button>

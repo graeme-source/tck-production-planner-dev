@@ -225,8 +225,8 @@ function Router() {
               <Route path="/case-orders" component={CaseOrders} />
               <Route path="/suppliers" component={Suppliers} />
               <Route path="/contacts" component={ContactsPage} />
-              {/* Team lists — shared recurring routines (Graeme, 2026-10-13). Managers/admins;
-                  server-enforced. Reached from the dashboard card and quick actions. */}
+              {/* Team lists — shared recurring routines (Graeme, 2026-10-13). Admins + the
+                  people ticked on each list; server-enforced. Reached from the dashboard card and quick actions. */}
               <Route path="/lists" component={TeamListsPage} />
               <Route path="/lists/:id" component={TeamListsPage} />
               <Route path="/finance" component={FinancePage} />
