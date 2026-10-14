@@ -1,5 +1,5 @@
 /**
- * Calendar setup (Graeme, 2026-10-14) — the founder edits everything the
+ * Calendar setup (Graeme, 2026-10-14) — anyone with Sales & Marketing access edits everything the
  * email plan runs on: the weekly plan, the offers (code, wording, colour,
  * product-of-the-week, a subject idea per email), the Saturday ideas, the
  * pauses (Black Friday) and the UK key dates. Every field autosaves with a

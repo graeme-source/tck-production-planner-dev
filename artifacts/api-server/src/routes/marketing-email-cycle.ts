@@ -26,8 +26,6 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { OFFER_EMAIL_TYPES, PLAN_DAY_TYPES, mondayIndex, startOfWeek } from "@workspace/marketing-calendar";
 import { validate } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
-import { requireFounder } from "../middleware/founder-access";
-import { FOUNDER_EMAIL } from "../lib/founder-email";
 import { loadCycle, materialiseSlot, offerJson } from "../lib/email-cycle-data";
 import { klaviyoCampaignResults } from "../lib/klaviyo-campaign-calendar";
 import { forgetAutoLinkRun } from "../lib/klaviyo-auto-link-run";
@@ -61,7 +59,10 @@ router.get("/", async (req: Request, res: Response) => {
   ]);
   res.json({
     ...cycle,
-    canEditSetup: me.email === FOUNDER_EMAIL,
+    // Anyone with Sales & Marketing access edits the setup too — Graeme and
+    // whoever he grants it to (Graeme, 2026-10-14: "Tommy to be able to edit
+    // the setup as well"). The router already requires that grant.
+    canEditSetup: true,
     settings: settingsRow[0] ? { updatedBy: settingsRow[0].updatedByName, updatedAt: settingsRow[0].updatedAt.toISOString() } : null,
     products: Object.fromEntries(products.filter(p => p.product).map(p => [p.weekStart, p.product])),
   });
@@ -114,7 +115,7 @@ const SettingsBody = z.object({
   freeSlotIdeas: z.array(Idea).max(52).optional(),
 });
 
-router.put("/settings", requireFounder, validate(SettingsBody), async (req: Request, res: Response) => {
+router.put("/settings", validate(SettingsBody), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof SettingsBody>;
   const user = await sessionUser(req);
   const [current] = await db.select().from(marketingCycleSettingsTable).where(eq(marketingCycleSettingsTable.id, 1));
@@ -143,7 +144,7 @@ const OfferFields = {
 const OfferCreate = z.object(OfferFields).partial().extend({ code: OfferFields.code, name: OfferFields.name });
 const OfferPatch = z.object(OfferFields).partial();
 
-router.post("/offers", requireFounder, validate(OfferCreate), async (req: Request, res: Response) => {
+router.post("/offers", validate(OfferCreate), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof OfferCreate>;
   const user = await sessionUser(req);
   const [{ next }] = (await db.execute<{ next: number }>(sql`SELECT COALESCE(MAX(position), 0) + 1 AS next FROM marketing_cycle_offers WHERE deleted_at IS NULL`)).rows;
@@ -156,7 +157,7 @@ router.post("/offers", requireFounder, validate(OfferCreate), async (req: Reques
   res.status(201).json({ offer: offerJson(row) });
 });
 
-router.patch("/offers/:id", requireFounder, validate(OfferPatch), async (req: Request, res: Response) => {
+router.patch("/offers/:id", validate(OfferPatch), async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const b = req.body as z.infer<typeof OfferPatch>;
@@ -178,7 +179,7 @@ router.patch("/offers/:id", requireFounder, validate(OfferPatch), async (req: Re
   res.json({ offer: offerJson(row) });
 });
 
-router.delete("/offers/:id", requireFounder, async (req: Request, res: Response) => {
+router.delete("/offers/:id", async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const user = await sessionUser(req);
@@ -193,14 +194,14 @@ const KeyDateFields = { date: IsoDate, name: z.string().trim().min(1, "Name the 
 const KeyDateCreate = z.object(KeyDateFields).partial({ big: true });
 const KeyDatePatch = z.object(KeyDateFields).partial();
 
-router.post("/key-dates", requireFounder, validate(KeyDateCreate), async (req: Request, res: Response) => {
+router.post("/key-dates", validate(KeyDateCreate), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof KeyDateCreate>;
   const user = await sessionUser(req);
   const [row] = await db.insert(marketingKeyDatesTable).values({ date: b.date, name: b.name, big: b.big ?? false, updatedById: user.id, updatedByName: user.name }).returning();
   res.status(201).json({ keyDate: { id: row.id, date: row.date, name: row.name, big: row.big } });
 });
 
-router.patch("/key-dates/:id", requireFounder, validate(KeyDatePatch), async (req: Request, res: Response) => {
+router.patch("/key-dates/:id", validate(KeyDatePatch), async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const b = req.body as z.infer<typeof KeyDatePatch>;
@@ -211,7 +212,7 @@ router.patch("/key-dates/:id", requireFounder, validate(KeyDatePatch), async (re
   res.json({ keyDate: { id: row.id, date: row.date, name: row.name, big: row.big } });
 });
 
-router.delete("/key-dates/:id", requireFounder, async (req: Request, res: Response) => {
+router.delete("/key-dates/:id", async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const user = await sessionUser(req);
@@ -226,7 +227,7 @@ const PauseFields = { name: z.string().trim().min(1, "Name the pause").max(120),
 const PauseCreate = z.object(PauseFields).refine(b => b.endDate >= b.startDate, { message: "The end can't be before the start" });
 const PausePatch = z.object(PauseFields).partial();
 
-router.post("/pauses", requireFounder, validate(PauseCreate), async (req: Request, res: Response) => {
+router.post("/pauses", validate(PauseCreate), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof PauseCreate>;
   const user = await sessionUser(req);
   const [row] = await db.insert(marketingCyclePausesTable).values({ ...b, updatedById: user.id, updatedByName: user.name }).returning();
@@ -234,7 +235,7 @@ router.post("/pauses", requireFounder, validate(PauseCreate), async (req: Reques
   res.status(201).json({ pause: { id: row.id, name: row.name, startDate: row.startDate, endDate: row.endDate } });
 });
 
-router.patch("/pauses/:id", requireFounder, validate(PausePatch), async (req: Request, res: Response) => {
+router.patch("/pauses/:id", validate(PausePatch), async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const b = req.body as z.infer<typeof PausePatch>;
@@ -249,7 +250,7 @@ router.patch("/pauses/:id", requireFounder, validate(PausePatch), async (req: Re
   res.json({ pause: { id: row.id, name: row.name, startDate: row.startDate, endDate: row.endDate } });
 });
 
-router.delete("/pauses/:id", requireFounder, async (req: Request, res: Response) => {
+router.delete("/pauses/:id", async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
   const user = await sessionUser(req);
