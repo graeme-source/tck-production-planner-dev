@@ -6,6 +6,7 @@ import authRouter from "./auth";
 import storageRouter from "./storage";
 import ingredientsRouter from "./ingredients";
 import ingredientDeclarationsRouter from "./ingredient-declarations";
+import ingredientDeliverySurplusRouter from "./ingredient-delivery-surplus";
 import subRecipesRouter from "./sub-recipes";
 import subRecipeLabelUsageRouter from "./sub-recipe-label-usage";
 import subRecipePrepTimeRouter from "./sub-recipe-prep-time";
@@ -221,6 +222,8 @@ router.use("/suppliers", suppliersRouter);
 // Admin dry-run tidy of unwrapped label declarations — before the main
 // ingredients router so its POST path is matched here.
 router.use("/ingredients", ingredientDeclarationsRouter);
+// Surplus by delivery day (GET/PUT /:id/surplus-by-delivery-day).
+router.use("/ingredients", ingredientDeliverySurplusRouter);
 router.use("/ingredients", ingredientsRouter);
 router.use("/ingredients", ingredientScrapeRouter);
 router.use("/upf", upfRouter);
