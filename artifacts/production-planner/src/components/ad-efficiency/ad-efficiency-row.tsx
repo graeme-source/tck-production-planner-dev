@@ -155,22 +155,43 @@ function Sparkline({ points, target, band, caption }: { points: SparkPoint[]; ta
  *  ROAS for that particular day only, not the average on that day"). The big
  *  number above stays the window's figure; the line still shows the rolling
  *  figure across 30 days on hover/drag. Coloured against the card's target. */
-function LastSevenDays({ points, target, caption }: { points: SparkPoint[]; target: number; caption: string }) {
+function LastSevenDays({ points, dayOnly, target, caption }: {
+  /** The card's rolling figure as it stood each day — the coloured column. */
+  points: SparkPoint[];
+  /** Each day on its own (that day's sales ÷ that day's spend), shown plain
+   *  to the left of the rolling figure, like Graeme's sheet (2026-10-14). */
+  dayOnly?: SparkPoint[];
+  target: number;
+  caption: string;
+}) {
   const last = points.slice(-7);
   if (last.length === 0) return null;
+  const dayBy = new Map((dayOnly ?? []).map(p => [p.date, p.percent]));
+  const pct = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v)}%`);
   return (
     <div className="space-y-px" aria-label={`Last 7 days — ${caption}`}>
-      <p className="px-1 pb-0.5 text-xs text-muted-foreground">{caption}</p>
+      <div className="flex items-center justify-between gap-2 px-1 pb-0.5 text-xs text-muted-foreground">
+        <span>{dayOnly ? "Last 7 days" : caption}</span>
+        {dayOnly && (
+          <span className="flex items-center gap-2">
+            <span className="w-14 text-right">That day</span>
+            <span className="w-14 text-right">{caption}</span>
+          </span>
+        )}
+      </div>
       {[...last].reverse().map(p => {
         const shade = roasShade(p.percent, target);
         const d = new Date(`${p.date}T12:00:00Z`);
         return (
-          <div key={p.date} className="flex items-center justify-between px-1 text-[13px] leading-5">
+          <div key={p.date} className="flex items-center justify-between gap-2 px-1 text-[13px] leading-5">
             <span className="text-muted-foreground">{d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" })}</span>
-            <span
-              className={cn("rounded px-1.5 font-bold tabular-nums", !shade && "bg-secondary text-muted-foreground", shade && (shade.darkBackground ? "text-white" : "text-stone-900"))}
-              style={shade ? { backgroundColor: shade.hex } : undefined}
-            >{p.percent == null ? "—" : `${Math.round(p.percent)}%`}</span>
+            <span className="flex items-center gap-2">
+              {dayOnly && <span className="w-14 text-right tabular-nums text-foreground">{pct(dayBy.get(p.date))}</span>}
+              <span
+                className={cn("w-14 text-right rounded px-1.5 font-bold tabular-nums", !shade && "bg-secondary text-muted-foreground", shade && (shade.darkBackground ? "text-white" : "text-stone-900"))}
+                style={shade ? { backgroundColor: shade.hex } : undefined}
+              >{pct(p.percent)}</span>
+            </span>
           </div>
         );
       })}
@@ -236,7 +257,7 @@ function RoasCard({
           </div>
         </div>
         <Sparkline points={spark} target={target} band={band} caption={sparkCaption} />
-        <LastSevenDays points={daily ?? spark} target={target} caption={daily ? "Each day on its own" : dailyCaption ?? "Rolling figure on each day"} />
+        <LastSevenDays points={spark} dayOnly={daily} target={target} caption={dailyCaption ?? "Average as it stood each day"} />
         {result.available && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-xl bg-secondary/50 px-3 py-2">
@@ -331,6 +352,7 @@ export function AdEfficiencyRow() {
               settings={settings}
               spark={view.spark7}
               daily={view.dailyNc}
+              dailyCaption="7-day avg"
               sparkCaption="Rolling 7-day, last 30 days"
               window={windows.last7}
               revenueLabel="New customers"
