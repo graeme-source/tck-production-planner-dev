@@ -127,4 +127,13 @@ describe("withReplySent — the card right after Reply to Claude", () => {
     expect(item.thread).toHaveLength(1);
     expect(item.triage.status).toBe("approved");
   });
+  it("'Send and fix it this way' goes straight to Approved with the go-ahead in the thread (2026-10-15)", () => {
+    const now = new Date("2026-10-15T09:00:00Z");
+    const out = withReplySent({ ...item, triage: { ...item.triage, status: "proposed" } } as FixQueueItem, "Use the wrapping count, not stock", now, true);
+    expect(out.triage.status).toBe("approved");
+    expect(out.triage.awaitingRetriage).toBe(false);
+    expect(out.fixNow).toBe(true);
+    expect(out.thread!.slice(-2).map(e => e.text)).toEqual(["Use the wrapping count, not stock", "Approved — fix it the way you said"]);
+    expect(cardActions(out.triage).waitingOnClaude).toBe(false);
+  });
 });

@@ -8,6 +8,8 @@ import {
   retriageVerdict,
   canReviewMove,
   replyToClaudePlan,
+  replyOutcome,
+  approvedToFix,
   reopenNote,
   repliesFirst,
   unansweredReplies,
@@ -444,5 +446,37 @@ describe("Dismiss — no action", () => {
     expect(canSetAside({ noActionAt: at })).toBe(false);
     expect(canRestoreSetAside({ noActionAt: at })).toBe(true);
     expect(canRestoreSetAside({ noActionAt: null })).toBe(false);
+  });
+});
+
+// ── "Send and fix it this way" (Graeme, 2026-10-15) ────────────────────────
+describe("Send and fix it this way", () => {
+  it("a plain reply goes back to Claude; fix-now is approved there and then", () => {
+    expect(replyOutcome(false)).toEqual({ status: null, awaitingRetriage: true });
+    expect(replyOutcome(true)).toEqual({ status: "approved", awaitingRetriage: false });
+  });
+
+  it("the go-ahead is the latest decision — a later plain reply or reject takes it away", () => {
+    expect(approvedToFix([{ event: "triaged" }, { event: "replied" }, { event: "approved_to_fix" }])).toBe(true);
+    expect(approvedToFix([{ event: "replied" }, { event: "approved_to_fix" }, { event: "in_progress" }])).toBe(true);
+    expect(approvedToFix([{ event: "approved_to_fix" }, { event: "replied" }])).toBe(false);
+    expect(approvedToFix([{ event: "approved_to_fix" }, { event: "rejected" }])).toBe(false);
+    expect(approvedToFix([{ event: "triaged" }, { event: "approved" }])).toBe(false);
+    expect(approvedToFix([])).toBe(false);
+  });
+
+  it("the history says when fix-now reopened a closed card, and stays quiet on an open one", () => {
+    const open = replyToClaudePlan({ status: "proposed" });
+    expect(reopenNote(open, true)).toBeNull();
+    expect(reopenNote(replyToClaudePlan({ status: "fixed" }), true)).toBe("Reopened by your reply (was: Fixed) — approved to fix your way");
+    expect(reopenNote(replyToClaudePlan({ status: "proposed", noActionAt: new Date() }), true)).toContain("Dismissed — no action");
+  });
+
+  it("the thread shows the go-ahead", () => {
+    const thread = buildThread([
+      { event: "replied", note: "Use the wrapping count", createdAt: "2026-10-15T09:00:00Z", snapshot: null },
+      { event: "approved_to_fix", note: null, createdAt: "2026-10-15T09:00:00Z", snapshot: null },
+    ]);
+    expect(thread.map(t => t.text)).toEqual(["Use the wrapping count", "Approved — fix it the way you said"]);
   });
 });

@@ -93,6 +93,9 @@ export interface FixQueueItem {
   notices: FixNoticeSummary[];
   /** The back-and-forth on this card, oldest first. */
   thread?: ThreadEntry[];
+  /** Approved with "Send and fix it this way" (2026-10-15): Claude builds it
+   *  from Graeme's words on its next run, without asking again. */
+  fixNow?: boolean;
   related: Array<{ id: number; description: string | null; station: string | null; reporterName: string | null; createdAt: string | null; resolvedAt: string | null; triageStatus: TriageStatus | null }>;
 }
 
@@ -189,21 +192,27 @@ export function batchedNoticeCopy(notices: Array<Pick<MyFixedNotice, "kind">>): 
  * Used to show "Sent — Claude will look at this on its next pass" straight
  * away instead of the card vanishing to another tab.
  */
-export function withReplySent(item: FixQueueItem, note: string, now: Date = new Date()): FixQueueItem {
+export function withReplySent(item: FixQueueItem, note: string, now: Date = new Date(), fixNow = false): FixQueueItem {
   const at = now.toISOString();
   return {
     ...item,
+    // "Send and fix it this way": straight to Approved, not back to Claude.
+    fixNow,
     triage: {
       ...item.triage,
-      status: "proposed",
-      awaitingRetriage: true,
+      status: fixNow ? "approved" : "proposed",
+      awaitingRetriage: !fixNow,
       snoozedUntil: null,
       noActionAt: null,
       noActionBy: null,
       decisionNote: note,
       decidedAt: at,
     },
-    thread: [...(item.thread ?? []), { at, who: "you", kind: "reply", text: note }],
+    thread: [
+      ...(item.thread ?? []),
+      { at, who: "you", kind: "reply", text: note },
+      ...(fixNow ? [{ at, who: "you" as const, kind: "decision" as const, text: "Approved — fix it the way you said" }] : []),
+    ],
   };
 }
 

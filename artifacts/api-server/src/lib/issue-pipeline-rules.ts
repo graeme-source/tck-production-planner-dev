@@ -250,10 +250,42 @@ export function reopenCardPlan(
 }
 
 /** The history line written when a reply re-opens a card; null = nothing re-opened. */
-export function reopenNote(plan: ReplyPlan): string | null {
+export function reopenNote(plan: ReplyPlan, fixNow = false): string | null {
+  if (fixNow) {
+    // Going straight to Approved: only worth a line when it was closed or set aside.
+    if (!plan.restoreSetAside && ["proposed", "approved", "rejected"].includes(plan.previousStatus)) return null;
+    const was = plan.restoreSetAside ? "Dismissed — no action" : REOPEN_WORDS[plan.previousStatus];
+    return `Reopened by your reply (was: ${was}) — approved to fix your way`;
+  }
   if (!plan.reopen && !plan.restoreSetAside) return null;
   const was = plan.restoreSetAside ? "Dismissed — no action" : REOPEN_WORDS[plan.previousStatus];
   return `Reopened by your reply (was: ${was}) — back to Claude for another look`;
+}
+
+// ── "Send and fix it this way" (Graeme, 2026-10-15) ────────────────────────
+// "My prompt is the prompt to fix it nearly most of the time … I don't want
+// a response and then have to confirm the fix again later because I forget
+// what the issue is." A reply can carry his go-ahead: the card goes straight
+// to Approved with his words as the fix instruction, so the hourly reviewer
+// builds it on its next run instead of coming back to ask for approval. It
+// still never deploys — that stays Graeme's "deploy".
+
+/** Where a Reply to Claude leaves the card. A plain reply goes back to
+ *  Claude for another look; "fix it this way" is approved there and then. */
+export function replyOutcome(fixNow: boolean): { status: TriageStatus | null; awaitingRetriage: boolean } {
+  return fixNow ? { status: "approved", awaitingRetriage: false } : { status: null, awaitingRetriage: true };
+}
+
+/** Was this card's current approval given with "Send and fix it this way"?
+ *  The latest approve/reject/reply decides — a later plain reply or a
+ *  reject takes the go-ahead away. */
+export function approvedToFix(events: { event: string }[]): boolean {
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i].event;
+    if (e === "approved_to_fix") return true;
+    if (e === "approved" || e === "rejected" || e === "replied") return false;
+  }
+  return false;
 }
 
 /** What Graeme has said since Claude last wrote a recommendation — the
@@ -442,6 +474,7 @@ interface EventLike {
 
 const DECISION_WORDS: Record<string, string> = {
   approved: "Approved",
+  approved_to_fix: "Approved — fix it the way you said",
   rejected: "Rejected",
   dismissed: "Dismissed — already done",
   snoozed: "Snoozed",

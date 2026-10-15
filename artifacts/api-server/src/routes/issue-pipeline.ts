@@ -30,6 +30,8 @@ import {
   QUEUE_TABS,
   SNOOZE_DAYS,
   replyToClaudePlan,
+  replyOutcome,
+  approvedToFix,
   reopenNote,
   canReviewMove,
   noticeAckVerdict,
@@ -150,6 +152,9 @@ router.get("/review", requireFounder, async (req, res) => {
         issue: issueById.get(t.andonIssueId) ?? null,
         notices: notices.get(t.id) ?? [],
         thread: buildThread(eventsByTriage.get(t.id) ?? []),
+        // Approved with "Send and fix it this way" — the card says Claude
+        // builds it on its next run.
+        fixNow: t.status === "approved" && approvedToFix(eventsByTriage.get(t.id) ?? []),
         related: t.relatedIssueIds.map(id => {
           const r = relatedById.get(id);
           return r
@@ -166,7 +171,8 @@ router.get("/review", requireFounder, async (req, res) => {
 
 // ── POST /review/:id/approve | reject | reply ───────────────────────────────
 const decisionBody = z.object({ note: z.string().trim().max(2000).nullable().optional() });
-const replyBody = z.object({ note: z.string().trim().min(1).max(4000) });
+// fixNow = "Send and fix it this way": his words are the fix and the go-ahead.
+const replyBody = z.object({ note: z.string().trim().min(1).max(4000), fixNow: z.boolean().optional() });
 
 async function decide(req: Request, res: Response, action: "approve" | "reject" | "reply") {
   const id = parseId(req.params.id);
@@ -186,6 +192,8 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
         // goes back to 'proposed' with the flag that puts it in the hourly
         // session's inbox, and his words are its newest instruction.
         const plan = replyToClaudePlan({ status: from, noActionAt: current.noActionAt });
+        const fixNow = (req.body as { fixNow?: boolean }).fixNow === true;
+        const outcome = replyOutcome(fixNow);
         const now = new Date();
         if (plan.restoreSetAside && current.noActionAt) {
           // Reopen the report only if the quiet dismissal is what closed it
@@ -198,16 +206,20 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
           }
         }
         [row] = await tx.update(issueTriageTable).set({
-          awaitingRetriage: true, decisionNote: note, decidedBy: name, decidedByUserId: userId, decidedAt: now, updatedAt: now,
+          awaitingRetriage: outcome.awaitingRetriage, decisionNote: note, decidedBy: name, decidedByUserId: userId, decidedAt: now, updatedAt: now,
           snoozedUntil: null, reporterReplyAt: null,
           ...(plan.restoreSetAside ? { noActionAt: null, noActionBy: null, noActionByUserId: null } : {}),
           // Back for a fresh decision; the old one stays in the history. The
           // fix reference is kept so Claude can see what was already built.
           ...(plan.reopen ? { status: "proposed", fixedAt: null, issueResolvedAt: null } : {}),
+          // "Send and fix it this way": straight to Approved — the hourly
+          // reviewer builds it from his words without asking again.
+          ...(outcome.status ? { status: outcome.status, fixedAt: null, issueResolvedAt: null } : {}),
         }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
-        const reopened = reopenNote(plan);
+        const reopened = reopenNote(plan, fixNow);
         if (reopened) await recordEvent(tx, row, "reopened", name, reopened);
         await recordEvent(tx, row, "replied", name, note);
+        if (fixNow) await recordEvent(tx, row, "approved_to_fix", name, null);
       } else {
         const to: TriageStatus = action === "approve" ? "approved" : "rejected";
         if (!canReviewMove(from, to)) return { status: 409 as const, error: `Can't ${action} a '${from}' recommendation`, triage: current };

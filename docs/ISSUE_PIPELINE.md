@@ -212,6 +212,29 @@ migration `0191`):
 - The reviewer sees reporter replies in each card's `thread` (who
   `reporter`).
 
+### Send and fix it this way (2026-10-15)
+
+Graeme's replies are usually the fix itself, and waiting an hour for Claude
+to answer and then approving again meant re-reading the whole card. The
+Reply to Claude box now has two buttons:
+
+- **Just send** — as before: back to Claude for another look.
+- **Send and fix it this way** (`POST /review/:id/reply {note, fixNow:true}`)
+  — his words are the fix AND the go-ahead. The card goes straight to
+  **Approved** (`replyOutcome`), `awaitingRetriage` stays false, and the
+  history gets `replied` then `approved_to_fix` ("Approved — fix it the way
+  you said"). The card shows "Approved — Claude will fix it the way you
+  said".
+
+`GET /approved` items now carry `thread` and, for these cards, a `fixNow`
+block (`approvedToFix(events)`: the latest approve/reject/reply decides — a
+later plain reply or a reject takes the go-ahead away) with his words since
+Claude's last recommendation. The hourly reviewer builds a `fixNow` item in
+that run on its own review branch (worktree off `origin/master`, regression
+test, typecheck), marks it `fixed` with the branch as `fixRef` and leaves a
+note on the card. It never pushes, merges or deploys — the branch waits for
+Graeme's "deploy", and `resolve-issue` still only happens once it's live.
+
 ### People side (session auth)
 
 - `/founder/fix-queue` — Graeme's Fix queue (founder account only, page and

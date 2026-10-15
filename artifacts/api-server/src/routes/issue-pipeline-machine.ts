@@ -31,6 +31,7 @@ import {
   machineIssueWanted,
   repliesFirst,
   unansweredReplies,
+  approvedToFix,
   machineMoveVerdict,
   parseBearer,
   pipelineMayHandle,
@@ -318,10 +319,42 @@ router.get("/approved", async (req, res) => {
       .orderBy(asc(issueTriageTable.decidedAt), asc(issueTriageTable.id));
     const issues = await buildIssueViews(await loadAndonRows(rows.map(r => r.andonIssueId)), machineAttachmentUrl);
     const byId = new Map(issues.map(i => [i.id, i]));
+    const eventRows = rows.length === 0 ? [] : await db.select({
+      triageId: issueTriageEventsTable.triageId,
+      event: issueTriageEventsTable.event,
+      note: issueTriageEventsTable.note,
+      createdAt: issueTriageEventsTable.createdAt,
+      snapshot: issueTriageEventsTable.snapshot,
+    }).from(issueTriageEventsTable)
+      .where(inArray(issueTriageEventsTable.triageId, rows.map(r => r.id)))
+      .orderBy(issueTriageEventsTable.createdAt, issueTriageEventsTable.id);
+    const eventsByTriage = new Map<number, typeof eventRows>();
+    for (const e of eventRows) {
+      const list = eventsByTriage.get(e.triageId) ?? [];
+      list.push(e);
+      eventsByTriage.set(e.triageId, list);
+    }
     res.json({
       status,
       count: rows.length,
-      items: rows.map(t => ({ triage: t, issue: byId.get(t.andonIssueId) ?? null })),
+      items: rows.map(t => {
+        const events = eventsByTriage.get(t.id) ?? [];
+        const thread = buildThread(events);
+        const fixNow = approvedToFix(events);
+        return {
+          triage: t,
+          issue: byId.get(t.andonIssueId) ?? null,
+          thread,
+          // "Send and fix it this way" (Graeme, 2026-10-15): his words are
+          // the fix AND the go-ahead — build it this run, don't ask again.
+          fixNow: fixNow
+            ? {
+              instruction: "Graeme approved this with 'Send and fix it this way'. His words below ARE the fix: they override proposedFix. Build it now on its own review branch with a regression test, then mark it fixed with the branch as fixRef. Do not ask him to approve again. Never push, merge or deploy.",
+              graemeSaid: unansweredReplies(thread).map(r => ({ at: r.at, text: r.text })),
+            }
+            : null,
+        };
+      }),
     });
   } catch (err) {
     console.error("[issue-pipeline] approved queue failed:", err instanceof Error ? err.message : String(err));

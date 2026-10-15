@@ -89,7 +89,8 @@ function NoteDialog({ mode, reopens = false, onCancel, onSubmit }: {
   /** Reply on a decided/closed card — say that it reopens it. */
   reopens?: boolean;
   onCancel: () => void;
-  onSubmit: (note: string) => void;
+  /** fixNow = "Send and fix it this way" (reply only). */
+  onSubmit: (note: string, fixNow?: boolean) => void;
 }) {
   const [note, setNote] = useState("");
   const isReply = mode === "reply";
@@ -112,6 +113,11 @@ function NoteDialog({ mode, reopens = false, onCancel, onSubmit }: {
               ? "Correct Claude's understanding, answer its question, or tell it what to do instead. Your words become its newest instruction — it looks again on its next hourly pass and updates this card."
               : "Optional: say why, so the next recommendation for something similar is better."}
           </p>
+          {isReply && (
+            <p className="text-sm text-emerald-900 dark:text-emerald-100 bg-emerald-50 dark:bg-emerald-950/30 rounded-xl px-3 py-2.5">
+              <span className="font-semibold">Telling it how to fix it?</span> Use <span className="font-semibold">Send and fix it this way</span>: your message is the fix and your go-ahead, so Claude builds it on its next hourly run without coming back for approval. It still waits for you to say deploy.
+            </p>
+          )}
           {isReply && reopens && (
             <p className="text-sm font-medium text-sky-800 dark:text-sky-200 bg-sky-50 dark:bg-sky-950/30 rounded-xl px-3 py-2.5">
               This reopens the card: your earlier decision is kept in its history, and Claude's updated recommendation comes back to To review for a fresh decision. The reporter isn't messaged.
@@ -131,20 +137,31 @@ function NoteDialog({ mode, reopens = false, onCancel, onSubmit }: {
             className="w-full min-h-[160px] px-3 py-2.5 bg-background border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         </div>
-        <div className="p-5 pt-0 flex gap-2">
-          <button onClick={onCancel} className="flex-1 h-12 rounded-xl border border-border font-semibold hover:bg-secondary/60">
-            Cancel
-          </button>
-          <button
-            onClick={() => onSubmit(note.trim())}
-            disabled={isReply && !note.trim()}
-            className={cn(
-              "flex-1 h-12 rounded-xl font-bold disabled:opacity-50",
-              isReply ? "bg-sky-600 text-white hover:bg-sky-700" : "bg-red-600 text-white hover:bg-red-700",
-            )}
-          >
-            {isReply ? "Send to Claude" : "Reject"}
-          </button>
+        <div className="p-5 pt-0 space-y-2">
+          {isReply && (
+            <button
+              onClick={() => onSubmit(note.trim(), true)}
+              disabled={!note.trim()}
+              className="w-full h-12 rounded-xl font-bold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
+            >
+              <Wrench className="w-5 h-5" /> Send and fix it this way
+            </button>
+          )}
+          <div className="flex gap-2">
+            <button onClick={onCancel} className="flex-1 h-12 rounded-xl border border-border font-semibold hover:bg-secondary/60">
+              Cancel
+            </button>
+            <button
+              onClick={() => onSubmit(note.trim())}
+              disabled={isReply && !note.trim()}
+              className={cn(
+                "flex-1 h-12 rounded-xl font-bold disabled:opacity-50",
+                isReply ? "border-2 border-sky-600 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30" : "bg-red-600 text-white hover:bg-red-700",
+              )}
+            >
+              {isReply ? "Just send" : "Reject"}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -163,7 +180,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
   showTab?: boolean;
   /** "Dismiss — no action" (restore = put it back). */
   onNoAction: (restore: boolean) => void;
-  onDecide: (action: DecisionAction, note?: string) => void;
+  onDecide: (action: DecisionAction, note?: string, fixNow?: boolean) => void;
   onMessage: (message: string, close: boolean) => void;
   onDismiss: () => void;
   /** days = null brings a snoozed card back now. */
@@ -249,6 +266,15 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
               <MessageCircleQuestion className="w-5 h-5" /> Answer Claude
             </button>
           )}
+        </div>
+      )}
+      {item.fixNow && status === "approved" && (
+        <div className="rounded-2xl border-2 border-primary/50 bg-primary/5 p-4 flex gap-3">
+          <Wrench className="w-6 h-6 text-primary flex-shrink-0" />
+          <p className="text-base">
+            <span className="font-bold">Approved — Claude will fix it the way you said.</span>{" "}
+            It builds this from your message on its next hourly run and won't ask you to approve again. Nothing goes live until you say deploy.
+          </p>
         </div>
       )}
       {actions.waitingOnClaude && (
@@ -548,7 +574,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
           mode={dialog}
           reopens={dialog === "reply" && (actions.replyReopens || !!t.noActionAt)}
           onCancel={() => setDialog(null)}
-          onSubmit={note => { setDialog(null); onDecide(dialog, note || undefined); }}
+          onSubmit={(note, fixNow) => { setDialog(null); onDecide(dialog, note || undefined, fixNow); }}
         />
       )}
     </article>
@@ -587,16 +613,16 @@ export default function FounderFixQueue() {
   });
 
   const decide = useMutation({
-    mutationFn: async ({ id, action, note }: { id: number; action: DecisionAction; note?: string }) =>
+    mutationFn: async ({ id, action, note, fixNow }: { id: number; action: DecisionAction; note?: string; fixNow?: boolean }) =>
       fetch(`${BASE}/api/issue-pipeline/review/${id}/${action}`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(note ? { note } : {}),
+        body: JSON.stringify(note ? { note, ...(fixNow ? { fixNow: true } : {}) } : {}),
       }).then(jsonOrThrow),
     // Optimistic: the card leaves this tab (or picks up its reply flag) the
     // moment Graeme taps; the server's answer confirms or rolls it back.
-    onMutate: async ({ id, action, note }) => {
+    onMutate: async ({ id, action, note, fixNow }) => {
       setSavingIds(s => new Set(s).add(id));
       await qc.cancelQueries({ queryKey });
       const previous = qc.getQueryData<FixQueueResponse>(queryKey);
@@ -610,10 +636,10 @@ export default function FounderFixQueue() {
             // showing "Sent — Claude will look at this on its next pass"
             // (the server files it under In progress; sentItems keeps it on
             // screen here until he changes tab).
-            const sent = withReplySent(item, note ?? "");
+            const sent = withReplySent(item, note ?? "", new Date(), fixNow);
             items = items.map(i => (i.triage.id === id ? sent : i));
             setSentItems(m => new Map(m).set(id, sent));
-            if (!item.triage.awaitingRetriage) counts.awaitingReply += 1;
+            if (!fixNow && !item.triage.awaitingRetriage) counts.awaitingReply += 1;
           } else {
             const to = ACTION_TO_STATUS[action];
             items = items.filter(i => i.triage.id !== id);
@@ -630,13 +656,15 @@ export default function FounderFixQueue() {
       if (action === "reply") setSentItems(m => { const n = new Map(m); n.delete(id); return n; });
       toast({ title: action === "reply" ? "Not sent to Claude" : "Not saved", description: err.message, variant: "destructive" });
     },
-    onSuccess: (_data, { action }) => {
-      toast({
-        title: action === "approve" ? "Approved — saved" : action === "reject" ? "Rejected — saved" : "Sent — Claude will look at this on its next pass",
-        description: action === "approve"
-          ? "It joins the fix queue. Nothing ships until you deploy."
-          : action === "reply" ? "It waits under In progress until Claude has answered, then comes back to To review." : undefined,
-      });
+    onSuccess: (_data, { action, fixNow }) => {
+      toast(action === "reply" && fixNow
+        ? { title: "Sent and approved — Claude will fix it your way", description: "It builds this on its next hourly run, then it waits for you to say deploy." }
+        : {
+          title: action === "approve" ? "Approved — saved" : action === "reject" ? "Rejected — saved" : "Sent — Claude will look at this on its next pass",
+          description: action === "approve"
+            ? "It joins the fix queue. Nothing ships until you deploy."
+            : action === "reply" ? "It waits under In progress until Claude has answered, then comes back to To review." : undefined,
+        });
     },
     onSettled: (_d, _e, { id }) => {
       setSavingIds(s => { const n = new Set(s); n.delete(id); return n; });
@@ -840,7 +868,7 @@ export default function FounderFixQueue() {
             item={item}
             showTab={!!q}
             saving={savingIds.has(item.triage.id)}
-            onDecide={(action, note) => decide.mutate({ id: item.triage.id, action, note })}
+            onDecide={(action, note, fixNow) => decide.mutate({ id: item.triage.id, action, note, fixNow })}
             onMessage={(message, close) => sendMessage.mutate({ id: item.triage.id, message, close })}
             onDismiss={() => dismiss.mutate({ id: item.triage.id })}
             onSnooze={days => snooze.mutate({ id: item.triage.id, days })}
