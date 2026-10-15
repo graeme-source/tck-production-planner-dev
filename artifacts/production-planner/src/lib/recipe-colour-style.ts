@@ -11,9 +11,13 @@
  *   dot    small chip / dot / swatch — split diagonally, primary top-left
  *   band   vertical stripe or bar   — two stacked bands, primary on top
  *   strip  horizontal strip (card top edge) — primary left, secondary right
- *   text   recipe name in its colour — primary text, secondary underline
- *   chip   outlined pill (text + border in the colour) — secondary underline
- *          on the text, border stays primary
+ *   text   recipe name as a PILL (Graeme, 2026-10-15: the old secondary
+ *          underline "makes it feel like there's something wrong with it,
+ *          or it's a link"): two colours → secondary background, primary
+ *          text; one colour → the colour on black (a near-black primary
+ *          goes on a light pill instead, so it never disappears)
+ *   chip   outlined pill (text + border in the colour) — with a secondary,
+ *          the secondary fills it; border stays primary
  *   fill   big filled header / background — primary fill, readable text
  *          worked out against the primary, and a clear secondary band along
  *          the bottom edge (never a blend)
@@ -106,9 +110,9 @@ export function recipeColourStyle(
         ? { background: `linear-gradient(to right, ${p} 0 50%, ${s} 50% 100%)` }
         : { backgroundColor: p };
     case "text":
-      return s ? { color: p, ...underline(s) } : { color: p };
+      return { color: p, backgroundColor: s ?? pillBackground(p), ...PILL };
     case "chip":
-      return s ? { color: p, borderColor: p, ...underline(s) } : { color: p, borderColor: p };
+      return s ? { color: p, borderColor: p, backgroundColor: s } : { color: p, borderColor: p };
     case "fill":
       return s
         ? { backgroundColor: p, color: readableTextOn(p), boxShadow: `inset 0 -6px 0 0 ${s}` }
@@ -116,12 +120,23 @@ export function recipeColourStyle(
   }
 }
 
-function underline(s: string): RecipeColourCss {
-  return {
-    textDecorationLine: "underline",
-    textDecorationColor: s,
-    textDecorationThickness: "3px",
-    textUnderlineOffset: "4px",
-    textDecorationSkipInk: "none",
-  };
+/** The pill around a recipe name: tight enough to sit in table rows and
+ *  station headers, and it wraps neatly if a long name breaks. */
+const PILL: RecipeColourCss = {
+  display: "inline-block",
+  padding: "0.1em 0.6em",
+  borderRadius: "9999px",
+  lineHeight: 1.35,
+  boxDecorationBreak: "clone",
+  WebkitBoxDecorationBreak: "clone",
+};
+
+export const PILL_BLACK = "#111111";
+export const PILL_LIGHT = "#f3f4f6";
+
+/** One-colour pill: black, unless the colour itself is so dark it would
+ *  vanish on black — then a light pill. */
+export function pillBackground(primary: string): string {
+  const L = relativeLuminance(primary);
+  return L != null && L < 0.03 ? PILL_LIGHT : PILL_BLACK;
 }

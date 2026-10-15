@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DARK_TEXT, LIGHT_TEXT, effectiveSecondary, readableTextOn, recipeColourStyle, relativeLuminance } from "./recipe-colour-style";
+import { DARK_TEXT, LIGHT_TEXT, PILL_BLACK, PILL_LIGHT, effectiveSecondary, readableTextOn, recipeColourStyle, relativeLuminance } from "./recipe-colour-style";
 
 const RED = "#dc2626";
 const YELLOW = "#facc15";
@@ -11,7 +11,7 @@ describe("recipeColourStyle — no secondary colour looks exactly as before", ()
     expect(recipeColourStyle(RED, "", "dot")).toEqual({ backgroundColor: RED });
   });
   it("text is just the colour; chip is colour + border", () => {
-    expect(recipeColourStyle(RED, null, "text")).toEqual({ color: RED });
+    expect(recipeColourStyle(RED, null, "text")).toMatchObject({ color: RED, backgroundColor: PILL_BLACK });
     expect(recipeColourStyle(RED, null, "chip")).toEqual({ color: RED, borderColor: RED });
   });
   it("no primary → no style at all (callers keep their fallback)", () => {
@@ -44,16 +44,22 @@ describe("recipeColourStyle — with a secondary colour", () => {
     });
     expect(recipeColourStyle(RED, null, "strip")).toEqual({ backgroundColor: RED });
   });
-  it("text keeps the primary colour and underlines in the secondary", () => {
+  it("text is a pill: two colours → secondary background, primary text; never an underline (2026-10-15)", () => {
     const s = recipeColourStyle(RED, YELLOW, "text");
     expect(s.color).toBe(RED);
-    expect(s.textDecorationLine).toBe("underline");
-    expect(s.textDecorationColor).toBe(YELLOW);
+    expect(s.backgroundColor).toBe(YELLOW);
+    expect(s.borderRadius).toBe("9999px");
+    expect(s.textDecorationLine).toBeUndefined();
   });
-  it("chip keeps a primary border", () => {
+  it("one colour → the colour on black; a near-black colour gets a light pill", () => {
+    expect(recipeColourStyle(RED, null, "text").backgroundColor).toBe(PILL_BLACK);
+    expect(recipeColourStyle("#000000", null, "text").backgroundColor).toBe(PILL_LIGHT);
+  });
+  it("chip keeps a primary border, filled with the secondary", () => {
     const s = recipeColourStyle(RED, YELLOW, "chip");
     expect(s.borderColor).toBe(RED);
-    expect(s.textDecorationColor).toBe(YELLOW);
+    expect(s.backgroundColor).toBe(YELLOW);
+    expect(s.textDecorationLine).toBeUndefined();
   });
   it("fill is the primary with a secondary band, text against the primary", () => {
     const s = recipeColourStyle(YELLOW, RED, "fill");
