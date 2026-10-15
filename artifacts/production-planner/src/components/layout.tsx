@@ -28,7 +28,8 @@ import {
   Carrot, 
   ClipboardList, 
   CalendarDays, 
-  PackageSearch, 
+  PackageSearch,
+  Scale,
   TrendingUp, 
   Truck,
   Building2,
@@ -97,13 +98,15 @@ export const inventorySubItems: NavItem[] = [
   { name: "Ingredients", href: "/inventory?tab=ingredients", icon: Carrot },
   { name: "Supplies", href: "/inventory?tab=supplies", icon: Box },
   { name: "Stock Control", href: "/stock-control", icon: PackageSearch },
+  // Expected vs counted stock (running stock, 15 Oct 2026) — managers.
+  { name: "Stock Accuracy", href: "/stock-accuracy", icon: Scale },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
   { name: "Tools", href: "/inventory/tools", icon: Wrench },
   { name: "Suppliers", href: "/suppliers", icon: Building2 },
 ];
 
-const INVENTORY_PATHS = ["/inventory", "/orders", "/deliveries", "/stock-control", "/suppliers"];
+const INVENTORY_PATHS = ["/inventory", "/orders", "/deliveries", "/stock-control", "/stock-accuracy", "/suppliers"];
 // Routes that count as "inside Inventory" for the auto-expand logic. Anything
 // under /inventory/... (e.g. /inventory/tools, /inventory/tools/label-stock-check)
 // should keep the sidebar group expanded.
