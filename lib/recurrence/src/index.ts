@@ -17,7 +17,11 @@
 
 export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 
-export type RecurrenceRule =
+/** Every rule may carry a start date (Graeme, 2026-10-15: "every 3 months
+ *  starting from next Monday"): nothing is due before `from`. */
+export type RecurrenceStart = { from?: string | null };
+
+export type RecurrenceRule = RecurrenceStart & (
   /** Every day, weekends included. */
   | { kind: "daily" }
   /** Monday to Friday. */
@@ -41,7 +45,7 @@ export type RecurrenceRule =
   /** One day only — a one-off item, e.g. a short-delivery report put on a
    *  team list for the day it happened (Graeme, 2026-10-15). With carry-over
    *  on it stays "Overdue" until someone ticks it. */
-  | { kind: "once"; date: string };
+  | { kind: "once"; date: string });
 
 export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -104,6 +108,7 @@ export function monthsOfYear(interval: number, anchor: string): number[] {
 
 /** Is the rule due on this London date? */
 export function isDueOn(rule: RecurrenceRule, date: string): boolean {
+  if (rule.from && isIsoDate(rule.from) && date < rule.from) return false;
   const wd = weekdayOf(date);
   switch (rule.kind) {
     case "daily":
@@ -182,6 +187,13 @@ function dayList(days: Weekday[]): string {
 /** Plain-English summary: "Every day", "Weekdays", "Every Mon & Thu",
  *  "Every 2 weeks on Fri", "Monthly on the 15th". */
 export function describeRule(rule: RecurrenceRule): string {
+  const base = describeRuleBase(rule);
+  if (!rule.from || !isIsoDate(rule.from) || rule.kind === "once") return base;
+  const d = noon(rule.from);
+  return `${base}, starting ${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${d.toLocaleString("en-GB", { month: "short", timeZone: "UTC" })}`;
+}
+
+function describeRuleBase(rule: RecurrenceRule): string {
   switch (rule.kind) {
     case "daily": return "Every day";
     case "weekdays": return "Weekdays (Mon–Fri)";
@@ -215,6 +227,11 @@ export function describeRule(rule: RecurrenceRule): string {
  *  that mean the same compare equal however they were built or stored
  *  (Postgres jsonb reorders keys). */
 export function normaliseRule(rule: RecurrenceRule): RecurrenceRule {
+  const base = normaliseRuleBase(rule);
+  return rule.from && isIsoDate(rule.from) && rule.kind !== "once" ? { ...base, from: rule.from } : base;
+}
+
+function normaliseRuleBase(rule: RecurrenceRule): RecurrenceRule {
   switch (rule.kind) {
     case "weekly": {
       const days = [...new Set(rule.days)].sort((a, b) => a - b) as Weekday[];
@@ -249,6 +266,7 @@ export function isDailyRhythm(rule: RecurrenceRule): boolean {
 export function isRecurrenceRule(value: unknown): value is RecurrenceRule {
   if (!value || typeof value !== "object") return false;
   const r = value as Record<string, unknown>;
+  if (r.from !== undefined && r.from !== null && !isIsoDate(r.from)) return false;
   switch (r.kind) {
     case "daily":
     case "weekdays":
@@ -275,3 +293,5 @@ export function weekdayFromName(name: string): Weekday | null {
   const i = LOWER_NAMES.indexOf(name.trim().toLowerCase());
   return i < 0 ? null : (i as Weekday);
 }
+
+export * from "./phrase";

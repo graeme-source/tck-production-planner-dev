@@ -12,6 +12,7 @@ import { X, Trash2, Clock } from "lucide-react";
 import {
   describeRule, WEEKDAY_SHORT, WEEKDAYS_MONDAY_FIRST, type RecurrenceRule, type Weekday,
 } from "@workspace/recurrence";
+import { ruleStartingOn } from "@workspace/recurrence";
 import { cn } from "@/lib/utils";
 import { useAutosave } from "@/hooks/use-autosave";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
@@ -75,7 +76,12 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
   // while only one day is picked (that rule alone looks like "Weekly").
   const [choice, setChoice] = useState<Preset>(() => presetOf(item.recurrence));
 
-  function setRule(rule: RecurrenceRule, nextChoice: Preset = choice) {
+  function setRule(next: RecurrenceRule, nextChoice: Preset = choice) {
+    // A start date survives switching rhythm (the preset buttons build a
+    // fresh rule); "once" items have their own date.
+    const prevFrom = form.recurrence.from ?? null;
+    const rule: RecurrenceRule = next.kind !== "once" && next.from === undefined && prevFrom
+      ? ruleStartingOn(next, prevFrom) : next;
     const rhythmChanged = defaultCarryOver(rule) !== defaultCarryOver(form.recurrence);
     setChoice(nextChoice);
     change({ recurrence: rule, ...(rhythmChanged ? { carryOver: defaultCarryOver(rule) } : {}) }, true);
@@ -212,6 +218,23 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
                   ))}
                 </div>
                 {rule.dayOfMonth > 28 && <p className="text-sm text-muted-foreground">Shorter months use their last day.</p>}
+              </div>
+            )}
+            {/* Start date (Graeme, 2026-10-15: "every 3 months starting from
+                next Monday"): the first one falls on this day, then it repeats. */}
+            {rule.kind !== "once" && (
+              <div className="flex items-center gap-3 flex-wrap pt-2">
+                <span className="text-sm font-semibold">Starts on</span>
+                <input type="date" value={rule.from ?? ""} min={today}
+                  onChange={e => {
+                    const v = e.target.value;
+                    if (!v) { const { from: _drop, ...rest } = rule; void _drop; setRule({ ...rest, from: null } as RecurrenceRule); return; }
+                    setRule(ruleStartingOn({ ...rule, from: undefined } as RecurrenceRule, v));
+                  }}
+                  className="h-11 px-3 rounded-xl border-2 border-border bg-background" aria-label="Starts on" />
+                {rule.from
+                  ? <button type="button" className={chip(false)} onClick={() => { const { from: _drop, ...rest } = rule; void _drop; setRule({ ...rest, from: null } as RecurrenceRule); }}>Start now</button>
+                  : <span className="text-sm text-muted-foreground">Leave empty to start straight away.</span>}
               </div>
             )}
           </Section>

@@ -17,12 +17,12 @@ import {
   ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, Eye, EyeOff, FileUp,
   Loader2, Pencil, Plus, Settings2, SkipForward, Undo2, ListChecks, Repeat,
 } from "lucide-react";
-import { describeRule } from "@workspace/recurrence";
+import { describeRule, parseQuickTask } from "@workspace/recurrence";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import {
-  COMING_UP_OPEN_KEY, SHOW_DONE_KEY, comingUpOpen, completionLabel, dayHeading, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+  COMING_UP_OPEN_KEY, SHOW_DONE_KEY, comingUpOpen, completionLabel, defaultCarryOver, dayHeading, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
 } from "@/lib/team-list-view";
 import { sortTasks } from "@/lib/task-sort";
 import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
@@ -220,7 +220,7 @@ export function ListDetail({ id }: { id: number }) {
           </p>
         )}
         {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
-        {list.canEdit && <AddTask listId={list.id} onAdded={onAdded} />}
+        {list.canEdit && <AddTask listId={list.id} today={today} onAdded={onAdded} />}
       </section>
 
       {/* Open by default, grouped by day. Anything here can be ticked early
@@ -364,15 +364,25 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
 /** "Add a task": type and press Enter; it's added as every day and you
  *  stay on the list — the box clears and keeps the cursor for the next one
  *  (Graeme, 2026-10-13). The new row's "Set days" chip opens its editor. */
-function AddTask({ listId, onAdded }: { listId: number; onAdded: (id: number) => void }) {
+function AddTask({ listId, today, onAdded }: { listId: number; today: string; onAdded: (id: number) => void }) {
   const [title, setTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const add = useAddItem(listId);
+  // "P1", "every 6 months", "every mon at 9am" in the title set those
+  // settings (Graeme, 2026-10-15) — shown below the box before adding.
+  const quick = useMemo(() => parseQuickTask(title, today), [title, today]);
   function submit(e: React.FormEvent) {
     e.preventDefault();
     const t = title.trim();
     if (!t || add.isPending) return;
-    add.mutate({ title: t }, {
+    const q = parseQuickTask(t, today);
+    const payload = {
+      title: q.title || t,
+      ...(q.priority ? { priority: q.priority } : {}),
+      ...(q.rule ? { recurrence: q.rule, carryOver: defaultCarryOver(q.rule) } : {}),
+      ...(q.time ? { timeOfDay: q.time } : {}),
+    };
+    add.mutate(payload, {
       onSuccess: row => {
         // Only clear what was sent — anything typed meanwhile stays.
         setTitle(cur => (cur.trim() === t ? "" : cur));
@@ -391,6 +401,17 @@ function AddTask({ listId, onAdded }: { listId: number; onAdded: (id: number) =>
           {add.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />} Add
         </button>
       </div>
+      {(quick.priority || quick.rule || quick.time) && (
+        <p className="text-sm text-primary font-semibold flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
+          <span>Adds “{quick.title || "…"}”</span>
+          {quick.priority && <span className="inline-flex items-center gap-1"><span className={cn("w-2.5 h-2.5 rounded-full", PRIORITY_STYLES[quick.priority].dot)} /> {PRIORITY_STYLES[quick.priority].label}</span>}
+          {quick.rule && <span className="inline-flex items-center gap-1"><Repeat className="w-4 h-4" /> {describeRule(quick.rule)}</span>}
+          {quick.time && <span className="inline-flex items-center gap-1"><Clock className="w-4 h-4" /> {quick.time}</span>}
+        </p>
+      )}
+      {!quick.rule && !quick.priority && title.trim() === "" && (
+        <p className="text-xs text-muted-foreground px-1">Tip: type “p1” for priority, or “every 6 months”, “every mon at 9am”, “quarterly”.</p>
+      )}
       {add.error && <p className="text-sm text-red-600">Couldn't add it — {(add.error as Error).message}. Your text is still here; try again.</p>}
     </form>
   );

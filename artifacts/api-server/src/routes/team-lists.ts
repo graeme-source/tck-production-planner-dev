@@ -93,7 +93,7 @@ const recurrenceSchema = z.discriminatedUnion("kind", [
   // One-off items the app adds (short-delivery reports, lib/short-delivery-report.ts).
   // Accepted here so editing such an item (title, priority…) still saves.
   z.object({ kind: z.literal("once"), date: isoDate }),
-]);
+]).and(z.object({ from: isoDate.nullish() })); // optional start date (2026-10-15)
 const optionalText = (max: number) => z.string().trim().max(max).nullish().transform(v => (v ? v : null));
 const urlField = z.string().trim().max(500).nullish()
   .refine(v => !v || /^(https?:\/\/|\/)/i.test(v), "Links start with https:// or / (a page in the app)")

@@ -46,12 +46,15 @@ describe("parseTodoistRecurrence", () => {
     expect(p("every weekday 4pm")).toEqual({ rule: { kind: "weekdays" }, time: "16:00" });
     expect(p("every mon at 12am")?.time).toBe("00:00");
   });
-  it("ignores 'starting …'", () => {
-    expect(p("every thu starting 1 nov")?.rule).toEqual({ kind: "weekly", days: [4] });
+  it("keeps 'starting …' as the start date (2026-10-15)", () => {
+    const r = p("every thu starting 1 nov")?.rule;
+    expect(r).toMatchObject({ kind: "weekly", days: [4] });
+    expect(r?.from).toMatch(/^\d{4}-11-01$/);
   });
   it("returns null for anything it doesn't know", () => {
     expect(p("every 3 days")).toBeNull();
-    expect(p("every month")).toBeNull();
+    // "every month" now means monthly on today's date (shared parser, 2026-10-15).
+    expect(p("every month")?.rule.kind).toBe("monthly");
     expect(p("tomorrow")).toBeNull();
     expect(p("every last fri")).toBeNull();
   });
