@@ -56,6 +56,8 @@ import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
 import { PlanMarginPanel, RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
 import { usePlanMargin } from "@/hooks/use-plan-margin";
 import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
+import { FactoryForecastPanel, FactoryFreezeGuard, usePlanFactoryForecast } from "@/components/factory-forecast-panel";
+import { applyBatchChanges } from "@/lib/factory-forecast-rows";
 import { useSlowMeatProfile } from "@/hooks/use-slow-meat-profile";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { applySlowMeatCap, slowMeatCountForRows } from "@/lib/slow-meat-plan";
@@ -2625,7 +2627,14 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     addMarginBatches(rows, marginWarnings).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));
   const fixAllMargins = () => { isDirty.current = true; setItems(prev => capForSlowMeat(withMarginFixes(prev))); };
 
-  type SubmitOpts = { skipMarginCheck?: boolean; itemsOverride?: PlanItem[]; skipDateClash?: boolean };
+  // Predicted factory number after this plan (upper limit) — components/factory-forecast-panel.
+  const categoryOf = useCallback((id: number) => calcData?.recipes?.find((r: CalcRecipe) => r.recipeId === id)?.recipeCategory, [calcData]);
+  const factory = usePlanFactoryForecast({ planDate, rows: items, categoryOf, margin: planMargin.settings, maxTotalBatches: effectiveTotalBatches || undefined, enabled: open });
+  const [factoryGuardFor, setFactoryGuardFor] = useState<"draft" | "active" | null>(null);
+  const withFactoryChanges = (rows: PlanItem[], rec: Parameters<typeof applyBatchChanges>[1]) =>
+    capForSlowMeat(applyBatchChanges(rows, rec).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) })));
+
+  type SubmitOpts = { skipMarginCheck?: boolean; skipFactoryCheck?: boolean; itemsOverride?: PlanItem[]; skipDateClash?: boolean };
   const handleSubmit = async (targetStatus: "draft" | "active", opts: SubmitOpts = {}) => {
     if (submittingRef.current) return; // a second tap while the first is saving
     const rows = opts.itemsOverride ?? items;
@@ -2634,6 +2643,10 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     if (slowMeatOver) return; // the red slow-meat warning says why
     if (!opts.skipMarginCheck && marginWarningsForRows(rows, planMargin.settings).length > 0) {
       setMarginGuardFor(targetStatus);
+      return;
+    }
+    if (!opts.skipFactoryCheck && factory.needsConfirmFor(rows)) {
+      setFactoryGuardFor(targetStatus);
       return;
     }
 
@@ -3033,6 +3046,11 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                 onAddBatches={addRowBatches}
                 onFixAll={fixAllMargins}
               />)}
+              {items.length > 0 && (<FactoryForecastPanel
+                state={factory}
+                canEdit={userRole === "admin" || userRole === "manager"}
+                onApply={rec => { isDirty.current = true; setItems(prev => withFactoryChanges(prev, rec)); }}
+              />)}
               {items.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
                   <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -3359,6 +3377,25 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
         const status = marginGuardFor ?? "draft";
         setMarginGuardFor(null);
         void handleSubmit(status, { skipMarginCheck: true });
+      }}
+    />
+    <FactoryFreezeGuard
+      open={factoryGuardFor !== null}
+      state={factory}
+      saving={isSubmitting}
+      onClose={() => setFactoryGuardFor(null)}
+      onApplyAndSave={rec => {
+        const status = factoryGuardFor ?? "draft";
+        const fixed = withFactoryChanges(items, rec);
+        setFactoryGuardFor(null);
+        isDirty.current = true;
+        setItems(fixed);
+        void handleSubmit(status, { itemsOverride: fixed, skipFactoryCheck: true });
+      }}
+      onSaveAnyway={() => {
+        const status = factoryGuardFor ?? "draft";
+        setFactoryGuardFor(null);
+        void handleSubmit(status, { skipMarginCheck: true, skipFactoryCheck: true });
       }}
     />
     {/* Close prompt — dismissing the create dialog with unsaved work forces
@@ -3932,12 +3969,23 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   const editWithMarginFixes = (rows: PlanItem[]) =>
     addMarginBatches(rows, editMarginWarnings).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));
 
-  const handleSave = async (targetStatus: "draft" | "active", opts: { skipMarginCheck?: boolean; itemsOverride?: PlanItem[] } = {}) => {
+  // Predicted factory number after this plan — same card and save check as Create Plan.
+  const editCategoryOf = useCallback((id: number) => editCalcData?.recipes?.find((r: CalcRecipe) => r.recipeId === id)?.recipeCategory, [editCalcData]);
+  const editFactory = usePlanFactoryForecast({ planDate, rows: items, categoryOf: editCategoryOf, margin: editPlanMargin.settings, maxTotalBatches: editEffectiveTotalBatches || undefined, enabled: open });
+  const [editFactoryGuardFor, setEditFactoryGuardFor] = useState<"draft" | "active" | null>(null);
+  const editWithFactoryChanges = (rows: PlanItem[], rec: Parameters<typeof applyBatchChanges>[1]) =>
+    applyBatchChanges(rows, rec).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));
+
+  const handleSave = async (targetStatus: "draft" | "active", opts: { skipMarginCheck?: boolean; skipFactoryCheck?: boolean; itemsOverride?: PlanItem[] } = {}) => {
     const rows = opts.itemsOverride ?? items;
     const includedItems = rows.filter(it => it.included);
     if (includedItems.length === 0) return;
     if (!opts.skipMarginCheck && marginWarningsForRows(rows, editPlanMargin.settings).length > 0) {
       setEditMarginGuardFor(targetStatus);
+      return;
+    }
+    if (!opts.skipFactoryCheck && editFactory.needsConfirmFor(rows)) {
+      setEditFactoryGuardFor(targetStatus);
       return;
     }
     setIsSubmitting(true);
@@ -4117,6 +4165,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             }}
             onFixAll={() => { isDirty.current = true; setItems(prev => editWithMarginFixes(prev)); }}
           />)}
+          {items.length > 0 && (<FactoryForecastPanel
+            state={editFactory}
+            canEdit={canManageCollections}
+            onApply={rec => { isDirty.current = true; setItems(prev => editWithFactoryChanges(prev, rec)); }}
+          />)}
           {items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
               <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -4269,6 +4322,25 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           const status = editMarginGuardFor ?? "draft";
           setEditMarginGuardFor(null);
           void handleSave(status, { skipMarginCheck: true });
+        }}
+      />
+      <FactoryFreezeGuard
+        open={editFactoryGuardFor !== null}
+        state={editFactory}
+        saving={isSubmitting}
+        onClose={() => setEditFactoryGuardFor(null)}
+        onApplyAndSave={rec => {
+          const status = editFactoryGuardFor ?? "draft";
+          const fixed = editWithFactoryChanges(items, rec);
+          setEditFactoryGuardFor(null);
+          isDirty.current = true;
+          setItems(fixed);
+          void handleSave(status, { itemsOverride: fixed, skipFactoryCheck: true });
+        }}
+        onSaveAnyway={() => {
+          const status = editFactoryGuardFor ?? "draft";
+          setEditFactoryGuardFor(null);
+          void handleSave(status, { skipMarginCheck: true, skipFactoryCheck: true });
         }}
       />
       {updateModalOpen && updateCalcData && (
