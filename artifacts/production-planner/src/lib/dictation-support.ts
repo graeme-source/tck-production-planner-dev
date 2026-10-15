@@ -125,3 +125,23 @@ export function speechErrorMessage(error: string, platform: DictationPlatform): 
       return `Dictation stopped (${error}). Tap Dictate to try again.`;
   }
 }
+
+/**
+ * The dictations running right now, so the microphone can be freed before
+ * the camera opens (Graeme, 2026-10-15: iOS refused to record the before
+ * video — "you can't record video while on a call" — because dictation
+ * still held the audio session). stop() only asks the browser to finish;
+ * hardStop prefers abort(), which ends the session at once.
+ */
+export function createDictationRegistry<R extends { stop: () => void; abort?: () => void }>() {
+  const active = new Set<R>();
+  const hardStop = (r: R) => {
+    try { if (r.abort) r.abort(); else r.stop(); } catch { /* already ended */ }
+    active.delete(r);
+  };
+  return {
+    active,
+    hardStop,
+    releaseAll: () => { for (const r of [...active]) hardStop(r); },
+  };
+}

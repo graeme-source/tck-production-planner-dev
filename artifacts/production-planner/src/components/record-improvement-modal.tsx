@@ -19,6 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DictateButton } from "@/components/dictate-button";
+import { releaseDictation } from "@/hooks/use-voice-input";
 import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 import { useAuth } from "@/contexts/auth-context";
@@ -108,7 +109,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
     if (opts.taken) {
       return (
         <button
-          onClick={opts.onPick}
+          onClick={() => { releaseDictation(); opts.onPick(); }}
           className="w-full rounded-2xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 text-left flex items-center gap-3 active:scale-[0.99] transition-all"
         >
           <CheckCircle2 className="w-6 h-6 text-emerald-600 dark:text-emerald-400 flex-shrink-0" />
@@ -119,7 +120,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
     if (opts.skipped) {
       return (
         <button
-          onClick={opts.onPick}
+          onClick={() => { releaseDictation(); opts.onPick(); }}
           className="w-full rounded-2xl border-2 border-dashed border-border p-4 text-left flex items-center gap-3 text-muted-foreground"
         >
           <Camera className="w-5 h-5 flex-shrink-0" />
@@ -129,11 +130,12 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
     }
     return (
       <div className="space-y-2">
-        <div className="rounded-2xl bg-primary text-primary-foreground px-4 py-3">
-          <p className="text-lg font-bold">{opts.n} · {opts.label}</p>
-        </div>
+        {/* One green button per step (Graeme, 2026-10-15: a green "3 · Add
+            the after photo" header above a green "Add the after photo"
+            button left people unsure which to press). */}
+        <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground px-1">Step {opts.n}</p>
         <button
-          onClick={opts.onPick}
+          onClick={() => { releaseDictation(); opts.onPick(); }}
           className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-3 shadow-lg shadow-primary/20 active:scale-[0.99] transition-all"
         >
           <Camera className="w-6 h-6" /> {opts.label}
@@ -405,7 +407,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
                   className="w-full h-16 px-4 rounded-2xl border-2 border-border bg-card text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/40"
                 />
                 <button
-                  onClick={() => setTitleConfirmed(true)}
+                  onClick={() => { releaseDictation(); setTitleConfirmed(true); }}
                   disabled={!title.trim()}
                   className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-40 active:scale-[0.99] transition-all"
                 >

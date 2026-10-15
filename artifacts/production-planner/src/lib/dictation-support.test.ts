@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  createDictationRegistry,
   detectDictationPlatform,
   dictationCapability,
   micBlockedHelp,
@@ -82,5 +83,24 @@ describe("messages", () => {
   it("Safari's service-not-allowed means system dictation is off", () => {
     expect(speechErrorMessage("service-not-allowed", { os: "ios", browser: "safari" })).toContain("Enable Dictation");
     expect(speechErrorMessage("service-not-allowed", { os: "mac", browser: "safari" })).toContain("System Settings");
+  });
+});
+
+describe("freeing the microphone before the camera (Graeme, 2026-10-15)", () => {
+  it("releaseAll aborts every running dictation (abort, not just stop) and forgets it", () => {
+    const reg = createDictationRegistry<{ stop: () => void; abort?: () => void }>();
+    const calls: string[] = [];
+    const a = { stop: () => calls.push("a.stop"), abort: () => calls.push("a.abort") };
+    const b = { stop: () => calls.push("b.stop") }; // a browser without abort()
+    reg.active.add(a); reg.active.add(b);
+    reg.releaseAll();
+    expect(calls).toEqual(["a.abort", "b.stop"]);
+    expect(reg.active.size).toBe(0);
+  });
+  it("a recognition that already ended doesn't throw", () => {
+    const reg = createDictationRegistry<{ stop: () => void; abort?: () => void }>();
+    reg.active.add({ stop: () => {}, abort: () => { throw new Error("InvalidStateError"); } });
+    expect(() => reg.releaseAll()).not.toThrow();
+    expect(reg.active.size).toBe(0);
   });
 });

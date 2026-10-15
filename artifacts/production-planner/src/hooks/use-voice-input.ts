@@ -6,6 +6,7 @@ import {
   speechErrorMessage,
   type DictationCapability,
   type DictationPlatform,
+  createDictationRegistry,
 } from "@/lib/dictation-support";
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
@@ -16,6 +17,8 @@ interface SpeechRecognitionInstance {
   interimResults: boolean;
   start: () => void;
   stop: () => void;
+  /** Ends the session at once and frees the microphone. */
+  abort?: () => void;
   onresult: ((event: SpeechRecognitionResultEvent) => void) | null;
   onerror: ((event: { error: string }) => void) | null;
   onend: (() => void) | null;
@@ -38,6 +41,21 @@ function getSpeechRecognition(): SpeechRecognitionConstructor | null {
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
   };
   return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null;
+}
+
+// Every recognition that's running, app-wide, so anything about to use the
+// camera or microphone can free them first (Graeme, 2026-10-15: after
+// dictating an improvement title, recording the before VIDEO failed with
+// iOS's "you can't record video while on a call" — the dictation still held
+// the audio session). stop() only asks the browser to finish; abort() ends it.
+const registry = createDictationRegistry<SpeechRecognitionInstance>();
+const active = registry.active;
+const hardStop = registry.hardStop;
+
+/** Free the microphone: end every running dictation now. Call it right
+ *  before opening the camera or a video picker. */
+export function releaseDictation(): void {
+  registry.releaseAll();
 }
 
 type Mode = "replace" | "append";
@@ -95,9 +113,13 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
   }, [supported]);
 
   const stop = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    const r = recognitionRef.current;
+    if (!r) return;
+    // A graceful stop first, so the last words are kept…
+    try { r.stop(); } catch { /* already ended */ }
+    // …then make sure it really lets go of the microphone (iOS can hold the
+    // audio session open after stop(), which blocks video recording).
+    window.setTimeout(() => { if (active.has(r)) hardStop(r); }, 1200);
   }, []);
 
   const start = useCallback(() => {
@@ -108,9 +130,7 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
       return;
     }
 
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
-    }
+    if (recognitionRef.current) hardStop(recognitionRef.current);
 
     const recognition = new SR();
     recognition.lang = "en-GB";
@@ -144,6 +164,7 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     };
 
     recognition.onend = () => {
+      active.delete(recognition);
       setListening(false);
       recognitionRef.current = null;
       // Only when something was actually heard — onend also fires on abort
@@ -153,6 +174,7 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     };
 
     recognitionRef.current = recognition;
+    active.add(recognition);
     setError(null);
     setListening(true);
 
@@ -172,7 +194,7 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
 
   useEffect(() => {
     return () => {
-      recognitionRef.current?.stop();
+      if (recognitionRef.current) hardStop(recognitionRef.current);
     };
   }, []);
 

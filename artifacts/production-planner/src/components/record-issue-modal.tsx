@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 import { DictateButton } from "@/components/dictate-button";
+import { releaseDictation } from "@/hooks/use-voice-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -248,13 +249,13 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
             />
             <div className="grid grid-cols-2 gap-3">
               <button
-                onClick={() => cameraRef.current?.click()}
+                onClick={() => { releaseDictation(); cameraRef.current?.click(); }}
                 className="h-16 rounded-2xl border-2 border-dashed border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors"
               >
                 <Camera className="w-5 h-5" /> Take photo / video
               </button>
               <button
-                onClick={() => deviceRef.current?.click()}
+                onClick={() => { releaseDictation(); deviceRef.current?.click(); }}
                 className="h-16 rounded-2xl border-2 border-dashed border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors"
               >
                 <ImageIcon className="w-5 h-5" /> Add from device
