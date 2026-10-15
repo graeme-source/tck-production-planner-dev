@@ -1,12 +1,15 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlarmClock } from "lucide-react";
+import { AlarmClock, ArrowRight } from "lucide-react";
+import { Link } from "wouter";
+import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { cn } from "@/lib/utils";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import type { StationType } from "./constants";
 import {
   resolveReminderDisplay,
   factoryCountConditionApplies,
+  countAlarmPhase,
   reminderShownByPrepPanel,
   type FactoryCountState,
 } from "./reminder-conditions";
@@ -120,9 +123,12 @@ export function useTimedReminders(): TimedReminder[] {
   return parseReminders(remindersRaw);
 }
 
-export function StationReminderBanner({ stationType, plan }: {
+export function StationReminderBanner({ stationType, plan, live }: {
   stationType: StationType;
   plan: ProductionPlanDetail | undefined;
+  /** Screens with no plan of their own (Order Packing Live) say the day is
+   *  live themselves; station screens leave it to the plan. */
+  live?: boolean;
 }) {
   const reminders = useTimedReminders();
 
@@ -136,13 +142,16 @@ export function StationReminderBanner({ stationType, plan }: {
   const nowSeconds = nowParts.h * 3600 + nowParts.m * 60 + nowParts.s;
 
   // Reminders only fire inside a live production day — never on completed plans.
-  const planLive = !!plan && plan.status !== "complete";
+  const planLive = live ?? (!!plan && plan.status !== "complete");
 
+  // Inside the window — or, for the Factory Number count on packing /
+  // wrapping, any time after it too: that one stays up as "Overdue" until
+  // the count is done (countAlarmPhase).
   const inWindow = (r: TimedReminder) =>
     r.enabled &&
     r.stations.includes(stationType) &&
-    nowSeconds >= toMinutes(r.startTime) * 60 &&
-    nowSeconds < toMinutes(r.endTime) * 60;
+    countAlarmPhase(r, stationType, nowSeconds) !== "none";
+  const reducedMotion = usePrefersReducedMotion();
 
   // On prep screens the stock-check reminder is shown by the "Stock check
   // records for today" panel itself (flashing red from its start time), so
@@ -165,9 +174,51 @@ export function StationReminderBanner({ stationType, plan }: {
 
   if (active.length === 0) return null;
 
+  // The Factory Number count can't be missed (Graeme, 2026-10-15: the
+  // wrapping team didn't see it because the screen was scrolled): pinned to
+  // the top of the screen, outside the scrolling page, flashing red in its
+  // window and solid red "Overdue" after, until the count is complete.
+  const pinned = active.filter(x => factoryCountConditionApplies(x.r, stationType));
+  const inline = active.filter(x => !factoryCountConditionApplies(x.r, stationType));
+
   return (
+    <>
+    {pinned.length > 0 && (
+      <div className="fixed inset-x-0 top-0 z-[70] pt-[env(safe-area-inset-top)] space-y-0.5" role="alert" aria-live="assertive">
+        {pinned.map(({ r, display }) => {
+          const overdue = countAlarmPhase(r, stationType, nowSeconds) === "overdue";
+          const remaining = Math.max(0, toMinutes(r.endTime) * 60 - nowSeconds);
+          const mm = Math.floor(remaining / 60);
+          const ss = remaining % 60;
+          return (
+            <div key={r.id} className={cn(
+              "text-white px-4 py-3 flex items-center gap-3 shadow-xl",
+              overdue ? "bg-red-700" : cn("bg-red-600", !reducedMotion && "stock-alarm-flash"),
+            )}>
+              <AlarmClock className="w-8 h-8 flex-shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-lg leading-snug">
+                  {overdue ? "OVERDUE — " : ""}{r.title}
+                  {display.suffix && <span className="font-semibold"> — {display.suffix}</span>}
+                </p>
+                <p className="text-sm text-white/90 leading-snug">{r.message}</p>
+              </div>
+              <span className="text-3xl font-display font-bold tabular-nums flex-shrink-0">
+                {overdue ? "Late" : `${mm}:${String(ss).padStart(2, "0")}`}
+              </span>
+              <Link href="/stock-control" className="flex-shrink-0 h-12 px-4 rounded-xl bg-white text-red-700 font-bold flex items-center gap-1.5 hover:bg-red-50">
+                Do the count <ArrowRight className="w-4 h-4" />
+              </Link>
+            </div>
+          );
+        })}
+      </div>
+    )}
+    {/* Keeps the page from sitting under the pinned bar. */}
+    {pinned.length > 0 && <div style={{ height: `${pinned.length * 76}px` }} aria-hidden />}
+    {inline.length > 0 && (
     <div className="space-y-3 mb-4">
-      {active.map(({ r, display }) => {
+      {inline.map(({ r, display }) => {
         const remaining = Math.max(0, toMinutes(r.endTime) * 60 - nowSeconds);
         const mm = Math.floor(remaining / 60);
         const ss = remaining % 60;
@@ -213,5 +264,7 @@ export function StationReminderBanner({ stationType, plan }: {
         );
       })}
     </div>
+    )}
+    </>
   );
 }

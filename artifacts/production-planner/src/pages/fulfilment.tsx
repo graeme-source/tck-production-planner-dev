@@ -37,6 +37,7 @@ import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { StationMessagesBanner } from "@/components/station-messages";
+import { StationReminderBanner } from "@/pages/station/shared/timed-reminders";
 import { barcodeFor, canTickByHand, decideScan, scanMessage, shouldRefreshOnMiss, type ScanDecision, type ScanLine } from "@workspace/barcodes";
 import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
@@ -4263,6 +4264,15 @@ export default function Fulfilment() {
       {/* Messages sent to the packing station — this screen is where the
           packers actually live, so 'packing' notes land here too. */}
       <StationMessagesBanner stationType="packing" />
+      {/* Timed reminders for packing — the 3pm Factory Number count alarm
+          pins itself to the top of the screen so it can't be scrolled past
+          (Graeme, 2026-10-15). */}
+      <StationReminderBanner
+        stationType="packing"
+        plan={undefined}
+        // No plan on this screen: the count is a weekday job, so Mon–Fri (London).
+        live={!["Saturday", "Sunday"].includes(new Date().toLocaleDateString("en-GB", { weekday: "long", timeZone: "Europe/London" }))}
+      />
 
       {/* One summary for the day. Gate warnings live behind a button here:
           they belong BEFORE picking (tag → book → pick) or after it, never

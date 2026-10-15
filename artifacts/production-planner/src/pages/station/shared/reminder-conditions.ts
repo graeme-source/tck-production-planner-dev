@@ -94,3 +94,27 @@ export function resolveReminderDisplay(
   }
   return { show: true, suffix: null };
 }
+
+// ── Count alarm phase (Graeme, 2026-10-15) ───────────────────────────────────
+// "It needs to be the case that it can't be missed on the wrapping screen …
+// They didn't see it pop up because it was scrolled out of view." A Factory
+// Number count reminder on packing/wrapping behaves like the prep stock-check
+// alarm: flashing red inside its window, then solid red "Overdue" after the
+// deadline until the count is complete — pinned to the top of the screen.
+
+export type CountAlarmPhase = "none" | "warning" | "overdue";
+
+/** Where a reminder is in its day: before its start → none; start ≤ now <
+ *  end → warning; after end → overdue, but ONLY for a factory-count reminder
+ *  on a packing/wrapping station (others just disappear at their end). */
+export function countAlarmPhase(
+  r: ReminderConditionFlags & { startTime: string; endTime: string },
+  stationType: string,
+  nowSeconds: number,
+): CountAlarmPhase {
+  const secs = (hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); return h * 3600 + m * 60; };
+  const start = secs(r.startTime), end = secs(r.endTime);
+  if (nowSeconds < start) return "none";
+  if (nowSeconds < end) return "warning";
+  return factoryCountConditionApplies(r, stationType) ? "overdue" : "none";
+}

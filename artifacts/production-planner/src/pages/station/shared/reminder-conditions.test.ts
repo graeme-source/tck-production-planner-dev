@@ -5,6 +5,7 @@ import {
   factoryCountConditionApplies,
   conditionsOffered,
   reminderShownByPrepPanel,
+  countAlarmPhase,
   type ReminderLiveCounts,
 } from "./reminder-conditions";
 
@@ -86,5 +87,24 @@ describe("reminderShownByPrepPanel — one warning on prep screens, not two (13 
     expect(reminderShownByPrepPanel({ onlyIfFactoryCountOutstanding: true }, "prep")).toBe(false);
     expect(reminderShownByPrepPanel(prepStockCheck, "packing")).toBe(false);
     expect(reminderShownByPrepPanel({ onlyIfFactoryCountOutstanding: true }, "wrapping")).toBe(false);
+  });
+});
+
+describe("count alarm phase (Graeme, 2026-10-15: can't be missed on wrapping)", () => {
+  const count = { startTime: "14:45", endTime: "15:00", onlyIfFactoryCountOutstanding: true };
+  const plain = { startTime: "14:45", endTime: "15:00" };
+  const at = (hhmm: string) => { const [h, m] = hhmm.split(":").map(Number); return h * 3600 + m * 60; };
+  it("is nothing before the start, a warning inside the window", () => {
+    expect(countAlarmPhase(count, "wrapping", at("14:44"))).toBe("none");
+    expect(countAlarmPhase(count, "wrapping", at("14:45"))).toBe("warning");
+    expect(countAlarmPhase(count, "packing", at("14:59"))).toBe("warning");
+  });
+  it("stays as overdue after the deadline on packing/wrapping only", () => {
+    expect(countAlarmPhase(count, "wrapping", at("15:00"))).toBe("overdue");
+    expect(countAlarmPhase(count, "packing", at("17:30"))).toBe("overdue");
+    expect(countAlarmPhase(count, "ovens", at("15:30"))).toBe("none");
+  });
+  it("other reminders just end at their deadline", () => {
+    expect(countAlarmPhase(plain, "wrapping", at("15:01"))).toBe("none");
   });
 });
