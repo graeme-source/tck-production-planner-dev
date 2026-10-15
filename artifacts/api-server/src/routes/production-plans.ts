@@ -29,6 +29,7 @@ import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
 import { buildPlanSchedule } from "../lib/day-schedule";
 import { recomputeItemFromProgress } from "../lib/building-progress";
+import { findRecentDuplicatePlan } from "../lib/plan-duplicate";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
 // is loaded lazily inside the /lock-pdf endpoint via dynamic import,
@@ -587,6 +588,10 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
   // duplicating the fallback logic.
   const resolvedPrepDate = prepDate ?? await resolveDefaultPrepDate(planDate);
   const resolvedDoughDate = doughDate ?? await resolveDefaultDoughDate(planDate);
+
+  // Double tap on Create Plan → the first plan, never a second (lib/plan-duplicate).
+  const duplicate = await findRecentDuplicatePlan(planDate, items ?? []);
+  if (duplicate) { res.status(200).json(mapPlan(duplicate)); return; }
 
   const [plan] = await db.insert(productionPlansTable).values({
     planDate,

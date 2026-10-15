@@ -1833,6 +1833,10 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Set the instant a save starts, before React re-renders the disabled
+  // button — a double tap made two identical Friday plans 0.7 s apart
+  // (Graeme, 2026-10-15). The server refuses a duplicate too (lib/plan-duplicate).
+  const submittingRef = useRef(false);
   const [dateWarning, setDateWarning] = useState<string | null>(null);
   const [totalBatchesOverride, setTotalBatchesOverride] = useState<number | null>(null);
   const [savedOrder, setSavedOrder] = useState<number[]>([]);
@@ -2023,7 +2027,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   useEffect(() => {
     if (!open) return;
     const interval = setInterval(async () => {
-      if (!isDirty.current) return;
+      if (!isDirty.current || submittingRef.current) return;
       const currentItems = itemsRef.current.filter(it => it.included);
       if (currentItems.length === 0) return;
       const payload = {
@@ -2617,6 +2621,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   const fixAllMargins = () => { isDirty.current = true; setItems(prev => capForSlowMeat(withMarginFixes(prev))); };
 
   const handleSubmit = async (targetStatus: "draft" | "active", opts: { skipMarginCheck?: boolean; itemsOverride?: PlanItem[] } = {}) => {
+    if (submittingRef.current) return; // a second tap while the first is saving
     const rows = opts.itemsOverride ?? items;
     const includedItems = rows.filter(it => it.included);
     if (includedItems.length === 0) return;
@@ -2638,6 +2643,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       if (!ok) return;
     }
 
+    submittingRef.current = true;
     setIsSubmitting(true);
     try {
       const data = {
@@ -2668,7 +2674,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
               onCreated?.(plan.id);
               if (targetStatus === "active") downloadLockPdf(plan.id);
             },
-            onSettled: () => setIsSubmitting(false),
+            onSettled: () => { submittingRef.current = false; setIsSubmitting(false); },
           }
         );
       } else {
@@ -2680,11 +2686,12 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
               onCreated?.(plan.id);
               if (targetStatus === "active") downloadLockPdf(plan.id);
             },
-            onSettled: () => setIsSubmitting(false),
+            onSettled: () => { submittingRef.current = false; setIsSubmitting(false); },
           }
         );
       }
     } catch {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };
