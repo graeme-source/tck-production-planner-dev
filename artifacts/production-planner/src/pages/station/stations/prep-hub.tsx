@@ -246,6 +246,9 @@ export interface PrepIngredientDetail {
   pieceCount: number | null;
   stockInPacks: boolean;
   packWeight: number | null;
+  /** How much of the prep figure (rawQty, or cookedQty for processed-weight
+   *  prep) is the recipe's Mix +g, in `unit`. */
+  mixExtraQty?: number;
 }
 
 export interface PrepMarinadeDetail {
@@ -259,6 +262,8 @@ export interface PrepMarinadeDetail {
   /** Held back from prep day — the mixing/cooking station adds it on
    *  production day. Still counted in the tray-capacity maths. */
   addAtCooking?: boolean;
+  /** Grams of totalGrams that are the recipe's Mix +g. */
+  mixExtraGrams?: number;
 }
 
 export interface PrepRecipeDetail {

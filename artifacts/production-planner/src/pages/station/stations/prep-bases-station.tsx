@@ -22,6 +22,7 @@ import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDr
 import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import type { NextActivePlan } from "../shared/prep-helpers";
+import { MixExtraNote } from "../shared/mix-extra-note";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
@@ -39,6 +40,8 @@ interface SubRecipePlanRequirement {
   shelfLifeDays: number | null;
   isBase?: boolean | null;
   totalRequired: number;
+  /** How much of totalRequired is recipes' Mix +g, in yieldUnit. */
+  mixExtraQty?: number;
   ingredients: Array<{
     id: number;
     ingredientId: number;
@@ -435,6 +438,7 @@ export function SubRecipeMakeFlow({
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
               <p className="text-sm text-muted-foreground mb-1">Required by plan</p>
               <p className="text-2xl font-bold tabular-nums">{formatPrepWeight(sr.totalRequired, sr.yieldUnit)}</p>
+              <MixExtraNote qty={sr.mixExtraQty} unit={sr.yieldUnit} className="mt-1" />
             </div>
             <div className="bg-secondary/30 rounded-xl px-4 py-3">
               <p className="text-sm text-muted-foreground mb-1">Yield per mix</p>
@@ -685,6 +689,7 @@ export function SubRecipeMakeFlow({
                           {mode === "plan" && sr.totalRequired > 0 && ` · ${formatPrepWeight(sr.totalRequired, sr.yieldUnit)} required`}
                         </>}
                   </p>
+                  {!isDone && mode === "plan" && <MixExtraNote qty={sr.mixExtraQty} unit={sr.yieldUnit} />}
                   {onOpenSop && (
                     <div className="mt-1.5" onClick={e => e.stopPropagation()}>
                       <SopChips
@@ -1313,6 +1318,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                       <span className="font-semibold text-foreground">{fmtPrepQty(ing.totalQty, ing.unit)}</span>
                       {" total · "}{status.completedTinCount}/{status.totalTinCount} tins done
                     </p>
+                    <MixExtraNote qty={ing.mixExtraQty} unit={ing.unit} className="mt-0.5" />
                     {isShared && (
                       <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
                         <span className="font-medium">Shared —</span>
