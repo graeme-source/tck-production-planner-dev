@@ -122,6 +122,9 @@ type OrderLine = SurplusLineFields & {
   // stays, and that wording made the team think it wasn't working
   // (Graeme, 2026-10-15).
   prepOutstandingQty?: number;
+  /** False = a kanban item nobody stock-checks; its stock figure only ever
+   *  grows with deliveries, so it isn't shown as a count. */
+  stockCounted?: boolean;
   // Packs per supplier case. When set, the pack count to order rounds up to the
   // nearest whole case. Null/absent means order in individual packs.
   caseSizePacks?: number | null;
@@ -2202,7 +2205,8 @@ export default function Orders() {
                                   type="number"
                                   min={0}
                                   step="any"
-                                  value={line.editedStock === 0 ? "" : line.editedStock}
+                                  // Not-counted kanban items: no made-up figure in the box.
+                                  value={line.editedStock === 0 || (line.stockCounted === false && !line.stockDirty) ? "" : line.editedStock}
                                   onChange={e => updateStock(so.supplier.id, idx, e.target.value === "" ? 0 : parseFloat(e.target.value) || 0)}
                                   onFocus={e => e.currentTarget.select()}
                                   onBlur={e => {
@@ -2214,7 +2218,15 @@ export default function Orders() {
                                 />
                                 <span className="text-xs text-muted-foreground">{line.unit}</span>
                               </div>
-                              {line.lastStockCheckAt ? (() => {
+                              {line.stockCounted === false && !line.stockDirty ? (
+                                <span
+                                  className="text-[10px] text-muted-foreground flex items-center gap-0.5"
+                                  title="Kanban item that isn't stock-checked: the app only adds deliveries to it and never takes usage off, so its figure isn't a real count. The kanban card drives the order. Type a count here if you want to record one."
+                                >
+                                  <AlertCircle className="w-2.5 h-2.5" />
+                                  Not counted — kanban
+                                </span>
+                              ) : line.lastStockCheckAt ? (() => {
                                 const d = new Date(line.lastStockCheckAt);
                                 const now = new Date();
                                 const isToday = d.toDateString() === now.toDateString();

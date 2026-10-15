@@ -378,6 +378,8 @@ router.get("/calculate", async (req, res) => {
       orderQty: number;
       packsToOrder: number;
       isKanban: boolean;
+      /** False for kanban-only items nobody stock-checks (their figure isn't a count). */
+      stockCounted: boolean;
       // The kanban floor applied to packsToOrder (null when not a kanban
       // line). The frontend's stock-edit recompute re-applies it.
       kanbanFloorPacks: number | null;
@@ -564,6 +566,10 @@ router.get("/calculate", async (req, res) => {
       packsToOrder,
       isKanban,
       kanbanFloorPacks,
+      // False for kanban-only items nobody stock-checks: their "stock" is
+      // the last figure plus every delivery since (nothing is ever taken
+      // off), so the screen shouldn't show it as a count (2026-10-15).
+      stockCounted: isStockChecked,
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
       stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
@@ -601,6 +607,7 @@ router.get("/calculate", async (req, res) => {
           orderingUrl: ingredientsTable.orderingUrl,
           stockInPacks: ingredientsTable.stockInPacks,
           palletSize: ingredientsTable.palletSize,
+          stockCheckEnabled: ingredientsTable.stockCheckEnabled,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -667,6 +674,7 @@ router.get("/calculate", async (req, res) => {
         packsToOrder,
         isKanban: true,
         kanbanFloorPacks: packsToOrder,
+        stockCounted: d.stockCheckEnabled ?? false,
         orderingUrl: d.orderingUrl ?? null,
         lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
         belowRequirement: false,
