@@ -176,3 +176,7 @@ export function remainingWrappingPacks(row: WrappingProgressRow): number {
     + (row.dogBinCount ?? 0);
   return Math.max(0, targetPacks - accountedFor - bagsStillToCome * bagEquiv);
 }
+
+// Late orders + the predicted factory number after a plan (Graeme, 15 Oct 2026).
+export * from "./late-orders";
+export * from "./factory-forecast";
