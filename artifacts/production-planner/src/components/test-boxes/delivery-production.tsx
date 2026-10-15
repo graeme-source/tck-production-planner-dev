@@ -215,7 +215,7 @@ export function ProductionPanel({ boxId, deliveryId, status, safetyBatch, onSave
       </div>
 
       <ul className="space-y-1.5">{p.lines.map(l => <Line key={l.recipeId} l={l} showQueued={!isOpen} />)}</ul>
-      {isOpen && <p className="text-sm text-muted-foreground">Closing orders queues these automatically — rounded up to whole batches{safety ? ", plus one safety batch each" : ""}. Prep and dough follow from the plan.</p>}
+      {isOpen && <p className="text-sm text-muted-foreground">Closing orders queues these automatically — whole batches covering the orders plus the safety margin of spare packs (set on Create Plan){safety ? ", plus one safety batch each" : ""}. Prep and dough follow from the plan.</p>}
 
       <Blockers blockers={p.blockers} onPublished={refetchAll} />
       <Warnings list={p.warnings} />

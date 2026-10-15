@@ -64,17 +64,24 @@ describe("packs sold for one delivery date", () => {
 
 describe("batches from packs", () => {
   it("rounds up to whole batches (the Properoni numbers)", () => {
-    expect(batchesFor({ packs: 50, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 100, batches: 10 });
-    expect(batchesFor({ packs: 32, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 64, batches: 7 });
-    expect(batchesFor({ packs: 25, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 50, batches: 5 });
+    // Orders + the 2-pack safety margin, in whole batches (15 Oct 2026).
+    expect(batchesFor({ packs: 50, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 100, batches: 11, marginPacks: 2 });
+    expect(batchesFor({ packs: 32, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 64, batches: 7, marginPacks: 2 });
+    expect(batchesFor({ packs: 25, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 50, batches: 6, marginPacks: 2 });
+    // Exactly enough with the margin: 28 + 2 = 30 = 6 batches.
+    expect(batchesFor({ packs: 28, packSize: 2, portionsPerBatch: 10, safetyBatch: false }).batches).toBe(6);
+    // Over 12 batches the margin is 4: 78 sold → 82 → 17 batches (85 packs).
+    expect(batchesFor({ packs: 78, packSize: 2, portionsPerBatch: 10, safetyBatch: false })).toEqual({ calzones: 156, batches: 17, marginPacks: 4 });
   });
   it("adds one safety batch per recipe when asked — but not for a recipe that didn't sell", () => {
-    expect(batchesFor({ packs: 25, packSize: 2, portionsPerBatch: 10, safetyBatch: true }).batches).toBe(6);
-    expect(batchesFor({ packs: 0, packSize: 2, portionsPerBatch: 10, safetyBatch: true })).toEqual({ calzones: 0, batches: 0 });
+    expect(batchesFor({ packs: 25, packSize: 2, portionsPerBatch: 10, safetyBatch: true }).batches).toBe(7);
+    expect(batchesFor({ packs: 0, packSize: 2, portionsPerBatch: 10, safetyBatch: true })).toEqual({ calzones: 0, batches: 0, marginPacks: 0 });
   });
   it("odd numbers and bad settings", () => {
     expect(batchesFor({ packs: 1, packSize: 2, portionsPerBatch: 10, safetyBatch: false }).batches).toBe(1);
-    expect(batchesFor({ packs: 5, packSize: 0, portionsPerBatch: 0, safetyBatch: false })).toEqual({ calzones: 5, batches: 1 });
+    expect(batchesFor({ packs: 5, packSize: 0, portionsPerBatch: 0, safetyBatch: false })).toEqual({ calzones: 5, batches: 1, marginPacks: 2 });
+    // The margin numbers are settings.
+    expect(batchesFor({ packs: 25, packSize: 2, portionsPerBatch: 10, safetyBatch: false }, { smallMarginPacks: 0, largeMarginPacks: 0, largeBatchThreshold: 12 }).batches).toBe(5);
   });
 });
 

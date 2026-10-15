@@ -20,9 +20,12 @@
  *      (same words, any order, emoji and "&" ignored) — and the result says
  *      so, because a renamed product would silently stop counting.
  *      8-pack bags are never matched by title (a bag is 4 packs, not 1).
- *   2. batchesFor — calzones = packs × pack size; batches = calzones ÷
- *      portions per batch, ROUNDED UP; plus one safety batch per recipe when
- *      the delivery's toggle is on (only for a recipe that sold).
+ *   2. batchesFor — calzones = packs × pack size; batches = the fewest
+ *      WHOLE batches that cover the packs sold PLUS the production safety
+ *      margin (2 packs, 4 over 12 batches — @workspace/plan-margin, 15 Oct
+ *      2026: "it always adds on at least two packs"); plus one safety batch
+ *      per recipe when the delivery's toggle is on (only for a recipe that
+ *      sold).
  *   3. planQueueDiff — what to write to Queued production so the delivery's
  *      own rows match, idempotently: update in place, never duplicate, take
  *      off what's no longer wanted, never touch a row a plan has already
@@ -31,6 +34,7 @@
  *      rows off; rows already on a plan stay, with a warning.
  */
 import { deliveryDateTag } from "./team-efficiency-despatch";
+import { DEFAULT_PLAN_MARGIN, minBatchesForOrders, type PlanMarginSettings } from "@workspace/plan-margin";
 
 /** Shopify's 8-pack bag variant title (same marker as shopify-stock-check.ts). */
 const EIGHT_PACK = "8 pack bag";
@@ -122,15 +126,20 @@ export function packsSoldByRecipe(orders: readonly SalesOrder[], deliveryDate: s
   return { packs, matchedBy, orders: counted };
 }
 
-/** Packs → calzones → whole batches (rounded up), + an optional safety batch. */
-export function batchesFor(input: { packs: number; packSize: number; portionsPerBatch: number; safetyBatch: boolean }): { calzones: number; batches: number } {
+/** Packs → whole batches covering orders + the safety margin, + an optional
+ *  safety batch. 32 packs at 5 a batch → 34 → 7 batches; 25 → 27 → 6. */
+export function batchesFor(
+  input: { packs: number; packSize: number; portionsPerBatch: number; safetyBatch: boolean },
+  margin: PlanMarginSettings = DEFAULT_PLAN_MARGIN,
+): { calzones: number; batches: number; marginPacks: number } {
   const packSize = input.packSize > 0 ? input.packSize : 1;
   const perBatch = input.portionsPerBatch > 0 ? input.portionsPerBatch : 10;
-  const calzones = Math.max(0, input.packs) * packSize;
-  if (calzones === 0) return { calzones: 0, batches: 0 };
-  // Guard against float dust (2.0000 × 25 = 50.00000001 must not become 6 batches of 10).
-  const exact = Math.round((calzones / perBatch) * 1e6) / 1e6;
-  return { calzones, batches: Math.ceil(exact) + (input.safetyBatch ? 1 : 0) };
+  const packs = Math.max(0, input.packs);
+  const calzones = packs * packSize;
+  if (calzones === 0) return { calzones: 0, batches: 0, marginPacks: 0 };
+  // minBatchesForOrders strips float dust (2.0000 × 25 = 50.00000001 must not become 6 batches of 10).
+  const min = minBatchesForOrders({ demandPacks: packs, packsPerBatch: perBatch / packSize }, margin);
+  return { calzones, batches: min.batches + (input.safetyBatch ? 1 : 0), marginPacks: min.marginPacks };
 }
 
 export interface QueueRow {
