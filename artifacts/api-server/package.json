@@ -23,6 +23,7 @@
     "@workspace/business-days": "workspace:*",
     "@workspace/db": "workspace:*",
     "@workspace/feature-registry": "workspace:*",
+    "@workspace/goods-in": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
     "@workspace/messages": "workspace:*",
     "@workspace/product-labels": "workspace:*",

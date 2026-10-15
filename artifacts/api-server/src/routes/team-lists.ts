@@ -84,6 +84,9 @@ const recurrenceSchema = z.discriminatedUnion("kind", [
     anchor: isoDate.nullish(),
   }),
   z.object({ kind: z.literal("monthly"), dayOfMonth: z.number().int().min(1).max(31) }),
+  // One-off items the app adds (short-delivery reports, lib/short-delivery-report.ts).
+  // Accepted here so editing such an item (title, priority…) still saves.
+  z.object({ kind: z.literal("once"), date: isoDate }),
 ]);
 const optionalText = (max: number) => z.string().trim().max(max).nullish().transform(v => (v ? v : null));
 const urlField = z.string().trim().max(500).nullish()

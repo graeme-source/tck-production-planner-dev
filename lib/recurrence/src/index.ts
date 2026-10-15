@@ -31,7 +31,11 @@ export type RecurrenceRule =
    */
   | { kind: "weekly"; days: Weekday[]; interval?: number; anchor?: string | null }
   /** On day N of every month; a month without that day uses its last day. */
-  | { kind: "monthly"; dayOfMonth: number };
+  | { kind: "monthly"; dayOfMonth: number }
+  /** One day only — a one-off item, e.g. a short-delivery report put on a
+   *  team list for the day it happened (Graeme, 2026-10-15). With carry-over
+   *  on it stays "Overdue" until someone ticks it. */
+  | { kind: "once"; date: string };
 
 export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -95,6 +99,8 @@ export function isDueOn(rule: RecurrenceRule, date: string): boolean {
       const want = Math.min(Math.max(1, Math.floor(rule.dayOfMonth)), daysInMonth(y, m));
       return d === want;
     }
+    case "once":
+      return date === rule.date;
     default:
       return false;
   }
@@ -160,6 +166,11 @@ export function describeRule(rule: RecurrenceRule): string {
       return interval === 1 ? `Every ${days}` : `Every ${interval} weeks on ${days}`;
     }
     case "monthly": return `Monthly on the ${ordinal(Math.max(1, Math.floor(rule.dayOfMonth)))}`;
+    case "once": {
+      if (!isIsoDate(rule.date)) return "Once";
+      const d = noon(rule.date);
+      return `Once, on ${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${d.toLocaleString("en-GB", { month: "short", timeZone: "UTC" })}`;
+    }
     default: return "Unknown";
   }
 }
@@ -178,6 +189,7 @@ export function normaliseRule(rule: RecurrenceRule): RecurrenceRule {
         : { kind: "weekly", days };
     }
     case "monthly": return { kind: "monthly", dayOfMonth: Math.floor(rule.dayOfMonth) };
+    case "once": return { kind: "once", date: rule.date };
     default: return { kind: rule.kind };
   }
 }
@@ -208,6 +220,8 @@ export function isRecurrenceRule(value: unknown): value is RecurrenceRule {
         && (r.anchor === undefined || r.anchor === null || isIsoDate(r.anchor));
     case "monthly":
       return Number.isInteger(r.dayOfMonth) && (r.dayOfMonth as number) >= 1 && (r.dayOfMonth as number) <= 31;
+    case "once":
+      return isIsoDate(r.date);
     default:
       return false;
   }

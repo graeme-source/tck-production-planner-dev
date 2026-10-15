@@ -24,6 +24,15 @@ import {
   type Collection,
 } from "@/components/collections";
 import { UnexpectedDeliveryDialog } from "@/components/unexpected-delivery-dialog";
+import {
+  canCompleteGoodsIn, initialDecision, initialQuantity, isReceivedOrderStatus, lineStatus, lineToSubmit,
+  orderShortage, shortLinesOf, shortSignature, undecidedLines, type LineDecision,
+} from "@workspace/goods-in";
+import { usePeople } from "@/components/messages/messages-api";
+import { useShortReportSettings, type ShortReportOutcome } from "@/components/deliveries/short-report-api";
+import { ShortReportStep } from "@/components/deliveries/short-report-step";
+import { ShortReportSettingsModal } from "@/components/deliveries/short-report-settings-modal";
+import { LineReceiptStatus, OrderShortBadge } from "@/components/deliveries/receipt-status";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -217,7 +226,9 @@ interface ReceivingLine {
   requiresUseByDate: boolean;
   defaultStorageLocation: string | null;
   useByIsAuto: boolean;
-  checked: boolean;
+  /** Received (at quantityReceived) / Not received / not decided yet. Every
+   *  line must be decided before goods-in can be completed (lib/goods-in). */
+  decision: LineDecision;
   stockInPacks?: boolean;
   packWeight?: number | null;
   palletSize?: number | null;
@@ -302,6 +313,16 @@ function ReceivingDialog({
   const [frozenTemp, setFrozenTemp] = useState("");
   const [checkResults, setCheckResults] = useState<CheckResult[]>([]);
   const [notes, setNotes] = useState("");
+  // Short-delivery step (Graeme, 2026-10-15): shown before completing a
+  // goods-in that's short, with a note and "Also tell…" people.
+  const [dialogStep, setDialogStep] = useState<"lines" | "short">("lines");
+  const [shortNote, setShortNote] = useState("");
+  /** null = not touched yet → the configured people. */
+  const [alsoTell, setAlsoTell] = useState<number[] | null>(null);
+  const { state: authState } = useAuth();
+  const myId = authState.status === "authenticated" ? authState.user.id : null;
+  const { data: shortSettings } = useShortReportSettings(open);
+  const { data: peopleData } = usePeople(open);
   // Tracks whether the user has made any edit since opening. Lets us prompt
   // before closing the dialog (and lose the in-progress work) on accidental
   // backdrop click / escape.
@@ -335,8 +356,10 @@ function ReceivingDialog({
     if (open && order) {
       const deliveryDate = order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate + "T00:00:00") : new Date();
 
+      const orderReceived = isReceivedOrderStatus(order.status);
       setLines(
         order.lines.map((l) => {
+          const facts = { quantityOrdered: l.quantityOrdered, quantityReceived: l.quantityReceived, goodsInChecked: l.goodsInChecked };
           let autoUseByDate = "";
           let useByIsAuto = false;
           if (l.shelfLifeDays != null && l.shelfLifeDays > 0) {
@@ -351,7 +374,9 @@ function ReceivingDialog({
             ingredientName: l.ingredientName,
             ingredientCategory: l.ingredientCategory,
             quantityOrdered: l.quantityOrdered,
-            quantityReceived: l.quantityReceived > 0 ? l.quantityReceived : l.quantityOrdered,
+            // The box opens at what was recorded, else what was ordered — but
+            // it's only sent for a line decided "Received" (lineToSubmit).
+            quantityReceived: initialQuantity(facts),
             unit: l.unit,
             nativeUnit: l.nativeUnit,
             useByDate: existingUseBy || autoUseByDate,
@@ -359,7 +384,7 @@ function ReceivingDialog({
             requiresUseByDate: l.requiresUseByDate ?? false,
             defaultStorageLocation: l.defaultStorageLocation,
             useByIsAuto: existingUseBy === "" && useByIsAuto,
-            checked: l.goodsInChecked ?? false,
+            decision: initialDecision(orderReceived, facts),
             stockInPacks: l.stockInPacks,
             packWeight: l.packWeight,
             palletSize: l.palletSize,
@@ -373,6 +398,9 @@ function ReceivingDialog({
       setChilledTemp(rec?.chilledTempC != null ? String(rec.chilledTempC) : "");
       setFrozenTemp(rec?.frozenTempC != null ? String(rec.frozenTempC) : "");
       setNotes("");
+      setDialogStep("lines");
+      setShortNote("");
+      setAlsoTell(null);
     }
   }, [open, order, checks]);
 
@@ -386,8 +414,36 @@ function ReceivingDialog({
   const frozenTempMissing = hasFrozen && frozenTemp.trim() === "";
 
   const missingRequiredUseBy = lines.some(
-    (l) => l.requiresUseByDate && l.quantityReceived > 0 && !l.useByDate
+    (l) => l.decision === "received" && l.requiresUseByDate && l.quantityReceived > 0 && !l.useByDate
   );
+  // Every line must be decided — Received or Not received — before goods-in
+  // can be completed (mistake-proofing: a missing item can't slip through
+  // un-ticked and be booked in at the ordered quantity).
+  const undecided = undecidedLines(lines);
+  const allDecided = canCompleteGoodsIn(lines);
+
+  // What this goods-in would report as short, and whether that differs from
+  // what was saved before (an edit that changes nothing reports nothing —
+  // the server agrees, short_delivery_reports.signature).
+  const shortNow = useMemo(() => shortLinesOf(lines.map((l) => ({
+    lineId: l.lineId,
+    name: l.ingredientName,
+    quantityOrdered: l.quantityOrdered,
+    quantityReceived: lineToSubmit({ decision: l.decision, quantity: l.quantityReceived }).quantityReceived,
+    unit: l.unit,
+    nativeUnit: l.nativeUnit,
+    packWeight: l.packWeight,
+    stockInPacks: l.stockInPacks,
+  }))), [lines]);
+  const shortSaved = useMemo(() => {
+    if (!isReceivedOrderStatus(order.status)) return "";
+    return shortSignature(shortLinesOf(order.lines.map((l) => ({
+      lineId: l.id, name: l.ingredientName, quantityOrdered: l.quantityOrdered,
+      quantityReceived: l.goodsInChecked ? l.quantityReceived : 0, unit: l.unit,
+    }))));
+  }, [order]);
+  const needsShortStep = shortNow.length > 0 && shortSignature(shortNow) !== shortSaved;
+  const alsoTellIds = alsoTell ?? shortSettings?.recipientIds ?? [];
 
   const requiredChecks = checks.filter((c) => c.isRequired);
   const allRequiredPassed = requiredChecks.every((rc) => {
@@ -401,7 +457,8 @@ function ReceivingDialog({
     (allRequiredPassed || requiredChecks.length === 0 || isEditMode) &&
     !chilledTempMissing &&
     !frozenTempMissing &&
-    !missingRequiredUseBy;
+    !missingRequiredUseBy &&
+    allDecided;
 
   const receiveMutation = useMutation({
     mutationFn: async () => {
@@ -410,16 +467,23 @@ function ReceivingDialog({
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({
-          lines: lines.map((l) => ({
-            lineId: l.lineId,
-            quantityReceived: l.quantityReceived,
-            useByDate: l.useByDate || null,
-            checked: l.checked,
-          })),
+          // Never a quantity for a line that isn't received: Not received
+          // goes as un-ticked 0 (and the server treats any un-ticked line
+          // as 0 too).
+          lines: lines.map((l) => {
+            const sent = lineToSubmit({ decision: l.decision, quantity: l.quantityReceived });
+            return {
+              lineId: l.lineId,
+              quantityReceived: sent.quantityReceived,
+              useByDate: sent.checked ? (l.useByDate || null) : null,
+              checked: sent.checked,
+            };
+          }),
           chilledTempC: chilledTemp ? Number(chilledTemp) : null,
           frozenTempC: frozenTemp ? Number(frozenTemp) : null,
           checkResults,
           notes: notes || null,
+          ...(needsShortStep ? { shortReport: { note: shortNote.trim() || null, alsoTellIds } } : {}),
         }),
       });
       if (!res.ok) {
@@ -430,7 +494,21 @@ function ReceivingDialog({
       }
       return res.json();
     },
-    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }> }) => {
+    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }>; shortReport?: ShortReportOutcome }) => {
+      // Say where the short-delivery report went — or that it didn't.
+      const sr = data?.shortReport;
+      if (sr && "error" in sr) {
+        toast({ title: "Short-delivery report not sent", description: sr.error, variant: "destructive" });
+      } else if (sr && sr.action !== "none" && sr.action !== "same") {
+        const where = [sr.teamList ? `the ${sr.teamList.name} list` : null, ...sr.told.map((p) => p.name)].filter(Boolean);
+        toast({
+          title: sr.action === "resolved" ? "Short-delivery report updated — all received now" : sr.action === "updated" ? "Short-delivery report updated" : "Short-delivery report sent",
+          description: where.length ? `Sent to ${where.join(", ")}.` : undefined,
+        });
+        if (sr.warning) toast({ title: "Check the short-delivery settings", description: sr.warning, variant: "destructive" });
+      } else if (sr && sr.action === "same" && sr.told.length) {
+        toast({ title: "Short-delivery report sent", description: `Also sent to ${sr.told.map((p) => p.name).join(", ")}.` });
+      }
       queryClient.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).includes("/api/deliveries") });
       queryClient.invalidateQueries({ queryKey: ["/api/stock-entries"] });
       // Shopify-linked items (e.g. bought-in brownies) push stock on receipt —
@@ -464,7 +542,7 @@ function ReceivingDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="w-[95vw] sm:w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="font-display text-3xl font-bold flex items-center gap-3">
             <Truck className="w-7 h-7 text-primary shrink-0" />
@@ -502,6 +580,41 @@ function ReceivingDialog({
         </DialogHeader>
 
         <div className="space-y-6 mt-4">
+          {dialogStep === "short" ? (
+            <>
+              <ShortReportStep
+                lines={shortNow}
+                teamListName={shortSettings?.teamListName ?? null}
+                note={shortNote}
+                onNote={(v) => { setDirty(true); setShortNote(v); }}
+                alsoTell={alsoTellIds}
+                onAlsoTell={(ids) => { setDirty(true); setAlsoTell(ids); }}
+                people={peopleData?.people ?? []}
+                myId={myId}
+              />
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDialogStep("lines")}
+                  disabled={receiveMutation.isPending}
+                  className="min-h-[56px] rounded-xl border-2 border-border font-semibold text-base hover:bg-secondary/50 inline-flex items-center justify-center gap-2"
+                >
+                  <ChevronLeft className="w-5 h-5" /> Back to the items
+                </button>
+                <button
+                  type="button"
+                  onClick={() => receiveMutation.mutate()}
+                  disabled={!canReceive || receiveMutation.isPending}
+                  className="sm:col-span-2 min-h-[56px] rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 inline-flex items-center justify-center gap-2 disabled:opacity-60"
+                >
+                  {receiveMutation.isPending
+                    ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</>
+                    : <><CheckCircle2 className="w-5 h-5" /> Send report and {isEditMode ? "update quantities" : "complete goods-in"}</>}
+                </button>
+              </div>
+            </>
+          ) : (
+          <>
           <div>
             <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
               <h3 className="text-sm font-semibold flex items-center gap-2">
@@ -510,97 +623,119 @@ function ReceivingDialog({
                   <span
                     className={cn(
                       "text-xs font-medium px-2 py-0.5 rounded-full",
-                      lines.every((l) => l.checked)
+                      allDecided
                         ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                        : "bg-secondary text-muted-foreground"
+                        : "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200"
                     )}
                   >
-                    {lines.filter((l) => l.checked).length} / {lines.length} checked
+                    {lines.length - undecided.length} / {lines.length} decided
                   </span>
                 )}
               </h3>
-              {lines.length > 0 && (
+              {/* The normal case — everything arrived — stays one tap: every
+                  line not yet decided becomes Received at the quantity shown. */}
+              {undecided.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => {
-                    const allChecked = lines.every((l) => l.checked);
-                    editLines(lines.map((l) => ({ ...l, checked: !allChecked })));
-                  }}
-                  className="text-xs font-medium px-3 py-1 rounded-lg border border-border hover:bg-secondary/50 transition-colors"
+                  onClick={() => editLines(lines.map((l) => (l.decision == null ? { ...l, decision: (l.quantityReceived > 0 ? "received" : "not_received") as LineDecision } : l)))}
+                  className="min-h-[44px] text-sm font-semibold px-4 py-2 rounded-xl border-2 border-green-500 text-green-800 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors inline-flex items-center gap-1.5"
                 >
-                  {lines.every((l) => l.checked) ? "Uncheck all" : "Check all"}
+                  <Check className="w-4 h-4" strokeWidth={3} />
+                  {undecided.length === lines.length ? "Mark all received" : `Mark the other ${undecided.length} received`}
                 </button>
               )}
             </div>
             <div className="space-y-3">
               {lines.map((line, idx) => {
-                const discrepancy = line.quantityReceived !== line.quantityOrdered;
-                const useByMissing = line.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate;
+                const received = line.decision === "received";
+                const notReceived = line.decision === "not_received";
+                const discrepancy = received && line.quantityReceived !== line.quantityOrdered;
+                const useByMissing = received && line.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate;
                 const locationLabel = line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null;
-                const toggleChecked = () => {
+                const decide = (decision: LineDecision) => {
                   const next = [...lines];
-                  next[idx] = { ...next[idx], checked: !next[idx].checked };
+                  // Received with nothing in the box means the ordered amount.
+                  const qty = decision === "received" && !(next[idx].quantityReceived > 0) ? next[idx].quantityOrdered : next[idx].quantityReceived;
+                  next[idx] = { ...next[idx], decision, quantityReceived: qty };
                   editLines(next);
                 };
                 return (
                   <div
                     key={line.lineId}
-                    onClick={toggleChecked}
-                    role="button"
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        toggleChecked();
-                      }
-                    }}
                     className={cn(
-                      "rounded-xl border p-3 space-y-2 cursor-pointer transition-colors",
-                      line.checked
-                        ? "border-green-400 bg-green-50/60 dark:bg-green-900/15 dark:border-green-700"
+                      "rounded-xl p-3 space-y-2 transition-colors",
+                      notReceived
+                        ? "border-2 border-red-400 bg-red-50/60 dark:bg-red-950/20 dark:border-red-800"
                         : useByMissing
-                        ? "border-destructive bg-destructive/5"
+                        ? "border-2 border-destructive bg-destructive/5"
                         : discrepancy
-                        ? "border-amber-300 bg-amber-50/30 dark:bg-amber-900/5 dark:border-amber-700"
-                        : "border-border hover:bg-secondary/20"
+                        ? "border-2 border-amber-400 bg-amber-50/40 dark:bg-amber-900/10 dark:border-amber-700"
+                        : received
+                        ? "border-2 border-green-400 bg-green-50/60 dark:bg-green-900/15 dark:border-green-700"
+                        : "border-2 border-dashed border-amber-400 bg-background"
                     )}
                   >
-                    <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-3 min-w-0">
-                        <div
-                          className={cn(
-                            "w-7 h-7 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
-                            line.checked
-                              ? "bg-green-500 border-green-500 text-white"
-                              : "border-border bg-background"
-                          )}
-                          aria-hidden="true"
-                        >
-                          {line.checked && <Check className="w-4 h-4" strokeWidth={3} />}
-                        </div>
-                        <span className={cn("text-xl font-bold truncate", line.checked && "line-through text-muted-foreground decoration-green-600/60")}>
+                        <span className={cn("text-xl font-bold truncate", notReceived && "text-red-800 dark:text-red-300")}>
                           {line.ingredientName}
                         </span>
                       </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
+                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
                         {locationLabel && (
                           <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
                             → {locationLabel}
                           </span>
                         )}
-                        {useByMissing && !line.checked && (
+                        {useByMissing && (
                           <span className="text-xs font-medium text-destructive bg-destructive/10 px-2 py-0.5 rounded-full flex items-center gap-1">
                             <AlertTriangle className="w-3 h-3" /> Use-by required
                           </span>
                         )}
-                        {line.useByIsAuto && (
+                        {line.useByIsAuto && !notReceived && (
                           <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-0.5 rounded-full">
                             Auto-dated
                           </span>
                         )}
                       </div>
                     </div>
-                    {(() => {
+                    {/* Every line is decided, one big button each (Graeme,
+                        2026-10-15): Received at the quantity below — edit it
+                        for a short delivery — or Not received. */}
+                    <div className="grid grid-cols-2 gap-2" role="group" aria-label={`${line.ingredientName}: received or not`}>
+                      <button
+                        type="button"
+                        onClick={() => decide("received")}
+                        aria-pressed={received}
+                        className={cn(
+                          "min-h-[52px] rounded-xl border-2 text-lg font-bold inline-flex items-center justify-center gap-2 transition-colors",
+                          received
+                            ? "bg-green-600 border-green-600 text-white"
+                            : "border-green-500 text-green-800 dark:text-green-300 bg-background hover:bg-green-50 dark:hover:bg-green-900/20"
+                        )}
+                      >
+                        <Check className="w-5 h-5" strokeWidth={3} /> Received
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => decide("not_received")}
+                        aria-pressed={notReceived}
+                        className={cn(
+                          "min-h-[52px] rounded-xl border-2 text-lg font-bold inline-flex items-center justify-center gap-2 transition-colors",
+                          notReceived
+                            ? "bg-red-600 border-red-600 text-white"
+                            : "border-red-400 text-red-700 dark:text-red-300 bg-background hover:bg-red-50 dark:hover:bg-red-900/20"
+                        )}
+                      >
+                        <X className="w-5 h-5" strokeWidth={3} /> Not received
+                      </button>
+                    </div>
+                    {notReceived && (
+                      <p className="text-base font-semibold text-red-800 dark:text-red-300">
+                        Nothing arrived — {line.quantityOrdered} {line.unit} ordered. It goes on the short-delivery report.
+                      </p>
+                    )}
+                    {!notReceived && (() => {
                       // For pack-counted ingredients, operators count whole
                       // packs coming off the truck — the stored quantity stays
                       // in the ingredient's native unit so everything
@@ -642,7 +777,7 @@ function ReceivingDialog({
                         const nextReceived = inPacks
                           ? (lineIsPackUnit ? newDisplay : newDisplay * pw)
                           : Number(newDisplay.toFixed(2));
-                        next[idx] = { ...next[idx], quantityReceived: nextReceived };
+                        next[idx] = { ...next[idx], quantityReceived: nextReceived, decision: nextReceived > 0 ? "received" : "not_received" };
                         editLines(next);
                       };
                       return (
@@ -703,7 +838,7 @@ function ReceivingDialog({
                               const stored = inPacks
                                 ? (lineIsPackUnit ? n : n * pw)
                                 : n;
-                              next[idx] = { ...next[idx], quantityReceived: stored };
+                              next[idx] = { ...next[idx], quantityReceived: stored, decision: stored > 0 ? "received" : "not_received" };
                               editLines(next);
                             }}
                             className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#7cb342] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
@@ -753,7 +888,7 @@ function ReceivingDialog({
                       return (
                         <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                           <AlertTriangle className="w-3.5 h-3.5" />
-                          Quantity differs from order (
+                          {line.quantityReceived < line.quantityOrdered ? "Short — goes on the short-delivery report" : "More than ordered"} (
                           {inPacks
                             ? <>{orderedPacks} {packNoun(native, orderedPacks)}{sizeHint && <> <span className="opacity-70">({sizeHint})</span></>}</>
                             : `${line.quantityOrdered} ${line.unit}`}
@@ -900,11 +1035,23 @@ function ReceivingDialog({
             />
           </div>
 
+          {/* Which lines still need a decision — completing is blocked
+              until each is Received or Not received. */}
+          {undecided.length > 0 && (
+            <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-3 text-base text-amber-900 dark:text-amber-200">
+              <p className="font-bold flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                {undecided.length === 1 ? "1 item still needs" : `${undecided.length} items still need`} Received or Not received:
+              </p>
+              <p className="mt-1">{undecided.map((i) => lines[i]?.ingredientName).join(", ")}</p>
+            </div>
+          )}
+
           <button
-            onClick={() => receiveMutation.mutate()}
+            onClick={() => (needsShortStep ? setDialogStep("short") : receiveMutation.mutate())}
             disabled={!canReceive || receiveMutation.isPending}
             className={cn(
-              "w-full py-3 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors",
+              "w-full min-h-[56px] py-3 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-colors",
               canReceive
                 ? "bg-primary text-primary-foreground hover:bg-primary/90"
                 : "bg-secondary text-muted-foreground cursor-not-allowed"
@@ -912,16 +1059,22 @@ function ReceivingDialog({
           >
             {receiveMutation.isPending ? (
               <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
+            ) : !allDecided ? (
+              <><AlertCircle className="w-4 h-4" /> Mark every item Received or Not received first</>
             ) : missingRequiredUseBy ? (
               <><AlertCircle className="w-4 h-4" /> Set use-by dates for required items</>
             ) : !canReceive ? (
               <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
+            ) : needsShortStep ? (
+              <><AlertTriangle className="w-4 h-4" /> Next: short-delivery report ({shortNow.length} {shortNow.length === 1 ? "item" : "items"})</>
             ) : isEditMode ? (
               <><Pencil className="w-4 h-4" /> Update quantities</>
             ) : (
               <><CheckCircle2 className="w-4 h-4" /> Mark as Received</>
             )}
           </button>
+          </>
+          )}
 
           {receiveMutation.isError && (
             <p className="text-sm text-destructive text-center">
@@ -943,8 +1096,15 @@ export default function Deliveries() {
   const canEdit = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
   const canReceive = state.status === "authenticated" && canAccess(userRole, "/deliveries/receive");
 
-  const [currentDate, setCurrentDate] = useState(() => new Date());
-  const [selectedDate, setSelectedDate] = useState(() => new Date());
+  // ?date=YYYY-MM-DD opens that day — the short-delivery report on the team
+  // list and in to-dos links here.
+  const [linkedDate] = useState<Date | null>(() => {
+    const d = new URLSearchParams(window.location.search).get("date");
+    return d && /^\d{4}-\d{2}-\d{2}$/.test(d) ? parseISO(d) : null;
+  });
+  const [currentDate, setCurrentDate] = useState(() => linkedDate ?? new Date());
+  const [selectedDate, setSelectedDate] = useState(() => linkedDate ?? new Date());
+  const [shortSettingsOpen, setShortSettingsOpen] = useState(false);
 
   const weekStart = useMemo(() => startOfWeek(currentDate, { weekStartsOn: 1 }), [currentDate]);
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart]);
@@ -1154,6 +1314,15 @@ export default function Deliveries() {
                 with the deliveries rather than on the dashboard header
                 (Graeme, 2026-09-16). */}
             <VisitorCheckInButton />
+            {canEdit && (
+              <button
+                onClick={() => setShortSettingsOpen(true)}
+                className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+                title="Who hears when a delivery comes in short"
+              >
+                <AlertTriangle className="w-4 h-4" /> Short-delivery reports
+              </button>
+            )}
             <button
               onClick={goToday}
               className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
@@ -1289,6 +1458,9 @@ export default function Deliveries() {
             {selectedDayOrders.map((order) => {
               const isReceived = order.status === "received" || order.status === "partially_received";
               const dots = computeProcessingDots(order);
+              const shortage = orderShortage(isReceived, order.lines.map((l) => ({
+                quantityOrdered: l.quantityOrdered, quantityReceived: l.quantityReceived, goodsInChecked: l.goodsInChecked,
+              })));
               // A collection scheduled with this delivery has to be handed over
               // first — so the whole card stops being a shortcut into receiving
               // until it's signed for. The server enforces this too.
@@ -1341,9 +1513,10 @@ export default function Deliveries() {
                             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
                             Fully processed
                           </span>
-                        ) : (
+                        ) : isReceived && shortage.label ? null : (
                           <StatusBadge status={order.status} />
                         )}
+                        <OrderShortBadge shortage={shortage} />
                         {order.origin === "unexpected" && <UnexpectedBadge />}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
@@ -1532,16 +1705,26 @@ export default function Deliveries() {
                           return (
                             <span
                               key={line.id}
-                              className="text-base bg-background border border-border rounded-2xl px-4 py-2 flex flex-col items-start"
+                              className={cn(
+                                "text-base bg-background border rounded-2xl px-4 py-2 flex flex-col items-start",
+                                (() => {
+                                  const st = lineStatus(isReceived, line);
+                                  return st === "not_received" ? "border-red-300 dark:border-red-800"
+                                    : st === "short" || st === "unconfirmed" ? "border-amber-300 dark:border-amber-700"
+                                    : "border-border";
+                                })(),
+                              )}
                             >
                               <span className="flex items-baseline gap-2 flex-wrap">
                                 <span className="font-bold">{line.ingredientName}</span>
                                 <span className="font-bold tabular-nums">× {ordered.primary}</span>
-                                {line.quantityReceived > 0 && (
-                                  <span className="text-green-600 dark:text-green-400 font-semibold">
-                                    ✓ {received.primary} received
-                                  </span>
-                                )}
+                                {/* Green tick only when ticked and everything
+                                    ordered arrived (lib/goods-in lineStatus). */}
+                                <LineReceiptStatus
+                                  status={lineStatus(isReceived, line)}
+                                  receivedLabel={received.primary}
+                                  orderedLabel={ordered.primary}
+                                />
                               </span>
                               {(() => {
                                 const pallet = palletReceiptLabel(line.quantityOrdered, line.unit, {
@@ -1582,6 +1765,8 @@ export default function Deliveries() {
           }}
         />
       )}
+
+      {shortSettingsOpen && <ShortReportSettingsModal onClose={() => setShortSettingsOpen(false)} />}
 
       <UnexpectedDeliveryDialog
         open={unexpectedOpen}

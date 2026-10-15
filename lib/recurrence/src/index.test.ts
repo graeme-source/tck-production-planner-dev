@@ -133,3 +133,20 @@ describe("normaliseRule / sameRule", () => {
     expect(isDailyRhythm({ kind: "weekly", days: [1, 2, 3, 4, 5] })).toBe(false);
   });
 });
+
+describe("once (one-off items, e.g. a short-delivery report)", () => {
+  const rule: RecurrenceRule = { kind: "once", date: THU };
+  it("is due on its day only", () => {
+    expect(isDueOn(rule, THU)).toBe(true);
+    expect(isDueOn(rule, SAT)).toBe(false);
+    expect(nextOccurrenceAfter(rule, THU)).toBeNull();
+    expect(lastOccurrenceOnOrBefore(rule, SUN, THU)).toBe(THU);
+  });
+  it("is a valid rule, normalises and reads in plain English", () => {
+    expect(isRecurrenceRule(rule)).toBe(true);
+    expect(isRecurrenceRule({ kind: "once", date: "15/10/2026" })).toBe(false);
+    expect(normaliseRule(rule)).toEqual(rule);
+    expect(describeRule(rule)).toBe("Once, on Thu 15 Oct");
+    expect(isDailyRhythm(rule)).toBe(false);
+  });
+});

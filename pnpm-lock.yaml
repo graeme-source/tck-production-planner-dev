@@ -129,6 +129,9 @@ importers:
       '@workspace/feature-registry':
         specifier: workspace:*
         version: link:../../lib/feature-registry
+      '@workspace/goods-in':
+        specifier: workspace:*
+        version: link:../../lib/goods-in
       '@workspace/marketing-calendar':
         specifier: workspace:*
         version: link:../../lib/marketing-calendar
@@ -617,6 +620,9 @@ importers:
       '@workspace/feature-registry':
         specifier: workspace:*
         version: link:../../lib/feature-registry
+      '@workspace/goods-in':
+        specifier: workspace:*
+        version: link:../../lib/goods-in
       '@workspace/marketing-calendar':
         specifier: workspace:*
         version: link:../../lib/marketing-calendar
@@ -766,6 +772,12 @@ importers:
         version: 0.31.10
 
   lib/feature-registry: {}
+
+  lib/goods-in:
+    dependencies:
+      '@workspace/units':
+        specifier: workspace:*
+        version: link:../units
 
   lib/marketing-calendar: {}
 
