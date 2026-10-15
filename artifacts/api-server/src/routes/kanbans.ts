@@ -3,6 +3,7 @@ import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, rec
 import { eq, and, desc } from "drizzle-orm";
 import { computeNextOrderDay, formatOrderDayTarget, getOrderDayLabel, isDueToday } from "../lib/order-day-scheduler";
 import { londonDateString } from "../lib/london-time";
+import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
 
 const router: IRouter = Router();
 
@@ -140,9 +141,14 @@ router.get("/ingredients", async (_req, res) => {
     .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
     .where(eq(ingredientsTable.kanbanEnabled, true))
     .orderBy(ingredientsTable.name);
+  // "Used in N recipes" link on the Pulled Kanbans list — the same count as
+  // the Ingredients list (Graeme, 15 Oct 2026).
+  const usage = await loadIngredientUsageCounts();
 
   res.json(rows.map(r => ({
     ingredientId: r.ingredientId,
+    usedInRecipes: usage.get(r.ingredientId)?.recipes ?? 0,
+    usedInSubRecipes: usage.get(r.ingredientId)?.subRecipes ?? 0,
     ingredientName: r.ingredientName,
     ingredientUnit: r.ingredientUnit,
     kanbanQuantity: r.kanbanQuantity != null ? Number(r.kanbanQuantity) : null,
