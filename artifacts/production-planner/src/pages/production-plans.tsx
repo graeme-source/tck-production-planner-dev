@@ -53,6 +53,7 @@ import { minBatchesForOrders, solveTargetAllocation, type PlanMarginSettings } f
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
+import { TeamListPopoutButton } from "@/components/team-list-popout";
 import { PlanMarginPanel, RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
 import { usePlanMargin } from "@/hooks/use-plan-margin";
 import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
@@ -2792,12 +2793,16 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   return (
     <>
     <Dialog open={open} onOpenChange={(v) => !v && closeWithGuard()}>
-      <DialogContent className="max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+      <DialogContent className="relative max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
         <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
-          <DialogTitle className="font-display text-xl flex items-center gap-2">
-            <CalendarDays className="w-5 h-5 text-primary" />
-            Create Production Plan
-          </DialogTitle>
+          <div className="flex items-center gap-3 flex-wrap pr-10">
+            <DialogTitle className="font-display text-xl flex items-center gap-2">
+              <CalendarDays className="w-5 h-5 text-primary" />
+              Create Production Plan
+            </DialogTitle>
+            {/* Production Flow Manager list, popped out over the plan (2026-10-15). */}
+            <TeamListPopoutButton className="ml-auto" />
+          </div>
         </DialogHeader>
 
         {/* Two-pane layout: left = plan meta + actions (everything that

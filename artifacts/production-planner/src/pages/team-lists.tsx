@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
-  ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, FileUp,
+  ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, Eye, EyeOff, FileUp,
   Loader2, Pencil, Plus, Settings2, SkipForward, Undo2, ListChecks, Repeat,
 } from "lucide-react";
 import { describeRule } from "@workspace/recurrence";
@@ -22,7 +22,7 @@ import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import {
-  COMING_UP_OPEN_KEY, comingUpOpen, completionLabel, dayHeading, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+  COMING_UP_OPEN_KEY, SHOW_DONE_KEY, comingUpOpen, completionLabel, dayHeading, overdueLabel, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
 } from "@/lib/team-list-view";
 import { sortTasks } from "@/lib/task-sort";
 import { TaskSortControl, useTaskSort } from "@/components/task-sort-control";
@@ -102,7 +102,7 @@ function ListsIndex() {
 }
 
 // ── /lists/:id ────────────────────────────────────────────────────────────
-function ListDetail({ id }: { id: number }) {
+export function ListDetail({ id }: { id: number }) {
   const { data, isLoading, error } = useTeamList(id);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -117,6 +117,16 @@ function ListDetail({ id }: { id: number }) {
     setShowComing(next);
   };
   const [showAll, setShowAll] = useState(false);
+  // Completed tasks hidden by default; the choice is remembered on this
+  // device (Graeme, 2026-10-15: "hide completed tasks by default").
+  const [showDone, setShowDone] = useState(() => {
+    try { return localStorage.getItem(SHOW_DONE_KEY) === "1"; } catch { return false; }
+  });
+  const toggleDone = () => {
+    const next = !showDone;
+    try { localStorage.setItem(SHOW_DONE_KEY, next ? "1" : "0"); } catch { /* just this visit */ }
+    setShowDone(next);
+  };
   // Time, then Priority unless this person picked otherwise for this list.
   const [sort, setSort] = useTaskSort(`team-list-${id}`, TEAM_LIST_DEFAULT_SORT);
   // Adding stays on the list (Graeme, 2026-10-13, same as My To-dos): the
@@ -153,8 +163,10 @@ function ListDetail({ id }: { id: number }) {
   const sortEntries = (rows: DayEntry[]) => sortTasks(
     rows.filter(e => byId.has(e.itemId)), sort, e => teamTaskSortFields(byId.get(e.itemId)!, e),
   );
-  const overdue = sortEntries(entries.filter(e => e.overdue));
-  const todays = sortEntries(entries.filter(e => !e.overdue));
+  const visible = (e: DayEntry) => showDone || !e.completion;
+  const overdue = sortEntries(entries.filter(e => e.overdue && visible(e)));
+  const todays = sortEntries(entries.filter(e => !e.overdue && visible(e)));
+  const hiddenDone = entries.filter(e => e.completion).length;
   const todayLabel = new Date(`${today}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
 
   return (
@@ -178,15 +190,20 @@ function ListDetail({ id }: { id: number }) {
         <p className="rounded-2xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 font-semibold">This list is archived — restore it in Settings to use it again.</p>
       )}
 
-      <div className="rounded-3xl border-2 border-border bg-card p-5 space-y-3">
-        <div className="flex items-baseline justify-between gap-3 flex-wrap">
-          <h2 className="font-display text-2xl font-bold">Today · {todayLabel}</h2>
-          <span className={cn("text-lg font-semibold", progress.overdue > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{progressText(progress)}</span>
-        </div>
-        {progress.total > 0 && <ProgressBar progress={progress} color={list.color} />}
+      {/* One row: today, progress, show/hide done, sort — saves vertical
+          space so the tasks start higher up (Graeme, 2026-10-15). */}
+      <div className="rounded-3xl border-2 border-border bg-card px-5 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <h2 className="font-display text-xl font-bold">Today · {todayLabel}</h2>
+        <span className={cn("text-base font-semibold", progress.overdue > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{progressText(progress)}</span>
+        {progress.total > 0 && <div className="w-40 sm:w-56"><ProgressBar progress={progress} color={list.color} /></div>}
+        <span className="flex-1" />
+        <button type="button" onClick={toggleDone} aria-pressed={showDone}
+          className="min-h-[48px] px-4 rounded-xl border-2 border-border bg-card font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
+          {showDone ? <EyeOff className="w-5 h-5 text-muted-foreground" /> : <Eye className="w-5 h-5 text-muted-foreground" />}
+          {showDone ? "Hide completed" : `Show completed${hiddenDone > 0 ? ` (${hiddenDone})` : ""}`}
+        </button>
+        <TaskSortControl spec={sort} onChange={setSort} />
       </div>
-
-      <TaskSortControl spec={sort} onChange={setSort} />
 
       {overdue.length > 0 && (
         <section className="space-y-3">
@@ -199,7 +216,7 @@ function ListDetail({ id }: { id: number }) {
         {overdue.length > 0 && <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Today</h3>}
         {todays.length === 0 && overdue.length === 0 && (
           <p className="rounded-2xl border-2 border-dashed border-border p-6 text-center text-muted-foreground text-lg">
-            {data.items.length === 0 ? (list.canEdit ? "No tasks yet — add the first one below." : "No tasks yet.") : "Nothing due today."}
+            {data.items.length === 0 ? (list.canEdit ? "No tasks yet — add the first one below." : "No tasks yet.") : hiddenDone > 0 && !showDone ? "All done for today 🎉" : "Nothing due today."}
           </p>
         )}
         {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
@@ -217,7 +234,7 @@ function ListDetail({ id }: { id: number }) {
             {data.comingUp.map(day => (
               <div key={day.date} className="space-y-3">
                 <h3 className="font-bold text-lg">{dayHeading(day.date, today)}</h3>
-                {sortTasks(day.entries.filter(e => byId.has(e.itemId)), sort, e => teamTaskSortFields(byId.get(e.itemId)!)).map(e => (
+                {sortTasks(day.entries.filter(e => byId.has(e.itemId) && (showDone || !e.completion)), sort, e => teamTaskSortFields(byId.get(e.itemId)!)).map(e => (
                   <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} upcoming
                     onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} />
                 ))}

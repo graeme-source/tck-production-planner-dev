@@ -186,6 +186,8 @@ export function completionLabel(
  *  2026-10-14: "upcoming tasks are open by default"). `stored` is the
  *  remembered choice ("0" = closed), or null when there isn't one. */
 export const COMING_UP_OPEN_KEY = "team-lists:coming-up-open";
+/** Show completed tasks on a team list (off by default; per device). */
+export const SHOW_DONE_KEY = "team-lists:show-completed";
 export function comingUpOpen(stored: string | null): boolean {
   return stored !== "0";
 }
