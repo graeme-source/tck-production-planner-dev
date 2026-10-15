@@ -17,6 +17,13 @@
  *   4. the legacy recipe_meat_marinades table (grams per kg of raw meat),
  *      only when none of the above exist
  * Only marinades whose target ingredient is category raw_meat are returned.
+ *
+ * includeMixExtra (the Raw Meat station, 2026-10-15): the recipe's Mix +g is
+ * added once for the run (lib/mix-extra.ts) — a meat line's extra is split
+ * between the meat and its filling-mix marinades, and a sub-recipe line's
+ * extra scales the marinades inside it — so prep makes the marinade the
+ * mixing station will ask for. mixExtraGrams says how much of totalGrams
+ * that is. Per-batch callers (the slow-meat tray limit) leave it off.
  */
 import {
   db,
@@ -31,6 +38,9 @@ import {
 import { eq, and, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { subMarinadeTotalGrams, subMarinadeExactGrams } from "./sub-recipe-marinades";
+import { toGrams } from "@workspace/units";
+import { mixExtraFor, roundMixExtra, type MixExtras } from "./mix-extra";
+import { loadRecipeMixExtras } from "./mix-extra-loader";
 
 export interface RawMeatMarinade {
   rawMeatIngredientId: number;
@@ -45,6 +55,8 @@ export interface RawMeatMarinade {
   // True = held back from prep day; the mixing/cooking station adds it
   // on production day. Weight still counts toward tray capacity.
   addAtCooking: boolean;
+  /** Grams of totalGrams that are Mix +g (0 unless includeMixExtra). */
+  mixExtraGrams: number;
 }
 
 export async function loadRawMeatMarinades(input: {
@@ -54,13 +66,19 @@ export async function loadRawMeatMarinades(input: {
   /** Raw meat kg used by the legacy grams-per-kg table (source 4). The
    *  station passes its own figure so its output is unchanged. */
   legacyRawMeatKgFor: (rawMeatIngredientId: number) => number;
+  /** Add the recipe's Mix +g for this run (see header). */
+  includeMixExtra?: boolean;
 }): Promise<RawMeatMarinade[]> {
   const { recipeId, portionsPerBatch, batchesTarget, legacyRawMeatKgFor } = input;
   const marinades: RawMeatMarinade[] = [];
+  const mixExtras: MixExtras | null = input.includeMixExtra && batchesTarget > 0
+    ? await loadRecipeMixExtras(recipeId)
+    : null;
 
   const marinadeTargetAlias = alias(ingredientsTable, "marinadeTarget");
   const marinadeIngRows = await db
     .select({
+      lineId: recipeIngredientsTable.id,
       ingredientId: recipeIngredientsTable.ingredientId,
       ingredientName: ingredientsTable.name,
       quantity: recipeIngredientsTable.quantity,
@@ -77,8 +95,10 @@ export async function loadRawMeatMarinades(input: {
   for (const mr of marinadeIngRows) {
     if (!mr.marinadeForIngredientId) continue;
     if (mr.targetCategory !== "raw_meat") continue;
+    const extra = mixExtraFor(mixExtras, "ingredient", mr.lineId);
+    const mixExtraGrams = toGrams(extra, mr.unit);
     const totalQty = Number(mr.quantity) * portionsPerBatch * batchesTarget;
-    const exactGrams = mr.unit === "kg" ? totalQty * 1000 : totalQty;
+    const exactGrams = (mr.unit === "kg" ? totalQty * 1000 : totalQty) + mixExtraGrams;
     const totalGrams = Math.round(exactGrams);
     marinades.push({
       rawMeatIngredientId: mr.marinadeForIngredientId,
@@ -89,14 +109,17 @@ export async function loadRawMeatMarinades(input: {
       totalGrams,
       exactGrams,
       addAtCooking: mr.marinadeAddAtCooking ?? false,
+      mixExtraGrams: roundMixExtra(mixExtraGrams),
     });
   }
 
   const marinadeSubTargetAlias = alias(ingredientsTable, "marinadeSubTarget");
   const marinadeSubRows = await db
     .select({
+      lineId: recipeSubRecipesTable.id,
       subRecipeId: recipeSubRecipesTable.subRecipeId,
       subRecipeName: subRecipesTable.name,
+      yieldUnit: subRecipesTable.yieldUnit,
       quantity: recipeSubRecipesTable.quantity,
       marinadeForIngredientId: recipeSubRecipesTable.marinadeForIngredientId,
       marinadeAddAtCooking: recipeSubRecipesTable.marinadeAddAtCooking,
@@ -110,8 +133,9 @@ export async function loadRawMeatMarinades(input: {
   for (const sr of marinadeSubRows) {
     if (!sr.marinadeForIngredientId) continue;
     if (sr.targetCategory !== "raw_meat") continue;
+    const mixExtraGrams = toGrams(mixExtraFor(mixExtras, "subRecipe", sr.lineId), sr.yieldUnit ?? "kg");
     const totalQty = Number(sr.quantity) * portionsPerBatch * batchesTarget;
-    const exactGrams = totalQty * 1000;
+    const exactGrams = totalQty * 1000 + mixExtraGrams;
     const totalGrams = Math.round(exactGrams);
     marinades.push({
       rawMeatIngredientId: sr.marinadeForIngredientId,
@@ -122,6 +146,7 @@ export async function loadRawMeatMarinades(input: {
       totalGrams,
       exactGrams,
       addAtCooking: sr.marinadeAddAtCooking ?? false,
+      mixExtraGrams: roundMixExtra(mixExtraGrams),
     });
   }
 
@@ -134,6 +159,7 @@ export async function loadRawMeatMarinades(input: {
     const marinadeInnerTarget = alias(ingredientsTable, "marinadeInnerTarget");
     const usedSubs = await db
       .select({
+        lineId: recipeSubRecipesTable.id,
         subRecipeId: recipeSubRecipesTable.subRecipeId,
         quantity: recipeSubRecipesTable.quantity,
         subYield: subRecipesTable.yield,
@@ -149,12 +175,21 @@ export async function loadRawMeatMarinades(input: {
       if (us.subRecipeId == null) continue;
       const subYield = Number(us.subYield) || 0;
       if (subYield <= 0) continue;
+      // Mix +g on the sub-recipe line scales everything inside it, its
+      // marinades included: fold the day's extra into the per-portion usage.
+      const portions = portionsPerBatch * batchesTarget;
+      const usageExtraPerPortion = portions > 0 ? mixExtraFor(mixExtras, "subRecipe", us.lineId) / portions : 0;
       const scale = {
-        subUsagePerPortion: Number(us.quantity) || 0,
+        subUsagePerPortion: (Number(us.quantity) || 0) + usageExtraPerPortion,
         subYield,
         portionsPerBatch,
         batchesTarget,
       };
+      const noExtraScale = { ...scale, subUsagePerPortion: Number(us.quantity) || 0 };
+      const extraGramsOf = (componentQty: number, unit: string | null) =>
+        usageExtraPerPortion > 0
+          ? roundMixExtra(subMarinadeExactGrams({ ...scale, componentQty, unit }) - subMarinadeExactGrams({ ...noExtraScale, componentQty, unit }))
+          : 0;
 
       const innerIngRows = await db
         .select({
@@ -183,6 +218,7 @@ export async function loadRawMeatMarinades(input: {
           totalGrams: subMarinadeTotalGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.unit }),
           exactGrams: subMarinadeExactGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.unit }),
           addAtCooking: mr.marinadeAddAtCooking ?? false,
+          mixExtraGrams: extraGramsOf(Number(mr.quantity) || 0, mr.unit),
         });
       }
 
@@ -215,6 +251,7 @@ export async function loadRawMeatMarinades(input: {
           totalGrams: subMarinadeTotalGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.componentYieldUnit }),
           exactGrams: subMarinadeExactGrams({ ...scale, componentQty: Number(mr.quantity) || 0, unit: mr.componentYieldUnit }),
           addAtCooking: mr.marinadeAddAtCooking ?? false,
+          mixExtraGrams: extraGramsOf(Number(mr.quantity) || 0, mr.componentYieldUnit),
         });
       }
     }
@@ -255,6 +292,9 @@ export async function loadRawMeatMarinades(input: {
         totalGrams,
         exactGrams,
         addAtCooking: false,
+        // Legacy grams-per-kg rows scale with the raw meat the caller passes,
+        // which already carries any Mix +g; the share isn't broken out here.
+        mixExtraGrams: 0,
       });
     }
   }

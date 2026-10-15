@@ -28,6 +28,12 @@ import { cn } from "@/lib/utils";
 import { formatLineCost } from "@/lib/recipe-line-cost";
 import { QuantityInput } from "./quantity-input";
 import type { EditorIngredientOption, EditorSubRecipeOption } from "./types";
+import { toGrams, convertQuantity } from "@workspace/units";
+
+const MIX_EXTRA_HELP =
+  "Extra grams per production day (not per batch), added once at the mixing station. " +
+  "If this item is prepped (meat, veg, sauces…) the extra is added to the prep requirement too, " +
+  "so it's ready by mixing. Fridge items (e.g. fior di latte) are just pulled out at mixing.";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyForm = UseFormReturn<any>;
@@ -104,7 +110,7 @@ export function LineRows(props: LineRowsProps) {
               <span className="text-[10px] text-muted-foreground font-medium text-center" title="Include in filling mix">Fill</span>
               <span className="text-[10px] text-muted-foreground font-medium text-center" title="Topping — skips prep">Top</span>
               <span className="text-[10px] text-muted-foreground font-medium text-center" title="Show in prep station (for filling items)">Prep</span>
-              <span className="text-[10px] text-amber-600 font-medium text-center" title="Extra grams added at mixing station only">Mix +g</span>
+              <span className="text-[10px] text-amber-600 font-medium text-center" title={MIX_EXTRA_HELP}>Mix +g</span>
             </>
           )}
           <span />
@@ -173,9 +179,10 @@ export function LineRows(props: LineRowsProps) {
                     </div>
                     <div className="flex justify-center">
                       {row?.includeInFillingMix ? (() => {
-                        const isKg = unit === "kg";
+                        // Stored in the line's own unit (a kg line stores kg),
+                        // entered as grams — converted through @workspace/units.
                         const stored = Number(row?.mixingOverage) || 0;
-                        const grams = isKg ? Math.round(stored * 1000) : stored;
+                        const grams = Math.round(toGrams(stored, unit) * 1000) / 1000;
                         return (
                           <div className="flex items-center gap-0.5">
                             <input
@@ -183,10 +190,11 @@ export function LineRows(props: LineRowsProps) {
                               step="1"
                               min="0"
                               placeholder="0"
+                              title={MIX_EXTRA_HELP}
                               value={grams || ""}
                               onChange={e => {
                                 const g = Number(e.target.value) || 0;
-                                set(`${path}.mixingOverage`, isKg ? g / 1000 : g);
+                                set(`${path}.mixingOverage`, convertQuantity(g, "g", unit) ?? g);
                               }}
                               className="w-12 h-8 rounded border border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-xs tabular-nums text-center focus:outline-none focus:ring-1 focus:ring-amber-500/30"
                             />

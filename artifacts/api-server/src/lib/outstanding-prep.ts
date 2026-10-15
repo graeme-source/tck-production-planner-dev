@@ -1,6 +1,8 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { londonDateString } from "./london-time";
+import { mixExtraFor } from "./mix-extra";
+import { loadRecipeMixExtras } from "./mix-extra-loader";
 
 // ── Outstanding prep for TODAY, in raw ingredient units ────────────────────
 //
@@ -139,13 +141,15 @@ export async function computeOutstandingPrepRaw(
     const defaultTinCount = calcTinCount(batches, item.max_batches_per_tin ?? null) ?? 1;
 
     const rowsRes = await db.execute(sql`
-      SELECT ri.ingredient_id, ri.quantity, ri.include_in_filling_mix, ri.is_topping,
+      SELECT ri.id AS line_id, ri.ingredient_id, ri.quantity, ri.include_in_filling_mix, ri.is_topping,
              i.name AS ingredient_name, i.category, i.processing_ratio
       FROM recipe_ingredients ri
       LEFT JOIN ingredients i ON ri.ingredient_id = i.id
       WHERE ri.recipe_id = ${item.recipe_id}
         AND ri.marinade_for_ingredient_id IS NULL
     `);
+    // Main prep makes each recipe's Mix +g once a day (lib/mix-extra.ts).
+    const mixExtras = await loadRecipeMixExtras(item.recipe_id);
 
     for (const row of rowsRes.rows as any[]) {
       if (row.is_topping) continue;
@@ -167,7 +171,8 @@ export async function computeOutstandingPrepRaw(
       }
       if (tinCount <= 0) continue;
 
-      const cookedQty = (Number(row.quantity) || 0) * (Number(item.portions_per_batch) || 10) * batches;
+      const cookedQty = (Number(row.quantity) || 0) * (Number(item.portions_per_batch) || 10) * batches
+        + mixExtraFor(mixExtras, "ingredient", row.line_id);
       const ratio = Number(row.processing_ratio) || 1;
       const rawQty = ratio > 0 ? cookedQty / ratio : cookedQty;
       if (rawQty <= 0) continue;

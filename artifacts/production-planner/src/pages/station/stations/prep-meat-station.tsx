@@ -21,6 +21,7 @@ import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { StationStockChecks } from "../shared/station-stock-checks";
+import { MixExtraNote } from "../shared/mix-extra-note";
 import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
 import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
 
@@ -563,6 +564,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
                               </p>
                             )}
+                            {!usePieces && <MixExtraNote qty={ing.mixExtraQty} unit={ing.unit} />}
                           </div>
                           <div className="text-right">
                             {usePieces ? (
@@ -584,7 +586,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           {usePieces ? (
                             <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ing.pieceCount} pieces</p>
                           ) : (
-                            <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
+                            <div className="text-right">
+                              <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
+                              <MixExtraNote qty={ing.mixExtraQty} unit={ing.unit} />
+                            </div>
                           )}
                         </div>
                       )}
@@ -643,6 +648,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                             ) : (
                               <span className="tabular-nums font-medium text-foreground">{m.totalGrams}g</span>
                             )}
+                            <MixExtraNote qty={m.mixExtraGrams} unit="g" />
                           </div>
                         </div>
                       );
@@ -687,6 +693,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </span>
                           <span className="text-right text-amber-800/80 dark:text-amber-300/80">
                             goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")} (counted in trays)
+                            <MixExtraNote qty={m.mixExtraGrams} unit="g" />
                           </span>
                         </div>
                       );

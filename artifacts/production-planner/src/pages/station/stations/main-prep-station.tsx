@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
+import { MixExtraNote } from "../shared/mix-extra-note";
 import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
@@ -41,6 +42,9 @@ export interface MainPrepIngredient {
   stockInPacks?: boolean;
   packWeight?: number | null;
   totalQty: number;
+  /** How much of totalQty is the recipes' Mix +g (extra prepped once per
+   *  production day for the mixing station), in `unit`. */
+  mixExtraQty?: number;
   totalTinCount: number;
   isSubRecipe?: boolean;
   recipes: Array<{
@@ -1101,6 +1105,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               : ` total · ${status.completedTinCount}/${status.totalTinCount} tins done`
                             }
                           </p>
+                          <MixExtraNote qty={ing.mixExtraQty} unit={ing.unit} className="mt-0.5" />
                           {isShared && (
                             <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
                               <span className="font-medium">Shared —</span>
