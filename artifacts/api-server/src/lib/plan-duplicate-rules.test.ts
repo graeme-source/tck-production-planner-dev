@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isDuplicateCreate } from "./plan-duplicate";
+import { isDuplicateCreate } from "./plan-duplicate-rules";
 
 describe("plan double-submit guard (Graeme, 2026-10-15)", () => {
   const items = [{ recipeId: 1, batchesTarget: 12 }, { recipeId: 2, batchesTarget: 9 }];
