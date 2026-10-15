@@ -33,6 +33,7 @@ import type { DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { cn } from "@/lib/utils";
+import { plannedPacksNetOfBags } from "@/lib/short-on-pack";
 import { packDayName, packDayNameCap } from "@/lib/pack-day";
 import { resetScrollWithin } from "@/lib/scroll";
 import { planSlideProductionTotals, planSlideScope } from "@/lib/meeting-plan-totals";
@@ -2383,9 +2384,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
     const isMac = it.recipeCategory === "Macaroni Cheese";
     const ppb = cr?.packsPerBatch ?? (isMac ? 1 : null);
     if (ppb == null) return null;
-    const bags = it.eightPackBagCount ?? 0;
-    const bagEquiv = cr?.packSize ? 8 / Number(cr.packSize) : 4;
-    return Math.max(0, Math.round((it.batchesTarget ?? 0) * ppb - bags * bagEquiv));
+    return plannedPacksNetOfBags(it.batchesTarget, ppb, cr?.packSize, it.eightPackBagCount);
   };
   const plannedPacksById = new Map<number, number>();
   for (const it of baseItems) {
