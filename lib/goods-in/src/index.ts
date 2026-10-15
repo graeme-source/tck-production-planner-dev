@@ -56,7 +56,7 @@ export interface LineFacts {
   quantityOrdered: number;
   quantityReceived: number;
   /** Ticked as received at goods-in. */
-  goodsInChecked: boolean | null | undefined;
+  goodsInChecked?: boolean | null;
 }
 
 export function isReceivedOrderStatus(status: string | null | undefined): boolean {
