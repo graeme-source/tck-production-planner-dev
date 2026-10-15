@@ -34,24 +34,17 @@ import {
   type LabelSnapshot, type PrintRefusal,
 } from "@workspace/product-labels";
 import { labelsPdf, pngDataUrl, proofLabel, stampTest } from "@workspace/product-labels/render";
-import { FOUNDER_FEATURES } from "@workspace/feature-registry";
-import { requireFounderArea } from "../middleware/founder-area-access";
 import { validate, validateQuery } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
-// Back labels at the wrapping station are for EVERYONE signed in (Graeme,
-// 12 Oct 2026: "Give everyone the label printing button") — they print only
-// the approved live label. TEST prints (the label review page, which can
-// stamp an unapproved proof) stay with the "Print back labels" grant.
-const testPrintGate = requireFounderArea(FOUNDER_FEATURES.printBackLabels);
-router.use((req: Request, res: Response, next) => {
-  const q = req.query?.["test"];
-  const isTest = q === "1" || q === "true" || (req.body && (req.body as { test?: unknown }).test === true);
-  if (isTest) { testPrintGate(req, res, next); return; }
-  next();
-});
+// Every print here is for EVERYONE signed in: back labels at the wrapping
+// station (Graeme, 12 Oct 2026: "Give everyone the label printing button"),
+// real labels dated today, and TEST prints from a product's label page
+// (Graeme, 15 Oct 2026: "Anyone should be able to do a test print" — a test
+// print is stamped TEST — NOT FOR SALE when there's no live label, and is
+// recorded as a test, so it can't pass for a real one).
 
 const RecipeParams = z.object({ recipeId: z.coerce.number().int().positive() });
 const PreviewQuery = z.object({

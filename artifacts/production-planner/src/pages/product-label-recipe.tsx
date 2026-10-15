@@ -18,7 +18,6 @@ import { ProofImage, type Area } from "@/components/product-labels/proof-image";
 import { PublishDialog, ChangeRow } from "@/components/product-labels/publish-dialog";
 import { RecipeLabelSettings } from "@/components/product-labels/recipe-label-settings";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
-import { useFounderArea } from "@/hooks/use-founder-area";
 import { DeclarationFixButtons } from "@/components/declaration-fix";
 import { otherBlockers } from "@/lib/declaration-fix";
 import { HubTabs, useCanSeeProductData, useTabParam, type HubTab } from "@/components/product-labels/hub-tabs";
@@ -43,8 +42,7 @@ export default function ProductLabelRecipePage() {
   const canEdit = role === "admin" || role === "manager";
   const { data, isLoading, error, isFetching } = useRecipeLabel(Number.isFinite(id) ? id : null);
   const [publishing, setPublishing] = useState(false);
-  // Test print: same feature gate as the wrapping station's back labels.
-  const { canPrintBackLabels } = useFounderArea();
+  // Test print and "Print labels — today": everyone (Graeme, 2026-10-15).
   const [testPrinting, setTestPrinting] = useState(false);
   // Real labels dated today for a product not on today's plan (2026-10-15).
   const [printingToday, setPrintingToday] = useState(false);
@@ -67,24 +65,22 @@ export default function ProductLabelRecipePage() {
         <Link href="/labels" className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"><ArrowLeft className="w-5 h-5" /> All labels</Link>
         <Link href={`/recipes?edit=${data.recipe.id}`} className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"><ChefHat className="w-5 h-5" /> {data.recipe.name} recipe</Link>
         {isFetching && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}
-        {canPrintBackLabels && (
-          <div className="ml-auto flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setPrintingToday(true)}
-              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
-            >
-              <Printer className="w-5 h-5" /> Print labels — today
-            </button>
-            <button
-              type="button"
-              onClick={() => setTestPrinting(true)}
-              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"
-            >
-              <Printer className="w-5 h-5" /> Test print
-            </button>
-          </div>
-        )}
+        <div className="ml-auto flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setPrintingToday(true)}
+            className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
+          >
+            <Printer className="w-5 h-5" /> Print labels — today
+          </button>
+          <button
+            type="button"
+            onClick={() => setTestPrinting(true)}
+            className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"
+          >
+            <Printer className="w-5 h-5" /> Test print
+          </button>
+        </div>
       </div>
 
       {tabs.length > 1 && <HubTabs tabs={tabs} value={tab} onChange={setTab} />}
