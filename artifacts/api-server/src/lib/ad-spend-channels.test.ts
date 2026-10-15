@@ -33,13 +33,13 @@ describe("combineChannelSpend", () => {
     expect(days.map(d => d.amount)).toEqual([50, 60]);
   });
 
-  it("from Google's first day, a day with no Google figure is missing (not £0)", () => {
+  it("from Google's first day, a day with no Google figure counts Meta alone and is flagged missing Google (not blanked)", () => {
     const days = combineChannelSpend({
       meta: [meta("2026-10-05", 50), meta("2026-10-06", 50)],
       google: [google("2026-10-05", 10)],
       googleFirstDate: "2026-10-05",
     });
-    expect(days[1]).toMatchObject({ date: "2026-10-06", amount: null, meta: 50, google: null, missing: "google" });
+    expect(days[1]).toMatchObject({ date: "2026-10-06", amount: 50, meta: 50, google: null, missing: "google" });
   });
 
   it("a Google figure without a Meta one is still missing Meta", () => {
@@ -74,7 +74,7 @@ describe("ROAS divides by Meta + Google", () => {
     expect(roasPercentFor(450, 7, 7, 100)).toBe(450);
   });
 
-  it("one day without its Google figure means no ROAS for the week", () => {
+  it("a day still waiting for Google keeps the week's ROAS, counting Meta for that day (2026-10-15)", () => {
     const dates = ["2026-10-04", "2026-10-05", "2026-10-06"];
     const days = combineChannelSpend({
       meta: dates.map(d => meta(d, 10)),
@@ -82,6 +82,10 @@ describe("ROAS divides by Meta + Google", () => {
       googleFirstDate: "2026-10-04",
     });
     const recorded = days.filter(d => d.amount != null);
-    expect(roasPercentFor(300, recorded.length, dates.length, 40)).toBeNull();
+    expect(recorded).toHaveLength(3);
+    expect(days[1].missing).toBe("google");
+    const spend = recorded.reduce((s, d) => s + (d.amount ?? 0), 0);
+    expect(spend).toBe(40);
+    expect(roasPercentFor(300, recorded.length, dates.length, spend)).not.toBeNull();
   });
 });

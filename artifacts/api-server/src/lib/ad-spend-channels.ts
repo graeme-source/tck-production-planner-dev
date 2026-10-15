@@ -45,7 +45,11 @@ export interface ChannelRow {
 
 export interface CombinedSpendDay {
   date: string;
-  /** Total of every channel, or null when a required channel is missing. */
+  /** Total of the channels that have sent a figure; null only when Meta
+   *  (the main channel) has nothing. A day still waiting for Google counts
+   *  Meta alone and says so via `missing: "google"` (Graeme, 2026-10-15:
+   *  blanking the whole day hid £412 of Meta spend while the Google script
+   *  wasn't running). */
   amount: number | null;
   /** The Meta channel's source ('manual' | 'meta'), as the panel has always shown. */
   source: string | null;
@@ -87,7 +91,7 @@ export function combineChannelSpend(input: {
     const missing: CombinedSpendDay["missing"] = !m ? "meta" : googleRequired && !g ? "google" : null;
     return {
       date,
-      amount: missing ? null : (pence(m!.amount) + (g ? pence(g.amount) : 0)) / 100,
+      amount: m ? (pence(m.amount) + (g ? pence(g.amount) : 0)) / 100 : null,
       source: m?.source ?? null,
       syncedAt: m?.syncedAt ?? null,
       meta: m ? m.amount : null,
