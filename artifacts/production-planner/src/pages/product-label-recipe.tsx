@@ -46,6 +46,8 @@ export default function ProductLabelRecipePage() {
   // Test print: same feature gate as the wrapping station's back labels.
   const { canPrintBackLabels } = useFounderArea();
   const [testPrinting, setTestPrinting] = useState(false);
+  // Real labels dated today for a product not on today's plan (2026-10-15).
+  const [printingToday, setPrintingToday] = useState(false);
   // Deck and nutrition keep the old Product Hub's access level.
   const canSeeData = useCanSeeProductData();
   const tabs = canSeeData ? ALL_TABS : ALL_TABS.filter(t => t.key === "label" || t.key === "history");
@@ -66,13 +68,22 @@ export default function ProductLabelRecipePage() {
         <Link href={`/recipes?edit=${data.recipe.id}`} className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"><ChefHat className="w-5 h-5" /> {data.recipe.name} recipe</Link>
         {isFetching && <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />}
         {canPrintBackLabels && (
-          <button
-            type="button"
-            onClick={() => setTestPrinting(true)}
-            className="ml-auto inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"
-          >
-            <Printer className="w-5 h-5" /> Test print
-          </button>
+          <div className="ml-auto flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setPrintingToday(true)}
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
+            >
+              <Printer className="w-5 h-5" /> Print labels — today
+            </button>
+            <button
+              type="button"
+              onClick={() => setTestPrinting(true)}
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary"
+            >
+              <Printer className="w-5 h-5" /> Test print
+            </button>
+          </div>
         )}
       </div>
 
@@ -152,6 +163,9 @@ export default function ProductLabelRecipePage() {
       </>)}
 
       {publishing && <PublishDialog data={data} onClose={() => setPublishing(false)} />}
+      {printingToday && (
+        <BackLabelsDialog mode="today" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setPrintingToday(false)} />
+      )}
       {testPrinting && (
         <BackLabelsDialog mode="test" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setTestPrinting(false)} />
       )}

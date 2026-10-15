@@ -41,10 +41,15 @@ const day = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en
  *  (label review page): count 1, dated today, live label — or, with no live
  *  label, today's proof stamped TEST — NOT FOR SALE; recorded as a test. */
 export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, mode = "production", onClose }: {
-  recipeId: number; recipeName: string; planItemId?: number; netPacks?: number; mode?: "production" | "test"; onClose: () => void;
+  recipeId: number; recipeName: string; planItemId?: number; netPacks?: number;
+  /** "today" (Graeme, 2026-10-15): real labels for a product that isn't on
+   *  today's plan, from its label page — the live label, dated today, no
+   *  plan item; recorded as a production print. */
+  mode?: "production" | "test" | "today"; onClose: () => void;
 }) {
   const test = mode === "test";
-  const startCount = test ? 1 : initialPrintCount(netPacks);
+  const today = mode === "today";
+  const startCount = test || today ? 1 : initialPrintCount(netPacks);
   const [count, setCount] = useState(startCount);
   const [countText, setCountText] = useState(() => String(startCount));
   const [busy, setBusy] = useState(false);
@@ -112,14 +117,18 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
       <div
         className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
-        role="dialog" aria-modal="true" aria-label={test ? "Test print" : "Back labels"}
+        role="dialog" aria-modal="true" aria-label={test ? "Test print" : today ? "Print labels today" : "Back labels"}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <Printer className="w-6 h-6 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <h2 className="font-bold text-xl leading-tight truncate">{test ? "Test print" : "Back labels"} — {recipeName}</h2>
+            <h2 className="font-bold text-xl leading-tight truncate">{test ? "Test print" : today ? "Print labels today" : "Back labels"} — {recipeName}</h2>
             <p className="text-sm text-muted-foreground">
-              {test ? "Try the printer: same PDF as the wrapping station, dated today, recorded as a test." : "A print-ready PDF of the live label, one label per page."}
+              {test
+                ? "Try the printer: same PDF as the wrapping station, dated today, recorded as a test."
+                : today
+                  ? "Real labels from the live label, dated today — for a product that isn't on today's plan. Set how many, make the PDF, print it."
+                  : "A print-ready PDF of the live label, one label per page."}
             </p>
           </div>
           <button onClick={onClose} className="p-3 rounded-xl hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
