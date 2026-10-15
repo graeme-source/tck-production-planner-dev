@@ -32,6 +32,7 @@ import {
   type BoxRecipeLinks, type MatchedBy, type QueueRow, type QueueWarning, type SalesOrder,
 } from "./test-box-production";
 import { setDeliveryClosed } from "./test-box-todos";
+import { loadPlanMarginSettings } from "./plan-margin-settings";
 import type { Actor, DeliveryRow, TestBoxRow, Tx } from "./test-box-data";
 
 type Db = typeof db | Tx;
@@ -195,13 +196,14 @@ export async function productionPreview(
   const sold = packsSoldByRecipe(orders, delivery.deliveryDate, links);
   const rows = await queueRowsForDay(conn, productionDate);
   const own = rows.filter(r => r.testBoxDeliveryId === delivery.id);
+  const margin = await loadPlanMarginSettings();
 
   const lines: PreviewLine[] = recipes.map(r => {
     const id = Number(r.id);
     const packs = sold.packs.get(id) ?? 0;
     const packSize = Number(r.pack_size) || 1;
     const portionsPerBatch = Number(r.portions_per_batch) || 10;
-    const { calzones, batches } = batchesFor({ packs, packSize, portionsPerBatch, safetyBatch });
+    const { calzones, batches } = batchesFor({ packs, packSize, portionsPerBatch, safetyBatch }, margin);
     const q = own.find(x => x.recipeId === id && x.status === "planned") ?? own.find(x => x.recipeId === id);
     return {
       recipeId: id, name: r.name, isDraft: r.is_draft === true,
