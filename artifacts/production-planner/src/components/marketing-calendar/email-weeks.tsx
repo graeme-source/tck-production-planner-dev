@@ -38,7 +38,7 @@ import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { calApi, createEmail, invalidateEmails, patchEmail, setEmailDate, type CalEvent, type CalTodo, type KlaviyoEmail, type PlannedEmail } from "./api";
 import { ensureSlot, invalidateCycle, removeDayEmail, saveSettings, setWeekProduct, useKlaviyoResults, type CycleResponse } from "./cycle-api";
-import { ApprovalBadge, type ApprovalIndex } from "./approvals";
+import { ApprovalBadge, ApprovalPanel, type ApprovalIndex } from "./approvals";
 import { EMAIL_TYPE_TONE, NOTE_TONE, PAUSE_TONE, TODO_TONE, emailStage, offerTone, typeStyle } from "./constants";
 
 type Row = ListRow<PlannedEmail, KlaviyoEmail>;
@@ -62,6 +62,8 @@ export function EmailWeeks(props: {
   linkedCampaignIds: string[];
   klaviyoError?: string | null;
   approvals: ApprovalIndex;
+  /** Bumped by the "needs approval — Review" banner: scroll to the first one. */
+  approvalJump?: number;
   /** Other calendar entries shown on their days / weeks. */
   notes: CalEvent[];
   todos: CalTodo[];
@@ -80,6 +82,29 @@ export function EmailWeeks(props: {
     config: cycle.config, firstMonday: props.firstMonday, weeks: props.weeks, planned, klaviyo,
     linkedCampaignIds: props.linkedCampaignIds, results, keyDates: cycle.keyDates, products: cycle.products, today,
   }), [cycle, props.firstMonday, props.weeks, planned, klaviyo, props.linkedCampaignIds, results, today]);
+
+  // Go to today / the next email waiting for approval (Graeme, 2026-10-15:
+  // "click today, see what I need to approve, click the link, it opens
+  // Klaviyo … and then approve it").
+  const [jumpNote, setJumpNote] = useState<string | null>(null);
+  const scrollTo = (selector: string, emptyNote: string) => {
+    window.setTimeout(() => {
+      const el = document.querySelector(selector);
+      if (el) { el.scrollIntoView({ behavior: "smooth", block: "center" }); setJumpNote(null); }
+      else setJumpNote(emptyNote);
+    }, 120);
+  };
+  const goToday = () => {
+    if (props.earlier !== 0) props.onEarlierChange(0);
+    scrollTo('[data-day-today="true"]', "Today isn't in the weeks shown.");
+  };
+  const needsCount = weeks.reduce((n, w) => n + w.days.reduce((m, d) => m + d.rows.filter(r =>
+    r.kind === "email" && r.planned && props.approvals.forPlan(r.planned.id)?.needsApproval).length, 0), 0);
+  const goNextApproval = () => scrollTo('[data-needs-approval="true"]', "Nothing waiting for approval in the weeks shown.");
+  useEffect(() => {
+    if (props.approvalJump) goNextApproval();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.approvalJump]);
 
   const offers = cycle.config.offers;
   const offerDays = offerDayIndexes(cycle.config.weeklyPlan);
@@ -169,6 +194,14 @@ export function EmailWeeks(props: {
             <CalendarDays className="w-4 h-4" /> Back to this week
           </button>
         )}
+        <button type="button" onClick={goToday} className="px-4 py-2.5 rounded-xl border-2 border-primary/50 text-primary font-semibold hover:bg-primary/10 flex items-center gap-1.5">
+          <CalendarDays className="w-4 h-4" /> Go to today
+        </button>
+        {needsCount > 0 && (
+          <button type="button" onClick={goNextApproval} className="px-4 py-2.5 rounded-xl bg-amber-500 text-white font-semibold hover:bg-amber-600 flex items-center gap-1.5">
+            <AlertTriangle className="w-4 h-4" /> {needsCount} to approve
+          </button>
+        )}
         <div className="flex-1" />
         {cycle.canEditSetup && (
           <button type="button" onClick={props.onOpenSetup} className="px-4 py-2.5 rounded-xl border-2 border-primary/50 text-primary font-semibold flex items-center gap-1.5 hover:bg-primary/10">
@@ -189,6 +222,7 @@ export function EmailWeeks(props: {
         {props.klaviyoError && <span className="text-amber-700 dark:text-amber-400">Klaviyo emails: {props.klaviyoError}</span>}
       </div>
 
+      {jumpNote && <p className="text-sm text-muted-foreground">{jumpNote}</p>}
       {moveErr && <p className="text-sm text-destructive flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> {moveErr}</p>}
       <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={onDragStart} onDragEnd={e => void onDragEnd(e)} onDragCancel={() => setDragging(null)}>
         <div className="space-y-5">
@@ -340,7 +374,7 @@ function DayBlock(props: WeekCardProps & { day: Week["days"][number] }) {
   const virtualSlot = d.rows.some(r => r.kind === "email" && r.planned == null);
   const drop = useDroppable({ id: `day-${d.date}` });
   return (
-    <div ref={drop.setNodeRef} className={cn("grid grid-cols-1 @3xl:grid-cols-[6.5rem_minmax(0,1fr)] @6xl:grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3", d.weekday === 5 && "bg-secondary/30", d.isToday && "bg-primary/5", drop.isOver && "bg-primary/15 ring-2 ring-inset ring-primary")}>
+    <div ref={drop.setNodeRef} data-day-today={d.isToday ? "true" : undefined} className={cn("grid grid-cols-1 @3xl:grid-cols-[6.5rem_minmax(0,1fr)] @6xl:grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3", d.weekday === 5 && "bg-secondary/30", d.isToday && "bg-primary/5", drop.isOver && "bg-primary/15 ring-2 ring-inset ring-primary")}>
       <div className="flex @3xl:flex-col flex-wrap items-baseline @3xl:items-start gap-x-2 gap-y-1">
         <span className="font-bold text-base">{WEEKDAYS_SHORT[d.weekday]}{d.isToday && <span className="ml-1.5 text-xs font-bold text-primary">Today</span>}</span>
         <span className="text-sm text-muted-foreground tabular-nums">{dayMonth(d.date)}</span>
@@ -423,8 +457,10 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
   const k = row.klaviyo;
   const r = row.result;
 
+  const needsApproval = !!ap?.needsApproval;
+  const klaviyoHref = k?.klaviyoUrl ?? (p?.klaviyoCampaignId ? klaviyoCampaignHref(p.klaviyoCampaignId) : null);
   return (
-    <div className={cn("flex flex-wrap items-start gap-x-4 gap-y-2 @md:grid @md:grid-cols-[9rem_minmax(0,1fr)] @md:grid-rows-[auto_1fr] @3xl:grid-cols-[10rem_8rem_minmax(0,1fr)] @3xl:grid-rows-none @6xl:grid-cols-[12rem_8rem_minmax(0,1fr)]", row.skipped && "opacity-60")}>
+    <div data-needs-approval={needsApproval ? "true" : undefined} className={cn("scroll-mt-24 flex flex-wrap items-start gap-x-4 gap-y-2 @md:grid @md:grid-cols-[9rem_minmax(0,1fr)] @md:grid-rows-[auto_1fr] @3xl:grid-cols-[10rem_8rem_minmax(0,1fr)] @3xl:grid-rows-none @6xl:grid-cols-[12rem_8rem_minmax(0,1fr)]", row.skipped && "opacity-60")}>
       {/* Offer */}
       <div className="flex flex-wrap items-center gap-2 min-w-0 @md:col-start-1 @md:row-start-1">
         <button type="button" ref={drag.setNodeRef} {...drag.listeners} {...drag.attributes}
@@ -483,9 +519,22 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
               <Mail className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">In Klaviyo: {k.name} · {k.status === "Draft" ? "draft" : k.status.toLowerCase()}</span> <ExternalLink className="w-3 h-3 flex-shrink-0" />
             </a>
           ) : p?.klaviyoCampaignId ? (
-            <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">Linked to Klaviyo: {p.klaviyoCampaignName ?? "campaign"}</span>
+            <a href={klaviyoHref!} target="_blank" rel="noreferrer" className="text-xs font-semibold px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-800 dark:text-teal-200 inline-flex items-center gap-1 max-w-full">
+              <Mail className="w-3.5 h-3.5 flex-shrink-0" /> <span className="truncate">In Klaviyo: {p.klaviyoCampaignName ?? "campaign"}</span> <ExternalLink className="w-3 h-3 flex-shrink-0" />
+            </a>
           ) : null}
         </div>
+        {needsApproval && p && (
+          <div className="space-y-2">
+            {klaviyoHref && (
+              <a href={klaviyoHref} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border-2 border-teal-500/50 text-teal-800 dark:text-teal-200 font-semibold hover:bg-teal-500/10">
+                <ExternalLink className="w-4 h-4" /> Open in Klaviyo to check it
+              </a>
+            )}
+            <ApprovalPanel item={ap} row={approvals.row(ap!.key)} canApprove={approvals.canApprove} target={{ emailId: p.id }} />
+          </div>
+        )}
         {r && <ResultBox name={k?.name ?? null} r={r} />}
         <NoteBox row={row} ensure={ensure} />
         <div className="flex flex-wrap gap-2">
@@ -638,4 +687,11 @@ function UnplannedRow(props: WeekCardProps & { row: Extract<Row, { kind: "unplan
       {err && <p className="text-sm text-destructive flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> {err}</p>}
     </div>
   );
+}
+
+/** A linked campaign we haven't loaded (rare — linked drafts are loaded
+ *  whatever their day): its Klaviyo editor, the path the server's
+ *  klaviyoUrlFor uses for drafts (approval happens at the draft stage). */
+function klaviyoCampaignHref(id: string): string {
+  return `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/wizard/1`;
 }

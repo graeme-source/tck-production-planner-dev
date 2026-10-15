@@ -20,10 +20,10 @@ import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
-  BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, GanttChartSquare, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, PencilLine, Plus, Sparkles, Square, StickyNote, X, AlertTriangle,
+  BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, List, Loader2, Lock, Mail, MailPlus, Megaphone, Package, PencilLine, Plus, Sparkles, Square, StickyNote, X, AlertTriangle,
 } from "lucide-react";
 import {
-  addDays, addMonths, filingEvents, listFirstMonday, formatRange, isNoteEvent, monthGridWeeks, monthStart, overlaps, stageLabel, timelineRange, type DragMode, type TimelineZoom,
+  addDays, addMonths, filingEvents, listFirstMonday, formatRange, isNoteEvent, monthGridWeeks, monthStart, overlaps, stageLabel, type DragMode,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -36,9 +36,7 @@ import { EmailModal } from "./email-modal";
 import { NoteModal } from "./note-modal";
 import { EVENT_TYPES, KLAVIYO_DRAFT_TONE, KLAVIYO_TONE, NOTE_TONE, THIN_TYPES, TODO_TONE, firstName, statusLabel, typeStyle } from "./constants";
 import { MonthGrid } from "./month-grid";
-import { Timeline, timelineMonths } from "./timeline";
 import { EventModal } from "./event-modal";
-import { ListView } from "./list-view";
 import { PlannedEmailModal } from "./planned-email-modal";
 import { ApprovalBadge, useApprovalIndex } from "./approvals";
 import { EmailWeeks, WEEK_COUNTS } from "./email-weeks";
@@ -47,8 +45,10 @@ import { useCycle } from "./cycle-api";
 
 // "weeks" is the email plan List view (2026-10-14, the default); "phases"
 // is the earlier list grouped by phase, kept with its Needs-approval filter.
-type View = "weeks" | "month" | "timeline" | "phases";
-export type ListFilter = "all" | "needs";
+// Two views (Graeme, 2026-10-15: "remove the By phase tab … remove the
+// timeline and just have list and month view"). A device that remembered
+// either old one lands on the List.
+type View = "weeks" | "month";
 // New key (2026-10-14) so everyone starts on the new List view once.
 const VIEW_KEY = "tck_marketing_calendar_view_v2";
 const WEEKS_KEY = "tck_marketing_calendar_weeks";
@@ -57,7 +57,7 @@ const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "Ju
 function readView(): View {
   try {
     const v = localStorage.getItem(VIEW_KEY);
-    return v === "timeline" || v === "month" || v === "phases" ? v : "weeks";
+    return v === "month" ? "month" : "weeks";
   } catch { return "weeks"; }
 }
 function readWeeks(): number {
@@ -106,24 +106,21 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   const [openNote, setOpenNote] = useState<{ id: number | null; newOn?: string; key: number } | null>(null);
   const [openTodo, setOpenTodo] = useState<number | null>(null);
   const [view, setView] = useState<View>(readView);
-  const [listFilter, setListFilter] = useState<ListFilter>("all");
   const sectionRef = useRef<HTMLElement>(null);
+  // "Needs approval — Review" banner: the List view, scrolled to the first
+  // email waiting for approval (EmailWeeks does the jump).
+  const [approvalJump, setApprovalJump] = useState(0);
   useEffect(() => {
     if (!reviewSignal) return;
-    setView("phases");
-    setListFilter("needs");
-    // After the List view has rendered, so the jump lands on it.
-    const t = window.setTimeout(() => sectionRef.current?.scrollIntoView({ block: "start" }), 150);
-    return () => window.clearTimeout(t);
+    setView("weeks");
+    setApprovalJump(n => n + 1);
   }, [reviewSignal]);
-  const [zoom, setZoom] = useState<TimelineZoom>("weeks");
   const [anchor, setAnchor] = useState(() => monthStart(londonToday()));
   const [open, setOpen] = useState<{ id: number | null; newOn?: string } | null>(null);
   const [dragError, setDragError] = useState<string | null>(null);
   const [openEmail, setOpenEmail] = useState<KlaviyoEmail | null>(null);
   const [openPlanned, setOpenPlanned] = useState<{ id: number | null; newOn?: string; key: number } | null>(null);
   const [addChoice, setAddChoice] = useState<string | null>(null);
-  const [showPast, setShowPast] = useState(false);
   const localToday = londonToday();
   // The email plan (List view): its cycle, how many weeks, how far back.
   const cycleQ = useCycle();
@@ -138,13 +135,8 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
       const weeks = monthGridWeeks(anchor);
       return { from: weeks[0][0], to: weeks[weeks.length - 1][6] };
     }
-    if (view === "weeks") return { from: firstMonday, to: addDays(firstMonday, shownWeeks * 7 - 1) };
-    if (view === "phases") {
-      // Upcoming: today to a year out; with "Show past", six months back too.
-      return { from: showPast ? addMonths(monthStart(localToday), -6) : localToday, to: addDays(localToday, 365) };
-    }
-    return timelineRange(anchor, timelineMonths(zoom));
-  }, [view, anchor, zoom, showPast, localToday, firstMonday, shownWeeks]);
+    return { from: firstMonday, to: addDays(firstMonday, shownWeeks * 7 - 1) };
+  }, [view, anchor, firstMonday, shownWeeks]);
 
   const { data, isLoading, isError, error } = useCalendarEvents(range.from, range.to);
   const today = data?.today ?? localToday;
@@ -175,8 +167,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
   }, [emails, klaviyo.data]);
   // Month grid (2026-10-09): drafts too, as dashed "Klaviyo draft" chips —
   // "if we build drafts in Klaviyo I'd expect them in the calendar". Ones
-  // linked to a plan show once, as the plan. The timeline stays sends-only.
-  const calendarEmails = useMemo(() => emails.filter(m => m.status !== "Draft"), [emails]);
+  // linked to a plan show once, as the plan.
   const gridEmails = useMemo(() => {
     const linkedAnywhere = new Set(klaviyo.data?.linkedCampaignIds ?? []);
     return emails.filter(m => m.status !== "Draft" || !linkedAnywhere.has(m.id));
@@ -227,11 +218,11 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
           <Link href="/test-boxes" className="px-3.5 py-2 rounded-xl border-2 border-rose-500/40 text-rose-700 dark:text-rose-300 text-sm font-semibold flex items-center gap-1.5 hover:bg-rose-500/10">
             <Package className="w-4 h-4" /> Test boxes
           </Link>
-          <button onClick={() => setOpen({ id: null, newOn: (view === "phases" || view === "weeks") || (today >= anchor && today < monthEnd) ? today : anchor })}
+          <button onClick={() => setOpen({ id: null, newOn: view === "weeks" || (today >= anchor && today < monthEnd) ? today : anchor })}
             className="px-3.5 py-2 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
             <Plus className="w-4 h-4" /> Add phase
           </button>
-          <button onClick={() => addEmail((view === "phases" || view === "weeks") || (today >= anchor && today < monthEnd) ? today : anchor)}
+          <button onClick={() => addEmail(view === "weeks" || (today >= anchor && today < monthEnd) ? today : anchor)}
             className="px-3.5 py-2 rounded-xl bg-indigo-600 text-white text-sm font-semibold flex items-center gap-1.5 hover:bg-indigo-700">
             <MailPlus className="w-4 h-4" /> Add email
           </button>
@@ -240,22 +231,7 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
 
       {/* Navigation row */}
       <div className="flex items-center gap-2 flex-wrap">
-        {view === "weeks" ? null : view === "phases" ? (<>
-          <Segmented
-            value={listFilter}
-            onChange={v => setListFilter(v as ListFilter)}
-            options={[
-              { value: "all", label: "All emails" },
-              { value: "needs", label: `Needs approval${approvals.loaded ? ` (${needsCount})` : ""}` },
-            ]}
-          />
-          {listFilter === "all" && (
-            <label className="flex items-center gap-2 text-sm font-semibold px-3 py-2 rounded-xl border-2 border-border cursor-pointer">
-              <input type="checkbox" checked={showPast} onChange={e => setShowPast(e.target.checked)} className="w-4 h-4" />
-              Show past
-            </label>
-          )}
-        </>) : (<>
+        {view === "weeks" ? null : (<>
         <div className="flex items-center gap-1">
           <button onClick={() => setAnchor(a => addMonths(a, -1))} className="p-2 rounded-xl border-2 border-border hover:bg-secondary/50" aria-label="Previous month">
             <ChevronLeft className="w-5 h-5" />
@@ -280,21 +256,12 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
         </label>
         </>)}
         <div className="flex-1" />
-        {view === "timeline" && (
-          <Segmented
-            value={zoom}
-            onChange={v => setZoom(v as TimelineZoom)}
-            options={[{ value: "weeks", label: "Weeks" }, { value: "months", label: "Months" }]}
-          />
-        )}
         <Segmented
           value={view}
           onChange={v => changeView(v as View)}
           options={[
             { value: "weeks", label: "List", icon: <List className="w-4 h-4" /> },
             { value: "month", label: "Month", icon: <CalendarDays className="w-4 h-4" /> },
-            { value: "timeline", label: "Timeline", icon: <GanttChartSquare className="w-4 h-4" /> },
-            { value: "phases", label: "By phase", icon: <Megaphone className="w-4 h-4" /> },
           ]}
         />
       </div>
@@ -341,7 +308,10 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
               earlier={earlier}
               onEarlierChange={setEarlier}
               planned={planned}
-              klaviyo={emails}
+              // Linked drafts too (any day), so an email waiting for approval
+              // always has its Klaviyo link (Graeme, 2026-10-15).
+              klaviyo={approvalKlaviyo}
+              approvalJump={approvalJump}
               linkedCampaignIds={klaviyo.data?.linkedCampaignIds ?? []}
               klaviyoError={klaviyo.data?.error ?? null}
               approvals={approvals}
@@ -373,46 +343,9 @@ export function MarketingCalendar({ reviewSignal = 0 }: {
             onAddOn={setAddChoice}
             onDatesChange={onDatesChange}
           />
-        ) : view === "phases" ? (
-          <ListView
-            today={today}
-            events={events}
-            planned={planned}
-            klaviyo={emails}
-            notes={notes}
-            todos={todos}
-            onOpenNote={id => setOpenNote({ id, key: id })}
-            onOpenTodo={t => setOpenTodo(t.id)}
-            showPast={listFilter === "all" && showPast}
-            filter={listFilter}
-            approvals={approvals}
-            onShowAll={() => setListFilter("all")}
-            onOpenCampaign={id => setOpen({ id })}
-            onOpenEmail={id => setOpenPlanned({ id, key: id })}
-            onOpenKlaviyo={setOpenEmail}
-            onAddEmail={addEmail}
-          />
-        ) : (
-          <Timeline
-            anchor={anchor}
-            zoom={zoom}
-            today={today}
-            events={events}
-            emails={calendarEmails}
-            notes={notes}
-            onOpen={openAny}
-            onOpenEmail={setOpenEmail}
-            onAddOn={setAddChoice}
-            onDatesChange={onDatesChange}
-          />
-        )}
+        ) : null}
       </div>
 
-      {view === "phases" && (
-        <p className="text-sm text-muted-foreground">
-          Emails belong to the phase running on their send day · tap a phase's name to rename it or change its dates.
-        </p>
-      )}
 
       {/* Legend */}
       <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
