@@ -21,6 +21,8 @@ import { londonDateString, londonStartOfDay } from "../lib/london-time";
 import { builtPortionWeightG } from "../lib/built-portion-weight";
 import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } from "../lib/sub-recipe-marinades";
 import { loadRawMeatMarinades, type RawMeatMarinade } from "../lib/raw-meat-marinades";
+import { mixExtraFor, mixExtraPrepQty, roundMixExtra, MixExtraNotes } from "../lib/mix-extra";
+import { createMixExtrasCache } from "../lib/mix-extra-loader";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
 import { loadMinShelfDaysRules, minShelfDaysFor } from "../lib/min-shelf-days";
 import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-per-hour";
@@ -4243,7 +4245,7 @@ router.get("/:id/prep-requirements", async (req, res) => {
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true });
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true, mixExtraBatches: batchesTarget });
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
@@ -4401,7 +4403,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true });
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true, mixExtraBatches: batchesTarget });
     const agg = aggregateIngredients(resolved);
 
     const ingredients: Array<{
@@ -4429,6 +4431,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       pieceCount: number | null;
       stockInPacks: boolean;
       packWeight: number | null;
+      mixExtraQty: number;
     }> = [];
 
     let hasRelevantIngredients = false;
@@ -4519,7 +4522,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
     let pastaKg = 0;
     for (const [, ing] of agg) {
       // Work out how much of this ingredient is marinade-only vs. base usage
-      const marinadeOnlyPerBatch = (marinadeQtyPerPortion.get(ing.ingredientId) ?? 0) * portionsPerBatch;
+      const marinadeOnlyPerBatch = (marinadeQtyPerPortion.get(ing.ingredientId) ?? 0) * portionsPerBatch + ing.marinadeMixExtraPerBatch;
       const nonMarinadePerBatch = ing.quantityPerBatch - marinadeOnlyPerBatch;
 
       // At non-prep_meat stations: skip if the ingredient is used ONLY as a marinade.
@@ -4551,6 +4554,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
       }
       const cookedQty = effectiveQtyPerBatch * batchesTarget;
       const rawQty = ing.processingRatio ? cookedQty / ing.processingRatio : cookedQty;
+      const mixExtraCooked = (station === "prep_meat" || isMozzType ? ing.mixExtraPerBatch : ing.mixExtraPerBatch - ing.marinadeMixExtraPerBatch) * batchesTarget;
 
       const roundedCooked = roundByUnit(cookedQty, ing.unit);
       const roundedRaw = roundByUnit(rawQty, ing.unit);
@@ -4597,6 +4601,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         trayCount: null,
         stockInPacks: ing.stockInPacks,
         packWeight: ing.packWeight,
+        mixExtraQty: roundMixExtra(mixExtraPrepQty(mixExtraCooked, ing.processingRatio, ing.prepWeightMode)),
       });
     }
 
@@ -4608,6 +4613,7 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
         recipeId: planItem.recipeId,
         portionsPerBatch,
         batchesTarget,
+        includeMixExtra: true,
         legacyRawMeatKgFor: id => {
           const rawMeatIng = ingredients.find(i => i.ingredientId === id);
           return rawMeatIng ? rawMeatIng.rawQty / 1000 : 0;
@@ -4676,15 +4682,19 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
     .where(eq(productionPlanItemsTable.planId, planId));
 
   const subRecipeTotals = new Map<number, number>();
+  const mixExtrasOf = createMixExtrasCache();
+  const mixNotes = new MixExtraNotes();
 
   for (const item of planItems) {
     if (!item.recipeId) continue;
     const batches = Number(item.batchesTarget) || 0;
     if (batches === 0) continue;
     const portionsPerBatch = Number(item.portionsPerBatch) || 10;
+    const mixExtras = await mixExtrasOf(item.recipeId);
 
     const srRows = await db
       .select({
+        lineId: recipeSubRecipesTable.id,
         subRecipeId: recipeSubRecipesTable.subRecipeId,
         quantity: recipeSubRecipesTable.quantity,
       })
@@ -4693,7 +4703,9 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
 
     for (const sr of srRows) {
       if (sr.subRecipeId == null) continue;
-      const qty = Number(sr.quantity) * portionsPerBatch * batches;
+      const mixExtra = mixExtraFor(mixExtras, "subRecipe", sr.lineId);
+      mixNotes.add("subRecipe", sr.subRecipeId, mixExtra);
+      const qty = Number(sr.quantity) * portionsPerBatch * batches + mixExtra;
       subRecipeTotals.set(sr.subRecipeId, (subRecipeTotals.get(sr.subRecipeId) ?? 0) + qty);
     }
   }
@@ -4758,6 +4770,7 @@ router.get("/:id/sub-recipe-requirements", async (req, res) => {
       shelfLifeDays: sr.shelfLifeDays,
       isBase: sr.isBase,
       totalRequired: subRecipeTotals.get(sr.id) ?? 0,
+      mixExtraQty: mixNotes.get("subRecipe", sr.id),
       ingredients: ingRows.map(i => ({
         id: i.id,
         ingredientId: i.ingredientId ?? 0,
@@ -5151,7 +5164,7 @@ router.get("/:id/ingredient-requirements", async (req, res) => {
     totalBatches += batchesTarget;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true });
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { skipToppings: true, mixExtraBatches: batchesTarget });
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
@@ -6981,12 +6994,18 @@ router.get("/:id/main-prep", async (req, res) => {
     subRecipeId: number;
   }>();
 
+  // Mix +g (lib/mix-extra.ts): each recipe's extra is prepped once per day.
+  const mixExtrasOf = createMixExtrasCache();
+  const mixNotes = new MixExtraNotes();
+
   for (const planItem of planItems) {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
+    const mixExtras = await mixExtrasOf(planItem.recipeId);
 
     const directIngredients = await db
       .select({
+        lineId: recipeIngredientsTable.id,
         ingredientId: recipeIngredientsTable.ingredientId,
         quantity: recipeIngredientsTable.quantity,
         includeInFillingMix: recipeIngredientsTable.includeInFillingMix,
@@ -7055,7 +7074,8 @@ router.get("/:id/main-prep", async (req, res) => {
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
       const qtyPerPortion = Number(row.quantity) || 0;
-      const cookedQty = qtyPerPortion * portionsPerBatch * batchesTarget;
+      const mixExtra = mixExtraFor(mixExtras, "ingredient", row.lineId);
+      const cookedQty = qtyPerPortion * portionsPerBatch * batchesTarget + mixExtra;
       const ratio = row.processingRatio ? Number(row.processingRatio) : null;
       const rawQty = ratio ? cookedQty / ratio : cookedQty;
       const originalUnit = row.unit ?? "g";
@@ -7084,6 +7104,7 @@ router.get("/:id/main-prep", async (req, res) => {
       const qtyPerTin = tinCount > 0
         ? (useCount ? Math.ceil(roundedQty / tinCount) : roundByUnit(roundedQty / tinCount, unit))
         : roundedQty;
+      if (!useCount) mixNotes.add("ingredient", row.ingredientId, mixExtraPrepQty(mixExtra, ratio, mode));
 
       const existing = ingredientMap.get(row.ingredientId);
       if (existing) {
@@ -7136,6 +7157,7 @@ router.get("/:id/main-prep", async (req, res) => {
     if (station === "main_prep") {
       const subRecipeRows = await db
         .select({
+          lineId: recipeSubRecipesTable.id,
           subRecipeId: recipeSubRecipesTable.subRecipeId,
           quantity: recipeSubRecipesTable.quantity,
           includeInFillingMix: recipeSubRecipesTable.includeInFillingMix,
@@ -7172,7 +7194,8 @@ router.get("/:id/main-prep", async (req, res) => {
 
         const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
         const qtyPerPortion = Number(sr.quantity) || 0;
-        const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget;
+        const srMixExtra = mixExtraFor(mixExtras, "subRecipe", sr.lineId);
+        const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget + srMixExtra;
         const unit = sr.yieldUnit ?? "kg";
         const roundedQty = roundByUnit(totalQty, unit);
         if (roundedQty <= 0) continue;
@@ -7219,6 +7242,7 @@ router.get("/:id/main-prep", async (req, res) => {
             const compUnit = comp.unit ?? "g";
             const rawScaled = compQty * scaleFactor;
             if (rawScaled <= 0) continue;
+            mixNotes.add("ingredient", comp.ingredientId, compQty * srMixExtra / srYield);
             // Pasta coming in via a sub-recipe expansion (e.g. macaroni
             // inside a cheese-sauce sub-recipe) counts toward the synthetic
             // cooking-water / salt rows too.
@@ -7293,6 +7317,7 @@ router.get("/:id/main-prep", async (req, res) => {
               ? Math.round(nestedTotalQty * 1000) / 1000
               : roundByUnit(nestedTotalQty, nestedUnit);
             if (nestedRounded <= 0) continue;
+            mixNotes.add("subRecipe", nested.componentSubRecipeId, nestedQtyPerParent * srMixExtra / srYield);
             const nestedTinCount = srTinCount;
             const nestedQtyPerTin = nestedTinCount > 0
               ? roundByUnit(nestedRounded / nestedTinCount, nestedUnit)
@@ -7345,6 +7370,7 @@ router.get("/:id/main-prep", async (req, res) => {
         }
 
         const qtyPerTin = srTinCount > 0 ? roundByUnit(roundedQty / srTinCount, unit) : roundedQty;
+        mixNotes.add("subRecipe", sr.subRecipeId, srMixExtra);
 
         // Sub-recipes used by multiple parent recipes get one entry per
         // parent recipe (same shape as direct ingredients), so e.g. Garlic
@@ -7570,8 +7596,10 @@ router.get("/:id/main-prep", async (req, res) => {
     const batchesTarget = Number(planItem.batchesTarget) || 0;
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
+    const mixExtras = await mixExtrasOf(planItem.recipeId);
     const linkedRows = await db
       .select({
+        lineId: recipeIngredientsTable.id,
         ingredientId: recipeIngredientsTable.ingredientId,
         ingredientName: ingredientsTable.name,
         unit: ingredientsTable.unit,
@@ -7592,7 +7620,7 @@ router.get("/:id/main-prep", async (req, res) => {
       const parentId = lr.marinadeForIngredientId!;
       if (!ingredientMap.has(parentId)) continue;
       const qtyPerPortion = Number(lr.quantity) || 0;
-      const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget;
+      const totalQty = qtyPerPortion * portionsPerBatch * batchesTarget + mixExtraFor(mixExtras, "ingredient", lr.lineId);
       const unit = lr.unit ?? "g";
       const roundedQty = roundByUnit(totalQty, unit);
       if (roundedQty <= 0) continue;
@@ -7657,6 +7685,7 @@ router.get("/:id/main-prep", async (req, res) => {
   }
 
   const allItems = [...ingredients, ...subRecipeIngredients]
+    .map(item => ({ ...item, mixExtraQty: mixNotes.get(item.isSubRecipe ? "subRecipe" : "ingredient", item.ingredientId) }))
     .sort((a, b) => a.ingredientName.localeCompare(b.ingredientName));
 
   // Join with app_users so each completion carries the prepper's name.

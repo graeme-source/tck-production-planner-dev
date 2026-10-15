@@ -968,7 +968,7 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
     for (const item of items) {
       const batches = item.batchesTarget ?? 0;
       if (batches <= 0 || item.recipeId == null) continue;
-      const resolved = await resolveRecipeIngredients(item.recipeId, Number(item.portionsPerBatch) || 10, { skipToppings: true });
+      const resolved = await resolveRecipeIngredients(item.recipeId, Number(item.portionsPerBatch) || 10, { skipToppings: true, mixExtraBatches: batches });
       const duckPerBatch = resolved
         .filter(i => i.ingredientName.toLowerCase().includes("duck"))
         .reduce((s, i) => s + i.quantityPerBatch, 0);

@@ -84,7 +84,8 @@ router.get("/calculate", async (req, res) => {
     if (!planItem.recipeId || batchesTarget === 0) continue;
 
     const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
-    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch);
+    // Mix +g is used every production day, so ordering covers it too.
+    const resolved = await resolveRecipeIngredients(planItem.recipeId, portionsPerBatch, { mixExtraBatches: batchesTarget });
     const agg = aggregateIngredients(resolved);
 
     for (const [iid, ing] of agg) {
