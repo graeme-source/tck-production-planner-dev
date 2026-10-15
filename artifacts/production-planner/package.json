@@ -55,6 +55,7 @@
     "@workspace/building-edit": "workspace:*",
     "@workspace/business-days": "workspace:*",
     "@workspace/feature-registry": "workspace:*",
+    "@workspace/goods-in": "workspace:*",
     "@workspace/marketing-calendar": "workspace:*",
     "@workspace/messages": "workspace:*",
     "@workspace/production-schedule": "workspace:*",
