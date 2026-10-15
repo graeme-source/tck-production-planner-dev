@@ -52,6 +52,7 @@ import type { PlanStartStock } from "@workspace/stock-prediction";
 import { minBatchesForOrders, solveTargetAllocation, type PlanMarginSettings } from "@workspace/plan-margin";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
+import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
 import { PlanMarginPanel, RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
 import { usePlanMargin } from "@/hooks/use-plan-margin";
 import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
@@ -1526,6 +1527,8 @@ interface CreatePlanDialogProps {
   open: boolean;
   onClose: () => void;
   onCreated?: (planId: number) => void;
+  /** "There's already a plan for this day" → Open this plan. */
+  onOpenExisting?: (planId: number) => void;
   initialDate?: Date;
 }
 
@@ -1811,7 +1814,7 @@ function FactoryNumberAuditDialog({
   );
 }
 
-function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanDialogProps) {
+function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDate }: CreatePlanDialogProps) {
   const { state: authState } = useAuth();
   const userRole = authState.status === "authenticated" ? authState.user.role : undefined;
   const isAdmin = userRole === "admin";
@@ -2612,6 +2615,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
   // save and shows the summary; saving as it is takes a second tap there.
   const marginWarnings = useMemo(() => marginWarningsForRows(items, planMargin.settings), [items, planMargin.settings]);
   const [marginGuardFor, setMarginGuardFor] = useState<"draft" | "active" | null>(null);
+  // "There's already a plan for this day" (2026-10-15) — the save it paused.
+  const [dateClash, setDateClash] = useState<{ status: "draft" | "active"; opts: SubmitOpts } | null>(null);
   const addRowBatches = (id: string, n: number) => {
     const row = items.find(it => it.id === id);
     if (row && n > 0) updateItem(id, { batchesTarget: row.batchesTarget + n });
@@ -2620,7 +2625,8 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     addMarginBatches(rows, marginWarnings).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));
   const fixAllMargins = () => { isDirty.current = true; setItems(prev => capForSlowMeat(withMarginFixes(prev))); };
 
-  const handleSubmit = async (targetStatus: "draft" | "active", opts: { skipMarginCheck?: boolean; itemsOverride?: PlanItem[] } = {}) => {
+  type SubmitOpts = { skipMarginCheck?: boolean; itemsOverride?: PlanItem[]; skipDateClash?: boolean };
+  const handleSubmit = async (targetStatus: "draft" | "active", opts: SubmitOpts = {}) => {
     if (submittingRef.current) return; // a second tap while the first is saving
     const rows = opts.itemsOverride ?? items;
     const includedItems = rows.filter(it => it.included);
@@ -2631,16 +2637,14 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       return;
     }
 
-    // Guard against accidentally planning the same day twice. Deliberate
-    // doubles (e.g. a second run) are still allowed after confirming.
+    // Guard against accidentally planning the same day twice: open the
+    // existing plan, replace a draft, or (deliberately) make a second one.
     const duplicates = (existingPlans ?? []).filter(
       p => p.planDate === planDate && p.id !== autoSavedPlanId.current
     );
-    if (duplicates.length > 0) {
-      const ok = window.confirm(
-        `There is already a production plan for ${format(parseISO(planDate), "EEEE d MMM yyyy")}. Are you sure you want to create another one?`
-      );
-      if (!ok) return;
+    if (duplicates.length > 0 && !opts.skipDateClash) {
+      setDateClash({ status: targetStatus, opts });
+      return;
     }
 
     submittingRef.current = true;
@@ -3304,6 +3308,38 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       onSaved={() => {
         setTotalBatchesOverride(null);
         refetchCalc();
+      }}
+    />
+    <PlanDateClashDialog
+      open={dateClash !== null}
+      planDate={planDate}
+      plans={duplicatePlansForDate.map(p => ({ id: p.id, name: p.name, status: p.status, planDate: p.planDate }))}
+      saving={isSubmitting}
+      onClose={() => setDateClash(null)}
+      onOpen={id => {
+        setDateClash(null);
+        // Nothing of this form is kept: drop any draft it auto-saved.
+        const own = autoSavedPlanId.current;
+        autoSavedPlanId.current = null;
+        isDirty.current = false;
+        if (own !== null) void fetch(`${BASE}/api/production-plans/${own}`, { method: "DELETE", credentials: "include" });
+        onClose();
+        onOpenExisting?.(id);
+      }}
+      onReplace={id => {
+        const clash = dateClash;
+        setDateClash(null);
+        if (!clash) return;
+        const own = autoSavedPlanId.current;
+        if (own !== null && own !== id) void fetch(`${BASE}/api/production-plans/${own}`, { method: "DELETE", credentials: "include" });
+        // Saving into the existing draft (PUT) instead of creating another.
+        autoSavedPlanId.current = id;
+        void handleSubmit(clash.status, { ...clash.opts, skipDateClash: true });
+      }}
+      onCreateAnother={() => {
+        const clash = dateClash;
+        setDateClash(null);
+        if (clash) void handleSubmit(clash.status, { ...clash.opts, skipDateClash: true });
       }}
     />
     <MarginSaveGuard
@@ -6806,6 +6842,7 @@ export default function ProductionPlans() {
         open={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         onCreated={handlePlanCreated}
+        onOpenExisting={id => { setIsCreateOpen(false); handleViewPlan(id); }}
         initialDate={selectedDate}
       />
     </div>
