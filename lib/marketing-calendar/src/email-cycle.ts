@@ -113,6 +113,11 @@ export interface CycleConfig {
   offers: readonly CycleOffer[];
   pauses: readonly CyclePause[];
   freeIdeas: readonly FreeSlotIdea[];
+  /** Days whose cycle email someone deleted from the plan (Graeme,
+   *  2026-10-15: "clear it out and delete that email from the day") — no
+   *  slot is offered there any more, by the list, the slot maker or the
+   *  Klaviyo name-linker. */
+  removedDays?: readonly string[];
 }
 
 /** Any stored value → a 7-day plan (bad entries become "no email"). */
@@ -259,6 +264,15 @@ export interface CycleSlot {
   idea: string | null;
 }
 
+/** Days whose cycle email was deleted from the plan: a deleted row holds
+ *  the day (cycle_date) and no live row has taken it back. */
+export function removedCycleDays(rows: ReadonlyArray<{ cycleDate: string | null; deleted: boolean }>): string[] {
+  const live = new Set(rows.filter(r => !r.deleted && r.cycleDate).map(r => r.cycleDate!));
+  const out = new Set<string>();
+  for (const r of rows) if (r.deleted && r.cycleDate && !live.has(r.cycleDate)) out.add(r.cycleDate);
+  return [...out].sort();
+}
+
 /** The cycle's emails for the week starting `monday` (index = weekday). */
 export function cycleSlotsForWeek(monday: string, config: CycleConfig, product?: string | null): Array<CycleSlot | null> {
   const week = startOfWeek(monday);
@@ -272,6 +286,7 @@ export function cycleSlotsForWeek(monday: string, config: CycleConfig, product?:
     if (!type) continue;
     const date = addDays(week, i);
     if (pauseOn(date, config.pauses)) continue;
+    if (config.removedDays?.includes(date)) continue;
     if (type === "free_slot") {
       const ideaText = idea?.idea ?? "Random or creative email";
       days[i] = {
@@ -345,6 +360,11 @@ export type ListRow<P, K> =
     scheduled: boolean;
     /** Set automatically from Klaviyo (the tick can't be undone by hand). */
     scheduledByKlaviyo: boolean;
+    /** Drafted in Klaviyo (Graeme, 2026-10-15): ticked by hand (stage
+     *  'created'), or automatically once it's linked to a Klaviyo campaign —
+     *  and always true once scheduled or sent. */
+    drafted: boolean;
+    draftedByKlaviyo: boolean;
     skipped: boolean;
     result: ResultForList | null;
   }
@@ -476,6 +496,7 @@ export function buildEmailWeeks<P extends PlannedForList, K extends KlaviyoForLi
     const fill = (s: string) => fillProduct(s, product);
     const byKlaviyo = k != null && KLAVIYO_SCHEDULED.has(k.status);
     const byHand = p != null && (p.status === "scheduled" || p.status === "sent");
+    const draftedByKlaviyo = k != null || p?.klaviyoCampaignId != null;
     const type = p && isEmailType(p.emailType) ? p.emailType : slot?.type ?? null;
     return {
       kind: "email",
@@ -485,6 +506,8 @@ export function buildEmailWeeks<P extends PlannedForList, K extends KlaviyoForLi
       campaignName: fill(p ? p.campaignName ?? (p.cycleDate && slot ? slot.campaignName : plannedCampaignName(date, p.campaignTitle, p.subject)) : slot!.campaignName),
       scheduled: byKlaviyo || byHand,
       scheduledByKlaviyo: byKlaviyo,
+      drafted: byKlaviyo || byHand || draftedByKlaviyo || p?.status === "created",
+      draftedByKlaviyo,
       skipped: p?.skipped === true,
       result: k ? results.get(k.id) ?? null : null,
     };

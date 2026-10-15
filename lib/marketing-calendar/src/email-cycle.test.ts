@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildEmailWeeks, cycleCampaignName, cycleSlotOn, cycleSlotsForWeek, fillProduct, freeSlotCampaignName, listFirstMonday,
-  normaliseCampaignName, normaliseWeeklyPlan, offerIndexForWeek, plannedCampaignName, weekPause,
+  normaliseCampaignName, normaliseWeeklyPlan, offerIndexForWeek, plannedCampaignName, removedCycleDays, weekPause,
   type CycleConfig, type PlannedForList, type KlaviyoForList,
 } from "./email-cycle";
 
@@ -178,5 +178,44 @@ describe("the List view's weeks", () => {
     expect(listFirstMonday("2026-10-14", "2026-10-12")).toBe("2026-10-12");
     expect(listFirstMonday("2026-10-14", "2026-11-09")).toBe("2026-11-09");
     expect(listFirstMonday("2026-10-14", "2026-10-12", 2)).toBe("2026-09-28");
+  });
+});
+
+// ── Drafted tick + deleting from a day (Graeme, 2026-10-15) ────────────────
+describe("drafted and removed days", () => {
+  const pl = (over: Partial<PlannedForList> & { id: number; sendDate: string }): PlannedForList => ({
+    sendTime: null, subject: "S", status: "planned", klaviyoCampaignId: null, campaignTitle: null,
+    cycleDate: null, emailType: null, campaignName: null, skipped: false, ...over,
+  });
+  const rowOn = (planned: PlannedForList[], date: string, cfg: CycleConfig = config) => {
+    const [w] = buildEmailWeeks({ config: cfg, firstMonday: "2026-10-12", weeks: 1, today: "2026-10-14", planned, klaviyo: [] });
+    return w.days.find(d => d.date === date)!.rows;
+  };
+
+  it("drafted: by hand (stage 'created'), by a Klaviyo link, and always once scheduled", () => {
+    const ticked = rowOn([pl({ id: 1, sendDate: "2026-10-12", cycleDate: "2026-10-12", status: "created" })], "2026-10-12")[0];
+    expect(ticked.kind === "email" && ticked.drafted && !ticked.draftedByKlaviyo && !ticked.scheduled).toBe(true);
+    const linked = rowOn([pl({ id: 2, sendDate: "2026-10-12", cycleDate: "2026-10-12", klaviyoCampaignId: "k1" })], "2026-10-12")[0];
+    expect(linked.kind === "email" && linked.drafted && linked.draftedByKlaviyo).toBe(true);
+    const sched = rowOn([pl({ id: 3, sendDate: "2026-10-12", cycleDate: "2026-10-12", status: "scheduled" })], "2026-10-12")[0];
+    expect(sched.kind === "email" && sched.drafted && sched.scheduled).toBe(true);
+    const plain = rowOn([], "2026-10-12")[0];
+    expect(plain.kind === "email" && !plain.drafted).toBe(true);
+  });
+
+  it("a removed day offers no cycle email; other days are untouched", () => {
+    const cfg = { ...config, removedDays: ["2026-10-14"] };
+    expect(cycleSlotOn("2026-10-14", cfg)).toBeNull();
+    expect(cycleSlotOn("2026-10-15", cfg)).not.toBeNull();
+    expect(rowOn([], "2026-10-14", cfg)).toEqual([]);
+  });
+
+  it("removedCycleDays: a deleted cycle row holds its day unless a live row took it back", () => {
+    expect(removedCycleDays([
+      { cycleDate: "2026-10-14", deleted: true },
+      { cycleDate: "2026-10-15", deleted: true },
+      { cycleDate: "2026-10-15", deleted: false },
+      { cycleDate: null, deleted: true },
+    ])).toEqual(["2026-10-14"]);
   });
 });

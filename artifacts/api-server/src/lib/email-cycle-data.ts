@@ -13,9 +13,9 @@ import {
   db, marketingCycleOffersTable, marketingCyclePausesTable, marketingCycleSettingsTable, marketingCycleWeeksTable,
   marketingEmailHistoryTable, marketingEmailsTable, marketingKeyDatesTable,
 } from "@workspace/db";
-import { and, asc, eq, gte, isNull, lte } from "drizzle-orm";
+import { and, asc, eq, gte, isNotNull, isNull, lte } from "drizzle-orm";
 import {
-  EMAIL_TYPE_LABELS, cycleSlotOn, fillProduct, normaliseFreeIdeas, normaliseSubjects, normaliseWeeklyPlan, startOfWeek,
+  EMAIL_TYPE_LABELS, cycleSlotOn, fillProduct, normaliseFreeIdeas, normaliseSubjects, normaliseWeeklyPlan, removedCycleDays, startOfWeek,
   type CycleConfig, type KeyDate,
 } from "@workspace/marketing-calendar";
 
@@ -50,12 +50,16 @@ export async function loadCycle(tx: Db = db) {
     tx.select().from(marketingKeyDatesTable).where(isNull(marketingKeyDatesTable.deletedAt))
       .orderBy(asc(marketingKeyDatesTable.date), asc(marketingKeyDatesTable.id)),
   ]);
+  // Cycle days someone deleted from the plan (removeDayEmail below).
+  const cycleRows = await tx.select({ cycleDate: marketingEmailsTable.cycleDate, deletedAt: marketingEmailsTable.deletedAt })
+    .from(marketingEmailsTable).where(isNotNull(marketingEmailsTable.cycleDate));
   const config: CycleConfig = {
     startDate: settings?.startDate ?? startOfWeek(londonToday()),
     weeklyPlan: normaliseWeeklyPlan(settings?.weeklyPlan ?? []),
     offers: offers.map(offerJson),
     pauses: pauses.map(p => ({ id: p.id, name: p.name, startDate: p.startDate, endDate: p.endDate })),
     freeIdeas: normaliseFreeIdeas(settings?.freeSlotIdeas ?? []),
+    removedDays: removedCycleDays(cycleRows.map(r => ({ cycleDate: r.cycleDate, deleted: r.deletedAt != null }))),
   };
   const kd: KeyDate[] = keyDates.map(k => ({ id: k.id, date: k.date, name: k.name, big: k.big }));
   return {
@@ -119,4 +123,43 @@ export async function materialiseSlot(tx: Tx, date: string, user: Actor, why = "
     emailId: row.id, userId: user.id, userName: user.name, action: "created", summary: `added ${what} ${why}`,
   });
   return { status: 200, row, created: true };
+}
+
+/**
+ * Delete an email from a day of the plan (Graeme, 2026-10-15: "we need the
+ * ability to delete entries completely, like clear it out and delete that
+ * email from the day"). Soft: rows and their history stay.
+ *   - `emailId`: that stored email is deleted;
+ *   - `slot`: the day's cycle email goes too, and stays gone — its stored
+ *     row is deleted, or (never stored) a deleted placeholder holds the day,
+ *     so loadCycle's removedDays stops the cycle offering it again.
+ */
+export async function removeDayEmail(tx: Tx, date: string, input: { emailId: number | null; slot: boolean }, user: Actor): Promise<{ removed: number }> {
+  const now = new Date();
+  let removed = 0;
+  const softDelete = async (id: number) => {
+    const r = await tx.update(marketingEmailsTable).set({
+      deletedAt: now, deletedById: user.id, deletedByName: user.name, updatedById: user.id, updatedByName: user.name, updatedAt: now,
+    }).where(and(eq(marketingEmailsTable.id, id), isNull(marketingEmailsTable.deletedAt))).returning({ id: marketingEmailsTable.id });
+    if (r.length) {
+      removed++;
+      await tx.insert(marketingEmailHistoryTable).values({ emailId: id, userId: user.id, userName: user.name, action: "deleted", summary: "deleted this email from the email plan" });
+    }
+  };
+  if (input.emailId != null) await softDelete(input.emailId);
+  if (input.slot) {
+    const [own] = await tx.select({ id: marketingEmailsTable.id }).from(marketingEmailsTable)
+      .where(and(eq(marketingEmailsTable.cycleDate, date), isNull(marketingEmailsTable.deletedAt)));
+    if (own) await softDelete(own.id);
+    else {
+      const [held] = await tx.insert(marketingEmailsTable).values({
+        sendDate: date, subject: "Removed from the email plan", status: "planned", cycleDate: date,
+        createdById: user.id, createdByName: user.name, updatedById: user.id, updatedByName: user.name,
+        deletedAt: now, deletedById: user.id, deletedByName: user.name,
+      }).returning({ id: marketingEmailsTable.id });
+      await tx.insert(marketingEmailHistoryTable).values({ emailId: held!.id, userId: user.id, userName: user.name, action: "deleted", summary: "deleted this day's cycle email from the email plan" });
+      removed++;
+    }
+  }
+  return { removed };
 }

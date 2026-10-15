@@ -59,6 +59,11 @@ export async function ensureSlot(date: string): Promise<number> {
   return r.emailId;
 }
 
+/** Delete an email from a day; `slot` = the day's cycle email goes too and stays gone. */
+export function removeDayEmail(date: string, body: { emailId: number | null; slot: boolean }) {
+  return calApi<{ removed: number }>(`/marketing-calendar/cycle/days/${date}/remove`, { method: "POST", body: JSON.stringify(body) });
+}
+
 export function setWeekProduct(monday: string, product: string | null) {
   return calApi<{ weekStart: string; product: string | null }>(`/marketing-calendar/cycle/weeks/${monday}`, {
     method: "PUT", body: JSON.stringify({ product }),

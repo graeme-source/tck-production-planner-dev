@@ -7,6 +7,8 @@
  *   POST /slots/:date         make the cycle slot on that day a stored
  *                             planned email (idempotent) — then it is edited,
  *                             linked, approved and ticked like any other
+ *   POST /days/:date/remove   delete an email from that day (and the day's
+ *                             cycle email, which then stays gone)
  *   PUT  /weeks/:monday       the product added that week
  *   Calendar setup (FOUNDER only — "Calendar setup panel (founder)"):
  *   PUT  /settings            start Monday, weekly plan, Saturday ideas
@@ -26,7 +28,7 @@ import { and, eq, isNull, sql } from "drizzle-orm";
 import { OFFER_EMAIL_TYPES, PLAN_DAY_TYPES, mondayIndex, startOfWeek } from "@workspace/marketing-calendar";
 import { validate } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
-import { loadCycle, materialiseSlot, offerJson } from "../lib/email-cycle-data";
+import { loadCycle, materialiseSlot, offerJson, removeDayEmail } from "../lib/email-cycle-data";
 import { klaviyoCampaignResults } from "../lib/klaviyo-campaign-calendar";
 import { forgetAutoLinkRun } from "../lib/klaviyo-auto-link-run";
 
@@ -86,6 +88,22 @@ router.post("/slots/:date", validate(z.object({}).passthrough()), async (req: Re
   if (r.status === 404) { res.status(404).json({ error: r.error }); return; }
   if (r.created) forgetAutoLinkRun();
   res.status(r.created ? 201 : 200).json({ emailId: r.row.id, created: r.created });
+});
+
+// ── Delete an email from a day (Graeme, 2026-10-15) ───────────────────────
+// emailId: the stored email to delete; slot: the day's cycle email goes too
+// and stays gone (removeDayEmail). Soft — history kept.
+const RemoveBody = z.object({ emailId: z.number().int().positive().nullable(), slot: z.boolean() })
+  .refine(b => b.emailId != null || b.slot, { message: "Nothing to delete" });
+
+router.post("/days/:date/remove", validate(RemoveBody), async (req: Request, res: Response) => {
+  const date = String(req.params["date"] ?? "");
+  if (!DATE_RE.test(date)) { res.status(400).json({ error: "Use YYYY-MM-DD" }); return; }
+  const b = req.body as z.infer<typeof RemoveBody>;
+  const user = await sessionUser(req);
+  const r = await db.transaction(tx => removeDayEmail(tx, date, b, { id: user.id, name: user.name }));
+  forgetAutoLinkRun();
+  res.json(r);
 });
 
 // ── Product of the week (day-to-day: anyone on the page) ───────────────────

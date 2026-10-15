@@ -14,14 +14,21 @@
  * email" row on its day. A slot is stored the moment someone acts on it
  * (note, tick, type, link), so it then has stages, approvals and history
  * like every planned email.
+ *
+ * 2026-10-15 (Graeme): a "Drafted" tick before "Scheduled" (built in
+ * Klaviyo but not scheduled = stage 'created'; ticks itself once linked to a
+ * Klaviyo campaign), "Delete" (the email goes from that day — a cycle
+ * email stays gone, POST /cycle/days/:date/remove), and drag an email by its
+ * handle onto another day (PUT /emails/:id/date).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNowStrict, parseISO } from "date-fns";
 import {
-  AlertTriangle, CalendarDays, Check, CheckSquare, ChevronDown, Copy, ExternalLink, Link2, Loader2, Mail, Package, Settings2, SkipForward, Square,
-  Star, StickyNote, Undo2,
+  AlertTriangle, CalendarDays, Check, CheckSquare, ChevronDown, Copy, ExternalLink, GripVertical, Link2, Loader2, Mail, Package, Settings2, SkipForward, Square,
+  Star, StickyNote, Trash2, Undo2,
 } from "lucide-react";
+import { DndContext, DragOverlay, PointerSensor, pointerWithin, useDraggable, useDroppable, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from "@dnd-kit/core";
 import {
   EMAIL_TYPE_KEYS, EMAIL_TYPE_LABELS, PLAN_RULE_TEXT, WEEKDAYS_SHORT, addDays, buildEmailWeeks, dayMonth, fillProduct, formatDay,
   offerDayIndexes, startOfWeek, stageLabel, type ListRow, type ListWeek, type ResultForList,
@@ -29,8 +36,8 @@ import {
 import { cn } from "@/lib/utils";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
-import { calApi, createEmail, invalidateEmails, patchEmail, type CalEvent, type CalTodo, type KlaviyoEmail, type PlannedEmail } from "./api";
-import { ensureSlot, invalidateCycle, saveSettings, setWeekProduct, useKlaviyoResults, type CycleResponse } from "./cycle-api";
+import { calApi, createEmail, invalidateEmails, patchEmail, setEmailDate, type CalEvent, type CalTodo, type KlaviyoEmail, type PlannedEmail } from "./api";
+import { ensureSlot, invalidateCycle, removeDayEmail, saveSettings, setWeekProduct, useKlaviyoResults, type CycleResponse } from "./cycle-api";
 import { ApprovalBadge, type ApprovalIndex } from "./approvals";
 import { EMAIL_TYPE_TONE, NOTE_TONE, PAUSE_TONE, TODO_TONE, emailStage, offerTone, typeStyle } from "./constants";
 
@@ -78,6 +85,27 @@ export function EmailWeeks(props: {
   const offerDays = offerDayIndexes(cycle.config.weeklyPlan);
   const offerSpan = `${WEEKDAYS_SHORT[offerDays[0]]}–${WEEKDAYS_SHORT[offerDays[offerDays.length - 1]]}`;
   const pausesAhead = cycle.config.pauses.filter(p => p.endDate >= today);
+
+  // Drag an email onto another day (by its handle — touch-none so it works on iPad).
+  const qc = useQueryClient();
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const [dragging, setDragging] = useState<Extract<Row, { kind: "email" }> | null>(null);
+  const [moveErr, setMoveErr] = useState<string | null>(null);
+  const onDragStart = (e: DragStartEvent) => setDragging((e.active.data.current as { row?: Extract<Row, { kind: "email" }> } | undefined)?.row ?? null);
+  const onDragEnd = async (e: DragEndEvent) => {
+    const row = (e.active.data.current as { row?: Extract<Row, { kind: "email" }> } | undefined)?.row ?? null;
+    setDragging(null);
+    const to = typeof e.over?.id === "string" && e.over.id.startsWith("day-") ? e.over.id.slice(4) : null;
+    if (!row || !to || to === row.date) return;
+    setMoveErr(null);
+    try {
+      const id = row.planned?.id ?? await ensureSlot(row.date);
+      await setEmailDate(id, to);
+      await Promise.all([invalidateEmails(qc), invalidateCycle(qc)]);
+    } catch (err) {
+      setMoveErr(err instanceof Error ? err.message : "Couldn't move that email");
+    }
+  };
 
   return (
     <div className="space-y-5">
@@ -150,7 +178,7 @@ export function EmailWeeks(props: {
       </div>
 
       <div className="flex flex-wrap gap-x-5 gap-y-1 text-sm text-muted-foreground">
-        <span>Tick each email once it's scheduled in Klaviyo — it ticks itself once Klaviyo has it scheduled or sent. Name the Klaviyo campaign with the campaign name shown and the two link up as one email.</span>
+        <span>Tick Drafted once the email is built in Klaviyo and Scheduled once it's scheduled — both tick themselves once Klaviyo has it. Drag an email by its handle to move it to another day. Name the Klaviyo campaign with the campaign name shown and the two link up as one email.</span>
         <span>
           {resultsQ.isLoading ? "Klaviyo results: loading…"
             : !resultsQ.data?.connected ? "Klaviyo results appear once Klaviyo is connected."
@@ -161,11 +189,22 @@ export function EmailWeeks(props: {
         {props.klaviyoError && <span className="text-amber-700 dark:text-amber-400">Klaviyo emails: {props.klaviyoError}</span>}
       </div>
 
-      <div className="space-y-5">
-        {weeks.map(w => (
-          <WeekCard key={w.monday} week={w} {...props} offers={offers} />
-        ))}
-      </div>
+      {moveErr && <p className="text-sm text-destructive flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> {moveErr}</p>}
+      <DndContext sensors={sensors} collisionDetection={pointerWithin} onDragStart={onDragStart} onDragEnd={e => void onDragEnd(e)} onDragCancel={() => setDragging(null)}>
+        <div className="space-y-5">
+          {weeks.map(w => (
+            <WeekCard key={w.monday} week={w} {...props} offers={offers} />
+          ))}
+        </div>
+        <DragOverlay>
+          {dragging && (
+            <div className="rounded-xl border-2 border-primary bg-card shadow-xl px-4 py-3 max-w-sm">
+              <p className="text-xs text-muted-foreground">Moving from {formatDay(dragging.date)}</p>
+              <p className="font-semibold truncate">{dragging.subject}</p>
+            </div>
+          )}
+        </DragOverlay>
+      </DndContext>
     </div>
   );
 }
@@ -299,8 +338,9 @@ function DayBlock(props: WeekCardProps & { day: Week["days"][number] }) {
   const todos = props.todos.filter(t => t.date === d.date);
   const rest = d.rows.length === 0;
   const virtualSlot = d.rows.some(r => r.kind === "email" && r.planned == null);
+  const drop = useDroppable({ id: `day-${d.date}` });
   return (
-    <div className={cn("grid grid-cols-1 @3xl:grid-cols-[6.5rem_minmax(0,1fr)] @6xl:grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3", d.weekday === 5 && "bg-secondary/30", d.isToday && "bg-primary/5")}>
+    <div ref={drop.setNodeRef} className={cn("grid grid-cols-1 @3xl:grid-cols-[6.5rem_minmax(0,1fr)] @6xl:grid-cols-[8.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 px-4 py-3", d.weekday === 5 && "bg-secondary/30", d.isToday && "bg-primary/5", drop.isOver && "bg-primary/15 ring-2 ring-inset ring-primary")}>
       <div className="flex @3xl:flex-col flex-wrap items-baseline @3xl:items-start gap-x-2 gap-y-1">
         <span className="font-bold text-base">{WEEKDAYS_SHORT[d.weekday]}{d.isToday && <span className="ml-1.5 text-xs font-bold text-primary">Today</span>}</span>
         <span className="text-sm text-muted-foreground tabular-nums">{dayMonth(d.date)}</span>
@@ -369,6 +409,9 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
     setBusy(what); setErr(null);
     try { await fn(); await refresh(); } catch (e) { setErr(e instanceof Error ? e.message : "Couldn't save that"); } finally { setBusy(null); }
   };
+  const qcRow = useQueryClient();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const drag = useDraggable({ id: `drag-${row.key}-${row.date}`, data: { row } });
 
   // The offer column: the planner email's phase, else the week's offer, else a free slot.
   const phase = p?.campaignTitle ?? null;
@@ -384,6 +427,11 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
     <div className={cn("flex flex-wrap items-start gap-x-4 gap-y-2 @md:grid @md:grid-cols-[9rem_minmax(0,1fr)] @md:grid-rows-[auto_1fr] @3xl:grid-cols-[10rem_8rem_minmax(0,1fr)] @3xl:grid-rows-none @6xl:grid-cols-[12rem_8rem_minmax(0,1fr)]", row.skipped && "opacity-60")}>
       {/* Offer */}
       <div className="flex flex-wrap items-center gap-2 min-w-0 @md:col-start-1 @md:row-start-1">
+        <button type="button" ref={drag.setNodeRef} {...drag.listeners} {...drag.attributes}
+          aria-label="Drag to another day" title="Drag to another day"
+          className={cn("touch-none cursor-grab active:cursor-grabbing -ml-2 w-8 h-9 rounded-lg flex items-center justify-center text-muted-foreground hover:bg-secondary/60", drag.isDragging && "opacity-40")}>
+          <GripVertical className="w-5 h-5" />
+        </button>
         {phase ? (
           <span className={cn("text-xs font-bold px-2 py-1 rounded-md", w.pause ? PAUSE_TONE.chip : typeStyle("campaign").chip)}>{phase}</span>
         ) : isFree ? (
@@ -399,8 +447,19 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
       {/* Email type + Scheduled tick */}
       <div className="flex @md:flex-col flex-wrap items-center @md:items-start gap-2 @md:col-start-1 @md:row-start-2 @3xl:col-start-2 @3xl:row-start-1">
         <TypeSelect value={row.type} disabled={busy != null} onChange={t => run("type", async () => patchEmail(await ensure(), { emailType: t }))} />
+        {/* Drafted (built in Klaviyo, not scheduled yet) — before Scheduled. */}
+        <button type="button" disabled={row.draftedByKlaviyo || row.scheduled || busy != null}
+          onClick={() => run("draft", async () => patchEmail(await ensure(), { status: row.drafted ? "planned" : "created" }))}
+          aria-pressed={row.drafted}
+          title={row.draftedByKlaviyo ? "It's in Klaviyo" : row.scheduled ? "Scheduled — so it's drafted" : undefined}
+          className={cn("flex items-center gap-1.5 text-sm font-semibold rounded-lg px-2 py-1 -ml-2 min-h-[40px]",
+            row.drafted ? "text-sky-700 dark:text-sky-300" : "text-muted-foreground hover:text-foreground", (row.draftedByKlaviyo || row.scheduled) && "cursor-default")}>
+          {busy === "draft" ? <Loader2 className="w-5 h-5 animate-spin" /> : row.drafted
+            ? <CheckSquare className="w-5 h-5" /> : <Square className="w-5 h-5" />}
+          {row.drafted ? (row.draftedByKlaviyo && !row.scheduled ? "Drafted in Klaviyo" : "Drafted") : "Drafted?"}
+        </button>
         <button type="button" disabled={row.scheduledByKlaviyo || busy != null}
-          onClick={() => run("tick", async () => patchEmail(await ensure(), { status: row.scheduled ? "planned" : "scheduled" }))}
+          onClick={() => run("tick", async () => patchEmail(await ensure(), { status: row.scheduled ? (row.drafted ? "created" : "planned") : "scheduled" }))}
           aria-pressed={row.scheduled}
           title={row.scheduledByKlaviyo ? "Klaviyo has it scheduled or sent" : undefined}
           className={cn("flex items-center gap-1.5 text-sm font-semibold rounded-lg px-2 py-1 -ml-2 min-h-[40px]",
@@ -444,6 +503,27 @@ function EmailRow(props: WeekCardProps & { row: Extract<Row, { kind: "email" }> 
             <button type="button" disabled={busy != null} onClick={() => run("skip", async () => patchEmail(await ensure(), { skipped: !row.skipped }))}
               className="px-3 py-2 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary/50 inline-flex items-center gap-1.5">
               {row.skipped ? <><Undo2 className="w-4 h-4" /> Put back</> : <><SkipForward className="w-4 h-4" /> Skip this week</>}
+            </button>
+          )}
+          {confirmDelete ? (
+            <span className="inline-flex flex-wrap items-center gap-2 rounded-xl bg-red-50 dark:bg-red-950/30 px-2 py-1">
+              <span className="text-sm font-semibold text-red-800 dark:text-red-200">Delete this email from {formatDay(row.date)}?</span>
+              <button type="button" disabled={busy != null}
+                onClick={() => run("delete", async () => {
+                  await removeDayEmail(row.date, { emailId: p?.id ?? null, slot: row.slot != null });
+                  await invalidateCycle(qcRow);
+                  setConfirmDelete(false);
+                })}
+                className="px-3 py-2 rounded-xl bg-red-600 text-white text-sm font-bold hover:bg-red-700 inline-flex items-center gap-1.5">
+                {busy === "delete" && <Loader2 className="w-4 h-4 animate-spin" />} Yes, delete
+              </button>
+              <button type="button" onClick={() => setConfirmDelete(false)} className="px-3 py-2 rounded-xl border-2 border-border text-sm font-semibold">Cancel</button>
+            </span>
+          ) : (
+            <button type="button" disabled={busy != null || row.scheduledByKlaviyo} onClick={() => setConfirmDelete(true)}
+              title={row.scheduledByKlaviyo ? "It's scheduled in Klaviyo — unschedule it there first" : undefined}
+              className="px-3 py-2 rounded-xl border-2 border-border text-sm font-semibold text-red-700 dark:text-red-300 hover:bg-red-50 dark:hover:bg-red-950/30 inline-flex items-center gap-1.5 disabled:opacity-50">
+              <Trash2 className="w-4 h-4" /> Delete
             </button>
           )}
         </div>
