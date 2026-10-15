@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   addDays, describeRule, isDailyRhythm, normaliseRule, sameRule, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, mondayOf,
-  nextOccurrenceAfter, occurrencesBetween, weekdayFromName, weekdayOf, type RecurrenceRule,
+  monthsBetween, nextOccurrenceAfter, occurrencesBetween, weekdayFromName, weekdayOf, type RecurrenceRule,
 } from "./index";
 
 // 2026-10-12 is a Monday.
@@ -148,5 +148,38 @@ describe("once (one-off items, e.g. a short-delivery report)", () => {
     expect(normaliseRule(rule)).toEqual(rule);
     expect(describeRule(rule)).toBe("Once, on Thu 15 Oct");
     expect(isDailyRhythm(rule)).toBe(false);
+  });
+});
+
+// ── Every N months (Graeme, 2026-10-15: maintenance every 3, 4 or 6 months) ─
+describe("every N months", () => {
+  const six = { kind: "monthly" as const, dayOfMonth: 1, interval: 6, anchor: "2026-11-01" };
+  it("is due on the day in the anchor month and every N months after (and before)", () => {
+    expect(isDueOn(six, "2026-11-01")).toBe(true);
+    expect(isDueOn(six, "2027-05-01")).toBe(true);
+    expect(isDueOn(six, "2026-05-01")).toBe(true);
+    expect(isDueOn(six, "2026-12-01")).toBe(false);
+    expect(isDueOn(six, "2027-02-01")).toBe(false);
+    expect(isDueOn(six, "2026-11-02")).toBe(false);
+  });
+  it("quarterly and every 4 months", () => {
+    const q = { kind: "monthly" as const, dayOfMonth: 15, interval: 3, anchor: "2026-10-15" };
+    expect(occurrencesBetween(q, "2026-10-01", "2027-07-31")).toEqual(["2026-10-15", "2027-01-15", "2027-04-15", "2027-07-15"]);
+    const four = { kind: "monthly" as const, dayOfMonth: 31, interval: 4, anchor: "2026-10-01" };
+    expect(occurrencesBetween(four, "2026-10-01", "2027-06-30")).toEqual(["2026-10-31", "2027-02-28", "2027-06-30"]);
+  });
+  it("yearly finds its next and last occurrence a year apart", () => {
+    const y = { kind: "monthly" as const, dayOfMonth: 10, interval: 12, anchor: "2026-03-10" };
+    expect(nextOccurrenceAfter(y, "2026-03-10")).toBe("2027-03-10");
+    expect(lastOccurrenceOnOrBefore(y, "2027-03-09")).toBe("2026-03-10");
+  });
+  it("describes, normalises and validates", () => {
+    expect(describeRule(six)).toBe("Every 6 months on the 1st — May & Nov");
+    expect(describeRule({ kind: "monthly", dayOfMonth: 2, interval: 12, anchor: "2026-01-05" })).toBe("Yearly on the 2nd — Jan");
+    expect(describeRule({ kind: "monthly", dayOfMonth: 2 })).toBe("Monthly on the 2nd");
+    expect(normaliseRule({ kind: "monthly", dayOfMonth: 2, interval: 1, anchor: "2026-01-05" })).toEqual({ kind: "monthly", dayOfMonth: 2 });
+    expect(isRecurrenceRule(six)).toBe(true);
+    expect(isRecurrenceRule({ ...six, interval: 13 })).toBe(false);
+    expect(monthsBetween("2026-11-30", "2027-05-01")).toBe(6);
   });
 });

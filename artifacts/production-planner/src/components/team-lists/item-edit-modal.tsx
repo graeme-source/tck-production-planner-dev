@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 import { useAutosave } from "@/hooks/use-autosave";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { SaveChip } from "@/components/save-chip";
-import { PRESETS, defaultCarryOver, nextOn, presetOf, ruleForPreset, type Preset } from "@/lib/team-list-view";
+import { MONTH_INTERVALS, PRESETS, defaultCarryOver, nextOn, presetOf, ruleForPreset, startMonthChoices, type Preset } from "@/lib/team-list-view";
 import { PRIORITY_STYLES, TEAM_LISTS_KEY, patchItem, type ItemInput, type TeamListItem } from "./team-lists-api";
 
 const inputCls = "w-full h-12 rounded-xl border-2 border-border bg-background px-3 text-base focus:outline-none focus:border-primary";
@@ -181,12 +181,32 @@ export function ItemEditModal({ item, today, onClose }: { item: TeamListItem; to
                 )}
               </div>
             )}
+            {rule.kind === "monthly" && (rule.interval ?? 1) > 1 && (
+              <div className="space-y-2 pt-1">
+                <p className="text-sm font-semibold">How often?</p>
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                  {MONTH_INTERVALS.map(o => (
+                    <button key={o.n} type="button" className={chip(rule.interval === o.n)} onClick={() => setRule({ ...rule, interval: o.n })}>
+                      {o.n === 12 ? o.label : `Every ${o.label}`}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-sm font-semibold">Starting in</p>
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-1.5">
+                  {startMonthChoices(today).map(c => (
+                    <button key={c.anchor} type="button" className={cn(chip(rule.anchor?.slice(0, 7) === c.anchor.slice(0, 7)), "px-1")} onClick={() => setRule({ ...rule, anchor: c.anchor })}>
+                      {c.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {rule.kind === "monthly" && (
               <div className="space-y-2 pt-1">
                 <p className="text-sm font-semibold">Which day of the month?</p>
                 <div className="grid grid-cols-7 gap-1.5">
                   {Array.from({ length: 31 }, (_, i) => i + 1).map(n => (
-                    <button key={n} type="button" className={cn(chip(rule.dayOfMonth === n), "px-0")} onClick={() => setRule({ kind: "monthly", dayOfMonth: n })}>
+                    <button key={n} type="button" className={cn(chip(rule.dayOfMonth === n), "px-0")} onClick={() => setRule({ ...rule, dayOfMonth: n })}>
                       {n}
                     </button>
                   ))}

@@ -30,8 +30,14 @@ export type RecurrenceRule =
    * every week is on.
    */
   | { kind: "weekly"; days: Weekday[]; interval?: number; anchor?: string | null }
-  /** On day N of every month; a month without that day uses its last day. */
-  | { kind: "monthly"; dayOfMonth: number }
+  /**
+   * On day N of every month; a month without that day uses its last day.
+   * With `interval` > 1 (2–12) it is every N months — quarterly is 3, six-
+   * monthly 6, yearly 12 (Graeme, 2026-10-15: "every 6 months, every 4
+   * months, or every 3 months" for maintenance) — and the month containing
+   * `anchor` is an "on" month; without an anchor every month is on.
+   */
+  | { kind: "monthly"; dayOfMonth: number; interval?: number; anchor?: string | null }
   /** One day only — a one-off item, e.g. a short-delivery report put on a
    *  team list for the day it happened (Graeme, 2026-10-15). With carry-over
    *  on it stays "Overdue" until someone ticks it. */
@@ -79,6 +85,23 @@ function daysInMonth(year: number, month1: number): number {
   return new Date(Date.UTC(year, month1, 0)).getUTCDate();
 }
 
+/** Whole calendar months from the month of `a` to the month of `b`. */
+export function monthsBetween(a: string, b: string): number {
+  const [ay, am] = a.split("-").map(Number);
+  const [by, bm] = b.split("-").map(Number);
+  return (by - ay) * 12 + (bm - am);
+}
+
+const MONTH_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** The months an every-N-months rule falls in, from its anchor: [0, 6] → "Jan & Jul". */
+export function monthsOfYear(interval: number, anchor: string): number[] {
+  const start = Number(anchor.slice(5, 7)) - 1;
+  const out: number[] = [];
+  for (let i = 0; i < 12; i += interval) out.push((start + i) % 12);
+  return out.sort((x, y) => x - y);
+}
+
 /** Is the rule due on this London date? */
 export function isDueOn(rule: RecurrenceRule, date: string): boolean {
   const wd = weekdayOf(date);
@@ -97,7 +120,10 @@ export function isDueOn(rule: RecurrenceRule, date: string): boolean {
     case "monthly": {
       const [y, m, d] = date.split("-").map(Number);
       const want = Math.min(Math.max(1, Math.floor(rule.dayOfMonth)), daysInMonth(y, m));
-      return d === want;
+      if (d !== want) return false;
+      const interval = Math.max(1, Math.floor(rule.interval ?? 1));
+      if (interval === 1 || !rule.anchor || !isIsoDate(rule.anchor)) return true;
+      return ((monthsBetween(rule.anchor, date) % interval) + interval) % interval === 0;
     }
     case "once":
       return date === rule.date;
@@ -107,9 +133,9 @@ export function isDueOn(rule: RecurrenceRule, date: string): boolean {
 }
 
 /** Longest gap between two occurrences of any rule this module accepts
- *  (52-week interval), plus slack. Searches stop here so a rule that never
- *  fires (weekly with no days) can't loop forever. */
-const SEARCH_LIMIT_DAYS = 7 * 53;
+ *  (52-week or 12-month interval), plus slack. Searches stop here so a rule
+ *  that never fires (weekly with no days) can't loop forever. */
+const SEARCH_LIMIT_DAYS = 7 * 54;
 
 /** The latest date on or before `date` that the rule is due, no earlier
  *  than `notBefore` (e.g. the day the item was created). Null if none. */
@@ -165,7 +191,16 @@ export function describeRule(rule: RecurrenceRule): string {
       const interval = Math.max(1, Math.floor(rule.interval ?? 1));
       return interval === 1 ? `Every ${days}` : `Every ${interval} weeks on ${days}`;
     }
-    case "monthly": return `Monthly on the ${ordinal(Math.max(1, Math.floor(rule.dayOfMonth)))}`;
+    case "monthly": {
+      const day = ordinal(Math.max(1, Math.floor(rule.dayOfMonth)));
+      const interval = Math.max(1, Math.floor(rule.interval ?? 1));
+      if (interval === 1) return `Monthly on the ${day}`;
+      const lead = interval === 12 ? "Yearly" : `Every ${interval} months`;
+      if (!rule.anchor || !isIsoDate(rule.anchor)) return `${lead} on the ${day}`;
+      const months = monthsOfYear(interval, rule.anchor).map(i => MONTH_SHORT[i]);
+      const list = months.length <= 1 ? months.join("") : `${months.slice(0, -1).join(", ")} & ${months[months.length - 1]}`;
+      return `${lead} on the ${day} — ${list}`;
+    }
     case "once": {
       if (!isIsoDate(rule.date)) return "Once";
       const d = noon(rule.date);
@@ -188,7 +223,12 @@ export function normaliseRule(rule: RecurrenceRule): RecurrenceRule {
         ? { kind: "weekly", days, interval, anchor: rule.anchor ?? null }
         : { kind: "weekly", days };
     }
-    case "monthly": return { kind: "monthly", dayOfMonth: Math.floor(rule.dayOfMonth) };
+    case "monthly": {
+      const interval = Math.max(1, Math.floor(rule.interval ?? 1));
+      return interval > 1
+        ? { kind: "monthly", dayOfMonth: Math.floor(rule.dayOfMonth), interval, anchor: rule.anchor ?? null }
+        : { kind: "monthly", dayOfMonth: Math.floor(rule.dayOfMonth) };
+    }
     case "once": return { kind: "once", date: rule.date };
     default: return { kind: rule.kind };
   }
@@ -219,7 +259,9 @@ export function isRecurrenceRule(value: unknown): value is RecurrenceRule {
         && (r.interval === undefined || (Number.isInteger(r.interval) && (r.interval as number) >= 1 && (r.interval as number) <= 52))
         && (r.anchor === undefined || r.anchor === null || isIsoDate(r.anchor));
     case "monthly":
-      return Number.isInteger(r.dayOfMonth) && (r.dayOfMonth as number) >= 1 && (r.dayOfMonth as number) <= 31;
+      return Number.isInteger(r.dayOfMonth) && (r.dayOfMonth as number) >= 1 && (r.dayOfMonth as number) <= 31
+        && (r.interval === undefined || (Number.isInteger(r.interval) && (r.interval as number) >= 1 && (r.interval as number) <= 12))
+        && (r.anchor === undefined || r.anchor === null || isIsoDate(r.anchor));
     case "once":
       return isIsoDate(r.date);
     default:

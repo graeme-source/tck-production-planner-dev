@@ -83,7 +83,13 @@ const recurrenceSchema = z.discriminatedUnion("kind", [
     interval: z.number().int().min(1).max(52).optional(),
     anchor: isoDate.nullish(),
   }),
-  z.object({ kind: z.literal("monthly"), dayOfMonth: z.number().int().min(1).max(31) }),
+  z.object({
+    kind: z.literal("monthly"),
+    dayOfMonth: z.number().int().min(1).max(31),
+    // Every N months (2026-10-15): quarterly, six-monthly, yearly…
+    interval: z.number().int().min(1).max(12).optional(),
+    anchor: isoDate.nullish(),
+  }),
   // One-off items the app adds (short-delivery reports, lib/short-delivery-report.ts).
   // Accepted here so editing such an item (title, priority…) still saves.
   z.object({ kind: z.literal("once"), date: isoDate }),

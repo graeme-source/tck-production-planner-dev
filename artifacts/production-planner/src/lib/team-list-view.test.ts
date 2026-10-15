@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  comingUpOpen, completionLabel, dayHeading, defaultCarryOver, doneByLabel, doneEarly, filterListPeople, membersSummary, overdueLabel, presetOf, ruleForPreset, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
+  comingUpOpen, completionLabel, dayHeading, defaultCarryOver, doneByLabel, doneEarly, filterListPeople, firstMonthFrom, membersSummary, overdueLabel, presetOf, ruleForPreset, startMonthChoices, TEAM_LIST_DEFAULT_SORT, teamTaskSortFields,
 } from "./team-list-view";
 import { sortTasks } from "./task-sort";
 
@@ -116,5 +116,27 @@ describe("ticked early (Graeme, 2026-10-14)", () => {
     expect(comingUpOpen(null)).toBe(true);
     expect(comingUpOpen("1")).toBe(true);
     expect(comingUpOpen("0")).toBe(false);
+  });
+});
+
+describe("every N months (Graeme, 2026-10-15)", () => {
+  it("the preset keeps the day of the month and starts this month if the day hasn't passed", () => {
+    expect(ruleForPreset("every_n_months", { kind: "monthly", dayOfMonth: 20 }, "2026-10-15"))
+      .toEqual({ kind: "monthly", dayOfMonth: 20, interval: 3, anchor: "2026-10-01" });
+    expect(ruleForPreset("every_n_months", { kind: "monthly", dayOfMonth: 1 }, "2026-12-15"))
+      .toEqual({ kind: "monthly", dayOfMonth: 1, interval: 3, anchor: "2027-01-01" });
+  });
+  it("presets round-trip, and plain Monthly drops the interval", () => {
+    const six = { kind: "monthly" as const, dayOfMonth: 1, interval: 6, anchor: "2026-11-01" };
+    expect(presetOf(six)).toBe("every_n_months");
+    expect(presetOf({ kind: "monthly", dayOfMonth: 1 })).toBe("monthly");
+    expect(ruleForPreset("monthly", six, "2026-10-15")).toEqual({ kind: "monthly", dayOfMonth: 1 });
+  });
+  it("start-month choices run 12 months from this one", () => {
+    const c = startMonthChoices("2026-10-15");
+    expect(c).toHaveLength(12);
+    expect(c[0].anchor).toBe("2026-10-01");
+    expect(c[3].anchor).toBe("2027-01-01");
+    expect(firstMonthFrom(15, "2026-10-15")).toBe("2026-10-01");
   });
 });

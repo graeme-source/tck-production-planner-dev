@@ -10,7 +10,7 @@ import type { SortSpec, TaskSortFields } from "./task-sort";
 
 /** "once" = a one-off item made by the app (a short-delivery report). It has
  *  no button of its own: picking any preset turns it into a repeating task. */
-export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly" | "once";
+export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly" | "every_n_months" | "once";
 
 export const PRESETS: Array<{ key: Preset; label: string }> = [
   { key: "daily", label: "Every day" },
@@ -19,13 +19,23 @@ export const PRESETS: Array<{ key: Preset; label: string }> = [
   { key: "weekly", label: "Weekly" },
   { key: "every_n", label: "Every 2+ weeks" },
   { key: "monthly", label: "Monthly" },
+  { key: "every_n_months", label: "Every 2+ months" },
+];
+
+/** Every-N-months choices (Graeme, 2026-10-15: maintenance every 3, 4 or 6 months). */
+export const MONTH_INTERVALS: Array<{ n: number; label: string }> = [
+  { n: 2, label: "2 months" },
+  { n: 3, label: "3 months" },
+  { n: 4, label: "4 months" },
+  { n: 6, label: "6 months" },
+  { n: 12, label: "Yearly" },
 ];
 
 export function presetOf(rule: RecurrenceRule): Preset {
   switch (rule.kind) {
     case "daily": return "daily";
     case "weekdays": return "weekdays";
-    case "monthly": return "monthly";
+    case "monthly": return (rule.interval ?? 1) > 1 ? "every_n_months" : "monthly";
     case "once": return "once";
     case "weekly":
       if ((rule.interval ?? 1) > 1) return "every_n";
@@ -57,9 +67,37 @@ export function ruleForPreset(preset: Preset, current: RecurrenceRule, today: st
       const day = currentDays[0];
       return { kind: "weekly", days: [day], interval: 2, anchor: nextOn(day, today) };
     }
-    case "monthly": return current.kind === "monthly" ? current : { kind: "monthly", dayOfMonth: Number(today.slice(8, 10)) };
+    case "monthly": return current.kind === "monthly"
+      ? { kind: "monthly", dayOfMonth: current.dayOfMonth }
+      : { kind: "monthly", dayOfMonth: Number(today.slice(8, 10)) };
+    case "every_n_months": {
+      if (current.kind === "monthly" && (current.interval ?? 1) > 1) return current;
+      const dayOfMonth = current.kind === "monthly" ? current.dayOfMonth : Number(today.slice(8, 10));
+      // Starts this month if the day hasn't passed yet, else next month.
+      return { kind: "monthly", dayOfMonth, interval: 3, anchor: firstMonthFrom(dayOfMonth, today) };
+    }
     case "once": return current.kind === "once" ? current : { kind: "once", date: today };
   }
+}
+
+/** The first of the month an every-N-months rule starts in: this month if
+ *  `dayOfMonth` hasn't passed yet, otherwise next month. */
+export function firstMonthFrom(dayOfMonth: number, today: string): string {
+  const [y, m, d] = today.split("-").map(Number);
+  const next = d <= dayOfMonth ? { y, m } : m === 12 ? { y: y + 1, m: 1 } : { y, m: m + 1 };
+  return `${next.y}-${String(next.m).padStart(2, "0")}-01`;
+}
+
+/** The next 12 months as {anchor, label} — the "starting in" choices. */
+export function startMonthChoices(today: string): Array<{ anchor: string; label: string }> {
+  const [y, m] = today.split("-").map(Number);
+  return Array.from({ length: 12 }, (_, i) => {
+    const mm = ((m - 1 + i) % 12) + 1;
+    const yy = y + Math.floor((m - 1 + i) / 12);
+    const anchor = `${yy}-${String(mm).padStart(2, "0")}-01`;
+    const label = new Date(`${anchor}T12:00:00Z`).toLocaleString("en-GB", { month: "short", year: yy === y ? undefined : "2-digit", timeZone: "UTC" });
+    return { anchor, label };
+  });
 }
 
 /** Default for the "carry over if missed" switch when the rhythm changes. */
