@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getGetRecipeQueryKey, getListIngredientsQueryKey, getListRecipesQueryKey } from "@workspace/api-client-react";
@@ -6,6 +6,7 @@ import { AlertTriangle, Beef, Check, CheckCircle2, ChefHat, Clock, Loader2, Refr
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { ingredientTimingHref } from "@/components/timing-flag";
+import { TimingReviewActions, useTimingReview, type SentInfo, type TimingKind } from "@/components/timing-review-actions";
 
 /**
  * "Timing data" card on the Recipes page (Graeme, 2026-09-25): everything the
@@ -31,6 +32,7 @@ interface RecipeIssue {
   currentSeconds: number | null;
   timesPlanned: number;
   suggestion: Suggestion | null;
+  sent?: SentInfo | null;
 }
 interface MeatIssue {
   ingredientId: number;
@@ -41,6 +43,7 @@ interface MeatIssue {
   cookMinutes: number | null;
   processMinutes: number | null;
   cookSuggestion: Suggestion | null;
+  sent?: SentInfo | null;
 }
 interface TimingHealth {
   buildWindowDays: number;
@@ -48,6 +51,8 @@ interface TimingHealth {
   recipes: RecipeIssue[];
   meats: MeatIssue[];
   notPlannedRecently: Array<{ recipeId: number; name: string }>;
+  /** Dismissed "check against the floor" cards that still hold (0195). */
+  dismissed?: Array<{ kind: TimingKind; targetId: number; name: string; setValue: number | null; suggestedValue: number | null; by: string | null; at: string }>;
 }
 
 type SaveState = { status: "idle" } | { status: "saving" } | { status: "saved" } | { status: "error"; message: string };
@@ -219,6 +224,11 @@ function RecipeCard({ issue, windowDays, onEdit, onSaved }: {
         busy={busy}
         onCommit={min => saveSeconds(Math.round(min * 60))}
       />
+      <TimingReviewActions
+        kind="build" targetId={issue.recipeId} name={issue.name}
+        setValue={issue.currentSeconds} suggestedValue={s?.value ?? null}
+        canDismiss={issue.kind === "check"} sent={issue.sent ?? null}
+      />
     </div>
   );
 }
@@ -308,6 +318,11 @@ function MeatCard({ issue, windowDays, onSaved }: {
           <AutosaveNumber label="Process time:" unit="min" busy={busy} onCommit={saveProcess} />
         </div>
       )}
+      <TimingReviewActions
+        kind="cook" targetId={issue.ingredientId} name={issue.name}
+        setValue={issue.cookMinutes} suggestedValue={s?.value ?? null}
+        canDismiss={issue.kind === "check"} sent={issue.sent ?? null}
+      />
     </div>
   );
 }
@@ -317,6 +332,7 @@ export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: nu
   const canManage = authState.status === "authenticated" &&
     (authState.user.role === "admin" || authState.user.role === "manager");
   const [justSaved, setJustSaved] = useState<string[]>([]);
+  const { restore } = useTimingReview();
 
   const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TimingHealth>({
     queryKey: ["timing-health"],
@@ -329,6 +345,12 @@ export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: nu
     staleTime: 60_000,
   });
 
+  // A "review this" to-do links to /recipes#timing-data — bring the card into view.
+  useEffect(() => {
+    if (!data || window.location.hash !== "#timing-data") return;
+    document.getElementById("timing-data")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [data]);
+
   if (!canManage) return null;
   const onSaved = (summary: string) => setJustSaved(prev => [summary, ...prev.filter(p => p !== summary)].slice(0, 6));
 
@@ -336,7 +358,7 @@ export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: nu
   const missingCount = (data?.recipes.filter(r => r.kind === "missing").length ?? 0) + (data?.meats.filter(m => m.kind === "missing").length ?? 0);
 
   return (
-    <section className="rounded-2xl border border-border bg-secondary/20 p-4 sm:p-5 space-y-4" aria-labelledby="timing-data-heading">
+    <section id="timing-data" className="scroll-mt-4 rounded-2xl border border-border bg-secondary/20 p-4 sm:p-5 space-y-4" aria-labelledby="timing-data-heading">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
           <h2 id="timing-data-heading" className="font-display text-xl font-bold flex items-center gap-2">
@@ -408,6 +430,24 @@ export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: nu
             </div>
           )}
         </>
+      )}
+
+      {data && (data.dismissed?.length ?? 0) > 0 && (
+        <div className="text-sm text-muted-foreground space-y-1">
+          <p className="font-semibold">Dismissed — set time kept ({data.dismissed!.length}):</p>
+          <ul className="flex flex-wrap gap-2">
+            {data.dismissed!.map(d => (
+              <li key={`${d.kind}-${d.targetId}`} className="inline-flex items-center gap-2 rounded-full border border-border bg-card pl-3 pr-1 py-1">
+                <span>{d.name}{d.by ? ` · by ${d.by}` : ""}</span>
+                <button type="button" disabled={restore.isPending} onClick={() => restore.mutate({ kind: d.kind, targetId: d.targetId })}
+                  className="min-h-8 px-2.5 rounded-full bg-secondary text-foreground text-xs font-semibold hover:bg-secondary/70 disabled:opacity-50">
+                  Bring back
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="text-xs">These come back by themselves if someone changes the set time or the history moves well away.</p>
+        </div>
       )}
 
       {data && (
