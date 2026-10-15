@@ -138,6 +138,9 @@ importers:
       '@workspace/people-reviews':
         specifier: workspace:*
         version: link:../../lib/people-reviews
+      '@workspace/plan-margin':
+        specifier: workspace:*
+        version: link:../../lib/plan-margin
       '@workspace/product-labels':
         specifier: workspace:*
         version: link:../../lib/product-labels
@@ -626,6 +629,9 @@ importers:
       '@workspace/people-reviews':
         specifier: workspace:*
         version: link:../../lib/people-reviews
+      '@workspace/plan-margin':
+        specifier: workspace:*
+        version: link:../../lib/plan-margin
       '@workspace/production-schedule':
         specifier: workspace:*
         version: link:../../lib/production-schedule
@@ -772,6 +778,8 @@ importers:
   lib/messages: {}
 
   lib/people-reviews: {}
+
+  lib/plan-margin: {}
 
   lib/product-labels:
     dependencies:

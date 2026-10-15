@@ -89,6 +89,7 @@ import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
 import slowMeatRouter, { slowMeatPlanGuard } from "./slow-meat";
+import planMarginRouter from "./plan-margin";
 import leanReviewsRouter from "./lean-reviews";
 import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
@@ -259,6 +260,8 @@ router.use("/production-plans", extraPacksRouter);
 // router, so no new code goes in production-plans.ts.
 router.use("/production-plans", slowMeatPlanGuard);
 router.use("/slow-meat", slowMeatRouter);
+// Production safety margin (orders + 2/4 packs) — settings for the plan screens.
+router.use("/plan-margin", planMarginRouter);
 router.use("/production-plans", productionPlansRouter);
 // Who is actually on each building table (last batch recorder + who opened
 // it) — read-only, feeds the dashboard chooser and the building lock.

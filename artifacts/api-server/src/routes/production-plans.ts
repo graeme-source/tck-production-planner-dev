@@ -4,7 +4,8 @@ import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as driz
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
-import { allocateDailyBatches } from "../lib/daily-batch-allocation";
+import { allocateDailyBatches, orderFloorBatches } from "../lib/daily-batch-allocation";
+import { loadPlanMarginSettings } from "../lib/plan-margin-settings";
 import { calzoneLineBatches } from "@workspace/production-schedule";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
@@ -1093,6 +1094,7 @@ export async function calculatePlanData(planDate: string) {
     .from(appSettingsTable)
     .where(eq(appSettingsTable.key, "total_daily_batches"));
   const totalDailyBatches = totalBatchesSetting ? Number(totalBatchesSetting.value) : 0;
+  const planMargin = await loadPlanMarginSettings();
 
   // Load recipe → Shopify variant mappings for precise matching
   const recipeVariantMappings = await db.execute<{ recipe_id: number; shopify_variant_id: string | null; wonky_variant_id: string | null }>(sql`
@@ -1428,6 +1430,7 @@ export async function calculatePlanData(planDate: string) {
     ppb: r.packsPerBatch,
     proj: r.estimatedFactoryNumber - r.bagPackEquivalents - (r.dispatch2Qty + r.dispatch3Qty),
     deficitBatches: r.deficitBatches,
+    floorBatches: orderFloorBatches(r, planMargin),
   })), totalDailyBatches);
   const { totalDeficitBatches, remainingCapacity } = allocation;
   const suggestedByIdx = allocation.suggestedBatches;
@@ -1655,7 +1658,7 @@ export async function calculatePlanData(planDate: string) {
         totalDispatchQty: d1 + d2 + d3,
         deficit,
         deficitBatches,
-        suggestedBatches: deficitBatches,
+        suggestedBatches: orderFloorBatches({ dispatch2Qty: d2, dispatch3Qty: d3, estimatedFactoryNumber, packsPerBatch }, planMargin),
         expiringPacks,
         sourceTitles: [...demand.sourceTitles],
       });

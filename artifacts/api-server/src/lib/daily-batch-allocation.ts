@@ -17,6 +17,11 @@
  * still produces up to zero stock when real orders drove it negative, so
  * genuine demand is honoured without ever building surplus.
  *
+ * Whole batches (15 Oct 2026): each recipe's orders + safety margin is a
+ * floor in WHOLE batches (floorBatches). Before, a recipe with no DPT weight
+ * got its shortfall as a fraction (32 packs ÷ 5 = 6.4) and the rounding gave
+ * the .4 away — Properoni Chicken & Chorizo was planned 2 packs short.
+ *
  * Main kitchen only (kitchen-scope rule): fried chicken rides along in the
  * calculation for its pack-table stock, but it is made in a separate
  * facility, so it never takes a share of the day's batches or counts towards
@@ -24,6 +29,10 @@
  * 42 of a 100-batch day on 7 Oct 2026.
  */
 import { isMainKitchen } from "@workspace/production-schedule";
+import { solveTargetAllocation, largestRemainderRound, minBatchesForOrders, type PlanMarginSettings } from "@workspace/plan-margin";
+
+// Kept as a re-export: older callers and tests import it from here.
+export { largestRemainderRound };
 
 export interface AllocationRecipe {
   category: string | null;
@@ -34,6 +43,10 @@ export interface AllocationRecipe {
   /** Projected end-of-horizon packs with NO production (can be negative). */
   proj: number;
   deficitBatches: number;
+  /** Fewest whole batches this recipe must get — orders + safety margin
+   *  (@workspace/plan-margin minBatchesForOrders, 15 Oct 2026). Defaults to
+   *  deficitBatches, so a shortfall is always covered in WHOLE batches. */
+  floorBatches?: number;
 }
 
 export interface DailyAllocation {
@@ -45,68 +58,38 @@ export interface DailyAllocation {
   remainingCapacity: number;
 }
 
-/** Round fractional allocations to integers that sum to `total`: floor each,
- *  then hand the leftover units to the largest remainders. */
-export function largestRemainderRound(exact: number[], total: number): number[] {
-  const floors = exact.map(e => Math.floor(e));
-  let leftover = total - floors.reduce((s, f) => s + f, 0);
-  const order = exact
-    .map((e, idx) => ({ idx, remainder: e - Math.floor(e) }))
-    .sort((a, b) => b.remainder - a.remainder);
-  for (const { idx } of order) {
-    if (leftover <= 0) break;
-    floors[idx] += 1;
-    leftover--;
-  }
-  return floors;
+/** Fewest whole batches a /calculate row needs: the orders this plan covers
+ *  (dispatch 2 + 3 — the same figures the Create Plan table shows) plus the
+ *  safety margin, net of the stock at plan start less 8-pack bag packs. Used
+ *  as the allocation floor and as the chilled / test-product suggestion. */
+export function orderFloorBatches(
+  r: { dispatch2Qty: number; dispatch3Qty: number; estimatedFactoryNumber: number; bagPackEquivalents?: number; packsPerBatch: number },
+  margin: PlanMarginSettings,
+): number {
+  return minBatchesForOrders({
+    demandPacks: r.dispatch2Qty + r.dispatch3Qty,
+    stockPacks: r.estimatedFactoryNumber - (r.bagPackEquivalents ?? 0),
+    packsPerBatch: r.packsPerBatch,
+  }, margin).batches;
 }
 
+/** The solver itself is @workspace/plan-margin (shared with the Create and
+ *  Edit Plan screens, so the two can never disagree). This wrapper adds the
+ *  main-kitchen rule and the deficit totals the response reports. */
 export function allocateDailyBatches(recipes: readonly AllocationRecipe[], totalDailyBatches: number): DailyAllocation {
   const inKitchen = recipes.map(r => isMainKitchen(r.category));
   const totalDeficitBatches = recipes.reduce((s, r, i) => s + (inKitchen[i] ? r.deficitBatches : 0), 0);
   const remainingCapacity = Math.max(0, totalDailyBatches - totalDeficitBatches);
-
-  // A separate-facility row has no weight and no gap, so it gets nothing.
-  const pool = recipes.map((r, i) => inKitchen[i]
-    ? { weight: r.weight, ppb: r.ppb > 0 ? r.ppb : 1, proj: r.proj }
-    : { weight: 0, ppb: 1, proj: 0 });
-  // Rounding hands leftover units to main-kitchen rows only — a tie at zero
-  // must never give a separate-facility row a batch.
-  const round = (exact: number[]): number[] => {
-    const idx = exact.map((_, i) => i).filter(i => inKitchen[i]);
-    const rounded = largestRemainderRound(idx.map(i => exact[i]), totalDailyBatches);
-    const out = exact.map(() => 0);
-    idx.forEach((i, k) => { out[i] = rounded[k]; });
-    return out;
-  };
-  // Batches needed to lift every under-target recipe to its λ-target.
-  const needBatches = (lambda: number) =>
-    pool.reduce((s, p) => s + Math.max(0, lambda * p.weight - p.proj) / p.ppb, 0);
-
-  const floorNeed = needBatches(0); // just covering shortfalls to zero stock
-  if (floorNeed >= totalDailyBatches) {
-    // Capacity can't even cover the shortfalls — scale each gap pro-rata.
-    const gaps = pool.map(p => Math.max(0, -p.proj) / p.ppb);
-    const scale = floorNeed > 0 ? totalDailyBatches / floorNeed : 0;
-    return {
-      suggestedBatches: round(gaps.map(g => g * scale)),
-      targetStockPacks: pool.map(() => null),
-      totalDeficitBatches,
-      remainingCapacity,
-    };
-  }
-  // Bisect λ until the targets exactly spend the day's capacity.
-  let lo = 0, hi = 1;
-  while (needBatches(hi) < totalDailyBatches && hi < 1e9) hi *= 2;
-  for (let i = 0; i < 60; i++) {
-    const mid = (lo + hi) / 2;
-    if (needBatches(mid) < totalDailyBatches) lo = mid; else hi = mid;
-  }
-  const lambda = (lo + hi) / 2;
-  const exact = pool.map(p => Math.max(0, lambda * p.weight - p.proj) / p.ppb);
+  const solved = solveTargetAllocation(recipes.map((r, i) => ({
+    weight: r.weight,
+    ppb: r.ppb,
+    proj: r.proj,
+    floorBatches: r.floorBatches ?? r.deficitBatches,
+    eligible: inKitchen[i],
+  })), totalDailyBatches);
   return {
-    suggestedBatches: round(exact),
-    targetStockPacks: pool.map(p => p.weight > 0 ? Math.round(lambda * p.weight) : null),
+    suggestedBatches: solved.batches,
+    targetStockPacks: solved.targets,
     totalDeficitBatches,
     remainingCapacity,
   };
