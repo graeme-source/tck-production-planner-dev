@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DARK_TEXT, LIGHT_TEXT, PILL_BLACK, PILL_LIGHT, effectiveSecondary, readableTextOn, recipeColourStyle, relativeLuminance } from "./recipe-colour-style";
+import { DARK_TEXT, LIGHT_TEXT, effectiveSecondary, readableTextOn, recipeColourStyle, relativeLuminance } from "./recipe-colour-style";
 
 const RED = "#dc2626";
 const YELLOW = "#facc15";
@@ -11,7 +11,7 @@ describe("recipeColourStyle — no secondary colour looks exactly as before", ()
     expect(recipeColourStyle(RED, "", "dot")).toEqual({ backgroundColor: RED });
   });
   it("text is just the colour; chip is colour + border", () => {
-    expect(recipeColourStyle(RED, null, "text")).toMatchObject({ color: RED, backgroundColor: PILL_BLACK });
+    expect(recipeColourStyle(RED, null, "text")).toEqual({ color: RED });
     expect(recipeColourStyle(RED, null, "chip")).toEqual({ color: RED, borderColor: RED });
   });
   it("no primary → no style at all (callers keep their fallback)", () => {
@@ -27,45 +27,17 @@ describe("recipeColourStyle — no secondary colour looks exactly as before", ()
   });
 });
 
-describe("recipeColourStyle — with a secondary colour", () => {
-  it("dot splits diagonally, primary first, hard edge (no blend)", () => {
-    expect(recipeColourStyle(RED, YELLOW, "dot")).toEqual({
-      background: `linear-gradient(135deg, ${RED} 0 50%, ${YELLOW} 50% 100%)`,
-    });
+describe("recipeColourStyle — a secondary colour is no longer drawn (Graeme, 2026-10-15)", () => {
+  it("every shape looks exactly as with one colour", () => {
+    for (const shape of ["dot", "band", "strip", "text", "chip", "fill"] as const) {
+      expect(recipeColourStyle(RED, YELLOW, shape)).toEqual(recipeColourStyle(RED, null, shape));
+    }
   });
-  it("band stacks primary over secondary", () => {
-    expect(recipeColourStyle(RED, YELLOW, "band")).toEqual({
-      background: `linear-gradient(to bottom, ${RED} 0 50%, ${YELLOW} 50% 100%)`,
-    });
+  it("names are just the colour — no pill, no underline", () => {
+    expect(recipeColourStyle(RED, YELLOW, "text")).toEqual({ color: RED });
   });
-  it("strip puts primary left, secondary right; plain without one", () => {
-    expect(recipeColourStyle(RED, YELLOW, "strip")).toEqual({
-      background: `linear-gradient(to right, ${RED} 0 50%, ${YELLOW} 50% 100%)`,
-    });
-    expect(recipeColourStyle(RED, null, "strip")).toEqual({ backgroundColor: RED });
-  });
-  it("text is a pill: two colours → secondary background, primary text; never an underline (2026-10-15)", () => {
-    const s = recipeColourStyle(RED, YELLOW, "text");
-    expect(s.color).toBe(RED);
-    expect(s.backgroundColor).toBe(YELLOW);
-    expect(s.borderRadius).toBe("9999px");
-    expect(s.textDecorationLine).toBeUndefined();
-  });
-  it("one colour → the colour on black; a near-black colour gets a light pill", () => {
-    expect(recipeColourStyle(RED, null, "text").backgroundColor).toBe(PILL_BLACK);
-    expect(recipeColourStyle("#000000", null, "text").backgroundColor).toBe(PILL_LIGHT);
-  });
-  it("chip keeps a primary border, filled with the secondary", () => {
-    const s = recipeColourStyle(RED, YELLOW, "chip");
-    expect(s.borderColor).toBe(RED);
-    expect(s.backgroundColor).toBe(YELLOW);
-    expect(s.textDecorationLine).toBeUndefined();
-  });
-  it("fill is the primary with a secondary band, text against the primary", () => {
-    const s = recipeColourStyle(YELLOW, RED, "fill");
-    expect(s.backgroundColor).toBe(YELLOW);
-    expect(s.color).toBe(DARK_TEXT);
-    expect(s.boxShadow).toBe(`inset 0 -6px 0 0 ${RED}`);
+  it("fill keeps readable text against the primary", () => {
+    expect(recipeColourStyle(YELLOW, RED, "fill")).toEqual({ backgroundColor: YELLOW, color: DARK_TEXT });
   });
 });
 

@@ -95,7 +95,12 @@ export function recipeColourStyle(
 ): RecipeColourCss {
   const p = cleanColour(primary);
   if (!p) return {};
-  const s = effectiveSecondary(p, secondary);
+  // One colour only, everywhere (Graeme, 2026-10-15: the two-colour pills
+  // "look hideous… even if I've got two colours set, just use one colour").
+  // The secondary colour stays stored but is no longer drawn; every shape is
+  // exactly what it was before secondary colours existed.
+  void secondary;
+  const s: string | null = null;
   switch (shape) {
     case "dot":
       return s
@@ -110,7 +115,7 @@ export function recipeColourStyle(
         ? { background: `linear-gradient(to right, ${p} 0 50%, ${s} 50% 100%)` }
         : { backgroundColor: p };
     case "text":
-      return { color: p, backgroundColor: s ?? pillBackground(p), ...PILL };
+      return { color: p };
     case "chip":
       return s ? { color: p, borderColor: p, backgroundColor: s } : { color: p, borderColor: p };
     case "fill":
