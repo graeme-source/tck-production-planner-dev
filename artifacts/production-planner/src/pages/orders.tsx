@@ -75,6 +75,16 @@ import {
 } from "@/lib/minimum-order";
 import { MinimumOrderNotice } from "@/components/minimum-order-notice";
 import { suggestedPacks, surplusDependsOnDeliveryDay, withDeliverySurplus, type SurplusLineFields } from "@/lib/order-line-surplus";
+import {
+  expectedAtCountLabel,
+  expectedStockBasisLine,
+  expectedStockHeadline,
+  expectedStockTooltip,
+  shouldSaveStockOnBlur,
+  stockBoxStartsBlank,
+  type ExpectedStock,
+  type StockBasis,
+} from "@/lib/expected-stock-label";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -125,6 +135,13 @@ type OrderLine = SurplusLineFields & {
   /** False = a kanban item nobody stock-checks; its stock figure only ever
    *  grows with deliveries, so it isn't shown as a count. */
   stockCounted?: boolean;
+  /** Where stockOnHand came from (running stock, 15 Oct 2026): today's
+   *  count, the EXPECTED figure (last count + deliveries − usage), or
+   *  neither. Manager page only — never shown at stations or count screens. */
+  stockBasis?: StockBasis;
+  expectedStock?: ExpectedStock | null;
+  /** Counted today: what the app expected at that count. */
+  expectedAtLastCount?: number | null;
   // Packs per supplier case. When set, the pack count to order rounds up to the
   // nearest whole case. Null/absent means order in individual packs.
   caseSizePacks?: number | null;
@@ -2205,23 +2222,33 @@ export default function Orders() {
                                   type="number"
                                   min={0}
                                   step="any"
-                                  // Not-counted kanban items: no made-up figure in the box.
-                                  value={line.editedStock === 0 || (line.stockCounted === false && !line.stockDirty) ? "" : line.editedStock}
+                                  // Not-counted kanban items and expected figures: no
+                                  // made-up number in the box (it would be saved as a count).
+                                  value={line.editedStock === 0 || stockBoxStartsBlank(line) ? "" : line.editedStock}
                                   onChange={e => updateStock(so.supplier.id, idx, e.target.value === "" ? 0 : parseFloat(e.target.value) || 0)}
                                   onFocus={e => e.currentTarget.select()}
                                   onBlur={e => {
+                                    if (!shouldSaveStockOnBlur(line)) return;
                                     const val = parseFloat(e.target.value) || 0;
                                     saveStockCheck(line.ingredientId, val);
                                   }}
-                                  placeholder="0"
+                                  placeholder={line.stockBasis === "expected" && line.expectedStock ? `~${Number(line.expectedStock.qty.toFixed(2))}` : "0"}
                                   className="w-20 h-7 rounded border border-border bg-background text-right text-sm tabular-nums px-1.5"
                                 />
                                 <span className="text-xs text-muted-foreground">{line.unit}</span>
                               </div>
-                              {line.stockCounted === false && !line.stockDirty ? (
+                              {line.stockBasis === "expected" && line.expectedStock && !line.stockDirty ? (
+                                <span
+                                  className="text-[10px] text-sky-700 dark:text-sky-300 flex flex-col items-end leading-tight"
+                                  title={expectedStockTooltip(line.expectedStock, line.nativeUnit ?? line.unit)}
+                                >
+                                  <span className="font-semibold">{expectedStockHeadline(line.expectedStock, line.nativeUnit ?? line.unit)}</span>
+                                  <span className="text-muted-foreground">{expectedStockBasisLine(line.expectedStock)}</span>
+                                </span>
+                              ) : line.stockCounted === false && !line.stockDirty ? (
                                 <span
                                   className="text-[10px] text-muted-foreground flex items-center gap-0.5"
-                                  title="Kanban item that isn't stock-checked: the app only adds deliveries to it and never takes usage off, so its figure isn't a real count. The kanban card drives the order. Type a count here if you want to record one."
+                                  title="Kanban item that has never been counted: the app only adds deliveries to it, so its figure isn't a real count. The kanban card drives the order. Type a count here once and the app keeps an expected figure from then on (count + deliveries − usage)."
                                 >
                                   <AlertCircle className="w-2.5 h-2.5" />
                                   Not counted — kanban
@@ -2238,6 +2265,14 @@ export default function Orders() {
                                   <span className={cn("text-[10px] flex items-center gap-0.5", isToday ? "text-emerald-600 dark:text-emerald-400" : "text-amber-600 dark:text-amber-400")}>
                                     <Clock className="w-2.5 h-2.5" />
                                     {label}
+                                    {line.expectedAtLastCount != null && !line.stockDirty && (
+                                      <span
+                                        className="text-muted-foreground ml-1"
+                                        title="What the app expected when this count was made (last count + deliveries − usage). The order uses your count."
+                                      >
+                                        · {expectedAtCountLabel(line.expectedAtLastCount)}
+                                      </span>
+                                    )}
                                   </span>
                                 );
                               })() : (

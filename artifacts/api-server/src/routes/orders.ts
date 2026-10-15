@@ -18,6 +18,8 @@ import {
 import { eq, and, or, isNull, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
+import { loadStockLedgers } from "../lib/stock-ledger-data";
+import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
 
@@ -315,7 +317,32 @@ router.get("/calculate", async (req, res) => {
   // Only that plan's share: the old all-or-nothing skip threw away every
   // other plan's outstanding prep whenever the selected plan happened to be
   // today's prep plan.
-  const outstandingPrep = await computeOutstandingPrepRaw(stockCheckTimestamps);
+  //
+  // Running stock (Graeme, 15 Oct 2026 — docs/RUNNING_STOCK.md): without a
+  // count today, an ingredient's stock is its EXPECTED figure — last real
+  // count + deliveries − usage since (lib/stock-ledger*.ts). Ticked tins are
+  // then already off that figure, so its still-to-prep counts only unticked
+  // tins: "now" is passed as its checked-at (isTinOutstanding).
+  const ledgerNow = new Date();
+  const stockLedgers = await loadStockLedgers({ since: new Date(ledgerNow.getTime() - 120 * 86_400_000), until: ledgerNow });
+  const lineStockByIngredient: Record<number, OrderLineStock> = {};
+  const lineStockFor = (iid: number, stockCheckEnabled: boolean): OrderLineStock =>
+    (lineStockByIngredient[iid] ??= orderLineStock({
+      ledger: stockLedgers.get(iid)?.ledger,
+      snapshotStock: latestStockByIngredient[iid] ?? 0,
+      stockCheckEnabled,
+      nowMs: ledgerNow.getTime(),
+      today,
+      toLondonDate: ms => londonDateString(new Date(ms)),
+      selectedPlanId: planId,
+    }));
+  const prepCheckedAt: Record<number, string | undefined> = { ...stockCheckTimestamps };
+  for (const iid of ingredientIds) {
+    if (lineStockFor(iid, ingredientLookup[iid]?.stockCheckEnabled ?? false).outstandingPrepFromNow) {
+      prepCheckedAt[iid] = ledgerNow.toISOString();
+    }
+  }
+  const outstandingPrep = await computeOutstandingPrepRaw(prepCheckedAt);
   const selectedPlanShare = outstandingPrep.byPlan[planId] ?? {};
   const prepOutstandingByIngredient: Record<number, number> = {};
   for (const [iidStr, qty] of Object.entries(outstandingPrep.byIngredient)) {
@@ -380,6 +407,14 @@ router.get("/calculate", async (req, res) => {
       isKanban: boolean;
       /** False for kanban-only items nobody stock-checks (their figure isn't a count). */
       stockCounted: boolean;
+      /** Where stockOnHand came from: today's count, the running EXPECTED
+       *  figure (no count today — lib/order-line-stock.ts), or neither. */
+      stockBasis: OrderLineStock["basis"];
+      /** The expected figure and what it's built from (null when the item
+       *  was never counted or nothing uses it). */
+      expectedStock: OrderLineStock["expectedStock"];
+      /** Counted today: what the ledger expected at that count. */
+      expectedAtLastCount: number | null;
       // The kanban floor applied to packsToOrder (null when not a kanban
       // line). The frontend's stock-edit recompute re-applies it.
       kanbanFloorPacks: number | null;
@@ -451,7 +486,8 @@ router.get("/calculate", async (req, res) => {
 
     const packWeight = Number(detail.packWeight) || 1;
     const costPerPack = Number(detail.costPerPack) || 0;
-    const stockOnHand = latestStockByIngredient[iid] ?? 0;
+    const lineStock = lineStockFor(iid, isStockChecked);
+    const stockOnHand = lineStock.stockOnHand;
     // Use DPT daily requirement if available, otherwise fall back to
     // the current plan's totalRequired for this ingredient.
     const dailyRequirement = dptLookup[iid] ?? ing.totalRequired;
@@ -570,6 +606,9 @@ router.get("/calculate", async (req, res) => {
       // the last figure plus every delivery since (nothing is ever taken
       // off), so the screen shouldn't show it as a count (2026-10-15).
       stockCounted: isStockChecked,
+      stockBasis: lineStock.basis,
+      expectedStock: lineStock.expectedStock,
+      expectedAtLastCount: lineStock.expectedAtLastCount,
       orderingUrl: detail.orderingUrl ?? null,
       lastStockCheckAt: stockCheckTimestamps[iid] ?? null,
       stockInPacks: (detail.stockInPacks ?? false) && packWeight > 0,
@@ -675,6 +714,12 @@ router.get("/calculate", async (req, res) => {
         isKanban: true,
         kanbanFloorPacks: packsToOrder,
         stockCounted: d.stockCheckEnabled ?? false,
+        // Shown for information only: this kanban-only line orders the card's
+        // amount, whatever the stock (unchanged).
+        ...(() => {
+          const ls = lineStockFor(d.id, d.stockCheckEnabled ?? false);
+          return { stockBasis: ls.basis, expectedStock: ls.expectedStock, expectedAtLastCount: ls.expectedAtLastCount };
+        })(),
         orderingUrl: d.orderingUrl ?? null,
         lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
         belowRequirement: false,

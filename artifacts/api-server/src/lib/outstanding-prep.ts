@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { londonDateString } from "./london-time";
 import { mixExtraFor } from "./mix-extra";
 import { loadRecipeMixExtras } from "./mix-extra-loader";
+import { directLineChannel, isTinOutstanding, lineRawQtyForItem, tinCountForLine } from "./stock-usage-rules";
 
 // ── Outstanding prep for TODAY, in raw ingredient units ────────────────────
 //
@@ -46,12 +47,6 @@ export interface OutstandingPrep {
   /** Each plan's share of byIngredient, so the caller can exclude exactly
    *  the plan whose own requirement already counts that consumption. */
   byPlan: Record<number, Record<number, number>>;
-}
-
-function calcTinCount(batchesTarget: number, maxBatchesPerTin: number | null): number | null {
-  if (!maxBatchesPerTin || batchesTarget <= 0) return null;
-  const raw = Math.ceil(batchesTarget / maxBatchesPerTin);
-  return batchesTarget > 5 ? Math.max(2, raw) : raw;
 }
 
 export async function computeOutstandingPrepRaw(
@@ -138,7 +133,6 @@ export async function computeOutstandingPrepRaw(
     if (isBacklog && !deferredPlanRecipes.has(`${item.plan_id}_${item.recipe_id}`)) continue;
     const batches = Number(item.batches_target) || 0;
     if (batches <= 0) continue;
-    const defaultTinCount = calcTinCount(batches, item.max_batches_per_tin ?? null) ?? 1;
 
     const rowsRes = await db.execute(sql`
       SELECT ri.id AS line_id, ri.ingredient_id, ri.quantity, ri.include_in_filling_mix, ri.is_topping,
@@ -152,29 +146,34 @@ export async function computeOutstandingPrepRaw(
     const mixExtras = await loadRecipeMixExtras(item.recipe_id);
 
     for (const row of rowsRes.rows as any[]) {
-      if (row.is_topping) continue;
-      const cat = row.category ?? "";
-      // Toppings and dough are consumed on the production day, not prep day;
-      // base/sauce raw usage runs through the sub-recipe flow, not tins.
-      if (["base", "sauce", "dough"].includes(cat)) continue;
-      const nameLc = (row.ingredient_name ?? "").toLowerCase();
-      const isMozz = nameLc.includes("mozzarella") || nameLc.includes("fior di latte");
-      if (isMozz && !row.include_in_filling_mix) continue;
+      // Only lines weighed into prep tins (lib/stock-usage-rules.ts — the
+      // same rule the running-stock ledger uses): toppings and dough are
+      // consumed on the production day, base/sauce ingredients go straight
+      // into the mix or onto the build, topping mozzarella isn't prepped.
+      if (directLineChannel({
+        isTopping: !!row.is_topping,
+        includeInFillingMix: !!row.include_in_filling_mix,
+        category: row.category ?? null,
+        ingredientName: row.ingredient_name ?? null,
+      }) !== "prep") continue;
 
       const isFillingMix = row.include_in_filling_mix ?? false;
-      let tinCount = defaultTinCount;
-      if (isFillingMix && item.mixing_tin_override != null) {
-        tinCount = item.mixing_tin_override;
-      } else if (!isFillingMix) {
-        const ov = overrideMap.get(`${item.plan_id}_${item.recipe_id}_${row.ingredient_id}`);
-        if (ov != null) tinCount = ov;
-      }
+      const tinCount = tinCountForLine({
+        batchesTarget: batches,
+        maxBatchesPerTin: item.max_batches_per_tin ?? null,
+        includeInFillingMix: isFillingMix,
+        mixingTinOverride: item.mixing_tin_override ?? null,
+        tinOverride: overrideMap.get(`${item.plan_id}_${item.recipe_id}_${row.ingredient_id}`) ?? null,
+      });
       if (tinCount <= 0) continue;
 
-      const cookedQty = (Number(row.quantity) || 0) * (Number(item.portions_per_batch) || 10) * batches
-        + mixExtraFor(mixExtras, "ingredient", row.line_id);
-      const ratio = Number(row.processing_ratio) || 1;
-      const rawQty = ratio > 0 ? cookedQty / ratio : cookedQty;
+      const rawQty = lineRawQtyForItem({
+        quantityPerPortion: Number(row.quantity) || 0,
+        portionsPerBatch: Number(item.portions_per_batch) || 10,
+        batches,
+        mixExtra: mixExtraFor(mixExtras, "ingredient", row.line_id),
+        processingRatio: row.processing_ratio != null ? Number(row.processing_ratio) : null,
+      });
       if (rawQty <= 0) continue;
       const perTin = rawQty / tinCount;
 
@@ -189,7 +188,7 @@ export async function computeOutstandingPrepRaw(
         // order still has to cover it.
         if (isBacklog && !deferredTins.has(key)) continue;
         const doneAt = completedAtByTin.get(key);
-        if (doneAt && checkedAt && doneAt.getTime() <= checkedAt.getTime()) continue;
+        if (!isTinOutstanding(doneAt ? doneAt.getTime() : null, checkedAt ? checkedAt.getTime() : null)) continue;
         byIngredient[row.ingredient_id] = (byIngredient[row.ingredient_id] ?? 0) + perTin;
         (byPlan[item.plan_id] ??= {})[row.ingredient_id] =
           ((byPlan[item.plan_id] ?? {})[row.ingredient_id] ?? 0) + perTin;

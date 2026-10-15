@@ -71,6 +71,7 @@ import FounderFixQueue from "@/pages/founder-fix-queue";
 import TestRequestsPage from "@/pages/test-requests";
 import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
+import StockAccuracy from "@/pages/stock-accuracy";
 import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
 import { stationTrainingPath } from "@/lib/training-sections";
@@ -242,6 +243,8 @@ function Router() {
               <Route path="/kanbans">{() => <Redirect to="/orders" />}</Route>
               <Route path="/deliveries" component={Deliveries} />
               <Route path="/stock-control" component={StockControl} />
+              {/* Expected vs counted stock — managers only (API enforces it too). */}
+              <Route path="/stock-accuracy">{() => <ProtectedRoute component={StockAccuracy} pageKey="/stock-accuracy" />}</Route>
               {/* Product Hub retired 12 Oct 2026 — its decks, nutrition and
                   data health now live in Product Labels (?tab=health kept). */}
               <Route path="/product-hub">{() => <RedirectKeepingQuery to="/labels" />}</Route>
