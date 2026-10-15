@@ -260,6 +260,30 @@ export function forecastLateOrders(input: LateForecastInput): LateForecast {
   };
 }
 
+/**
+ * The despatches whose known orders the plan screen already takes out of the
+ * fridge before the end of the plan day — so their LATE orders come out too:
+ *   today's despatch (in "end of today"), when today is a despatch day;
+ *   the despatch before the plan day (dispatch1), when it's still ahead —
+ *     the screen rolls it forward;
+ *   the plan day's own despatch.
+ * Oldest first, no repeats, none before today. Closed ones are harmless:
+ * forecastLateOrders returns 0 for them.
+ */
+export function despatchesBeforePlanEnd(input: {
+  today: string;
+  planDate: string;
+  /** The despatch day before the plan date (holiday-aware). */
+  dispatch1: string;
+  todayIsDespatchDay: boolean;
+}): string[] {
+  const days = new Set<string>();
+  if (input.todayIsDespatchDay && input.today <= input.planDate) days.add(input.today);
+  if (input.dispatch1 > input.today) days.add(input.dispatch1);
+  if (input.planDate >= input.today) days.add(input.planDate);
+  return [...days].sort();
+}
+
 export interface LateTotal {
   latePacks: number;
   low: number;

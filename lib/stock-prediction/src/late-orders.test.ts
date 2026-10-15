@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   londonWallTimeMs, orderCutoffMs, indexOrdersByDate, finalPacks, knownPacksAt,
-  forecastLateOrders, combineLateForecasts, recipeSalesShares, addDays, type ForecastOrder,
+  forecastLateOrders, combineLateForecasts, recipeSalesShares, addDays, despatchesBeforePlanEnd, type ForecastOrder,
 } from "./late-orders";
 
 const H = 3_600_000;
@@ -94,6 +94,21 @@ describe("forecastLateOrders", () => {
     const open: ForecastOrder = { createdAt: cut - 200 * H, cancelledAt: null, deliveryDate: addDays(target, 7), packs: 5000 };
     const f = forecastLateOrders({ byDate: indexOrdersByDate([...history(target, 8, 200, 100), ...other, open]), deliveryDate: target, now: cut - 48 * H, emailsInWindow: 0, typicalEmailsPerHour: 0 });
     expect(f.latePacks).toBe(100);
+  });
+});
+
+describe("despatchesBeforePlanEnd", () => {
+  it("Thursday planning Monday: Thursday, Friday and Monday despatches", () => {
+    expect(despatchesBeforePlanEnd({ today: "2026-10-15", planDate: "2026-10-19", dispatch1: "2026-10-16", todayIsDespatchDay: true }))
+      .toEqual(["2026-10-15", "2026-10-16", "2026-10-19"]);
+  });
+  it("planning tomorrow: today is the despatch before it", () => {
+    expect(despatchesBeforePlanEnd({ today: "2026-10-15", planDate: "2026-10-16", dispatch1: "2026-10-15", todayIsDespatchDay: true }))
+      .toEqual(["2026-10-15", "2026-10-16"]);
+  });
+  it("planning on a Saturday for Monday: just Monday", () => {
+    expect(despatchesBeforePlanEnd({ today: "2026-10-17", planDate: "2026-10-19", dispatch1: "2026-10-16", todayIsDespatchDay: false }))
+      .toEqual(["2026-10-19"]);
   });
 });
 
