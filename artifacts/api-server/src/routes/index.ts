@@ -52,6 +52,7 @@ import ordersRouter from "./orders";
 import supplierPricingRouter from "./supplier-pricing";
 import deliveriesRouter from "./deliveries";
 import unexpectedDeliveriesRouter from "./unexpected-deliveries";
+import shortDeliveryReportsRouter from "./short-delivery-reports";
 import stockControlRouter from "./stock-control";
 import eightPackStockRouter from "./eight-pack-stock";
 import founderPanelsRouter from "./founder-panels";
@@ -303,6 +304,8 @@ router.use("/supplier-pricing", supplierPricingRouter);
 // Unexpected deliveries first: the deliveries router's GET /:id would
 // otherwise read "unexpected" as a purchase-order id.
 router.use("/deliveries/unexpected", unexpectedDeliveriesRouter);
+// Short-delivery report settings — before /deliveries for the same reason.
+router.use("/deliveries/short-reports", shortDeliveryReportsRouter);
 router.use("/deliveries", deliveriesRouter);
 // Collections — goods leaving the unit. Same audience as deliveries: anyone
 // on the floor may be the one who meets the driver.

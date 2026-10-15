@@ -9,12 +9,17 @@ import {
   suppliersTable,
   ingredientsTable,
   stockEntriesTable,
+  usersTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
 import { adjustInventoryLevel } from "../services/shopify";
 import { outstandingCollectionsForOrder } from "./collections";
 import { receiptDelta, stockQuantityForReceipt } from "../lib/goods-in-stock";
+import { z } from "zod";
+import { effectiveReceived } from "@workspace/goods-in";
+import { validate } from "../middleware/validate";
+import { sendShortDeliveryReport, type ShortReportOutcome } from "../lib/short-delivery-report";
 
 const router: IRouter = Router();
 
@@ -175,6 +180,9 @@ router.get("/weekly", async (req, res) => {
         nativeUnit: ingredientsTable.unit,
         unitPrice: purchaseOrderLinesTable.unitPrice,
         checkedOff: purchaseOrderLinesTable.checkedOff,
+        // Ticked as received at goods-in — the week view shows a green tick
+        // only for ticked lines (lib/goods-in lineStatus).
+        goodsInChecked: purchaseOrderLinesTable.goodsInChecked,
         notes: purchaseOrderLinesTable.notes,
         useByDate: purchaseOrderLinesTable.useByDate,
         shelfLifeDays: ingredientsTable.shelfLifeDays,
@@ -517,7 +525,42 @@ router.get("/:id", async (req, res) => {
   });
 });
 
-router.post("/:id/receive", async (req, res) => {
+// Every field the receive dialog sends is declared, nested ones included —
+// validate() only passes unknown keys through at the top level, so anything
+// missing from a nested object here would be silently dropped.
+const receiveBody = z.object({
+  lines: z.array(z.object({
+    lineId: z.number().int().positive(),
+    quantityReceived: z.number().min(0, "Quantities can't be negative"),
+    useByDate: z.string().nullish(),
+    /** Ticked as received. Anything else counts as received 0. */
+    checked: z.boolean().optional(),
+  })).max(500).optional(),
+  newLines: z.array(z.object({
+    ingredientId: z.number().int().positive(),
+    quantityOrdered: z.number().min(0).optional(),
+    quantityReceived: z.number().min(0),
+    unit: z.string().min(1),
+    useByDate: z.string().nullish(),
+    checked: z.boolean().optional(),
+  })).max(100).optional(),
+  chilledTempC: z.number().nullish(),
+  frozenTempC: z.number().nullish(),
+  checkResults: z.array(z.object({
+    checkConfigId: z.number().int().positive(),
+    passed: z.boolean(),
+    notes: z.string().nullish(),
+  })).optional(),
+  notes: z.string().max(4000).nullish(),
+  /** The short-delivery step of the dialog: a note for the report and the
+   *  "Also tell…" people (pre-filled from the settings). */
+  shortReport: z.object({
+    note: z.string().max(2000).nullish(),
+    alsoTellIds: z.array(z.number().int().positive()).max(100).optional(),
+  }).optional(),
+});
+
+router.post("/:id/receive", validate(receiveBody), async (req, res) => {
   const poId = Number(req.params.id);
   const userId = req.session.userId;
   const {
@@ -527,14 +570,8 @@ router.post("/:id/receive", async (req, res) => {
     frozenTempC,
     checkResults,
     notes,
-  } = req.body as {
-    lines: { lineId: number; quantityReceived: number; useByDate?: string | null; checked?: boolean }[];
-    newLines?: { ingredientId: number; quantityOrdered: number; quantityReceived: number; unit: string; useByDate?: string | null; checked?: boolean }[];
-    chilledTempC?: number | null;
-    frozenTempC?: number | null;
-    checkResults?: { checkConfigId: number; passed: boolean; notes?: string }[];
-    notes?: string;
-  };
+    shortReport,
+  } = req.body as z.infer<typeof receiveBody>;
 
   // A collection scheduled with this delivery must be handed over and signed
   // for first. Enforced here, not just in the UI: once the driver has left,
@@ -553,13 +590,6 @@ router.post("/:id/receive", async (req, res) => {
   if ((!lines || !Array.isArray(lines)) && (!newLines || newLines.length === 0)) {
     res.status(400).json({ error: "lines array is required" });
     return;
-  }
-
-  for (const line of lines || []) {
-    if (typeof line.quantityReceived !== "number" || line.quantityReceived < 0) {
-      res.status(400).json({ error: `Invalid quantity for line ${line.lineId}: must be >= 0` });
-      return;
-    }
   }
 
   const [order] = await db
@@ -604,7 +634,7 @@ router.post("/:id/receive", async (req, res) => {
       res.status(400).json({ error: `Line ${line.lineId} does not belong to PO #${poId}` });
       return;
     }
-    if (ing.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate) {
+    if (ing.requiresUseByDate && effectiveReceived(line.checked, line.quantityReceived) > 0 && !line.useByDate) {
       const label = ing.ingredientName ?? ing.description ?? "Miscellaneous item";
       res.status(400).json({ error: `Use-by date is required for ${label}` });
       return;
@@ -650,7 +680,7 @@ router.post("/:id/receive", async (req, res) => {
       res.status(400).json({ error: `Ingredient ${nl.ingredientId} not found` });
       return;
     }
-    if (ing.requiresUseByDate && nl.quantityReceived > 0 && !nl.useByDate) {
+    if (ing.requiresUseByDate && newLineReceived(nl) > 0 && !nl.useByDate) {
       res.status(400).json({ error: `Use-by date is required for ${ing.ingredientName}` });
       return;
     }
@@ -690,15 +720,19 @@ router.post("/:id/receive", async (req, res) => {
   for (const line of lines || []) {
     const existing = existingLineMap.get(line.lineId)!;
     const previousReceived = Number(existing.quantityReceived);
-    const newTotal = line.quantityReceived;
+    // Only a line ticked as received counts — an un-ticked line is received
+    // 0 whatever quantity the screen sent (Graeme, 2026-10-15: three missing
+    // Brakes items were never ticked yet booked in, stock and all). So an old
+    // cached screen can't book ghost stock either.
+    const newTotal = effectiveReceived(line.checked, line.quantityReceived);
     const delta = receiptDelta(previousReceived, newTotal);
 
     await db
       .update(purchaseOrderLinesTable)
       .set({
         quantityReceived: String(newTotal),
-        useByDate: line.useByDate || null,
-        ...(line.checked !== undefined ? { goodsInChecked: line.checked } : {}),
+        useByDate: newTotal > 0 ? (line.useByDate || null) : null,
+        goodsInChecked: newTotal > 0,
       })
       .where(eq(purchaseOrderLinesTable.id, line.lineId));
 
@@ -726,6 +760,7 @@ router.post("/:id/receive", async (req, res) => {
   // Create new PO lines for items that were added at receiving time
   for (const nl of newLines ?? []) {
     const ing = newLineIngredientMap.get(nl.ingredientId)!;
+    const received = newLineReceived(nl);
     const [inserted] = await db
       .insert(purchaseOrderLinesTable)
       .values({
@@ -733,15 +768,15 @@ router.post("/:id/receive", async (req, res) => {
         ingredientId: nl.ingredientId,
         quantityRequired: "0",
         quantityOrdered: String(nl.quantityOrdered ?? nl.quantityReceived),
-        quantityReceived: String(nl.quantityReceived),
+        quantityReceived: String(received),
         unit: nl.unit,
         useByDate: nl.useByDate || null,
-        goodsInChecked: nl.checked ?? false,
+        goodsInChecked: received > 0,
       })
       .returning();
-    if (nl.quantityReceived > 0) {
+    if (received > 0) {
       const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName, ing.perishable);
-      const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(nl.quantityReceived, {
+      const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(received, {
         unit: nl.unit,
         packWeight: ing.packWeight,
         ingredientUnit: ing.ingredientUnit,
@@ -753,7 +788,7 @@ router.post("/:id/receive", async (req, res) => {
         location,
         useByDate: nl.useByDate || null,
       });
-      queueShopifyPush(nl.ingredientId, ing.ingredientName, ing.shopifyVariantId, ing.shopifyUnitsPerPack, nl.quantityReceived);
+      queueShopifyPush(nl.ingredientId, ing.ingredientName, ing.shopifyVariantId, ing.shopifyUnitsPerPack, received);
     }
     void inserted;
   }
@@ -870,12 +905,38 @@ router.post("/:id/receive", async (req, res) => {
     }
   }
 
+  // Short or missing lines → the short-delivery report (team list + chosen
+  // people). After everything else is saved, and never fails the goods-in:
+  // a problem comes back to the screen to show, not swallowed.
+  let shortReportOutcome: ShortReportOutcome | { error: string } | null = null;
+  try {
+    const [actor] = userId
+      ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId))
+      : [];
+    shortReportOutcome = await sendShortDeliveryReport({
+      purchaseOrderId: poId,
+      actor: { id: userId ?? null, name: actor?.name ?? null },
+      note: shortReport?.note ?? notes ?? null,
+      chosen: shortReport?.alsoTellIds,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Deliveries] short-delivery report failed for PO #${poId}:`, msg);
+    shortReportOutcome = { error: `The goods-in is saved, but the short-delivery report couldn't be sent (${msg}). Tell the Production Flow Manager directly.` };
+  }
+
   res.json({
     deliveryRecordId,
     orderStatus: "received",
     shopifySync,
+    shortReport: shortReportOutcome,
   });
 });
+
+/** A line added at the door arrived unless the screen says it didn't. */
+function newLineReceived(nl: { quantityReceived: number; checked?: boolean }): number {
+  return effectiveReceived(nl.checked !== false, nl.quantityReceived);
+}
 
 // Toggle post-receipt checks (invoice filed, kanbans & put-away) from the card.
 router.patch("/:id/checks", async (req, res) => {
