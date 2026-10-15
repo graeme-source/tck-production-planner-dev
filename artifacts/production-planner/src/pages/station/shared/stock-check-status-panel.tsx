@@ -221,18 +221,18 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
       {open && (
         <div className="border-t border-border/60 bg-card text-foreground">
           {completed.length > 0 && (
-            <div className="px-4 py-2 flex items-center justify-between text-xs border-b border-border/60">
+            <div className="px-4 py-2 flex items-center justify-between text-sm border-b border-border/60">
               <span className="text-muted-foreground">
                 {outstanding.length === 0
                   ? "Everything for today is in."
                   : `${completed.length} already recorded`}
               </span>
-              <label className="inline-flex items-center gap-1.5 cursor-pointer select-none">
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none min-h-11">
                 <input
                   type="checkbox"
                   checked={showCompleted}
                   onChange={e => setShowCompleted(e.target.checked)}
-                  className="rounded border-border"
+                  className="w-5 h-5 rounded border-border"
                 />
                 <span>Show completed</span>
               </label>
@@ -262,16 +262,16 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                   ? `${recordPacks} × ${packNoun(it.unit, recordPacks)}`
                   : `${recordNative} ${it.unit}`;
                 return (
-                  <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                    <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
+                  <div key={it.id} className="px-4 py-3 flex items-center gap-3 text-base">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                    <span className="font-semibold flex-1 min-w-0 truncate">{it.name}</span>
                     <div className="flex flex-col items-end leading-tight">
-                      <span className="text-sm tabular-nums text-foreground font-semibold">{primary}</span>
+                      <span className="text-base tabular-nums text-foreground font-bold">{primary}</span>
                       {sizeHint && (
                         <span className="text-[11px] tabular-nums text-muted-foreground/70">({sizeHint})</span>
                       )}
                     </div>
-                    <span className="text-xs text-muted-foreground ml-2">{timeLabel}</span>
+                    <span className="text-sm text-muted-foreground ml-2">{timeLabel}</span>
                     <button
                       onClick={() => {
                         setEditingIds(prev => { const n = new Set(prev); n.add(it.id); return n; });
@@ -281,19 +281,20 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                         setInputValues(prev => ({ ...prev, [it.id]: prefill }));
                       }}
                       title="Overwrite this record"
-                      className="text-muted-foreground hover:text-foreground p-1 -m-1"
+                      aria-label={`Change ${it.name}`}
+                      className="w-11 h-11 rounded-xl border-2 border-border flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-secondary/60 flex-shrink-0"
                     >
-                      <Pencil className="w-3.5 h-3.5" />
+                      <Pencil className="w-5 h-5" />
                     </button>
                   </div>
                 );
               }
               return (
-                <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
+                <div key={it.id} className="px-4 py-3 flex items-center gap-3 text-base">
                   {record
-                    ? <Pencil className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                    : <span className={cn("w-4 h-4 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
-                  <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
+                    ? <Pencil className="w-5 h-5 text-blue-500 flex-shrink-0" />
+                    : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
+                  <span className="font-semibold flex-1 min-w-0 truncate">{it.name}</span>
                   <input
                     ref={el => { if (el) inputRefs.current.set(it.id, el); else inputRefs.current.delete(it.id); }}
                     type="number"
@@ -307,10 +308,11 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                     onKeyDown={e => { if (e.key === "Enter" && inputVal !== "") saveOne(it.id); }}
                     placeholder={inPacks ? "0" : "qty"}
                     autoFocus={isEditing}
-                    className="w-20 px-2 py-1 text-sm text-right bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30"
+                    // Big enough to tap and read on the prep iPad (Graeme, 2026-10-15).
+                    className="w-28 h-12 px-3 text-xl font-bold tabular-nums text-right bg-background border-2 border-border rounded-xl focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-400/30"
                   />
                   <div className="flex flex-col leading-tight">
-                    <span className="text-xs font-semibold">{primaryUnit}</span>
+                    <span className="text-sm font-semibold">{primaryUnit}</span>
                     {sizeHint && (
                       <span className="text-[11px] tabular-nums text-muted-foreground/70">({sizeHint})</span>
                     )}
@@ -319,11 +321,11 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                     onClick={() => saveOne(it.id)}
                     disabled={saving || inputVal === ""}
                     className={cn(
-                      "text-xs px-3 py-1 rounded-md text-white transition-colors disabled:opacity-40",
+                      "h-12 min-w-[6.5rem] px-5 rounded-xl text-base font-bold text-white transition-colors disabled:opacity-40 flex items-center justify-center active:scale-[0.98]",
                       record ? "bg-blue-600 hover:bg-blue-700" : "bg-amber-600 hover:bg-amber-700",
                     )}
                   >
-                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : record ? "Overwrite" : "Save"}
+                    {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : record ? "Overwrite" : "Save"}
                   </button>
                   {record && (
                     <button
@@ -331,7 +333,7 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                         setEditingIds(prev => { const n = new Set(prev); n.delete(it.id); return n; });
                         setInputValues(prev => { const c = { ...prev }; delete c[it.id]; return c; });
                       }}
-                      className="text-xs text-muted-foreground hover:text-foreground"
+                      className="h-12 px-4 rounded-xl border-2 border-border text-base font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/60"
                     >
                       Cancel
                     </button>

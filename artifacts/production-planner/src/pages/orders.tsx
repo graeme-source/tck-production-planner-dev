@@ -114,8 +114,12 @@ type OrderLine = SurplusLineFields & {
   // suggestion itself deliberately ignores it.
   inboundQty?: number;
   inboundDeliveries?: Array<{ date: string | null; qty: number; unit: string; poId: number }>;
-  // Raw units still to be consumed by TODAY'S outstanding prep — added to
-  // the requirement server-side; shown as the "−N still to prep" chip.
+  // Raw units today's prep takes out of the counted stock — prep still to
+  // do, plus prep ticked AFTER the stock check (lib/outstanding-prep.ts) —
+  // added to the requirement server-side; shown as the "−N for today's
+  // prep" chip. Not "still to prep": once prep is done the deduction rightly
+  // stays, and that wording made the team think it wasn't working
+  // (Graeme, 2026-10-15).
   prepOutstandingQty?: number;
   // Packs per supplier case. When set, the pack count to order rounds up to the
   // nearest whole case. Null/absent means order in individual packs.
@@ -2253,10 +2257,10 @@ export default function Orders() {
                               {(line.prepOutstandingQty ?? 0) > 0 && (
                                 <span
                                   className="text-[10px] text-amber-600 dark:text-amber-400 flex items-center gap-0.5"
-                                  title={`Today's prep still needs ${line.prepOutstandingQty} ${line.unit} of this — it will come out of the counted stock before tonight, so the suggestion covers it.`}
+                                  title={`Today's prep uses ${line.prepOutstandingQty} ${line.unit} of this that was still on the shelf when it was counted — whether it's been prepped since or is still to do — so it's taken off the count and the suggestion covers it.`}
                                 >
                                   <Clock className="w-2.5 h-2.5" />
-                                  {`−${line.prepOutstandingQty} ${line.unit} still to prep today`}
+                                  {`−${line.prepOutstandingQty} ${line.unit} for today's prep (since the count)`}
                                 </span>
                               )}
                             </div>
