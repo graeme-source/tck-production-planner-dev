@@ -22,6 +22,7 @@ const DEFAULT_MIN_ROLE: Record<string, Role> = {
   "/training": "viewer",
   "/stock": "manager",
   "/suppliers": "manager",
+  "/stock-accuracy": "manager",
 };
 
 /** True when `userRole` is at least `minRole` in the viewer<manager<admin order. */

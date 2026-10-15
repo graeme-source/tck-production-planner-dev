@@ -27,6 +27,7 @@ const KNOWN_PAGES = [
   { pageKey: "/training", label: "Training (station matrices — keep at Viewer so staff can train)" },
   { pageKey: "/lean-curriculum", label: "Lean Curriculum planner" },
   { pageKey: "/surveys", label: "Customer Surveys" },
+  { pageKey: "/stock-accuracy", label: "Stock accuracy (expected vs counted)" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {
@@ -42,6 +43,9 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   "/training": "viewer",
   "/lean-curriculum": "manager",
   "/surveys": "admin",
+  // Expected stock is for managers only — never the stations (blind
+  // counts). The API enforces manager+ whatever this is set to.
+  "/stock-accuracy": "manager",
 };
 
 // GET /api/page-permissions

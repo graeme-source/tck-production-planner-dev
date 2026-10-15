@@ -24,6 +24,7 @@ import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
 import stockCheckHistoryRouter from "./stock-check-history";
+import stockAccuracyRouter from "./stock-accuracy";
 import teamEfficiencyRouter from "./team-efficiency";
 import dptCalculatorRouter from "./dpt-calculator";
 import stockRouter from "./stock";
@@ -283,6 +284,9 @@ router.use("/timing-health", timingHealthRouter);
 // Recent stock counts per ingredient — the "are you sure?" check on every
 // stock-check entry (read-only).
 router.use("/stock-check-history", stockCheckHistoryRouter);
+// Running ("expected") stock vs real counts — managers only, never shown at
+// stations or on count screens (docs/RUNNING_STOCK.md).
+router.use("/stock-accuracy", stockAccuracyRouter);
 router.use("/team-efficiency", teamEfficiencyRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
