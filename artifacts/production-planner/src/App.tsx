@@ -19,6 +19,7 @@ import TeamListsPage from "@/pages/team-lists";
 import MeetingPage from "@/pages/meeting";
 import VisitorCheckIn from "@/pages/visitor-check-in";
 import PackReport from "@/pages/pack-report";
+import ShortOnThePack from "@/pages/short-on-the-pack";
 import EndOfDayMeeting from "@/pages/end-of-day";
 import LabelLiveTest from "@/pages/label-live-test";
 import Ingredients from "@/pages/ingredients";
@@ -200,6 +201,7 @@ function Router() {
             <Switch>
               <Route path="/" component={HomeRoute} />
               <Route path="/pack-report" component={PackReport} />
+              <Route path="/short-on-the-pack" component={ShortOnThePack} />
               <Route path="/end-of-day" component={EndOfDayMeeting} />
               <Route path="/label-live-test" component={LabelLiveTest} />
               <Route path="/inventory" component={Inventory} />
