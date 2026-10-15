@@ -13,7 +13,7 @@ import { format } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
-import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked, nativeToPackCount, packsToNative, packNoun, packDescriptor, packsWeightHint, packSizeHint } from "../shared/prep-helpers";
+import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked } from "../shared/prep-helpers";
 import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
@@ -21,6 +21,7 @@ import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { StationStockChecks } from "../shared/station-stock-checks";
+import { StockCheckButton } from "../shared/stock-check-entry";
 import { MixExtraNote } from "../shared/mix-extra-note";
 import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
 import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
@@ -104,8 +105,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   // Stock check state
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
-  const [savingStock, setSavingStock] = useState<Record<number, boolean>>({});
-  const dirtyStockIds = useRef<Set<number>>(new Set());
   const stockCheckRef = useRef<HTMLDivElement>(null);
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
@@ -126,18 +125,13 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
         if (d?.checks) {
           const serverVals: Record<number, string> = {};
           for (const c of d.checks) {
-            if (c.quantity) serverVals[c.ingredientId] = String(parseFloat(c.quantity));
+            // 0 is a real count ("nothing left") — keep it.
+            if (c.quantity != null && c.quantity !== "") serverVals[c.ingredientId] = String(parseFloat(c.quantity));
           }
-          setStockValues(prev => {
-            const merged = { ...serverVals };
-            for (const id of dirtyStockIds.current) {
-              if (id in prev) merged[id] = prev[id];
-            }
-            return merged;
-          });
+          setStockValues(serverVals);
         }
       })
-      .catch(() => {});
+      .catch(err => { console.warn("[RawMeat] Stock checks fetch failed:", err); });
   }, [checkDate]);
 
   useEffect(() => {
@@ -146,26 +140,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     const interval = setInterval(fetchStockChecks, 5000);
     return () => clearInterval(interval);
   }, [fetchStockChecks]);
-
-  const saveStockCheck = async (ingredientId: number) => {
-    const val = stockValues[ingredientId];
-    if (val === undefined || val === "") return;
-    if (isDraft) { toastDraftBlocked(); return; }
-    setSavingStock(s => ({ ...s, [ingredientId]: true }));
-    try {
-      await fetch("/api/production-plans/stock-checks", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, checkDate, quantity: Number(val) }),
-      });
-      dirtyStockIds.current.delete(ingredientId);
-      toast({ title: "Stock check saved" });
-    } catch {
-      toast({ title: "Failed to save stock check", variant: "destructive" });
-    }
-    setSavingStock(s => ({ ...s, [ingredientId]: false }));
-  };
 
   // Check if ALL trays for an ingredient are done across ALL recipes
   const isIngredientFullyDone = (ingredientId: number): boolean => {
@@ -772,76 +746,27 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </div>
                         ) : null;
                       }
-                      const inPacks = !!ing.stockInPacks && (ing.packWeight ?? 0) > 0;
-                      const nativeStr = stockValues[ing.ingredientId] ?? "";
-                      const inputDisplay = inPacks && nativeStr !== ""
-                        ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
-                        : nativeStr;
-                      const count = Number(inputDisplay) || 0;
-                      // Mirror the main-prep stock check display: bold "<count>
-                      // packs/bottles" primary, smaller grey "(<size> per pack)"
-                      // underneath. Drops the old packDescriptor output that
-                      // produced "0.500 kg pack" — confusing in the kitchen.
-                      const primaryUnit = inPacks ? packNoun(ing.unit, count) : ing.unit;
-                      const sizeHint = inPacks ? packSizeHint(ing.packWeight, ing.unit) : null;
-                      const onInputChange = (raw: string) => {
-                        dirtyStockIds.current.add(ing.ingredientId);
-                        if (raw === "") {
-                          setStockValues(v => ({ ...v, [ing.ingredientId]: "" }));
-                          return;
-                        }
-                        const asNumber = Number(raw);
-                        if (!Number.isFinite(asNumber)) return;
-                        const native = inPacks ? packsToNative(asNumber, ing.packWeight) : asNumber;
-                        setStockValues(v => ({ ...v, [ing.ingredientId]: String(native) }));
-                      };
                       return (
                         <div ref={stockCheckRef} className="px-4 pb-4 pt-3 bg-blue-50/70 dark:bg-blue-950/30 border-t-2 border-blue-400 dark:border-blue-600">
-                          <div className="flex items-center gap-2 mb-3 flex-wrap">
-                            <Package className="w-5 h-5 text-blue-600 animate-pulse" />
-                            <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
-                            <p className="text-sm text-blue-600 dark:text-blue-400">— how {inPacks ? "many" : "much"} {ing.ingredientName.toLowerCase()} remains?</p>
-                          </div>
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <input
-                              type="number"
-                              step="any"
-                              min="0"
-                              inputMode="decimal"
-                              placeholder={inPacks ? `Remaining ${packNoun(ing.unit, 0)}` : `Remaining ${ing.unit}`}
-                              className="flex-1 max-w-[160px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-                              value={inputDisplay}
-                              onChange={e => onInputChange(e.target.value)}
-                              onKeyDown={e => { if (e.key === "Enter") saveStockCheck(ing.ingredientId); }}
-                            />
-                            <div className="flex flex-col">
-                              <span className="text-base font-semibold">{primaryUnit}</span>
-                              {sizeHint && (
-                                <span className="text-xs text-muted-foreground tabular-nums">({sizeHint})</span>
-                              )}
+                          <div className="flex items-center gap-3 flex-wrap">
+                            <Package className={cn("w-5 h-5 text-blue-600", !stockSaved && "animate-pulse")} />
+                            <div className="flex-1 min-w-[10rem]">
+                              <p className="text-lg font-bold text-blue-800 dark:text-blue-200">Stock Check</p>
+                              <p className="text-sm text-blue-600 dark:text-blue-400">
+                                {stockSaved ? "Counted — tap to recount if it's changed." : `How much ${ing.ingredientName.toLowerCase()} is left?`}
+                              </p>
                             </div>
-                            <button
-                              onClick={() => saveStockCheck(ing.ingredientId)}
-                              disabled={!stockValues[ing.ingredientId] || savingStock[ing.ingredientId]}
-                              className={cn(
-                                "px-4 py-2 rounded-lg text-base font-bold transition-all ml-auto",
-                                stockValues[ing.ingredientId]
-                                  ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
-                                  : "bg-blue-200 text-blue-400 cursor-not-allowed"
-                              )}
-                            >
-                              {savingStock[ing.ingredientId] ? <Loader2 className="w-4 h-4 animate-spin" /> : stockSaved ? <Check className="w-4 h-4" /> : "Save"}
-                            </button>
+                            <StockCheckButton
+                              ingredient={{ id: ing.ingredientId, name: ing.ingredientName, unit: ing.unit, packWeight: ing.packWeight }}
+                              checkDate={checkDate}
+                              isDraft={isDraft}
+                              currentNative={stockSaved ? Number(stockValues[ing.ingredientId]) : null}
+                              onSaved={native => {
+                                setStockValues(v => ({ ...v, [ing.ingredientId]: String(native) }));
+                                fetchStockChecks();
+                              }}
+                            />
                           </div>
-                          {stockSaved && (
-                            <p className="text-sm text-emerald-600 dark:text-emerald-400 mt-2 flex items-center gap-1 flex-wrap">
-                              <CheckCircle2 className="w-3 h-3" />
-                              {inputDisplay} {primaryUnit} recorded
-                              {sizeHint && (
-                                <span className="text-muted-foreground/70 font-normal ml-1">({sizeHint})</span>
-                              )}
-                            </p>
-                          )}
                         </div>
                       );
                     })()}

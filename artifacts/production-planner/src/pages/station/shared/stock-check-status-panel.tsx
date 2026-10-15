@@ -1,10 +1,9 @@
-import { useEffect, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlarmClock, CheckCircle2, Loader2, Package, Pencil } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { AlarmClock, CheckCircle2, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "@/hooks/use-toast";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
-import { nativeToPackCount, packNoun, packSizeHint, packsToNative } from "./prep-helpers";
+import { StockCheckDialog, recordedStockLabel } from "./stock-check-entry";
 import { useTimedReminders } from "./timed-reminders";
 import {
   isPrepDayToday,
@@ -30,7 +29,10 @@ import {
 // items by name (tap one to record it); after the deadline it is solid red
 // "Overdue". Rules and wording: stock-check-alarm.ts.
 //
-// Polls every 10s so writes from any device / station show near real time.
+// Each row's "Stock check" button (and each red chip) opens the shared
+// two-step entry — amount, then a unit the person taps (stock-check-entry.tsx,
+// Graeme 15 Oct 2026). Polls every 10s so writes from any device / station
+// show near real time.
 // ─────────────────────────────────────────────────────────────────────────
 
 interface StockCheckStatusItem {
@@ -76,14 +78,10 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   /** The plan being prepped for — the alarm only fires when its prep is today. */
   prepTarget: PrepTarget | null;
 }) {
-  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [showCompleted, setShowCompleted] = useState(false);
-  const [inputValues, setInputValues] = useState<Record<number, string>>({});
-  const [savingIds, setSavingIds] = useState<Set<number>>(new Set());
-  const [editingIds, setEditingIds] = useState<Set<number>>(new Set());
-  const [focusId, setFocusId] = useState<number | null>(null);
-  const inputRefs = useRef(new Map<number, HTMLInputElement>());
+  // The item whose stock-check dialog is open (row button or red chip).
+  const [activeId, setActiveId] = useState<number | null>(null);
   const reducedMotion = usePrefersReducedMotion();
   const clock = useLondonClock();
   const reminders = useTimedReminders();
@@ -101,17 +99,6 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   });
   const items = data?.stockIngredients ?? [];
   const checks = data?.checks ?? [];
-
-  // Tapping an outstanding item opens the list and puts the cursor in its box.
-  useEffect(() => {
-    if (!open || focusId == null) return;
-    const el = inputRefs.current.get(focusId);
-    if (el) {
-      el.focus();
-      el.scrollIntoView({ block: "center", behavior: reducedMotion ? "auto" : "smooth" });
-    }
-    setFocusId(null);
-  }, [open, focusId, reducedMotion]);
 
   const dueItems = items.filter(it => isStockCheckDueToday(it, clock.dayName));
   const checkByIngredient = new Map<number, StockCheckRecord>();
@@ -137,36 +124,7 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
 
   const visibleItems = showCompleted ? [...outstanding, ...completed] : outstanding;
 
-  // "inputValues" holds the typed string in the DISPLAY unit (packs when
-  // stockInPacks is on, native otherwise). Convert to native here so the DB
-  // stays in native units — keeps cost/recipe maths untouched.
-  const saveOne = async (ingredientId: number) => {
-    const v = inputValues[ingredientId];
-    if (v === undefined || v === "") return;
-    const item = items.find(it => it.id === ingredientId);
-    const inPacks = !!item?.stockInPacks && (item.packWeight ?? 0) > 0;
-    const typedNumber = Number(v);
-    if (!Number.isFinite(typedNumber)) return;
-    const nativeQty = inPacks ? packsToNative(typedNumber, item?.packWeight) : typedNumber;
-    setSavingIds(s => new Set(s).add(ingredientId));
-    try {
-      const res = await fetch("/api/production-plans/stock-checks", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId, checkDate, quantity: nativeQty }),
-      });
-      if (!res.ok) throw new Error(`Not saved (${res.status}) — please try again`);
-      setInputValues(prev => { const copy = { ...prev }; delete copy[ingredientId]; return copy; });
-      setEditingIds(prev => { const n = new Set(prev); n.delete(ingredientId); return n; });
-      await queryClient.invalidateQueries({ queryKey: stockChecksQueryKey(checkDate) });
-      queryClient.invalidateQueries({ queryKey: ["reminder-stock-checks"] });
-    } catch (err) {
-      toast({ title: "Save failed", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
-    } finally {
-      setSavingIds(s => { const n = new Set(s); n.delete(ingredientId); return n; });
-    }
-  };
+  const activeItem = activeId != null ? items.find(it => it.id === activeId) ?? null : null;
 
   if (isLoading || state === "none") return null;
 
@@ -209,7 +167,7 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
           {outstanding.map(it => (
             <button
               key={it.id}
-              onClick={() => { setOpen(true); setFocusId(it.id); }}
+              onClick={() => { setOpen(true); setActiveId(it.id); }}
               className="px-3 py-2 rounded-lg bg-white text-red-700 text-sm font-semibold shadow-sm hover:bg-red-50 active:scale-[0.98] transition-transform"
             >
               {it.name}
@@ -246,101 +204,45 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
             )}
             {visibleItems.map(it => {
               const record = checkByIngredient.get(it.id);
-              const saving = savingIds.has(it.id);
-              const inputVal = inputValues[it.id] ?? "";
-              const isEditing = editingIds.has(it.id);
-              const inPacks = !!it.stockInPacks && (it.packWeight ?? 0) > 0;
-              const inputCount = Number(inputVal) || 0;
-              const primaryUnit = inPacks ? packNoun(it.unit, inputCount) : it.unit;
-              const sizeHint = inPacks ? packSizeHint(it.packWeight, it.unit) : null;
-              if (record && !isEditing) {
-                const checkedAt = new Date(record.checkedAt);
-                const timeLabel = checkedAt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
-                const recordNative = Number(record.quantity);
-                const recordPacks = inPacks ? nativeToPackCount(recordNative, it.packWeight) : null;
-                const primary = inPacks && recordPacks != null
-                  ? `${recordPacks} × ${packNoun(it.unit, recordPacks)}`
-                  : `${recordNative} ${it.unit}`;
-                return (
-                  <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
-                    <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
-                    <div className="flex flex-col items-end leading-tight">
-                      <span className="text-sm tabular-nums text-foreground font-semibold">{primary}</span>
-                      {sizeHint && (
-                        <span className="text-[11px] tabular-nums text-muted-foreground/70">({sizeHint})</span>
-                      )}
-                    </div>
-                    <span className="text-xs text-muted-foreground ml-2">{timeLabel}</span>
-                    <button
-                      onClick={() => {
-                        setEditingIds(prev => { const n = new Set(prev); n.add(it.id); return n; });
-                        // Prefill in the display unit so the user sees the
-                        // value they'll overwrite — saveOne converts back.
-                        const prefill = inPacks && recordPacks != null ? String(recordPacks) : String(recordNative);
-                        setInputValues(prev => ({ ...prev, [it.id]: prefill }));
-                      }}
-                      title="Overwrite this record"
-                      className="text-muted-foreground hover:text-foreground p-1 -m-1"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                );
-              }
+              const recordNative = record ? Number(record.quantity) : null;
+              const timeLabel = record
+                ? new Date(record.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })
+                : null;
               return (
-                <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm">
+                <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm flex-wrap">
                   {record
-                    ? <Pencil className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                    : <span className={cn("w-4 h-4 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
-                  <span className="font-medium flex-1 min-w-0 truncate">{it.name}</span>
-                  <input
-                    ref={el => { if (el) inputRefs.current.set(it.id, el); else inputRefs.current.delete(it.id); }}
-                    type="number"
-                    // step "any" + decimal keyboard even in pack mode — the
-                    // team records part-packs (e.g. 0.5 of a box).
-                    step="any"
-                    min="0"
-                    inputMode="decimal"
-                    value={inputVal}
-                    onChange={e => setInputValues(prev => ({ ...prev, [it.id]: e.target.value }))}
-                    onKeyDown={e => { if (e.key === "Enter" && inputVal !== "") saveOne(it.id); }}
-                    placeholder={inPacks ? "0" : "qty"}
-                    autoFocus={isEditing}
-                    className="w-20 px-2 py-1 text-sm text-right bg-background border border-border rounded-md focus:outline-none focus:ring-2 focus:ring-amber-400/30"
-                  />
-                  <div className="flex flex-col leading-tight">
-                    <span className="text-xs font-semibold">{primaryUnit}</span>
-                    {sizeHint && (
-                      <span className="text-[11px] tabular-nums text-muted-foreground/70">({sizeHint})</span>
-                    )}
-                  </div>
+                    ? <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                    : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
+                  <span className="font-semibold text-base flex-1 min-w-[8rem] truncate">{it.name}</span>
+                  {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
                   <button
-                    onClick={() => saveOne(it.id)}
-                    disabled={saving || inputVal === ""}
+                    type="button"
+                    onClick={() => setActiveId(it.id)}
                     className={cn(
-                      "text-xs px-3 py-1 rounded-md text-white transition-colors disabled:opacity-40",
-                      record ? "bg-blue-600 hover:bg-blue-700" : "bg-amber-600 hover:bg-amber-700",
+                      "min-h-[48px] px-4 rounded-xl text-base font-bold inline-flex items-center gap-2 transition-colors active:scale-[0.98]",
+                      record
+                        ? "bg-emerald-50 text-emerald-800 border-2 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800"
+                        : "bg-blue-600 text-white hover:bg-blue-700 shadow",
                     )}
                   >
-                    {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : record ? "Overwrite" : "Save"}
+                    <Package className="w-5 h-5 flex-shrink-0" />
+                    {record && recordNative != null
+                      ? <span className="text-left leading-tight">{recordedStockLabel(recordNative, it)}<span className="block text-xs font-medium opacity-80">Tap to recount</span></span>
+                      : "Stock check"}
                   </button>
-                  {record && (
-                    <button
-                      onClick={() => {
-                        setEditingIds(prev => { const n = new Set(prev); n.delete(it.id); return n; });
-                        setInputValues(prev => { const c = { ...prev }; delete c[it.id]; return c; });
-                      }}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      Cancel
-                    </button>
-                  )}
                 </div>
               );
             })}
           </div>
         </div>
+      )}
+      {activeItem && (
+        <StockCheckDialog
+          ingredient={activeItem}
+          checkDate={checkDate}
+          currentNative={checkByIngredient.has(activeItem.id) ? Number(checkByIngredient.get(activeItem.id)!.quantity) : null}
+          onClose={() => setActiveId(null)}
+        />
       )}
     </div>
   );

@@ -16,16 +16,15 @@
  * check date; it looks up which of them are stock-check-enabled and due
  * (daily, or weekly on today's real day — the real day, not the plan
  * date, same rule as the checklist scheduling fix), shows the same
- * blue check card as main prep, and saves to the same endpoint. Values
- * poll every 5s so two iPads agree. Renders nothing when nothing is due.
+ * blue check card as main prep, and saves to the same endpoint through the
+ * shared two-step entry (stock-check-entry.tsx — amount, then a unit the
+ * person taps; Graeme 15 Oct 2026). Values poll every 5s so two iPads
+ * agree. Renders nothing when nothing is due.
  */
-import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Package, Loader2, Check, CheckCircle2 } from "lucide-react";
+import { Package } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { toast } from "@/hooks/use-toast";
-import { guardedFetch } from "@/hooks/use-guarded-action";
-import { toastDraftBlocked, nativeToPackCount, packsToNative, packNoun, packSizeHint } from "./prep-helpers";
+import { StockCheckButton } from "./stock-check-entry";
 
 interface StockCheckIngredient {
   id: number;
@@ -80,11 +79,6 @@ export function StationStockChecks({
     staleTime: 5 * 60_000,
   });
 
-  const [values, setValues] = useState<Record<number, string>>({});
-  const [saving, setSaving] = useState<Record<number, boolean>>({});
-  const [savedIds, setSavedIds] = useState<Set<number>>(new Set());
-  const dirtyIds = useRef<Set<number>>(new Set());
-
   // Saved values come through react-query on a shared key: several rows can
   // be mounted at once (one under each linked ingredient) and they read one
   // cache entry instead of each running its own 5s poll.
@@ -98,26 +92,11 @@ export function StationStockChecks({
     },
     refetchInterval: 5000,
   });
-  const fetchSaved = () => { void queryClient.invalidateQueries({ queryKey: savedKey }); };
-
-  useEffect(() => {
-    if (!savedData?.checks) return;
-    const serverVals: Record<number, string> = {};
-    const saved = new Set<number>();
-    for (const c of savedData.checks) {
-      if (c.quantity != null && c.quantity !== "") {
-        serverVals[c.ingredientId] = String(parseFloat(c.quantity));
-        saved.add(Number(c.ingredientId));
-      }
-    }
-    setSavedIds(saved);
-    // Whatever someone is mid-typing wins over the poll until it saves.
-    setValues(prev => {
-      const merged = { ...serverVals };
-      for (const id of dirtyIds.current) if (id in prev) merged[id] = prev[id];
-      return merged;
-    });
-  }, [savedData]);
+  // Native quantity recorded today per ingredient. 0 is a real count.
+  const savedNative = new Map<number, number>();
+  for (const c of savedData?.checks ?? []) {
+    if (c.quantity != null && c.quantity !== "") savedNative.set(Number(c.ingredientId), parseFloat(c.quantity));
+  }
 
   // Weekly checks key on the REAL day, not the plan date (dough-room
   // Sunday/Thursday lesson).
@@ -129,86 +108,19 @@ export function StationStockChecks({
     && (ing.stockCheckFrequency !== "weekly" || ing.stockCheckDay === todayDayName),
   );
 
-  const save = async (ing: StockCheckIngredient) => {
-    const val = values[ing.id];
-    if (val === undefined || val === "") return;
-    if (isDraft) { toastDraftBlocked(); return; }
-    if (saving[ing.id]) return;
-    setSaving(s => ({ ...s, [ing.id]: true }));
-    try {
-      await guardedFetch("/api/production-plans/stock-checks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId: ing.id, checkDate, quantity: Number(val) }),
-      });
-      dirtyIds.current.delete(ing.id);
-      toast({ title: "Stock check saved" });
-      fetchSaved();
-    } catch (err) {
-      toast({ title: "Save failed", description: err instanceof Error ? err.message : "Failed to save stock check", variant: "destructive" });
-    } finally {
-      setSaving(s => ({ ...s, [ing.id]: false }));
-    }
-  };
-
   if (due.length === 0) return null;
 
-  /** The input + unit + Save cluster — identical in both shapes, so a count
-   *  taken inline behaves exactly like one taken in the panel. */
-  const control = (ing: StockCheckIngredient) => {
-    const inPacks = ing.stockInPacks && (ing.packWeight ?? 0) > 0;
-    const nativeStr = values[ing.id] ?? "";
-    const display = inPacks && nativeStr !== ""
-      ? String(nativeToPackCount(Number(nativeStr), ing.packWeight) ?? "")
-      : nativeStr;
-    const isSaved = savedIds.has(ing.id) && !dirtyIds.current.has(ing.id);
-    const sizeHint = inPacks ? packSizeHint(ing.packWeight, ing.unit) : null;
-    return (
-      <>
-        <input
-          type="number"
-          step="any"
-          min="0"
-          inputMode="decimal"
-          placeholder={inPacks ? `Remaining ${packNoun(ing.unit, 0)}` : `Remaining ${ing.unit}`}
-          className="flex-1 max-w-[150px] text-base border-2 border-blue-300 dark:border-blue-600 rounded-lg px-3 py-2 text-right bg-background focus:ring-2 focus:ring-blue-400 focus:border-blue-400"
-          value={display}
-          onChange={e => {
-            dirtyIds.current.add(ing.id);
-            const v = e.target.value;
-            if (v === "") { setValues(prev => ({ ...prev, [ing.id]: "" })); return; }
-            const n = Number(v);
-            setValues(prev => ({
-              ...prev,
-              [ing.id]: inPacks && Number.isFinite(n) ? String(packsToNative(n, ing.packWeight)) : v,
-            }));
-          }}
-          onKeyDown={e => { if (e.key === "Enter") save(ing); }}
-        />
-        <span className="text-sm font-semibold">
-          {inPacks ? packNoun(ing.unit, Number(display) || 0) : ing.unit}
-          {sizeHint && <span className="block text-xs text-muted-foreground font-normal tabular-nums">({sizeHint})</span>}
-        </span>
-        <button
-          onClick={() => save(ing)}
-          disabled={!values[ing.id] || saving[ing.id]}
-          className={cn(
-            "px-4 py-2 rounded-lg text-base font-bold transition-all",
-            values[ing.id]
-              ? "bg-blue-600 text-white hover:bg-blue-700 shadow active:scale-95"
-              : "bg-blue-200 text-blue-400 cursor-not-allowed",
-          )}
-        >
-          {saving[ing.id] ? <Loader2 className="w-4 h-4 animate-spin" /> : isSaved ? <Check className="w-4 h-4" /> : "Save"}
-        </button>
-        {isSaved && (
-          <span className="text-sm text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-            <CheckCircle2 className="w-3 h-3" /> recorded
-          </span>
-        )}
-      </>
-    );
-  };
+  /** The big "Stock check" button (shared two-step entry: amount, then a
+   *  unit the person taps) — identical in both shapes. */
+  const control = (ing: StockCheckIngredient) => (
+    <StockCheckButton
+      ingredient={ing}
+      checkDate={checkDate}
+      isDraft={isDraft}
+      currentNative={savedNative.get(ing.id) ?? null}
+      onSaved={() => { void queryClient.invalidateQueries({ queryKey: savedKey }); }}
+    />
+  );
 
   // Compact shape: one line per ingredient, in the host list's own rhythm,
   // sitting directly beneath the item it counts.
@@ -216,7 +128,7 @@ export function StationStockChecks({
     return (
       <>
         {due.map(ing => {
-          const isSaved = savedIds.has(ing.id) && !dirtyIds.current.has(ing.id);
+          const isSaved = savedNative.has(ing.id);
           return (
             <div
               key={ing.id}
@@ -252,7 +164,7 @@ export function StationStockChecks({
         <p className="text-sm text-blue-600 dark:text-blue-400">count what's left while you're stood at it.</p>
       </div>
       {due.map(ing => {
-        const isSaved = savedIds.has(ing.id) && !dirtyIds.current.has(ing.id);
+        const isSaved = savedNative.has(ing.id);
         return (
           <div key={ing.id} className="flex items-center gap-2 flex-wrap">
             <span className={cn("font-semibold min-w-[10rem]", isSaved && "text-emerald-700 dark:text-emerald-400")}>{ing.name}</span>

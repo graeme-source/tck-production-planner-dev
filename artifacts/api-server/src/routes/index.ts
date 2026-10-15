@@ -23,6 +23,7 @@ import doughMixProgressRouter from "./dough-mix-progress";
 import dptSettingsRouter from "./dpt-settings";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
+import stockCheckHistoryRouter from "./stock-check-history";
 import teamEfficiencyRouter from "./team-efficiency";
 import dptCalculatorRouter from "./dpt-calculator";
 import stockRouter from "./stock";
@@ -272,6 +273,9 @@ router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
 router.use("/timing-standards", timingStandardsRouter);
 // Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).
 router.use("/timing-health", timingHealthRouter);
+// Recent stock counts per ingredient — the "are you sure?" check on every
+// stock-check entry (read-only).
+router.use("/stock-check-history", stockCheckHistoryRouter);
 router.use("/team-efficiency", teamEfficiencyRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
