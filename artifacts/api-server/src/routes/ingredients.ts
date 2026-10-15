@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, ingredientsTable, suppliersTable, recipeIngredientsTable, subRecipeIngredientsTable, ingredientStorageLocationsTable, storageLocationsTable } from "@workspace/db";
+import { db, ingredientsTable, suppliersTable, ingredientStorageLocationsTable, storageLocationsTable } from "@workspace/db";
 import { eq, sql, inArray, isNull, isNotNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
@@ -8,6 +8,7 @@ import { reconcileRecipesUsing } from "../lib/quid-store";
 import { declarationToStore } from "../lib/ingredient-declaration";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
+import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
 import * as z from "zod";
 
 const router: IRouter = Router();
@@ -112,27 +113,11 @@ router.get("/", async (req, res) => {
   const rows = joined.map(j => j.ing);
   const supplierNameById = new Map(joined.map(j => [j.ing.id, j.supplierName ?? null]));
 
-  const recipeUsage = await db
-    .select({ ingredientId: recipeIngredientsTable.ingredientId, cnt: sql<number>`count(distinct ${recipeIngredientsTable.recipeId})` })
-    .from(recipeIngredientsTable)
-    .groupBy(recipeIngredientsTable.ingredientId);
-  const subRecipeUsage = await db
-    .select({ ingredientId: subRecipeIngredientsTable.ingredientId, cnt: sql<number>`count(distinct ${subRecipeIngredientsTable.subRecipeId})` })
-    .from(subRecipeIngredientsTable)
-    .groupBy(subRecipeIngredientsTable.ingredientId);
-
-  const usageMap: Record<number, { recipes: number; subRecipes: number }> = {};
-  for (const r of recipeUsage) {
-    if (!usageMap[r.ingredientId]) usageMap[r.ingredientId] = { recipes: 0, subRecipes: 0 };
-    usageMap[r.ingredientId].recipes = Number(r.cnt);
-  }
-  for (const s of subRecipeUsage) {
-    if (!usageMap[s.ingredientId]) usageMap[s.ingredientId] = { recipes: 0, subRecipes: 0 };
-    usageMap[s.ingredientId].subRecipes = Number(s.cnt);
-  }
+  // The "Used in" count — shared with the Orders page's Pulled Kanbans list.
+  const usageMap = await loadIngredientUsageCounts();
 
   res.json(rows.map(r => {
-    const usage = usageMap[r.id];
+    const usage = usageMap.get(r.id);
     return {
       ...mapRow(r),
       supplierName: supplierNameById.get(r.id) ?? null,

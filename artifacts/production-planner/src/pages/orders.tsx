@@ -51,6 +51,7 @@ import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
 import { useNow } from "@/hooks/use-now";
 import { orderForSupplierSearch } from "@/lib/search-word-groups";
 import { kanbanOrderPacks, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
+import { UsedInLink } from "@/components/ingredient-usage-dialog";
 import {
   buildOrderMessage,
   costPerUnitLabel,
@@ -232,6 +233,9 @@ type KanbanIngredient = {
   secondarySupplierId: number | null;
   supplierPartNumber: string | null;
   orderingUrl: string | null;
+  /** The Ingredients list's "Used in" count (same server helper). */
+  usedInRecipes?: number;
+  usedInSubRecipes?: number;
 };
 
 // ── Drag & drop: move a line to a different supplier's order ─────────
@@ -2821,6 +2825,15 @@ export default function Orders() {
                         )}
                       </div>
                     </button>
+                    {/* "Used in N recipes" — tap to see which (Graeme, 15 Oct
+                        2026). Outside the select-row button: its own tap. */}
+                    <UsedInLink
+                      id={k.ingredientId}
+                      name={k.ingredientName ?? "Ingredient"}
+                      recipes={k.usedInRecipes ?? 0}
+                      subRecipes={k.usedInSubRecipes ?? 0}
+                      className="shrink-0 max-w-[11rem] text-right leading-tight"
+                    />
                     <select
                       value={effectiveSupplierId ?? ""}
                       onChange={e => {
