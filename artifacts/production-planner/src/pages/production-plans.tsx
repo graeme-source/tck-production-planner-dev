@@ -49,8 +49,12 @@ import { applyMacCheeseMinimum } from "@/lib/mac-cheese-minimum";
 import { cn } from "@/lib/utils";
 import { activeRecipes, archivedRecipeIds, draftRecipeIds } from "@/lib/recipe-archive";
 import type { PlanStartStock } from "@workspace/stock-prediction";
+import { minBatchesForOrders, solveTargetAllocation, type PlanMarginSettings } from "@workspace/plan-margin";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
+import { PlanMarginPanel, RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
+import { usePlanMargin } from "@/hooks/use-plan-margin";
+import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
 import { useSlowMeatProfile } from "@/hooks/use-slow-meat-profile";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { applySlowMeatCap, slowMeatCountForRows } from "@/lib/slow-meat-plan";
@@ -223,79 +227,40 @@ interface PlanItem {
  *  `stockAfterPacks` is the projected packs left after this horizon's
  *  dispatches with NO production — estimatedFactoryNumber − bag equivalents
  *  − dispatch2 − dispatch3, may be negative; the allocator adds the deficit
- *  production back itself. */
+ *  production back itself. `demandPacks` (dispatch2 + dispatch3) sets the
+ *  row's whole-batch floor: orders + the safety margin (@workspace/plan-margin). */
 interface AllocRecipe {
   deficitBatches: number;
   salesPercent: number;
   packsSold: number;
   packsPerBatch: number;
   stockAfterPacks: number;
+  demandPacks: number;
 }
 
-/** Round fractional allocations to integers that sum to `total`: floor each,
- *  then hand the leftover units to the largest remainders. Mirrors the
- *  backend helper of the same name. */
-function largestRemainderRound(exact: number[], total: number): number[] {
-  const floors = exact.map(e => Math.floor(e));
-  let leftover = total - floors.reduce((s, f) => s + f, 0);
-  const order = exact
-    .map((e, idx) => ({ idx, remainder: e - Math.floor(e) }))
-    .sort((a, b) => b.remainder - a.remainder);
-  for (const { idx } of order) {
-    if (leftover <= 0) break;
-    floors[idx] += 1;
-    leftover--;
-  }
-  return floors;
-}
-
-/** Target-stock allocation, mirroring the backend exactly: the plan should
- *  RESULT in end-of-horizon factory numbers split by the DPT percentages
- *  (Graeme, 2026-08-06). Find the level λ whose per-recipe targets λ·weight
- *  exactly spend the capacity, then each recipe makes whatever closes its
- *  gap to target — a flavour with a massive deficit gets heavily produced.
- *  Overstocked flavours contribute no gap (stock can't be unmade); weight 0
- *  means target 0 but genuine shortfalls still get produced back to zero.
- *  Shared by BOTH plan dialogs — create and edit must never diverge. */
-function allocateBatchesToTargets(recipes: AllocRecipe[], capacity: number): { suggestedBatches: number; surplusBatches: number; targetStockPacks: number | null }[] {
-  if (capacity <= 0) {
-    return recipes.map(() => ({ suggestedBatches: 0, surplusBatches: 0, targetStockPacks: null }));
-  }
-
+/** Target-stock allocation (Graeme, 2026-08-06): the plan should RESULT in
+ *  end-of-horizon factory numbers split by the DPT percentages. The solver is
+ *  the SAME code the server's /calculate uses (@workspace/plan-margin
+ *  solveTargetAllocation), so the screens and the API can never diverge.
+ *  Every row is floored at the whole batches that cover its orders + the
+ *  safety margin (15 Oct 2026 — a fractional 6.4 batches used to round down
+ *  to 6 for a test product). Shared by BOTH plan dialogs. */
+function allocateBatchesToTargets(recipes: AllocRecipe[], capacity: number, margin: PlanMarginSettings): { suggestedBatches: number; surplusBatches: number; targetStockPacks: number | null }[] {
   const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
-  const pool = recipes.map(r => ({
+  const solved = solveTargetAllocation(recipes.map(r => ({
     weight: totalPacksSold > 0 ? r.salesPercent : 0,
-    ppb: r.packsPerBatch > 0 ? r.packsPerBatch : 1,
+    ppb: r.packsPerBatch,
     proj: r.stockAfterPacks,
-  }));
-  const needBatches = (lambda: number) =>
-    pool.reduce((s, p) => s + Math.max(0, lambda * p.weight - p.proj) / p.ppb, 0);
-
-  let suggested: number[];
-  let targets: Array<number | null>;
-  const floorNeed = needBatches(0);
-  if (floorNeed >= capacity) {
-    // Capacity can't even cover the shortfalls — scale each gap pro-rata.
-    const gaps = pool.map(p => Math.max(0, -p.proj) / p.ppb);
-    const scale = floorNeed > 0 ? capacity / floorNeed : 0;
-    suggested = largestRemainderRound(gaps.map(g => g * scale), capacity);
-    targets = pool.map(() => null);
-  } else {
-    let lo = 0, hi = 1;
-    while (needBatches(hi) < capacity && hi < 1e9) hi *= 2;
-    for (let i = 0; i < 60; i++) {
-      const mid = (lo + hi) / 2;
-      if (needBatches(mid) < capacity) lo = mid; else hi = mid;
-    }
-    const lambda = (lo + hi) / 2;
-    suggested = largestRemainderRound(pool.map(p => Math.max(0, lambda * p.weight - p.proj) / p.ppb), capacity);
-    targets = pool.map(p => p.weight > 0 ? Math.round(lambda * p.weight) : null);
-  }
-
+    floorBatches: minBatchesForOrders({
+      demandPacks: r.demandPacks,
+      stockPacks: r.stockAfterPacks + r.demandPacks,
+      packsPerBatch: r.packsPerBatch,
+    }, margin).batches,
+  })), capacity);
   return recipes.map((r, idx) => ({
-    suggestedBatches: suggested[idx],
-    surplusBatches: Math.max(0, suggested[idx] - r.deficitBatches),
-    targetStockPacks: targets[idx],
+    suggestedBatches: solved.batches[idx],
+    surplusBatches: Math.max(0, solved.batches[idx] - r.deficitBatches),
+    targetStockPacks: solved.targets[idx],
   }));
 }
 
@@ -506,9 +471,12 @@ interface SortableRowProps {
   // /calculate constructs dispatchDates ([prev, planDate, next]). Used so
   // the row can credit this plan's production to the correct rolling FN.
   productionDayIndex: 0 | 1 | 2;
+  // Safety margin (orders + 2/4 packs) — when set, a short / tight row shows
+  // a note and a one-tap "+N batches" under its Batches box.
+  margin?: PlanMarginSettings;
 }
 
-function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock, productionDayIndex }: SortableRowProps) {
+function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock, productionDayIndex, margin }: SortableRowProps) {
   const colourStyle = useRecipeColourLookup();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
@@ -720,6 +688,10 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
               <BagsInFridgeNote recipeId={item.recipeId} needed={item.eightPackBagCount} className="text-[9px] font-normal" />
             </div>
           );
+        })()}
+        {margin && item.included && (() => {
+          const check = marginCheckForRow(item, margin);
+          return <RowMarginNote check={check} onAdd={() => onBatchChange(item.id, item.batchesTarget + check.batchesToAdd)} />;
         })()}
       </td>
       <td className="py-2 px-1.5 text-right">
@@ -1100,7 +1072,11 @@ function ExpiryWarningsPanel({ warnings }: { warnings: ExpiryWarningRow[] }) {
 // batch counts decided ahead of time: they sit outside the DPT allocation
 // entirely (their batches are subtracted from the day's capacity before the
 // balancing distributes the rest) and survive Recalculate untouched.
-function queuedToPlanItem(q: QueuedProductionRow, prev?: PlanItem): PlanItem {
+// `orders` = the same recipe's chilled suggestion when it has orders in this
+// plan's window (test products): the row then carries the real D1–D3 and
+// stock figures, so the safety-margin check can see whether the queued
+// batches cover them. Without it the queued row shows no demand.
+function queuedToPlanItem(q: QueuedProductionRow, prev?: PlanItem, orders?: ChilledSuggestion): PlanItem {
   return {
     id: `queued-${q.recipeId}`,
     recipeId: q.recipeId,
@@ -1123,12 +1099,12 @@ function queuedToPlanItem(q: QueuedProductionRow, prev?: PlanItem): PlanItem {
     isFromDpt: false,
     fridgeStock: prev ? prev.fridgeStock : q.fridgeStock,
     stockCheckedAt: q.stockCheckedAt,
-    prevProduction: 0,
-    estimatedFactoryNumber: q.fridgeStock,
-    dispatch1Qty: 0,
-    dispatch2Qty: 0,
-    dispatch3Qty: 0,
-    totalDispatchQty: 0,
+    prevProduction: orders?.prevProduction ?? 0,
+    estimatedFactoryNumber: orders?.estimatedFactoryNumber ?? q.fridgeStock,
+    dispatch1Qty: orders?.dispatch1Qty ?? 0,
+    dispatch2Qty: orders?.dispatch2Qty ?? 0,
+    dispatch3Qty: orders?.dispatch3Qty ?? 0,
+    totalDispatchQty: orders?.totalDispatchQty ?? 0,
     deficit: 0,
     deficitBatches: 0,
     surplusBatches: 0,
@@ -2155,7 +2131,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     return () => { cancelled = true; };
   }, [planDate, prepTouched, doughTouched]);
 
-  const allocateBatches = allocateBatchesToTargets;
+  // Safety margin (orders + 2 packs, + 4 over 12 batches) — floors every
+  // suggestion and drives the warnings + the save check below.
+  const planMargin = usePlanMargin(open);
+  const allocateBatches = useCallback(
+    (rows: AllocRecipe[], capacity: number) => allocateBatchesToTargets(rows, capacity, planMargin.settings),
+    [planMargin.settings],
+  );
 
   // Guards the rota-suggestion auto-apply: reset whenever the calc reloads
   // (which also resets totalBatchesOverride) so the suggestion re-applies to
@@ -2204,6 +2186,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       packsSold: r.packsSold,
       packsPerBatch: r.packsPerBatch,
       stockAfterPacks: r.estimatedFactoryNumber - (r.bagPackEquivalents ?? 0) - r.dispatch2Qty - r.dispatch3Qty,
+      demandPacks: r.dispatch2Qty + r.dispatch3Qty,
     })), capacity);
     // Capture any manual batch edits the user has already made so we can preserve them
     const prevItems = itemsRef.current;
@@ -2273,7 +2256,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     for (const q of queuedForPlan) {
       if (newItems.some(n => n.recipeId === q.recipeId)) continue;
       const prev = prevItems.find(p => p.recipeId === q.recipeId && p.id.startsWith("queued-"));
-      newItems.push(queuedToPlanItem(q, prev));
+      newItems.push(queuedToPlanItem(q, prev, (calcData.additionalChilled ?? []).find(s => s.recipeId === q.recipeId)));
     }
     // Apply saved default order: known recipes sorted first, unknowns appended at the end
     if (savedOrder.length > 0) {
@@ -2321,6 +2304,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
         packsSold: 1,
         packsPerBatch: it.packsPerBatch,
         stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
+        demandPacks: it.dispatch2Qty + it.dispatch3Qty,
       }));
       const alloc = allocateBatches(recipesForAlloc, Math.max(0, newTotal - queuedSum));
       return capForSlowMeat(prev.map(item => {
@@ -2427,6 +2411,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       packsSold: 1,
       packsPerBatch: it.packsPerBatch,
       stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
+      demandPacks: it.dispatch2Qty + it.dispatch3Qty,
     }));
     const alloc = allocateBatches(recipesForAlloc, Math.max(0, effectiveTotalBatches - queuedSum));
     isDirty.current = true;
@@ -2619,10 +2604,27 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
     setItems(prev => capForSlowMeat([...prev, ...toAdd]));
   };
 
-  const handleSubmit = async (targetStatus: "draft" | "active") => {
-    const includedItems = items.filter(it => it.included);
+  // Safety-margin save check: any recipe short of orders + margin stops the
+  // save and shows the summary; saving as it is takes a second tap there.
+  const marginWarnings = useMemo(() => marginWarningsForRows(items, planMargin.settings), [items, planMargin.settings]);
+  const [marginGuardFor, setMarginGuardFor] = useState<"draft" | "active" | null>(null);
+  const addRowBatches = (id: string, n: number) => {
+    const row = items.find(it => it.id === id);
+    if (row && n > 0) updateItem(id, { batchesTarget: row.batchesTarget + n });
+  };
+  const withMarginFixes = (rows: PlanItem[]) =>
+    addMarginBatches(rows, marginWarnings).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));
+  const fixAllMargins = () => { isDirty.current = true; setItems(prev => capForSlowMeat(withMarginFixes(prev))); };
+
+  const handleSubmit = async (targetStatus: "draft" | "active", opts: { skipMarginCheck?: boolean; itemsOverride?: PlanItem[] } = {}) => {
+    const rows = opts.itemsOverride ?? items;
+    const includedItems = rows.filter(it => it.included);
     if (includedItems.length === 0) return;
     if (slowMeatOver) return; // the red slow-meat warning says why
+    if (!opts.skipMarginCheck && marginWarningsForRows(rows, planMargin.settings).length > 0) {
+      setMarginGuardFor(targetStatus);
+      return;
+    }
 
     // Guard against accidentally planning the same day twice. Deliberate
     // doubles (e.g. a second run) are still allowed after confirming.
@@ -3013,6 +3015,13 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
           ) : (
             <>
               <SlowMeatPanel rows={items} data={slowMeat.data} loadError={slowMeat.isError} isAdmin={isAdmin} />
+              {items.length > 0 && (<PlanMarginPanel
+                warnings={marginWarnings}
+                settings={planMargin.settings}
+                canEdit={userRole === "admin" || userRole === "manager"}
+                onAddBatches={addRowBatches}
+                onFixAll={fixAllMargins}
+              />)}
               {items.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
                   <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -3138,6 +3147,7 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
                               fridgeStockJustSaved={!!recentlySaved[it.id] && Date.now() - recentlySaved[it.id] < 1500}
                               onSaveFridgeStock={handleExplicitFridgeSave}
                               productionDayIndex={productionDayIndex}
+                              margin={planMargin.settings}
                             />
                           ))}
                         </tbody>
@@ -3287,6 +3297,25 @@ function CreatePlanDialog({ open, onClose, onCreated, initialDate }: CreatePlanD
       onSaved={() => {
         setTotalBatchesOverride(null);
         refetchCalc();
+      }}
+    />
+    <MarginSaveGuard
+      open={marginGuardFor !== null}
+      warnings={marginWarnings}
+      saving={isSubmitting}
+      onClose={() => setMarginGuardFor(null)}
+      onFixAndSave={() => {
+        const status = marginGuardFor ?? "draft";
+        const fixed = capForSlowMeat(withMarginFixes(items));
+        setMarginGuardFor(null);
+        isDirty.current = true;
+        setItems(fixed);
+        void handleSubmit(status, { itemsOverride: fixed });
+      }}
+      onSaveAnyway={() => {
+        const status = marginGuardFor ?? "draft";
+        setMarginGuardFor(null);
+        void handleSubmit(status, { skipMarginCheck: true });
       }}
     />
     {/* Close prompt — dismissing the create dialog with unsaved work forces
@@ -3543,7 +3572,11 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
   // Shared target-stock allocator — the edit dialog previously carried its own
   // copy of the old flat-DPT-split maths, so Recalculate here silently
   // disagreed with the create dialog and the backend. Never fork this again.
-  const editAllocateBatches = allocateBatchesToTargets;
+  const editPlanMargin = usePlanMargin(open);
+  const editAllocateBatches = useCallback(
+    (rows: AllocRecipe[], capacity: number) => allocateBatchesToTargets(rows, capacity, editPlanMargin.settings),
+    [editPlanMargin.settings],
+  );
 
   const [editRecalcFlash, setEditRecalcFlash] = useState(false);
   const handleEditRecalculateBatches = useCallback(() => {
@@ -3561,6 +3594,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       packsSold: 1,
       packsPerBatch: it.packsPerBatch,
       stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
+      demandPacks: it.dispatch2Qty + it.dispatch3Qty,
     }));
     const alloc = editAllocateBatches(recipesForAlloc, editEffectiveTotalBatches);
     isDirty.current = true;
@@ -3849,9 +3883,20 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
     setItems(prev => [...prev, ...toAdd]);
   };
 
-  const handleSave = async (targetStatus: "draft" | "active") => {
-    const includedItems = items.filter(it => it.included);
+  // Safety-margin save check — same rule and summary as Create Plan.
+  const editMarginWarnings = useMemo(() => marginWarningsForRows(items, editPlanMargin.settings), [items, editPlanMargin.settings]);
+  const [editMarginGuardFor, setEditMarginGuardFor] = useState<"draft" | "active" | null>(null);
+  const editWithMarginFixes = (rows: PlanItem[]) =>
+    addMarginBatches(rows, editMarginWarnings).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));
+
+  const handleSave = async (targetStatus: "draft" | "active", opts: { skipMarginCheck?: boolean; itemsOverride?: PlanItem[] } = {}) => {
+    const rows = opts.itemsOverride ?? items;
+    const includedItems = rows.filter(it => it.included);
     if (includedItems.length === 0) return;
+    if (!opts.skipMarginCheck && marginWarningsForRows(rows, editPlanMargin.settings).length > 0) {
+      setEditMarginGuardFor(targetStatus);
+      return;
+    }
     setIsSubmitting(true);
     updatePlan.mutate(
       {
@@ -4019,6 +4064,16 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             </div>
           )}
 
+          {items.length > 0 && (<PlanMarginPanel
+            warnings={editMarginWarnings}
+            settings={editPlanMargin.settings}
+            canEdit={canManageCollections}
+            onAddBatches={(id, n) => {
+              const row = items.find(it => it.id === id);
+              if (row && n > 0) updateItem(id, { batchesTarget: row.batchesTarget + n });
+            }}
+            onFixAll={() => { isDirty.current = true; setItems(prev => editWithMarginFixes(prev)); }}
+          />)}
           {items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
               <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -4078,6 +4133,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
                           fridgeStockJustSaved={false}
                           onSaveFridgeStock={() => {}}
                           productionDayIndex={1}
+                          margin={editPlanMargin.settings}
                         />
                       ))}
                     </tbody>
@@ -4153,6 +4209,25 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
           </p>
         </div>
       </DialogContent>
+      <MarginSaveGuard
+        open={editMarginGuardFor !== null}
+        warnings={editMarginWarnings}
+        saving={isSubmitting}
+        onClose={() => setEditMarginGuardFor(null)}
+        onFixAndSave={() => {
+          const status = editMarginGuardFor ?? "draft";
+          const fixed = editWithMarginFixes(items);
+          setEditMarginGuardFor(null);
+          isDirty.current = true;
+          setItems(fixed);
+          void handleSave(status, { itemsOverride: fixed });
+        }}
+        onSaveAnyway={() => {
+          const status = editMarginGuardFor ?? "draft";
+          setEditMarginGuardFor(null);
+          void handleSave(status, { skipMarginCheck: true });
+        }}
+      />
       {updateModalOpen && updateCalcData && (
         <UpdateFactoryDiffModal
           currentItems={items}
