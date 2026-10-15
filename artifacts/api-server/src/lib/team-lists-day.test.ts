@@ -258,3 +258,17 @@ describe("coming up", () => {
     expect(comingUp(items, TUE)[0].entries.map(e => e.completion)).toEqual([null, null]);
   });
 });
+
+describe("one-off items (short-delivery reports, recurrence 'once')", () => {
+  const report = item({ id: 9, priority: 1, recurrence: { kind: "once", date: TUE }, carryOver: true, startDate: TUE });
+  it("shows on its day", () => {
+    expect(buildDay([report], [], TUE).entries).toEqual([{ itemId: 9, dueDate: TUE, overdue: false, completion: null }]);
+  });
+  it("stays as overdue until someone ticks it, then goes", () => {
+    expect(buildDay([report], [], THU).entries[0]).toMatchObject({ dueDate: TUE, overdue: true });
+    expect(buildDay([report], [{ ...done(9, TUE), atDate: TUE }], THU).entries).toEqual([]);
+  });
+  it("never shows before its day", () => {
+    expect(buildDay([report], [], MON).entries).toEqual([]);
+  });
+});

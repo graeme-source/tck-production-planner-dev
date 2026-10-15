@@ -8,7 +8,9 @@ import {
 } from "@workspace/recurrence";
 import type { SortSpec, TaskSortFields } from "./task-sort";
 
-export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly";
+/** "once" = a one-off item made by the app (a short-delivery report). It has
+ *  no button of its own: picking any preset turns it into a repeating task. */
+export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly" | "once";
 
 export const PRESETS: Array<{ key: Preset; label: string }> = [
   { key: "daily", label: "Every day" },
@@ -24,6 +26,7 @@ export function presetOf(rule: RecurrenceRule): Preset {
     case "daily": return "daily";
     case "weekdays": return "weekdays";
     case "monthly": return "monthly";
+    case "once": return "once";
     case "weekly":
       if ((rule.interval ?? 1) > 1) return "every_n";
       return rule.days.length === 1 ? "weekly" : "days";
@@ -55,6 +58,7 @@ export function ruleForPreset(preset: Preset, current: RecurrenceRule, today: st
       return { kind: "weekly", days: [day], interval: 2, anchor: nextOn(day, today) };
     }
     case "monthly": return current.kind === "monthly" ? current : { kind: "monthly", dayOfMonth: Number(today.slice(8, 10)) };
+    case "once": return current.kind === "once" ? current : { kind: "once", date: today };
   }
 }
 
