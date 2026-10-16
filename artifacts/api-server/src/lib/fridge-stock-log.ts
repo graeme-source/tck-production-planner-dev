@@ -24,6 +24,9 @@ export interface FridgeStockChange {
   /** Log even a zero delta — used to flag a despatch the record couldn't
    *  cover (nothing left to take, but the shortfall must show). */
   keepZero?: boolean;
+  /** Where the packs are (migration 0202). Omitted = the production fridge,
+   *  which every caller before the freezer log meant. */
+  location?: "production_fridge" | "production_freezer";
 }
 
 /** Insert one change-log row. Accepts a transaction or the base db so it can
@@ -34,6 +37,18 @@ export async function logFridgeStockChange(
   change: FridgeStockChange,
 ): Promise<void> {
   if (!Math.round(change.delta) && !change.keepZero) return;
+  if (change.location && change.location !== "production_fridge") {
+    // Freezer rows name their place; fridge rows keep the original insert so
+    // a fridge write never depends on the 0202 column.
+    await tx.execute(sql`
+      INSERT INTO fridge_stock_changes (recipe_id, pack_size, delta, resulting_qty, source, user_id, note, location)
+      VALUES (
+        ${change.recipeId}, ${change.packSize}, ${Math.round(change.delta)}, ${Math.round(change.resultingQty)},
+        ${change.source}, ${change.userId ?? null}, ${change.note ?? null}, ${change.location}
+      )
+    `);
+    return;
+  }
   await tx.execute(sql`
     INSERT INTO fridge_stock_changes (recipe_id, pack_size, delta, resulting_qty, source, user_id, note)
     VALUES (

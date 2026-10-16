@@ -44,6 +44,7 @@ export async function stockAt(ids: number[], at: Date): Promise<number | null> {
       SELECT DISTINCT ON (recipe_id) recipe_id, resulting_qty
         FROM fridge_stock_changes
        WHERE pack_size = ${FACTORY_PACK_SIZE} AND created_at < ${utcWall}::timestamp
+         AND location = 'production_fridge'
          AND recipe_id IN (SELECT recipe_id FROM ids)
        ORDER BY recipe_id, created_at DESC, id DESC
     ),

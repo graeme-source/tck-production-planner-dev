@@ -47,6 +47,9 @@ export const TakeBackOutBody = z
     }),
     reason: z.enum(UNDO_REASONS),
     otherText: z.string().trim().max(UNDO_OTHER_MAX).optional(),
+    /** The screen's id for this take-back — the wrap-to-Shopify ledger key
+     *  (lib/shopify-wrap-push-rules.ts). Optional; made up when missing. */
+    eventId: z.string().regex(/^[A-Za-z0-9_-]{8,64}$/).optional(),
   })
   .superRefine((body, ctx) => {
     if (body.reason === "other" && !(body.otherText ?? "").trim()) {

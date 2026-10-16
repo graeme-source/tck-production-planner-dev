@@ -327,6 +327,7 @@ router.get("/history", validateQuery(HistoryQuery), async (req: Request, res: Re
         SELECT id, pack_size, delta, resulting_qty, source, note, created_at
         FROM fridge_stock_changes
         WHERE recipe_id = ${itemId} AND created_at >= ${since} ${packFilter}
+          AND location = 'production_fridge'
         ORDER BY created_at DESC
       `),
     ) as Array<{ id: number; pack_size: number; delta: number; resulting_qty: number; source: string; note: string | null; created_at: Date | string }>;

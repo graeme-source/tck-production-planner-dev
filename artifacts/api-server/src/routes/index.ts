@@ -88,6 +88,8 @@ import morningMeetingsRouter from "./morning-meetings";
 import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
+import wrappingFreezerRouter from "./wrapping-freezer";
+import shopifyWrapPushesRouter from "./shopify-wrap-pushes";
 import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
@@ -255,6 +257,11 @@ router.use("/production-plans", qualityRejectsRouter);
 // Taking wrapped packs back out of the fridge/freezer (the wrapping undo) —
 // moved out of the frozen router 2026-10-08; refuses unconfirmed requests.
 router.use("/production-plans", wrappingStorageUndoRouter);
+// Packs into the Product Freezer (stock + change log + wrap-to-Shopify) —
+// moved out of the frozen router 2026-10-16.
+router.use("/production-plans", wrappingFreezerRouter);
+// Wrap-to-Shopify ledger: per-plan status, retry, pinned location.
+router.use(shopifyWrapPushesRouter);
 // Building station "Edit production numbers" (batches + extra packs for one
 // recipe, staged and saved in one transaction) — ahead of the frozen router.
 router.use("/production-plans", buildingEditRouter);

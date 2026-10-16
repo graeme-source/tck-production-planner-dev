@@ -19,15 +19,19 @@
  * twice"), and logs what ACTUALLY changed: on 8 Oct the old handler logged
  * "−20" against a fridge that already held 0 for that recipe.
  *
- * Freezer: only the plan item's freezer count moves (as before — that
- * endpoint never wrote stock); the confirmation is required all the same.
+ * Freezer: the plan item's freezer count drops, the recipe's
+ * production_freezer stock drops and is logged (16 Oct 2026 — it never
+ * moved before), and a recipe flagged shopify_push_on_wrap gets the packs
+ * taken off its Shopify variant again (lib/shopify-wrap-push.ts).
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, productionPlanItemsTable, productionPlansTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
-import { adjustFridgeStock } from "../lib/fridge-stock";
+import { randomUUID } from "node:crypto";
+import { adjustFridgeStock, adjustRecipeFreezerStock } from "../lib/fridge-stock";
+import { recordWrapPush } from "../lib/shopify-wrap-push";
 import { TakeBackOutBody, undoNote } from "../lib/wrapping-undo";
 
 const router: IRouter = Router();
@@ -103,23 +107,63 @@ router.delete("/:id/items/:itemId/freezer", validate(TakeBackOutBody), async (re
   if (!params.success) { res.status(400).json({ error: "Invalid plan or item id" }); return; }
   const { id: planId, itemId } = params.data;
   const body = req.body as TakeBackOutBody;
+  const userId = req.session.userId ?? null;
 
   const item = await findItem(planId, itemId);
   if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
 
-  const [updated] = await db
-    .update(productionPlanItemsTable)
-    .set({ freezerQty: sql`GREATEST(${productionPlanItemsTable.freezerQty} - ${body.qty}, 0)` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ freezerQty: productionPlanItemsTable.freezerQty });
+  // Read-and-decrement in one statement so the packs actually removed (the
+  // count floors at 0) are known exactly — that is what stock and Shopify
+  // get back, never more than went in.
+  const moved = await db.execute<{ before: number; after: number }>(sql`
+    WITH prev AS (SELECT freezer_qty FROM production_plan_items WHERE id = ${itemId} FOR UPDATE)
+    UPDATE production_plan_items i
+       SET freezer_qty = GREATEST(prev.freezer_qty - ${body.qty}, 0)
+      FROM prev
+     WHERE i.id = ${itemId}
+    RETURNING prev.freezer_qty AS before, i.freezer_qty AS after
+  `);
+  const before = Number(moved.rows[0]?.before ?? 0);
+  const after = Number(moved.rows[0]?.after ?? 0);
+  const removed = Math.max(0, before - after);
+
+  // Freezer stock + the change log, like the fridge (Graeme, 16 Oct 2026).
+  let stock: { newQty: number; appliedDelta: number; shortfall: number } | null = null;
+  if (removed > 0) {
+    try {
+      stock = await adjustRecipeFreezerStock({
+        recipeId: item.recipeId, delta: -removed, note: undoNote(body.reason, body.otherText, 2), userId,
+      });
+    } catch (err) {
+      console.error("[wrapping-undo] freezer stock write failed:", err);
+    }
+  }
+
+  // Recipes that push to Shopify on wrap get the packs taken off again.
+  const shopify = removed > 0
+    ? await recordWrapPush({
+        kind: "take_back", planId, planItemId: itemId, recipeId: item.recipeId,
+        packs: removed, clientEventId: body.eventId ?? randomUUID(), userId,
+      }).catch(err => {
+        console.error("[wrapping-undo] Shopify ledger write failed:", err);
+        return null;
+      })
+    : null;
 
   console.info("[wrapping-undo]", JSON.stringify({
-    planId, itemId, recipeId: item.recipeId, qty: body.qty,
-    reason: body.reason, otherText: body.otherText ?? null, userId: req.session.userId ?? null,
+    planId, itemId, recipeId: item.recipeId, qty: body.qty, removed,
+    reason: body.reason, otherText: body.otherText ?? null, userId,
+    stockAppliedDelta: stock?.appliedDelta ?? null, shopify: shopify?.status ?? null,
     where: "product freezer",
   }));
 
-  res.json({ itemId, freezerQty: updated.freezerQty });
+  res.json({
+    itemId,
+    freezerQty: after,
+    removed,
+    freezerStock: stock?.newQty ?? null,
+    shopify: shopify ? { id: shopify.id, status: shopify.status, delta: shopify.delta, error: shopify.error } : null,
+  });
 });
 
 export default router;

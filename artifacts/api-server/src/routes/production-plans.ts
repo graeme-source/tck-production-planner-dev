@@ -6214,22 +6214,11 @@ router.post("/:id/items/:itemId/fridge", async (req, res) => {
 // (2026-10-08): taking wrapped packs back out needs { confirm: true, reason }.
 
 // ──────────────────────────────────────────────────────────────────────────────
-// POST/DELETE /:id/items/:itemId/freezer — freezer stock (atomic increment/decrement)
+// /:id/items/:itemId/freezer — both directions live outside this router now
 // ──────────────────────────────────────────────────────────────────────────────
-router.post("/:id/items/:itemId/freezer", async (req, res) => {
-  const planId = Number(req.params.id);
-  const itemId = Number(req.params.itemId);
-  const qty = Number(req.body.qty);
-  if (!Number.isInteger(qty) || qty < 1) { res.status(400).json({ error: "Body must contain { qty: positive integer }" }); return; }
-  const [item] = await db.select({ id: productionPlanItemsTable.id }).from(productionPlanItemsTable)
-    .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
-  if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
-  const [updated] = await db.update(productionPlanItemsTable)
-    .set({ freezerQty: sql`${productionPlanItemsTable.freezerQty} + ${qty}` })
-    .where(eq(productionPlanItemsTable.id, itemId))
-    .returning({ freezerQty: productionPlanItemsTable.freezerQty });
-  res.json({ itemId, freezerQty: updated.freezerQty });
-});
+// POST /:id/items/:itemId/freezer — moved to routes/wrapping-freezer.ts
+// (2026-10-16): a freezer add now writes freezer stock + the change log, and
+// pushes to Shopify for recipes flagged shopify_push_on_wrap.
 
 // DELETE /:id/items/:itemId/freezer — moved to routes/wrapping-storage-undo.ts
 // (2026-10-08): taking packs back out needs { confirm: true, reason }.

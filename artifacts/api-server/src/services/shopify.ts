@@ -867,6 +867,36 @@ export async function adjustInventoryLevel(variantId: string, delta: number): Pr
   return { newQuantity: result.inventory_level.available };
 }
 
+// ── Wrap-to-Shopify (lib/shopify-wrap-push.ts) ───────────────────────────────
+
+/** READ: a variant's inventory item GID. Null when Shopify doesn't know the
+ *  variant or it doesn't track inventory. */
+export async function getVariantInventoryItem(variantId: string): Promise<{ inventoryItemGid: string; tracked: boolean } | null> {
+  const gid = variantId.startsWith("gid://") ? variantId : `gid://shopify/ProductVariant/${variantId}`;
+  const data = await shopifyGraphQL<{ productVariant: { inventoryItem: { id: string; tracked: boolean } | null } | null }>(
+    `query($id: ID!) { productVariant(id: $id) { inventoryItem { id tracked } } }`,
+    { id: gid },
+  );
+  const item = data.productVariant?.inventoryItem;
+  return item ? { inventoryItemGid: item.id, tracked: item.tracked } : null;
+}
+
+/** READ: the store's locations, for pinning the wrap location. */
+export async function getShopifyLocations(): Promise<Array<{ id: string; name: string; isActive: boolean }>> {
+  const data = await shopifyGraphQL<{ locations: { nodes: Array<{ id: string; name: string; isActive: boolean }> } }>(
+    `{ locations(first: 50, includeInactive: true) { nodes { id name isActive } } }`,
+  );
+  return data.locations.nodes;
+}
+
+/** WRITE: one prepared inventoryAdjustQuantities request (built by
+ *  lib/shopify-wrap-push-rules.ts). Goes through shopifyGraphQLWrite, so it
+ *  THROWS ShopifyWritesBlockedError when this server must not write — it
+ *  never pretends to have adjusted anything. */
+export async function sendInventoryAdjust<T>(request: { query: string; variables: Record<string, unknown> }): Promise<T> {
+  return shopifyGraphQLWrite<T>("inventoryAdjustQuantities", request.query, request.variables);
+}
+
 // ── Inventory item costs (for COGS fallback on unmapped products) ────────────
 
 let variantCostCache: { data: Map<string, number>; expiry: number } | null = null;

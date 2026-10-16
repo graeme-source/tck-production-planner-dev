@@ -300,6 +300,60 @@ export async function addRecipeFreezerStock(recipeId: number, delta: number, not
   return newQty;
 }
 
+/**
+ * Wrapping-station freezer adds and take-backs (Graeme, 16 Oct 2026: "freezer
+ * adds/take-backs must write production_freezer stock + fridge_stock_changes
+ * like fridge adds do"). Until now the freezer button only bumped the plan
+ * item's freezerQty, so the stock record never moved.
+ *
+ * Same aggregate as addRecipeFreezerStock (production_freezer, packSize 2 =
+ * the standard retail pack), but locked, never below zero, and logged to
+ * fridge_stock_changes with location 'production_freezer' and source
+ * 'wrapping' — which is also what the wrapping pace reads.
+ */
+export async function adjustRecipeFreezerStock(input: {
+  recipeId: number;
+  delta: number;
+  note: string;
+  userId?: number | null;
+  source?: FridgeChangeSource;
+}): Promise<{ newQty: number; appliedDelta: number; shortfall: number }> {
+  const delta = Math.trunc(input.delta);
+  return await db.transaction(async (tx) => {
+    const [existing] = await tx
+      .select({ id: stockEntriesTable.id, quantity: stockEntriesTable.quantity })
+      .from(stockEntriesTable)
+      .where(and(
+        eq(stockEntriesTable.recipeId, input.recipeId),
+        eq(stockEntriesTable.itemType, "recipe"),
+        eq(stockEntriesTable.location, "production_freezer"),
+      ))
+      .orderBy(desc(stockEntriesTable.checkedAt))
+      .limit(1)
+      .for("update");
+    const before = existing ? Math.max(0, Math.round(Number(existing.quantity) || 0)) : 0;
+    const removal = delta < 0 ? planBagDecrement(before, -delta) : null;
+    const appliedDelta = removal ? removal.delta : delta;
+    const newQty = before + appliedDelta;
+    if (existing) {
+      await tx.update(stockEntriesTable)
+        .set({ quantity: String(newQty), checkedAt: new Date(), notes: input.note })
+        .where(eq(stockEntriesTable.id, existing.id));
+    } else if (newQty > 0) {
+      await tx.insert(stockEntriesTable).values({
+        recipeId: input.recipeId, itemType: "recipe", quantity: String(newQty), unit: "packs",
+        location: "production_freezer", packSize: 2, notes: input.note,
+      });
+    }
+    await logFridgeStockChange(tx, {
+      recipeId: input.recipeId, packSize: 2, delta: appliedDelta, resultingQty: newQty,
+      source: input.source ?? "wrapping", userId: input.userId ?? null, note: input.note,
+      location: "production_freezer",
+    });
+    return { newQty, appliedDelta, shortfall: delta < 0 ? (-delta) - (-appliedDelta) : 0 };
+  });
+}
+
 /** Current production-fridge level for a recipe at one pack size (2-packs
  *  or 8-pack bags) — the newest stock_entries row, 0 when there is none. */
 export async function readFridgeAggregate(recipeId: number, packSize: number): Promise<number> {

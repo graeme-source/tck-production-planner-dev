@@ -42,6 +42,8 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/building-edit/?$`), what: "edit production numbers" },
   { method: "PATCH", pattern: new RegExp(`${PLAN}/items/${ID}/wrapping-complete/?$`), what: "wrapping complete" },
   { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/fridge/?$`), what: "packs into fridge" },
+  // Freezer adds now log who wrapped them (routes/wrapping-freezer.ts).
+  { method: "POST", pattern: new RegExp(`${PLAN}/items/${ID}/freezer/?$`), what: "packs into freezer" },
   // Quality rejects: both + taps now write who-and-when to
   // quality_reject_events (routes/quality-rejects.ts). The − undo taps stay
   // unguarded like every other undo here.
