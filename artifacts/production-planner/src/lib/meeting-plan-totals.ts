@@ -11,7 +11,7 @@
  * doesn't — the fried chicken team isn't there, and fried chicken rows were
  * swelling the meeting's stock totals (Graeme, 2026-10-12).
  */
-import { isMainKitchen } from "@workspace/production-schedule";
+import { isMainKitchen, countsInKpis } from "@workspace/production-schedule";
 
 /** The plan items and stock rows the production table shows. With
  *  `mainKitchenOnly` (the morning meeting) both drop the separate facility's
@@ -31,6 +31,8 @@ export function planSlideScope<I extends { recipeCategory: string | null }, C ex
 
 export interface PlanSlideTotalsRow {
   category: string | null;
+  /** Recipe flag (migration 0202 — buns): not a calzone batch. */
+  excludeFromKpis?: boolean | null;
   unit: "batches" | "packs";
   target: number | null;
   packs: number | null;
@@ -41,7 +43,8 @@ export function planSlideProductionTotals(rows: readonly PlanSlideTotalsRow[]): 
   let totalPacks = 0;
   for (const r of rows) {
     if (!isMainKitchen(r.category)) continue;
-    if (r.unit === "batches") calzoneBatches += r.target ?? 0;
+    // Buns etc. (excludeFromKpis) are made here but are not calzone batches.
+    if (r.unit === "batches" && countsInKpis(r.category, r.excludeFromKpis)) calzoneBatches += r.target ?? 0;
     totalPacks += r.packs ?? 0;
   }
   return { calzoneBatches, totalPacks };

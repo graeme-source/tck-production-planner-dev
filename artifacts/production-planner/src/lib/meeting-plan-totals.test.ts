@@ -40,4 +40,11 @@ describe("planSlideProductionTotals", () => {
       { category: null, unit: "batches", target: null, packs: null }, // a core recipe not on today's plan
     ])).toEqual({ calzoneBatches: 105, totalPacks: 540 });
   });
+  // Graeme, 16 Oct 2026: buns are not calzone batches (recipe flag).
+  it("leaves recipes flagged out of the KPIs out of the calzone batches", () => {
+    expect(planSlideProductionTotals([
+      { category: "Calzones", unit: "batches", target: 90, packs: 450 },
+      { category: "Desserts", excludeFromKpis: true, unit: "batches", target: 6, packs: 48 },
+    ])).toEqual({ calzoneBatches: 90, totalPacks: 498 });
+  });
 });

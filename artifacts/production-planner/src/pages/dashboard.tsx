@@ -21,6 +21,7 @@ import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
+import { useRecipeRoutes } from "@/lib/recipe-routes";
 import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
@@ -275,7 +276,7 @@ type UpcomingPlan = {
   planDate: string;
   name: string;
   status: "draft" | "active" | "prep" | "building" | "complete";
-  items?: Array<{ recipeCategory?: string | null; batchesTarget?: number | null }>;
+  items?: Array<{ recipeId: number; recipeCategory?: string | null; batchesTarget?: number | null }>;
 };
 
 const PLAN_STATUS_STYLE: Record<string, string> = {
@@ -292,6 +293,9 @@ const PLAN_STATUS_STYLE: Record<string, string> = {
  *  1 pack), matching the unit convention everywhere else. */
 function UpcomingProductionPanel() {
   const [, setLocation] = useLocation();
+  // The plans list carries no route flags: recipes out of the KPIs (buns)
+  // are not calzone batches (migration 0202).
+  const { routeOf } = useRecipeRoutes();
   const { data: plans, isLoading, error } = useQuery<UpcomingPlan[]>({
     queryKey: ["dashboard-upcoming-plans"],
     queryFn: async () => {
@@ -310,7 +314,7 @@ function UpcomingProductionPanel() {
     .map(p => {
       const items = p.items ?? [];
       const calzoneBatches = items
-        .filter(it => dayKind(it.recipeCategory) === "calzone")
+        .filter(it => dayKind(it.recipeCategory) === "calzone" && !routeOf(it.recipeId).excludeFromKpis)
         .reduce((s, it) => s + (it.batchesTarget ?? 0), 0);
       const macPacks = items
         .filter(it => (it.recipeCategory ?? "") === MAC_CHEESE_CATEGORY)

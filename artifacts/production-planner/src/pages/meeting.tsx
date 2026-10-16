@@ -87,6 +87,8 @@ export interface PlanSlideItem {
   recipeColor: string | null;
   batchesTarget: number;
   recipeCategory: string | null;
+  /** Recipe flag (migration 0202): out of the calzone batch count. */
+  excludeFromKpis?: boolean;
   eightPackBagCount: number;
   status?: string;
 }
@@ -2140,6 +2142,7 @@ type ProductionPlanRow = {
   recipeName: string;
   color: string | null;
   category: string | null;
+  excludeFromKpis?: boolean;     // recipe flag: left out of the calzone batch total
   itemId: number | null;         // plan item id; null when not in today's plan (not draggable)
   locked: boolean;               // completed items keep their slot (same rule as mixing)
   seq: number | null;            // production order number; null when not in today's plan
@@ -2449,6 +2452,7 @@ export function ProductionPlanSlide({ data, slide, isPreviewing, stockMode = "ac
       recipeName: it.recipeName,
       color: it.recipeColor,
       category: it.recipeCategory,
+      excludeFromKpis: it.excludeFromKpis === true,
       itemId: it.itemId ?? null,
       locked: it.status === "complete",
       seq: i + 1,
