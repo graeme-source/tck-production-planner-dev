@@ -21,6 +21,11 @@ import { toast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { SurveyRichText, SurveyRichTextEditor } from "@/components/survey-rich-text";
+import {
+  FINAL_PAGE_DEFAULTS, finalPageProblems, isShopLink, linkChoiceFor, plainTextToHtml,
+  type FinalPageDraft, type LinkPreset,
+} from "@/lib/survey-rich-text";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -45,6 +50,16 @@ interface SurveyListItem {
   id: number;
   title: string;
   intro: string | null;
+  // Formatted intro, sanitised by the server (older plain intros come back
+  // as paragraphs).
+  introHtml: string | null;
+  // Optional final page after submit (off unless switched on).
+  finalPageEnabled: boolean;
+  finalHeading: string | null;
+  finalHtml: string | null;
+  finalButtonLabel: string | null;
+  finalButtonUrl: string | null;
+  finalShowOffer: boolean;
   status: SurveyStatus;
   createdAt: string;
   responseCount: number;
@@ -886,7 +901,57 @@ interface PreviewQuestion {
   recipe: { name: string; imageUrl: string | null } | null;
 }
 
-interface PreviewData { title: string; intro: string | null; questions: PreviewQuestion[] }
+interface PreviewFinalPage { heading: string | null; html: string | null; button: { label: string; url: string } | null; offer: string | null }
+interface PreviewData { title: string; introHtml: string | null; questions: PreviewQuestion[]; finalPage: PreviewFinalPage | null }
+
+interface FinalPageOptions { presets: LinkPreset[]; currentOffer: string | null }
+
+/** Link presets + this week's offer from the email plan (read-only). */
+function useFinalPageOptions() {
+  return useQuery<FinalPageOptions>({
+    queryKey: ["survey-final-page-options"],
+    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/final-page-options`, { credentials: "include" }), "Failed to load final page options"),
+    staleTime: 5 * 60 * 1000,
+  });
+}
+
+/** What the customer would see after submitting (null = page switched off). */
+function toPreviewFinalPage(fp: FinalPageDraft, currentOffer: string | null): PreviewFinalPage | null {
+  if (!fp.enabled) return null;
+  const label = fp.buttonLabel.trim();
+  return {
+    heading: fp.heading.trim() || null,
+    html: fp.html || null,
+    button: label && isShopLink(fp.buttonUrl) ? { label, url: fp.buttonUrl.trim() } : null,
+    offer: fp.showOffer ? currentOffer : null,
+  };
+}
+
+/** The final page as the Shopify page shows it after a successful submit. */
+function FinalPagePreview({ page }: { page: PreviewFinalPage }) {
+  return (
+    <div className="text-center space-y-4 py-4">
+      {page.heading && <h2 className="text-2xl font-bold tck-font-heading">{page.heading}</h2>}
+      {page.html && <SurveyRichText html={page.html} className="text-sm text-muted-foreground" />}
+      {page.offer && (
+        <div className="rounded-xl border-2 border-dashed border-[#7cb342] bg-[#7cb342]/10 px-4 py-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">This week's offer</p>
+          <p className="text-base font-semibold mt-1">{page.offer}</p>
+        </div>
+      )}
+      {page.button && (
+        <a
+          href={page.button.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block w-full rounded-full bg-[#7cb342] px-6 py-4 text-lg font-bold text-white hover:opacity-90"
+        >
+          {page.button.label}
+        </a>
+      )}
+    </div>
+  );
+}
 
 function PreviewStars({ max }: { max: number }) {
   const [value, setValue] = useState(0);
@@ -997,28 +1062,44 @@ function PreviewQuestionCard({ q }: { q: PreviewQuestion }) {
 }
 
 function SurveyPreviewDialog({ data, onClose }: { data: PreviewData | null; onClose: () => void }) {
+  const [submitted, setSubmitted] = useState(false);
   if (!data) return null;
   return (
     <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-w-md max-h-[92dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Eye className="w-4 h-4" /> Customer preview — nothing is recorded
           </DialogTitle>
         </DialogHeader>
+        {submitted && data.finalPage ? (
+          <div className="space-y-3">
+            <FinalPagePreview page={data.finalPage} />
+            <Button variant="outline" className="w-full" onClick={() => setSubmitted(false)}>
+              <ArrowLeft className="w-4 h-4 mr-2" /> Back to the questions
+            </Button>
+          </div>
+        ) : (
         <div className="space-y-3">
-          <div className="text-center space-y-1 pb-1">
-            <h2 className="text-lg font-bold">{data.title || "Untitled survey"}</h2>
-            {data.intro && <p className="text-sm text-muted-foreground">{data.intro}</p>}
+          <div className="text-center space-y-2 pb-1">
+            <h2 className="text-lg font-bold uppercase tck-font-heading">{data.title || "Untitled survey"}</h2>
+            {data.introHtml && <SurveyRichText html={data.introHtml} className="text-sm text-muted-foreground" />}
           </div>
           {data.questions.map(q => <PreviewQuestionCard key={q.key} q={q} />)}
           <Button
             className="w-full"
-            onClick={() => toast({ title: "Preview only", description: "Nothing is recorded from the preview." })}
+            onClick={() => {
+              if (data.finalPage) setSubmitted(true);
+              else toast({ title: "Preview only", description: "Nothing is recorded from the preview." });
+            }}
           >
             Send feedback
           </Button>
+          {data.finalPage && (
+            <p className="text-center text-xs text-muted-foreground">Tap Send feedback to see the final page. Nothing is recorded.</p>
+          )}
         </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -1030,13 +1111,15 @@ function SavedSurveyPreview({ surveyId, onClose }: { surveyId: number; onClose: 
     queryKey: ["survey", surveyId],
     queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/${surveyId}`, { credentials: "include" }), "Failed to load survey"),
   });
+  const { data: options } = useFinalPageOptions();
   if (isLoading || !data) return null;
   return (
     <SurveyPreviewDialog
       onClose={onClose}
       data={{
         title: data.title,
-        intro: data.intro,
+        introHtml: data.introHtml,
+        finalPage: toPreviewFinalPage(finalDraftFrom(data), options?.currentOffer ?? null),
         questions: data.questions.map(q => ({
           key: String(q.id),
           type: q.type,
@@ -1216,6 +1299,151 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
   );
 }
 
+const EMPTY_FINAL_PAGE: FinalPageDraft = {
+  enabled: false, heading: "", html: "", buttonLabel: "", buttonUrl: "", showOffer: false,
+};
+
+function finalDraftFrom(s: SurveyListItem): FinalPageDraft {
+  return {
+    enabled: s.finalPageEnabled,
+    heading: s.finalHeading ?? "",
+    html: s.finalHtml ?? "",
+    buttonLabel: s.finalButtonLabel ?? "",
+    buttonUrl: s.finalButtonUrl ?? "",
+    showOffer: s.finalShowOffer,
+  };
+}
+
+/** Everything the Save button saves, as one comparable string. */
+function formSnapshot(f: { title: string; intro: string; questions: DraftQuestion[]; finalPage: FinalPageDraft }): string {
+  return JSON.stringify({
+    title: f.title,
+    intro: f.intro,
+    finalPage: f.finalPage,
+    questions: f.questions.map(({ key: _key, promptEdited: _pe, ...rest }) => rest),
+  });
+}
+
+/** Visible save state beside the Save button. */
+function SaveState({ saving, dirty, isNew }: { saving: boolean; dirty: boolean; isNew: boolean }) {
+  if (saving) {
+    return <span className="text-sm text-muted-foreground inline-flex items-center gap-1.5"><Loader2 className="w-4 h-4 animate-spin" /> Saving…</span>;
+  }
+  if (isNew || dirty) {
+    return <span className="text-sm font-medium text-amber-600 dark:text-amber-400">{isNew ? "Not saved yet" : "Unsaved changes"}</span>;
+  }
+  return <span className="text-sm text-emerald-600 dark:text-emerald-400 inline-flex items-center gap-1"><Check className="w-4 h-4" /> All changes saved</span>;
+}
+
+/** The optional page after submit: off unless switched on for this survey. */
+function FinalPageEditor({ value, onChange, presets, currentOffer, problems }: {
+  value: FinalPageDraft;
+  onChange: (next: FinalPageDraft) => void;
+  presets: LinkPreset[];
+  currentOffer: string | null;
+  problems: string[];
+}) {
+  const set = (patch: Partial<FinalPageDraft>) => onChange({ ...value, ...patch });
+  const choice = linkChoiceFor(value.buttonUrl, presets);
+  const [customMode, setCustomMode] = useState(false);
+  const showCustom = customMode || (choice === "custom" && value.buttonUrl.trim() !== "");
+  const selectValue = showCustom ? "custom" : (value.buttonUrl.trim() ? choice : "none");
+
+  function toggle(enabled: boolean) {
+    // First switch-on fills editable starting text; switching off keeps it.
+    const blank = !value.heading && !value.html && !value.buttonLabel && !value.buttonUrl;
+    onChange(enabled && blank
+      ? { ...value, enabled, heading: FINAL_PAGE_DEFAULTS.heading, html: FINAL_PAGE_DEFAULTS.html, buttonLabel: FINAL_PAGE_DEFAULTS.buttonLabel, buttonUrl: FINAL_PAGE_DEFAULTS.buttonUrl }
+      : { ...value, enabled });
+  }
+
+  return (
+    <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+      <label className="flex items-start justify-between gap-4 cursor-pointer">
+        <span>
+          <span className="block text-base font-semibold">Show a final offer page after they submit</span>
+          <span className="block text-sm text-muted-foreground">
+            {value.enabled
+              ? "Customers see this page once their feedback is sent."
+              : "Off: the survey ends with the usual thank-you message."}
+          </span>
+        </span>
+        <Switch checked={value.enabled} onCheckedChange={toggle} aria-label="Show a final offer page after they submit" />
+      </label>
+
+      {value.enabled && (
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">Heading</p>
+            <Input className="h-11 text-base" value={value.heading} onChange={(e) => set({ heading: e.target.value })} placeholder={FINAL_PAGE_DEFAULTS.heading} />
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">Text</p>
+            <SurveyRichTextEditor ariaLabel="Final page text" value={value.html} onChange={(html) => set({ html })} placeholder="A short thank-you or nudge to order…" />
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">Button label</p>
+              <Input className="h-11 text-base" value={value.buttonLabel} onChange={(e) => set({ buttonLabel: e.target.value })} placeholder="e.g. Order now" />
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">Button goes to</p>
+              <Select
+                value={selectValue}
+                onValueChange={(v) => {
+                  if (v === "custom") { setCustomMode(true); if (choice !== "custom") set({ buttonUrl: "" }); return; }
+                  setCustomMode(false);
+                  if (v === "none") { set({ buttonUrl: "", buttonLabel: "" }); return; }
+                  const preset = presets.find(p => p.key === v);
+                  if (preset) set({ buttonUrl: preset.url });
+                }}
+              >
+                <SelectTrigger className="h-11 text-base"><SelectValue placeholder="Choose a page" /></SelectTrigger>
+                <SelectContent>
+                  {presets.map(p => <SelectItem key={p.key} value={p.key}>{p.label}</SelectItem>)}
+                  <SelectItem value="custom">Another page on our website…</SelectItem>
+                  <SelectItem value="none">No button</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          {showCustom && (
+            <div className="space-y-1.5">
+              <p className="text-sm font-medium">Page address</p>
+              <Input
+                className="h-11 text-base"
+                value={value.buttonUrl}
+                onChange={(e) => set({ buttonUrl: e.target.value })}
+                placeholder="https://thecalzonekitchen.co.uk/products/…"
+                inputMode="url"
+              />
+              <p className="text-xs text-muted-foreground">Must be a page on thecalzonekitchen.co.uk.</p>
+            </div>
+          )}
+
+          <label className="flex items-start justify-between gap-4 rounded-lg border border-border p-3 cursor-pointer">
+            <span>
+              <span className="block text-sm font-semibold">Show this week's offer</span>
+              <span className="block text-sm text-muted-foreground">
+                {currentOffer
+                  ? <>From the email plan: <span className="font-medium text-foreground">{currentOffer}</span></>
+                  : "The email plan has no offer this week, so nothing extra shows. It updates by itself each week."}
+              </span>
+            </span>
+            <Switch checked={value.showOffer} onCheckedChange={(showOffer) => set({ showOffer })} aria-label="Show this week's offer" />
+          </label>
+
+          {problems.length > 0 && (
+            <div className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive space-y-0.5">
+              {problems.map(p => <p key={p}>{p}</p>)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface BuilderInitial {
   title: string;
   intro: string;
@@ -1234,7 +1462,12 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
 }) {
   const queryClient = useQueryClient();
   const [title, setTitle] = useState(initial?.title ?? "");
-  const [intro, setIntro] = useState(initial?.intro ?? "");
+  // Intro as editor HTML; template intros are plain text.
+  const [intro, setIntro] = useState(() => plainTextToHtml(initial?.intro));
+  const [finalPage, setFinalPage] = useState<FinalPageDraft>(EMPTY_FINAL_PAGE);
+  // What was last loaded/saved — compared with the form for the save state.
+  const [savedSnapshot, setSavedSnapshot] = useState<string | null>(null);
+  const { data: finalOptions } = useFinalPageOptions();
   const [questions, setQuestions] = useState<DraftQuestion[]>(() =>
     (initial?.questions ?? []).map(q => ({
       key: nextKey(),
@@ -1265,9 +1498,17 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
   // Hydrate the form once per loaded survey (not on every refetch, which
   // would stomp in-progress edits).
   if (existing && loadedFor !== existing.id) {
-    setTitle(existing.title);
-    setIntro(existing.intro ?? "");
-    setQuestions(toDraftQuestions(existing.questions));
+    const hydrated = {
+      title: existing.title,
+      intro: existing.introHtml ?? "",
+      questions: toDraftQuestions(existing.questions),
+      finalPage: finalDraftFrom(existing),
+    };
+    setTitle(hydrated.title);
+    setIntro(hydrated.intro);
+    setQuestions(hydrated.questions);
+    setFinalPage(hydrated.finalPage);
+    setSavedSnapshot(formSnapshot(hydrated));
     setLoadedFor(existing.id);
   }
 
@@ -1275,7 +1516,16 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
     mutationFn: async () => {
       const payload = {
         title: title.trim(),
-        intro: intro.trim() || null,
+        // Formatted intro — the server sanitises it and derives the plain text.
+        introHtml: intro || null,
+        finalPage: {
+          enabled: finalPage.enabled,
+          heading: finalPage.heading.trim() || null,
+          html: finalPage.html || null,
+          buttonLabel: finalPage.buttonLabel.trim() || null,
+          buttonUrl: finalPage.buttonUrl.trim() || null,
+          showOffer: finalPage.showOffer,
+        },
         // Only creates carry the collection; the server keeps it on edits.
         ...(surveyId == null && initial?.collection
           ? { collectionId: initial.collection.id, collectionTitle: initial.collection.title }
@@ -1302,13 +1552,17 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
       queryClient.invalidateQueries({ queryKey: ["surveys"] });
       queryClient.invalidateQueries({ queryKey: ["survey", saved.id] });
       toast({ title: "Survey saved" });
+      setSavedSnapshot(formSnapshot({ title, intro, questions, finalPage }));
       setShareTarget({ id: saved.id, title: saved.title, shareUrl: saved.shareUrl });
       if (surveyId == null) onSaved(saved.id);
     },
     onError: (e) => toast({ title: e instanceof Error ? e.message : "Failed to save survey", variant: "destructive" }),
   });
 
+  const finalProblems = finalPageProblems(finalPage);
+  const isDirty = savedSnapshot !== formSnapshot({ title, intro, questions, finalPage });
   const canSave = title.trim().length > 0 &&
+    finalProblems.length === 0 &&
     questions.length > 0 &&
     questions.every(q =>
       q.prompt.trim().length > 0 &&
@@ -1319,12 +1573,13 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
-      <div className="flex items-center justify-between">
+    <div className="w-full space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Button variant="ghost" onClick={onBack}>
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to surveys
         </Button>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <SaveState saving={save.isPending} dirty={isDirty} isNew={surveyId == null} />
           <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={questions.length === 0}>
             <Eye className="w-4 h-4 mr-2" /> Preview
           </Button>
@@ -1350,12 +1605,15 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
           className="text-base font-medium"
           onChange={(e) => setTitle(e.target.value)}
         />
-        <Textarea
-          value={intro}
-          placeholder="Intro text shown above the questions (optional)"
-          rows={2}
-          onChange={(e) => setIntro(e.target.value)}
-        />
+        <div className="space-y-1.5">
+          <p className="text-sm font-medium">Introduction <span className="font-normal text-muted-foreground">(shown under the heading, optional)</span></p>
+          <SurveyRichTextEditor
+            ariaLabel="Survey introduction"
+            value={intro}
+            onChange={setIntro}
+            placeholder="Instructions or a welcome for your customers…"
+          />
+        </div>
       </div>
 
       {questions.map((q, i) => (
@@ -1387,6 +1645,14 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
         <Plus className="w-4 h-4 mr-2" /> Add question
       </Button>
 
+      <FinalPageEditor
+        value={finalPage}
+        onChange={setFinalPage}
+        presets={finalOptions?.presets ?? []}
+        currentOffer={finalOptions?.currentOffer ?? null}
+        problems={finalProblems}
+      />
+
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
 
       {previewOpen && (
@@ -1395,7 +1661,8 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
           // Built from the live draft state, so unsaved edits preview too.
           data={{
             title: title.trim(),
-            intro: intro.trim() || null,
+            introHtml: intro || null,
+            finalPage: toPreviewFinalPage(finalPage, finalOptions?.currentOffer ?? null),
             questions: questions.map(q => {
               const recipe = q.recipeId != null ? (recipes ?? []).find(r => r.id === q.recipeId) : undefined;
               return {
