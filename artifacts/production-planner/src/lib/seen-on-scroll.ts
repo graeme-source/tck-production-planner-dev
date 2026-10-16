@@ -13,7 +13,18 @@ export function isLookedAt(visibleHeight: number, cardHeight: number, viewportHe
   return visibleHeight >= Math.min(cardHeight, viewportHeight) * 0.5;
 }
 
-/** Has the card now been read and scrolled past (its bottom above the viewport top)? */
-export function scrolledPastAfterReading(dwellMs: number, cardBottom: number, viewportTop: number): boolean {
-  return dwellMs >= SEEN_DWELL_MS && cardBottom <= viewportTop;
+/** Has the card now been read and scrolled past?
+ *
+ *  `scrollTop` is the top edge, in screen pixels, of the box the card really
+ *  scrolls inside. Sidebar pages scroll #app-main-scroll, which starts BELOW
+ *  the top bar — not at the window's top (0). Measuring against 0 was the
+ *  2026-10-16 bug (Graeme: scrolling past an improvement on the desktop
+ *  didn't mark it seen): a card slides out of sight under the top bar with
+ *  its bottom still somewhere between 0 and the bar's height, the observer
+ *  then goes quiet because the card is fully hidden, so "bottom ≤ 0" was
+ *  never seen. Small mouse-wheel steps always stop in that gap; a big touch
+ *  flick could jump straight over it. */
+export function scrolledPastAfterReading(dwellMs: number, cardBottom: number, scrollTop: number): boolean {
+  // 1 px slack for sub-pixel layout: a card sitting exactly on the edge is past.
+  return dwellMs >= SEEN_DWELL_MS && cardBottom <= scrollTop + 1;
 }
