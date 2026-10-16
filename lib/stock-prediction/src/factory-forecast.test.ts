@@ -55,30 +55,57 @@ describe("forecastFactoryNumber", () => {
 });
 
 describe("recommendBatchChange", () => {
-  it("takes batches off the recipe with the most cover until at or under 1,000", () => {
+  it("at the 1,250 warning, takes batches off the recipe with the most cover until at or under 1,000", () => {
     const rows = [
       // a: lots of stock for its sales → most cover
-      row({ key: "a", startStockPacks: 600, plannedBatches: 20, salesShare: 0.2 }),
+      row({ key: "a", startStockPacks: 450, plannedBatches: 100, salesShare: 0.2 }),
       row({ key: "b", startStockPacks: 300, plannedBatches: 20, salesShare: 0.8 }),
     ];
-    // ends: a 700, b 400 = 1,100
+    // ends: a 950, b 400 = 1,350
     const rec = recommendBatchChange(rows, noLate)!;
     expect(rec.direction).toBe("fewer");
-    expect(rec.batches).toBe(20);
-    expect(rec.changes).toEqual([{ key: "a", recipeName: "a", from: 20, to: 0 }]);
+    expect(rec.reason).toBe("warning");
+    expect(rec.batches).toBe(70);
+    expect(rec.changes).toEqual([{ key: "a", recipeName: "a", from: 100, to: 30 }]);
     expect(rec.landsOn).toBe(1000);
+    expect(rec.aim).toBe(1000);
     expect(rec.limited).toBe(false);
+  });
+
+  it("between 1,000 and the warning: calm, no suggestion (Graeme's 1,058)", () => {
+    const rows = [row({ key: "a", startStockPacks: 558, plannedBatches: 100, salesShare: 1 })];
+    expect(forecastFactoryNumber(rows, noLate).predictedEnd).toBe(1058);
+    expect(forecastFactoryNumber(rows, noLate).band).toBe("above");
+    expect(recommendBatchChange(rows, noLate)).toBeNull();
+  });
+
+  it("above 1,000 with stock building for days → pull back to 1,000", () => {
+    const rows = [row({ key: "a", startStockPacks: 558, plannedBatches: 100, salesShare: 1 })];
+    const rec = recommendBatchChange(rows, noLate, DEFAULT_FACTORY_THRESHOLDS, { pullBack: { days: 3, latest: 1100, rise: 80 } })!;
+    expect(rec.reason).toBe("pull-back");
+    expect(rec.batches).toBe(12); // 1,058 − 12 × 5 = 998
+    expect(rec.landsOn).toBe(998);
+  });
+
+  it("never takes the day below the fewest batches a day", () => {
+    const rows = [row({ key: "a", startStockPacks: 1000, plannedBatches: 100, salesShare: 1 })];
+    // 1,500 predicted; 80 batches is the floor → only 20 off, lands 1,400.
+    const rec = recommendBatchChange(rows, noLate, DEFAULT_FACTORY_THRESHOLDS, { minTotalBatches: 80 })!;
+    expect(rec.reason).toBe("freeze");
+    expect(rec.batches).toBe(20);
+    expect(rec.landsOn).toBe(1400);
+    expect(rec.limited).toBe(true);
   });
 
   it("never goes below a recipe's orders + margin floor", () => {
     const rows = [
-      row({ key: "a", startStockPacks: 1200, plannedBatches: 10, floorBatches: 10, salesShare: 0.1 }),
+      row({ key: "a", startStockPacks: 1250, plannedBatches: 10, floorBatches: 10, salesShare: 0.1 }),
       row({ key: "b", startStockPacks: 0, plannedBatches: 4, floorBatches: 2, salesShare: 0.9 }),
     ];
     const rec = recommendBatchChange(rows, noLate)!;
     expect(rec.changes).toEqual([{ key: "b", recipeName: "b", from: 4, to: 2 }]);
     expect(rec.limited).toBe(true);
-    expect(rec.landsOn).toBe(1260);
+    expect(rec.landsOn).toBe(1310);
   });
 
   it("never runs a recipe's predicted end below zero", () => {
@@ -86,19 +113,20 @@ describe("recommendBatchChange", () => {
       // a: 10 made − 6 predicted late = 4 left; one batch fewer would run out.
       row({ key: "a", startStockPacks: 0, plannedBatches: 2, salesShare: 1 }),
       // b: all stock, nothing planned to take off.
-      row({ key: "b", startStockPacks: 1100, plannedBatches: 0, salesShare: 0 }),
+      row({ key: "b", startStockPacks: 1300, plannedBatches: 0, salesShare: 0 }),
     ];
     expect(recommendBatchChange(rows, { latePacks: 6, low: 4, high: 8 })).toBeNull();
   });
 
-  it("adds batches to the least-covered recipe when below the low warning, within capacity", () => {
+  it("adds batches to the least-covered recipe when under the 800 target, within capacity", () => {
     const rows = [
       row({ key: "a", startStockPacks: 300, plannedBatches: 10, despatchPacks: 50, salesShare: 0.5 }),
       row({ key: "b", startStockPacks: 100, plannedBatches: 10, despatchPacks: 50, salesShare: 0.5 }),
     ];
-    // ends: 300, 100 = 400 → under 600
+    // ends: 300, 100 = 400 → under 500, too low
     const rec = recommendBatchChange(rows, noLate, DEFAULT_FACTORY_THRESHOLDS, { maxTotalBatches: 100 })!;
     expect(rec.direction).toBe("more");
+    expect(rec.reason).toBe("too-low");
     expect(rec.landsOn).toBe(800);
     expect(rec.batches).toBe(80);
     const capped = recommendBatchChange(rows, noLate, DEFAULT_FACTORY_THRESHOLDS, { maxTotalBatches: 30 })!;
@@ -109,12 +137,27 @@ describe("recommendBatchChange", () => {
   it("inside the comfortable range → nothing to recommend", () => {
     expect(recommendBatchChange([row({ key: "a", startStockPacks: 850, plannedBatches: 0 })], noLate)).toBeNull();
   });
+
+  it("700 (a little under 800) → more, toward 800", () => {
+    const rec = recommendBatchChange([row({ key: "a", startStockPacks: 650, plannedBatches: 10, salesShare: 1 })], noLate)!;
+    expect(rec.direction).toBe("more");
+    expect(rec.reason).toBe("under");
+    expect(rec.landsOn).toBe(800);
+  });
 });
 
 describe("settings", () => {
   it("falls back per field and rejects an out-of-order set", () => {
     expect(parseFactoryThresholds({ targetHigh: "1100", warnAt: "" })).toEqual({ ...DEFAULT_FACTORY_THRESHOLDS, targetHigh: 1100 });
     expect(parseFactoryThresholds({ maxAt: "900" })).toEqual(DEFAULT_FACTORY_THRESHOLDS);
+    // The fewest batches a day is a count, not a level — never "out of order".
+    expect(parseFactoryThresholds({ minBatchesPerDay: "2000" }).minBatchesPerDay).toBe(2000);
+  });
+
+  it("defaults to Graeme's 16 Oct levels and 80 batches a day", () => {
+    expect(DEFAULT_FACTORY_THRESHOLDS).toEqual({
+      targetLow: 800, targetHigh: 1000, warnAt: 1250, maxAt: 1500, lowAmber: 600, lowRed: 500, minBatchesPerDay: 80,
+    });
   });
 
   it("asks for a second tap at 1,500 and over only", () => {

@@ -20,6 +20,7 @@
  * batches change.
  */
 import type { LateTotal } from "./late-orders";
+import { factoryAdvice, type PullBackAdvice } from "./batch-advice";
 
 export const FACTORY_FORECAST_SETTING_KEYS = {
   targetLow: "factory_forecast_target_low",
@@ -28,6 +29,7 @@ export const FACTORY_FORECAST_SETTING_KEYS = {
   maxAt: "factory_forecast_max_at",
   lowAmber: "factory_forecast_low_amber",
   lowRed: "factory_forecast_low_red",
+  minBatchesPerDay: "factory_min_batches_per_day",
 } as const;
 
 export interface FactoryThresholds {
@@ -43,6 +45,10 @@ export interface FactoryThresholds {
   lowAmber: number;
   /** Red "too low" below (default 500). */
   lowRed: number;
+  /** Fewest batches a day the kitchen makes (default 80; Graeme, 16 Oct
+   *  2026: "we'll make a minimum of about 80 batches, never less really").
+   *  Not a pack level — no suggestion ever goes below it. */
+  minBatchesPerDay: number;
 }
 
 export const DEFAULT_FACTORY_THRESHOLDS: FactoryThresholds = {
@@ -52,11 +58,13 @@ export const DEFAULT_FACTORY_THRESHOLDS: FactoryThresholds = {
   maxAt: 1500,
   lowAmber: 600,
   lowRed: 500,
+  minBatchesPerDay: 80,
 };
 
 /** Parse app_settings values, falling back per field to the defaults for
  *  anything missing or nonsensical, then forcing a sensible order
- *  (lowRed ≤ lowAmber ≤ targetLow ≤ targetHigh ≤ warnAt ≤ maxAt). */
+ *  (lowRed ≤ lowAmber ≤ targetLow ≤ targetHigh ≤ warnAt ≤ maxAt).
+ *  minBatchesPerDay is a batch count, not a level, so it isn't ordered. */
 export function parseFactoryThresholds(raw: Partial<Record<keyof FactoryThresholds, string | number | null | undefined>>): FactoryThresholds {
   const num = (v: unknown, fallback: number) => {
     if (v == null || String(v).trim() === "") return fallback;
@@ -191,8 +199,10 @@ export interface BatchChange {
 }
 
 export interface FactoryRecommendation {
-  /** "fewer" when over the comfortable range, "more" when below the low warning. */
+  /** "fewer" at/over the warning (or when stock keeps building), "more" under the target. */
   direction: "fewer" | "more";
+  /** Why: see factoryAdvice() in batch-advice.ts. */
+  reason: "warning" | "freeze" | "pull-back" | "under" | "too-low";
   /** Total batches to take off / add. */
   batches: number;
   changes: BatchChange[];
@@ -200,31 +210,40 @@ export interface FactoryRecommendation {
   landsOn: number;
   /** The number aimed for (targetHigh when over, targetLow when under). */
   aim: number;
-  /** True when the floors (or capacity) stopped it short of the aim. */
+  /** True when the floors (recipe orders + margin, the fewest batches a day)
+   *  or the day's capacity stopped it short of the aim. */
   limited: boolean;
 }
 
 /**
- * Over the top of the comfortable range → take batches off, one at a time,
- * from the recipe with the most cover (predicted packs left ÷ its share of
- * sales — the most days' worth), never below its orders + margin floor and
- * never past zero predicted end, until the forecast is at or under targetHigh.
+ * When to suggest a change is factoryAdvice() (batch-advice.ts, Graeme
+ * 16 Oct 2026): fewer at/over the warning level (1,250), or over the top of
+ * the target (1,000) when stock has been building for days; more under the
+ * bottom of the target (800). Between 800 and the warning, nothing.
  *
- * Below the low warning → add batches to the recipe with the least cover
- * until targetLow, within `maxTotalBatches` (the day's capacity) if given.
- * Otherwise null.
+ * Fewer → take batches off, one at a time, from the recipe with the most
+ * cover (predicted packs left ÷ its share of sales — the most days' worth),
+ * never below its orders + margin floor, never past zero predicted end, and
+ * never taking the day's total below `minTotalBatches`, until the forecast is
+ * at or under targetHigh.
+ *
+ * More → add batches to the recipe with the least cover until targetLow,
+ * within `maxTotalBatches` (the day's capacity) if given.
+ *
+ * Both totals count these rows only (the screen passes them net of any
+ * batches outside the forecast, e.g. mac cheese).
  */
 export function recommendBatchChange(
   rows: readonly FactoryForecastRow[],
   late: LateTotal,
   t: FactoryThresholds = DEFAULT_FACTORY_THRESHOLDS,
-  opts: { maxTotalBatches?: number } = {},
+  opts: { maxTotalBatches?: number; minTotalBatches?: number; pullBack?: PullBackAdvice | null } = {},
 ): FactoryRecommendation | null {
   const batches = new Map(rows.map(r => [r.key, Math.max(0, Math.round(r.plannedBatches || 0))]));
   const start = forecastFactoryNumber(rows, late, t, batches);
-  const over = start.predictedEnd > t.targetHigh;
-  const under = start.predictedEnd < t.lowAmber;
-  if (!over && !under) return null;
+  const advice = factoryAdvice(start.predictedEnd, t, opts.pullBack);
+  if (!advice.direction || !advice.reason) return null;
+  const over = advice.direction === "fewer";
 
   const lateByRow = splitLatePacks(rows, late.latePacks);
   const endOf = (i: number) => rowKnownEnd(rows[i], batches.get(rows[i].key)!) - lateByRow[i];
@@ -235,6 +254,8 @@ export function recommendBatchChange(
 
   for (let guard = 0; guard < 1000; guard++) {
     if (over ? current <= t.targetHigh : current >= t.targetLow) break;
+    if (over && opts.minTotalBatches != null && totalBatches() <= opts.minTotalBatches) { limited = true; break; }
+    if (!over && opts.maxTotalBatches != null && totalBatches() >= opts.maxTotalBatches) { limited = true; break; }
     let best = -1;
     for (let i = 0; i < rows.length; i++) {
       const r = rows[i];
@@ -251,7 +272,6 @@ export function recommendBatchChange(
       }
     }
     if (best < 0) { limited = true; break; }
-    if (!over && opts.maxTotalBatches != null && totalBatches() >= opts.maxTotalBatches) { limited = true; break; }
     const key = rows[best].key;
     batches.set(key, batches.get(key)! + (over ? -1 : 1));
     current = forecastFactoryNumber(rows, late, t, batches).predictedEnd;
@@ -264,11 +284,12 @@ export function recommendBatchChange(
   const moved = changes.reduce((s, c) => s + Math.abs(c.to - c.from), 0);
   if (moved === 0) return null;
   return {
-    direction: over ? "fewer" : "more",
+    direction: advice.direction,
+    reason: advice.reason,
     batches: moved,
     changes,
     landsOn: current,
-    aim: over ? t.targetHigh : t.targetLow,
+    aim: advice.aim!,
     limited,
   };
 }

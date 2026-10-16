@@ -180,5 +180,6 @@ export function remainingWrappingPacks(row: WrappingProgressRow): number {
 // Late orders + the predicted factory number after a plan (Graeme, 15 Oct 2026).
 export * from "./late-orders";
 export * from "./factory-forecast";
+export * from "./batch-advice";
 // End-of-week factory number for the Dispatch Orders panel (Graeme, 16 Oct 2026).
 export * from "./week-end";
