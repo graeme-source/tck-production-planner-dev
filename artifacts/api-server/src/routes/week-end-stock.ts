@@ -28,9 +28,8 @@
  */
 import { Router, type IRouter } from "express";
 import * as z from "zod";
-import { db, recipesTable, stockEntriesTable } from "@workspace/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
-import { kitchenLine } from "@workspace/production-schedule";
+import { db, stockEntriesTable } from "@workspace/db";
+import { and, eq, inArray } from "drizzle-orm";
 import {
   addDays, forecastLateOrders, indexOrdersByDate, londonWallTimeMs, orderCutoffMs,
 } from "@workspace/stock-prediction";
@@ -38,12 +37,11 @@ import { loadEmailWindow, loadForecastOrders } from "../lib/factory-forecast-dat
 import { loadPlannedTwoPacksByDate, loadStillToWrapToday } from "../lib/plan-start-stock-inputs";
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { londonDateString } from "../lib/london-time";
+import { calzoneRecipeIds, stockAt, FACTORY_PACK_SIZE } from "../lib/fridge-history";
 import { getNonDispatchDates } from "./production-plans";
 
 const router: IRouter = Router();
 
-/** The factory number counts 2-packs (stock_entries pack_size 2). */
-const FACTORY_PACK_SIZE = 2;
 /** Further ahead than next week the panel has no orders feed to pair with. */
 const MAX_DAYS_AHEAD = 14;
 /** forecastLateOrders needs this many past same-weekday days to predict. */
@@ -53,11 +51,6 @@ const Query = z.object({
   weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
     .refine(d => new Date(`${d}T12:00:00Z`).getUTCDay() === 1, "weekStart must be a Monday"),
 });
-
-async function calzoneRecipeIds(): Promise<number[]> {
-  const rows = await db.select({ id: recipesTable.id, category: recipesTable.category, packSize: recipesTable.packSize }).from(recipesTable);
-  return rows.filter(r => kitchenLine(r.category) === "calzone" && Number(r.packSize) === FACTORY_PACK_SIZE).map(r => r.id);
-}
 
 /** Sum of each recipe's latest 2-pack production-fridge reading; null when
  *  none has ever been counted. */
@@ -86,38 +79,6 @@ async function stockNow(ids: number[]): Promise<{ packs: number; countedAt: stri
     if (!newest || v.at > newest) newest = v.at;
   }
   return { packs: Math.round(packs), countedAt: newest ? newest.toISOString() : null };
-}
-
-/** What the fridge held at instant `at`: each recipe's last logged count
- *  before it (fridge_stock_changes), else its last reading before it. Null
- *  when `at` is before the change log began. Timestamps are stored as UTC
- *  wall-clock, so compare against the UTC wall-clock of `at`. */
-async function stockAt(ids: number[], at: Date): Promise<number | null> {
-  if (ids.length === 0) return null;
-  const utcWall = at.toISOString().replace("Z", "");
-  const first = await db.execute<{ first: string | null }>(sql`SELECT min(created_at)::text AS first FROM fridge_stock_changes`);
-  const firstLog = first.rows[0]?.first;
-  if (!firstLog || firstLog >= utcWall.replace("T", " ")) return null;
-  const res = await db.execute<{ packs: string | null }>(sql`
-    WITH ids AS (SELECT unnest(${`{${ids.map(Number).join(",")}}`}::int[]) AS recipe_id),
-    logged AS (
-      SELECT DISTINCT ON (recipe_id) recipe_id, resulting_qty
-        FROM fridge_stock_changes
-       WHERE pack_size = ${FACTORY_PACK_SIZE} AND created_at < ${utcWall}::timestamp
-         AND recipe_id IN (SELECT recipe_id FROM ids)
-       ORDER BY recipe_id, created_at DESC, id DESC
-    ),
-    entered AS (
-      SELECT DISTINCT ON (recipe_id) recipe_id, quantity
-        FROM stock_entries
-       WHERE item_type = 'recipe' AND location = 'production_fridge' AND pack_size = ${FACTORY_PACK_SIZE}
-         AND checked_at < ${utcWall}::timestamp AND recipe_id IN (SELECT recipe_id FROM ids)
-       ORDER BY recipe_id, checked_at DESC
-    )
-    SELECT SUM(COALESCE(l.resulting_qty, e.quantity, 0))::text AS packs
-      FROM ids LEFT JOIN logged l USING (recipe_id) LEFT JOIN entered e USING (recipe_id)
-  `);
-  return Math.round(Number(res.rows[0]?.packs ?? 0));
 }
 
 router.get("/", async (req, res) => {
