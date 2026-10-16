@@ -174,7 +174,7 @@ async function productGoneInactive(variantId: string): Promise<boolean> {
 
 type CartItem = { variant_id: number; product_id: number; quantity: number };
 
-async function zapietCalendar(locationId: string, cart: CartItem[]): Promise<{ minDate?: string; disabled?: unknown[] } | null> {
+export async function zapietCalendar(locationId: string, cart: CartItem[]): Promise<{ minDate?: string; disabled?: unknown[] } | null> {
   const apiKey = process.env["ZAPIET_API_KEY"];
   const shop = process.env["SHOPIFY_STORE_DOMAIN"];
   if (!apiKey || !shop) return null;

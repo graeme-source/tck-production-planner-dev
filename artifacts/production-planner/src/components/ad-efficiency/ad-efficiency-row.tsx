@@ -10,6 +10,7 @@
  * the Numbers trend series by the day — the same data as Order Analysis.
  */
 import { useId, useMemo, useState } from "react";
+import { SpendContextNotes } from "@/components/sales-drivers/spend-context-notes";
 import { ArrowDownRight, ArrowUpRight, HelpCircle, History, Megaphone, Minus } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -397,6 +398,9 @@ export function AdEfficiencyRow() {
             />
           </div>
           <AdviceCard advice={view.advice} sourceLine={sourceLine} />
+          {/* Delivery wait, emails and site changes in the same 7 days —
+              context for the advice, never an override (2026-10-16). */}
+          <SpendContextNotes from={windows.last7.from} to={windows.last7.to} />
           {historyOpen && (
             <RoasHistoryDialog lastDay={lastDay} target={settings.ncRoas7dTargetPct} onClose={() => setHistoryOpen(false)} />
           )}

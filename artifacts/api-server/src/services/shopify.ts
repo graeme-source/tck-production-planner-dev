@@ -263,6 +263,45 @@ export async function getOnlineStoreConversion(from: string, to: string): Promis
 }
 
 /**
+ * Day-by-day sessions and conversion rate (fraction) for the sales-drivers
+ * history — one ShopifyQL call grouped by day. Returns null when the
+ * grouped query isn't accepted (parse error / scope), so the caller can
+ * fall back to getOnlineStoreConversion one day at a time.
+ */
+export async function getDailyOnlineStoreConversion(
+  from: string,
+  to: string,
+): Promise<Array<{ day: string; sessions: number | null; conversionRate: number | null }> | null> {
+  try {
+    const shopifyql = `FROM sessions SHOW sessions, conversion_rate GROUP BY day SINCE ${from} UNTIL ${to} ORDER BY day ASC`;
+    const gql = `{
+      shopifyqlQuery(query: ${JSON.stringify(shopifyql)}) {
+        parseErrors
+        tableData { columns { name } rows }
+      }
+    }`;
+    const data = await shopifyGraphQL<{
+      shopifyqlQuery: {
+        parseErrors: string[] | null;
+        tableData: { columns: Array<{ name: string }>; rows: Array<Record<string, unknown>> } | null;
+      };
+    }>(gql);
+    const q = data.shopifyqlQuery;
+    if (q.parseErrors && q.parseErrors.length > 0) {
+      console.warn("[Shopify] daily conversion ShopifyQL parse error:", q.parseErrors.join("; "));
+      return null;
+    }
+    const num = (v: unknown) => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+    return (q.tableData?.rows ?? [])
+      .map(r => ({ day: String(r.day ?? "").slice(0, 10), sessions: num(r.sessions), conversionRate: num(r.conversion_rate) }))
+      .filter(r => /^\d{4}-\d{2}-\d{2}$/.test(r.day));
+  } catch (err) {
+    console.warn("[Shopify] daily conversion query unavailable:", err instanceof Error ? err.message : err);
+    return null;
+  }
+}
+
+/**
  * Count orders matching a Shopify tag, optionally narrowed by
  * fulfillment status. Uses GraphQL's server-side filtering, so the
  * response is a single integer regardless of how many orders match.

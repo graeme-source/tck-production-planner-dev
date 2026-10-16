@@ -3437,6 +3437,12 @@ async function startup() {
     const { startStockGatePoller } = await import("./lib/stock-gating");
     startStockGatePoller();
 
+    // Sales drivers — 1pm delivery-availability check and the daily
+    // sessions / lead-time / changelog refresh. Read-only towards Shopify,
+    // Zapiet, GitHub and Klaviyo; off on staging.
+    const { startSalesDriverJobs } = await import("./lib/sales-drivers/collect");
+    startSalesDriverJobs();
+
     // Probation reminders — a to-do for the scheduling manager three weeks
     // before someone's probation review falls due, from their Planday start
     // date. Self-gates: does nothing until probation_scheduler_user_id is
