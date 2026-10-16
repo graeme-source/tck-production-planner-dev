@@ -6,7 +6,7 @@ import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 import { allocateDailyBatches, orderFloorBatches } from "../lib/daily-batch-allocation";
 import { loadPlanMarginSettings } from "../lib/plan-margin-settings";
-import { calzoneLineBatches } from "@workspace/production-schedule";
+import { calzoneLineBatches, feedingStations, usesShopifyStock } from "@workspace/production-schedule";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
 // (returns boolean, used mid-handler) — the middleware form guards routes.
 import { requireManagerOrAdmin as requireManagerOrAdminMw } from "../middleware/roles";
@@ -353,17 +353,11 @@ function mapItem(i: typeof productionPlanItemsTable.$inferSelect & { recipeName?
 }
 
 // Building is the start of the dependency chain — no mixing dependency.
-// Chain: Building → Ovens → Wrapping (mixing runs independently).
-const STATION_DEPENDENCIES: Record<string, string[]> = {
-  building_1: [],
-  building_2: [],
-  macaroni_cheese: [],
-  ovens: ["building_1", "building_2"],
-  wrapping: ["ovens"],
-};
-
-function getPreviousStations(stationType: string): string[] {
-  return STATION_DEPENDENCIES[stationType] ?? [];
+// Chain: Building → Ovens → Wrapping (mixing runs independently); a recipe
+// flagged skip_ovens goes Building → Wrapping. The rule lives in
+// @workspace/production-schedule recipe-route.ts (feedingStations).
+function getPreviousStations(stationType: string, route: { skipOvens?: boolean | null }): string[] {
+  return feedingStations(stationType, route);
 }
 
 // recomputeItemFromProgress moved to lib/building-progress.ts (2026-10-09).
@@ -1005,6 +999,7 @@ export async function calculatePlanData(planDate: string) {
       recipeName: recipesTable.name,
       recipeCategory: recipesTable.category,
       packsSold: dptSettingsTable.packsSold,
+      shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
       isActive: dptSettingsTable.isActive,
       portionsPerBatch: recipesTable.portionsPerBatch,
       packSize: recipesTable.packSize,
@@ -1029,6 +1024,7 @@ export async function calculatePlanData(planDate: string) {
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
+      shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
       color: recipesTable.color,
       isCoreMenu: recipesTable.isCoreMenu,
     })
@@ -1043,6 +1039,7 @@ export async function calculatePlanData(planDate: string) {
         recipeCategory: cm.category,
         packsSold: 0,
         isActive: true,
+        shopifyPushOnWrap: cm.shopifyPushOnWrap,
         portionsPerBatch: cm.portionsPerBatch,
         packSize: cm.packSize,
         tinSize: cm.tinSize,
@@ -1069,6 +1066,7 @@ export async function calculatePlanData(planDate: string) {
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
+      shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
       color: recipesTable.color,
       isCoreMenu: recipesTable.isCoreMenu,
     })
@@ -1082,6 +1080,7 @@ export async function calculatePlanData(planDate: string) {
         recipeCategory: fc.category,
         packsSold: 0,
         isActive: true,
+        shopifyPushOnWrap: fc.shopifyPushOnWrap,
         portionsPerBatch: fc.portionsPerBatch,
         packSize: fc.packSize,
         tinSize: fc.tinSize,
@@ -1238,12 +1237,14 @@ export async function calculatePlanData(planDate: string) {
   const totalDptPacksSold = dptRows.reduce((s, x) => s + (x.packsSold ?? 0), 0);
 
   // Fried chicken never enters the production fridge — its physical stock is
+  // the Shopify freezer count; nor do recipes wrapped straight to Shopify
+  // (shopify_push_on_wrap, migration 0202 — cinnamon buns). For both it is
   // the Shopify freezer count (Graeme, 2026-09-14). Specifically ON-HAND,
   // not available: available already has open orders deducted, and the pack
   // tables deduct today's dispatch themselves — pairing them counted the
   // same orders twice. Cached 5 min in the service.
   const fcVariantIds = dptRows
-    .filter(r => (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY)
+    .filter(r => usesShopifyStock(r.recipeCategory, r.shopifyPushOnWrap))
     .flatMap(r => recipeToVariantIds.get(r.recipeId) ?? []);
   const shopifyStockLevels: Record<string, number> = await getVariantOnHandQuantities(fcVariantIds);
 
@@ -1264,7 +1265,7 @@ export async function calculatePlanData(planDate: string) {
 
     // Shopify on-hand for freezer-stocked (fried chicken) recipes — the
     // figure the pack tables show as Have instead of the always-zero fridge.
-    const shopifyStock = (r.recipeCategory ?? "") === FRIED_CHICKEN_CATEGORY && recipeToVariantIds.has(recipeId)
+    const shopifyStock = usesShopifyStock(r.recipeCategory, r.shopifyPushOnWrap) && recipeToVariantIds.has(recipeId)
       ? (recipeToVariantIds.get(recipeId) ?? []).reduce((s, vid) => s + (shopifyStockLevels[vid] ?? 0), 0)
       : null;
 
@@ -2362,6 +2363,11 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       baseWeightGrams: recipesTable.baseWeightGrams,
       recipeColor: recipesTable.color,
       recipeCategory: recipesTable.category,
+      skipOvens: recipesTable.skipOvens,
+      defaultStorage: recipesTable.defaultStorage,
+      shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
+      excludeFromKpis: recipesTable.excludeFromKpis,
+      calzoneBatchEquivalent: recipesTable.calzoneBatchEquivalent,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -2876,6 +2882,13 @@ router.get("/:id", async (req, res) => {
       recipeColor: recipesTable.color,
       recipeCategory: recipesTable.category,
       dietaryCategory: recipesTable.dietaryCategory,
+      // Production route (migration 0202) — read by the stations through
+      // @workspace/production-schedule readRecipeRoute.
+      skipOvens: recipesTable.skipOvens,
+      defaultStorage: recipesTable.defaultStorage,
+      shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
+      excludeFromKpis: recipesTable.excludeFromKpis,
+      calzoneBatchEquivalent: recipesTable.calzoneBatchEquivalent,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -3250,6 +3263,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     portionsPerBatch: recipesTable.portionsPerBatch,
     packSize: recipesTable.packSize,
     recipeCategory: recipesTable.category,
+    skipOvens: recipesTable.skipOvens,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -3283,7 +3297,7 @@ router.post("/:id/batch-completions", async (req, res) => {
   // That naturally bounds ovens/wrapping to the actual building output — under
   // OR over target — without a separate target cap.
   if (stationType) {
-    const prevStations = getPreviousStations(stationType);
+    const prevStations = getPreviousStations(stationType, planItem);
     if (prevStations.length > 0) {
       const stationCountResult = await db.execute(sql`
         SELECT COUNT(*)::int as cnt FROM batch_completions
@@ -3484,6 +3498,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
     builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
     leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
+    skipOvens: recipesTable.skipOvens,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -3498,7 +3513,7 @@ router.post("/:id/batch-completions/bulk", async (req, res) => {
   // The only guard that survives is the cascade — a downstream station
   // (ovens, wrapping) cannot outrun the actual output of the station feeding it.
   if (stationType) {
-    const prevStations = getPreviousStations(stationType);
+    const prevStations = getPreviousStations(stationType, planItem);
     if (prevStations.length > 0) {
       const stationCountResult = await db.execute(sql`
         SELECT COUNT(*)::int as cnt FROM batch_completions
@@ -5275,6 +5290,8 @@ router.get("/:id/kpi", async (req, res) => {
   // calzone vs mac cheese completions. batchesTarget is included so we can
   // detect "all done" and freeze the KPI clock — otherwise activeMinutes
   // keeps growing after production finishes and BPH decays all evening.
+  // Recipes flagged exclude_from_kpis (migration 0202 — cinnamon buns) are
+  // built on the same tables but are not calzone batches: left out entirely.
   const planItems = await db.select({
     id: productionPlanItemsTable.id,
     category: recipesTable.category,
@@ -5282,7 +5299,7 @@ router.get("/:id/kpi", async (req, res) => {
   })
     .from(productionPlanItemsTable)
     .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-    .where(eq(productionPlanItemsTable.planId, planId));
+    .where(and(eq(productionPlanItemsTable.planId, planId), eq(recipesTable.excludeFromKpis, false)));
   const itemIds = planItems.map(i => i.id);
   const macItemIds = new Set(planItems.filter(i => i.category === MAC_CHEESE_CATEGORY).map(i => i.id));
   if (itemIds.length === 0) {
@@ -5709,8 +5726,13 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
     wonlyCount: productionPlanItemsTable.wonlyCount,
     // Read freezerQty BEFORE any updates so we can compute the Shopify delta.
     freezerQty: productionPlanItemsTable.freezerQty,
+    // Recipes that push to Shopify on every wrap (lib/shopify-wrap-push.ts)
+    // must never ALSO get this end-of-wrapping bulk push — it would count
+    // the same packs twice.
+    shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
   })
     .from(productionPlanItemsTable)
+    .leftJoin(recipesTable, eq(recipesTable.id, productionPlanItemsTable.recipeId))
     .where(and(eq(productionPlanItemsTable.id, itemId), eq(productionPlanItemsTable.planId, planId)));
 
   if (!item) { res.status(404).json({ error: "Plan item not found" }); return; }
@@ -5759,7 +5781,7 @@ router.patch("/:id/items/:itemId/wrapping-complete", async (req, res) => {
     // upload is paused until an admin explicitly enables it from Settings.
     const shopifyDelta = Number(item.freezerQty) + wonkyFrozen;
     const shopifySyncEnabled = await getShopifyFreezerSyncEnabled();
-    if (shopifyDelta > 0 && shopifySyncEnabled) {
+    if (shopifyDelta > 0 && shopifySyncEnabled && !item.shopifyPushOnWrap) {
       const mappingRows = await db.execute(sql`
         SELECT shopify_variant_id, shopify_product_title, shopify_variant_title
         FROM recipe_shopify_mappings WHERE recipe_id = ${item.recipeId}

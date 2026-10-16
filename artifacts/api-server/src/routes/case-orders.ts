@@ -377,6 +377,8 @@ router.get("/:id/schedule-suggestion", async (req: Request, res: Response) => {
           recipeId: productionPlanItemsTable.recipeId,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           category: recipesTable.category,
+          // Capacity equivalence (migration 0202): a bun batch uses 20/6.
+          calzoneBatchEquivalent: recipesTable.calzoneBatchEquivalent,
         })
         .from(productionPlanItemsTable)
         .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
