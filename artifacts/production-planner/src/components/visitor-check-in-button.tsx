@@ -25,7 +25,7 @@ export function VisitorCheckInButton() {
 
   return (
     <Link href="/visitor-check-in">
-      <button className="flex items-center gap-1.5 text-xs font-medium text-primary border border-primary/30 bg-primary/10 rounded-lg px-3 py-2 hover:bg-primary/20 transition-colors">
+      <button className="min-h-[44px] flex items-center gap-1.5 text-sm font-medium text-primary border border-primary/30 bg-primary/10 rounded-xl px-4 py-2 hover:bg-primary/20 transition-colors">
         <UserPlus className="w-3.5 h-3.5" />
         Visitor Check-In
         {count > 0 && (

@@ -310,7 +310,7 @@ function Dot({
         type="button"
         onClick={onClick}
         disabled={disabled}
-        className={cn(base, styles, disabled ? "cursor-not-allowed" : "hover:opacity-80")}
+        className={cn(base, styles, "min-h-[44px] sm:min-h-0 text-sm sm:text-xs px-3 sm:px-2.5", disabled ? "cursor-not-allowed" : "hover:opacity-80")}
       >
         <span
           className={cn(
@@ -676,12 +676,29 @@ function ReceivingDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) handleClose(); }}>
-      <DialogContent className="w-[95vw] sm:w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="font-display text-3xl font-bold flex items-center gap-3">
+      {/* Phone-first card (Graeme, 16 Oct 2026, checking a delivery in on
+          his phone): nearly full width, header with a big X that never
+          scrolls away, the lines scroll inside, and the save button sits in
+          a footer that is always on screen. */}
+      <DialogContent
+        className="w-[calc(100vw-1rem)] max-w-none sm:w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[92dvh] p-0 gap-0 flex flex-col overflow-hidden [&>button:last-child]:hidden"
+        aria-describedby={undefined}
+      >
+        <DialogHeader className="shrink-0 px-4 sm:px-6 pt-4 pb-3 border-b border-border text-left space-y-0">
+          <div className="flex items-start gap-3">
+          <DialogTitle className="flex-1 min-w-0 font-display text-2xl sm:text-3xl font-bold flex items-center gap-3 text-left">
             <Truck className="w-7 h-7 text-primary shrink-0" />
-            <span>{order.supplierName}</span>
+            <span className="min-w-0 break-words">{order.supplierName}</span>
           </DialogTitle>
+          <button
+            type="button"
+            onClick={handleClose}
+            aria-label="Close"
+            className="h-12 w-12 -mr-1 -mt-1 flex items-center justify-center rounded-xl border border-border hover:bg-secondary/60 shrink-0"
+          >
+            <X className="w-6 h-6" />
+          </button>
+          </div>
           {(() => {
             const expectedIsToday = order.expectedDeliveryDate
               ? isToday(parseISO(order.expectedDeliveryDate))
@@ -713,7 +730,7 @@ function ReceivingDialog({
           })()}
         </DialogHeader>
 
-        <div className="space-y-6 mt-4">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-4 space-y-6">
           {dialogStep === "short" ? (
             <>
               <ShortReportStep
@@ -726,26 +743,6 @@ function ReceivingDialog({
                 people={peopleData?.people ?? []}
                 myId={myId}
               />
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setDialogStep("lines")}
-                  disabled={receiveMutation.isPending}
-                  className="min-h-[56px] rounded-xl border-2 border-border font-semibold text-base hover:bg-secondary/50 inline-flex items-center justify-center gap-2"
-                >
-                  <ChevronLeft className="w-5 h-5" /> Back to the items
-                </button>
-                <button
-                  type="button"
-                  onClick={() => receiveMutation.mutate()}
-                  disabled={!canReceive || receiveMutation.isPending}
-                  className="sm:col-span-2 min-h-[56px] rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 inline-flex items-center justify-center gap-2 disabled:opacity-60"
-                >
-                  {receiveMutation.isPending
-                    ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</>
-                    : <><CheckCircle2 className="w-5 h-5" /> Send report and {isEditMode ? "update quantities" : "complete goods-in"}</>}
-                </button>
-              </div>
             </>
           ) : (
           <>
@@ -831,7 +828,7 @@ function ReceivingDialog({
                   >
                     <div className="flex items-center justify-between gap-2 flex-wrap">
                       <div className="flex items-center gap-3 min-w-0">
-                        <span className={cn("text-xl font-bold truncate", notReceived && "text-red-800 dark:text-red-300")}>
+                        <span className={cn("text-xl font-bold break-words min-w-0", notReceived && "text-red-800 dark:text-red-300")}>
                           {line.ingredientName}
                         </span>
                       </div>
@@ -862,7 +859,7 @@ function ReceivingDialog({
                         onClick={() => decide("received")}
                         aria-pressed={received}
                         className={cn(
-                          "min-h-[52px] rounded-xl border-2 text-lg font-bold inline-flex items-center justify-center gap-2 transition-colors",
+                          "min-h-[52px] px-2 rounded-xl border-2 text-base sm:text-lg font-bold inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap transition-colors",
                           received
                             ? "bg-green-600 border-green-600 text-white"
                             : "border-green-500 text-green-800 dark:text-green-300 bg-background hover:bg-green-50 dark:hover:bg-green-900/20"
@@ -875,7 +872,7 @@ function ReceivingDialog({
                         onClick={() => decide("not_received")}
                         aria-pressed={notReceived}
                         className={cn(
-                          "min-h-[52px] rounded-xl border-2 text-lg font-bold inline-flex items-center justify-center gap-2 transition-colors",
+                          "min-h-[52px] px-2 rounded-xl border-2 text-base sm:text-lg font-bold inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap transition-colors",
                           notReceived
                             ? "bg-red-600 border-red-600 text-white"
                             : "border-red-400 text-red-700 dark:text-red-300 bg-background hover:bg-red-50 dark:hover:bg-red-900/20"
@@ -946,7 +943,7 @@ function ReceivingDialog({
                         editLines(next);
                       };
                       return (
-                    <div className={cn("grid gap-3", showUseBy ? "grid-cols-3" : "grid-cols-2")} onClick={(e) => e.stopPropagation()}>
+                    <div className={cn("grid gap-3 grid-cols-[minmax(0,2fr)_minmax(0,3fr)]", showUseBy ? "sm:grid-cols-3" : "sm:grid-cols-2")} onClick={(e) => e.stopPropagation()}>
                       <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
                         <span className="text-xl font-bold tabular-nums">
@@ -989,7 +986,7 @@ function ReceivingDialog({
                             type="button"
                             aria-label={inPacks ? "Decrease received by 1 pack" : "Decrease received by 0.5"}
                             onClick={() => bump(-step)}
-                            className="px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
+                            className="min-w-[44px] min-h-[48px] px-2 sm:px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
                           >
                             <Minus className="w-5 h-5" />
                           </button>
@@ -1006,20 +1003,20 @@ function ReceivingDialog({
                               next[idx] = { ...next[idx], quantityReceived: stored, decision: stored > 0 ? "received" : "not_received" };
                               editLines(next);
                             }}
-                            className="flex-1 min-w-0 px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#7cb342] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                            className="flex-1 min-w-0 px-1 sm:px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#7cb342] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                           />
                           <button
                             type="button"
                             aria-label={inPacks ? "Increase received by 1 pack" : "Increase received by 0.5"}
                             onClick={() => bump(step)}
-                            className="px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
+                            className="min-w-[44px] min-h-[48px] px-2 sm:px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
                           >
                             <Plus className="w-5 h-5" />
                           </button>
                         </div>
                       </div>
                       {showUseBy && (
-                        <div className="min-w-0">
+                        <div className="min-w-0 col-span-2 sm:col-span-1">
                           <label className="text-base font-semibold text-muted-foreground block mb-1">
                             Use-by Date{line.requiresUseByDate && <span className="text-destructive ml-1">*</span>}
                           </label>
@@ -1033,7 +1030,7 @@ function ReceivingDialog({
                               editLines(next);
                             }}
                             className={cn(
-                              "w-full min-w-0 px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
+                              "w-full min-w-0 min-h-[48px] px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
                               useByMissing || slShort ? "border-destructive border-2" : "border-border"
                             )}
                           />
@@ -1097,7 +1094,7 @@ function ReceivingDialog({
               <p className="text-sm text-muted-foreground mb-3">
                 Temperature must be recorded for all chilled and frozen items before the delivery can be marked as received.
               </p>
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Same dial as the fridge checklist (Graeme, 2026-09-14):
                     −/+ nudge 0.1°C (hold to spin) with a slider for coarse
                     jumps, −20…+20°C. "Record" reveals the dial at a sensible
@@ -1112,7 +1109,7 @@ function ReceivingDialog({
                       <button
                         type="button"
                         onClick={() => editChilledTemp("4.0")}
-                        className="w-full px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
+                        className="w-full min-h-[52px] px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
                       >
                         Record chilled temperature
                       </button>
@@ -1142,7 +1139,7 @@ function ReceivingDialog({
                       <button
                         type="button"
                         onClick={() => editFrozenTemp("-18.0")}
-                        className="w-full px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
+                        className="w-full min-h-[52px] px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
                       >
                         Record frozen temperature
                       </button>
@@ -1179,7 +1176,7 @@ function ReceivingDialog({
                     <div
                       key={check.id}
                       className={cn(
-                        "flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors cursor-pointer",
+                        "min-h-[52px] flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors cursor-pointer",
                         result?.passed
                           ? "border-green-300 bg-green-50/50 dark:bg-green-900/10 dark:border-green-700"
                           : "border-border hover:bg-secondary/30"
@@ -1200,7 +1197,7 @@ function ReceivingDialog({
                       >
                         {result?.passed && <Check className="w-3.5 h-3.5 text-white" />}
                       </div>
-                      <span className="text-sm flex-1">{check.label}</span>
+                      <span className="text-base sm:text-sm flex-1 min-w-0 break-words">{check.label}</span>
                       {check.isRequired && (
                         <span className="text-xs text-muted-foreground">Required</span>
                       )}
@@ -1216,7 +1213,7 @@ function ReceivingDialog({
             <textarea
               value={notes}
               onChange={(e) => editNotes(e.target.value)}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
               placeholder="Any notes about this delivery..."
             />
           </div>
@@ -1264,41 +1261,67 @@ function ReceivingDialog({
             />
           )}
 
-          <button
-            onClick={() => (needsShortStep ? setDialogStep("short") : receiveMutation.mutate())}
-            disabled={!canReceive || receiveMutation.isPending}
-            className={cn(
-              "w-full min-h-[56px] py-3 rounded-xl font-bold text-lg flex items-center justify-center gap-2 transition-colors",
-              canReceive
-                ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                : "bg-secondary text-muted-foreground cursor-not-allowed"
-            )}
-          >
-            {receiveMutation.isPending ? (
-              <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
-            ) : !allDecided ? (
-              <><AlertCircle className="w-4 h-4" /> Mark every item Received or Not received first</>
-            ) : missingRequiredUseBy ? (
-              <><AlertCircle className="w-4 h-4" /> Set use-by dates for required items</>
-            ) : shelfLifeUndecided.length > 0 ? (
-              <><AlertCircle className="w-4 h-4" /> Accept or reject the short-dated {shelfLifeUndecided.length === 1 ? "item" : "items"} first</>
-            ) : damageUnfinished.length > 0 ? (
-              <><AlertCircle className="w-4 h-4" /> Finish the damaged {damageUnfinished.length === 1 ? "item" : "items"} first</>
-            ) : !photoGate.ok ? (
-              <><AlertCircle className="w-4 h-4" /> {photoGate.message}</>
-            ) : !canReceive ? (
-              <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
-            ) : needsShortStep ? (
-              <><AlertTriangle className="w-4 h-4" /> Next: short-delivery report ({shortNow.length} {shortNow.length === 1 ? "item" : "items"})</>
-            ) : isEditMode ? (
-              <><Pencil className="w-4 h-4" /> Update quantities</>
-            ) : (
-              <><CheckCircle2 className="w-4 h-4" /> Mark as Received</>
-            )}
-          </button>
           </>
           )}
+        </div>
 
+        {/* Always on screen, whatever the scroll position. */}
+        <div className="shrink-0 border-t border-border bg-card px-4 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] space-y-2">
+          {dialogStep === "short" ? (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <button
+                type="button"
+                onClick={() => setDialogStep("lines")}
+                disabled={receiveMutation.isPending}
+                className="min-h-[56px] rounded-xl border-2 border-border font-semibold text-base hover:bg-secondary/50 inline-flex items-center justify-center gap-2"
+              >
+                <ChevronLeft className="w-5 h-5" /> Back to the items
+              </button>
+              <button
+                type="button"
+                onClick={() => receiveMutation.mutate()}
+                disabled={!canReceive || receiveMutation.isPending}
+                className="sm:col-span-2 min-h-[56px] rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 inline-flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {receiveMutation.isPending
+                  ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</>
+                  : <><CheckCircle2 className="w-5 h-5" /> Send report and {isEditMode ? "update quantities" : "complete goods-in"}</>}
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => (needsShortStep ? setDialogStep("short") : receiveMutation.mutate())}
+              disabled={!canReceive || receiveMutation.isPending}
+              className={cn(
+                "w-full min-h-[56px] px-3 py-3 rounded-xl font-bold text-lg text-center flex items-center justify-center gap-2 transition-colors [&>svg]:shrink-0",
+                canReceive
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "bg-secondary text-muted-foreground cursor-not-allowed"
+              )}
+            >
+              {receiveMutation.isPending ? (
+                <><Loader2 className="w-4 h-4 animate-spin" /> Processing...</>
+              ) : !allDecided ? (
+                <><AlertCircle className="w-4 h-4" /> Mark every item Received or Not received first</>
+              ) : missingRequiredUseBy ? (
+                <><AlertCircle className="w-4 h-4" /> Set use-by dates for required items</>
+              ) : shelfLifeUndecided.length > 0 ? (
+                <><AlertCircle className="w-4 h-4" /> Accept or reject the short-dated {shelfLifeUndecided.length === 1 ? "item" : "items"} first</>
+              ) : damageUnfinished.length > 0 ? (
+                <><AlertCircle className="w-4 h-4" /> Finish the damaged {damageUnfinished.length === 1 ? "item" : "items"} first</>
+              ) : !photoGate.ok ? (
+                <><AlertCircle className="w-4 h-4" /> {photoGate.message}</>
+              ) : !canReceive ? (
+                <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
+              ) : needsShortStep ? (
+                <><AlertTriangle className="w-4 h-4" /> Next: short-delivery report ({shortNow.length} {shortNow.length === 1 ? "item" : "items"})</>
+              ) : isEditMode ? (
+                <><Pencil className="w-4 h-4" /> Update quantities</>
+              ) : (
+                <><CheckCircle2 className="w-4 h-4" /> Mark as Received</>
+              )}
+            </button>
+          )}
           {receiveMutation.isError && (
             <p className="text-sm text-destructive text-center">
               {receiveMutation.error instanceof Error ? receiveMutation.error.message : "Failed to receive delivery"}
@@ -1531,45 +1554,47 @@ export default function Deliveries() {
       <PageHeader
         title="Front Door — Deliveries"
         description="Everything at the front door: deliveries in, collections out, visitors signing in."
-        action={
-          <div className="flex items-center gap-2">
-            {/* Visitor check-in belongs to the doorstep, so it lives here
-                with the deliveries rather than on the dashboard header
-                (Graeme, 2026-09-16). */}
-            <VisitorCheckInButton />
-            {canEdit && (
-              <button
-                onClick={() => setShortSettingsOpen(true)}
-                className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
-                title="Who hears when a delivery comes in short"
-              >
-                <AlertTriangle className="w-4 h-4" /> Short-delivery reports
-              </button>
-            )}
-            <button
-              onClick={goToday}
-              className="px-4 py-2.5 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
-            >
-              <Calendar className="w-4 h-4" /> Today
-            </button>
-          </div>
-        }
       />
+
+      {/* The page's own buttons live in the page, not the top bar: the bar
+          can't wrap, and on a phone or an iPad with the sidebar open they
+          ran off the side of the screen (Graeme, 16 Oct 2026: "I couldn't
+          scroll across"). Here they wrap onto a second row when they must.
+          Visitor check-in belongs to the doorstep, so it lives here with the
+          deliveries rather than on the dashboard (Graeme, 2026-09-16). */}
+      <div className="flex flex-wrap items-center sm:justify-end gap-2">
+        <VisitorCheckInButton />
+        {canEdit && (
+          <button
+            onClick={() => setShortSettingsOpen(true)}
+            className="min-h-[44px] px-4 py-2 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+            title="Who hears when a delivery comes in short"
+          >
+            <AlertTriangle className="w-4 h-4" /> Short-delivery reports
+          </button>
+        )}
+        <button
+          onClick={goToday}
+          className="min-h-[44px] px-4 py-2 border border-border rounded-xl font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors text-sm"
+        >
+          <Calendar className="w-4 h-4" /> Today
+        </button>
+      </div>
 
       <div className="glass-panel rounded-2xl p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <button onClick={prevWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors">
+          <button onClick={prevWeek} aria-label="Previous week" className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-secondary/50 transition-colors">
             <ChevronLeft className="w-5 h-5" />
           </button>
           <span className="text-sm font-semibold text-muted-foreground">
             {format(weekStart, "d MMM")} — {format(addDays(weekStart, 6), "d MMM yyyy")}
           </span>
-          <button onClick={nextWeek} className="p-2 rounded-lg hover:bg-secondary/50 transition-colors">
+          <button onClick={nextWeek} aria-label="Next week" className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-secondary/50 transition-colors">
             <ChevronRight className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="grid grid-cols-7 gap-2">
+        <div className="grid grid-cols-7 gap-1 sm:gap-2">
           {weekDays.map((day) => {
             const dateKey = format(day, "yyyy-MM-dd");
             const ordersCount = (ordersByDay[dateKey] || []).length;
@@ -1581,7 +1606,7 @@ export default function Deliveries() {
                 key={dateKey}
                 onClick={() => selectDay(day)}
                 className={cn(
-                  "flex flex-col items-center gap-1 rounded-xl py-3 px-1 transition-all border",
+                  "min-w-0 flex flex-col items-center gap-1 rounded-xl py-3 px-0.5 sm:px-1 transition-all border",
                   selected
                     ? "bg-primary text-primary-foreground border-primary shadow-md"
                     : today
@@ -1628,7 +1653,7 @@ export default function Deliveries() {
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => setAddingCollection({})}
-                className="px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                className="min-h-[44px] px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
                 title="Something being collected from us"
               >
                 <PackageOpen className="w-4 h-4" />
@@ -1636,7 +1661,7 @@ export default function Deliveries() {
               </button>
               <button
                 onClick={() => setUnexpectedOpen(true)}
-                className="px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
+                className="min-h-[44px] px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
                 title="Something arrived that isn't on the list"
               >
                 <Truck className="w-4 h-4" />
@@ -1647,7 +1672,7 @@ export default function Deliveries() {
           {selectedDayOrdersAll.length > 0 && (
             <button
               onClick={() => setShowProcessed((v) => !v)}
-              className="px-3 py-1.5 border border-border rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors"
+              className="min-h-[44px] px-3 py-1.5 border border-border rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-secondary/50 transition-colors"
               title={showProcessed ? "Hide fully processed orders" : "Show fully processed orders"}
             >
               {showProcessed ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -1717,7 +1742,14 @@ export default function Deliveries() {
                     <CollectionPanel key={c.id} collection={c} nested canEdit={canReceive} />
                   ))}
 
-                  <div className="p-4 flex items-center gap-4">
+                  {/* When the card is too narrow for the name and the buttons
+                      side by side (a phone, or an iPad with the sidebar open)
+                      the buttons wrap under the name and Receive Goods fills
+                      the row — side by side they pushed it off the screen and
+                      squeezed the name to nothing (Graeme, 16 Oct 2026). Wraps
+                      on the card's own width, not the screen's. */}
+                  <div className="p-4 flex flex-wrap items-center gap-3 sm:gap-4">
+                    <div className="flex items-center gap-3 sm:gap-4 flex-[100_1_16rem] min-w-0">
                     <div className={cn(
                       "w-12 h-12 rounded-xl flex items-center justify-center shrink-0",
                       dots.fullyProcessed ? "bg-green-100 dark:bg-green-900/30" : "bg-primary/10"
@@ -1730,7 +1762,7 @@ export default function Deliveries() {
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="font-bold text-2xl truncate">{order.supplierName}</h3>
+                        <h3 className="font-bold text-xl sm:text-2xl break-words min-w-0">{order.supplierName}</h3>
                         {dots.fullyProcessed ? (
                           <span className="text-xs font-semibold px-2 py-0.5 rounded-full inline-flex items-center gap-1.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
                             <span className="w-1.5 h-1.5 rounded-full bg-green-500" />
@@ -1749,14 +1781,15 @@ export default function Deliveries() {
                         )}
                       </p>
                     </div>
+                    </div>
 
-                    <div className="shrink-0 flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex-[1_1_auto] flex flex-wrap items-center justify-end gap-2" onClick={(e) => e.stopPropagation()}>
                       {canEdit && !isReceived && (
                         movingOrderId === order.id ? (
                           <div className="flex items-center gap-2">
                             <input
                               type="date"
-                              className="px-2 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                              className="min-h-[44px] px-2 py-1.5 text-base sm:text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
                               defaultValue={order.expectedDeliveryDate || ""}
                               onChange={(e) => {
                                 if (e.target.value && e.target.value !== order.expectedDeliveryDate) {
@@ -1767,7 +1800,8 @@ export default function Deliveries() {
                             />
                             <button
                               onClick={() => setMovingOrderId(null)}
-                              className="p-1.5 rounded-lg hover:bg-secondary/50 text-muted-foreground"
+                              aria-label="Cancel move"
+                              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-secondary/50 text-muted-foreground"
                             >
                               <X className="w-4 h-4" />
                             </button>
@@ -1775,7 +1809,8 @@ export default function Deliveries() {
                         ) : (
                           <button
                             onClick={() => setMovingOrderId(order.id)}
-                            className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                            aria-label="Move to another day"
+                            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
                             title="Move to another day"
                           >
                             <ArrowRightLeft className="w-4 h-4" />
@@ -1789,7 +1824,7 @@ export default function Deliveries() {
                       {canEdit && !isReceived && (
                         <button
                           onClick={(e) => { e.stopPropagation(); navigate(order.planId ? `/orders?planId=${order.planId}&editPo=${order.id}` : `/orders?editPo=${order.id}`); }}
-                          className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
+                          className="min-h-[44px] px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
                           title="Edit ordered quantities on the orders page (manager / admin)"
                         >
                           <Pencil className="w-4 h-4" />
@@ -1805,7 +1840,7 @@ export default function Deliveries() {
                       {canReceive && !isReceived && !blockedByCollection && (
                         <button
                           onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
-                          className="px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:bg-primary/90 transition-colors flex items-center gap-2"
+                          className="flex-1 min-h-[52px] px-5 py-3 rounded-xl bg-primary text-primary-foreground text-lg font-bold hover:bg-primary/90 transition-colors flex items-center justify-center gap-2 whitespace-nowrap"
                         >
                           <PackageCheck className="w-5 h-5" />
                           Receive Goods
@@ -1818,18 +1853,19 @@ export default function Deliveries() {
                               <input
                                 type="date"
                                 autoFocus
-                                className="px-2 py-1.5 text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
+                                className="min-h-[44px] px-2 py-1.5 text-base sm:text-sm border border-border rounded-lg bg-background focus:outline-none focus:ring-2 focus:ring-primary/30"
                                 defaultValue={format(new Date(), "yyyy-MM-dd")}
                                 onChange={(e) => { if (e.target.value) editDateMutation.mutate({ orderId: order.id, receivedAt: e.target.value }); }}
                               />
-                              <button onClick={() => setEditingDateOrderId(null)} className="p-1.5 rounded-lg hover:bg-secondary/50 text-muted-foreground">
+                              <button onClick={() => setEditingDateOrderId(null)} aria-label="Cancel date change" className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-lg hover:bg-secondary/50 text-muted-foreground">
                                 <X className="w-4 h-4" />
                               </button>
                             </div>
                           ) : (
                             <button
                               onClick={() => setEditingDateOrderId(order.id)}
-                              className="p-2 rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
+                              aria-label="Change the received date"
+                              className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/50 transition-colors"
                               title="Change the received date"
                             >
                               <Calendar className="w-4 h-4" />
@@ -1837,7 +1873,7 @@ export default function Deliveries() {
                           )}
                           <button
                             onClick={(e) => { e.stopPropagation(); openReceiving(order.id); }}
-                            className="px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
+                            className="min-h-[44px] px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5"
                             title="Edit received quantities"
                           >
                             <Pencil className="w-4 h-4" />
@@ -1851,7 +1887,7 @@ export default function Deliveries() {
                               }
                             }}
                             disabled={unreceiveMutation.isPending}
-                            className="px-3 py-2 rounded-xl border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10 transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                            className="min-h-[44px] px-3 py-2 rounded-xl border border-destructive/40 text-destructive text-sm font-medium hover:bg-destructive/10 transition-colors flex items-center gap-1.5 disabled:opacity-50"
                             title="Undo this receipt completely"
                           >
                             <RotateCcw className="w-4 h-4" />
@@ -1929,7 +1965,7 @@ export default function Deliveries() {
                             <span
                               key={line.id}
                               className={cn(
-                                "text-base bg-background border rounded-2xl px-4 py-2 flex flex-col items-start",
+                                "text-base bg-background border rounded-2xl px-4 py-2 flex flex-col items-start max-w-full min-w-0 break-words",
                                 (() => {
                                   const st = lineStatus(isReceived, line);
                                   return st === "not_received" ? "border-red-300 dark:border-red-800"
