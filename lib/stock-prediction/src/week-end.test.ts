@@ -106,7 +106,7 @@ describe("weekEndFactoryNumber", () => {
     expect(res.unplannedDays).toEqual(["2026-10-16"]);
     expect(res.tightest).toEqual({ date: "2026-10-16", packs: -40 });
     expect(formatEndPacks(-40, true)).toBe("short by ~40 packs");
-    expect(describeWeekEnd(res)).toBe("End of week in the fridge: short by 10 packs if nothing else sells · short by ~40 predicted");
+    expect(describeWeekEnd(res, () => "Fri")).toBe("End of week in the fridge: short by 10 packs if nothing else sells · short by ~40 predicted · no plan yet for Fri, so nothing counted as made");
   });
 
   it("reports a mid-week low that later production makes good", () => {

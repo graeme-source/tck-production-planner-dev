@@ -237,5 +237,10 @@ export function describeWeekEnd(res: WeekEndResult, dayName: (date: string) => s
   } else if (res.predictionGap.length > 0) {
     parts.push(`no prediction for ${res.predictionGap.map(dayName).join(", ")} (not enough order history)`);
   }
+  // Without this, a week whose later days aren't planned yet reads as a
+  // frightening shortfall with no reason given.
+  if (res.unplannedDays.length > 0) {
+    parts.push(`no plan yet for ${res.unplannedDays.map(dayName).join(", ")}, so nothing counted as made`);
+  }
   return parts.join(" · ");
 }
