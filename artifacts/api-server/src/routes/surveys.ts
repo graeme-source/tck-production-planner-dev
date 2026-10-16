@@ -20,6 +20,9 @@ import {
   createBuyersSegment, getSegmentStatus, deleteSegment,
 } from "../lib/klaviyo";
 import { buildSurveyInviteHtml } from "../lib/survey-email";
+import { prepareSurveyIntro, sanitiseSurveyIntroHtml, surveyIntroHtml, SURVEY_INTRO_HTML_MAX } from "../lib/survey-intro";
+import { FINAL_LINK_PRESETS, normaliseFinalLink } from "../lib/survey-final-page";
+import { loadCurrentOfferText } from "../lib/survey-offer-data";
 
 const router: IRouter = Router();
 
@@ -50,6 +53,18 @@ const questionSchema = z.object({
 const surveyBodySchema = z.object({
   title: z.string().trim().min(1, "Title is required").max(200),
   intro: z.string().trim().max(2000).nullable().optional(),
+  // Formatted intro from the rich-text editor. Sanitised server-side
+  // (lib/survey-intro.ts) before it is stored; `intro` is then derived.
+  introHtml: z.string().max(SURVEY_INTRO_HTML_MAX).nullable().optional(),
+  // Optional final page after submit. Omitted = leave as stored.
+  finalPage: z.object({
+    enabled: z.boolean(),
+    heading: z.string().trim().max(200).nullable().optional(),
+    html: z.string().max(SURVEY_INTRO_HTML_MAX).nullable().optional(),
+    buttonLabel: z.string().trim().max(80).nullable().optional(),
+    buttonUrl: z.string().trim().max(500).nullable().optional(),
+    showOffer: z.boolean().optional().default(false),
+  }).optional(),
   questions: z.array(questionSchema).max(100).optional().default([]),
   // Set when the survey was built from a Shopify collection — the ground
   // truth for the live email audience. The builder omits these on ordinary
@@ -57,6 +72,40 @@ const surveyBodySchema = z.object({
   collectionId: z.number().int().positive().nullable().optional(),
   collectionTitle: z.string().trim().max(300).nullable().optional(),
 });
+
+type SurveyBody = z.infer<typeof surveyBodySchema>;
+
+/** Final-page columns from the request, or an error for a bad link. */
+function finalPageValues(fp: SurveyBody["finalPage"]):
+  | { ok: true; values: Partial<typeof surveysTable.$inferInsert> }
+  | { ok: false; error: string } {
+  if (!fp) return { ok: true, values: {} };
+  const rawUrl = fp.buttonUrl?.trim() || null;
+  const url = rawUrl ? normaliseFinalLink(rawUrl) : null;
+  if (rawUrl && !url) {
+    return { ok: false, error: "The final page button must link to a page on thecalzonekitchen.co.uk." };
+  }
+  return {
+    ok: true,
+    values: {
+      finalPageEnabled: fp.enabled,
+      finalHeading: fp.heading?.trim() || null,
+      finalHtml: sanitiseSurveyIntroHtml(fp.html ?? null),
+      finalButtonLabel: fp.buttonLabel?.trim() || null,
+      finalButtonUrl: url,
+      finalShowOffer: fp.showOffer,
+    },
+  };
+}
+
+/** A survey row as the planner sees it: formatted texts sanitised on output. */
+function surveyJson<T extends typeof surveysTable.$inferSelect>(row: T) {
+  return {
+    ...row,
+    introHtml: surveyIntroHtml(row),
+    finalHtml: sanitiseSurveyIntroHtml(row.finalHtml),
+  };
+}
 
 const statusSchema = z.object({ status: z.enum(["draft", "open", "closed"]) });
 
@@ -114,11 +163,21 @@ router.get("/", async (_req, res) => {
   const questionsBySurvey = new Map(questionCounts.map(c => [c.surveyId, c.count]));
 
   res.json(surveys.map(s => ({
-    ...s,
+    ...surveyJson(s),
     responseCount: countBySurvey.get(s.id) ?? 0,
     questionCount: questionsBySurvey.get(s.id) ?? 0,
     shareUrl: surveyShareUrl(s.token),
   })));
+});
+
+// GET /api/surveys/final-page-options — button link presets and this
+// week's offer from the email plan (null when there isn't one), for the
+// final-page editor and preview. Declared before /:id.
+router.get("/final-page-options", async (_req, res) => {
+  res.json({
+    presets: Object.entries(FINAL_LINK_PRESETS).map(([key, p]) => ({ key, label: p.label, url: p.url })),
+    currentOffer: await loadCurrentOfferText(),
+  });
 });
 
 // GET /api/surveys/recipe-options — recipe picker for the builder.
@@ -640,20 +699,25 @@ router.get("/:id", async (req, res) => {
     .from(surveyResponsesTable)
     .where(eq(surveyResponsesTable.surveyId, id));
 
-  res.json({ ...survey, questions, responseCount, shareUrl: surveyShareUrl(survey.token) });
+  res.json({ ...surveyJson(survey), questions, responseCount, shareUrl: surveyShareUrl(survey.token) });
 });
 
 // POST /api/surveys — create (always starts as draft)
 router.post("/", async (req, res) => {
   const parsed = surveyBodySchema.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() }); return; }
-  const { title, intro, questions } = parsed.data;
+  const { title, questions } = parsed.data;
+  const intro = prepareSurveyIntro({ intro: parsed.data.intro, html: parsed.data.introHtml });
+  const finalPage = finalPageValues(parsed.data.finalPage);
+  if (!finalPage.ok) { res.status(400).json({ error: finalPage.error }); return; }
 
   const created = await db.transaction(async (tx) => {
     const [survey] = await tx.insert(surveysTable).values({
       token: generateToken(),
       title,
-      intro: intro ?? null,
+      intro: intro.intro,
+      introHtml: intro.introHtml,
+      ...finalPage.values,
       status: "draft",
       collectionId: parsed.data.collectionId ?? null,
       collectionTitle: parsed.data.collectionTitle ?? null,
@@ -673,7 +737,7 @@ router.post("/", async (req, res) => {
     return survey;
   });
 
-  res.status(201).json({ ...created, shareUrl: surveyShareUrl(created.token) });
+  res.status(201).json({ ...surveyJson(created), shareUrl: surveyShareUrl(created.token) });
 });
 
 // PUT /api/surveys/:id — update title/intro and upsert questions.
@@ -688,7 +752,10 @@ router.put("/:id", async (req, res) => {
   const [survey] = await db.select().from(surveysTable).where(eq(surveysTable.id, id));
   if (!survey) { res.status(404).json({ error: "Survey not found" }); return; }
 
-  const { title, intro, questions } = parsed.data;
+  const { title, questions } = parsed.data;
+  const intro = prepareSurveyIntro({ intro: parsed.data.intro, html: parsed.data.introHtml });
+  const finalPage = finalPageValues(parsed.data.finalPage);
+  if (!finalPage.ok) { res.status(400).json({ error: finalPage.error }); return; }
   const existing = await loadQuestions(id);
   const existingIds = new Set(existing.map(q => q.id));
   const keptIds = new Set(questions.map(q => q.id).filter((qid): qid is number => qid != null));
@@ -702,7 +769,7 @@ router.put("/:id", async (req, res) => {
 
   await db.transaction(async (tx) => {
     await tx.update(surveysTable)
-      .set({ title, intro: intro ?? null, updatedAt: sql`now()` })
+      .set({ title, intro: intro.intro, introHtml: intro.introHtml, ...finalPage.values, updatedAt: sql`now()` })
       .where(eq(surveysTable.id, id));
 
     const toDelete = existing.filter(q => !keptIds.has(q.id)).map(q => q.id);
@@ -731,7 +798,7 @@ router.put("/:id", async (req, res) => {
 
   const updatedQuestions = await serializeQuestions(await loadQuestions(id));
   const [updated] = await db.select().from(surveysTable).where(eq(surveysTable.id, id));
-  res.json({ ...updated, questions: updatedQuestions, shareUrl: surveyShareUrl(updated.token) });
+  res.json({ ...surveyJson(updated), questions: updatedQuestions, shareUrl: surveyShareUrl(updated.token) });
 });
 
 // POST /api/surveys/:id/status — open/close toggle (and back to draft)
@@ -746,7 +813,7 @@ router.post("/:id/status", async (req, res) => {
     .where(eq(surveysTable.id, id))
     .returning();
   if (!updated) { res.status(404).json({ error: "Survey not found" }); return; }
-  res.json({ ...updated, shareUrl: surveyShareUrl(updated.token) });
+  res.json({ ...surveyJson(updated), shareUrl: surveyShareUrl(updated.token) });
 });
 
 // POST /api/surveys/:id/duplicate — copy survey + questions, fresh token,
@@ -763,6 +830,13 @@ router.post("/:id/duplicate", async (req, res) => {
       token: generateToken(),
       title: `${survey.title} (copy)`,
       intro: survey.intro,
+      introHtml: survey.introHtml,
+      finalPageEnabled: survey.finalPageEnabled,
+      finalHeading: survey.finalHeading,
+      finalHtml: survey.finalHtml,
+      finalButtonLabel: survey.finalButtonLabel,
+      finalButtonUrl: survey.finalButtonUrl,
+      finalShowOffer: survey.finalShowOffer,
       status: "draft",
       // The copy is about the same products, so the collection travels — but
       // NOT the segment: each survey owns its segment, and a shared one
@@ -785,7 +859,7 @@ router.post("/:id/duplicate", async (req, res) => {
     return created;
   });
 
-  res.status(201).json({ ...copy, shareUrl: surveyShareUrl(copy.token) });
+  res.status(201).json({ ...surveyJson(copy), shareUrl: surveyShareUrl(copy.token) });
 });
 
 type QuestionResults =
