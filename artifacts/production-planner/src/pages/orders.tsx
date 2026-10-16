@@ -2048,8 +2048,8 @@ export default function Orders() {
                   <Building2 className="w-5 h-5 text-primary" />
                 </div>
                 <div className="text-left">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold">{so.supplier.name}</h3>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="font-semibold break-words min-w-0">{so.supplier.name}</h3>
                     {isReopened && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                         <RefreshCw className="w-2.5 h-2.5" />
@@ -2486,7 +2486,10 @@ export default function Orders() {
                   </span>
                 </div>
 
-                <div className="p-4 flex items-center justify-between border-t border-border bg-secondary/10">
+                {/* Wraps when the card is narrow: on a phone the buttons
+                    were one long row that the card clipped, hiding Mark as
+                    Placed / Update & Resend Order (Graeme, 16 Oct 2026). */}
+                <div className="p-4 flex flex-wrap items-center justify-between gap-3 border-t border-border bg-secondary/10">
                   <div className="text-sm text-muted-foreground">
                     {checkedCount === orderableLines.length && orderableLines.length > 0 ? (
                       <span className="text-green-600 font-medium flex items-center gap-1">
@@ -2496,11 +2499,11 @@ export default function Orders() {
                       <span>{checkedCount} of {orderableLines.length} items checked</span>
                     )}
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                     {isReopened && canManageOrders && reopenedPOId && (
                       <button
                         onClick={() => setDeleteOrderConfirm({ poId: reopenedPOId, supplierId: so.supplier.id, supplierName: so.supplier.name })}
-                        className="px-3 py-2 rounded-lg text-sm font-medium transition-colors border border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-1.5"
+                        className="min-h-[44px] px-3 py-2 rounded-lg text-sm font-medium transition-colors border border-destructive/40 text-destructive hover:bg-destructive/10 flex items-center gap-1.5"
                         title="Delete this placed order — for orders placed by mistake (manager / admin only)"
                       >
                         <Trash2 className="w-4 h-4" />
@@ -2511,7 +2514,7 @@ export default function Orders() {
                       <button
                         type="button"
                         onClick={() => copyOrderText(so.supplier.id, so.supplier.name, orderableLines, orderDeliveryText)}
-                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
+                        className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
                         title="Copy the order text — paste it into any email or message"
                       >
                         {copiedOrderSupplierId === so.supplier.id ? (
@@ -2530,7 +2533,7 @@ export default function Orders() {
                     {emailHref && (
                       <a
                         href={emailHref}
-                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
+                        className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
                         title={so.supplier.email
                           ? `Draft an order email to ${so.supplier.email}`
                           : "No email saved for this supplier — opens a blank email with the order text so you can add the address"}
@@ -2544,7 +2547,7 @@ export default function Orders() {
                         href={whatsAppHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-600/10"
+                        className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-600/10"
                         title={`Draft a WhatsApp order to ${so.supplier.orderingPhone}`}
                       >
                         <MessageCircle className="w-4 h-4" />
@@ -2556,7 +2559,7 @@ export default function Orders() {
                         href={whatsAppShareHref}
                         target="_blank"
                         rel="noopener noreferrer"
-                        className="px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-600/10"
+                        className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-green-600/40 text-green-700 dark:text-green-400 hover:bg-green-600/10"
                         title="Opens WhatsApp — pick the group (or any chat) to send the order to"
                       >
                         <Users className="w-4 h-4" />
@@ -2567,7 +2570,7 @@ export default function Orders() {
                       onClick={() => handlePlaceOrder(so.supplier.id, so.supplier.name)}
                       disabled={!allChecked || placeMutation.isPending}
                       className={cn(
-                        "px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2",
+                        "w-full sm:w-auto justify-center min-h-[48px] sm:min-h-[44px] px-4 py-2 rounded-lg text-base sm:text-sm font-semibold sm:font-medium transition-colors flex items-center gap-2",
                         allChecked
                           ? "bg-green-600 text-white hover:bg-green-700"
                           : "bg-secondary text-muted-foreground cursor-not-allowed"
@@ -2625,9 +2628,9 @@ export default function Orders() {
             const isReopened = !!reopenedPlacedOrders[order.supplierId];
             return (
             <div key={order.id} className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">
-              <div className="p-4 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center">
+              <div className="p-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-lg bg-green-500/10 flex items-center justify-center shrink-0">
                     <CheckCircle2 className="w-5 h-5 text-green-600" />
                   </div>
                   <div>
@@ -2639,7 +2642,7 @@ export default function Orders() {
                     </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 ml-auto">
                   <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-700">
                     Placed
                   </span>
@@ -2647,7 +2650,7 @@ export default function Orders() {
                     type="button"
                     onClick={() => handleEditPlacedOrder(order)}
                     disabled={isReopened}
-                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    className="min-h-[44px] px-3 py-1.5 rounded-lg text-sm sm:text-xs font-medium transition-colors border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                     title={isReopened ? "Already being edited in the To Order tab" : "Reopen this order so you can add or change items, then resubmit"}
                   >
                     <RefreshCw className="w-3 h-3" />
