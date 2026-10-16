@@ -81,6 +81,20 @@ export const recipesTable = pgTable("recipes", {
   draftedByName: text("drafted_by_name"),
   publishedAt: timestamp("published_at"),
   publishedByName: text("published_by_name"),
+  // Production route (migration 0202) — read through
+  // @workspace/production-schedule recipe-route.ts, never by product name.
+  // skipOvens: no ovens step; wrapping follows the builders' batches.
+  skipOvens: boolean("skip_ovens").notNull().default(false),
+  // Where the wrapping station sends packs by default: 'fridge' | 'freezer'.
+  defaultStorage: text("default_storage").notNull().default("fridge"),
+  // Each freezer add at wrapping adds +N to the mapped Shopify variant
+  // (take-backs reverse it) through the shopify_wrap_pushes ledger.
+  shopifyPushOnWrap: boolean("shopify_push_on_wrap").notNull().default(false),
+  // Left out of the calzone KPIs (pace, team efficiency, defects, calzone
+  // batch counts) while still made on the main-kitchen stations.
+  excludeFromKpis: boolean("exclude_from_kpis").notNull().default(false),
+  // Calzone batches of day capacity one batch of this recipe uses. Null = 1.
+  calzoneBatchEquivalent: numeric("calzone_batch_equivalent", { precision: 10, scale: 6 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

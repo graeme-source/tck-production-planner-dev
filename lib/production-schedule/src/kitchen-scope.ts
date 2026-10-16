@@ -50,12 +50,20 @@ export function splitByKitchenLine<T>(items: readonly T[], categoryOf: (t: T) =>
   return out;
 }
 
-/** Main-kitchen batches planned (calzone batches + mac cheese packs, the
- *  long-standing meaning of a day's "batches" against the 110/80 capacity). */
-export function mainKitchenBatches(items: ReadonlyArray<{ category: string | null | undefined; batchesTarget: number | string | null | undefined }>): number {
-  return items
+/** Main-kitchen batches planned against the 110/80 day capacity: calzone
+ *  batches + mac cheese packs, one for one — the long-standing meaning —
+ *  except a recipe with its own capacity equivalence (recipes
+ *  .calzone_batch_equivalent, migration 0202: one bun batch ≈ 3.33 calzone
+ *  batches), which counts batches × that. Rounded to 2 dp. */
+export function mainKitchenBatches(items: ReadonlyArray<{ category: string | null | undefined; batchesTarget: number | string | null | undefined; calzoneBatchEquivalent?: number | string | null }>): number {
+  const total = items
     .filter(i => isMainKitchen(i.category))
-    .reduce((s, i) => s + (Number(i.batchesTarget) || 0), 0);
+    .reduce((s, i) => {
+      const eq = i.calzoneBatchEquivalent;
+      const factor = eq === null || eq === undefined || eq === "" || !Number.isFinite(Number(eq)) ? 1 : Number(eq);
+      return s + (Number(i.batchesTarget) || 0) * factor;
+    }, 0);
+  return Math.round(total * 100) / 100;
 }
 
 /** Calzone-line batches planned — the target behind the stations' "all done"
