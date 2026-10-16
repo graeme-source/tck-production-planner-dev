@@ -12,7 +12,7 @@
  * Received 16 Oct with a minimum of 3: a use-by of 17 or 18 Oct is short;
  * 19 Oct is fine. A short line needs the receiver's decision — accept it
  * anyway (we'll use or freeze it) or reject it (not received) — and the
- * supplier's account manager is emailed either way (shelfLifeReportEmail).
+ * supplier's account manager is emailed either way (delivery-issues.ts).
  *
  * Objective D (goods-in checks every time).
  */
@@ -131,110 +131,12 @@ export function shelfLifeWarningText(check: ShelfLifeCheck, supplierName: string
   return `${head} — ${who} promise at least ${daysPhrase(check.minDays)} (use-by should be ${shortDayLabel(check.earliestOkUseBy)} or later)`;
 }
 
-// ── The email to the supplier ──────────────────────────────────────────────
+// ── The decision ───────────────────────────────────────────────────────────
 
 export type ShelfLifeDecision = "accepted" | "rejected";
 
-export interface ShelfLifeReportInput {
-  supplierName: string;
-  /** The supplier's account manager's name, for "Dear …". */
-  recipientName?: string | null;
-  /** Our order number (the purchase order id). */
-  orderNumber: number | string;
-  deliveryDate: string;
-  productName: string;
-  /** "20 kg", "4 packs" — already formatted. */
-  quantityText: string;
-  useByDate: string;
-  days: number;
-  minDays: number;
-  decision: ShelfLifeDecision;
-  /** Who made the call at the door. */
-  receivedByName?: string | null;
-}
-
-export interface ShelfLifeEmail {
-  subject: string;
-  text: string;
-  html: string;
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-function firstName(name: string | null | undefined): string | null {
-  const n = name?.trim();
-  if (!n) return null;
-  return n.split(/\s+/)[0] ?? null;
-}
-
-/** Plain, polite, factual: what arrived, how much shelf life it had against
- *  the minimum promised, and what we did with it. From The Calzone Kitchen. */
-export function shelfLifeReportEmail(r: ShelfLifeReportInput): ShelfLifeEmail {
-  const greeting = firstName(r.recipientName) ? `Dear ${firstName(r.recipientName)},` : "Hello,";
-  const outcome = r.decision === "accepted"
-    ? "We accepted it so as not to go without, and will use it or freeze it before the use-by date."
-    : "We rejected it, so it has not been received into our stock.";
-  const subject = `Short shelf life on delivery — ${r.productName} — ${shortDayLabel(r.deliveryDate)} (our order #${r.orderNumber})`;
-  const facts: Array<[string, string]> = [
-    ["Supplier", r.supplierName],
-    ["Our order number", `#${r.orderNumber}`],
-    ["Delivery date", longDayLabel(r.deliveryDate)],
-    ["Product", r.productName],
-    ["Quantity", r.quantityText],
-    ["Use-by date received", longDayLabel(r.useByDate)],
-    ["Shelf life on arrival", shelfLifePhrase(r.days)],
-    ["Minimum shelf life agreed", daysPhrase(r.minDays)],
-    ["What we did", r.decision === "accepted" ? "Accepted (to be used or frozen)" : "Rejected"],
-  ];
-  if (r.receivedByName?.trim()) facts.push(["Checked in by", r.receivedByName.trim()]);
-
-  const intro = `The ${r.productName} delivered to us on ${longDayLabel(r.deliveryDate)} arrived with ${
-    r.days < 0 ? "a use-by date that had already passed" : r.days === 0 ? "a use-by date of that same day" : `only ${daysPhrase(r.days)} of shelf life`
-  }. We were promised at least ${daysPhrase(r.minDays)}.`;
-  const ask = "Please could you look into this and let us know what will be done to make sure future deliveries meet the agreed minimum shelf life.";
-  const signOff = ["Kind regards,", "The Calzone Kitchen"];
-
-  const text = [
-    greeting,
-    "",
-    intro,
-    "",
-    ...facts.map(([k, v]) => `${k}: ${v}`),
-    "",
-    outcome,
-    "",
-    ask,
-    "",
-    ...signOff,
-    "",
-    "(This report was sent automatically from our goods-in check.)",
-  ].join("\n");
-
-  const rows = facts
-    .map(([k, v]) => `<tr><td style="padding:4px 12px 4px 0;color:#555;vertical-align:top;">${escapeHtml(k)}</td><td style="padding:4px 0;font-weight:600;">${escapeHtml(v)}</td></tr>`)
-    .join("");
-  const html = `<!DOCTYPE html>
-<html>
-<body style="font-family: sans-serif; max-width: 600px; margin: 24px auto; color: #222; line-height: 1.45;">
-  <p>${escapeHtml(greeting)}</p>
-  <p>${escapeHtml(intro)}</p>
-  <table style="border-collapse:collapse;margin:12px 0;">${rows}</table>
-  <p>${escapeHtml(outcome)}</p>
-  <p>${escapeHtml(ask)}</p>
-  <p>${signOff.map(escapeHtml).join("<br>")}</p>
-  <p style="color:#888;font-size:12px;">This report was sent automatically from our goods-in check.</p>
-</body>
-</html>`;
-
-  return { subject, text, html };
-}
+// The supplier email is one per delivery receive, covering every issue line
+// with the photos attached: delivery-issues.ts deliveryIssueReportEmail.
 
 // ── Which lines are reported, and how the receiver is told ────────────────
 
@@ -262,37 +164,4 @@ export function shelfLifeReportFor(input: {
     return check?.short ? { decision: "rejected", check, useByDate: input.rejected.useByDate! } : null;
   }
   return null;
-}
-
-export type ShelfLifeEmailStatus = "pending" | "sent" | "failed" | "no_address" | "skipped";
-
-/** One reported line, as the server hands it back to the receive dialog. */
-export interface ShelfLifeReportOutcome {
-  lineId: number;
-  ingredientName: string;
-  supplierName: string;
-  decision: ShelfLifeDecision;
-  emailStatus: ShelfLifeEmailStatus;
-  /** The account manager's name, when there is one. */
-  recipientName: string | null;
-  /** True when this line was already reported on an earlier save. */
-  alreadyReported: boolean;
-}
-
-/** The confirmation the receiver sees: "Emailed James Clarke at Brakes
- *  automatically" — or what went wrong, so someone else can tell them. */
-export function shelfLifeToldText(o: ShelfLifeReportOutcome): { ok: boolean; text: string } {
-  const at = o.supplierName || "the supplier";
-  const who = o.recipientName?.trim() ? `${o.recipientName.trim()} at ${at}` : at;
-  if (o.alreadyReported) return { ok: true, text: `${at} were already told about the ${o.ingredientName}.` };
-  switch (o.emailStatus) {
-    case "sent":
-      return { ok: true, text: `Emailed ${who} automatically about the ${o.ingredientName}.` };
-    case "no_address":
-      return { ok: false, text: `${at} have no account manager email set, so they weren't told about the ${o.ingredientName}. Add it on the supplier's record and tell a manager.` };
-    case "skipped":
-      return { ok: false, text: `Email to ${at} not sent — this copy of the app doesn't send emails. The decision on the ${o.ingredientName} is recorded.` };
-    default:
-      return { ok: false, text: `Couldn't email ${who} about the ${o.ingredientName}. The decision is recorded — tell a manager so they can let ${at} know.` };
-  }
 }

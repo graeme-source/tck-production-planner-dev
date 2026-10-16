@@ -10,6 +10,7 @@ import {
   ingredientsTable,
   stockEntriesTable,
   usersTable,
+  deliveryIssuePhotosTable,
 } from "@workspace/db";
 import { eq, and, gte, lte, sql, desc, asc, inArray } from "drizzle-orm";
 import { londonDateString } from "../lib/london-time";
@@ -17,11 +18,14 @@ import { adjustInventoryLevel } from "../services/shopify";
 import { outstandingCollectionsForOrder } from "./collections";
 import { receiptDelta, stockQuantityForReceipt } from "../lib/goods-in-stock";
 import { z } from "zod";
-import { effectiveReceived } from "@workspace/goods-in";
+import { effectiveReceived, issuePhotoGate, MAX_ISSUE_PHOTOS, type DeliveryIssueOutcome } from "@workspace/goods-in";
 import { validate } from "../middleware/validate";
 import { sendShortDeliveryReport, type ShortReportOutcome } from "../lib/short-delivery-report";
-import { recordShelfLifeReports, shelfLifeReportsForOrder, type ShelfLifeCandidate } from "../lib/shelf-life-report";
-import type { ShelfLifeReportOutcome } from "@workspace/goods-in";
+import {
+  recordDeliveryIssues, deliveryIssuesForOrder, countNewIssues, deliveryDayForOrder, validIssuePhotoIds,
+  type ShelfLifeCandidate, type DamageCandidate,
+} from "../lib/delivery-issue-report";
+import { singleFileUpload } from "../middleware/upload";
 
 const router: IRouter = Router();
 
@@ -502,12 +506,14 @@ router.get("/:id", async (req, res) => {
     .orderBy(desc(deliveryRecordsTable.receivedAt))
     .limit(1);
 
-  // Short-shelf-life decisions already recorded for this delivery, by line.
-  const shelfLifeReports = await shelfLifeReportsForOrder(id);
+  // Short-shelf-life and damage reports already recorded for this delivery,
+  // by line, with their photos and email status (migrations 0197, 0198).
+  const { shelfLifeReports, damageReports } = await deliveryIssuesForOrder(id);
 
   res.json({
     ...order,
     shelfLifeReports,
+    damageReports,
     createdAt: order.createdAt.toISOString(),
     lines: lines.map((l) => ({
       ...l,
@@ -537,6 +543,69 @@ router.get("/:id", async (req, res) => {
   });
 });
 
+// ── Photos of delivery issues (migration 0198, Graeme 2026-10-16) ─────────
+// Taken at goods-in of every short-dated / damaged item, uploaded BEFORE the
+// receive is saved (the receive needs their ids), attached to the supplier
+// email. The screen compresses to JPEG first; the cap is a backstop.
+const ISSUE_PHOTO_MAX_MB = 8;
+
+router.post(
+  "/:id/issue-photos",
+  singleFileUpload("file", ISSUE_PHOTO_MAX_MB),
+  validate(z.object({})),
+  async (req, res) => {
+    const poId = Number(req.params.id);
+    if (!Number.isInteger(poId) || poId <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+    const userId = req.session.userId;
+    if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+    if (!req.file) { res.status(400).json({ error: "No photo came through — take it again." }); return; }
+    if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(req.file.mimetype)) {
+      res.status(400).json({ error: "That isn't a photo — use the camera." });
+      return;
+    }
+    try {
+      const [order] = await db.select({ id: purchaseOrdersTable.id }).from(purchaseOrdersTable).where(eq(purchaseOrdersTable.id, poId));
+      if (!order) { res.status(404).json({ error: "Purchase order not found" }); return; }
+      const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      const [row] = await db
+        .insert(deliveryIssuePhotosTable)
+        .values({
+          purchaseOrderId: poId,
+          mime: req.file.mimetype,
+          data: req.file.buffer,
+          sizeBytes: req.file.size,
+          uploadedById: userId,
+          uploadedByName: user?.name ?? null,
+        })
+        .returning({ id: deliveryIssuePhotosTable.id });
+      res.status(201).json({ id: row!.id });
+    } catch (err) {
+      console.error("[Deliveries] issue photo upload failed:", err);
+      res.status(500).json({ error: "The photo didn't save — try again." });
+    }
+  },
+);
+
+// GET /issue-photos/:photoId — the bytes, for the thumbnail on a reopened
+// delivery.
+router.get("/issue-photos/:photoId", async (req, res) => {
+  const photoId = Number(req.params.photoId);
+  if (!Number.isInteger(photoId) || photoId <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const [row] = await db
+      .select({ mime: deliveryIssuePhotosTable.mime, data: deliveryIssuePhotosTable.data })
+      .from(deliveryIssuePhotosTable)
+      .where(eq(deliveryIssuePhotosTable.id, photoId));
+    if (!row) { res.status(404).json({ error: "Not found" }); return; }
+    res.setHeader("Content-Type", row.mime);
+    res.setHeader("Cache-Control", "private, max-age=300");
+    res.send(row.data);
+  } catch (err) {
+    console.error("[Deliveries] issue photo read failed:", err);
+    res.status(500).json({ error: "Failed to load the photo" });
+  }
+});
+
 // Every field the receive dialog sends is declared, nested ones included —
 // validate() only passes unknown keys through at the top level, so anything
 // missing from a nested object here would be silently dropped.
@@ -551,6 +620,14 @@ const receiveBody = z.object({
      *  received, and this carries the use-by the receiver saw so the
      *  supplier can be told (migration 0197). */
     shelfLifeRejected: z.object({ useByDate: z.string().min(1) }).nullish(),
+    /** "Damaged / broken" (migration 0198): how many, kept or rejected, and
+     *  a short note. A rejected quantity is already taken off
+     *  quantityReceived by the screen — the server only records it. */
+    damage: z.object({
+      quantity: z.number().positive("The damaged quantity must be more than 0"),
+      disposition: z.enum(["kept", "rejected"]),
+      note: z.string().trim().max(300).nullish(),
+    }).nullish(),
   })).max(500).optional(),
   newLines: z.array(z.object({
     ingredientId: z.number().int().positive(),
@@ -574,6 +651,13 @@ const receiveBody = z.object({
     note: z.string().max(2000).nullish(),
     alsoTellIds: z.array(z.number().int().positive()).max(100).optional(),
   }).optional(),
+  /** Photos of every affected item (uploaded first via POST
+   *  /:id/issue-photos) and the receiver's tick that all of them are in the
+   *  photo(s). Required whenever the save has a new issue line. */
+  issuePhotos: z.object({
+    photoIds: z.array(z.number().int().positive()).max(MAX_ISSUE_PHOTOS),
+    allItemsConfirmed: z.boolean(),
+  }).nullish(),
 });
 
 router.post("/:id/receive", validate(receiveBody), async (req, res) => {
@@ -587,6 +671,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     checkResults,
     notes,
     shortReport,
+    issuePhotos,
   } = req.body as z.infer<typeof receiveBody>;
 
   // A collection scheduled with this delivery must be handed over and signed
@@ -630,6 +715,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
       ingredientCategory: ingredientsTable.category,
       ingredientUnit: ingredientsTable.unit,
       packWeight: ingredientsTable.packWeight,
+      stockInPacks: ingredientsTable.stockInPacks,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
       minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
       perishable: ingredientsTable.perishable,
@@ -665,6 +751,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     ingredientCategory: string | null;
     ingredientUnit: string;
     packWeight: string;
+    stockInPacks: boolean;
     requiresUseByDate: boolean;
     minDeliveryShelfLifeDays: number | null;
     perishable: boolean;
@@ -681,6 +768,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
         ingredientCategory: ingredientsTable.category,
         ingredientUnit: ingredientsTable.unit,
         packWeight: ingredientsTable.packWeight,
+        stockInPacks: ingredientsTable.stockInPacks,
         requiresUseByDate: ingredientsTable.requiresUseByDate,
         minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
         perishable: ingredientsTable.perishable,
@@ -705,6 +793,76 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     }
   }
 
+  // Delivery issues — short shelf life and damaged / broken (migrations
+  // 0197, 0198). Worked out from what will be saved, BEFORE anything is
+  // written: a save with a new issue line must carry at least one uploaded
+  // photo of the affected items and the "all items are in the photo(s)"
+  // tick (Graeme, 2026-10-16: the photo is mandatory, no way round it).
+  const lineName = (l: ExistingLineInfo) => l.ingredientName ?? l.description ?? "Miscellaneous item";
+  const shelfLifeCandidates: ShelfLifeCandidate[] = [];
+  const damageCandidates: DamageCandidate[] = [];
+  for (const line of lines || []) {
+    const existing = existingLineMap.get(line.lineId)!;
+    const newTotal = effectiveReceived(line.checked, line.quantityReceived);
+    const qty = { unit: existing.unit, nativeUnit: existing.ingredientUnit, packWeight: existing.packWeight, stockInPacks: existing.stockInPacks };
+    shelfLifeCandidates.push({
+      lineId: line.lineId,
+      ingredientId: existing.ingredientId,
+      ingredientName: lineName(existing),
+      minDays: existing.minDeliveryShelfLifeDays ?? null,
+      quantityReceived: newTotal,
+      // A rejected line reports what came on the truck — what the box
+      // showed, else what was ordered.
+      quantityForReport: newTotal > 0
+        ? newTotal
+        : (Number(line.quantityReceived) > 0 ? Number(line.quantityReceived) : Number(existing.quantityOrdered)),
+      qty,
+      useByDate: newTotal > 0 ? (line.useByDate || null) : null,
+      rejected: line.shelfLifeRejected ?? null,
+    });
+    if (line.damage) {
+      damageCandidates.push({
+        lineId: line.lineId,
+        ingredientId: existing.ingredientId,
+        ingredientName: lineName(existing),
+        quantityReceived: newTotal,
+        qty,
+        damage: { quantity: line.damage.quantity, disposition: line.damage.disposition, note: line.damage.note ?? null },
+      });
+    }
+  }
+  // Lines added at the door: checked for shelf life (they're always new).
+  const newLineShelfLife = (nl: NonNullable<typeof newLines>[number]): ShelfLifeCandidate => {
+    const ing = newLineIngredientMap.get(nl.ingredientId)!;
+    const received = newLineReceived(nl);
+    return {
+      lineId: null,
+      ingredientId: nl.ingredientId,
+      ingredientName: ing.ingredientName,
+      minDays: ing.minDeliveryShelfLifeDays ?? null,
+      quantityReceived: received,
+      quantityForReport: received,
+      qty: { unit: nl.unit, nativeUnit: ing.ingredientUnit, packWeight: ing.packWeight, stockInPacks: ing.stockInPacks },
+      useByDate: received > 0 ? (nl.useByDate || null) : null,
+    };
+  };
+  const deliveryDate = await deliveryDayForOrder(poId);
+  const photoIds = await validIssuePhotoIds(poId, issuePhotos?.photoIds ?? []);
+  const newIssueCount = await countNewIssues({
+    deliveryDate,
+    shelfLife: [...shelfLifeCandidates, ...(newLines ?? []).map(newLineShelfLife)],
+    damage: damageCandidates,
+  });
+  const gate = issuePhotoGate({
+    newIssueCount,
+    uploadedPhotoCount: photoIds.length,
+    allItemsConfirmed: issuePhotos?.allItemsConfirmed === true,
+  });
+  if (!gate.ok) {
+    res.status(400).json({ error: gate.message, photoRequired: true });
+    return;
+  }
+
   const stockInserts: {
     ingredientId: number;
     quantity: number;
@@ -720,8 +878,6 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
   // are pushed best-effort after the local writes: a Shopify hiccup must
   // never fail goods-in.
   const shopifyPushes = new Map<number, { ingredientName: string; variantId: string; units: number }>();
-  // Lines to check against their ingredient's minimum shelf life on delivery.
-  const shelfLifeCandidates: ShelfLifeCandidate[] = [];
   const queueShopifyPush = (
     ingredientId: number | null,
     ingredientName: string | null,
@@ -747,21 +903,6 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     // cached screen can't book ghost stock either.
     const newTotal = effectiveReceived(line.checked, line.quantityReceived);
     const delta = receiptDelta(previousReceived, newTotal);
-    shelfLifeCandidates.push({
-      lineId: line.lineId,
-      ingredientId: existing.ingredientId,
-      ingredientName: existing.ingredientName ?? existing.description ?? "Miscellaneous item",
-      minDays: existing.minDeliveryShelfLifeDays ?? null,
-      quantityReceived: newTotal,
-      // A rejected line reports what came on the truck — what the box
-      // showed, else what was ordered.
-      quantityForReport: newTotal > 0
-        ? newTotal
-        : (Number(line.quantityReceived) > 0 ? Number(line.quantityReceived) : Number(existing.quantityOrdered)),
-      unit: existing.unit,
-      useByDate: newTotal > 0 ? (line.useByDate || null) : null,
-      rejected: line.shelfLifeRejected ?? null,
-    });
 
     await db
       .update(purchaseOrderLinesTable)
@@ -810,18 +951,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
         goodsInChecked: received > 0,
       })
       .returning();
-    if (inserted) {
-      shelfLifeCandidates.push({
-        lineId: inserted.id,
-        ingredientId: nl.ingredientId,
-        ingredientName: ing.ingredientName,
-        minDays: ing.minDeliveryShelfLifeDays ?? null,
-        quantityReceived: received,
-        quantityForReport: received,
-        unit: nl.unit,
-        useByDate: received > 0 ? (nl.useByDate || null) : null,
-      });
-    }
+    if (inserted) shelfLifeCandidates.push({ ...newLineShelfLife(nl), lineId: inserted.id });
     if (received > 0) {
       const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName, ing.perishable);
       const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(received, {
@@ -973,24 +1103,29 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     shortReportOutcome = { error: `The goods-in is saved, but the short-delivery report couldn't be sent (${msg}). Tell the Production Flow Manager directly.` };
   }
 
-  // Short shelf life -> the decision is recorded and the supplier's account
-  // manager emailed, once per line. Never fails the goods-in: a problem
-  // comes back to the screen (and stays on the record for managers).
-  let shelfLifeOutcome: ShelfLifeReportOutcome[] | { error: string } = [];
+  // Delivery issues -> recorded per line, and ONE email to the supplier's
+  // account manager for the new ones, with the photos attached. Never fails
+  // the goods-in: a problem comes back to the screen (and stays on the
+  // record for managers).
+  let issueOutcome: DeliveryIssueOutcome | { error: string } | null = null;
   try {
     const [actor] = userId
       ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId))
       : [];
-    shelfLifeOutcome = await recordShelfLifeReports({
+    issueOutcome = await recordDeliveryIssues({
       purchaseOrderId: poId,
       supplierId: order.supplierId,
+      deliveryDate,
       actor: { id: userId ?? null, name: actor?.name ?? null },
-      candidates: shelfLifeCandidates,
+      shelfLife: shelfLifeCandidates,
+      damage: damageCandidates,
+      photoIds,
+      photosConfirmed: issuePhotos?.allItemsConfirmed === true,
     });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[Deliveries] shelf-life report failed for PO #${poId}:`, msg);
-    shelfLifeOutcome = { error: `The goods-in is saved, but the short-shelf-life report couldn't be recorded or sent (${msg}). Tell a manager so the supplier can be told.` };
+    console.error(`[Deliveries] delivery-issue report failed for PO #${poId}:`, msg);
+    issueOutcome = { error: `The goods-in is saved, but the report to the supplier couldn't be recorded or sent (${msg}). Tell a manager so the supplier can be told.` };
   }
 
   res.json({
@@ -998,7 +1133,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     orderStatus: "received",
     shopifySync,
     shortReport: shortReportOutcome,
-    shelfLife: shelfLifeOutcome,
+    issues: issueOutcome,
   });
 });
 

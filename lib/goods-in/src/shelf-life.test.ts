@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  checkShelfLife, normaliseMinShelfLife, shelfLifeDaysOnDelivery, shelfLifeReportEmail,
+  checkShelfLife, normaliseMinShelfLife, shelfLifeDaysOnDelivery,
   shelfLifeWarningText, shortDayLabel, longDayLabel, londonDeliveryDay,
-  shelfLifeReportFor, shelfLifeToldText,
+  shelfLifeReportFor,
 } from "./shelf-life";
 
 describe("shelfLifeDaysOnDelivery", () => {
@@ -107,51 +107,6 @@ describe("shelfLifeWarningText", () => {
   });
 });
 
-describe("shelfLifeReportEmail", () => {
-  const input = {
-    supplierName: "Brakes",
-    recipientName: "Pat Example",
-    orderNumber: 1234,
-    deliveryDate: "2026-10-16",
-    productName: "Diced Chicken Breast",
-    quantityText: "20 kg",
-    useByDate: "2026-10-17",
-    days: 1,
-    minDays: 3,
-    decision: "accepted" as const,
-    receivedByName: "Sam",
-  };
-
-  it("carries every fact the supplier needs", () => {
-    const e = shelfLifeReportEmail(input);
-    expect(e.subject).toBe("Short shelf life on delivery — Diced Chicken Breast — Fri 16 Oct (our order #1234)");
-    for (const s of [
-      "Dear Pat,", "Supplier: Brakes", "Our order number: #1234", "Delivery date: Fri 16 Oct 2026",
-      "Product: Diced Chicken Breast", "Quantity: 20 kg", "Use-by date received: Sat 17 Oct 2026",
-      "Shelf life on arrival: 1 day", "Minimum shelf life agreed: 3 days", "What we did: Accepted (to be used or frozen)",
-      "Checked in by: Sam", "The Calzone Kitchen",
-    ]) {
-      expect(e.text).toContain(s);
-    }
-    expect(e.html).toContain("Diced Chicken Breast");
-    expect(e.html).toContain("The Calzone Kitchen");
-  });
-
-  it("says when we rejected it", () => {
-    const e = shelfLifeReportEmail({ ...input, decision: "rejected" });
-    expect(e.text).toContain("What we did: Rejected");
-    expect(e.text).toContain("We rejected it, so it has not been received into our stock.");
-    expect(e.text).not.toContain("freeze");
-  });
-
-  it("greets politely without a name, and never leaks HTML", () => {
-    const e = shelfLifeReportEmail({ ...input, recipientName: null, productName: "Fish & <Chips>" });
-    expect(e.text.startsWith("Hello,")).toBe(true);
-    expect(e.html).toContain("Fish &amp; &lt;Chips&gt;");
-    expect(e.html).not.toContain("<Chips>");
-  });
-});
-
 describe("shelfLifeReportFor — decided from what was saved", () => {
   const base = { deliveryDate: "2026-10-16", minDays: 3 };
 
@@ -184,27 +139,5 @@ describe("shelfLifeReportFor — decided from what was saved", () => {
 
   it("no minimum, no report", () => {
     expect(shelfLifeReportFor({ deliveryDate: "2026-10-16", minDays: null, quantityReceived: 20, useByDate: "2026-10-17" })).toBeNull();
-  });
-});
-
-describe("shelfLifeToldText", () => {
-  const o = {
-    lineId: 1, ingredientName: "Diced Chicken", supplierName: "Brakes", decision: "accepted" as const,
-    emailStatus: "sent" as const, recipientName: "Pat Example", alreadyReported: false,
-  };
-
-  it("names who was emailed — never the address", () => {
-    expect(shelfLifeToldText(o)).toEqual({ ok: true, text: "Emailed Pat Example at Brakes automatically about the Diced Chicken." });
-    expect(shelfLifeToldText({ ...o, recipientName: null }).text).toBe("Emailed Brakes automatically about the Diced Chicken.");
-  });
-
-  it("says plainly when nobody was told", () => {
-    expect(shelfLifeToldText({ ...o, emailStatus: "no_address" }).ok).toBe(false);
-    expect(shelfLifeToldText({ ...o, emailStatus: "failed" }).text).toMatch(/^Couldn't email Pat Example at Brakes/);
-    expect(shelfLifeToldText({ ...o, emailStatus: "skipped" }).ok).toBe(false);
-  });
-
-  it("an earlier save already told them", () => {
-    expect(shelfLifeToldText({ ...o, alreadyReported: true }).text).toBe("Brakes were already told about the Diced Chicken.");
   });
 });

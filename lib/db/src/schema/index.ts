@@ -64,3 +64,4 @@ export * from "./team_lists";
 export * from "./timing_reviews";
 export * from "./short_delivery_reports";
 export * from "./delivery_shelf_life_reports";
+export * from "./delivery_issue_reports";
