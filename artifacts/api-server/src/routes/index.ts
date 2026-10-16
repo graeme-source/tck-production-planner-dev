@@ -94,6 +94,7 @@ import defectsRouter from "./defects";
 import slowMeatRouter, { slowMeatPlanGuard } from "./slow-meat";
 import planMarginRouter from "./plan-margin";
 import factoryForecastRouter from "./factory-forecast";
+import weekEndStockRouter from "./week-end-stock";
 import leanReviewsRouter from "./lean-reviews";
 import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
@@ -268,6 +269,8 @@ router.use("/slow-meat", slowMeatRouter);
 router.use("/plan-margin", planMarginRouter);
 // Predicted factory number after a plan (late orders + thresholds) — the upper limit.
 router.use("/factory-forecast", factoryForecastRouter);
+// End-of-week factory number for the Dispatch Orders panel (16 Oct 2026).
+router.use("/week-end-stock", weekEndStockRouter);
 router.use("/production-plans", productionPlansRouter);
 // Who is actually on each building table (last batch recorder + who opened
 // it) — read-only, feeds the dashboard chooser and the building lock.
