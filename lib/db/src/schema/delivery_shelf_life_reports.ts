@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, date, numeric } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, numeric, boolean } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { purchaseOrdersTable, purchaseOrderLinesTable } from "./ordering";
 import { suppliersTable } from "./suppliers";
@@ -33,6 +33,10 @@ export const deliveryShelfLifeReportsTable = pgTable("delivery_shelf_life_report
   emailedToName: text("emailed_to_name"),
   emailedTo: text("emailed_to"),
   emailedAt: timestamp("emailed_at"),
+  /** Photos sent with the report (delivery_issue_photos, migration 0198). */
+  photoIds: integer("photo_ids").array().notNull().default([]),
+  /** The receiver ticked that every affected item was in the photos. */
+  photosConfirmed: boolean("photos_confirmed").notNull().default(false),
 });
 
 export type DeliveryShelfLifeReport = typeof deliveryShelfLifeReportsTable.$inferSelect;
