@@ -20,6 +20,8 @@ import { z } from "zod";
 import { effectiveReceived } from "@workspace/goods-in";
 import { validate } from "../middleware/validate";
 import { sendShortDeliveryReport, type ShortReportOutcome } from "../lib/short-delivery-report";
+import { recordShelfLifeReports, shelfLifeReportsForOrder, type ShelfLifeCandidate } from "../lib/shelf-life-report";
+import type { ShelfLifeReportOutcome } from "@workspace/goods-in";
 
 const router: IRouter = Router();
 
@@ -456,6 +458,9 @@ router.get("/:id", async (req, res) => {
       description: purchaseOrderLinesTable.description,
       shelfLifeDays: ingredientsTable.shelfLifeDays,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
+      // Minimum shelf life on delivery — the receive dialog warns on a
+      // use-by shorter than this (migration 0197).
+      minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
       stockInPacks: ingredientsTable.stockInPacks,
       packWeight: ingredientsTable.packWeight,
       // Packs per pallet — lets the receive dialog read "1 pallet — 50 packs".
@@ -497,8 +502,12 @@ router.get("/:id", async (req, res) => {
     .orderBy(desc(deliveryRecordsTable.receivedAt))
     .limit(1);
 
+  // Short-shelf-life decisions already recorded for this delivery, by line.
+  const shelfLifeReports = await shelfLifeReportsForOrder(id);
+
   res.json({
     ...order,
+    shelfLifeReports,
     createdAt: order.createdAt.toISOString(),
     lines: lines.map((l) => ({
       ...l,
@@ -508,12 +517,15 @@ router.get("/:id", async (req, res) => {
       unitPrice: l.unitPrice ? Number(l.unitPrice) : null,
       shelfLifeDays: l.shelfLifeDays ?? null,
       requiresUseByDate: l.requiresUseByDate ?? false,
+      minDeliveryShelfLifeDays: l.minDeliveryShelfLifeDays ?? null,
       defaultStorageLocation: resolveStorageLocation(l.ingredientCategory, l.ingredientName, l.perishable),
     })),
     checks,
     deliveryRecord: latestRecord
       ? {
           id: latestRecord.id,
+          // The delivery day for the shelf-life check on an edit.
+          receivedAt: latestRecord.receivedAt.toISOString(),
           invoiceFiled: latestRecord.invoiceFiled,
           allPutAway: latestRecord.allPutAway,
           kanbansReplaced: latestRecord.kanbansReplaced,
@@ -535,6 +547,10 @@ const receiveBody = z.object({
     useByDate: z.string().nullish(),
     /** Ticked as received. Anything else counts as received 0. */
     checked: z.boolean().optional(),
+    /** "Reject it" on a short-shelf-life warning: the line goes as not
+     *  received, and this carries the use-by the receiver saw so the
+     *  supplier can be told (migration 0197). */
+    shelfLifeRejected: z.object({ useByDate: z.string().min(1) }).nullish(),
   })).max(500).optional(),
   newLines: z.array(z.object({
     ingredientId: z.number().int().positive(),
@@ -615,6 +631,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
       ingredientUnit: ingredientsTable.unit,
       packWeight: ingredientsTable.packWeight,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
+      minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
       perishable: ingredientsTable.perishable,
       shopifyVariantId: ingredientsTable.shopifyVariantId,
       shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
@@ -649,6 +666,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     ingredientUnit: string;
     packWeight: string;
     requiresUseByDate: boolean;
+    minDeliveryShelfLifeDays: number | null;
     perishable: boolean;
     shopifyVariantId: string | null;
     shopifyUnitsPerPack: string | null;
@@ -664,6 +682,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
         ingredientUnit: ingredientsTable.unit,
         packWeight: ingredientsTable.packWeight,
         requiresUseByDate: ingredientsTable.requiresUseByDate,
+        minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
         perishable: ingredientsTable.perishable,
         shopifyVariantId: ingredientsTable.shopifyVariantId,
         shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
@@ -701,6 +720,8 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
   // are pushed best-effort after the local writes: a Shopify hiccup must
   // never fail goods-in.
   const shopifyPushes = new Map<number, { ingredientName: string; variantId: string; units: number }>();
+  // Lines to check against their ingredient's minimum shelf life on delivery.
+  const shelfLifeCandidates: ShelfLifeCandidate[] = [];
   const queueShopifyPush = (
     ingredientId: number | null,
     ingredientName: string | null,
@@ -726,6 +747,21 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     // cached screen can't book ghost stock either.
     const newTotal = effectiveReceived(line.checked, line.quantityReceived);
     const delta = receiptDelta(previousReceived, newTotal);
+    shelfLifeCandidates.push({
+      lineId: line.lineId,
+      ingredientId: existing.ingredientId,
+      ingredientName: existing.ingredientName ?? existing.description ?? "Miscellaneous item",
+      minDays: existing.minDeliveryShelfLifeDays ?? null,
+      quantityReceived: newTotal,
+      // A rejected line reports what came on the truck — what the box
+      // showed, else what was ordered.
+      quantityForReport: newTotal > 0
+        ? newTotal
+        : (Number(line.quantityReceived) > 0 ? Number(line.quantityReceived) : Number(existing.quantityOrdered)),
+      unit: existing.unit,
+      useByDate: newTotal > 0 ? (line.useByDate || null) : null,
+      rejected: line.shelfLifeRejected ?? null,
+    });
 
     await db
       .update(purchaseOrderLinesTable)
@@ -774,6 +810,18 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
         goodsInChecked: received > 0,
       })
       .returning();
+    if (inserted) {
+      shelfLifeCandidates.push({
+        lineId: inserted.id,
+        ingredientId: nl.ingredientId,
+        ingredientName: ing.ingredientName,
+        minDays: ing.minDeliveryShelfLifeDays ?? null,
+        quantityReceived: received,
+        quantityForReport: received,
+        unit: nl.unit,
+        useByDate: received > 0 ? (nl.useByDate || null) : null,
+      });
+    }
     if (received > 0) {
       const location = resolveStorageLocation(ing.ingredientCategory, ing.ingredientName, ing.perishable);
       const { quantity: stockQty, unit: stockUnit } = stockQuantityForReceipt(received, {
@@ -925,11 +973,32 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     shortReportOutcome = { error: `The goods-in is saved, but the short-delivery report couldn't be sent (${msg}). Tell the Production Flow Manager directly.` };
   }
 
+  // Short shelf life -> the decision is recorded and the supplier's account
+  // manager emailed, once per line. Never fails the goods-in: a problem
+  // comes back to the screen (and stays on the record for managers).
+  let shelfLifeOutcome: ShelfLifeReportOutcome[] | { error: string } = [];
+  try {
+    const [actor] = userId
+      ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId))
+      : [];
+    shelfLifeOutcome = await recordShelfLifeReports({
+      purchaseOrderId: poId,
+      supplierId: order.supplierId,
+      actor: { id: userId ?? null, name: actor?.name ?? null },
+      candidates: shelfLifeCandidates,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Deliveries] shelf-life report failed for PO #${poId}:`, msg);
+    shelfLifeOutcome = { error: `The goods-in is saved, but the short-shelf-life report couldn't be recorded or sent (${msg}). Tell a manager so the supplier can be told.` };
+  }
+
   res.json({
     deliveryRecordId,
     orderStatus: "received",
     shopifySync,
     shortReport: shortReportOutcome,
+    shelfLife: shelfLifeOutcome,
   });
 });
 
