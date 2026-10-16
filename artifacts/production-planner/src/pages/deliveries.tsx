@@ -27,7 +27,9 @@ import { UnexpectedDeliveryDialog } from "@/components/unexpected-delivery-dialo
 import {
   canCompleteGoodsIn, initialDecision, initialQuantity, isReceivedOrderStatus, lineStatus, lineToSubmit,
   orderShortage, shortLinesOf, shortSignature, undecidedLines, type LineDecision,
+  checkShelfLife, londonDeliveryDay, shelfLifeToldText, type ShelfLifeReportOutcome,
 } from "@workspace/goods-in";
+import { ShelfLifeWarning, ShelfLifeRejectedNote } from "@/components/deliveries/shelf-life-warning";
 import { usePeople } from "@/components/messages/messages-api";
 import { useShortReportSettings, type ShortReportOutcome } from "@/components/deliveries/short-report-api";
 import { ShortReportStep } from "@/components/deliveries/short-report-step";
@@ -56,6 +58,8 @@ interface POLine {
   useByDate: string | null;
   shelfLifeDays: number | null;
   requiresUseByDate: boolean;
+  /** Minimum shelf life on delivery, days (ingredient setting). */
+  minDeliveryShelfLifeDays?: number | null;
   defaultStorageLocation: string | null;
   stockInPacks?: boolean;
   packWeight?: number | null;
@@ -66,6 +70,8 @@ interface POLine {
 
 interface DeliveryRecordSummary {
   id: number;
+  /** When goods-in was first saved — the delivery day on an edit. */
+  receivedAt?: string;
   invoiceFiled: boolean;
   allPutAway: boolean;
   kanbansReplaced: boolean;
@@ -100,6 +106,8 @@ interface DeliveryOrder {
   hasChilled?: boolean;
   hasFrozen?: boolean;
   deliveryRecord?: DeliveryRecordSummary | null;
+  /** Short-shelf-life decisions already recorded (one per line). */
+  shelfLifeReports?: Array<{ lineId: number; decision: string; useByDate: string; emailStatus: string; emailedToName: string | null }>;
 }
 
 interface CheckConfig {
@@ -232,6 +240,14 @@ interface ReceivingLine {
   stockInPacks?: boolean;
   packWeight?: number | null;
   palletSize?: number | null;
+  /** Minimum shelf life on delivery, days (null = none). */
+  minDeliveryShelfLifeDays: number | null;
+  /** "Accept anyway" tapped on a short-shelf-life warning. */
+  shelfLifeAccepted: boolean;
+  /** "Reject it" tapped: the use-by that was too short (line is Not received). */
+  shelfLifeRejectedUseBy: string | null;
+  /** This line's shelf life was already reported on an earlier save. */
+  shelfLifeReported: boolean;
 }
 
 interface CheckResult {
@@ -357,8 +373,10 @@ function ReceivingDialog({
       const deliveryDate = order.expectedDeliveryDate ? new Date(order.expectedDeliveryDate + "T00:00:00") : new Date();
 
       const orderReceived = isReceivedOrderStatus(order.status);
+      const reportByLine = new Map((order.shelfLifeReports ?? []).map((r) => [r.lineId, r]));
       setLines(
         order.lines.map((l) => {
+          const slReport = reportByLine.get(l.id);
           const facts = { quantityOrdered: l.quantityOrdered, quantityReceived: l.quantityReceived, goodsInChecked: l.goodsInChecked };
           let autoUseByDate = "";
           let useByIsAuto = false;
@@ -388,6 +406,11 @@ function ReceivingDialog({
             stockInPacks: l.stockInPacks,
             packWeight: l.packWeight,
             palletSize: l.palletSize,
+            minDeliveryShelfLifeDays: l.minDeliveryShelfLifeDays ?? null,
+            // Already decided on an earlier save: keep that decision.
+            shelfLifeAccepted: slReport?.decision === "accepted" && slReport.useByDate === existingUseBy,
+            shelfLifeRejectedUseBy: slReport?.decision === "rejected" ? slReport.useByDate : null,
+            shelfLifeReported: !!slReport,
           };
         })
       );
@@ -412,6 +435,16 @@ function ReceivingDialog({
 
   const chilledTempMissing = hasChilled && chilledTemp.trim() === "";
   const frozenTempMissing = hasFrozen && frozenTemp.trim() === "";
+
+  // Shelf life is counted from the London day it's received: today, or the
+  // day goods-in was first saved when editing.
+  const deliveryDay = order.deliveryRecord?.receivedAt ? londonDeliveryDay(order.deliveryRecord.receivedAt) : londonDeliveryDay();
+  const shelfLifeOf = (l: ReceivingLine) => checkShelfLife({ deliveryDate: deliveryDay, useByDate: l.useByDate, minDays: l.minDeliveryShelfLifeDays });
+  // A received line whose use-by is short needs Accept anyway / Reject it.
+  const shelfLifeUndecided = lines
+    .map((l, i) => ({ l, i }))
+    .filter(({ l }) => l.decision === "received" && l.quantityReceived > 0 && !l.shelfLifeAccepted && shelfLifeOf(l)?.short)
+    .map(({ i }) => i);
 
   const missingRequiredUseBy = lines.some(
     (l) => l.decision === "received" && l.requiresUseByDate && l.quantityReceived > 0 && !l.useByDate
@@ -458,6 +491,7 @@ function ReceivingDialog({
     !chilledTempMissing &&
     !frozenTempMissing &&
     !missingRequiredUseBy &&
+    shelfLifeUndecided.length === 0 &&
     allDecided;
 
   const receiveMutation = useMutation({
@@ -477,6 +511,9 @@ function ReceivingDialog({
               quantityReceived: sent.quantityReceived,
               useByDate: sent.checked ? (l.useByDate || null) : null,
               checked: sent.checked,
+              // "Reject it" on a short shelf life: the server records it and
+              // tells the supplier.
+              shelfLifeRejected: !sent.checked && l.shelfLifeRejectedUseBy ? { useByDate: l.shelfLifeRejectedUseBy } : null,
             };
           }),
           chilledTempC: chilledTemp ? Number(chilledTemp) : null,
@@ -494,7 +531,24 @@ function ReceivingDialog({
       }
       return res.json();
     },
-    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }>; shortReport?: ShortReportOutcome }) => {
+    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }>; shortReport?: ShortReportOutcome; shelfLife?: ShelfLifeReportOutcome[] | { error: string } }) => {
+      // Short shelf life: say who was told — or plainly that nobody was.
+      const sl = data?.shelfLife;
+      if (sl && !Array.isArray(sl)) {
+        toast({ title: "Supplier not told about the short shelf life", description: sl.error, variant: "destructive" });
+      } else {
+        for (const o of sl ?? []) {
+          if (o.alreadyReported) continue;
+          const told = shelfLifeToldText(o);
+          toast({
+            title: told.ok
+              ? `${o.supplierName} have been told automatically`
+              : `${o.supplierName} not told — short shelf life`,
+            description: told.text,
+            ...(told.ok ? {} : { variant: "destructive" as const }),
+          });
+        }
+      }
       // Say where the short-delivery report went — or that it didn't.
       const sr = data?.shortReport;
       if (sr && "error" in sr) {
@@ -656,9 +710,21 @@ function ReceivingDialog({
                   const next = [...lines];
                   // Received with nothing in the box means the ordered amount.
                   const qty = decision === "received" && !(next[idx].quantityReceived > 0) ? next[idx].quantityOrdered : next[idx].quantityReceived;
-                  next[idx] = { ...next[idx], decision, quantityReceived: qty };
+                  // A plain Received / Not received tap undoes any shelf-life call.
+                  next[idx] = { ...next[idx], decision, quantityReceived: qty, shelfLifeAccepted: false, shelfLifeRejectedUseBy: null };
                   editLines(next);
                 };
+                const slCheck = shelfLifeOf(line);
+                const slShort = received && line.quantityReceived > 0 && !!slCheck?.short;
+                const rejectedCheck = notReceived && line.shelfLifeRejectedUseBy
+                  ? checkShelfLife({ deliveryDate: deliveryDay, useByDate: line.shelfLifeRejectedUseBy, minDays: line.minDeliveryShelfLifeDays })
+                  : null;
+                const setShelfLife = (patch: Partial<ReceivingLine>) => {
+                  const next = [...lines];
+                  next[idx] = { ...next[idx], ...patch };
+                  editLines(next);
+                };
+                const showUseBy = line.requiresUseByDate || line.minDeliveryShelfLifeDays != null;
                 return (
                   <div
                     key={line.lineId}
@@ -666,6 +732,8 @@ function ReceivingDialog({
                       "rounded-xl p-3 space-y-2 transition-colors",
                       notReceived
                         ? "border-2 border-red-400 bg-red-50/60 dark:bg-red-950/20 dark:border-red-800"
+                        : slShort
+                        ? "border-2 border-red-600 bg-red-50/40 dark:bg-red-950/20"
                         : useByMissing
                         ? "border-2 border-destructive bg-destructive/5"
                         : discrepancy
@@ -730,9 +798,17 @@ function ReceivingDialog({
                         <X className="w-5 h-5" strokeWidth={3} /> Not received
                       </button>
                     </div>
+                    {notReceived && line.shelfLifeRejectedUseBy && (
+                      <ShelfLifeRejectedNote
+                        check={rejectedCheck}
+                        useByDate={line.shelfLifeRejectedUseBy}
+                        supplierName={order.supplierName}
+                        alreadyReported={line.shelfLifeReported}
+                      />
+                    )}
                     {notReceived && (
                       <p className="text-base font-semibold text-red-800 dark:text-red-300">
-                        Nothing arrived — {line.quantityOrdered} {line.unit} ordered. It goes on the short-delivery report.
+                        Nothing {line.shelfLifeRejectedUseBy ? "kept" : "arrived"} — {line.quantityOrdered} {line.unit} ordered. It goes on the short-delivery report.
                       </p>
                     )}
                     {!notReceived && (() => {
@@ -781,7 +857,7 @@ function ReceivingDialog({
                         editLines(next);
                       };
                       return (
-                    <div className={cn("grid gap-3", line.requiresUseByDate ? "grid-cols-3" : "grid-cols-2")} onClick={(e) => e.stopPropagation()}>
+                    <div className={cn("grid gap-3", showUseBy ? "grid-cols-3" : "grid-cols-2")} onClick={(e) => e.stopPropagation()}>
                       <div className="min-w-0">
                         <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
                         <span className="text-xl font-bold tabular-nums">
@@ -853,22 +929,23 @@ function ReceivingDialog({
                           </button>
                         </div>
                       </div>
-                      {line.requiresUseByDate && (
+                      {showUseBy && (
                         <div className="min-w-0">
                           <label className="text-base font-semibold text-muted-foreground block mb-1">
-                            Use-by Date<span className="text-destructive ml-1">*</span>
+                            Use-by Date{line.requiresUseByDate && <span className="text-destructive ml-1">*</span>}
                           </label>
                           <input
                             type="date"
                             value={line.useByDate}
                             onChange={(e) => {
                               const next = [...lines];
-                              next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false };
+                              // A new date needs a new shelf-life decision.
+                              next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false, shelfLifeAccepted: false };
                               editLines(next);
                             }}
                             className={cn(
                               "w-full min-w-0 px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
-                              useByMissing ? "border-destructive" : "border-border"
+                              useByMissing || slShort ? "border-destructive border-2" : "border-border"
                             )}
                           />
                         </div>
@@ -876,6 +953,16 @@ function ReceivingDialog({
                     </div>
                       );
                     })()}
+                    {slShort && slCheck && (
+                      <ShelfLifeWarning
+                        check={slCheck}
+                        supplierName={order.supplierName}
+                        accepted={line.shelfLifeAccepted}
+                        onAccept={() => setShelfLife({ shelfLifeAccepted: true, shelfLifeRejectedUseBy: null })}
+                        onReject={() => setShelfLife({ decision: "not_received", shelfLifeAccepted: false, shelfLifeRejectedUseBy: line.useByDate })}
+                        onUndo={() => setShelfLife({ shelfLifeAccepted: false })}
+                      />
+                    )}
                     {discrepancy && (() => {
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
                       const pw = Number(line.packWeight) || 1;
@@ -1047,6 +1134,16 @@ function ReceivingDialog({
             </div>
           )}
 
+          {shelfLifeUndecided.length > 0 && (
+            <div className="rounded-xl border-2 border-red-500 bg-red-50 dark:bg-red-950/30 p-3 text-base text-red-900 dark:text-red-200">
+              <p className="font-bold flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                Short shelf life — choose Accept anyway or Reject it for:
+              </p>
+              <p className="mt-1">{shelfLifeUndecided.map((i) => lines[i]?.ingredientName).join(", ")}</p>
+            </div>
+          )}
+
           <button
             onClick={() => (needsShortStep ? setDialogStep("short") : receiveMutation.mutate())}
             disabled={!canReceive || receiveMutation.isPending}
@@ -1063,6 +1160,8 @@ function ReceivingDialog({
               <><AlertCircle className="w-4 h-4" /> Mark every item Received or Not received first</>
             ) : missingRequiredUseBy ? (
               <><AlertCircle className="w-4 h-4" /> Set use-by dates for required items</>
+            ) : shelfLifeUndecided.length > 0 ? (
+              <><AlertCircle className="w-4 h-4" /> Accept or reject the short-dated {shelfLifeUndecided.length === 1 ? "item" : "items"} first</>
             ) : !canReceive ? (
               <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
             ) : needsShortStep ? (
