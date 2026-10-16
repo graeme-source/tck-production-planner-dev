@@ -13,7 +13,8 @@
  *   emails   Klaviyo email campaigns (sent → the usual rate; scheduled →
  *            due before a cut-off) plus planned rows on the email plan
  *            (marketing_emails) not yet scheduled in Klaviyo.
- *   settings the six thresholds in app_settings (factory_forecast_*).
+ *   settings the six levels in app_settings (factory_forecast_*) and the
+ *            fewest batches a day (factory_min_batches_per_day).
  */
 import { db, appSettingsTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
@@ -139,11 +140,13 @@ export async function loadFactoryThresholds(): Promise<FactoryThresholds> {
   return parseFactoryThresholds({
     targetLow: map.get(keys.targetLow), targetHigh: map.get(keys.targetHigh), warnAt: map.get(keys.warnAt),
     maxAt: map.get(keys.maxAt), lowAmber: map.get(keys.lowAmber), lowRed: map.get(keys.lowRed),
+    minBatchesPerDay: map.get(keys.minBatchesPerDay),
   });
 }
 
-export async function saveFactoryThresholds(t: FactoryThresholds): Promise<void> {
+export async function saveFactoryThresholds(t: Partial<FactoryThresholds>): Promise<void> {
   for (const k of Object.keys(FACTORY_FORECAST_SETTING_KEYS) as Array<keyof FactoryThresholds>) {
+    if (t[k] == null) continue;
     const key = FACTORY_FORECAST_SETTING_KEYS[k];
     const value = String(t[k]);
     await db.insert(appSettingsTable).values({ key, value })

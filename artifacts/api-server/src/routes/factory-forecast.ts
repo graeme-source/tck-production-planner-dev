@@ -6,10 +6,12 @@
  *       { despatches: per despatch before the plan day ends — predicted late
  *         packs + 80% range + how it was worked out; total; recipeShares
  *         (recipeId → share of the last 7 days' calzone sales); emails due;
- *         thresholds }. The screen combines it with its own live rows
+ *         thresholds; history — the fridge at the end of the last few plan
+ *         days, for "time to pull back" }. The screen combines it with its own live rows
  *         (forecastFactoryNumber) so editing batches updates instantly.
  *   GET /factory-forecast/settings   { thresholds }
- *   PUT /factory-forecast/settings   manager+: the six thresholds (autosaved)
+ *   PUT /factory-forecast/settings   manager+: the six levels + the fewest
+ *                                    batches a day (autosaved)
  *
  * Maths: @workspace/stock-prediction (late-orders.ts, factory-forecast.ts).
  * Data: lib/factory-forecast-data.ts (orders cache READ ONLY, Klaviyo READ
@@ -25,6 +27,7 @@ import {
 } from "@workspace/stock-prediction";
 import { loadEmailWindow, loadFactoryThresholds, loadForecastOrders, saveFactoryThresholds } from "../lib/factory-forecast-data";
 import { londonDateString } from "../lib/london-time";
+import { recentPlanDayFactoryNumbers } from "../lib/fridge-history";
 import { getNonDispatchDates, getPreviousDispatchDay } from "./production-plans";
 
 const router: IRouter = Router();
@@ -48,10 +51,15 @@ router.get("/", async (req, res) => {
   const deliveries = despatchDays.map(d => addDays(d, 1));
   const lastCutoff = Math.max(now, ...deliveries.map(d => orderCutoffMs(d)));
 
-  const [{ orders, lines }, emailWindow, thresholds] = await Promise.all([
+  const [{ orders, lines }, emailWindow, thresholds, history] = await Promise.all([
     loadForecastOrders(),
     loadEmailWindow(now, lastCutoff),
     loadFactoryThresholds(),
+    // History is a nice-to-have: without it the screen just skips "time to pull back".
+    recentPlanDayFactoryNumbers(today, planDate).catch(err => {
+      console.warn("[factory-forecast] plan-day history unavailable:", err instanceof Error ? err.message : err);
+      return null;
+    }),
   ]);
   const byDate = indexOrdersByDate(orders);
   const despatches = despatchDays.map((despatchDate, i) => {
@@ -72,6 +80,7 @@ router.get("/", async (req, res) => {
     klaviyoConnected: emailWindow.klaviyoConnected,
     recipeShares: recipeSalesShares(lines, now),
     thresholds,
+    history,
   });
 });
 
@@ -82,6 +91,8 @@ router.get("/settings", async (_req, res) => {
 const n = z.number().int().min(0).max(20_000);
 const SettingsBody = z.object({
   targetLow: n, targetHigh: n, warnAt: n, maxAt: n, lowAmber: n, lowRed: n,
+  // Optional so a screen loaded before this setting existed can still save.
+  minBatchesPerDay: z.number().int().min(0).max(1000).optional(),
 }).refine(t => thresholdsInOrder(t as FactoryThresholds), {
   message: "Keep them in order: too low ≤ low ≤ target from ≤ target to ≤ warning ≤ freezing",
 });
