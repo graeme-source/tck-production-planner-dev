@@ -1,7 +1,7 @@
 /**
  * Sales drivers — the website changelog and the daily facts that plausibly
  * move sales (delivery lead time, sessions, conversion). Created by
- * migration 0089_sales_drivers.sql; see that file for the why.
+ * migration 0197_sales_drivers.sql; see that file for the why.
  */
 import { pgTable, serial, text, integer, boolean, timestamp, date, numeric } from "drizzle-orm/pg-core";
 
