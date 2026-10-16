@@ -1006,6 +1006,19 @@ export function IngredientFormDialog({
               </div>
 
               <div>
+                <label className="text-sm font-medium mb-1 block">Minimum shelf life on delivery <span className="text-xs font-normal text-muted-foreground">(days)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="1" {...register("minDeliveryShelfLifeDays")} className={cn(numInputClass, "pr-12")} placeholder="none" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">days</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  What the supplier promises, counted from the delivery day to the use-by. At goods-in a shorter use-by
+                  shows a big red warning, the receiver accepts or rejects it, and the supplier&apos;s account manager is emailed
+                  automatically. Empty = no minimum.
+                </p>
+              </div>
+
+              <div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" {...register("stockInPacks")} className="w-4 h-4 rounded border-border" />
                   <span className="text-sm font-medium">Count stock in whole packs</span>
