@@ -37,6 +37,7 @@ import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../ser
 import { suggestDeliveryDateFromNote } from "../lib/note-delivery-date";
 import { isEightPackLine } from "../lib/eight-pack-bags";
 import { loadProductTitleToRecipe } from "../lib/eight-pack-recipe-map";
+import { greetingNameOf } from "../lib/order-reschedule";
 
 const router: IRouter = Router();
 
@@ -238,7 +239,7 @@ router.get("/queue", async (_req, res) => {
  * delivery dates. Fire-and-forget: a mail failure never fails the
  * processing, it just logs loudly and reports emailed:false to the UI.
  */
-async function emailDeliverySchedule(order: { name: string; email?: string | null; contact_email?: string | null; customer: { first_name: string; email: string } | null }, deliveryDate: string): Promise<boolean> {
+async function emailDeliverySchedule(order: { name: string; email?: string | null; contact_email?: string | null; customer: { first_name: string; last_name?: string | null; email: string } | null }, deliveryDate: string): Promise<boolean> {
   const to = order.email ?? order.contact_email ?? order.customer?.email;
   if (!to) {
     console.warn(`[wholesale-bags] no customer email on ${order.name} — delivery-date email not sent`);
@@ -247,7 +248,7 @@ async function emailDeliverySchedule(order: { name: string; email?: string | nul
   const friendly = new Date(`${deliveryDate}T00:00:00`).toLocaleDateString("en-GB", {
     weekday: "long", day: "numeric", month: "long",
   });
-  const firstName = order.customer?.first_name?.trim();
+  const firstName = greetingNameOf({ first: order.customer?.first_name, last: order.customer?.last_name }, "");
   const greeting = firstName ? `Hi ${firstName},` : "Hi,";
   const text = `${greeting}
 

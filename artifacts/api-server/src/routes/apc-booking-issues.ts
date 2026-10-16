@@ -26,7 +26,7 @@ import { requireFeature, userCan } from "../lib/feature-access";
 import { requireFulfilmentAccess, resolveRole } from "../lib/fulfilment-access";
 import { londonDateString } from "../lib/london-time";
 import { sendEmail } from "../lib/email";
-import { firstNameOf } from "../lib/order-reschedule";
+import { firstNameOf, greetingNameOf } from "../lib/order-reschedule";
 import { cantDeliverEmail, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { escalationMessage, type IssueAction } from "../lib/apc-booking-issues";
 import { loadTodayReport, todayOpenCount, issueById, toApiIssue, appendIssueAction, setDealtWith, type IssueRow } from "../lib/apc-booking-issues-db";
@@ -102,7 +102,7 @@ router.get("/booking-issues/today/count", requireFulfilmentAccess, async (_req: 
 async function cantDeliverPlan(req: Request, row: IssueRow) {
   const sender = await userName(req);
   const email = cantDeliverEmail({
-    customerFirstName: firstNameOf(row.customer_first_name ?? row.customer_name, "there"),
+    customerFirstName: greetingNameOf({ first: row.customer_first_name, full: row.customer_name }, "there"),
     senderFirstName: firstNameOf(sender, "The Calzone Kitchen"),
     orderName: row.order_name,
   });

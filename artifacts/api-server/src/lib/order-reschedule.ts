@@ -249,3 +249,50 @@ export function firstNameOf(full: string | null | undefined, fallback: string): 
   const first = (full ?? "").trim().split(/\s+/)[0];
   return first || fallback;
 }
+
+// Titles people type into Shopify's first-name box, and how we write them.
+const TITLES: Record<string, string> = {
+  mr: "Mr", mister: "Mr", mrs: "Mrs", missus: "Mrs", ms: "Ms", miss: "Miss", mx: "Mx",
+  dr: "Dr", doctor: "Dr", prof: "Prof", professor: "Prof", sir: "Sir", dame: "Dame",
+  lady: "Lady", lord: "Lord", rev: "Rev", revd: "Revd", reverend: "Rev",
+};
+const titleOf = (word: string): string | null => TITLES[word.toLowerCase().replace(/\.$/, "")] ?? null;
+const isInitial = (word: string): boolean => /^[a-z]\.?$/i.test(word);
+/** "salmon" / "SALMON" → "Salmon"; a name someone typed in mixed case is theirs. */
+function tidyCase(word: string): string {
+  if (word !== word.toLowerCase() && word !== word.toUpperCase()) return word;
+  return word.toLowerCase().replace(/(^|[-'’])(\p{L})/gu, (_m, sep: string, ch: string) => sep + ch.toUpperCase());
+}
+
+/**
+ * Who a customer email says "Hi" to (Graeme, 2026-10-16: Mr K M Salmon typed
+ * "mr" as his first name, and the reschedule email said "Hi mr").
+ *   - A real first name: just that ("Hi Kyra-Lucy").
+ *   - A title in the first-name box, or a first name that's only initials:
+ *     title + surname, the way they gave it ("Hi Mr Salmon"). The surname is
+ *     the last name if Shopify has one, else the last word of the full name.
+ *   - Initials and no title: the full name ("Hi K M Salmon").
+ *   - Nothing usable: the fallback ("Hi there").
+ */
+export function greetingNameOf(
+  name: { first?: string | null; last?: string | null; full?: string | null },
+  fallback: string,
+): string {
+  const firstWords = (name.first ?? "").trim().split(/\s+/).filter(Boolean);
+  const fullWords = (name.full ?? "").trim().split(/\s+/).filter(Boolean);
+  const words = firstWords.length ? firstWords : fullWords;
+  if (words.length === 0) return fallback;
+
+  const title = titleOf(words[0]) ?? (fullWords.length ? titleOf(fullWords[0]) : null);
+  const firstIsTitleOrInitials = titleOf(words[0]) != null || words.every(isInitial);
+  if (!firstIsTitleOrInitials) return tidyCase(words[0]);
+
+  const lastField = (name.last ?? "").trim();
+  const candidates = fullWords.filter(w => !titleOf(w) && !isInitial(w));
+  const surname = lastField || candidates[candidates.length - 1] || "";
+  if (!surname) return fallback;
+  if (title) return `${title} ${tidyCase(surname)}`;
+  // Initials only, no title: the name as they gave it, minus nothing.
+  const rest = fullWords.length ? fullWords : [...words, surname];
+  return rest.map(w => (isInitial(w) ? w.toUpperCase() : tidyCase(w))).join(" ");
+}

@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   nextAvailableDeliveryDate, dayNameFor, toZapietDate, rescheduleTags,
-  withDeliveryDate, friendlyDate, rescheduleEmailText, firstNameOf,
+  withDeliveryDate, friendlyDate, rescheduleEmailText, firstNameOf, greetingNameOf,
 } from "./order-reschedule";
 
 describe("nextAvailableDeliveryDate", () => {
@@ -198,5 +198,35 @@ describe("firstNameOf", () => {
   it("falls back when there is no name", () => {
     expect(firstNameOf(null, "TCK")).toBe("TCK");
     expect(firstNameOf("   ", "TCK")).toBe("TCK");
+  });
+});
+
+describe("greetingNameOf (Graeme, 2026-10-16: 'Hi mr')", () => {
+  it("greets Mr K M Salmon, who typed 'mr' as his first name, as Mr Salmon", () => {
+    expect(greetingNameOf({ first: "mr", full: "Mr K M Salmon" }, "there")).toBe("Mr Salmon");
+    expect(greetingNameOf({ first: "Mister", last: "Salmon" }, "there")).toBe("Mr Salmon");
+  });
+  it("handles other titles, dots and capitals", () => {
+    expect(greetingNameOf({ first: "Mrs.", last: "JONES" }, "there")).toBe("Mrs Jones");
+    expect(greetingNameOf({ first: "dr", full: "Dr Aisha O'Neill" }, "there")).toBe("Dr O'Neill");
+  });
+  it("uses the title from the full name when the first name is only initials", () => {
+    expect(greetingNameOf({ first: "K M", full: "Mr K M Salmon" }, "there")).toBe("Mr Salmon");
+  });
+  it("uses the full name for initials with no title", () => {
+    expect(greetingNameOf({ first: "K", full: "K Salmon" }, "there")).toBe("K Salmon");
+  });
+  it("keeps an ordinary first name, tidying all-lower or all-caps", () => {
+    expect(greetingNameOf({ first: "Kyra-Lucy", full: "Kyra-Lucy Carroll" }, "there")).toBe("Kyra-Lucy");
+    expect(greetingNameOf({ first: "graeme" }, "there")).toBe("Graeme");
+    expect(greetingNameOf({ first: "McKenzie" }, "there")).toBe("McKenzie");
+  });
+  it("falls back when there's nothing usable", () => {
+    expect(greetingNameOf({ first: "mr" }, "there")).toBe("there");
+    expect(greetingNameOf({ first: null, full: "  " }, "there")).toBe("there");
+  });
+  it("reads the full name when the first name is empty", () => {
+    expect(greetingNameOf({ first: "", full: "Miss Ella Hart" }, "there")).toBe("Miss Hart");
+    expect(greetingNameOf({ first: "", full: "Ella Hart" }, "there")).toBe("Ella");
   });
 });

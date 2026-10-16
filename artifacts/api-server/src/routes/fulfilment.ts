@@ -9,7 +9,7 @@ import { recordBookingRun, rescheduleRulesForOrder, appendIssueAction, type Resc
 import { loadOwnership, reconcileBarcodes, scanQueueBarcodes } from "../lib/barcode-store";
 import { MANUAL_TICK_KEY, isManualTickEnabled, checkPackedLines } from "../lib/packing-barcode-gate";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
-import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, toZapietDate } from "../lib/order-reschedule";
+import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, greetingNameOf, toZapietDate } from "../lib/order-reschedule";
 import { rescheduleEmailFor, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { validate } from "../middleware/validate";
 import { requireFeature } from "../lib/feature-access";
@@ -1438,7 +1438,8 @@ async function buildReschedulePlan(orderId: number, fromDate: string, toDate: st
 
   const tagChange = rescheduleTags(order.tags, fromDate, toDate);
   const attrChange = withDeliveryDate(order.noteAttributes, toDate);
-  const customerFirstName = firstNameOf(order.customerFirstName ?? order.shippingName, "there");
+  // "Hi Mr Salmon", not "Hi mr" (2026-10-16): titles and initials are read.
+  const customerFirstName = greetingNameOf({ first: order.customerFirstName, last: order.customerLastName, full: order.shippingName }, "there");
   const senderFirstName = firstNameOf(senderFullName, "The Calzone Kitchen");
 
   return {
