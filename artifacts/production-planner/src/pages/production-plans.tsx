@@ -2793,7 +2793,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   return (
     <>
     <Dialog open={open} onOpenChange={(v) => !v && closeWithGuard()}>
-      <DialogContent className="relative max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
+      <DialogContent className="max-w-[98vw] w-[1600px] bg-card border-border rounded-2xl max-h-[95vh] overflow-hidden flex flex-col p-0">
         <DialogHeader className="px-6 pt-5 pb-4 border-b border-border flex-shrink-0">
           <div className="flex items-center gap-3 flex-wrap pr-10">
             <DialogTitle className="font-display text-xl flex items-center gap-2">
