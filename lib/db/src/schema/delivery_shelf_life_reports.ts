@@ -4,7 +4,7 @@ import { purchaseOrdersTable, purchaseOrderLinesTable } from "./ordering";
 import { suppliersTable } from "./suppliers";
 import { ingredientsTable } from "./ingredients";
 
-// Short shelf life at goods-in (migration 0197): one row per PO line that
+// Short shelf life at goods-in (migration 0198): one row per PO line that
 // arrived with less shelf life than the ingredient's minimum — the receiver's
 // decision and the email to the supplier's account manager. UNIQUE line id =
 // a re-save never re-sends. Rule: lib/goods-in shelf-life.ts (pure); writes:
@@ -33,7 +33,7 @@ export const deliveryShelfLifeReportsTable = pgTable("delivery_shelf_life_report
   emailedToName: text("emailed_to_name"),
   emailedTo: text("emailed_to"),
   emailedAt: timestamp("emailed_at"),
-  /** Photos sent with the report (delivery_issue_photos, migration 0198). */
+  /** Photos sent with the report (delivery_issue_photos, migration 0199). */
   photoIds: integer("photo_ids").array().notNull().default([]),
   /** The receiver ticked that every affected item was in the photos. */
   photosConfirmed: boolean("photos_confirmed").notNull().default(false),

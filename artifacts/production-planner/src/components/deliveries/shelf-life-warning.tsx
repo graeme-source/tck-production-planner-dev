@@ -91,7 +91,7 @@ export function ShelfLifeRecordNote({
     decision: string; useByDate: string; shelfLifeDays: number; minShelfLifeDays: number;
     decidedByName: string | null; decidedAt: string;
     emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
-    /** Photos sent with the report (migration 0198). */
+    /** Photos sent with the report (migration 0199). */
     photoIds?: number[];
   };
   supplierName: string;

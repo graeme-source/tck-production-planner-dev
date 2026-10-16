@@ -463,7 +463,7 @@ router.get("/:id", async (req, res) => {
       shelfLifeDays: ingredientsTable.shelfLifeDays,
       requiresUseByDate: ingredientsTable.requiresUseByDate,
       // Minimum shelf life on delivery — the receive dialog warns on a
-      // use-by shorter than this (migration 0197).
+      // use-by shorter than this (migration 0198).
       minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
       stockInPacks: ingredientsTable.stockInPacks,
       packWeight: ingredientsTable.packWeight,
@@ -507,7 +507,7 @@ router.get("/:id", async (req, res) => {
     .limit(1);
 
   // Short-shelf-life and damage reports already recorded for this delivery,
-  // by line, with their photos and email status (migrations 0197, 0198).
+  // by line, with their photos and email status (migrations 0198, 0199).
   const { shelfLifeReports, damageReports } = await deliveryIssuesForOrder(id);
 
   res.json({
@@ -543,7 +543,7 @@ router.get("/:id", async (req, res) => {
   });
 });
 
-// ── Photos of delivery issues (migration 0198, Graeme 2026-10-16) ─────────
+// ── Photos of delivery issues (migration 0199, Graeme 2026-10-16) ─────────
 // Taken at goods-in of every short-dated / damaged item, uploaded BEFORE the
 // receive is saved (the receive needs their ids), attached to the supplier
 // email. The screen compresses to JPEG first; the cap is a backstop.
@@ -618,9 +618,9 @@ const receiveBody = z.object({
     checked: z.boolean().optional(),
     /** "Reject it" on a short-shelf-life warning: the line goes as not
      *  received, and this carries the use-by the receiver saw so the
-     *  supplier can be told (migration 0197). */
+     *  supplier can be told (migration 0198). */
     shelfLifeRejected: z.object({ useByDate: z.string().min(1) }).nullish(),
-    /** "Damaged / broken" (migration 0198): how many, kept or rejected, and
+    /** "Damaged / broken" (migration 0199): how many, kept or rejected, and
      *  a short note. A rejected quantity is already taken off
      *  quantityReceived by the screen — the server only records it. */
     damage: z.object({
@@ -794,7 +794,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
   }
 
   // Delivery issues — short shelf life and damaged / broken (migrations
-  // 0197, 0198). Worked out from what will be saved, BEFORE anything is
+  // 0198, 0199). Worked out from what will be saved, BEFORE anything is
   // written: a save with a new issue line must carry at least one uploaded
   // photo of the affected items and the "all items are in the photo(s)"
   // tick (Graeme, 2026-10-16: the photo is mandatory, no way round it).

@@ -10,7 +10,7 @@ const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
   },
 });
 
-// Delivery issues reported with photos (migration 0198, Graeme 2026-10-16).
+// Delivery issues reported with photos (migration 0199, Graeme 2026-10-16).
 // Photos of every affected item (use-by dates / damage showing), taken at
 // goods-in and attached to the ONE supplier email per receive. Rules:
 // lib/goods-in delivery-issues.ts (pure); writes: api-server

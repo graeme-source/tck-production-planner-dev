@@ -25,7 +25,7 @@ export const suppliersTable = pgTable("suppliers", {
   // Minimum order spend in £ (e.g. 75.00). NULL = no minimum. The Orders page
   // warns when a draft order is below it and suggests items to move across.
   minimumOrderValue: numeric("minimum_order_value", { precision: 10, scale: 2 }),
-  // The supplier's account manager (migration 0197). Shown on the supplier
+  // The supplier's account manager (migration 0198). Shown on the supplier
   // record and in the Contacts directory; short-shelf-life reports from
   // goods-in are emailed here.
   accountManagerName: text("account_manager_name"),

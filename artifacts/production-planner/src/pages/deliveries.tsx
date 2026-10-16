@@ -116,7 +116,7 @@ interface DeliveryOrder {
     emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
     photoIds?: number[];
   }>;
-  /** Damaged / broken reports already recorded (one per line, migration 0198). */
+  /** Damaged / broken reports already recorded (one per line, migration 0199). */
   damageReports?: Array<{
     lineId: number; quantity: number; unit: string | null; note: string | null; disposition: string;
     reportedByName: string | null; reportedAt: string;

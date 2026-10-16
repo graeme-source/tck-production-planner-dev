@@ -72,7 +72,7 @@ router.get("/", async (_req: Request, res: Response) => {
     id: suppliersTable.id, name: suppliersTable.name, contactName: suppliersTable.contactName,
     phone: suppliersTable.phone, orderingPhone: suppliersTable.orderingPhone,
     email: suppliersTable.email, website: suppliersTable.website,
-    // Account manager (migration 0197) — edited on the supplier's record.
+    // Account manager (migration 0198) — edited on the supplier's record.
     accountManagerName: suppliersTable.accountManagerName,
     accountManagerEmail: suppliersTable.accountManagerEmail,
   }).from(suppliersTable).orderBy(asc(suppliersTable.name));

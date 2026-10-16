@@ -57,7 +57,7 @@ export const ingredientsTable = pgTable("ingredients", {
   requiresUseByDate: boolean("requires_use_by_date").notNull().default(false),
   // Minimum shelf life on delivery, in whole days from the delivery day to
   // the use-by (NULL = none). Goods-in warns on anything shorter and the
-  // supplier's account manager is emailed (migration 0197). Objective D.
+  // supplier's account manager is emailed (migration 0198). Objective D.
   minDeliveryShelfLifeDays: integer("min_delivery_shelf_life_days"),
   // Prep-label rules: food-safe days after OPENING (shelfLifeDays stays the
   // unopened figure) and after DEFROSTING. Null = category default from

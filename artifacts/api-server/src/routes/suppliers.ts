@@ -22,7 +22,7 @@ const minimumOrderValueField = z
     return Math.round(n * 100) / 100;
   })
   .nullish();
-// The supplier's account manager (Graeme, 2026-10-16; migration 0197) —
+// The supplier's account manager (Graeme, 2026-10-16; migration 0198) —
 // short-shelf-life reports from goods-in are emailed here. "" clears.
 const accountManagerNameField = z.string().trim().max(200).nullish().transform(v => (v ? v : v === undefined ? undefined : null));
 const accountManagerEmailField = z

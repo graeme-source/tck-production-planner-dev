@@ -18,7 +18,7 @@ const router: IRouter = Router();
 // validated here: a non-negative £ amount, or null to clear.
 const secondaryCostPerPackField = z.coerce.number().min(0).max(100000).nullish();
 // Minimum shelf life on delivery, whole days (Graeme, 2026-10-16; migration
-// 0197). null / "" clears it. Goods-in warns on a shorter use-by.
+// 0198). null / "" clears it. Goods-in warns on a shorter use-by.
 const minDeliveryShelfLifeDaysField = z
   .union([z.number(), z.string().trim()])
   .transform((v, ctx) => {
