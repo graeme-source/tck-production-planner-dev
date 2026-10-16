@@ -1,0 +1,39 @@
+/*
+ * Survey formatted text (intro + final page), as the editor and the
+ * customer preview show it. Mirrors the CSS proposed for the Shopify theme
+ * in docs/survey-rich-intro-theme-change.md — keep the two in step.
+ * Class names match the server allow-list (api-server/src/lib/survey-intro.ts).
+ */
+.tck-rich { line-height: 1.6; overflow-wrap: anywhere; }
+.tck-rich--center { text-align: center; }
+.tck-rich p { margin: 0 0 0.75em; }
+.tck-rich > :last-child { margin-bottom: 0; }
+.tck-rich h2 { font-size: 1.35em; font-weight: 700; line-height: 1.25; margin: 0.6em 0 0.4em; }
+.tck-rich h3 { font-size: 1.12em; font-weight: 700; line-height: 1.3; margin: 0.6em 0 0.35em; }
+.tck-rich > h2:first-child, .tck-rich > h3:first-child { margin-top: 0; }
+/* Lists read left-aligned even inside centred text. */
+.tck-rich ul, .tck-rich ol { display: inline-block; text-align: left; margin: 0 0 0.75em; padding-left: 1.4em; }
+.tck-rich ul { list-style: disc; }
+.tck-rich ol { list-style: decimal; }
+.tck-rich li { margin: 0.2em 0; }
+.tck-rich li p { margin: 0; }
+.tck-rich strong { font-weight: 700; }
+.tck-rich em { font-style: italic; }
+.tck-rich u { text-decoration: underline; }
+.tck-rich a { color: #558b2f; text-decoration: underline; text-underline-offset: 2px; }
+.dark .tck-rich a { color: #9ccc65; }
+.tck-rich .tck-align-left { text-align: left; }
+.tck-rich .tck-align-center { text-align: center; }
+
+/* Fonts: the site's heading font (falls back to a rounded system font in
+   the planner) and a system serif — nothing extra to download. */
+.tck-font-heading {
+  font-family: "Swiss 721 Rounded", "Arial Rounded MT Bold", "Arial Rounded MT", "Nunito", system-ui, sans-serif;
+  font-weight: 700;
+}
+.tck-font-serif { font-family: Georgia, "Times New Roman", serif; }
+.tck-size-small { font-size: 0.875em; }
+.tck-size-large { font-size: 1.25em; }
+
+/* Editor surface */
+.tck-rich-editor .ProseMirror { outline: none; min-height: 7rem; padding: 0.75rem 1rem; }

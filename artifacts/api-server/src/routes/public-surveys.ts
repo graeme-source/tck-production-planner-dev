@@ -18,6 +18,9 @@ import { eq, and, asc, inArray } from "drizzle-orm";
 import * as z from "zod";
 import { getRecipeImagesByName } from "../lib/recipe-images";
 import { validateAnswerValue } from "../lib/survey-answers";
+import { surveyIntroHtml } from "../lib/survey-intro";
+import { publicFinalPage } from "../lib/survey-final-page";
+import { loadCurrentOfferText } from "../lib/survey-offer-data";
 
 const router: IRouter = Router();
 
@@ -109,10 +112,21 @@ router.get("/:token", readLimiter, async (req, res) => {
     const recipeById = new Map(recipes.map(r => [r.id, r]));
     const images = await getRecipeImagesByName([...recipeById.values()].map(r => r.name));
 
+    // Only look the offer up when this survey's final page wants it.
+    const offer = survey.finalPageEnabled && survey.finalShowOffer ? await loadCurrentOfferText() : null;
+
     res.json({
       token: survey.token,
       title: survey.title,
+      // Plain text, unchanged: what the current theme code shows.
       intro: survey.intro,
+      // The formatted intro as SANITISED HTML (allow-list in
+      // lib/survey-intro.ts, re-applied here on output). Older surveys get
+      // their plain text as paragraphs. Null = no intro.
+      intro_html: surveyIntroHtml(survey),
+      // Optional page shown after a successful submit; null = switched off
+      // (end as before). Body sanitised, button link re-checked on output.
+      final_page: publicFinalPage(survey, offer),
       status: survey.status as "open" | "closed",
       previous,
       questions: questions.map(q => {

@@ -20,7 +20,25 @@ export const surveysTable = pgTable("surveys", {
   // control on the public API, so it must be unguessable — never sequential.
   token: text("token").notNull().unique(),
   title: text("title").notNull(),
+  // Plain-text intro, kept for the invite email and older theme code. When
+  // intro_html is set, this is derived from it on save.
   intro: text("intro"),
+  // Formatted intro from the rich-text editor, stored SANITISED (allow-list
+  // in api-server/src/lib/survey-intro.ts) and sanitised again on output,
+  // because the public Shopify page renders it as HTML. Null = older survey;
+  // its plain `intro` is turned into paragraphs instead.
+  introHtml: text("intro_html"),
+  // Optional final page after a successful submit (migration 0201). Off by
+  // default; when off the survey ends as it always did. finalHtml is
+  // sanitised like introHtml; finalButtonUrl must be on our shop
+  // (api-server/src/lib/survey-final-page.ts).
+  finalPageEnabled: boolean("final_page_enabled").notNull().default(false),
+  finalHeading: text("final_heading"),
+  finalHtml: text("final_html"),
+  finalButtonLabel: text("final_button_label"),
+  finalButtonUrl: text("final_button_url"),
+  // Also show this week's offer from the email plan (read-only).
+  finalShowOffer: boolean("final_show_offer").notNull().default(false),
   // draft = invisible to the public API (404), open = accepting responses,
   // closed = readable (widget shows "closed") but rejects new responses.
   status: text("status").notNull().default("draft"),

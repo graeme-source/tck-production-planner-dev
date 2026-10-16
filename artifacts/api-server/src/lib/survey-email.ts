@@ -33,7 +33,7 @@ export function buildSurveyInviteHtml(input: { title: string; intro: string | nu
             ${escapeHtml(input.title.toUpperCase())}
           </h1>
           <p style="margin:0 0 10px;font-family:Verdana,Geneva,sans-serif;font-size:16px;line-height:1.4;color:#2e2e2e;text-align:left;">
-            ${escapeHtml(intro)}
+            ${escapeHtml(intro).replace(/\n/g, "<br>")}
           </p>
         </td></tr>
         <tr><td style="padding:18px;">
