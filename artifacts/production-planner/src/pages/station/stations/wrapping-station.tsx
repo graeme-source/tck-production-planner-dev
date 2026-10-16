@@ -558,7 +558,11 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
       const eightPackStored = item.fridgeEightPackQty ?? 0;
       const newRemaining = net - currentStored - eightPackStored - qty;
-      if (newRemaining <= 0 && !item.wrappingComplete) {
+      // Only once everything the recipe will produce has reached wrapping:
+      // buns arrive a sheet at a time from building, and catching up with
+      // the first two sheets must not mark the whole recipe wrapped (the
+      // end-of-day "all wrapped" check would stop waiting for the rest).
+      if (newRemaining <= 0 && !item.wrappingComplete && batchesReadyToWrap(item) >= effBatches(item)) {
         await markWrappingComplete(item.id, true);
       }
       await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
