@@ -23,6 +23,7 @@ import { activeRecipes, archivedRecipes, archivedLabel, draftRecipes, draftMenuT
 import { ArchiveRecipeDialog, ArchivedRecipesPanel, DraftRecipesPanel, MoveToDraftDialog, RecipeArchiveFooter, RecipeDraftBadge } from "@/components/recipe-archive";
 import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
 import { RecipeColourFields } from "@/components/recipe-colour-fields";
+import { RecipeProductionRoutePanel } from "@/components/recipe-production-route-panel";
 import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
 import { EditorForm } from "@/components/recipe-editor/editor-form";
 import { LineRows } from "@/components/recipe-editor/line-rows";
@@ -1079,6 +1080,9 @@ function EditRecipeDialog({
 
               {/* Percentages on the label — automatic QUID, its own autosave */}
               <RecipeQuidPanel recipeId={id} />
+
+              {/* Production route (skip ovens, freezer, Shopify on wrap, KPIs, capacity) */}
+              <RecipeProductionRoutePanel recipeId={id} portionsPerBatch={detail?.portionsPerBatch} packSize={(detail as { packSize?: number | string } | undefined)?.packSize} />
 
               {/* Shopify Inventory Link */}
               <div className="mt-4 border-t border-border pt-4">

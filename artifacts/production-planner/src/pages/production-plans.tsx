@@ -37,7 +37,9 @@ import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chic
 import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
 import { FRIED_CHICKEN_CATEGORY, type StationPlanItem } from "@/pages/station/shared/constants";
 import { mainKitchenItems } from "@workspace/production-schedule";
-import { netTwoPacks } from "@/pages/station/shared/recipe-completion";
+import { netTwoPacks, batchesReadyToWrap, packsWrapped } from "@/pages/station/shared/recipe-completion";
+import { useRecipeRoutes } from "@/lib/recipe-routes";
+import { capacityBreakdown, formatCapacityBreakdown, batchesForPacks, packsFromBatches } from "@workspace/production-schedule";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -474,8 +476,44 @@ interface SortableRowProps {
   margin?: PlanMarginSettings;
 }
 
+/** "6 batches = 48 packs" with a packs box that sets the batches (rounded
+ *  up to whole batches) — for recipes planned in packs (buns). */
+function PacksForBatches({ item, disabled, onBatchChange }: { item: PlanItem; disabled: boolean; onBatchChange: (id: string, n: number) => void }) {
+  const packs = packsFromBatches(item.batchesTarget, item.portionsPerBatch, item.packSize);
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const n = Math.max(0, parseInt(draft, 10) || 0);
+    onBatchChange(item.id, batchesForPacks(n, item.portionsPerBatch, item.packSize));
+    setDraft(null);
+  };
+  return (
+    <div className="mt-1 flex items-center justify-center gap-1 text-[10px] text-muted-foreground">
+      <span>=</span>
+      <input
+        type="number"
+        min={0}
+        value={draft ?? (packs === 0 ? "" : String(packs))}
+        onChange={e => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={e => { if (e.key === "Enter") commit(); }}
+        onFocus={e => e.currentTarget.select()}
+        disabled={disabled}
+        placeholder="0"
+        title="Type packs — the batches round up to whole sheets"
+        className="w-12 px-1 py-0.5 bg-background border border-border rounded text-[11px] text-center tabular-nums"
+      />
+      <span>packs</span>
+    </div>
+  );
+}
+
 function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChange, onRemove, hasUnsavedFridgeStock, fridgeStockJustSaved, onSaveFridgeStock, productionDayIndex, margin }: SortableRowProps) {
   const colourStyle = useRecipeColourLookup();
+  // Recipes with their own capacity equivalence (migration 0202 — buns) are
+  // thought of in PACKS: show packs = batches × packs a batch, and take packs.
+  const { routeOf } = useRecipeRoutes();
+  const plannedInPacks = routeOf(item.recipeId).calzoneBatchEquivalent != null;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: item.id });
 
   const style = {
@@ -667,6 +705,9 @@ function SortableRow({ item, saving, onToggle, onBatchChange, onFridgeStockChang
           style={item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "chip") : undefined}
           className="w-16 px-1.5 py-1 bg-background border-2 rounded-lg text-base font-bold text-center focus-ring disabled:opacity-40 tabular-nums"
         />
+        {plannedInPacks && item.included && (
+          <PacksForBatches item={item} disabled={saving} onBatchChange={onBatchChange} />
+        )}
         {/* Bags are made from these same batches, so their portions never
             become 2-pack stock. Spell the deduction out — otherwise the net
             figure looks like a bug rather than the truth (36 bags swallow
@@ -1911,6 +1952,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   });
 
   const effectiveTotalBatches = totalBatchesOverride ?? calcData?.totalDailyBatches ?? 0;
+  const recipeRoutes = useRecipeRoutes(open);
 
   // Slow-meat tray limit: suggestions are capped to fit, typed-in batches
   // that go over block saving (components/slow-meat-panel.tsx).
@@ -2962,21 +3004,37 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                     </div>
                   </div>
                 )}
-                <div className="flex items-center justify-between text-xs">
-                  <span>Planned</span>
-                  <span>
-                    <span className={cn(
-                      "font-semibold",
-                      items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0) > effectiveTotalBatches
-                        ? "text-red-600 dark:text-red-400"
-                        : "text-foreground"
-                    )}>
-                      {items.filter(i => i.included).reduce((s, i) => s + i.batchesTarget, 0)}
-                    </span>
-                    {" / "}
-                    {effectiveTotalBatches}
-                  </span>
-                </div>
+                {(() => {
+                  // Day capacity used (migration 0202): calzone batches one for
+                  // one, a recipe with an equivalence (buns: 48 packs ≈ 20
+                  // batches) by its equivalence — "90 batches + 48 packs
+                  // Cinnamon Buns (≈20) = 110".
+                  const cap = capacityBreakdown(items.filter(i => i.included).map(i => ({
+                    name: i.recipeName,
+                    category: calcData?.recipes?.find((r: CalcRecipe) => r.recipeId === i.recipeId)?.recipeCategory ?? null,
+                    batchesTarget: i.batchesTarget,
+                    calzoneBatchEquivalent: recipeRoutes.routeOf(i.recipeId).calzoneBatchEquivalent,
+                    portionsPerBatch: i.portionsPerBatch,
+                    packSize: i.packSize,
+                  })));
+                  return (
+                    <div className="text-xs space-y-0.5">
+                      <div className="flex items-center justify-between">
+                        <span>Planned</span>
+                        <span>
+                          <span className={cn("font-semibold", cap.total > effectiveTotalBatches ? "text-red-600 dark:text-red-400" : "text-foreground")}>
+                            {Math.round(cap.total * 10) / 10}
+                          </span>
+                          {" / "}
+                          {effectiveTotalBatches}
+                        </span>
+                      </div>
+                      {cap.equivalents.length > 0 && (
+                        <p className="text-[11px] text-muted-foreground text-right">{formatCapacityBreakdown(cap)}</p>
+                      )}
+                    </div>
+                  );
+                })()}
                 <ScheduleCapacityPanel
                   planDate={planDate}
                   items={items}
@@ -5586,11 +5644,11 @@ function PlanDetail({ planId, onBack }: PlanDetailProps) {
         // Net target matches the "in chiller" figure shown on the wrapping station (gross oven output
         // minus 8-pack bags, wonky, dog bin and short, plus any extras built) — the same shared
         // netTwoPacks the stations use, instead of a copy of the formula that could drift.
-        const wrappingTarget = items.reduce((sum, it) => {
-          const ovenCount = (it.stationCompletions as Record<string, number> | undefined)?.["ovens"] ?? 0;
-          return sum + netTwoPacks(it as StationPlanItem, ovenCount);
-        }, 0);
-        const wrappingDone = items.reduce((sum, it) => sum + (it.fridgeQty ?? 0), 0);
+        // Route-aware (migration 0202): a skip-ovens recipe (buns) is ready to
+        // wrap off the building tables, and wrapped packs include the freezer.
+        const wrappingTarget = items.filter(it => !isChicken(it)).reduce((sum, it) =>
+          sum + netTwoPacks(it as StationPlanItem, batchesReadyToWrap(it as StationPlanItem)), 0);
+        const wrappingDone = items.filter(it => !isChicken(it)).reduce((sum, it) => sum + packsWrapped(it as StationPlanItem), 0);
         stationProgress[s.key] = { done: wrappingDone, target: wrappingTarget };
       } else {
         stationProgress[s.key] = { done: packsDoneAt(items, s.key), target };
