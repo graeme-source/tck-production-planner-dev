@@ -80,6 +80,41 @@ export function ShelfLifeWarning({
   );
 }
 
+/** The recorded decision on a line already saved — and whether the supplier
+ *  email went, so a failed send is visible to whoever opens the delivery. */
+export function ShelfLifeRecordNote({
+  record,
+  supplierName,
+}: {
+  record: {
+    decision: string; useByDate: string; shelfLifeDays: number; minShelfLifeDays: number;
+    decidedByName: string | null; decidedAt: string;
+    emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
+  };
+  supplierName: string;
+}) {
+  const when = new Date(record.decidedAt).toLocaleString("en-GB", {
+    timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+  });
+  const decided = `${record.decision === "rejected" ? "Rejected" : "Accepted"} for short shelf life (${shelfLifePhrase(record.shelfLifeDays)}, use-by ${shortDayLabel(record.useByDate)}, ${record.minShelfLifeDays} promised)${record.decidedByName ? ` by ${record.decidedByName}` : ""}, ${when}.`;
+  const who = record.emailedToName ? `${record.emailedToName} at ${supplierName}` : supplierName;
+  const email =
+    record.emailStatus === "sent" ? { ok: true, text: `Emailed ${who}.` }
+    : record.emailStatus === "no_address" ? { ok: false, text: `Email not sent — ${supplierName} has no account manager email set.` }
+    : record.emailStatus === "skipped" ? { ok: false, text: "Email not sent — this copy of the app doesn't send emails." }
+    : record.emailStatus === "pending" ? { ok: false, text: "Email still being sent (or the send was interrupted)." }
+    : { ok: false, text: `Email failed${record.emailError ? `: ${record.emailError}` : ""}. Tell ${supplierName} directly.` };
+  return (
+    <div className={cn(
+      "rounded-lg px-3 py-2 text-sm flex items-start gap-2",
+      email.ok ? "bg-secondary/60 text-muted-foreground" : "bg-red-100 text-red-900 dark:bg-red-950/40 dark:text-red-200 font-semibold",
+    )}>
+      <Mail className="w-4 h-4 shrink-0 mt-0.5" />
+      <span className="min-w-0 break-words">{decided} {email.text}</span>
+    </div>
+  );
+}
+
 /** On a line that was rejected for its shelf life. */
 export function ShelfLifeRejectedNote({
   check,

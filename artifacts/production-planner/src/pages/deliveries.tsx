@@ -29,7 +29,7 @@ import {
   orderShortage, shortLinesOf, shortSignature, undecidedLines, type LineDecision,
   checkShelfLife, londonDeliveryDay, shelfLifeToldText, type ShelfLifeReportOutcome,
 } from "@workspace/goods-in";
-import { ShelfLifeWarning, ShelfLifeRejectedNote } from "@/components/deliveries/shelf-life-warning";
+import { ShelfLifeWarning, ShelfLifeRejectedNote, ShelfLifeRecordNote } from "@/components/deliveries/shelf-life-warning";
 import { usePeople } from "@/components/messages/messages-api";
 import { useShortReportSettings, type ShortReportOutcome } from "@/components/deliveries/short-report-api";
 import { ShortReportStep } from "@/components/deliveries/short-report-step";
@@ -107,7 +107,11 @@ interface DeliveryOrder {
   hasFrozen?: boolean;
   deliveryRecord?: DeliveryRecordSummary | null;
   /** Short-shelf-life decisions already recorded (one per line). */
-  shelfLifeReports?: Array<{ lineId: number; decision: string; useByDate: string; emailStatus: string; emailedToName: string | null }>;
+  shelfLifeReports?: Array<{
+    lineId: number; decision: string; useByDate: string; shelfLifeDays: number; minShelfLifeDays: number;
+    decidedByName: string | null; decidedAt: string;
+    emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
+  }>;
 }
 
 interface CheckConfig {
@@ -725,6 +729,7 @@ function ReceivingDialog({
                   editLines(next);
                 };
                 const showUseBy = line.requiresUseByDate || line.minDeliveryShelfLifeDays != null;
+                const slRecord = order.shelfLifeReports?.find((r) => r.lineId === line.lineId);
                 return (
                   <div
                     key={line.lineId}
@@ -798,6 +803,9 @@ function ReceivingDialog({
                         <X className="w-5 h-5" strokeWidth={3} /> Not received
                       </button>
                     </div>
+                    {slRecord && (
+                      <ShelfLifeRecordNote record={slRecord} supplierName={order.supplierName} />
+                    )}
                     {notReceived && line.shelfLifeRejectedUseBy && (
                       <ShelfLifeRejectedNote
                         check={rejectedCheck}
