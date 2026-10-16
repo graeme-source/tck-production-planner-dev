@@ -10,8 +10,8 @@
  *   - one delivery_shelf_life_reports row per PO line (UNIQUE), recording
  *     the decision — who, when, use-by, days vs minimum, accepted/rejected;
  *   - one email to the supplier's account manager (suppliers.
- *     account_manager_email), CC the founder — visibly, so the supplier
- *     knows he's aware and can reply to him (Graeme, 2026-10-16) — sent ONLY when
+ *     account_manager_email), CC the founder and accounts — visibly, so the
+ *     supplier knows they're aware and can reply (Graeme, 2026-10-16) — sent ONLY when
  *     that row is first created — a re-save never re-sends;
  *   - the send is logged on the row: sent / failed + error / no_address /
  *     skipped (staging or BLOCK_SHOPIFY_WRITES). A failure never fails the
@@ -32,6 +32,7 @@ import { formatCount, unitWord } from "@workspace/units";
 import { sendEmail, FROM_EMAIL } from "./email";
 import { shouldSkipSideEffect } from "./app-env";
 import { FOUNDER_EMAIL } from "./founder-email";
+import { ACCOUNTS_MAILBOX } from "./accounts-email";
 
 export interface ShelfLifeCandidate {
   lineId: number;
@@ -165,7 +166,7 @@ export async function recordShelfLifeReports(input: {
       try {
         await sendEmail({
           to: recipientEmail,
-          cc: [FOUNDER_EMAIL],
+          cc: [FOUNDER_EMAIL, ACCOUNTS_MAILBOX],
           replyTo: FOUNDER_EMAIL,
           fromName: "The Calzone Kitchen",
           fromEmail: FROM_EMAIL,

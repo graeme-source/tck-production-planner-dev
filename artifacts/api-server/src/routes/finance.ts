@@ -24,6 +24,7 @@ import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
 import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
+import { ACCOUNTS_MAILBOX } from "../lib/accounts-email";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -406,7 +407,6 @@ router.patch("/lines/:id/supplier", requireFinanceAccess, validate(supplierPatch
 // so the accounts mailbox holds the whole thread. Every chase is counted on
 // the line — "have I already emailed them?" is answered by the button
 // itself, which is the pain this exists to kill (Graeme, 2026-09-10).
-const ACCOUNTS_MAILBOX = "accounts@thecalzonekitchen.co.uk";
 const chaseSchema = z.object({
   toEmail: z.string().email(),
   subject: z.string().min(1).max(200),
