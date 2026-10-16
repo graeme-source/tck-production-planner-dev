@@ -14,6 +14,7 @@ import { kitchenLine } from "@workspace/production-schedule";
 import {
   forecastFactoryNumber, recommendBatchChange, needsFreezeConfirmation,
   type FactoryForecast, type FactoryForecastRow, type FactoryRecommendation, type FactoryThresholds, type LateTotal,
+  type PullBackAdvice,
 } from "@workspace/stock-prediction";
 
 export interface ForecastPlanRow {
@@ -69,6 +70,17 @@ export interface PlanFactoryForecast {
   forecast: FactoryForecast;
   recommendation: FactoryRecommendation | null;
   needsConfirm: boolean;
+  /** Average packs per batch across the forecast's planned batches (5 when none). */
+  packsPerBatch: number;
+}
+
+export interface PlanFactoryOptions {
+  /** The day's capacity (whole plan total, all lines). */
+  maxTotalBatches?: number;
+  /** The fewest batches a day (whole plan total, all lines). */
+  minTotalBatches?: number;
+  /** Stock building for days → "time to pull back". */
+  pullBack?: PullBackAdvice | null;
 }
 
 export function planFactoryForecast(
@@ -76,14 +88,24 @@ export function planFactoryForecast(
   ctx: ForecastContext,
   late: LateTotal,
   t: FactoryThresholds,
-  maxTotalBatches?: number,
+  opts: PlanFactoryOptions = {},
 ): PlanFactoryForecast {
   const fr = toForecastRows(rows, ctx);
   const forecast = forecastFactoryNumber(fr, late, t);
+  // The plan total counts every included row; the forecast only touches the
+  // calzone line, so the limits it works to are net of the other batches.
+  const allBatches = rows.reduce((s, r) => s + (r.included ? r.batchesTarget || 0 : 0), 0);
+  const forecastBatches = fr.reduce((s, r) => s + (r.included ? r.plannedBatches : 0), 0);
+  const outside = allBatches - forecastBatches;
+  const madePacks = fr.reduce((s, r) => s + (r.included ? r.plannedBatches * r.packsPerBatch : 0), 0);
+  const limits: { maxTotalBatches?: number; minTotalBatches?: number } = {};
+  if (opts.maxTotalBatches) limits.maxTotalBatches = Math.max(0, opts.maxTotalBatches - outside);
+  if (opts.minTotalBatches) limits.minTotalBatches = Math.max(0, opts.minTotalBatches - outside);
   return {
     forecast,
-    recommendation: recommendBatchChange(fr, late, t, maxTotalBatches ? { maxTotalBatches } : {}),
+    recommendation: recommendBatchChange(fr, late, t, { ...limits, pullBack: opts.pullBack ?? null }),
     needsConfirm: needsFreezeConfirmation(forecast, t),
+    packsPerBatch: forecastBatches > 0 ? madePacks / forecastBatches : 5,
   };
 }
 

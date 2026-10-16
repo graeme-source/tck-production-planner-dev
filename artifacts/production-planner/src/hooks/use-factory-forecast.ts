@@ -6,7 +6,7 @@
  * the card shows known orders only and says so.
  */
 import { useQuery } from "@tanstack/react-query";
-import { DEFAULT_FACTORY_THRESHOLDS, type FactoryThresholds, type LateTotal } from "@workspace/stock-prediction";
+import { DEFAULT_FACTORY_THRESHOLDS, type FactoryHistoryDay, type FactoryThresholds, type LateTotal } from "@workspace/stock-prediction";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -37,6 +37,9 @@ export interface FactoryForecastResponse {
   klaviyoConnected: boolean;
   recipeShares: Record<string, number>;
   thresholds: FactoryThresholds;
+  /** The fridge at the end of the last few plan days (oldest first); null
+   *  when it couldn't be read. Older servers don't send it. */
+  history?: FactoryHistoryDay[] | null;
 }
 
 export const factoryForecastKey = (planDate: string) => ["factory-forecast", planDate] as const;
