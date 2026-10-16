@@ -33,6 +33,15 @@ function isoOf(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
 }
 
+/** The London calendar day of a moment, "2026-10-16" — the delivery day is
+ *  the London day the goods were received. */
+export function londonDeliveryDay(at: Date | string | number = new Date()): string {
+  const d = at instanceof Date ? at : new Date(at);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(d);
+}
+
 /** Whole calendar days from the delivery day to the use-by day (17 Oct
  *  use-by on a 16 Oct delivery = 1). Null when either date is unreadable. */
 export function shelfLifeDaysOnDelivery(deliveryDate: string, useByDate: string): number | null {
@@ -225,4 +234,65 @@ export function shelfLifeReportEmail(r: ShelfLifeReportInput): ShelfLifeEmail {
 </html>`;
 
   return { subject, text, html };
+}
+
+// ── Which lines are reported, and how the receiver is told ────────────────
+
+/** What a saved line means for the shelf-life report. The server decides
+ *  from what was actually saved, not from what the screen claims:
+ *    - received (> 0) with a short use-by → ACCEPTED, whatever was tapped;
+ *    - received 0, and the screen says it was rejected for its shelf life
+ *      with a use-by that is indeed short → REJECTED;
+ *    - anything else → nothing to report (null). */
+export function shelfLifeReportFor(input: {
+  deliveryDate: string;
+  minDays: number | string | null | undefined;
+  quantityReceived: number;
+  /** The use-by saved on the line (received lines). */
+  useByDate?: string | null;
+  /** The screen's "Reject it" — with the use-by the receiver saw. */
+  rejected?: { useByDate: string | null | undefined } | null;
+}): { decision: ShelfLifeDecision; check: ShelfLifeCheck; useByDate: string } | null {
+  if (input.quantityReceived > 0) {
+    const check = checkShelfLife({ deliveryDate: input.deliveryDate, useByDate: input.useByDate, minDays: input.minDays });
+    return check?.short ? { decision: "accepted", check, useByDate: input.useByDate! } : null;
+  }
+  if (input.rejected) {
+    const check = checkShelfLife({ deliveryDate: input.deliveryDate, useByDate: input.rejected.useByDate, minDays: input.minDays });
+    return check?.short ? { decision: "rejected", check, useByDate: input.rejected.useByDate! } : null;
+  }
+  return null;
+}
+
+export type ShelfLifeEmailStatus = "pending" | "sent" | "failed" | "no_address" | "skipped";
+
+/** One reported line, as the server hands it back to the receive dialog. */
+export interface ShelfLifeReportOutcome {
+  lineId: number;
+  ingredientName: string;
+  supplierName: string;
+  decision: ShelfLifeDecision;
+  emailStatus: ShelfLifeEmailStatus;
+  /** The account manager's name, when there is one. */
+  recipientName: string | null;
+  /** True when this line was already reported on an earlier save. */
+  alreadyReported: boolean;
+}
+
+/** The confirmation the receiver sees: "Emailed James Clarke at Brakes
+ *  automatically" — or what went wrong, so someone else can tell them. */
+export function shelfLifeToldText(o: ShelfLifeReportOutcome): { ok: boolean; text: string } {
+  const at = o.supplierName || "the supplier";
+  const who = o.recipientName?.trim() ? `${o.recipientName.trim()} at ${at}` : at;
+  if (o.alreadyReported) return { ok: true, text: `${at} were already told about the ${o.ingredientName}.` };
+  switch (o.emailStatus) {
+    case "sent":
+      return { ok: true, text: `Emailed ${who} automatically about the ${o.ingredientName}.` };
+    case "no_address":
+      return { ok: false, text: `${at} have no account manager email set, so they weren't told about the ${o.ingredientName}. Add it on the supplier's record and tell a manager.` };
+    case "skipped":
+      return { ok: false, text: `Email to ${at} not sent — this copy of the app doesn't send emails. The decision on the ${o.ingredientName} is recorded.` };
+    default:
+      return { ok: false, text: `Couldn't email ${who} about the ${o.ingredientName}. The decision is recorded — tell a manager so they can let ${at} know.` };
+  }
 }

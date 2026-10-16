@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   checkShelfLife, normaliseMinShelfLife, shelfLifeDaysOnDelivery, shelfLifeReportEmail,
-  shelfLifeWarningText, shortDayLabel, longDayLabel,
+  shelfLifeWarningText, shortDayLabel, longDayLabel, londonDeliveryDay,
+  shelfLifeReportFor, shelfLifeToldText,
 } from "./shelf-life";
 
 describe("shelfLifeDaysOnDelivery", () => {
@@ -21,6 +22,16 @@ describe("shelfLifeDaysOnDelivery", () => {
     expect(shelfLifeDaysOnDelivery("2026-10-16T09:00:00Z", "2026-10-18")).toBe(2);
     expect(shelfLifeDaysOnDelivery("2026-10-16", "")).toBeNull();
     expect(shelfLifeDaysOnDelivery("nope", "2026-10-18")).toBeNull();
+  });
+});
+
+describe("londonDeliveryDay", () => {
+  it("uses the London day, not UTC", () => {
+    // 23:30 UTC on 16 Oct is 00:30 on 17 Oct in London (BST).
+    expect(londonDeliveryDay(new Date("2026-10-16T23:30:00Z"))).toBe("2026-10-17");
+    expect(londonDeliveryDay(new Date("2026-10-16T06:00:00Z"))).toBe("2026-10-16");
+    // Winter (GMT): 23:30 UTC is still the same day.
+    expect(londonDeliveryDay(new Date("2026-12-01T23:30:00Z"))).toBe("2026-12-01");
   });
 });
 
@@ -138,5 +149,62 @@ describe("shelfLifeReportEmail", () => {
     expect(e.text.startsWith("Hello,")).toBe(true);
     expect(e.html).toContain("Fish &amp; &lt;Chips&gt;");
     expect(e.html).not.toContain("<Chips>");
+  });
+});
+
+describe("shelfLifeReportFor — decided from what was saved", () => {
+  const base = { deliveryDate: "2026-10-16", minDays: 3 };
+
+  it("a received short-dated line is accepted", () => {
+    const r = shelfLifeReportFor({ ...base, quantityReceived: 20, useByDate: "2026-10-17" })!;
+    expect(r.decision).toBe("accepted");
+    expect(r.check.days).toBe(1);
+    expect(r.useByDate).toBe("2026-10-17");
+  });
+
+  it("a received line with enough shelf life reports nothing", () => {
+    expect(shelfLifeReportFor({ ...base, quantityReceived: 20, useByDate: "2026-10-19" })).toBeNull();
+  });
+
+  it("received counts as accepted even if the screen also said rejected", () => {
+    const r = shelfLifeReportFor({ ...base, quantityReceived: 5, useByDate: "2026-10-17", rejected: { useByDate: "2026-10-17" } })!;
+    expect(r.decision).toBe("accepted");
+  });
+
+  it("a rejected line (received 0) with a short use-by is rejected", () => {
+    const r = shelfLifeReportFor({ ...base, quantityReceived: 0, useByDate: null, rejected: { useByDate: "2026-10-18" } })!;
+    expect(r.decision).toBe("rejected");
+    expect(r.useByDate).toBe("2026-10-18");
+  });
+
+  it("a plain not-received line, or a 'rejection' that wasn't short, reports nothing", () => {
+    expect(shelfLifeReportFor({ ...base, quantityReceived: 0 })).toBeNull();
+    expect(shelfLifeReportFor({ ...base, quantityReceived: 0, rejected: { useByDate: "2026-10-20" } })).toBeNull();
+  });
+
+  it("no minimum, no report", () => {
+    expect(shelfLifeReportFor({ deliveryDate: "2026-10-16", minDays: null, quantityReceived: 20, useByDate: "2026-10-17" })).toBeNull();
+  });
+});
+
+describe("shelfLifeToldText", () => {
+  const o = {
+    lineId: 1, ingredientName: "Diced Chicken", supplierName: "Brakes", decision: "accepted" as const,
+    emailStatus: "sent" as const, recipientName: "Pat Example", alreadyReported: false,
+  };
+
+  it("names who was emailed — never the address", () => {
+    expect(shelfLifeToldText(o)).toEqual({ ok: true, text: "Emailed Pat Example at Brakes automatically about the Diced Chicken." });
+    expect(shelfLifeToldText({ ...o, recipientName: null }).text).toBe("Emailed Brakes automatically about the Diced Chicken.");
+  });
+
+  it("says plainly when nobody was told", () => {
+    expect(shelfLifeToldText({ ...o, emailStatus: "no_address" }).ok).toBe(false);
+    expect(shelfLifeToldText({ ...o, emailStatus: "failed" }).text).toMatch(/^Couldn't email Pat Example at Brakes/);
+    expect(shelfLifeToldText({ ...o, emailStatus: "skipped" }).ok).toBe(false);
+  });
+
+  it("an earlier save already told them", () => {
+    expect(shelfLifeToldText({ ...o, alreadyReported: true }).text).toBe("Brakes were already told about the Diced Chicken.");
   });
 });
