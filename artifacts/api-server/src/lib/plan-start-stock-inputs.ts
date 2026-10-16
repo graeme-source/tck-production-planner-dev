@@ -10,7 +10,7 @@
 
 import { db, productionPlansTable, productionPlanItemsTable, recipesTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
-import { plannedProductionPacks, remainingWrappingPacks } from "@workspace/stock-prediction";
+import { plannedProductionPacks, plannedTwoPackPacks, remainingWrappingPacks } from "@workspace/stock-prediction";
 
 /** Plan statuses whose production is still going to happen (or is happening). */
 const PLANNED_PRODUCTION_STATUSES = ["draft", "active", "prep", "building", "complete"];
@@ -86,5 +86,34 @@ export async function loadPlannedProductionByDate(
     const byRecipe = (out[row.planDate] ??= {});
     byRecipe[row.recipeId] = (byRecipe[row.recipeId] ?? 0) + plannedProductionPacks(row);
   }
+  return out;
+}
+
+/**
+ * date → 2-packs planned for production on that date, net of the plan's
+ * 8-pack bags (plannedTwoPackPacks) — what will land in the factory number.
+ * Same plans and statuses as loadPlannedProductionByDate. A date with no
+ * plan for these recipes is absent.
+ */
+export async function loadPlannedTwoPacksByDate(dates: string[], recipeIds: number[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  if (dates.length === 0 || recipeIds.length === 0) return out;
+  const rows = await db
+    .select({
+      planDate: productionPlansTable.planDate,
+      batchesTarget: productionPlanItemsTable.batchesTarget,
+      eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
+      portionsPerBatch: recipesTable.portionsPerBatch,
+      packSize: recipesTable.packSize,
+    })
+    .from(productionPlanItemsTable)
+    .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
+    .innerJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
+    .where(and(
+      inArray(productionPlansTable.planDate, dates),
+      inArray(productionPlansTable.status, PLANNED_PRODUCTION_STATUSES),
+      inArray(productionPlanItemsTable.recipeId, recipeIds),
+    ));
+  for (const row of rows) out[row.planDate] = (out[row.planDate] ?? 0) + plannedTwoPackPacks(row);
   return out;
 }
