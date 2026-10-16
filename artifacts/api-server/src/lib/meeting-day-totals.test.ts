@@ -14,6 +14,17 @@ describe("meetingDayTotals", () => {
     expect(t).toEqual({ wonky: 7, dogBin: 2, batchesTarget: 120, shortCount: 1, leftoverFillingGrams: 300 });
   });
 
+  // Graeme, 16 Oct 2026: buns are built on the calzone tables but are not in
+  // the KPIs — decided by the recipe flag, not the category.
+  it("leaves recipes flagged out of the KPIs out of batches and rejects", () => {
+    const t = meetingDayTotals([
+      { recipeCategory: "Calzones", batchesTarget: 90, wonlyTotal: 3, dogBinCount: 1 },
+      { recipeCategory: "Desserts", excludeFromKpis: true, batchesTarget: 6, wonlyTotal: 2, dogBinCount: 1 },
+      { recipeCategory: "Desserts", excludeFromKpis: false, batchesTarget: 4, wonlyTotal: 0, dogBinCount: 0 },
+    ]);
+    expect(t).toMatchObject({ wonky: 3, dogBin: 1, batchesTarget: 94 });
+  });
+
   it("treats missing counters as zero", () => {
     expect(meetingDayTotals([{ recipeCategory: null, batchesTarget: null, wonlyTotal: null, dogBinCount: null }]))
       .toEqual({ wonky: 0, dogBin: 0, batchesTarget: 0, shortCount: 0, leftoverFillingGrams: 0 });
