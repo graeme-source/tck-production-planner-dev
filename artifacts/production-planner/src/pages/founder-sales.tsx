@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
 import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
+import { SalesDriversSection } from "@/components/sales-drivers/sales-drivers-section";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -144,6 +145,10 @@ export default function FounderSales() {
         <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
       </div>
       <MarketingCalendar reviewSignal={reviewSignal} />
+
+      {/* What's driving sales — delivery wait, conversion and the website
+          changelog on one timeline (Graeme, 2026-10-16). Objective I. */}
+      <SalesDriversSection canEdit={canSales} />
 
       {/* Bundle calculator — moved here from the old Product Hub (Graeme,
           12 Oct 2026): pricing bundles is a sales job. Full width under the
