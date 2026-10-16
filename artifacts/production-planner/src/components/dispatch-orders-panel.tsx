@@ -6,6 +6,7 @@ import { ArrowRight, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList } from "recharts";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { cn } from "@/lib/utils";
+import { WeekEndStock, WeekEndStockLine } from "@/components/week-end-stock";
 
 // The Dispatch Orders panel — Shopify dispatch packs per day vs calzone packs
 // being made, plus the team-based "could make" forecast. ONE component shown on
@@ -129,6 +130,24 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
     queryFn: () => fetchWeeklyOrders(weekStartStr),
     staleTime: 5 * 60 * 1000,
   });
+
+  // The end-of-week factory number needs the orders already placed for every
+  // day from today to the shown week's Sunday — for next week that includes
+  // the rest of THIS week, so its orders are read too (same query + cache).
+  const currentWeekStr = format(currentMonday, "yyyy-MM-dd");
+  const { data: currentWeekOrders } = useQuery({
+    queryKey: ["shopify-weekly-orders-dashboard", currentWeekStr],
+    queryFn: () => fetchWeeklyOrders(currentWeekStr),
+    staleTime: 5 * 60 * 1000,
+    enabled: weekOffset === 1,
+  });
+  const knownPacksByDate = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of [...(weekOffset === 1 ? currentWeekOrders ?? [] : []), ...(weeklyOrders ?? [])]) m.set(d.date, d.packCount);
+    return m;
+  }, [weeklyOrders, currentWeekOrders, weekOffset]);
+  const weekEndOrdersReady = !!weeklyOrders && (weekOffset !== 1 || !!currentWeekOrders);
+  const showWeekEnd = weekOffset <= 1;
 
   // Seven days plus a WEEK TOTAL column on the end, so the week's making vs
   // dispatching can be read at a glance instead of added up in your head
@@ -371,7 +390,7 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
           {/* Week total on its OWN scale, clearly fenced off from the
               daily bars — as a bar it dwarfed them into unreadability. */}
           {dispatchWeekTotals && (
-            <div className="shrink-0 w-full sm:w-[150px] flex flex-wrap sm:flex-col sm:justify-center gap-x-8 gap-y-2 sm:gap-4 border-t-2 sm:border-t-0 sm:border-l-2 border-border pt-3 mt-3 sm:pt-0 sm:mt-0 sm:pl-4 sm:ml-3">
+            <div className="shrink-0 w-full sm:w-[170px] flex flex-wrap sm:flex-col sm:justify-center gap-x-8 gap-y-2 sm:gap-4 border-t-2 sm:border-t-0 sm:border-l-2 border-border pt-3 mt-3 sm:pt-0 sm:mt-0 sm:pl-4 sm:ml-3">
               <p className="w-full sm:w-auto text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Week total</p>
               <div>
                 <p className="text-3xl font-display font-bold tabular-nums text-primary">
@@ -396,11 +415,18 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
                   <p className="text-xs text-muted-foreground leading-snug">could still make (forecast, unplanned days)</p>
                 </div>
               )}
+              {showWeekEnd && (
+                <WeekEndStock weekStart={weekStartStr} knownPacksByDate={knownPacksByDate} ordersReady={weekEndOrdersReady} />
+              )}
             </div>
           )}
           </>
         )}
       </div>
+
+      {showWeekEnd && weeklyOrders && (
+        <WeekEndStockLine weekStart={weekStartStr} knownPacksByDate={knownPacksByDate} ordersReady={weekEndOrdersReady} />
+      )}
 
       {weeklyOrders && (
         <div className="flex flex-wrap gap-x-4 gap-y-1 mt-4 pt-4 border-t border-border text-sm text-muted-foreground">
