@@ -34,7 +34,7 @@ async function kFetch<T>(apiKey: string, url: string, report?: { body: unknown }
     },
     ...(report ? { body: JSON.stringify(report.body) } : {}),
   });
-  if (!res.ok) throw new Error(`Klaviyo ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  if (!res.ok) throw Object.assign(new Error(`Klaviyo ${res.status}: ${(await res.text()).slice(0, 200)}`), { status: res.status });
   return res.json() as Promise<T>;
 }
 
@@ -128,14 +128,21 @@ async function recentDrafts(apiKey: string, days: number): Promise<KlaviyoCalend
 /**
  * One campaign straight from Klaviyo (read-only GET) — the subject line an
  * approval snapshots must be the one Klaviyo has right now, not a cache.
+ * null = Klaviyo isn't connected; "deleted" = Klaviyo says there's no such
+ * campaign (404) — deleted there, e.g. a clone replaced by a fresh copy.
  */
-export async function klaviyoCampaignById(id: string) {
+export async function klaviyoCampaignById(id: string): Promise<ReturnType<typeof campaignSnapshot> | "deleted" | null> {
   const apiKey = await getKlaviyoKey();
   if (!apiKey) return null;
-  const r = await kFetch<{ data: RawCampaign; included?: RawMessage[] }>(
-    apiKey, `/api/campaigns/${encodeURIComponent(id)}?include=campaign-messages`,
-  );
-  return campaignSnapshot(r.data, r.included ?? []);
+  try {
+    const r = await kFetch<{ data: RawCampaign; included?: RawMessage[] }>(
+      apiKey, `/api/campaigns/${encodeURIComponent(id)}?include=campaign-messages`,
+    );
+    return campaignSnapshot(r.data, r.included ?? []);
+  } catch (err) {
+    if ((err as { status?: number }).status === 404) return "deleted";
+    throw err;
+  }
 }
 
 export async function klaviyoEmailsForRange(from: string, to: string, opts: { withRecentDrafts?: boolean } = {}): Promise<{

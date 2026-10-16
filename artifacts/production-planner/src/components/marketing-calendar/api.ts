@@ -440,9 +440,12 @@ export function useSetApproval() {
         method: "POST",
         body: JSON.stringify(target),
       }),
-    onSettled: (_r, _e, v) => {
+    onSettled: (_r, e, v) => {
       void qc.invalidateQueries({ queryKey: APPROVALS_KEY });
-      if ("emailId" in v.target) void qc.invalidateQueries({ queryKey: [...EMAILS_KEY, "one", v.target.emailId] });
+      // A refusal can mean the server unlinked a campaign deleted in Klaviyo
+      // (2026-10-16) — reload the emails so the dead link goes.
+      if (e) void qc.invalidateQueries({ queryKey: EMAILS_KEY });
+      else if ("emailId" in v.target) void qc.invalidateQueries({ queryKey: [...EMAILS_KEY, "one", v.target.emailId] });
     },
   });
 }

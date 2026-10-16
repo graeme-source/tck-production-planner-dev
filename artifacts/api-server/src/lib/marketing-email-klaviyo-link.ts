@@ -33,6 +33,8 @@ export async function setPlannedEmailKlaviyoLink(tx: Tx, input: {
   user: LinkActor;
   /** Set by the automatic linker: only links a plan that is still unlinked. */
   auto?: AutoLinkNote;
+  /** History wording instead of the usual "linked / unlinked …" line. */
+  summary?: string;
 }): Promise<LinkResult> {
   const { emailId: id, klaviyoCampaignId, user, auto } = input;
   const [before] = await tx.select().from(marketingEmailsTable).where(eq(marketingEmailsTable.id, id)).for("update");
@@ -51,6 +53,7 @@ export async function setPlannedEmailKlaviyoLink(tx: Tx, input: {
   }).where(eq(marketingEmailsTable.id, id)).returning();
   const change = auto
     ? { action: "linked" as const, summary: auto.summary }
+    : input.summary ? { action: klaviyoCampaignId ? "linked" as const : "unlinked" as const, summary: input.summary }
     : describeKlaviyoLink(before.klaviyoCampaignName ?? before.klaviyoCampaignId, nextName)
       ?? { action: "linked" as const, summary: `linked it to the Klaviyo email “${nextName ?? ""}”` };
   await tx.insert(marketingEmailHistoryTable).values({

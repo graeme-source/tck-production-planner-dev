@@ -689,9 +689,9 @@ function UnplannedRow(props: WeekCardProps & { row: Extract<Row, { kind: "unplan
   );
 }
 
-/** A linked campaign we haven't loaded (rare — linked drafts are loaded
- *  whatever their day): its Klaviyo editor, the path the server's
- *  klaviyoUrlFor uses for drafts (approval happens at the draft stage). */
-function klaviyoCampaignHref(id: string): string {
-  return `https://www.klaviyo.com/campaign/${encodeURIComponent(id)}/wizard/1`;
+/** A linked campaign we haven't loaded: we don't know its status — or that
+ *  it still exists (2026-10-16: a deleted clone's editor link was a Klaviyo
+ *  404) — so open the campaign list, which always works. */
+function klaviyoCampaignHref(_id: string): string {
+  return "https://www.klaviyo.com/campaigns";
 }

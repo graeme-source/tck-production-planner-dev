@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
+import { calendarStatus, campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
 
 const camp = (id: string, status: string, send: string | null, msgs: string[], included: string[] = ["L1"]) => ({
   id, relationships: { "campaign-messages": { data: msgs.map(m => ({ id: m })) } },
@@ -88,5 +88,33 @@ describe("Klaviyo results per campaign (email list view)", () => {
   it("missing statistics count as nothing", () => {
     const r = campaignResultsFromReport([{ groupings: { campaign_id: "c3" }, statistics: { recipients: null } }]).get("c3")!;
     expect(r).toEqual({ campaignId: "c3", recipients: 0, openRate: 0, clickRate: 0, orders: 0, revenue: 0 });
+  });
+});
+
+describe("Klaviyo's other statuses (Graeme, 2026-10-16)", () => {
+  it("shows a 'Queued without Recipients' campaign as scheduled, with the campaign-list link", () => {
+    const out = campaignsToCalendar({
+      campaigns: [camp("q", "Queued without Recipients", "2026-10-16T09:41:00+00:00", ["mq"])],
+      messages: [msg("mq", "Ending tonight")],
+      audienceNames: new Map(), from: "2026-10-01", to: "2026-10-31",
+    });
+    expect(out).toHaveLength(1);
+    expect(out[0].status).toBe("Scheduled");
+    expect(out[0].klaviyoUrl).toBe("https://www.klaviyo.com/campaigns");
+  });
+
+  it("maps every in-flight status to one of the four, and cancelled ones to nothing", () => {
+    expect(calendarStatus("Preparing to schedule")).toBe("Scheduled");
+    expect(calendarStatus("Adding Recipients")).toBe("Sending");
+    expect(calendarStatus("Preparing to send")).toBe("Sending");
+    expect(calendarStatus("Variations Sent")).toBe("Sent");
+    expect(calendarStatus("Cancelled: Smart Sending")).toBeNull();
+    expect(calendarStatus("Unknown")).toBeNull();
+  });
+
+  it("gives the approval the mapped status", () => {
+    const snap = campaignSnapshot(camp("q", "Queued without Recipients", "2026-10-16T09:41:00+00:00", ["mq"]), [msg("mq", "Ending tonight")]);
+    expect(snap.status).toBe("Scheduled");
+    expect(snap.subject).toBe("Ending tonight");
   });
 });

@@ -33,6 +33,8 @@ import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { userCan } from "../lib/feature-access";
 import { klaviyoCampaignById, klaviyoEmailsForRange } from "../lib/klaviyo-campaign-calendar";
+import { setPlannedEmailKlaviyoLink } from "../lib/marketing-email-klaviyo-link";
+import { forgetAutoLinkRun } from "../lib/klaviyo-auto-link-run";
 
 const router: IRouter = Router();
 router.use(requireFounderArea("founder.sales"));
@@ -179,6 +181,27 @@ router.post("/approve", requireFounderArea(FOUNDER_FEATURES.approveEmails), vali
     try {
       const k = await klaviyoCampaignById(t.klaviyoCampaignId);
       if (!k) { res.status(409).json({ error: "Klaviyo isn't connected, so its subject line can't be checked." }); return; }
+      if (k === "deleted") {
+        // Graeme, 2026-10-16: the linked clone had been deleted in Klaviyo
+        // and replaced by a fresh copy; approving said "try again in a
+        // minute" forever. The link is dead, so drop it (our database only)
+        // and let the auto-linker / a manual link pick the replacement.
+        if (t.plan) {
+          const plan = t.plan;
+          const gone = plan.klaviyoCampaignName ?? t.klaviyoCampaignId;
+          await db.transaction(tx => setPlannedEmailKlaviyoLink(tx, {
+            emailId: plan.id, klaviyoCampaignId: null, user,
+            summary: `unlinked the Klaviyo email “${gone}” — it has been deleted in Klaviyo`,
+          }));
+          forgetAutoLinkRun();
+        }
+        res.status(409).json({
+          error: "The Klaviyo email this was linked to has been deleted in Klaviyo, so it's been unlinked. "
+            + "Link the email that replaced it (it may link itself in a minute), then approve.",
+          klaviyoDeleted: true,
+        });
+        return;
+      }
       subject = k.subject;
       kName = k.name;
       // A draft's day in Klaviyo is a placeholder — the plan's day wins then.

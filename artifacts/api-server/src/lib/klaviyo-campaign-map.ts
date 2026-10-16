@@ -37,7 +37,22 @@ export interface RawCampaign {
 }
 export interface RawMessage { id: string; attributes: { content?: { subject?: string | null; preview_text?: string | null } } }
 
-const SHOWN = new Set(["Draft", "Scheduled", "Sending", "Sent"]);
+/**
+ * Klaviyo's many campaign statuses → the four the calendar knows; null =
+ * not shown (cancelled, unknown). Graeme, 2026-10-16: a scheduled email
+ * Klaviyo called "Queued without Recipients" (scheduled, audience worked
+ * out at send time) never showed or auto-linked, so its plan stayed linked
+ * to the deleted clone it replaced.
+ */
+export function calendarStatus(raw: string): KlaviyoCalendarEmail["status"] | null {
+  switch (raw) {
+    case "Draft": return "Draft";
+    case "Scheduled": case "Queued without Recipients": case "Preparing to schedule": return "Scheduled";
+    case "Sending": case "Adding Recipients": case "Preparing to send": case "Sending Segments": return "Sending";
+    case "Sent": case "Variations Sent": return "Sent";
+    default: return null;
+  }
+}
 
 export function londonDay(iso: string): string {
   return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
@@ -77,7 +92,8 @@ export function campaignsToCalendar(input: {
   const seen = new Set<string>();
   for (const c of input.campaigns) {
     const a = c.attributes;
-    if (!SHOWN.has(a.status) || seen.has(c.id)) continue;
+    const status = calendarStatus(a.status);
+    if (!status || seen.has(c.id)) continue;
     const sendAt = campaignSendAt(a);
     if (!sendAt) continue;
     const date = londonDay(sendAt);
@@ -88,7 +104,7 @@ export function campaignsToCalendar(input: {
     out.push({
       id: c.id,
       name: a.name,
-      status: a.status as KlaviyoCalendarEmail["status"],
+      status,
       date,
       sendAt,
       subject: first?.attributes.content?.subject?.trim() || null,
@@ -96,7 +112,7 @@ export function campaignsToCalendar(input: {
       abTest: msgIds.length > 1,
       audiences: included.map(id => input.audienceNames.get(id) ?? id),
       excludedCount: a.audiences?.excluded?.length ?? 0,
-      klaviyoUrl: klaviyoUrlFor(c.id, a.status),
+      klaviyoUrl: klaviyoUrlFor(c.id, status),
     });
   }
   return out.sort((x, y) => x.sendAt.localeCompare(y.sendAt));
@@ -112,7 +128,7 @@ export function campaignSnapshot(c: RawCampaign, messages: RawMessage[]): {
   return {
     id: c.id,
     name: c.attributes.name,
-    status: c.attributes.status,
+    status: calendarStatus(c.attributes.status) ?? c.attributes.status,
     subject: first?.attributes.content?.subject?.trim() || null,
     date: sendAt ? londonDay(sendAt) : null,
   };
