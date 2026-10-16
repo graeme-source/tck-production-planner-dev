@@ -10,7 +10,8 @@
  *   - one delivery_shelf_life_reports row per PO line (UNIQUE), recording
  *     the decision — who, when, use-by, days vs minimum, accepted/rejected;
  *   - one email to the supplier's account manager (suppliers.
- *     account_manager_email), BCC the founder for the record, sent ONLY when
+ *     account_manager_email), CC the founder — visibly, so the supplier
+ *     knows he's aware and can reply to him (Graeme, 2026-10-16) — sent ONLY when
  *     that row is first created — a re-save never re-sends;
  *   - the send is logged on the row: sent / failed + error / no_address /
  *     skipped (staging or BLOCK_SHOPIFY_WRITES). A failure never fails the
@@ -164,7 +165,7 @@ export async function recordShelfLifeReports(input: {
       try {
         await sendEmail({
           to: recipientEmail,
-          bcc: [FOUNDER_EMAIL],
+          cc: [FOUNDER_EMAIL],
           replyTo: FOUNDER_EMAIL,
           fromName: "The Calzone Kitchen",
           fromEmail: FROM_EMAIL,
