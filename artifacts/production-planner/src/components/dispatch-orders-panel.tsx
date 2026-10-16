@@ -317,7 +317,9 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
           </div>
         ) : (
           <>
-          <div className="flex-1 min-w-0 h-[300px]">
+          {/* flex-1 only beside the totals: stacked on a phone, flex-1's zero
+              basis collapsed the chart to 0px tall (16 Oct 2026). */}
+          <div className="w-full shrink-0 sm:w-auto sm:shrink sm:flex-1 min-w-0 h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={dispatchChartData}
