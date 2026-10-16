@@ -27,9 +27,12 @@ import { UnexpectedDeliveryDialog } from "@/components/unexpected-delivery-dialo
 import {
   canCompleteGoodsIn, initialDecision, initialQuantity, isReceivedOrderStatus, lineStatus, lineToSubmit,
   orderShortage, shortLinesOf, shortSignature, undecidedLines, type LineDecision,
-  checkShelfLife, londonDeliveryDay, shelfLifeToldText, type ShelfLifeReportOutcome,
+  checkShelfLife, londonDeliveryDay, issueEmailToldText, issueLinesOf, newIssueLines, issuePhotoGate,
+  receivedAfterDamage, reopenDamagedLine, formatReportQty, type DeliveryIssueOutcome, type DamageDisposition,
 } from "@workspace/goods-in";
 import { ShelfLifeWarning, ShelfLifeRejectedNote, ShelfLifeRecordNote } from "@/components/deliveries/shelf-life-warning";
+import { DamagePanel, DamageRecordNote, type LineDamage } from "@/components/deliveries/damage-panel";
+import { IssuePhotoStep, IssuePhotoStrip, useRevokeOnUnmount, type IssuePhoto } from "@/components/deliveries/issue-photos";
 import { usePeople } from "@/components/messages/messages-api";
 import { useShortReportSettings, type ShortReportOutcome } from "@/components/deliveries/short-report-api";
 import { ShortReportStep } from "@/components/deliveries/short-report-step";
@@ -111,6 +114,14 @@ interface DeliveryOrder {
     lineId: number; decision: string; useByDate: string; shelfLifeDays: number; minShelfLifeDays: number;
     decidedByName: string | null; decidedAt: string;
     emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
+    photoIds?: number[];
+  }>;
+  /** Damaged / broken reports already recorded (one per line, migration 0198). */
+  damageReports?: Array<{
+    lineId: number; quantity: number; unit: string | null; note: string | null; disposition: string;
+    reportedByName: string | null; reportedAt: string;
+    emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
+    photoIds?: number[];
   }>;
 }
 
@@ -252,6 +263,17 @@ interface ReceivingLine {
   shelfLifeRejectedUseBy: string | null;
   /** This line's shelf life was already reported on an earlier save. */
   shelfLifeReported: boolean;
+  /** "Damaged / broken" (quantityReceived = what ARRIVED; a rejected damaged
+   *  quantity is taken off when sent — receivedAfterDamage). */
+  damage: LineDamage | null;
+  /** The damage was already reported on an earlier save (read-only now). */
+  damageReported: boolean;
+}
+
+/** What a dialog line sends: ticked + quantity after any rejected damage. */
+function submitOf(l: ReceivingLine) {
+  const after = l.damage?.disposition ? receivedAfterDamage(l.quantityReceived, { quantity: l.damage.quantity, disposition: l.damage.disposition }) : l.quantityReceived;
+  return lineToSubmit({ decision: l.decision, quantity: after });
 }
 
 interface CheckResult {
@@ -347,6 +369,11 @@ function ReceivingDialog({
   // before closing the dialog (and lose the in-progress work) on accidental
   // backdrop click / escape.
   const [dirty, setDirty] = useState(false);
+  // Photos of the affected items (short shelf life / damaged) — mandatory
+  // when this save reports a new issue (Graeme, 2026-10-16).
+  const [issuePhotos, setIssuePhotos] = useState<IssuePhoto[]>([]);
+  const [photosConfirmed, setPhotosConfirmed] = useState(false);
+  useRevokeOnUnmount(issuePhotos);
 
   // Suppress the global pull-to-refresh gesture while this dialog is open —
   // a swipe-down inside a long form would otherwise reload the page and
@@ -378,9 +405,17 @@ function ReceivingDialog({
 
       const orderReceived = isReceivedOrderStatus(order.status);
       const reportByLine = new Map((order.shelfLifeReports ?? []).map((r) => [r.lineId, r]));
+      const damageByLine = new Map((order.damageReports ?? []).map((r) => [r.lineId, r]));
       setLines(
         order.lines.map((l) => {
           const slReport = reportByLine.get(l.id);
+          const dmReport = damageByLine.get(l.id);
+          const dmDisposition: DamageDisposition = dmReport?.disposition === "rejected" ? "rejected" : "kept";
+          // Reopening: the box shows what arrived, so rejected damage is
+          // added back on (it comes off again when saved).
+          const reopened = dmReport
+            ? reopenDamagedLine({ savedQuantity: l.goodsInChecked ? l.quantityReceived : 0, damage: { quantity: dmReport.quantity, disposition: dmDisposition } })
+            : null;
           const facts = { quantityOrdered: l.quantityOrdered, quantityReceived: l.quantityReceived, goodsInChecked: l.goodsInChecked };
           let autoUseByDate = "";
           let useByIsAuto = false;
@@ -398,7 +433,7 @@ function ReceivingDialog({
             quantityOrdered: l.quantityOrdered,
             // The box opens at what was recorded, else what was ordered — but
             // it's only sent for a line decided "Received" (lineToSubmit).
-            quantityReceived: initialQuantity(facts),
+            quantityReceived: reopened && reopened.arrived > 0 ? reopened.arrived : initialQuantity(facts),
             unit: l.unit,
             nativeUnit: l.nativeUnit,
             useByDate: existingUseBy || autoUseByDate,
@@ -406,7 +441,7 @@ function ReceivingDialog({
             requiresUseByDate: l.requiresUseByDate ?? false,
             defaultStorageLocation: l.defaultStorageLocation,
             useByIsAuto: existingUseBy === "" && useByIsAuto,
-            decision: initialDecision(orderReceived, facts),
+            decision: reopened?.wasReceived ? "received" : initialDecision(orderReceived, facts),
             stockInPacks: l.stockInPacks,
             packWeight: l.packWeight,
             palletSize: l.palletSize,
@@ -415,6 +450,8 @@ function ReceivingDialog({
             shelfLifeAccepted: slReport?.decision === "accepted" && slReport.useByDate === existingUseBy,
             shelfLifeRejectedUseBy: slReport?.decision === "rejected" ? slReport.useByDate : null,
             shelfLifeReported: !!slReport,
+            damage: dmReport ? { quantity: dmReport.quantity, disposition: dmDisposition, note: dmReport.note ?? "" } : null,
+            damageReported: !!dmReport,
           };
         })
       );
@@ -428,6 +465,8 @@ function ReceivingDialog({
       setDialogStep("lines");
       setShortNote("");
       setAlsoTell(null);
+      setIssuePhotos([]);
+      setPhotosConfirmed(false);
     }
   }, [open, order, checks]);
 
@@ -450,6 +489,33 @@ function ReceivingDialog({
     .filter(({ l }) => l.decision === "received" && l.quantityReceived > 0 && !l.shelfLifeAccepted && shelfLifeOf(l)?.short)
     .map(({ i }) => i);
 
+  // Delivery issues on this save — short shelf life (accepted or rejected)
+  // and damaged — and the photo gate for the new ones.
+  const issues = issueLinesOf(lines.map((l) => {
+    const sent = submitOf(l);
+    const qtyFmt = { unit: l.unit, nativeUnit: l.nativeUnit, packWeight: l.packWeight, stockInPacks: l.stockInPacks };
+    const accepted = l.decision === "received" && sent.quantityReceived > 0 && l.shelfLifeAccepted && !!shelfLifeOf(l)?.short;
+    const rejected = !sent.checked && !!l.shelfLifeRejectedUseBy;
+    return {
+      lineId: l.lineId,
+      name: l.ingredientName,
+      shelfLife: accepted ? "accepted" as const : rejected ? "rejected" as const : null,
+      shelfLifeReported: l.shelfLifeReported,
+      shelfLifeQuantityText: formatReportQty(accepted ? sent.quantityReceived : l.quantityOrdered, qtyFmt),
+      damage: l.decision === "received" && l.damage?.disposition && l.damage.quantity > 0
+        ? { quantity: l.damage.quantity, disposition: l.damage.disposition, note: l.damage.note }
+        : null,
+      damageReported: l.damageReported,
+      damageQuantityText: l.damage ? formatReportQty(l.damage.quantity, qtyFmt) : "",
+    };
+  }));
+  const newIssues = newIssueLines(issues);
+  const uploadedPhotoIds = issuePhotos.filter((p) => p.status === "done" && p.id != null).map((p) => p.id!);
+  const photoGate = issuePhotoGate({ newIssueCount: newIssues.length, uploadedPhotoCount: uploadedPhotoIds.length, allItemsConfirmed: photosConfirmed });
+  // A damage mark needs a quantity (no more than arrived) and keep/reject.
+  const damageUnfinished = lines.filter((l) => l.decision === "received" && l.damage && !l.damageReported
+    && (!l.damage.disposition || !(l.damage.quantity > 0) || l.damage.quantity > l.quantityReceived));
+
   const missingRequiredUseBy = lines.some(
     (l) => l.decision === "received" && l.requiresUseByDate && l.quantityReceived > 0 && !l.useByDate
   );
@@ -466,7 +532,7 @@ function ReceivingDialog({
     lineId: l.lineId,
     name: l.ingredientName,
     quantityOrdered: l.quantityOrdered,
-    quantityReceived: lineToSubmit({ decision: l.decision, quantity: l.quantityReceived }).quantityReceived,
+    quantityReceived: submitOf(l).quantityReceived,
     unit: l.unit,
     nativeUnit: l.nativeUnit,
     packWeight: l.packWeight,
@@ -496,6 +562,8 @@ function ReceivingDialog({
     !frozenTempMissing &&
     !missingRequiredUseBy &&
     shelfLifeUndecided.length === 0 &&
+    damageUnfinished.length === 0 &&
+    photoGate.ok &&
     allDecided;
 
   const receiveMutation = useMutation({
@@ -509,7 +577,7 @@ function ReceivingDialog({
           // goes as un-ticked 0 (and the server treats any un-ticked line
           // as 0 too).
           lines: lines.map((l) => {
-            const sent = lineToSubmit({ decision: l.decision, quantity: l.quantityReceived });
+            const sent = submitOf(l);
             return {
               lineId: l.lineId,
               quantityReceived: sent.quantityReceived,
@@ -518,6 +586,10 @@ function ReceivingDialog({
               // "Reject it" on a short shelf life: the server records it and
               // tells the supplier.
               shelfLifeRejected: !sent.checked && l.shelfLifeRejectedUseBy ? { useByDate: l.shelfLifeRejectedUseBy } : null,
+              // Damaged / broken: recorded and reported with the photos.
+              damage: l.decision === "received" && l.damage?.disposition && l.damage.quantity > 0
+                ? { quantity: l.damage.quantity, disposition: l.damage.disposition, note: l.damage.note.trim() || null }
+                : null,
             };
           }),
           chilledTempC: chilledTemp ? Number(chilledTemp) : null,
@@ -525,6 +597,7 @@ function ReceivingDialog({
           checkResults,
           notes: notes || null,
           ...(needsShortStep ? { shortReport: { note: shortNote.trim() || null, alsoTellIds } } : {}),
+          issuePhotos: { photoIds: uploadedPhotoIds, allItemsConfirmed: photosConfirmed },
         }),
       });
       if (!res.ok) {
@@ -535,20 +608,23 @@ function ReceivingDialog({
       }
       return res.json();
     },
-    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }>; shortReport?: ShortReportOutcome; shelfLife?: ShelfLifeReportOutcome[] | { error: string } }) => {
-      // Short shelf life: say who was told — or plainly that nobody was.
-      const sl = data?.shelfLife;
-      if (sl && !Array.isArray(sl)) {
-        toast({ title: "Supplier not told about the short shelf life", description: sl.error, variant: "destructive" });
-      } else {
-        for (const o of sl ?? []) {
-          if (o.alreadyReported) continue;
-          const told = shelfLifeToldText(o);
+    onSuccess: (data: { shopifySync?: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }>; shortReport?: ShortReportOutcome; issues?: DeliveryIssueOutcome | { error: string } | null }) => {
+      // Short shelf life / damaged: say what was reported and who was told —
+      // or plainly that nobody was — with the photos that went.
+      const iss = data?.issues;
+      if (iss && "error" in iss) {
+        toast({ title: "Supplier not told about the problem items", description: iss.error, variant: "destructive" });
+      } else if (iss) {
+        const told = issueEmailToldText(iss);
+        if (told) {
           toast({
-            title: told.ok
-              ? `${o.supplierName} have been told automatically`
-              : `${o.supplierName} not told — short shelf life`,
-            description: told.text,
+            title: told.ok ? `${iss.supplierName} have been told automatically` : `${iss.supplierName} not told — problem items`,
+            description: (
+              <div className="space-y-2">
+                <p>{told.text}</p>
+                <IssuePhotoStrip photoIds={uploadedPhotoIds} />
+              </div>
+            ),
             ...(told.ok ? {} : { variant: "destructive" as const }),
           });
         }
@@ -715,7 +791,11 @@ function ReceivingDialog({
                   // Received with nothing in the box means the ordered amount.
                   const qty = decision === "received" && !(next[idx].quantityReceived > 0) ? next[idx].quantityOrdered : next[idx].quantityReceived;
                   // A plain Received / Not received tap undoes any shelf-life call.
-                  next[idx] = { ...next[idx], decision, quantityReceived: qty, shelfLifeAccepted: false, shelfLifeRejectedUseBy: null };
+                  next[idx] = {
+                    ...next[idx], decision, quantityReceived: qty, shelfLifeAccepted: false, shelfLifeRejectedUseBy: null,
+                    // Nothing arrived = nothing damaged (unless already reported).
+                    damage: decision === "not_received" && !next[idx].damageReported ? null : next[idx].damage,
+                  };
                   editLines(next);
                 };
                 const slCheck = shelfLifeOf(line);
@@ -730,6 +810,7 @@ function ReceivingDialog({
                 };
                 const showUseBy = line.requiresUseByDate || line.minDeliveryShelfLifeDays != null;
                 const slRecord = order.shelfLifeReports?.find((r) => r.lineId === line.lineId);
+                const dmRecord = order.damageReports?.find((r) => r.lineId === line.lineId);
                 return (
                   <div
                     key={line.lineId}
@@ -971,6 +1052,16 @@ function ReceivingDialog({
                         onUndo={() => setShelfLife({ shelfLifeAccepted: false })}
                       />
                     )}
+                    {dmRecord ? (
+                      <DamageRecordNote record={dmRecord} supplierName={order.supplierName} unitLabel={line.unit} />
+                    ) : received && line.quantityReceived > 0 ? (
+                      <DamagePanel
+                        line={line}
+                        arrived={line.quantityReceived}
+                        damage={line.damage}
+                        onChange={(d) => setShelfLife({ damage: d })}
+                      />
+                    ) : null}
                     {discrepancy && (() => {
                       const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
                       const pw = Number(line.packWeight) || 1;
@@ -1152,6 +1243,27 @@ function ReceivingDialog({
             </div>
           )}
 
+          {damageUnfinished.length > 0 && (
+            <div className="rounded-xl border-2 border-orange-500 bg-orange-50 dark:bg-orange-950/30 p-3 text-base text-orange-900 dark:text-orange-200">
+              <p className="font-bold flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 shrink-0" />
+                Damaged — enter how many and choose Keep or Reject for:
+              </p>
+              <p className="mt-1">{damageUnfinished.map((l) => l.ingredientName).join(", ")}</p>
+            </div>
+          )}
+
+          {newIssues.length > 0 && (
+            <IssuePhotoStep
+              orderId={order.id}
+              issues={newIssues}
+              photos={issuePhotos}
+              onPhotos={(update) => { setDirty(true); setIssuePhotos(update); }}
+              confirmed={photosConfirmed}
+              onConfirmed={(v) => { setDirty(true); setPhotosConfirmed(v); }}
+            />
+          )}
+
           <button
             onClick={() => (needsShortStep ? setDialogStep("short") : receiveMutation.mutate())}
             disabled={!canReceive || receiveMutation.isPending}
@@ -1170,6 +1282,10 @@ function ReceivingDialog({
               <><AlertCircle className="w-4 h-4" /> Set use-by dates for required items</>
             ) : shelfLifeUndecided.length > 0 ? (
               <><AlertCircle className="w-4 h-4" /> Accept or reject the short-dated {shelfLifeUndecided.length === 1 ? "item" : "items"} first</>
+            ) : damageUnfinished.length > 0 ? (
+              <><AlertCircle className="w-4 h-4" /> Finish the damaged {damageUnfinished.length === 1 ? "item" : "items"} first</>
+            ) : !photoGate.ok ? (
+              <><AlertCircle className="w-4 h-4" /> {photoGate.message}</>
             ) : !canReceive ? (
               <><AlertCircle className="w-4 h-4" /> Complete all required checks first</>
             ) : needsShortStep ? (

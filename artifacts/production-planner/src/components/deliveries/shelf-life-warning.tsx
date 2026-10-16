@@ -5,12 +5,13 @@
  * the delivery day than the ingredient's minimum. The receiver decides —
  * accept it anyway (we'll use or freeze it) or reject it (not received) —
  * and either way the supplier's account manager is emailed when goods-in is
- * saved. It never blocks receiving outright: it's their call, but they must
+ * saved, with photos of the items (issue-photos.tsx). It never blocks receiving outright: it's their call, but they must
  * make it. Rule and wording: @workspace/goods-in shelf-life.ts.
  */
 import { AlertTriangle, Check, Mail, RotateCcw, X } from "lucide-react";
-import { shelfLifeWarningText, shortDayLabel, shelfLifePhrase, type ShelfLifeCheck } from "@workspace/goods-in";
+import { shelfLifeWarningText, shortDayLabel, shelfLifePhrase, issueEmailStatusText, type ShelfLifeCheck } from "@workspace/goods-in";
 import { cn } from "@/lib/utils";
+import { IssuePhotoStrip } from "./issue-photos";
 
 export function ShelfLifeWarning({
   check,
@@ -43,7 +44,7 @@ export function ShelfLifeWarning({
         <div className="flex flex-wrap items-center gap-2">
           <p className="flex-1 min-w-[14rem] text-base font-semibold text-red-900 dark:text-red-200 flex items-center gap-2">
             <Check className="w-5 h-5 shrink-0" strokeWidth={3} />
-            Accepted anyway — use it or freeze it. {supplierName} will be emailed when you save.
+            Accepted anyway — use it or freeze it. Take the photo below; {supplierName} will be emailed with it when you save.
           </p>
           <button
             type="button"
@@ -56,7 +57,7 @@ export function ShelfLifeWarning({
       ) : (
         <>
           <p className="text-base font-semibold text-red-900 dark:text-red-200">
-            Decide before saving. Either way {supplierName} are emailed automatically.
+            Decide before saving. Either way {supplierName} are emailed automatically, with a photo of the items.
           </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
@@ -90,6 +91,8 @@ export function ShelfLifeRecordNote({
     decision: string; useByDate: string; shelfLifeDays: number; minShelfLifeDays: number;
     decidedByName: string | null; decidedAt: string;
     emailStatus: string; emailError: string | null; emailedToName: string | null; emailedAt: string | null;
+    /** Photos sent with the report (migration 0198). */
+    photoIds?: number[];
   };
   supplierName: string;
 }) {
@@ -97,20 +100,17 @@ export function ShelfLifeRecordNote({
     timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
   });
   const decided = `${record.decision === "rejected" ? "Rejected" : "Accepted"} for short shelf life (${shelfLifePhrase(record.shelfLifeDays)}, use-by ${shortDayLabel(record.useByDate)}, ${record.minShelfLifeDays} promised)${record.decidedByName ? ` by ${record.decidedByName}` : ""}, ${when}.`;
-  const who = record.emailedToName ? `${record.emailedToName} at ${supplierName}` : supplierName;
-  const email =
-    record.emailStatus === "sent" ? { ok: true, text: `Emailed ${who}.` }
-    : record.emailStatus === "no_address" ? { ok: false, text: `Email not sent — ${supplierName} has no account manager email set.` }
-    : record.emailStatus === "skipped" ? { ok: false, text: "Email not sent — this copy of the app doesn't send emails." }
-    : record.emailStatus === "pending" ? { ok: false, text: "Email still being sent (or the send was interrupted)." }
-    : { ok: false, text: `Email failed${record.emailError ? `: ${record.emailError}` : ""}. Tell ${supplierName} directly.` };
+  const email = issueEmailStatusText(record, supplierName);
   return (
     <div className={cn(
-      "rounded-lg px-3 py-2 text-sm flex items-start gap-2",
+      "rounded-lg px-3 py-2 text-sm space-y-2",
       email.ok ? "bg-secondary/60 text-muted-foreground" : "bg-red-100 text-red-900 dark:bg-red-950/40 dark:text-red-200 font-semibold",
     )}>
-      <Mail className="w-4 h-4 shrink-0 mt-0.5" />
-      <span className="min-w-0 break-words">{decided} {email.text}</span>
+      <p className="flex items-start gap-2">
+        <Mail className="w-4 h-4 shrink-0 mt-0.5" />
+        <span className="min-w-0 break-words">{decided} {email.text}</span>
+      </p>
+      <IssuePhotoStrip photoIds={record.photoIds ?? []} />
     </div>
   );
 }
