@@ -53,6 +53,7 @@
     "qrcode": "^1.5.4",
     "react": "catalog:",
     "resend": "^6.9.4",
+    "sanitize-html": "^2.18.1",
     "tsdav": "^2.3.1",
     "web-push": "^3.6.7",
     "zod": "catalog:"
@@ -71,6 +72,7 @@
     "@types/node-cron": "^3.0.11",
     "@types/qrcode": "^1.5.6",
     "@types/react": "catalog:",
+    "@types/sanitize-html": "^2.16.2",
     "@types/web-push": "^3.6.4",
     "esbuild": "^0.27.3",
     "tsx": "catalog:"
