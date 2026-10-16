@@ -2645,7 +2645,8 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   const categoryOf = useCallback((id: number) => calcData?.recipes?.find((r: CalcRecipe) => r.recipeId === id)?.recipeCategory, [calcData]);
   // "More" never goes past the day's capacity: the rota cap when known.
   const rotaCap = capacityData?.available ? (capacityData.capacityBatches ?? null) : null;
-  const factory = usePlanFactoryForecast({ planDate, rows: items, categoryOf, margin: planMargin.settings, maxTotalBatches: rotaCap ?? (effectiveTotalBatches || undefined), enabled: open });
+  const inFridge = useCallback((id: number) => recipeRoutes.routeOf(id).defaultStorage !== "freezer", [recipeRoutes.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const factory = usePlanFactoryForecast({ planDate, rows: items, categoryOf, inFridge, margin: planMargin.settings, maxTotalBatches: rotaCap ?? (effectiveTotalBatches || undefined), enabled: open });
   const [factoryGuardFor, setFactoryGuardFor] = useState<"draft" | "active" | null>(null);
   const withFactoryChanges = (rows: PlanItem[], rec: Parameters<typeof applyBatchChanges>[1]) =>
     capForSlowMeat(applyBatchChanges(rows, rec).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) })));
@@ -4065,7 +4066,9 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
 
   // Predicted factory number after this plan — same card and save check as Create Plan.
   const editCategoryOf = useCallback((id: number) => editCalcData?.recipes?.find((r: CalcRecipe) => r.recipeId === id)?.recipeCategory, [editCalcData]);
-  const editFactory = usePlanFactoryForecast({ planDate, rows: items, categoryOf: editCategoryOf, margin: editPlanMargin.settings, maxTotalBatches: editEffectiveTotalBatches || undefined, enabled: open });
+  const editRecipeRoutes = useRecipeRoutes(open);
+  const editInFridge = useCallback((id: number) => editRecipeRoutes.routeOf(id).defaultStorage !== "freezer", [editRecipeRoutes.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  const editFactory = usePlanFactoryForecast({ planDate, rows: items, categoryOf: editCategoryOf, inFridge: editInFridge, margin: editPlanMargin.settings, maxTotalBatches: editEffectiveTotalBatches || undefined, enabled: open });
   const [editFactoryGuardFor, setEditFactoryGuardFor] = useState<"draft" | "active" | null>(null);
   const editWithFactoryChanges = (rows: PlanItem[], rec: Parameters<typeof applyBatchChanges>[1]) =>
     applyBatchChanges(rows, rec).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) }));

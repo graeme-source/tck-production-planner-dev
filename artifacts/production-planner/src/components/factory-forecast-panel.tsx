@@ -60,10 +60,12 @@ export interface PlanFactoryForecastState extends PlanFactoryForecast {
   needsConfirmFor: (rows: readonly ForecastPlanRow[]) => boolean;
 }
 
-export function usePlanFactoryForecast({ planDate, rows, categoryOf, margin, maxTotalBatches, enabled = true }: {
+export function usePlanFactoryForecast({ planDate, rows, categoryOf, inFridge, margin, maxTotalBatches, enabled = true }: {
   planDate: string | null | undefined;
   rows: readonly ForecastPlanRow[];
   categoryOf: (recipeId: number) => string | null | undefined;
+  /** False for freezer-stored recipes (route flag) — out of the factory number. */
+  inFridge?: (recipeId: number) => boolean;
   margin: PlanMarginSettings;
   /** The day's capacity (the rota cap, or the total batches box). */
   maxTotalBatches?: number;
@@ -72,7 +74,7 @@ export function usePlanFactoryForecast({ planDate, rows, categoryOf, margin, max
   const q = useFactoryForecast(planDate, enabled);
   const shares = q.data?.recipeShares;
   const history = q.data?.history;
-  const ctx = useMemo(() => ({ categoryOf, shares: shares ?? {}, margin }), [categoryOf, shares, margin]);
+  const ctx = useMemo(() => ({ categoryOf, inFridge, shares: shares ?? {}, margin }), [categoryOf, inFridge, shares, margin]);
   const pullBack = useMemo(() => (history ? pullBackAdvice(history, q.thresholds) : null), [history, q.thresholds]);
   const result = useMemo(
     () => planFactoryForecast(rows, ctx, q.late, q.thresholds, {

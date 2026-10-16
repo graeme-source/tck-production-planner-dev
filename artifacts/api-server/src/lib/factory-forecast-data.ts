@@ -37,25 +37,28 @@ let ordersLoading: Promise<{ orders: ForecastOrder[]; lines: RecipeLine[] }> | n
 async function loadOrdersFresh(): Promise<{ orders: ForecastOrder[]; lines: RecipeLine[] }> {
   const res = await db.execute<{
     order_id: string; created: string; cancelled: string | null; tags: string | null;
-    recipe_id: number; category: string | null; qty: number;
+    recipe_id: number; category: string | null; default_storage: string | null; qty: number;
   }>(sql`
     SELECT o.id::text AS order_id,
            o.payload->>'created_at' AS created,
            o.payload->>'cancelled_at' AS cancelled,
            o.payload->>'tags' AS tags,
-           m.recipe_id, r.category,
+           m.recipe_id, r.category, r.default_storage,
            SUM((li->>'quantity')::int)::int AS qty
       FROM shopify_orders_cache o
       CROSS JOIN LATERAL jsonb_array_elements(o.payload->'line_items') li
       JOIN recipe_shopify_mappings m ON m.shopify_variant_id = li->>'variant_id'
       JOIN recipes r ON r.id = m.recipe_id
      WHERE o.created_at > now() - make_interval(weeks => ${HISTORY_WEEKS})
-     GROUP BY 1, 2, 3, 4, 5, 6
+     GROUP BY 1, 2, 3, 4, 5, 6, 7
   `);
   const byOrder = new Map<string, ForecastOrder>();
   const lines: RecipeLine[] = [];
   for (const r of res.rows) {
     if (kitchenLine(r.category) !== "calzone") continue;
+    // Wrapped into the freezer (recipe route, migration 0202 — buns): not
+    // production-fridge stock, so not factory-number demand.
+    if (r.default_storage === "freezer") continue;
     const deliveryDate = /\d{4}-\d{2}-\d{2}/.exec(r.tags ?? "")?.[0];
     const createdAt = Date.parse(r.created);
     if (!deliveryDate || !Number.isFinite(createdAt)) continue;

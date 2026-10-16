@@ -22,6 +22,13 @@ describe("toForecastRows", () => {
     // margin 2 → 34 − 2 = 32 → 7 batches.
     expect(rows[0]).toMatchObject({ bagPacks: 8, despatchPacks: 20, salesShare: 0.25, floorBatches: 7 });
   });
+  // Buns are on the calzone line but wrapped into the freezer (recipe route,
+  // 16 Oct 2026): not production-fridge stock, so not in the factory number.
+  it("leaves freezer-stored recipes out", () => {
+    const rows = toForecastRows([row({ id: "a", recipeId: 1 }), row({ id: "bun", recipeId: 2 })],
+      { ...ctx, inFridge: (id: number) => id !== 2 });
+    expect(rows.map(r => r.key)).toEqual(["a"]);
+  });
 });
 
 describe("planFactoryForecast", () => {

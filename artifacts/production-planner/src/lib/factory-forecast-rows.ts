@@ -34,6 +34,10 @@ export interface ForecastPlanRow {
 export interface ForecastContext {
   /** recipeId → category (from the calculate data); unknown → calzone line. */
   categoryOf: (recipeId: number) => string | null | undefined;
+  /** recipeId → false for a recipe wrapped into the FREEZER (recipe route,
+   *  migration 0202 — buns): not production-fridge stock, so not in the
+   *  factory number. Omitted = everything on the calzone line counts. */
+  inFridge?: (recipeId: number) => boolean;
   /** recipeId → share of the last 7 days' calzone sales. */
   shares: Record<string | number, number>;
   margin: PlanMarginSettings;
@@ -43,7 +47,7 @@ const bagPacks = (r: ForecastPlanRow) => (r.eightPackBagCount ?? 0) * (8 / (r.pa
 
 export function toForecastRows(rows: readonly ForecastPlanRow[], ctx: ForecastContext): FactoryForecastRow[] {
   return rows
-    .filter(r => kitchenLine(ctx.categoryOf(r.recipeId)) === "calzone")
+    .filter(r => kitchenLine(ctx.categoryOf(r.recipeId)) === "calzone" && (ctx.inFridge?.(r.recipeId) ?? true))
     .map(r => {
       const bags = bagPacks(r);
       const floor = minBatchesForOrders({
