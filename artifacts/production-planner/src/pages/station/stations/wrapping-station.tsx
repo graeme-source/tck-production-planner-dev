@@ -20,7 +20,9 @@ import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
-import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget } from "../shared/recipe-completion";
+import { netTwoPacks as computeNetTwoPacks, effectiveBatchesTarget, batchesReadyToWrap, itemRoute, packsWrapped } from "../shared/recipe-completion";
+import { packsFromBatches } from "@workspace/production-schedule";
+import { ShopifyWrapStatus, useShopifyWrapPushes, newWrapEventId } from "../shared/shopify-wrap-status";
 import { QualityRejectSteppers, useQualityRejects } from "../shared/quality-rejects-control";
 import { formatQualityRejects, packsLeftToClassify } from "@/lib/quality-rejects";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
@@ -128,6 +130,8 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     },
     refetchInterval: 60_000,
   });
+  // Wrap-to-Shopify ledger for this plan (recipes flagged shopify_push_on_wrap).
+  const shopifyPushes = useShopifyWrapPushes(plan.id, (plan.items ?? []).some(it => itemRoute(it).shopifyPushOnWrap));
   const [wrappingLoading, setWrappingLoading] = useState<number | null>(null);
   const [storageLoading, setStorageLoading] = useState<number | null>(null);
   const [customAmounts, setCustomAmounts] = useState<Record<number, string>>({});
@@ -301,17 +305,20 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items).sort(compareItemsForDisplay);
 
+  // Packs in the recipe's OWN pack size (÷2 until 16 Oct 2026: a bun sheet
+  // of 48 in sixes read 24 packs, not 8). What reaches wrapping is the oven
+  // output — or, for a skip-ovens recipe, the builders' confirmed batches.
+  const itemPackSize = (item: ProductionPlanItem) => (item as StationPlanItem).packSize;
   const plannedPacks = (item: ProductionPlanItem) =>
-    Math.floor(((item.batchesTarget ?? 0) * (item.portionsPerBatch ?? 10)) / 2);
+    packsFromBatches(item.batchesTarget ?? 0, item.portionsPerBatch, itemPackSize(item));
   const grossPacks = (item: ProductionPlanItem) =>
-    Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
-  const eightPackDeduction = (item: StationPlanItem) => (item.eightPackBagCount ?? 0) * 4;
+    packsFromBatches(batchesReadyToWrap(item), item.portionsPerBatch, itemPackSize(item));
   const combinedBuildingCount = (item: ProductionPlanItem) =>
     getStationCount(item, "building_1") + getStationCount(item, "building_2");
   const effBatches = (item: ProductionPlanItem) =>
     effectiveBatchesTarget(item, combinedBuildingCount(item));
   const netTwoPacks = (item: ProductionPlanItem) =>
-    computeNetTwoPacks(item, getStationCount(item, "ovens"), effBatches(item), combinedBuildingCount(item));
+    computeNetTwoPacks(item, batchesReadyToWrap(item), effBatches(item), combinedBuildingCount(item));
   // netPacks for backward compat (total items including 8-pack bags for storage calcs)
   const netPacks = (item: StationPlanItem) =>
     netTwoPacks(item) + (item.eightPackBagCount ?? 0);
@@ -335,7 +342,8 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   );
   const totalNet = items.reduce((s, it) => s + netTwoPacks(it), 0);
   const totalEightPackBags = items.reduce((s, it) => s + (it.eightPackBagCount ?? 0), 0);
-  const totalFridge = items.reduce((s, it) => s + (it.fridgeQty ?? 0), 0);
+  // Wrapped = into the fridge OR the freezer (buns go to the freezer).
+  const totalFridge = items.reduce((s, it) => s + packsWrapped(it), 0);
   const wrappedCount = items.filter(it => it.wrappingComplete).length;
   const allWrapped = items.length > 0 && items.every(it => it.wrappingComplete);
   const wrappingPct = totalNet > 0 ? Math.min(Math.round((totalFridge / totalNet) * 100), 100) : 0;
@@ -492,7 +500,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     const newValue = !item.wrappingComplete;
     if (newValue) {
       const mapping = item.recipeId ? shopifyMappings[item.recipeId] : undefined;
-      if (mapping) {
+      // A recipe that pushes to Shopify on every wrap tap has already sent
+      // its packs; the old end-of-wrapping push is skipped server-side, so
+      // don't ask about it.
+      if (mapping && !itemRoute(item).shopifyPushOnWrap) {
         const displayDelta = item.freezerQty + (item.wonlyCount ?? 0);
         setShopifyConfirm({ item, productTitle: mapping.productTitle, variantTitle: mapping.variantTitle, displayDelta });
         return;
@@ -532,13 +543,17 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
     if (!loc) return;
     addingRef.current = true;
     setStorageLoading(item.id);
+    // One id per tap: the wrap-to-Shopify ledger key, so a retried request
+    // can never add the packs to Shopify twice.
+    const eventId = newWrapEventId();
     await runStorageAction(async (signal) => {
-      await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
+      const res = await guardedFetch(`/api/production-plans/${plan.id}/items/${item.id}/${loc.endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ qty, packSize }),
+        body: JSON.stringify(loc.endpoint === "freezer" ? { qty, eventId } : { qty, packSize }),
         signal,
       });
+      const added = await res.json().catch(() => null) as { stockError?: string | null; shopify?: { status: string; error: string | null } | null } | null;
       const net = netPacks(item);
       const currentStored = STORAGE_LOCATIONS.reduce((s, l) => s + getStorageQty(item, l.key), 0);
       const eightPackStored = item.fridgeEightPackQty ?? 0;
@@ -551,6 +566,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       setShowCustom(prev => ({ ...prev, [item.id]: false }));
       const packLabel = packSize === 8 ? "8-pack bags" : "packs";
       toast({ title: `+${qty} ${packLabel} → ${loc.label}`, description: `${item.recipeName ?? "Recipe"}` });
+      if (added?.stockError) toast({ title: "Freezer stock not updated", description: added.stockError, variant: "destructive" });
+      if (added?.shopify) {
+        await shopifyPushes.refetch();
+        if (added.shopify.status === "sent") toast({ title: `+${qty} sent to Shopify ✓`, description: item.recipeName ?? "Recipe" });
+        else if (added.shopify.status === "failed") toast({ title: "Shopify update failed — retry on the recipe", description: added.shopify.error ?? "", variant: "destructive" });
+      }
     });
     setStorageLoading(null);
     addingRef.current = false;
@@ -580,7 +601,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   };
 
   const takeOutMutation = useMutation({
-    mutationFn: async (args: { itemId: number; where: TakeBackOutWhere; body: ReturnType<typeof takeBackOutBody> }) => {
+    mutationFn: async (args: { itemId: number; where: TakeBackOutWhere; body: ReturnType<typeof takeBackOutBody> & { eventId?: string } }) => {
       const loc = STORAGE_LOCATIONS.find(l => l.key === args.where);
       if (!loc) throw new Error("Unknown storage place");
       const res = await fetch(`/api/production-plans/${plan.id}/items/${args.itemId}/${loc.endpoint}`, {
@@ -601,13 +622,19 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const confirmTakeBackOut = async (reason: UndoReason, otherText: string) => {
     if (!takeOut) return;
     const { item, where, packSize, summary } = takeOut;
-    await takeOutMutation.mutateAsync({
+    const taken = await takeOutMutation.mutateAsync({
       itemId: item.id,
       where,
-      body: takeBackOutBody({ qty: summary.qty, packSize, reason, otherText }),
-    });
+      // eventId: the take-back's own ledger key, so Shopify gets −N once.
+      body: { ...takeBackOutBody({ qty: summary.qty, packSize, reason, otherText }), eventId: newWrapEventId() },
+    }) as { shopify?: { status: string; error: string | null } | null } | undefined;
     await queryClient.invalidateQueries({ queryKey: getGetProductionPlanQueryKey(plan.id) });
     setTakeOut(null);
+    if (taken?.shopify) {
+      await shopifyPushes.refetch();
+      if (taken.shopify.status === "sent") toast({ title: `−${summary.qty} taken off Shopify ✓`, description: summary.recipe });
+      else if (taken.shopify.status === "failed") toast({ title: "Shopify not updated — retry on the recipe", description: taken.shopify.error ?? "", variant: "destructive" });
+    }
     toast({
       title: `−${summary.qty} ${summary.unit} from ${where === "fridge" ? "Production Fridge" : "Product Freezer"}`,
       description: `${summary.recipe} — still to wrap now ${summary.stillToWrapAfter}`,
@@ -895,7 +922,9 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                           {isWrapped && <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />}
                         </div>
                         <p className="text-sm text-muted-foreground">
-                          {getStationCount(item, "ovens")} / {effBatches(item)} oven loads
+                          {itemRoute(item).skipOvens
+                            ? <>{batchesReadyToWrap(item)} / {effBatches(item)} batches built · straight from building</>
+                            : <>{getStationCount(item, "ovens")} / {effBatches(item)} oven loads</>}
                           {item.builderMarkedCompleteAt && (
                             <span className="text-amber-600 dark:text-amber-400"> · builder marked complete</span>
                           )}
@@ -927,7 +956,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                         oven card uses). */}
                     <div className="rounded-xl border border-cyan-300 dark:border-cyan-800 bg-cyan-50/40 dark:bg-cyan-950/20 p-4">
                       <div className="flex items-center gap-2 text-base font-bold text-cyan-700 dark:text-cyan-300 uppercase tracking-wider mb-3">
-                        <Snowflake className="w-5 h-5" /> From Chiller
+                        <Snowflake className="w-5 h-5" /> {itemRoute(item).skipOvens ? "From building" : "From Chiller"}
                       </div>
                       <div className="flex items-stretch justify-center gap-3">
                         <div className="flex-1 text-center bg-background rounded-lg border border-border py-2">
@@ -1012,23 +1041,37 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                         at the bottom of the station. */}
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-xl border border-purple-200 dark:border-purple-800 bg-purple-50/40 dark:bg-purple-950/20 px-3 py-3 text-center">
-                        <p className="text-xs text-purple-700 dark:text-purple-300 font-semibold uppercase tracking-wider mb-1">In Chiller</p>
+                        <p className="text-xs text-purple-700 dark:text-purple-300 font-semibold uppercase tracking-wider mb-1">{itemRoute(item).skipOvens ? "To wrap" : "In Chiller"}</p>
                         <p className="text-3xl font-bold tabular-nums text-purple-700 dark:text-purple-300 leading-tight">{Math.max(0, remaining)}</p>
                         <p className="text-xs text-muted-foreground mt-0.5">awaiting wrap</p>
                       </div>
-                      <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-3 text-center">
-                        <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-1">In Production Fridge</p>
-                        <p className="text-3xl font-bold tabular-nums text-primary leading-tight">{fridge}</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">wrapped &amp; stored</p>
-                      </div>
+                      {itemRoute(item).defaultStorage === "freezer" ? (
+                        <div className="rounded-xl border border-sky-300 dark:border-sky-800 bg-sky-50/50 dark:bg-sky-950/20 px-3 py-3 text-center">
+                          <p className="text-xs text-sky-700 dark:text-sky-300 font-semibold uppercase tracking-wider mb-1">In Product Freezer</p>
+                          <p className="text-3xl font-bold tabular-nums text-sky-700 dark:text-sky-300 leading-tight">{freezer}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">wrapped &amp; frozen{fridge > 0 ? ` · ${fridge} in fridge` : ""}</p>
+                        </div>
+                      ) : (
+                        <div className="rounded-xl border border-primary/40 bg-primary/5 px-3 py-3 text-center">
+                          <p className="text-xs text-primary font-semibold uppercase tracking-wider mb-1">In Production Fridge</p>
+                          <p className="text-3xl font-bold tabular-nums text-primary leading-tight">{fridge}</p>
+                          <p className="text-xs text-muted-foreground mt-0.5">wrapped &amp; stored</p>
+                        </div>
+                      )}
                     </div>
+
+                    {/* Wrap-to-Shopify status for recipes that push on every
+                        wrap tap: "+8 sent to Shopify ✓" or "failed — retry". */}
+                    {itemRoute(item).shopifyPushOnWrap && (
+                      <ShopifyWrapStatus state={shopifyPushes.data?.byItem?.[item.id]} onRetried={() => shopifyPushes.refetch()} />
+                    )}
 
                     {/* Mark as Chilled (HACCP cooling timer) — available to
                         wrappers as a redundant stamp. Oven operators can also
                         mark it earlier; either way, it's one stamp per recipe.
                         The wrapping-complete action auto-stamps as fallback if
                         nobody pressed it. */}
-                    {(() => {
+                    {!itemRoute(item).skipOvens && (() => {
                       const chill = item.recipeId ? chillByRecipe[item.recipeId] : undefined;
                       const hasLastBatch = !!chill;
                       const alreadyChilled = !!chill?.chillEndAt;
@@ -1135,7 +1178,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       )}
                       <div className="flex items-center gap-2 flex-wrap">
                         {(() => {
-                          const dest = storageDest[item.id] ?? "fridge";
+                          const dest = storageDest[item.id] ?? itemRoute(item).defaultStorage;
                           const destLabel = dest === "fridge" ? "Fridge" : "Freezer";
                           return (
                             <>
@@ -1147,7 +1190,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                                     className={dest === k
                                       ? "px-2.5 py-2 bg-secondary text-foreground"
                                       : "px-2.5 py-2 text-muted-foreground hover:text-foreground"}
-                                    title={k === "fridge" ? "Production Fridge" : "Product Freezer — freezer stock is what wrapping-complete offers to Shopify"}
+                                    title={k === "fridge" ? "Production Fridge" : "Product Freezer"}
                                   >
                                     {k === "fridge" ? "Fridge" : "Freezer"}
                                   </button>
@@ -1182,12 +1225,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                               placeholder="Qty"
                               value={customVal}
                               onChange={e => setCustomAmounts(prev => ({ ...prev, [item.id]: e.target.value }))}
-                              onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, storageDest[item.id] ?? "fridge"); }}
+                              onKeyDown={e => { if (e.key === "Enter" && customNum > 0) addToStorage(item, customNum, storageDest[item.id] ?? itemRoute(item).defaultStorage); }}
                               className="w-20 h-10 rounded-lg border border-border bg-background px-2 text-base tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
                               autoFocus
                             />
                             <button
-                              onClick={() => { if (customNum > 0) addToStorage(item, customNum, storageDest[item.id] ?? "fridge"); }}
+                              onClick={() => { if (customNum > 0) addToStorage(item, customNum, storageDest[item.id] ?? itemRoute(item).defaultStorage); }}
                               disabled={isStorageLoading || !(customNum > 0) || isOnBreak || addingRef.current || storageBusy}
                               className="px-3 py-2 rounded-lg bg-primary text-primary-foreground text-base font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                             >
@@ -1203,7 +1246,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                         )}
 
                         {(() => {
-                          const dest = storageDest[item.id] ?? "fridge";
+                          const dest = storageDest[item.id] ?? itemRoute(item).defaultStorage;
                           const stored = dest === "fridge" ? fridge : (item.freezerQty ?? 0);
                           if (stored <= 0) return null;
                           const undoAmt = Math.min(STACK_SIZE, stored);
