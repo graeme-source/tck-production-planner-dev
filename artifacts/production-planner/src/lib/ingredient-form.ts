@@ -70,6 +70,10 @@ export const ingredientFormSchema = z.object({
   surplusAbsoluteQty: nullableNumber((n) => n.min(0)),
   shelfLifeDays: nullableNumber((n) => n.int().positive()),
   requiresUseByDate: z.boolean().optional(),
+  // Minimum shelf life on delivery (whole days, delivery day → use-by).
+  // Empty = no minimum. Goods-in warns on anything shorter and the
+  // supplier's account manager is emailed.
+  minDeliveryShelfLifeDays: nullableNumber((n) => n.int().positive()),
   // Prep-label rules: food-safe days after opening / after defrosting.
   // Empty = the category default set on the Label Printer tools page.
   openedLifeDays: nullableNumber((n) => n.int().positive()),
@@ -172,6 +176,7 @@ export function emptyIngredientFormDefaults(
     surplusAbsoluteQty: null,
     shelfLifeDays: null,
     requiresUseByDate: false,
+    minDeliveryShelfLifeDays: null,
     openedLifeDays: null,
     defrostLifeDays: null,
     caseSizePacks: null,
@@ -258,6 +263,7 @@ export function ingredientToFormValues(
     surplusAbsoluteQty: num(it.surplusAbsoluteQty),
     shelfLifeDays: num(it.shelfLifeDays),
     requiresUseByDate: bool(it.requiresUseByDate),
+    minDeliveryShelfLifeDays: num(it.minDeliveryShelfLifeDays),
     openedLifeDays: num(it.openedLifeDays),
     defrostLifeDays: num(it.defrostLifeDays),
     caseSizePacks: num(it.caseSizePacks),
@@ -331,6 +337,7 @@ export function buildIngredientPayload(data: IngredientFormValues) {
       data.surplusMode === "absolute" ? (data.surplusAbsoluteQty ?? null) : null,
     shelfLifeDays: data.shelfLifeDays ?? null,
     requiresUseByDate: data.requiresUseByDate ?? false,
+    minDeliveryShelfLifeDays: data.minDeliveryShelfLifeDays ?? null,
     openedLifeDays: data.openedLifeDays ?? null,
     defrostLifeDays: data.defrostLifeDays ?? null,
     caseSizePacks: data.caseSizePacks ?? null,

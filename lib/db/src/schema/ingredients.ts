@@ -55,6 +55,10 @@ export const ingredientsTable = pgTable("ingredients", {
   surplusByDeliveryWeekday: jsonb("surplus_by_delivery_weekday"),
   shelfLifeDays: integer("shelf_life_days"),
   requiresUseByDate: boolean("requires_use_by_date").notNull().default(false),
+  // Minimum shelf life on delivery, in whole days from the delivery day to
+  // the use-by (NULL = none). Goods-in warns on anything shorter and the
+  // supplier's account manager is emailed (migration 0197). Objective D.
+  minDeliveryShelfLifeDays: integer("min_delivery_shelf_life_days"),
   // Prep-label rules: food-safe days after OPENING (shelfLifeDays stays the
   // unopened figure) and after DEFROSTING. Null = category default from
   // app_settings 'label_opened_life_defaults', then the global fallback —

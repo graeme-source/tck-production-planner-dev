@@ -4,7 +4,7 @@ import { useListSuppliers, type CreateSupplier } from "@workspace/api-client-rea
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical, Truck, Clock } from "lucide-react";
+import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical, Truck, Clock, UserRound } from "lucide-react";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -29,6 +29,10 @@ const schema = z.object({
   leadTimeDays: z.coerce.number().int().min(0).optional(),
   cutoffTime: z.string().optional(),
   invoiceNotRequired: z.boolean().optional(),
+  // Account manager (2026-10-16) — short-shelf-life reports from goods-in
+  // are emailed here automatically.
+  accountManagerName: z.string().optional(),
+  accountManagerEmail: z.string().email("Invalid email").optional().or(z.literal("")),
   // Minimum order spend in £ — blank = no minimum.
   minimumOrderValue: z
     .string()
@@ -53,6 +57,8 @@ type SupplierBody = CreateSupplier & {
   cutoffTime?: string;
   invoiceNotRequired?: boolean;
   minimumOrderValue?: number | null;
+  accountManagerName?: string | null;
+  accountManagerEmail?: string | null;
 };
 
 type SupplierItem = {
@@ -71,11 +77,13 @@ type SupplierItem = {
   cutoffTime?: string;
   invoiceNotRequired?: boolean;
   minimumOrderValue?: number | null;
+  accountManagerName?: string | null;
+  accountManagerEmail?: string | null;
   createdAt: string;
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, minimumOrderValue: "",
+  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, minimumOrderValue: "", accountManagerName: "", accountManagerEmail: "",
 };
 
 /** Form text → £ amount for the API: blank or 0 = no minimum (null). */
@@ -152,6 +160,36 @@ function SupplierForm({
           placeholder="orders@supplier.co.uk"
         />
         {errors.email && <span className="text-destructive text-xs">{errors.email.message}</span>}
+      </div>
+
+      <div className="rounded-xl border border-border bg-secondary/30 p-3 space-y-3">
+        <div>
+          <p className="text-sm font-semibold">Account manager</p>
+          <p className="text-xs text-muted-foreground">
+            If something arrives with less shelf life than the minimum set on the ingredient, goods-in emails them
+            automatically (Graeme gets a copy).
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="text-sm font-medium mb-1 block">Name</label>
+            <input
+              {...register("accountManagerName")}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="e.g. Sam Smith"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium mb-1 block">Email</label>
+            <input
+              {...register("accountManagerEmail")}
+              type="email"
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="name@supplier.co.uk"
+            />
+            {errors.accountManagerEmail && <span className="text-destructive text-xs">{errors.accountManagerEmail.message}</span>}
+          </div>
+        </div>
       </div>
 
       <div>
@@ -500,7 +538,7 @@ export default function Suppliers() {
 
       {/* Add Dialog */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-        <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display text-xl">New Supplier</DialogTitle>
           </DialogHeader>
@@ -509,7 +547,7 @@ export default function Suppliers() {
             isEdit={false}
             isPending={createSupplier.isPending}
             onSubmit={(data) => {
-              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue) };
+              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null };
               createSupplier.mutate(
                 { data: body },
                 { onSuccess: () => setIsAddOpen(false) }
@@ -521,7 +559,7 @@ export default function Suppliers() {
 
       {editingItem && (
         <Dialog open={!!editingItem} onOpenChange={(v) => { if (!v) setEditingItem(null); }}>
-          <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="font-display text-xl">Edit Supplier</DialogTitle>
             </DialogHeader>
@@ -542,11 +580,13 @@ export default function Suppliers() {
                 cutoffTime: editingItem.cutoffTime ?? "17:00",
                 invoiceNotRequired: editingItem.invoiceNotRequired ?? false,
                 minimumOrderValue: editingItem.minimumOrderValue != null ? String(editingItem.minimumOrderValue) : "",
+                accountManagerName: editingItem.accountManagerName ?? "",
+                accountManagerEmail: editingItem.accountManagerEmail ?? "",
               }}
               isEdit
               isPending={updateSupplier.isPending}
               onSubmit={(data) => {
-                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue) };
+                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null };
                 updateSupplier.mutate(
                   { id: editingItem.id, data: body },
                   { onSuccess: () => setEditingItem(null) }
@@ -619,6 +659,18 @@ export default function Suppliers() {
             </div>
 
             <div className="space-y-1.5 text-sm">
+              {(supplier as SupplierItem).accountManagerEmail && (
+                <a
+                  href={`mailto:${(supplier as SupplierItem).accountManagerEmail}`}
+                  className="flex items-center gap-2 text-muted-foreground hover:text-foreground transition-colors truncate"
+                  title="Account manager — short-shelf-life reports go here"
+                >
+                  <UserRound className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="truncate">
+                    Account manager: {(supplier as SupplierItem).accountManagerName ? `${(supplier as SupplierItem).accountManagerName} · ` : ""}{(supplier as SupplierItem).accountManagerEmail}
+                  </span>
+                </a>
+              )}
               {supplier.email && (
                 <a
                   href={`mailto:${supplier.email}`}

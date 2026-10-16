@@ -23,3 +23,26 @@ describe("secondary supplier price", () => {
     expect(ingredientFormSchema.safeParse({ ...base, secondaryCostPerPack: "-1" }).success).toBe(false);
   });
 });
+
+// Minimum shelf life on delivery (2026-10-16): optional whole days.
+describe("minimum shelf life on delivery", () => {
+  const base = { ...emptyIngredientFormDefaults("ingredient"), name: "Diced Chicken", unit: "kg", packWeight: 5, costPerPack: 30 };
+
+  it("defaults to none and is sent as null", () => {
+    expect(base.minDeliveryShelfLifeDays).toBeNull();
+    expect(buildIngredientPayload(base).minDeliveryShelfLifeDays).toBeNull();
+  });
+
+  it("is sent when set", () => {
+    const parsed = ingredientFormSchema.safeParse({ ...base, minDeliveryShelfLifeDays: "3" });
+    expect(parsed.success).toBe(true);
+    expect(buildIngredientPayload(parsed.data!).minDeliveryShelfLifeDays).toBe(3);
+  });
+
+  it("blank clears it; zero, fractions and negatives are rejected", () => {
+    expect(ingredientFormSchema.safeParse({ ...base, minDeliveryShelfLifeDays: "" }).data?.minDeliveryShelfLifeDays).toBeNull();
+    expect(ingredientFormSchema.safeParse({ ...base, minDeliveryShelfLifeDays: "0" }).success).toBe(false);
+    expect(ingredientFormSchema.safeParse({ ...base, minDeliveryShelfLifeDays: "1.5" }).success).toBe(false);
+    expect(ingredientFormSchema.safeParse({ ...base, minDeliveryShelfLifeDays: "-2" }).success).toBe(false);
+  });
+});

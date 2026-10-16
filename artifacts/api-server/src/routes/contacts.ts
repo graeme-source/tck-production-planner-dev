@@ -72,11 +72,14 @@ router.get("/", async (_req: Request, res: Response) => {
     id: suppliersTable.id, name: suppliersTable.name, contactName: suppliersTable.contactName,
     phone: suppliersTable.phone, orderingPhone: suppliersTable.orderingPhone,
     email: suppliersTable.email, website: suppliersTable.website,
+    // Account manager (migration 0197) — edited on the supplier's record.
+    accountManagerName: suppliersTable.accountManagerName,
+    accountManagerEmail: suppliersTable.accountManagerEmail,
   }).from(suppliersTable).orderBy(asc(suppliersTable.name));
   res.json({
     contacts: contacts.map(serialise),
     // Only suppliers with a way to reach them — an empty card is noise.
-    suppliers: suppliers.filter(s => s.phone || s.orderingPhone || s.email),
+    suppliers: suppliers.filter(s => s.phone || s.orderingPhone || s.email || s.accountManagerEmail),
   });
 });
 

@@ -304,3 +304,6 @@ export function newlyAdded(all: number[], previous: number[] | null | undefined)
   const told = new Set(previous ?? []);
   return all.filter(id => !told.has(id));
 }
+
+// Minimum shelf life at goods-in (2026-10-16).
+export * from "./shelf-life";

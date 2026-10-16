@@ -35,6 +35,9 @@ export interface SupplierContact {
   orderingPhone: string | null;
   email: string | null;
   website: string | null;
+  /** The supplier's account manager (short-shelf-life reports go here). */
+  accountManagerName?: string | null;
+  accountManagerEmail?: string | null;
 }
 
 export interface ContactsResponse {
