@@ -1,5 +1,6 @@
 import type { ProductionPlanItem } from "@workspace/api-client-react";
-import type { StationPlanItem } from "./constants";
+import { packsFromBatches, packsPerBatch as recipePacksPerBatch, readRecipeRoute, type RecipeRoute } from "@workspace/production-schedule";
+import { getStationCount, type StationPlanItem } from "./constants";
 
 /**
  * Helpers for the builder-controlled recipe completion model.
@@ -24,9 +25,30 @@ import type { StationPlanItem } from "./constants";
  * untouched.
  */
 export function packsPerBatch(item: ProductionPlanItem): number {
-  const packSize = Number((item as { packSize?: number | string }).packSize) || 2;
-  const portions = Number(item.portionsPerBatch) || 10;
-  return Math.max(1, Math.floor(portions / packSize));
+  return recipePacksPerBatch(item.portionsPerBatch, (item as { packSize?: number | string }).packSize);
+}
+
+/** The plan item's production route (migration 0202 flags, carried on the
+ *  plan API's items). Missing = the standard calzone route. */
+export function itemRoute(item: ProductionPlanItem): RecipeRoute {
+  return readRecipeRoute(item as Parameters<typeof readRecipeRoute>[0]);
+}
+
+/**
+ * Batches that have reached wrapping: through the ovens for the standard
+ * route, or straight off the building tables (the builders' confirmed
+ * batches) for a recipe flagged skip_ovens — cinnamon buns go building →
+ * wrapping (Graeme, 16 Oct 2026).
+ */
+export function batchesReadyToWrap(item: ProductionPlanItem): number {
+  if (itemRoute(item).skipOvens) return getStationCount(item, "building_1") + getStationCount(item, "building_2");
+  return getStationCount(item, "ovens");
+}
+
+/** Packs already wrapped and stored — fridge and freezer (the freezer is
+ *  where wrapping sends freezer-stored products like buns). */
+export function packsWrapped(item: StationPlanItem): number {
+  return (item.fridgeQty ?? 0) + (item.freezerQty ?? 0);
 }
 
 /**
@@ -91,7 +113,10 @@ export function packsDoneForItem(
 }
 
 /**
- * Net two-packs available to send to wrapping for a plan item.
+ * Net packs available to send to wrapping for a plan item (named for the
+ * calzone two-pack; counts in the recipe's own pack size). The first count
+ * is the batches that reached wrapping — ovens, or building for a
+ * skip-ovens recipe: pass batchesReadyToWrap(item).
  *
  * - builderMarkedCompleteAt path ignores any legacy `shortCount` — the
  *   builder has authoritatively stated what was made.
@@ -108,8 +133,12 @@ export function netTwoPacks(
   effectiveBatches?: number,
   builtBatches?: number,
 ): number {
-  const grossPacks = Math.floor((ovensBatchCount * (item.portionsPerBatch ?? 10)) / 2);
-  const eightPackDeduction = (item.eightPackBagCount ?? 0) * 4;
+  // In the recipe's OWN pack size (a hard-coded 2 until 16 Oct 2026 — a
+  // sheet of 48 buns in sixes read 24 packs instead of 8).
+  const packSize = (item as { packSize?: number | string }).packSize;
+  const grossPacks = packsFromBatches(ovensBatchCount, item.portionsPerBatch, packSize);
+  // An 8-pack bag is 8 portions, i.e. 8 / packSize packs (4 two-packs).
+  const eightPackDeduction = Math.round(((item.eightPackBagCount ?? 0) * 8) / (Number(packSize) || 2));
   const wonky = item.wonlyCount ?? 0;
   const dogBin = item.dogBinCount ?? 0;
   const extras = item.extraPacksBuilt ?? 0;

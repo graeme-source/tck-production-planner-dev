@@ -20,7 +20,8 @@ import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-sc
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, isMacCheese, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
 import { QueueDock, QueueSheet } from "../shared/station-queue";
-import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch } from "../shared/recipe-completion";
+import { effectiveBatchesTarget, netTwoPacks as computeNetTwoPacks, packsTargetForItem, packsDoneForItem, packsPerBatch, itemRoute } from "../shared/recipe-completion";
+import { packsFromBatches } from "@workspace/production-schedule";
 import { RECIPE_RACK_COLOURS } from "./dough-sheeting-station";
 import { ovenChangeReminder } from "../shared/oven-reminder";
 import { OvenChangeBanner } from "../shared/oven-change-banner";
@@ -166,7 +167,11 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     return null;
   };
 
-  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items).sort(compareItemsForDisplay);
+  // Recipes flagged skip_ovens (migration 0202 — cinnamon buns, proofed and
+  // baked by hand for now) go building → wrapping and never show here.
+  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items)
+    .filter(it => !itemRoute(it).skipOvens)
+    .sort(compareItemsForDisplay);
   const combinedBuildingCount = (it: ProductionPlanItem) =>
     getStationCount(it, "building_1") + getStationCount(it, "building_2");
   const effTarget = (it: ProductionPlanItem) =>
@@ -462,8 +467,9 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   const macDone = macItems.reduce((s, it) => s + getStationCount(it, "ovens"), 0);
   const macTarget = macItems.reduce((s, it) => s + effTarget(it), 0);
 
+  // In the recipe's own pack size (÷2 until 16 Oct 2026).
   const grossPacks = (item: ProductionPlanItem) =>
-    Math.floor((getStationCount(item, "ovens") * (item.portionsPerBatch ?? 10)) / 2);
+    packsFromBatches(getStationCount(item, "ovens"), item.portionsPerBatch, (item as StationPlanItem).packSize);
   const eightPackDeduction = (item: StationPlanItem) => (item.eightPackBagCount ?? 0) * 4;
   const netTwoPacks = (item: ProductionPlanItem) =>
     computeNetTwoPacks(item, getStationCount(item, "ovens"), effTarget(item), combinedBuildingCount(item));
@@ -615,7 +621,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
               </h3>
               <p className="text-sm text-amber-700 dark:text-amber-300 mt-0.5">
                 Through the ovens for this recipe:{" "}
-                <strong>{formatBatches(getStationCount(promptItem, "ovens"), Math.max(1, Math.floor((promptItem.portionsPerBatch ?? 10) / 2)))} batches</strong>
+                <strong>{formatBatches(getStationCount(promptItem, "ovens"), packsPerBatch(promptItem))} batches</strong>
                 {" · "}
                 <strong>{ovenPacksDone(promptItem)} packs</strong>
                 {" "}— check this matches what physically came out before moving on.

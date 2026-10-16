@@ -1941,7 +1941,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
                       ) : null;
                     })()}
                     <span className="text-sm tabular-nums font-medium flex-shrink-0">
-                      {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2)))} packs)</span>
+                      {formatBatches(combinedCount)}/{formatBatches(item.batchesTarget ?? 0)}{" "}<span className="text-xs font-normal text-muted-foreground">({batchesToPacks(item.batchesTarget ?? 0, packsPerBatch(item))} packs)</span>
                     </span>
                     {paceData[item.id] != null && (
                       <span className="text-xs tabular-nums text-violet-600 dark:text-violet-400 font-medium flex-shrink-0">
@@ -2272,7 +2272,9 @@ function RecipeFinishedControls({
     // "3 batches 2 packs"; and a missed batch registration hid inside a
     // rounded counter — Graeme, 2026-08-26). The builder is signing off
     // that this is EXACTLY what physically exists.
-    const ppb = Math.max(1, Math.floor((item.portionsPerBatch ?? 10) / 2));
+    // In the recipe's own pack size (÷2 until 16 Oct 2026: a bun sheet of
+    // 48 in sixes is 8 packs, not 24).
+    const ppb = packsPerBatch(item);
     const packsMade = batchesToPacks(combinedCount, ppb) + extras;
     const summary =
       `Built: ${formatBatches(combinedCount, ppb)} of ${formatBatches(target, ppb)} batches` +

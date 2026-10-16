@@ -1,6 +1,6 @@
 import { Construction, Waves, Flame, Gift, Box, Salad, Layers, UtensilsCrossed, Drumstick } from "lucide-react";
 import type { ProductionPlanItem } from "@workspace/api-client-react";
-import { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY, mainKitchenItems } from "@workspace/production-schedule";
+import { MAC_CHEESE_CATEGORY, FRIED_CHICKEN_CATEGORY, mainKitchenItems, feedingStations } from "@workspace/production-schedule";
 
 /**
  * A production plan item as the API actually serialises it. The server's
@@ -19,6 +19,13 @@ export type StationPlanItem = ProductionPlanItem & {
   eightPackBagCount?: number;
   /** 8-pack bags actually wrapped into the fridge so far. */
   fridgeEightPackQty?: number;
+  /** Production route (migration 0202) — read via itemRoute() in
+   *  recipe-completion.ts, never directly. */
+  skipOvens?: boolean;
+  defaultStorage?: string;
+  shopifyPushOnWrap?: boolean;
+  excludeFromKpis?: boolean;
+  calzoneBatchEquivalent?: string | number | null;
 };
 
 /** DOM id of the flex slot beside the Checklist/Production toggle. A station
@@ -93,7 +100,8 @@ export function getPrevStationCount(item: ProductionPlanItem, stationType: strin
     building_2: ["mixing"],
     macaroni_cheese: [],
     ovens: ["building_1", "building_2"],
-    wrapping: itemIsMacCheese ? ["macaroni_cheese"] : ["ovens"],
+    // A skip-ovens recipe (migration 0202) is wrapped straight off building.
+    wrapping: itemIsMacCheese ? ["macaroni_cheese"] : feedingStations("wrapping", item as StationPlanItem),
   };
   const prevStations = deps[stationType];
   if (!prevStations || prevStations.length === 0) return item.batchesTarget ?? 0;
