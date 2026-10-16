@@ -62,6 +62,9 @@ export async function computeBuilderBatchesPerHourForDay(dateIso: string): Promi
       lte(batchCompletionsTable.completedAt, dayEnd),
       sql`${batchCompletionsTable.stationType} IN ('building_1','building_2')`,
       ne(recipesTable.category, MAC_CHEESE_CATEGORY),
+      // Out of the KPIs by recipe flag (migration 0202) — cinnamon buns are
+      // built on the same tables but are not calzone batches.
+      eq(recipesTable.excludeFromKpis, false),
     ));
 
   const breakConfig = await getStandardBreakConfig();

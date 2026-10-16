@@ -66,6 +66,7 @@ router.get("/", async (req: Request, res: Response) => {
           dogBinCount: productionPlanItemsTable.dogBinCount,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
+          excludeFromKpis: recipesTable.excludeFromKpis,
         })
         .from(productionPlanItemsTable)
         .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

@@ -11,7 +11,8 @@
  *   - recorded defects + their types: the defects tables (migration 0139)
  *
  * Main kitchen only (kitchen-scope rule): fried chicken is made in a separate
- * facility, so its packs, rejects and reject taps never count here.
+ * facility, so its packs, rejects and reject taps never count here. Nor do
+ * recipes flagged exclude_from_kpis (migration 0202 — cinnamon buns).
  */
 import { db, defectsTable, defectTypesTable } from "@workspace/db";
 import { and, gte, isNull, lte, sql } from "drizzle-orm";
@@ -29,6 +30,7 @@ export async function loadDefectSummary(from: string, to: string): Promise<Defec
       FROM production_plans p JOIN production_plan_items i ON i.plan_id = p.id
       LEFT JOIN recipes r ON r.id = i.recipe_id
       WHERE p.plan_date BETWEEN ${from} AND ${to}
+        AND COALESCE(r.exclude_from_kpis, FALSE) = FALSE
     `),
     db.execute<{ kind: "wonky" | "dog_bin"; station_type: string | null; category: string | null; packs: number }>(sql`
       SELECT e.kind, e.station_type, r.category, SUM(e.delta)::int AS packs
@@ -36,6 +38,7 @@ export async function loadDefectSummary(from: string, to: string): Promise<Defec
       LEFT JOIN production_plan_items i ON i.id = e.plan_item_id
       LEFT JOIN recipes r ON r.id = i.recipe_id
       WHERE p.plan_date BETWEEN ${from} AND ${to}
+        AND COALESCE(r.exclude_from_kpis, FALSE) = FALSE
       GROUP BY e.kind, e.station_type, r.category
     `),
     db.select({

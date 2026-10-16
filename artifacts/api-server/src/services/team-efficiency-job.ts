@@ -103,6 +103,9 @@ export async function planItems(from: string, to: string): Promise<Map<string, P
     JOIN production_plan_items i ON i.plan_id = p.id
     JOIN recipes r ON r.id = i.recipe_id
     WHERE p.plan_date BETWEEN ${from} AND ${to}
+      -- Recipes flagged out of the KPIs (migration 0202 — cinnamon buns) are
+      -- not team-efficiency or defects output (Graeme, 16 Oct 2026).
+      AND r.exclude_from_kpis = FALSE
   `);
   const out = new Map<string, PlanItemInput[]>();
   for (const x of r.rows) {

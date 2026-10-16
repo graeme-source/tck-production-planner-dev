@@ -416,7 +416,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       .from(productionPlansTable)
       .where(eq(productionPlansTable.planDate, today))
       .limit(1);
-    let todayPlanItems: Array<{ itemId: number; recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; eightPackBagCount: number; status: string }> = [];
+    let todayPlanItems: Array<{ itemId: number; recipeId: number; recipeName: string; recipeColor: string | null; batchesTarget: number; recipeCategory: string | null; excludeFromKpis?: boolean; eightPackBagCount: number; status: string }> = [];
     // ── The day in two big numbers for the opening slide (Graeme,
     //    2026-09-02): batches being made today (calzones and mac cheese
     //    split, per the house rule) and orders being packed. Orders going
@@ -446,6 +446,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           recipeColor: recipesTable.color,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
+          excludeFromKpis: recipesTable.excludeFromKpis,
           eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
           status: productionPlanItemsTable.status,
         })
@@ -492,6 +493,7 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
           leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
           batchesTarget: productionPlanItemsTable.batchesTarget,
           recipeCategory: recipesTable.category,
+          excludeFromKpis: recipesTable.excludeFromKpis,
         })
         .from(productionPlanItemsTable)
         .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

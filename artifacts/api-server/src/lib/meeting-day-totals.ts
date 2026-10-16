@@ -1,15 +1,18 @@
 /**
  * A production day's totals for the morning and end-of-day meetings' quality
  * tiles (wonkies, dog bins, "across N batches planned", shorts, leftover
- * filling). Main kitchen only, by the shared kitchen-scope rule: fried
+ * filling). Main kitchen only, by the shared kitchen-scope rule (and a
+ * recipe flagged exclude_from_kpis — cinnamon buns — is left out too): fried
  * chicken is made in a separate facility, and its bags had been added to the
  * day's "batches planned" (a 105-batch day read 274). Pure.
  */
-import { isMainKitchen } from "@workspace/production-schedule";
+import { countsInKpis } from "@workspace/production-schedule";
 import { sumQualityRejects } from "./quality-rejects";
 
 export interface MeetingDayItem {
   recipeCategory: string | null;
+  /** Recipe flag (migration 0202): out of every production KPI. */
+  excludeFromKpis?: boolean | null;
   wonlyTotal: number | null;
   dogBinCount: number | null;
   batchesTarget: number | null;
@@ -27,7 +30,7 @@ export interface MeetingDayTotals {
 }
 
 export function meetingDayTotals(items: readonly MeetingDayItem[]): MeetingDayTotals {
-  const main = items.filter(it => isMainKitchen(it.recipeCategory));
+  const main = items.filter(it => countsInKpis(it.recipeCategory, it.excludeFromKpis));
   const rejects = sumQualityRejects(main);
   let batchesTarget = 0;
   let shortCount = 0;
