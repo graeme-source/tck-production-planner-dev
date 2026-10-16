@@ -101,6 +101,14 @@ describe("htmlToPlainText + prepareSurveyIntro", () => {
       .toBe("Vote\n\nOne & two\nthree\n\n• a\n• b");
   });
 
+  it("does not put blank lines between list items the editor wrapped in <p>", () => {
+    expect(htmlToPlainText("<p>Hi</p><ul><li><p>a</p></li><li><p>b</p></li></ul><p>End</p>")).toBe("Hi\n\n• a\n• b\n\nEnd");
+  });
+
+  it("drops the editor's empty trailing (and leading) paragraphs but keeps middle spacing", () => {
+    expect(sanitiseSurveyIntroHtml("<p></p><p>a</p><p></p><p>b</p><p></p><p><br></p>")).toBe("<p>a</p><p></p><p>b</p>");
+  });
+
   it("formatted save stores sanitised HTML and its plain text", () => {
     expect(prepareSurveyIntro({ intro: "ignored", html: "<p>Hi <b>there</b></p><script>x</script>" }))
       .toEqual({ intro: "Hi there", introHtml: "<p>Hi <strong>there</strong></p>" });

@@ -89,7 +89,12 @@ function isBlank(html: string): boolean {
  */
 export function sanitiseSurveyIntroHtml(raw: string | null | undefined): string | null {
   if (raw == null) return null;
-  const clean = sanitizeHtml(String(raw).slice(0, SURVEY_INTRO_HTML_MAX), OPTIONS).trim();
+  const clean = sanitizeHtml(String(raw).slice(0, SURVEY_INTRO_HTML_MAX), OPTIONS)
+    // The editor leaves an empty paragraph after the last line — drop empty
+    // paragraphs at the start and end (ones in the middle are deliberate space).
+    .replace(/^(\s*<p>(\s|<br \/>)*<\/p>)+/, "")
+    .replace(/(<p>(\s|<br \/>)*<\/p>\s*)+$/, "")
+    .trim();
   if (!clean || isBlank(clean)) return null;
   return clean;
 }
@@ -136,6 +141,9 @@ function decodeEntities(s: string): string {
  */
 export function htmlToPlainText(html: string): string {
   const text = html
+    // The editor wraps list items in <p>; don't let that add blank lines.
+    .replace(/<li([^>]*)>\s*<p[^>]*>/gi, "<li$1>")
+    .replace(/<\/p>\s*<\/li>/gi, "</li>")
     .replace(/<br\s*\/?>/gi, "\n")
     .replace(/<li[^>]*>/gi, "• ")
     .replace(/<\/li>/gi, "\n")
