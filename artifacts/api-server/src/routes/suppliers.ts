@@ -22,8 +22,23 @@ const minimumOrderValueField = z
     return Math.round(n * 100) / 100;
   })
   .nullish();
-const CreateSupplierBodyWithMinimum = CreateSupplierBody.extend({ minimumOrderValue: minimumOrderValueField });
-const UpdateSupplierBodyWithMinimum = UpdateSupplierBody.extend({ minimumOrderValue: minimumOrderValueField });
+// The supplier's account manager (Graeme, 2026-10-16; migration 0197) —
+// short-shelf-life reports from goods-in are emailed here. "" clears.
+const accountManagerNameField = z.string().trim().max(200).nullish().transform(v => (v ? v : v === undefined ? undefined : null));
+const accountManagerEmailField = z
+  .string()
+  .trim()
+  .max(320)
+  .refine(v => v === "" || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), "Account manager email doesn't look like an email address")
+  .nullish()
+  .transform(v => (v ? v : v === undefined ? undefined : null));
+const extraSupplierFields = {
+  minimumOrderValue: minimumOrderValueField,
+  accountManagerName: accountManagerNameField,
+  accountManagerEmail: accountManagerEmailField,
+};
+const CreateSupplierBodyWithMinimum = CreateSupplierBody.extend(extraSupplierFields);
+const UpdateSupplierBodyWithMinimum = UpdateSupplierBody.extend(extraSupplierFields);
 
 /** "75.00" → 75; null stays null (numeric columns come back as strings). */
 function moneyOrNull(v: string | null): number | null {
@@ -47,8 +62,8 @@ router.get("/", async (_req, res) => {
 });
 
 router.post("/", validate(CreateSupplierBodyWithMinimum), async (req, res) => {
-  const { name, contactName, email, phone, orderingPhone, website, address, notes, orderFrequency, orderDays, leadTimeDays, cutoffTime, invoiceNotRequired, minimumOrderValue } = req.body;
-  const [row] = await db.insert(suppliersTable).values({ name, contactName, email, phone, orderingPhone: orderingPhone || null, website, address, notes, orderFrequency: orderFrequency ?? "daily", orderDays: orderDays || null, leadTimeDays: leadTimeDays ?? 1, cutoffTime: cutoffTime || "17:00", invoiceNotRequired: invoiceNotRequired === true, minimumOrderValue: minimumForDb(minimumOrderValue) }).returning();
+  const { name, contactName, email, phone, orderingPhone, website, address, notes, orderFrequency, orderDays, leadTimeDays, cutoffTime, invoiceNotRequired, minimumOrderValue, accountManagerName, accountManagerEmail } = req.body;
+  const [row] = await db.insert(suppliersTable).values({ name, contactName, email, phone, orderingPhone: orderingPhone || null, website, address, notes, orderFrequency: orderFrequency ?? "daily", orderDays: orderDays || null, leadTimeDays: leadTimeDays ?? 1, cutoffTime: cutoffTime || "17:00", invoiceNotRequired: invoiceNotRequired === true, minimumOrderValue: minimumForDb(minimumOrderValue), accountManagerName: accountManagerName ?? null, accountManagerEmail: accountManagerEmail ?? null }).returning();
   res.status(201).json(mapRow(row));
 });
 
@@ -61,8 +76,8 @@ router.get("/:id", async (req, res) => {
 
 router.put("/:id", validate(UpdateSupplierBodyWithMinimum), async (req, res) => {
   const id = Number(req.params.id);
-  const { name, contactName, email, phone, orderingPhone, website, address, notes, orderFrequency, orderDays, leadTimeDays, cutoffTime, invoiceNotRequired, minimumOrderValue } = req.body;
-  const [row] = await db.update(suppliersTable).set({ name, contactName, email, phone, ...(orderingPhone !== undefined ? { orderingPhone: orderingPhone || null } : {}), website, address, notes, ...(orderFrequency !== undefined ? { orderFrequency } : {}), ...(orderDays !== undefined ? { orderDays: orderDays || null } : {}), ...(leadTimeDays !== undefined && leadTimeDays !== null ? { leadTimeDays } : {}), ...(cutoffTime !== undefined && cutoffTime !== null ? { cutoffTime } : {}), ...(invoiceNotRequired !== undefined ? { invoiceNotRequired: invoiceNotRequired === true } : {}), ...(minimumOrderValue !== undefined ? { minimumOrderValue: minimumForDb(minimumOrderValue) } : {}) }).where(eq(suppliersTable.id, id)).returning();
+  const { name, contactName, email, phone, orderingPhone, website, address, notes, orderFrequency, orderDays, leadTimeDays, cutoffTime, invoiceNotRequired, minimumOrderValue, accountManagerName, accountManagerEmail } = req.body;
+  const [row] = await db.update(suppliersTable).set({ ...(accountManagerName !== undefined ? { accountManagerName } : {}), ...(accountManagerEmail !== undefined ? { accountManagerEmail } : {}), name, contactName, email, phone, ...(orderingPhone !== undefined ? { orderingPhone: orderingPhone || null } : {}), website, address, notes, ...(orderFrequency !== undefined ? { orderFrequency } : {}), ...(orderDays !== undefined ? { orderDays: orderDays || null } : {}), ...(leadTimeDays !== undefined && leadTimeDays !== null ? { leadTimeDays } : {}), ...(cutoffTime !== undefined && cutoffTime !== null ? { cutoffTime } : {}), ...(invoiceNotRequired !== undefined ? { invoiceNotRequired: invoiceNotRequired === true } : {}), ...(minimumOrderValue !== undefined ? { minimumOrderValue: minimumForDb(minimumOrderValue) } : {}) }).where(eq(suppliersTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(mapRow(row));
 });

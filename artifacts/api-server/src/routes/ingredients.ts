@@ -17,8 +17,22 @@ const router: IRouter = Router();
 // order top-ups on the Orders page). Not in the generated spec yet, so it is
 // validated here: a non-negative £ amount, or null to clear.
 const secondaryCostPerPackField = z.coerce.number().min(0).max(100000).nullish();
-const CreateIngredientBodyWithSecondaryPrice = CreateIngredientBody.extend({ secondaryCostPerPack: secondaryCostPerPackField });
-const UpdateIngredientBodyWithSecondaryPrice = UpdateIngredientBody.extend({ secondaryCostPerPack: secondaryCostPerPackField });
+// Minimum shelf life on delivery, whole days (Graeme, 2026-10-16; migration
+// 0197). null / "" clears it. Goods-in warns on a shorter use-by.
+const minDeliveryShelfLifeDaysField = z
+  .union([z.number(), z.string().trim()])
+  .transform((v, ctx) => {
+    if (v === "") return null;
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isInteger(n) || n < 1 || n > 365) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Minimum shelf life on delivery must be a whole number of days (1–365)" });
+      return z.NEVER;
+    }
+    return n;
+  })
+  .nullish();
+const CreateIngredientBodyWithSecondaryPrice = CreateIngredientBody.extend({ secondaryCostPerPack: secondaryCostPerPackField, minDeliveryShelfLifeDays: minDeliveryShelfLifeDaysField });
+const UpdateIngredientBodyWithSecondaryPrice = UpdateIngredientBody.extend({ secondaryCostPerPack: secondaryCostPerPackField, minDeliveryShelfLifeDays: minDeliveryShelfLifeDaysField });
 
 /** The secondary price only means something while there IS a secondary
  *  supplier — clearing the supplier clears the price. undefined = leave the
@@ -49,6 +63,7 @@ function mapRow(r: typeof ingredientsTable.$inferSelect) {
       : null,
     shelfLifeDays: r.shelfLifeDays ?? null,
     requiresUseByDate: r.requiresUseByDate ?? false,
+    minDeliveryShelfLifeDays: r.minDeliveryShelfLifeDays ?? null,
     kanbanEnabled: r.kanbanEnabled ?? false,
     kanbanQuantity: Number(r.kanbanQuantity ?? 0),
     kanbanUnit: r.kanbanUnit ?? "weight",
@@ -177,6 +192,7 @@ router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, r
     surplusAbsoluteQty: surplusAbsoluteQty != null ? String(surplusAbsoluteQty) : null,
     shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null,
     requiresUseByDate: requiresUseByDate ?? false,
+    minDeliveryShelfLifeDays: (req.body as { minDeliveryShelfLifeDays?: number | null }).minDeliveryShelfLifeDays ?? null,
     openedLifeDays: openedLifeDays != null ? Number(openedLifeDays) : null,
     defrostLifeDays: defrostLifeDays != null ? Number(defrostLifeDays) : null,
     kanbanEnabled: kanbanEnabled ?? false,
@@ -498,6 +514,9 @@ router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req,
     ...(openedLifeDays !== undefined ? { openedLifeDays: openedLifeDays != null ? Number(openedLifeDays) : null } : {}),
     ...(defrostLifeDays !== undefined ? { defrostLifeDays: defrostLifeDays != null ? Number(defrostLifeDays) : null } : {}),
     ...(requiresUseByDate !== undefined ? { requiresUseByDate: !!requiresUseByDate } : {}),
+    ...((req.body as { minDeliveryShelfLifeDays?: number | null }).minDeliveryShelfLifeDays !== undefined
+      ? { minDeliveryShelfLifeDays: (req.body as { minDeliveryShelfLifeDays?: number | null }).minDeliveryShelfLifeDays ?? null }
+      : {}),
     ...(kanbanEnabled !== undefined ? { kanbanEnabled } : {}),
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),
     ...(kanbanUnit !== undefined ? { kanbanUnit } : {}),
