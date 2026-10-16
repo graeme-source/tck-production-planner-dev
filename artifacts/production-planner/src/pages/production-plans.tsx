@@ -48,16 +48,17 @@ import { useLocation, useSearch } from "wouter";
 import { applyMacCheeseMinimum } from "@/lib/mac-cheese-minimum";
 import { cn } from "@/lib/utils";
 import { activeRecipes, archivedRecipeIds, draftRecipeIds } from "@/lib/recipe-archive";
-import type { PlanStartStock } from "@workspace/stock-prediction";
+import { batchRange, initialBatchTotal, suggestedBatchTotal, type PlanStartStock } from "@workspace/stock-prediction";
 import { minBatchesForOrders, solveTargetAllocation, type PlanMarginSettings } from "@workspace/plan-margin";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
-import { SlowMeatPanel, SlowMeatSaveStatus } from "@/components/slow-meat-panel";
+import { SlowMeatSaveStatus } from "@/components/slow-meat-panel";
+import { PlanChecksRow } from "@/components/plan-checks-row";
 import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
 import { TeamListPopoutButton } from "@/components/team-list-popout";
-import { PlanMarginPanel, RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
+import { RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
 import { usePlanMargin } from "@/hooks/use-plan-margin";
 import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
-import { FactoryForecastPanel, FactoryFreezeGuard, usePlanFactoryForecast } from "@/components/factory-forecast-panel";
+import { FactoryFreezeGuard, usePlanFactoryForecast } from "@/components/factory-forecast-panel";
 import { applyBatchChanges } from "@/lib/factory-forecast-rows";
 import { useSlowMeatProfile } from "@/hooks/use-slow-meat-profile";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
@@ -302,11 +303,13 @@ function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
 // Imports the plan date's Planday schedule (same source as the morning
 // meeting's Who's On Today) and suggests a total-batches number from two
 // hard business rules: a Dough Prep person on shift unlocks the full daily
-// ceiling (110), no Dough Prep caps it (80); and the day's production
-// shouldn't leave the total factory number above 1,000 packs — the 1,000
-// rule only ever lowers the suggestion, never raises it past the rota cap.
-// Fried-chicken shifts (Frying/Breading) are irrelevant to calzone
-// production and are shown separately, uncounted.
+// ceiling (110), no Dough Prep caps it (80). Within that, the factory-number
+// levels decide (Graeme, 16 Oct 2026 — replaces the legacy 1,000-pack
+// ceiling, which once suggested 5 batches): the suggestion follows the
+// forecast's own more/fewer advice and is never below the fewest batches a
+// day (80) or above the cap. Rules: @workspace/stock-prediction
+// batch-advice.ts. Fried-chicken shifts (Frying/Breading) are irrelevant to
+// calzone production and are shown separately, uncounted.
 
 interface ScheduleCapacityData {
   available: boolean;
@@ -321,24 +324,16 @@ interface ScheduleCapacityData {
   capacityWithoutDoughPrep?: number;
 }
 
-const PACK_CEILING = 1000;
-
-// The 1,000-pack ceiling on a plan's suggested batch total, derived from the
-// packs already in the system after the upcoming dispatches. Shared between
-// the panel display and the parent's auto-apply of the rota suggestion.
-function computeCeilingBatches(included: PlanItem[]): { basePacks: number; ceilingBatches: number } {
-  const basePacks = included.reduce((s, i) =>
-    s + Math.max(0, i.estimatedFactoryNumber - bagPackEquivalents(i) - i.dispatch2Qty - i.dispatch3Qty), 0);
-  const packsPerBatch = Math.max(5, ...included.map(i => i.packsPerBatch || 0));
-  return { basePacks, ceilingBatches: Math.max(0, Math.floor((PACK_CEILING - basePacks) / packsPerBatch)) };
-}
-
-function ScheduleCapacityPanel({ planDate, items, data, loading, currentTotal, onUseSuggestion }: {
+function ScheduleCapacityPanel({ planDate, items, data, loading, currentTotal, minBatchesPerDay, suggested, onUseSuggestion }: {
   planDate: string;
   items: PlanItem[];
   data: ScheduleCapacityData | null;
   loading: boolean;
   currentTotal: number;
+  /** The fewest batches a day (factory levels setting). */
+  minBatchesPerDay: number;
+  /** From suggestedBatchTotal() — null without a rota. */
+  suggested: number | null;
   onUseSuggestion: (batches: number) => void;
 }) {
   // The headline (team size, Dough Prep, cap, suggested total) is always
@@ -347,11 +342,8 @@ function ScheduleCapacityPanel({ planDate, items, data, loading, currentTotal, o
   const [open, setOpen] = useState(false);
 
   const included = items.filter(i => i.included);
-  const { basePacks, ceilingBatches } = computeCeilingBatches(included);
   const totalDeficitBatches = included.reduce((s, i) => s + i.deficitBatches, 0);
-
-  const rotaCap = data?.available ? (data.capacityBatches ?? 0) : null;
-  const suggested = rotaCap != null ? Math.min(rotaCap, ceilingBatches) : null;
+  const range = data?.available ? batchRange(data.capacityBatches ?? 0, minBatchesPerDay) : null;
 
   return (
     <div className="border-t border-border pt-2 mt-2 space-y-1.5 text-xs">
@@ -374,10 +366,12 @@ function ScheduleCapacityPanel({ planDate, items, data, loading, currentTotal, o
             </span>
             <span className="font-semibold flex-shrink-0">cap {data.capacityBatches}</span>
           </div>
-          <div className="flex items-center justify-between text-muted-foreground">
-            <span>{PACK_CEILING.toLocaleString()}-pack ceiling ({basePacks} banked)</span>
-            <span className="font-semibold text-foreground">≤ {ceilingBatches}</span>
-          </div>
+          {range && (
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span>Batches a day (fewest {range.floor} · cap {range.cap})</span>
+              <span className="font-semibold text-foreground">{range.floor === range.cap ? range.cap : `${range.floor}–${range.cap}`}</span>
+            </div>
+          )}
           {suggested != null && (
             <div className="flex items-center justify-between gap-2">
               <span className="font-semibold text-foreground">Suggested total: {suggested}</span>
@@ -2339,29 +2333,6 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     applyTotalBatches(newTotal);
   }, [applyTotalBatches]);
 
-  // Pre-populate Total Batches from the rota suggestion (80 / 110 capped by
-  // the 1,000-pack ceiling) instead of leaving the static DPT default. Runs
-  // once per calc load, only while the operator hasn't set their own value;
-  // the input stays fully editable afterwards.
-  useEffect(() => {
-    if (!open || capacityAutoApplied.current) return;
-    if (!capacityData?.available || !calcData?.recipes) return;
-    // A non-null override means a total is already chosen — but do NOT mark
-    // the auto-apply as consumed here: on a date change this effect can run
-    // one commit before the calc effect's reset has re-rendered, and it would
-    // see the PREVIOUS date's auto-applied value and permanently skip the new
-    // date (the stuck-at-75 bug, 2026-08-08). Once the reset lands, the
-    // effect re-runs with override === null and applies normally.
-    if (totalBatchesOverride !== null) return;
-    const included = items.filter(i => i.included);
-    if (included.length === 0) return;
-    const { ceilingBatches } = computeCeilingBatches(included);
-    const suggested = Math.min(capacityData.capacityBatches ?? 0, ceilingBatches);
-    capacityAutoApplied.current = true;
-    if (suggested > 0 && suggested !== (calcData.totalDailyBatches ?? 0)) {
-      applyTotalBatches(suggested, { markDirty: false });
-    }
-  }, [open, capacityData, calcData, items, totalBatchesOverride, applyTotalBatches]);
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
@@ -2630,10 +2601,68 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
 
   // Predicted factory number after this plan (upper limit) — components/factory-forecast-panel.
   const categoryOf = useCallback((id: number) => calcData?.recipes?.find((r: CalcRecipe) => r.recipeId === id)?.recipeCategory, [calcData]);
-  const factory = usePlanFactoryForecast({ planDate, rows: items, categoryOf, margin: planMargin.settings, maxTotalBatches: effectiveTotalBatches || undefined, enabled: open });
+  // "More" never goes past the day's capacity: the rota cap when known.
+  const rotaCap = capacityData?.available ? (capacityData.capacityBatches ?? null) : null;
+  const factory = usePlanFactoryForecast({ planDate, rows: items, categoryOf, margin: planMargin.settings, maxTotalBatches: rotaCap ?? (effectiveTotalBatches || undefined), enabled: open });
   const [factoryGuardFor, setFactoryGuardFor] = useState<"draft" | "active" | null>(null);
   const withFactoryChanges = (rows: PlanItem[], rec: Parameters<typeof applyBatchChanges>[1]) =>
     capForSlowMeat(applyBatchChanges(rows, rec).map(r => ({ ...r, tinCount: recalcTins(r.batchesTarget, r.maxBatchesPerTin) })));
+  const plannedTotal = items.reduce((s, i) => s + (i.included ? i.batchesTarget : 0), 0);
+  /** Apply the forecast's changes and keep the Total batches box in step. */
+  const applyFactoryChanges = (rec: Parameters<typeof applyBatchChanges>[1]) => {
+    isDirty.current = true;
+    const next = withFactoryChanges(items, rec);
+    setItems(next);
+    setTotalBatchesOverride(next.reduce((s, i) => s + (i.included ? i.batchesTarget : 0), 0));
+  };
+
+  // Left column "Suggested total": the planned batches, moved by the
+  // forecast's own advice, within [fewest a day, rota cap]
+  // (@workspace/stock-prediction batch-advice.ts).
+  const factoryRec = factory.recommendation;
+  const suggestedTotal = rotaCap != null
+    ? suggestedBatchTotal({
+        currentTotal: plannedTotal,
+        cap: rotaCap,
+        minBatchesPerDay: factory.thresholds.minBatchesPerDay,
+        change: factoryRec ? (factoryRec.direction === "fewer" ? -factoryRec.batches : factoryRec.batches) : 0,
+      })
+    : null;
+
+  // Pre-populate Total Batches from the rota (80 / 110) instead of leaving
+  // the static DPT default: the cap, unless that would land the fridge at the
+  // warning level (or over the target while stock keeps building), then the
+  // total that lands near the target top — never below the fewest a day.
+  // Waits for the late-orders forecast so the prediction is the real one.
+  // Runs once per calc load, only while the operator hasn't set their own
+  // value; the input stays fully editable afterwards.
+  useEffect(() => {
+    if (!open || capacityAutoApplied.current) return;
+    if (!capacityData?.available || !calcData?.recipes) return;
+    if (!factory.data && !factory.loadError) return;
+    // A non-null override means a total is already chosen — but do NOT mark
+    // the auto-apply as consumed here: on a date change this effect can run
+    // one commit before the calc effect's reset has re-rendered, and it would
+    // see the PREVIOUS date's auto-applied value and permanently skip the new
+    // date (the stuck-at-75 bug, 2026-08-08). Once the reset lands, the
+    // effect re-runs with override === null and applies normally.
+    if (totalBatchesOverride !== null) return;
+    if (!items.some(i => i.included)) return;
+    const suggested = initialBatchTotal({
+      cap: capacityData.capacityBatches ?? 0,
+      minBatchesPerDay: factory.thresholds.minBatchesPerDay,
+      currentTotal: plannedTotal,
+      predicted: factory.forecast.predictedEnd,
+      packsPerBatch: factory.packsPerBatch,
+      thresholds: factory.thresholds,
+      pullBack: factory.pullBack,
+    });
+    capacityAutoApplied.current = true;
+    if (suggested > 0 && suggested !== (calcData.totalDailyBatches ?? 0)) {
+      applyTotalBatches(suggested, { markDirty: false });
+    }
+  }, [open, capacityData, calcData, items, totalBatchesOverride, applyTotalBatches, factory.data, factory.loadError,
+    factory.thresholds, factory.forecast.predictedEnd, factory.packsPerBatch, factory.pullBack, plannedTotal]);
 
   type SubmitOpts = { skipMarginCheck?: boolean; skipFactoryCheck?: boolean; itemsOverride?: PlanItem[]; skipDateClash?: boolean };
   const handleSubmit = async (targetStatus: "draft" | "active", opts: SubmitOpts = {}) => {
@@ -2954,6 +2983,8 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   data={capacityData}
                   loading={capacityLoading}
                   currentTotal={effectiveTotalBatches}
+                  minBatchesPerDay={factory.thresholds.minBatchesPerDay}
+                  suggested={suggestedTotal}
                   onUseSuggestion={handleTotalBatchesChange}
                 />
               </div>
@@ -3043,19 +3074,19 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
             </div>
           ) : (
             <>
-              <SlowMeatPanel rows={items} data={slowMeat.data} loadError={slowMeat.isError} isAdmin={isAdmin} />
-              {items.length > 0 && (<PlanMarginPanel
-                warnings={marginWarnings}
-                settings={planMargin.settings}
-                canEdit={userRole === "admin" || userRole === "manager"}
-                onAddBatches={addRowBatches}
-                onFixAll={fixAllMargins}
-              />)}
-              {items.length > 0 && (<FactoryForecastPanel
-                state={factory}
-                canEdit={userRole === "admin" || userRole === "manager"}
-                onApply={rec => { isDirty.current = true; setItems(prev => withFactoryChanges(prev, rec)); }}
-              />)}
+              {items.length > 0 && (
+                <PlanChecksRow
+                  slowMeat={{ rows: items, data: slowMeat.data, loadError: slowMeat.isError, isAdmin }}
+                  margin={{
+                    warnings: marginWarnings,
+                    settings: planMargin.settings,
+                    canEdit: userRole === "admin" || userRole === "manager",
+                    onAddBatches: addRowBatches,
+                    onFixAll: fixAllMargins,
+                  }}
+                  factory={{ state: factory, canEdit: userRole === "admin" || userRole === "manager", onApply: applyFactoryChanges }}
+                />
+              )}
               {items.length === 0 ? (
                 <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
                   <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />
@@ -4160,21 +4191,25 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
             </div>
           )}
 
-          {items.length > 0 && (<PlanMarginPanel
-            warnings={editMarginWarnings}
-            settings={editPlanMargin.settings}
-            canEdit={canManageCollections}
-            onAddBatches={(id, n) => {
-              const row = items.find(it => it.id === id);
-              if (row && n > 0) updateItem(id, { batchesTarget: row.batchesTarget + n });
-            }}
-            onFixAll={() => { isDirty.current = true; setItems(prev => editWithMarginFixes(prev)); }}
-          />)}
-          {items.length > 0 && (<FactoryForecastPanel
-            state={editFactory}
-            canEdit={canManageCollections}
-            onApply={rec => { isDirty.current = true; setItems(prev => editWithFactoryChanges(prev, rec)); }}
-          />)}
+          {items.length > 0 && (
+            <PlanChecksRow
+              margin={{
+                warnings: editMarginWarnings,
+                settings: editPlanMargin.settings,
+                canEdit: canManageCollections,
+                onAddBatches: (id, n) => {
+                  const row = items.find(it => it.id === id);
+                  if (row && n > 0) updateItem(id, { batchesTarget: row.batchesTarget + n });
+                },
+                onFixAll: () => { isDirty.current = true; setItems(prev => editWithMarginFixes(prev)); },
+              }}
+              factory={{
+                state: editFactory,
+                canEdit: canManageCollections,
+                onApply: rec => { isDirty.current = true; setItems(prev => editWithFactoryChanges(prev, rec)); },
+              }}
+            />
+          )}
           {items.length === 0 ? (
             <div className="text-center py-8 text-muted-foreground bg-secondary/20 rounded-xl mb-3">
               <Info className="w-8 h-8 mx-auto mb-2 opacity-40" />

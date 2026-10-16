@@ -4,10 +4,14 @@
  * one batch came out 2 packs light, and orders had to be cancelled).
  * Objective C.
  *
- *   PlanMarginPanel       big card above the recipe table: every recipe that
- *                         is short or inside the margin, each with a one-tap
- *                         "Add N batches", plus "Fix all"; managers can open
- *                         the margin numbers here (autosaved)
+ *   PlanMarginTile        compact check tile (one of three in a row since
+ *                         16 Oct 2026): "Every recipe covers orders +
+ *                         margin ✓", or how many are short / too close, with
+ *                         one "Add N batches" fix-all and Change margin
+ *   PlanMarginDetails     opened by tapping the tile: every recipe that is
+ *                         short or inside the margin, each with a one-tap
+ *                         "Add N batches"; managers' margin numbers
+ *                         (autosaved); the rule in words
  *   RowMarginNote         a compact line under a recipe's Batches box
  *   MarginSaveGuard       the summary shown when Save is tapped with any
  *                         recipe short / under the margin — saving anyway
@@ -18,12 +22,13 @@
  */
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Plus, Settings2, ShieldAlert, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Plus, Settings2, ShieldAlert } from "lucide-react";
 import type { MarginCheck, MarginWarning, PlanMarginSettings } from "@workspace/plan-margin";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
+import { CheckTile, TileButton, type CheckTone } from "@/components/check-tile";
 import { PLAN_MARGIN_KEY, savePlanMargin } from "@/hooks/use-plan-margin";
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
@@ -32,56 +37,55 @@ function ruleText(s: PlanMarginSettings): string {
   return `Every recipe with orders is planned to at least ${plural(s.smallMarginPacks, "spare pack")} over its orders (${plural(s.largeMarginPacks, "pack")} when the orders need more than ${plural(s.largeBatchThreshold, "batch", "batches")}).`;
 }
 
-export function PlanMarginPanel({ warnings, settings, canEdit, onAddBatches, onFixAll }: {
+export function marginTone(warnings: MarginWarning[]): CheckTone {
+  if (warnings.length === 0) return "ok";
+  return warnings.some(w => w.check.status === "short") ? "red" : "amber";
+}
+
+export function PlanMarginTile({ warnings, canEdit, expanded, onToggle, onEdit, onFixAll }: {
+  warnings: MarginWarning[];
+  canEdit: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
+  onFixAll: () => void;
+}) {
+  const shortCount = warnings.filter(w => w.check.status === "short").length;
+  const tone = marginTone(warnings);
+  const toAdd = warnings.reduce((s, w) => s + w.check.batchesToAdd, 0);
+  return (
+    <CheckTile
+      tone={tone} expanded={expanded} onToggle={onToggle} label="Orders + margin"
+      icon={tone === "ok"
+        ? <CheckCircle2 className="w-6 h-6 text-emerald-600" />
+        : <ShieldAlert className={cn("w-6 h-6", tone === "red" ? "text-red-600" : "text-amber-600")} />}
+      headline={tone === "ok"
+        ? "Every recipe covers orders + margin ✓"
+        : shortCount > 0
+          ? `${plural(shortCount, "recipe")} short of orders`
+          : `${plural(warnings.length, "recipe")} too close to the line`}
+      sub={shortCount > 0 && warnings.length > shortCount ? `+ ${warnings.length - shortCount} inside the margin` : undefined}
+      actions={(warnings.length > 0 || canEdit) ? (
+        <>
+          {warnings.length > 0 && (
+            <TileButton primary onClick={onFixAll}><Plus className="w-4 h-4" /> Add {plural(toAdd, "batch", "batches")}</TileButton>
+          )}
+          {canEdit && <TileButton onClick={onEdit}><Settings2 className="w-4 h-4" /> Change margin</TileButton>}
+        </>
+      ) : undefined}
+    />
+  );
+}
+
+export function PlanMarginDetails({ warnings, settings, canEdit, editing, onAddBatches }: {
   warnings: MarginWarning[];
   settings: PlanMarginSettings;
   canEdit: boolean;
+  editing: boolean;
   onAddBatches: (rowId: string, batches: number) => void;
-  onFixAll: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const shortCount = warnings.filter(w => w.check.status === "short").length;
-  const tone = warnings.length === 0 ? "ok" : shortCount > 0 ? "short" : "under";
-
   return (
-    <div className={cn(
-      "mb-3 rounded-2xl border-2 p-4 space-y-3",
-      tone === "short" ? "border-red-500 bg-red-500/10" : tone === "under" ? "border-amber-400 bg-amber-500/10" : "border-border bg-card",
-    )}>
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2 min-w-0">
-          {tone === "ok"
-            ? <CheckCircle2 className="w-6 h-6 flex-shrink-0 text-emerald-600" />
-            : <ShieldAlert className={cn("w-6 h-6 flex-shrink-0", tone === "short" ? "text-red-600" : "text-amber-600")} />}
-          <span className="text-lg font-bold">
-            {tone === "ok"
-              ? "Every recipe covers its orders + margin"
-              : tone === "short"
-                ? `${plural(shortCount, "recipe")} short of orders${warnings.length > shortCount ? `, ${warnings.length - shortCount} inside the margin` : ""}`
-                : `${plural(warnings.length, "recipe")} too close to the line`}
-          </span>
-        </div>
-        {warnings.length > 1 && (
-          <button
-            type="button"
-            onClick={onFixAll}
-            className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90"
-          >
-            <Plus className="w-4 h-4" /> Add all missing batches
-          </button>
-        )}
-        {canEdit && (
-          <button
-            type="button"
-            onClick={() => setEditing(v => !v)}
-            className="ml-auto inline-flex items-center gap-1.5 h-11 px-3 rounded-xl border border-border bg-background text-sm font-semibold hover:bg-secondary/60"
-          >
-            {editing ? <X className="w-4 h-4" /> : <Settings2 className="w-4 h-4" />}
-            {editing ? "Done" : "Change margin"}
-          </button>
-        )}
-      </div>
-
+    <div className="space-y-3">
       {warnings.length > 0 && (
         <ul className="grid gap-2 grid-cols-1 xl:grid-cols-2">
           {warnings.map(w => (
@@ -92,7 +96,7 @@ export function PlanMarginPanel({ warnings, settings, canEdit, onAddBatches, onF
 
       {editing && canEdit && <PlanMarginSettingsEditor settings={settings} />}
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-sm text-muted-foreground">
         {ruleText(settings)} Orders = the D2 + D3 dispatch columns; stock = the factory number at the start of the plan day.
       </p>
     </div>

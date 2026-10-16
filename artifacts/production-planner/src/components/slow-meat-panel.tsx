@@ -3,23 +3,27 @@
  *
  * The kitchen can only cook so many trays of slow meat (cook time of 2 hours
  * or more — the pulled-pork pork and the slow-cooked beef today) for one
- * plan. This shows:
- *   - a live tray counter ("Slow meat: 9 of 11 trays") with the per-meat split
- *   - a friendly notice when the suggestions were cut to fit
- *   - a red warning when typed-in batches push it over (saving is blocked)
- *   - any slow meat with no kg-per-tray set (flagged, never guessed) — the
- *     ingredient name links to its edit form
- *   - for admins, the limit and the threshold, autosaved
+ * plan. Since 16 Oct 2026 it is one of the three compact check tiles in a
+ * row (PlanChecksRow):
+ *   SlowMeatTile     "Slow meat 9/11 trays", red when over (saving is
+ *                    blocked), amber at the limit or with a meat not counted;
+ *                    Change limit (admins)
+ *   SlowMeatDetails  opened by tapping the tile: the tray boxes and per-meat
+ *                    split, the notice when suggestions were cut to fit, any
+ *                    slow meat with no kg-per-tray set (flagged, never
+ *                    guessed — the name links to its edit form), the limit
+ *                    editor (autosaved) and how trays are counted
  * Trays are counted exactly as the Raw Meat station lays them out
  * (@workspace/slow-meat).
  */
-import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Flame, Info, Settings2, X } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Flame, Info, Settings2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { ingredientTimingHref } from "@/components/timing-flag";
+import { CheckTile, TileButton, type CheckTone } from "@/components/check-tile";
 import { SLOW_MEAT_PROFILE_KEY, saveSlowMeatSettings } from "@/hooks/use-slow-meat-profile";
 import { slowMeatCountForRows, slowMeatNotice, type CappablePlanRow, type SlowMeatProfileData } from "@/lib/slow-meat-plan";
 
@@ -30,22 +34,69 @@ function cookTimeLabel(min: number): string {
   return `${min} minutes`;
 }
 
-/** Big card above the recipes table. */
-export function SlowMeatPanel({ rows, data, loadError, isAdmin }: {
+export function slowMeatTone(rows: CappablePlanRow[], data: SlowMeatProfileData | undefined, loadError: boolean): CheckTone {
+  if (!data) return loadError ? "amber" : "neutral";
+  const count = slowMeatCountForRows(rows, data);
+  if (count.overLimit) return "red";
+  if (count.missingTraySize.length > 0) return "amber";
+  if (count.totalTrays === count.trayLimit && count.trayLimit > 0) return "amber";
+  return "ok";
+}
+
+export function SlowMeatTile({ rows, data, loadError, isAdmin, expanded, onToggle, onEdit }: {
   rows: CappablePlanRow[];
   data: SlowMeatProfileData | undefined;
   loadError: boolean;
   isAdmin: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-
+  const tone = slowMeatTone(rows, data, loadError);
   if (!data) {
-    if (!loadError) return null;
     return (
-      <div className="mb-3 px-4 py-3 rounded-2xl border-2 border-amber-400/60 bg-amber-500/10 text-sm text-amber-900 dark:text-amber-200 flex items-start gap-2">
-        <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
-        <span>Couldn't load the slow-meat tray limit, so trays aren't being counted here. The plan is still checked when you save.</span>
-      </div>
+      <CheckTile
+        tone={tone} expanded={expanded} onToggle={onToggle} label="Slow meat"
+        icon={loadError ? <AlertTriangle className="w-6 h-6 text-amber-600" /> : <Flame className="w-6 h-6 text-muted-foreground" />}
+        headline={loadError ? "Slow meat not counted" : "Slow meat…"}
+        sub={loadError ? "Couldn't load the tray limit — still checked when you save" : undefined}
+      />
+    );
+  }
+  const count = slowMeatCountForRows(rows, data);
+  const notice = slowMeatNotice(rows, count);
+  const over = count.overLimit;
+  return (
+    <CheckTile
+      tone={tone} expanded={expanded} onToggle={onToggle} label="Slow meat"
+      icon={<Flame className={cn("w-6 h-6", over ? "text-red-600" : "text-orange-500")} />}
+      headline={<>Slow meat <span className="tabular-nums">{count.totalTrays}/{count.trayLimit}</span> trays</>}
+      sub={over
+        ? "Too much — reduce it to save"
+        : count.missingTraySize.length > 0
+          ? `${count.missingTraySize.length} meat${count.missingTraySize.length === 1 ? "" : "s"} not counted`
+          : notice
+            ? "Suggestions cut to fit"
+            : count.totalTrays === count.trayLimit && count.trayLimit > 0 ? "At the limit" : undefined}
+      actions={isAdmin ? <TileButton onClick={onEdit}><Settings2 className="w-4 h-4" /> Change limit</TileButton> : undefined}
+    />
+  );
+}
+
+export function SlowMeatDetails({ rows, data, loadError, isAdmin, editing }: {
+  rows: CappablePlanRow[];
+  data: SlowMeatProfileData | undefined;
+  loadError: boolean;
+  isAdmin: boolean;
+  editing: boolean;
+}) {
+  if (!data) {
+    return (
+      <p className="text-sm">
+        {loadError
+          ? "Couldn't load the slow-meat tray limit, so trays aren't being counted here. The plan is still checked when you save."
+          : "Loading the slow-meat tray limit…"}
+      </p>
     );
   }
 
@@ -53,26 +104,12 @@ export function SlowMeatPanel({ rows, data, loadError, isAdmin }: {
   const notice = slowMeatNotice(rows, count);
   const { totalTrays, trayLimit } = count;
   const over = count.overLimit;
-  const atLimit = !over && totalTrays === trayLimit && trayLimit > 0;
   // Tray boxes: one per tray allowed, plus red ones for any over.
   const boxes = Math.min(40, Math.max(trayLimit, totalTrays));
 
   return (
-    <div className={cn(
-      "mb-3 rounded-2xl border-2 p-4 space-y-3",
-      over ? "border-red-500 bg-red-500/10" : "border-border bg-card",
-    )}>
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <Flame className={cn("w-6 h-6 flex-shrink-0", over ? "text-red-600" : "text-orange-500")} />
-          <span className="text-lg font-bold">
-            Slow meat:{" "}
-            <span className={cn("tabular-nums", over ? "text-red-600 dark:text-red-400" : atLimit ? "text-amber-600 dark:text-amber-400" : "text-foreground")}>
-              {totalTrays} of {trayLimit}
-            </span>{" "}
-            trays
-          </span>
-        </div>
         <div className="flex flex-wrap gap-1" aria-hidden>
           {Array.from({ length: boxes }, (_, i) => (
             <span
@@ -94,16 +131,6 @@ export function SlowMeatPanel({ rows, data, loadError, isAdmin }: {
               </span>
             ))}
           </div>
-        )}
-        {isAdmin && (
-          <button
-            type="button"
-            onClick={() => setEditing(v => !v)}
-            className="ml-auto inline-flex items-center gap-1.5 h-10 px-3 rounded-xl border border-border bg-background text-sm font-semibold hover:bg-secondary/60"
-          >
-            {editing ? <X className="w-4 h-4" /> : <Settings2 className="w-4 h-4" />}
-            {editing ? "Done" : "Change limit"}
-          </button>
         )}
       </div>
 

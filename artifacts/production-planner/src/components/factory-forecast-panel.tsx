@@ -1,31 +1,38 @@
 /**
  * Predicted factory number after this plan — the UPPER limit on the Create /
  * Edit Plan screens (Graeme, 15 Oct 2026). Objective C. Sits beside the
- * safety-margin card (the lower limit).
+ * safety-margin tile (the lower limit).
  *
- *   usePlanFactoryForecast  the forecast for the screen's live rows
- *   FactoryForecastPanel    big card: "~1,340 (likely 1,250–1,430)", the
- *                           working in one line, the band, a recommendation
- *                           with one-tap Apply, per-despatch and per-recipe
- *                           detail, and (managers) the six thresholds,
- *                           autosaved
+ *   usePlanFactoryForecast  the forecast for the screen's live rows, with
+ *                           "time to pull back" from the last plan days
+ *   FactoryForecastTile     compact check tile (16 Oct 2026): "~1,058
+ *                           predicted · likely 642–1,340 · Above target",
+ *                           one short suggestion line + Apply changes, and
+ *                           Change levels (managers)
+ *   FactoryForecastDetails  opened by tapping the tile: the working in one
+ *                           line, the suggested per-recipe changes, the last
+ *                           plan days, per-despatch and per-recipe detail, and
+ *                           the levels + fewest batches a day, autosaved
  *   FactoryFreezeGuard      saving a plan predicted at/over the freezing line
  *                           takes a deliberate second tap
  *
- * Maths: @workspace/stock-prediction (tested); rows: lib/factory-forecast-rows.
+ * When to suggest more / fewer: factoryAdvice() in
+ * @workspace/stock-prediction (batch-advice.ts). Maths:
+ * @workspace/stock-prediction (tested); rows: lib/factory-forecast-rows.
  */
 import { useMemo, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ChevronDown, ChevronUp, Gauge, Minus, Plus, Settings2, Snowflake, X } from "lucide-react";
+import { AlertTriangle, Gauge, Minus, Plus, Settings2, Snowflake } from "lucide-react";
 import type { PlanMarginSettings } from "@workspace/plan-margin";
 import {
-  describeFactoryForecast, thresholdsInOrder,
-  type FactoryBand, type FactoryRecommendation, type FactoryThresholds,
+  describeFactoryForecast, factoryAdvice, pullBackAdvice, thresholdsInOrder,
+  type FactoryBand, type FactoryRecommendation, type FactoryThresholds, type PullBackAdvice,
 } from "@workspace/stock-prediction";
 import { cn } from "@/lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
+import { CheckTile, TileButton, type CheckTone } from "@/components/check-tile";
 import { useFactoryForecast, saveFactoryThresholds, type FactoryForecastResponse } from "@/hooks/use-factory-forecast";
 import { planFactoryForecast, type ForecastPlanRow, type PlanFactoryForecast } from "@/lib/factory-forecast-rows";
 
@@ -45,6 +52,8 @@ const dayName = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateStri
 export interface PlanFactoryForecastState extends PlanFactoryForecast {
   data: FactoryForecastResponse | null;
   thresholds: FactoryThresholds;
+  /** Stock above the target top for several plan days and rising. */
+  pullBack: PullBackAdvice | null;
   loading: boolean;
   loadError: boolean;
   /** Same check for any set of rows (e.g. after the margin fix is applied). */
@@ -56,20 +65,26 @@ export function usePlanFactoryForecast({ planDate, rows, categoryOf, margin, max
   rows: readonly ForecastPlanRow[];
   categoryOf: (recipeId: number) => string | null | undefined;
   margin: PlanMarginSettings;
+  /** The day's capacity (the rota cap, or the total batches box). */
   maxTotalBatches?: number;
   enabled?: boolean;
 }): PlanFactoryForecastState {
   const q = useFactoryForecast(planDate, enabled);
   const shares = q.data?.recipeShares;
+  const history = q.data?.history;
   const ctx = useMemo(() => ({ categoryOf, shares: shares ?? {}, margin }), [categoryOf, shares, margin]);
+  const pullBack = useMemo(() => (history ? pullBackAdvice(history, q.thresholds) : null), [history, q.thresholds]);
   const result = useMemo(
-    () => planFactoryForecast(rows, ctx, q.late, q.thresholds, maxTotalBatches),
-    [rows, ctx, q.late, q.thresholds, maxTotalBatches],
+    () => planFactoryForecast(rows, ctx, q.late, q.thresholds, {
+      maxTotalBatches, minTotalBatches: q.thresholds.minBatchesPerDay, pullBack,
+    }),
+    [rows, ctx, q.late, q.thresholds, maxTotalBatches, pullBack],
   );
   return {
     ...result,
     data: q.data,
     thresholds: q.thresholds,
+    pullBack,
     loading: q.loading,
     loadError: q.loadError,
     // Only ask for the second tap once the forecast has actually loaded.
@@ -77,95 +92,130 @@ export function usePlanFactoryForecast({ planDate, rows, categoryOf, margin, max
   };
 }
 
-const BAND_STYLE: Record<FactoryBand, { box: string; text: string; label: (t: FactoryThresholds) => string }> = {
-  "too-low": { box: "border-red-500 bg-red-500/10", text: "text-red-700 dark:text-red-300", label: t => `Too low — under ${fmt(t.lowRed)}, flavours could run out` },
-  low: { box: "border-amber-400 bg-amber-500/10", text: "text-amber-800 dark:text-amber-200", label: t => `Running low — under ${fmt(t.lowAmber)}` },
-  under: { box: "border-sky-400 bg-sky-500/5", text: "text-sky-800 dark:text-sky-200", label: t => `A little under the ${fmt(t.targetLow)}–${fmt(t.targetHigh)} target` },
-  target: { box: "border-emerald-500 bg-emerald-500/10", text: "text-emerald-800 dark:text-emerald-200", label: t => `On target (${fmt(t.targetLow)}–${fmt(t.targetHigh)})` },
-  above: { box: "border-amber-400 bg-amber-500/10", text: "text-amber-800 dark:text-amber-200", label: t => `Above the ${fmt(t.targetHigh)} target` },
-  warning: { box: "border-orange-500 bg-orange-500/10", text: "text-orange-800 dark:text-orange-200", label: t => `Warning — over ${fmt(t.warnAt)}` },
-  freeze: { box: "border-red-500 bg-red-500/10", text: "text-red-700 dark:text-red-300", label: t => `Over ${fmt(t.maxAt)} — you'd be freezing stock` },
+const BAND: Record<FactoryBand, { tone: CheckTone; short: (t: FactoryThresholds) => string }> = {
+  "too-low": { tone: "red", short: t => `Too low — under ${fmt(t.lowRed)}` },
+  low: { tone: "amber", short: t => `Running low — under ${fmt(t.lowAmber)}` },
+  under: { tone: "info", short: t => `A little under the ${fmt(t.targetLow)}–${fmt(t.targetHigh)} target` },
+  target: { tone: "ok", short: t => `On target (${fmt(t.targetLow)}–${fmt(t.targetHigh)})` },
+  above: { tone: "amber", short: () => "Above target" },
+  warning: { tone: "orange", short: t => `Warning — over ${fmt(t.warnAt)}` },
+  freeze: { tone: "red", short: t => `Over ${fmt(t.maxAt)} — you'd be freezing` },
 };
 
-function recommendationText(r: FactoryRecommendation): string {
-  const verb = r.direction === "fewer" ? "fewer" : "more";
-  const aim = r.limited
-    ? `— lands on ~${fmt(r.landsOn)} (the orders + margin floors stop it going further)`
-    : `to land near ${fmt(r.aim)} (~${fmt(r.landsOn)})`;
-  return `Make ${plural(r.batches, "batch", "batches").replace(/^(\S+) /, `$1 ${verb} `)} ${aim}`;
+/** "Make 12 fewer batches to land near 1,000" — one short line. */
+export function recommendationText(r: FactoryRecommendation): string {
+  const n = plural(r.batches, "batch", "batches").replace(/^(\S+) /, `$1 ${r.direction === "fewer" ? "fewer" : "more"} `);
+  if (r.limited) return `Make ${n} — lands on ~${fmt(r.landsOn)}`;
+  return r.direction === "fewer" ? `Make ${n} to land near ${fmt(r.aim)}` : `Make ${n} to reach ${fmt(r.aim)}`;
 }
 
-export function FactoryForecastPanel({ state, canEdit, onApply }: {
+function pullBackText(p: PullBackAdvice, t: FactoryThresholds): string {
+  return `Stock has been above ${fmt(t.targetHigh)} for ${p.days} plan days and rising — time to pull back`;
+}
+
+export function FactoryForecastTile({ state, canEdit, expanded, onToggle, onEdit, onApply }: {
   state: PlanFactoryForecastState;
   canEdit: boolean;
+  expanded: boolean;
+  onToggle: () => void;
+  onEdit: () => void;
   onApply: (rec: FactoryRecommendation) => void;
 }) {
-  const [details, setDetails] = useState(false);
-  const [editing, setEditing] = useState(false);
   const { forecast: f, recommendation: rec, data, thresholds: t } = state;
-  const style = BAND_STYLE[f.band];
+  const ready = !!data;
+  const band = BAND[f.band];
+  const tone: CheckTone = !ready ? "neutral" : rec?.reason === "pull-back" ? "orange" : band.tone;
+  // The levels want a change the limits won't allow — say why, not nothing.
+  const blocked = !rec ? factoryAdvice(f.predictedEnd, t, state.pullBack).direction : null;
+  return (
+    <CheckTile
+      tone={tone} expanded={expanded} onToggle={onToggle} label="Predicted factory number"
+      icon={<Gauge className={cn("w-6 h-6", ready ? "text-foreground" : "text-muted-foreground")} />}
+      headline={
+        <span className="tabular-nums">
+          ~{fmt(f.predictedEnd)} predicted
+          {ready && f.high > f.low && <span className="font-semibold text-muted-foreground"> · likely {fmt(f.low)}–{fmt(f.high)}</span>}
+        </span>
+      }
+      sub={state.loading
+        ? "Working out late orders…"
+        : !ready
+          ? "Known orders only — couldn't load late orders"
+          : band.short(t)}
+      footer={ready && rec ? (
+        <div className="rounded-xl border bg-background px-3 py-2 space-y-2" onClick={e => e.stopPropagation()}>
+          {rec.reason === "pull-back" && state.pullBack && (
+            <div className="text-sm font-semibold text-orange-800 dark:text-orange-200">{pullBackText(state.pullBack, t)}</div>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-bold flex-1 min-w-[10rem]">{recommendationText(rec)}</span>
+            <TileButton primary onClick={() => onApply(rec)}>
+              {rec.direction === "fewer" ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />} Apply changes
+            </TileButton>
+          </div>
+        </div>
+      ) : ready && blocked ? (
+        <div className="text-sm font-semibold">
+          {blocked === "fewer"
+            ? `Can't take more off: at the fewest batches a day (${fmt(t.minBatchesPerDay)}) or every recipe's orders + margin`
+            : "Can't add more: the day is at capacity"}
+        </div>
+      ) : undefined}
+      actions={canEdit ? <TileButton onClick={onEdit}><Settings2 className="w-4 h-4" /> Change levels</TileButton> : undefined}
+    />
+  );
+}
+
+export function FactoryForecastDetails({ state, canEdit, editing }: {
+  state: PlanFactoryForecastState;
+  canEdit: boolean;
+  editing: boolean;
+}) {
+  const { forecast: f, recommendation: rec, data, thresholds: t } = state;
   const emails = data?.emails.length ?? 0;
   const byWhen = data ? londonWhen(data.lastCutoffAt) : undefined;
-  const ready = !!data;
-
+  const history = data?.history ?? null;
   return (
-    <div className={cn("mb-3 rounded-2xl border-2 p-4 space-y-3", ready ? style.box : "border-border bg-card")}>
-      <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
-        <Gauge className={cn("w-7 h-7 flex-shrink-0 mt-0.5", ready ? style.text : "text-muted-foreground")} />
-        <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold text-muted-foreground">Predicted factory number after this plan</div>
-          <div className="flex flex-wrap items-baseline gap-x-3">
-            <span className="text-3xl font-extrabold tabular-nums">~{fmt(f.predictedEnd)}</span>
-            {ready && f.high > f.low && (
-              <span className="text-base font-semibold tabular-nums text-muted-foreground">likely {fmt(f.low)}–{fmt(f.high)}</span>
-            )}
-          </div>
-          {ready && <div className={cn("text-base font-bold", style.text)}>{style.label(t)}</div>}
-          <div className="text-sm mt-1">
-            {state.loading
-              ? "Working out late orders…"
-              : state.loadError || !data
-                ? `Known orders only (${fmt(f.knownEnd)}) — couldn't load the late-orders prediction just now.`
-                : describeFactoryForecast(f, { byWhen, emails })}
-          </div>
-        </div>
-        <div className="flex gap-2 ml-auto">
-          <button type="button" onClick={() => setDetails(v => !v)}
-            className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl border border-border bg-background text-sm font-semibold hover:bg-secondary/60">
-            {details ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />} How it's worked out
-          </button>
-          {canEdit && (
-            <button type="button" onClick={() => setEditing(v => !v)}
-              className="inline-flex items-center gap-1.5 h-11 px-3 rounded-xl border border-border bg-background text-sm font-semibold hover:bg-secondary/60">
-              {editing ? <X className="w-4 h-4" /> : <Settings2 className="w-4 h-4" />} {editing ? "Done" : "Change levels"}
-            </button>
-          )}
-        </div>
+    <div className="space-y-3 text-sm">
+      <div className="text-base">
+        {state.loading
+          ? "Working out late orders…"
+          : state.loadError || !data
+            ? `Known orders only (${fmt(f.knownEnd)}) — couldn't load the late-orders prediction just now.`
+            : describeFactoryForecast(f, { byWhen, emails })}
       </div>
 
-      {ready && rec && (
-        <div className="flex flex-wrap items-center gap-3 rounded-xl border bg-background px-3 py-2.5">
-          <div className="min-w-0 flex-1">
-            <div className="font-bold">
-              {rec.direction === "fewer" ? "You're making too many batches here." : "This could leave the fridge short."}{" "}
-              {recommendationText(rec)}
-            </div>
-            <div className="text-sm text-muted-foreground">
-              {rec.changes.slice(0, 6).map(c => `${c.recipeName} ${c.from}→${c.to}`).join(" · ")}
-              {rec.changes.length > 6 ? ` · +${rec.changes.length - 6} more` : ""}
-              {rec.direction === "fewer"
-                ? " — taken from the flavours with the most packs left for their sales; never below a recipe's orders + margin."
-                : " — added to the flavours with the fewest packs left for their sales."}
-            </div>
+      {rec && (
+        <div className="rounded-xl border bg-background p-3">
+          <div className="font-bold">{recommendationText(rec)}</div>
+          <div className="text-muted-foreground">
+            {rec.changes.map(c => `${c.recipeName} ${c.from}→${c.to}`).join(" · ")}
+            {rec.direction === "fewer"
+              ? ` — taken from the flavours with the most packs left for their sales; never below a recipe's orders + margin or ${plural(t.minBatchesPerDay, "batch", "batches")} a day.`
+              : " — added to the flavours with the fewest packs left for their sales, within the day's capacity."}
           </div>
-          <button type="button" onClick={() => onApply(rec)}
-            className="inline-flex items-center gap-1.5 h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90">
-            {rec.direction === "fewer" ? <Minus className="w-4 h-4" /> : <Plus className="w-4 h-4" />} Apply
-          </button>
         </div>
       )}
 
-      {details && <ForecastDetails state={state} />}
+      <div className="rounded-xl border bg-background p-3">
+        <div className="font-bold mb-1">When it suggests a change</div>
+        <ul className="list-disc pl-5 space-y-0.5">
+          <li>{fmt(t.targetLow)}–{fmt(t.targetHigh)} is the target. Up to {fmt(t.warnAt)} it says "above target" and leaves the batches alone.</li>
+          <li>At {fmt(t.warnAt)} or more it suggests fewer batches to land near {fmt(t.targetHigh)}; at {fmt(t.maxAt)} saving needs a second tap.</li>
+          <li>Over {fmt(t.targetHigh)} when the fridge has ended 3 or more plan days in a row above {fmt(t.targetHigh)} and rising, it says it's time to pull back.</li>
+          <li>Under {fmt(t.targetLow)} it suggests more, up to the day's capacity; under {fmt(t.lowRed)} is too low.</li>
+          <li>Never below {plural(t.minBatchesPerDay, "batch", "batches")} a day.</li>
+        </ul>
+        {history && history.length > 0 && (
+          <div className="mt-2">
+            <span className="font-semibold">Fridge at the end of recent plan days:</span>{" "}
+            {history.map(h => `${dayName(h.date)} ${h.date.slice(8, 10)}/${h.date.slice(5, 7)} ${fmt(h.packs)}`).join(" · ")}
+          </div>
+        )}
+        {data && !history && <div className="mt-2 text-muted-foreground">Couldn't read the last plan days, so "time to pull back" isn't checked.</div>}
+      </div>
+
+      <ForecastDetails state={state} />
       {editing && canEdit && <ThresholdEditor thresholds={t} />}
     </div>
   );
@@ -222,6 +272,8 @@ const THRESHOLD_FIELDS: Array<{ key: keyof FactoryThresholds; label: string }> =
   { key: "targetHigh", label: "Target to" },
   { key: "warnAt", label: "Warning at" },
   { key: "maxAt", label: "Freezing at" },
+  // Not a pack level: a batch count, outside the left-to-right order check.
+  { key: "minBatchesPerDay", label: "Fewest batches a day" },
 ];
 
 function ThresholdEditor({ thresholds }: { thresholds: FactoryThresholds }) {
@@ -249,7 +301,7 @@ function ThresholdEditor({ thresholds }: { thresholds: FactoryThresholds }) {
     <div className="space-y-2">
       <div className="flex flex-wrap items-end gap-4">
         {THRESHOLD_FIELDS.map(f => (
-          <label key={f.key} className="space-y-1">
+          <label key={f.key} className={cn("space-y-1", f.key === "minBatchesPerDay" && "sm:ml-4 sm:pl-4 sm:border-l-2 border-border")}>
             <span className="block text-sm font-semibold text-muted-foreground">{f.label}</span>
             <input type="number" min={0} inputMode="numeric" value={vals[f.key]} className={field}
               onChange={e => change(f.key, e.target.value)} onBlur={() => void auto.flush()} />
@@ -260,7 +312,7 @@ function ThresholdEditor({ thresholds }: { thresholds: FactoryThresholds }) {
       {orderError && (
         <div className="text-sm font-semibold text-red-600">Not saved — keep them in order, smallest to largest, left to right.</div>
       )}
-      <p className="text-xs text-muted-foreground">Packs of calzone in the fridge at the end of the plan day. Saving a plan predicted at or over the freezing level needs a second tap.</p>
+      <p className="text-xs text-muted-foreground">Levels are packs of calzone in the fridge at the end of the plan day. Saving a plan predicted at or over the freezing level needs a second tap. No suggestion goes below the fewest batches a day or above the day's capacity.</p>
     </div>
   );
 }
