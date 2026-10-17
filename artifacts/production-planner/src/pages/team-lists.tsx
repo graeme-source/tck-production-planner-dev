@@ -14,7 +14,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "wouter";
 import {
-  ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, Eye, EyeOff, FileUp,
+  ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, Eye, EyeOff,
   Loader2, Pencil, Plus, Settings2, SkipForward, Undo2, ListChecks, Repeat,
 } from "lucide-react";
 import { describeRule, parseQuickTask } from "@workspace/recurrence";
@@ -173,26 +173,15 @@ export function ListDetail({ id }: { id: number }) {
     <div className="space-y-6 w-full">
       <PageHeader title={`${list.emoji ? `${list.emoji} ` : ""}${list.name}`} description={list.description ?? "Team list"} />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Link href="/lists" className="min-h-[48px] px-3 rounded-xl inline-flex items-center gap-2 font-semibold hover:bg-secondary/60"><ArrowLeft className="w-5 h-5" /> All lists</Link>
-        <span className="flex-1" />
-        {list.canEdit && <>
-        <button onClick={() => setImportOpen(true)} className="min-h-[48px] px-4 rounded-xl border-2 border-border font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
-          <FileUp className="w-5 h-5" /> <span className="hidden sm:inline">Import from Todoist</span><span className="sm:hidden">Import</span>
-        </button>
-        <button onClick={() => setSettingsOpen(true)} className="min-h-[48px] px-4 rounded-xl border-2 border-border font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
-          <Settings2 className="w-5 h-5" /> Settings
-        </button>
-        </>}
-      </div>
-
       {list.archived && (
         <p className="rounded-2xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 font-semibold">This list is archived — restore it in Settings to use it again.</p>
       )}
 
-      {/* One row: today, progress, show/hide done, sort — saves vertical
-          space so the tasks start higher up (Graeme, 2026-10-15). */}
+      {/* One row: back, today, progress, show/hide done, sort, settings —
+          saves vertical space so the tasks start higher up (Graeme,
+          2026-10-15; Settings moved in and Import into Settings 2026-10-17). */}
       <div className="rounded-3xl border-2 border-border bg-card px-5 py-3 flex flex-wrap items-center gap-x-4 gap-y-2">
+        <Link href="/lists" aria-label="All lists" title="All lists" className="min-h-[48px] min-w-[48px] -ml-2 rounded-xl inline-flex items-center justify-center hover:bg-secondary/60"><ArrowLeft className="w-5 h-5" /></Link>
         <h2 className="font-display text-xl font-bold">Today · {todayLabel}</h2>
         <span className={cn("text-base font-semibold", progress.overdue > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{progressText(progress)}</span>
         {progress.total > 0 && <div className="w-40 sm:w-56"><ProgressBar progress={progress} color={list.color} /></div>}
@@ -203,6 +192,12 @@ export function ListDetail({ id }: { id: number }) {
           {showDone ? "Hide completed" : `Show completed${hiddenDone > 0 ? ` (${hiddenDone})` : ""}`}
         </button>
         <TaskSortControl spec={sort} onChange={setSort} />
+        {list.canEdit && (
+          <button type="button" onClick={() => setSettingsOpen(true)}
+            className="min-h-[48px] px-4 rounded-xl border-2 border-border bg-card font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
+            <Settings2 className="w-5 h-5 text-muted-foreground" /> Settings
+          </button>
+        )}
       </div>
 
       {overdue.length > 0 && (
@@ -249,7 +244,7 @@ export function ListDetail({ id }: { id: number }) {
       </Collapsible>
 
       {editing && list.canEdit && <ItemEditModal key={editing.id} item={editing} today={today} onClose={() => setEditingId(null)} />}
-      {settingsOpen && list.canEdit && <ListSettingsModal list={list} onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && list.canEdit && <ListSettingsModal list={list} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); setImportOpen(true); }} />}
       {importOpen && list.canEdit && <ImportModal listId={list.id} onClose={() => setImportOpen(false)} onEditItem={itemId => { setImportOpen(false); setEditingId(itemId); }} />}
     </div>
   );

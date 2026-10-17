@@ -22,6 +22,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { getClaudeClient, CLAUDE_MODELS } from "./ai/claude";
+import { SOP_AI_MAX_TOKENS, SOP_MAX_STEPS, SOP_TOO_LONG_MESSAGE, aiRanOutOfRoom } from "./sop-ai-limits";
 
 const execFileAsync = promisify(execFile);
 
@@ -199,17 +200,19 @@ Think the process through logically from start to finish, then break it into cle
 - Note food-safety points where relevant (hand washing, allergen handling, temperatures, knife/hot-surface safety) in the safetyNote field.
 - For each step choose the SINGLE best illustration: bestFrameSec for the most illustrative video moment (mid-action, not a transition or blur), OR suppliedPhotoNumber when a supplied photo shows the step better${video ? "" : " (there is no video, so every step must use a suppliedPhotoNumber"}${video ? "." : ")."} Never set both.
 - startSec/endSec bound the step within the video timeline when the step appears in the video; null otherwise.
-- If parts are unclear, still create the step but keep the instruction to what is certain — the team will edit the draft afterwards.`,
+- If parts are unclear, still create the step but keep the instruction to what is certain — the team will edit the draft afterwards.
+- Use as many steps as the process really needs, up to ${SOP_MAX_STEPS}.`,
     });
 
     const client = getClaudeClient();
     const response = await client.messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 4096,
+      max_tokens: SOP_AI_MAX_TOKENS,
       tool_choice: { type: "tool", name: "draft_sop_steps" },
       tools: [DRAFT_TOOL],
       messages: [{ role: "user", content: content as never }],
     });
+    if (aiRanOutOfRoom(response.stop_reason)) throw new Error(SOP_TOO_LONG_MESSAGE);
     const toolUse = response.content.find(b => b.type === "tool_use");
     if (!toolUse || toolUse.type !== "tool_use") throw new Error("The AI did not return drafted steps — try again");
     const input = toolUse.input as { suggestedTitle?: string | null; steps?: RawDraftStep[] };
