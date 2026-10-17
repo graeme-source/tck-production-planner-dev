@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useQueryClient } from "@tanstack/react-query";
-import { Archive, ArchiveRestore, Check, Loader2, Search, X } from "lucide-react";
+import { Archive, ArchiveRestore, Check, FileUp, Loader2, Search, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { filterListPeople, membersSummary } from "@/lib/team-list-view";
 import { useAuth } from "@/contexts/auth-context";
@@ -25,10 +25,12 @@ const inputCls = "w-full h-12 rounded-xl border-2 border-border bg-background px
 
 type Existing = Pick<TeamListSummary, "id" | "name" | "description" | "emoji" | "color" | "memberIds" | "archived">;
 
-export function ListSettingsModal({ list, onClose, onCreated }: {
+export function ListSettingsModal({ list, onClose, onCreated, onImport }: {
   list: Existing | null;
   onClose: () => void;
   onCreated?: (id: number) => void;
+  /** A one-off job, so it lives here rather than on the list page (Graeme, 2026-10-17). */
+  onImport?: () => void;
 }) {
   useModalScrollKeeper();
   const qc = useQueryClient();
@@ -189,6 +191,16 @@ export function ListSettingsModal({ list, onClose, onCreated }: {
               )}
             </div>
           </div>
+
+          {list && onImport && (
+            <div className="pt-3 border-t border-border space-y-2">
+              <p className="text-sm font-semibold">Import tasks</p>
+              <button type="button" onClick={onImport}
+                className="min-h-[48px] px-4 rounded-xl border-2 border-border font-semibold inline-flex items-center gap-2 hover:bg-secondary/60">
+                <FileUp className="w-5 h-5" /> Import from Todoist
+              </button>
+            </div>
+          )}
 
           {list && (
             <div className="pt-3 border-t border-border">
