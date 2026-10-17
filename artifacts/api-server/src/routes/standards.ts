@@ -615,10 +615,11 @@ router.post("/:id/polish", requireAuth, async (req, res) => {
 
   try {
     const { getClaudeClient, CLAUDE_MODELS } = await import("../lib/ai/claude");
+    const { SOP_AI_MAX_TOKENS, SOP_TOO_LONG_MESSAGE, aiRanOutOfRoom } = await import("../lib/sop-ai-limits");
     const client = getClaudeClient();
     const response = await client.messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 4096,
+      max_tokens: SOP_AI_MAX_TOKENS,
       tool_choice: { type: "tool", name: "polish_sop_steps" },
       tools: [POLISH_TOOL as never],
       messages: [{
@@ -639,6 +640,7 @@ The steps:
 ${steps.map(st => `[id ${st.id}]\n${st.description}`).join("\n\n")}`,
       }],
     });
+    if (aiRanOutOfRoom(response.stop_reason)) throw new Error(SOP_TOO_LONG_MESSAGE);
     const toolUse = response.content.find(b => b.type === "tool_use");
     if (!toolUse || toolUse.type !== "tool_use") throw new Error("The AI did not return rewritten steps — try again");
     const input = toolUse.input as { steps?: { id: number; description: string }[] };
