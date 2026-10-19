@@ -12,6 +12,7 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip } from "../shared/pace-kpi-strip";
 import { IcePackBanner } from "@/components/ice-pack-callout";
+import { ChargebackHoldsBanner } from "@/components/chargeback-holds-banner";
 
 // ──────────────────────────────────────────────────────────────────────────────
 interface PackingData {
@@ -468,6 +469,8 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           </div>
         </div>
       )}
+
+      {canPack && <ChargebackHoldsBanner tag={dispatchTag} />}
 
       {canPack && progress && progress.totalOrders - progress.totalFulfilled > 0 && (
         <button

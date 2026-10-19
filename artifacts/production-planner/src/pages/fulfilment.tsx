@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { ChargebackHoldsBanner } from "@/components/chargeback-holds-banner";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -4112,6 +4113,7 @@ export default function Fulfilment() {
     <div className="space-y-6">
       {showTestModeBanner && <TestModeBanner trainingCredentialsMissing={configStatus?.trainingCredentialsMissing} />}
         {reconcileMode && <ReconcileModeBanner />}
+      <ChargebackHoldsBanner tag={queryTag} />
       {printDialogSeen && <KioskPrintBanner onDismiss={() => setPrintDialogSeen(false)} />}
 
       {/* Live-mode confirmation dialog — appears when operator selects an order */}
