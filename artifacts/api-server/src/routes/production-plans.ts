@@ -36,6 +36,7 @@ import { findRecentDuplicatePlan } from "../lib/plan-duplicate";
 // so any issue with that module can never take down server startup or
 // the rest of the router.
 import type { ProductionPlanPdfData } from "../pdf/production-plan-pdf";
+import { mainMixDoughIds } from "../lib/dough-mix-split";
 
 /** Recipe category name for macaroni cheese products. Used to split calzone
  *  vs mac cheese metrics (mac cheese is tracked in packs, calzones in batches). */
@@ -6313,7 +6314,9 @@ router.get("/:id/dough-prep", async (req, res) => {
   };
   const sameDayDough: SameDayGroup[] = [];
 
-  if (!useCurrentPlan && currentPlanRow) {
+  // Also in mode=current (calendar dough card / sheeting): bun dough is its
+  // own group, never part of the main mix (2026-10-19).
+  if (currentPlanRow) {
     const sameDayItems = await db
       .select({
         planId: productionPlansTable.id,
@@ -6584,7 +6587,10 @@ router.get("/:id/dough-prep", async (req, res) => {
     });
   }
 
-  const recipeDoughKg = recipeResults.reduce((sum, r) => sum + r.doughKgTotal, 0);
+  // Same-day doughs (bun dough) keep their balls for sheeting but never join
+  // the main mix maths — they're mixed as their own group (2026-10-19).
+  const mixDoughIds = mainMixDoughIds(doughSubRecipeIds, subRecipeLinks);
+  const recipeDoughKg = recipeResults.filter(r => mixDoughIds.includes(r.subRecipeId)).reduce((sum, r) => sum + r.doughKgTotal, 0);
   const totalDoughKg = recipeDoughKg + extraBallsKg;
 
   // ── 7. Compute flour-based mixing ──
@@ -6596,7 +6602,7 @@ router.get("/:id/dough-prep", async (req, res) => {
 
   let totalFlourKg = 0;
 
-  for (const srId of doughSubRecipeIds) {
+  for (const srId of mixDoughIds) {
     const srYield = Number(
       subRecipeLinks.find(l => l.subRecipeId === srId)?.subRecipeYield ?? 0
     );
@@ -6629,7 +6635,7 @@ router.get("/:id/dough-prep", async (req, res) => {
   // ── 8. Aggregate ingredients scaled to total dough needed ──
   const ingredientTotals = new Map<number, { ingredientId: number | null; ingredientName: string; unit: string; totalQty: number }>();
 
-  for (const srId of doughSubRecipeIds) {
+  for (const srId of mixDoughIds) {
     const srYield = Number(
       subRecipeLinks.find(l => l.subRecipeId === srId)?.subRecipeYield ?? 0
     );
