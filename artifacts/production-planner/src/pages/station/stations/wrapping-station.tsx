@@ -32,7 +32,7 @@ import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
-import { useLiveLabelRecipeIds } from "@/components/product-labels/api";
+import { useLiveLabelRecipeIds, wrappingLabelAction } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 // Everyone can make back labels at the bench (Graeme, 12 Oct 2026); only the
@@ -908,7 +908,12 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                   {/* A proper green button on every flavour panel (Graeme,
                       2026-10-12) — still only for whoever holds "Print back
                       labels". */}
-                  {canPrintBackLabels && liveLabelRecipeIds.has(item.recipeId) && (
+                  {/* No label built yet → a plain instruction, not a button
+                      (Graeme, 19 Oct 2026: "Use Label Live" — the old way). */}
+                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId) === "label-live" && (
+                    <span className="ml-auto shrink-0 text-sm font-semibold text-muted-foreground">Use Label Live</span>
+                  )}
+                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId) === "print" && (
                     <button
                       type="button"
                       onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net })}
