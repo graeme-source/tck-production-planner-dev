@@ -25,6 +25,19 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
   const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
+  // The piece of dough each batch is sheeted from: a ball (calzone dough,
+  // doughData.recipes) or a billet (same-day dough such as bun dough, which
+  // the server keeps out of the balling list — Graeme, 19 Oct 2026).
+  const doughPieceFor = (recipeId: number | null | undefined): { grams: number; kind: "Ball" | "Billet" } | null => {
+    if (recipeId == null) return null;
+    const ball = doughData?.recipes.find(r => r.recipeId === recipeId)?.ballWeightG;
+    if (ball) return { grams: ball, kind: "Ball" };
+    for (const g of doughData?.sameDayDough ?? []) {
+      const r = g.recipes.find(x => x.recipeId === recipeId);
+      if (r) return { grams: r.billetWeightG ?? Math.round(r.doughKgPerBatch * 1000), kind: "Billet" };
+    }
+    return null;
+  };
   // ONE recipe on show at a time (the shared station-queue pattern, Graeme
   // 2026-09-16): pinned panel + bottom dock + queue sheet.
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
@@ -236,7 +249,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
             const sheeted = getStationCount(item, "dough_sheeting");
             const isDone = sheeted >= target && target > 0;
             const isCurrent = item.id === nextItem?.id;
-            const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
+            const piece = doughPieceFor(item.recipeId);
             const progress = target > 0 ? Math.round((sheeted / target) * 100) : 0;
             const recipeColour = item.recipeColor || undefined;
             const panelIdx = items.findIndex(it => it.id === item.id);
@@ -280,9 +293,10 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
 
                   <div className="px-4 py-3 space-y-3">
                     <div className="flex items-center justify-between">
-                      {ballWeight ? (
+                      {piece ? (
                         <p className="text-base text-muted-foreground">
-                          Ball weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{ballWeight}g</span>
+                          {piece.kind} weight: <span className="font-semibold text-amber-600 dark:text-amber-400">{piece.grams.toLocaleString("en-GB")} g</span>
+                          {piece.kind === "Billet" && <span> · one billet per batch</span>}
                         </p>
                       ) : <span />}
                       <p className="text-3xl font-bold font-display tabular-nums">
@@ -343,7 +357,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
               const isDone = sheeted >= target && target > 0;
               const isCurrent = item.id === nextItem?.id;
               const isSelected = item.id === selectedItemId;
-              const ballWeight = doughData?.recipes.find(r => r.recipeId === item.recipeId)?.ballWeightG;
+              const ballWeight = doughPieceFor(item.recipeId)?.grams;
               return (
                 <button
                   key={item.id}

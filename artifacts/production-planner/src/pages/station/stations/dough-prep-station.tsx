@@ -10,7 +10,8 @@ import {
   Loader2, Plus, Minus, CheckCircle2, RotateCcw, Timer, Droplets, Scale,
   PackageSearch, ChevronRight, Layers, ClipboardList, Check, Package,
 } from "lucide-react";
-import { format, parseISO, differenceInMinutes, differenceInSeconds } from "date-fns";
+import { format, parseISO, addDays, differenceInMinutes, differenceInSeconds } from "date-fns";
+import { formatPrepWeight } from "@workspace/units";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -76,6 +77,8 @@ interface DoughPrepData {
     totalDoughKg: number;
     totalFlourKg: number;
     mixCount: number;
+    /** One billet per batch — portioned and sheeted whole, never balled. */
+    billetCount?: number;
     recipes: Array<{
       recipeId: number;
       recipeName: string;
@@ -84,6 +87,8 @@ interface DoughPrepData {
       doughKgPerBatch: number;
       doughKgTotal: number;
       gramsPerPortion: number;
+      /** Grams each billet is portioned to (recipe setting, else dough per batch). */
+      billetWeightG?: number;
     }>;
     ingredients: Array<{
       ingredientId: number | null;
@@ -93,6 +98,9 @@ interface DoughPrepData {
       qtyPerMix: number;
     }>;
   }>;
+  /** Day-before view: the NEXT plan's same-day dough, weighed up today and
+   *  mixed + portioned into billets on its production morning. */
+  weighUpDough?: DoughPrepData["sameDayDough"];
   extraBalls?: {
     extraPack: { count: number; weightG: number };
     snack: { count: number; weightG: number };
@@ -157,36 +165,99 @@ function MixSaveBadge({ state, onRetry }: { state: MixSaveState; onRetry?: () =>
   return null;
 }
 
-/** Same-day dough (cinnamon bun dough): its own amber card per dough type,
- *  mixed TODAY for today's bake — kept fully separate from the day-before
- *  dough maths. The mix flow mirrors the calzone one — same tick-off rows,
- *  same complete button, same mix chips — so the bench works one way. */
-function SameDayDoughSection({ groups, isOnBreak = false }: { groups: NonNullable<DoughPrepData["sameDayDough"]>; isOnBreak?: boolean }) {
-  if (!groups || groups.length === 0) return null;
+type SameDayGroupData = NonNullable<DoughPrepData["sameDayDough"]>[number];
+
+/** Today's date in the kitchen's clock (YYYY-MM-DD). */
+function londonToday(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
+}
+
+/** Weigh-up (the day before its bake) or mix + billets (its bake day).
+ *  Graeme, 19 Oct 2026: "the weighing of the ingredients gets done the day
+ *  before … the mixing and balling of the billets … on the morning of
+ *  production". Judged against the real calendar day, like doughDueLater. */
+export function sameDayDoughPhase(planDate: string, today: string): "weigh" | "mix" {
+  return planDate > today ? "weigh" : "mix";
+}
+
+/** Every same-day dough group the response carries — this plan's day
+ *  (sameDayDough) and the next plan's (weighUpDough) — once each. */
+function allSameDayGroups(d: DoughPrepData | null | undefined): SameDayGroupData[] {
+  const seen = new Set<string>();
+  const out: SameDayGroupData[] = [];
+  for (const g of [...(d?.sameDayDough ?? []), ...(d?.weighUpDough ?? [])]) {
+    const k = `${g.planId}:${g.subRecipeId}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(g);
+  }
+  return out;
+}
+
+const fmtGrams = (g: number) => `${Math.round(g).toLocaleString("en-GB")} g`;
+
+/** Same-day dough (cinnamon bun dough): its own card per dough type, kept
+ *  fully separate from the calzone dough maths. Not balled — each batch is
+ *  one billet, portioned and sheeted straight away. `only` picks which phase
+ *  to show at this spot on the page. */
+function SameDayDoughSection({ groups, isOnBreak = false, only }: { groups: SameDayGroupData[]; isOnBreak?: boolean; only?: "weigh" | "mix" }) {
+  const today = londonToday();
+  const shown = groups.filter(g => !only || sameDayDoughPhase(g.planDate, today) === only);
+  if (shown.length === 0) return null;
   return (
     <>
-      {groups.map(g => <SameDayDoughGroup key={`${g.planId}:${g.subRecipeId}`} group={g} isOnBreak={isOnBreak} />)}
+      {shown.map(g => <SameDayDoughGroup key={`${g.planId}:${g.subRecipeId}`} group={g} isOnBreak={isOnBreak} phase={sameDayDoughPhase(g.planDate, today)} />)}
     </>
   );
 }
 
+/** The billets line: "Portion into 18 billets of 2,467 g". */
+function BilletLines({ g, done }: { g: SameDayGroupData; done?: boolean }) {
+  return (
+    <div className="space-y-2">
+      {g.recipes.map(r => {
+        const madeG = Math.round(r.doughKgPerBatch * 1000);
+        const portionG = r.billetWeightG ?? madeG;
+        const spareG = madeG - portionG;
+        return (
+          <div key={r.recipeId} className={cn("rounded-xl border-2 px-4 py-3", done ? "border-emerald-300 bg-emerald-50/50 dark:border-emerald-700 dark:bg-emerald-900/10" : "border-amber-400 bg-background")}>
+            <p className="font-display text-2xl font-bold">
+              Portion into {formatBatches(r.batchesTarget)} {r.batchesTarget === 1 ? "billet" : "billets"} of {fmtGrams(portionG)}, then sheet straight away
+            </p>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              {r.recipeName} · one billet per batch
+              {spareG > 0 ? ` · dough made at ${fmtGrams(madeG)} per billet — about ${fmtGrams(spareG)} spare each for wastage` : ""}
+            </p>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** One same-day dough. Ticks and "Mix complete" are saved per plan + dough
- *  (dough_key 'same_day:<subRecipeId>', migration 0177), so a reload or a
- *  second iPad shows the same — they used to live only in memory. There are
- *  no balls for this dough, so nothing is estimated: only saved taps count. */
-function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPrepData["sameDayDough"]>[number]; isOnBreak: boolean }) {
+ *  (dough_key 'same_day:<subRecipeId>', migration 0177): the weigh-up ticks
+ *  made the day before ARE the ingredient ticks the mix reads on the
+ *  production morning, so a weighed-up ingredient shows as done. */
+function SameDayDoughGroup({ group: g, isOnBreak, phase }: { group: SameDayGroupData; isOnBreak: boolean; phase: "weigh" | "mix" }) {
   const mixCount = Math.max(1, g.mixCount);
   const progress = useDoughMixProgress(g.planId, { dough: sameDayDoughKey(g.subRecipeId), enabled: true });
   const status = deriveDoughMixStatus({ mixCount, saved: progress.data?.mixes, ballsRecorded: 0, ballsNeeded: 0 });
   const [chosenMix, setChosenMix] = useState<number | null>(null);
-  // Until someone taps a chip, show the first mix not yet done.
-  const firstUndone = Array.from({ length: mixCount }, (_, i) => i + 1).find(n => !status.completedMixes.has(n)) ?? mixCount;
+  const ingKeyOf = (ing: { ingredientId: number | null }, i: number) => String(ing.ingredientId ?? `x-${i}`);
+  const weighedAll = (n: number) => g.ingredients.length > 0 && g.ingredients.every((ing, i) => (status.ticksByMix[n] ?? new Set<string>()).has(ingKeyOf(ing, i)));
+  const mixNos = Array.from({ length: mixCount }, (_, i) => i + 1);
+  // Until someone taps a chip, show the first mix not yet weighed (weigh-up)
+  // or not yet mixed (production day).
+  const firstUndone = mixNos.find(n => phase === "weigh" ? !weighedAll(n) && !status.completedMixes.has(n) : !status.completedMixes.has(n)) ?? mixCount;
   const activeMix = Math.min(chosenMix ?? firstUndone, mixCount);
   const checkedForMix = status.ticksByMix[activeMix] ?? new Set<string>();
   const isMixComplete = status.completedMixes.has(activeMix);
-  const ingKeyOf = (ing: { ingredientId: number | null }, i: number) => String(ing.ingredientId ?? `x-${i}`);
-  const allChecked = g.ingredients.length > 0 && g.ingredients.every((ing, i) => checkedForMix.has(ingKeyOf(ing, i)));
+  const allChecked = weighedAll(activeMix);
   const doneCount = status.completedMixes.size;
+  const weighedCount = mixNos.filter(n => weighedAll(n) || status.completedMixes.has(n)).length;
+  const allMixed = doneCount >= mixCount;
+  const billets = g.billetCount ?? g.recipes.reduce((s, r) => s + r.batchesTarget, 0);
 
   const toggle = (ingKey: string) => {
     if (isOnBreak || isMixComplete) return;
@@ -198,42 +269,51 @@ function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPr
     if (activeMix < mixCount) setChosenMix(activeMix + 1);
   };
 
+  const isWeigh = phase === "weigh";
+  const bakeDay = format(parseISO(g.planDate), "EEEE");
+  const tomorrow = format(addDays(parseISO(londonToday()), 1), "yyyy-MM-dd") === g.planDate;
+  const mixLabel = (n: number) => mixCount > 1 ? `Mix ${n}` : "Mix";
+
   return (
-    <div className="bg-amber-50 dark:bg-amber-950/30 border-2 border-amber-400 rounded-xl p-4 space-y-3">
+    <div className={cn(
+      "border-2 rounded-xl p-4 space-y-3",
+      isWeigh ? "bg-sky-50 dark:bg-sky-950/30 border-sky-400" : "bg-amber-50 dark:bg-amber-950/30 border-amber-400",
+    )}>
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div>
           <h2 className="font-semibold text-lg">
-            {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span>
+            {isWeigh
+              ? <>{g.subRecipeName} — <span className="text-sky-700 dark:text-sky-300">weigh up for {tomorrow ? "tomorrow" : bakeDay}</span></>
+              : <>Mix the {g.subRecipeName} — <span className="text-amber-700 dark:text-amber-400">made TODAY</span></>}
           </h2>
           <p className="text-sm text-muted-foreground">
-            For today's bake ({g.planName}). Mix on the production day — not the day before.
+            {isWeigh
+              ? `Weigh the ingredients today and tick each one off. It's mixed and portioned into ${formatBatches(billets)} billets on ${bakeDay} morning (${g.planName}) — not today.`
+              : `For today's bake (${g.planName}). The ingredients were weighed up yesterday — mix, portion into ${formatBatches(billets)} billets and sheet straight away. Not balled.`}
           </p>
         </div>
         <div className="text-right">
-          <div className="text-2xl font-bold font-display">{g.totalDoughKg.toFixed(2)} kg</div>
+          <div className="text-2xl font-bold font-display">{formatBatches(billets)} billets</div>
           <div className="text-xs text-muted-foreground">
-            {mixCount > 1 ? `${doneCount} of ${mixCount} mixes done` : isMixComplete ? "Mix complete ✓" : "1 mix"}
+            {formatPrepWeight(g.totalDoughKg, "kg")} dough ·{" "}
+            {isWeigh
+              ? (weighedCount >= mixCount ? "all weighed ✓" : mixCount > 1 ? `${weighedCount} of ${mixCount} mixes weighed` : "1 mix to weigh")
+              : (mixCount > 1 ? `${doneCount} of ${mixCount} mixes done` : isMixComplete ? "mix complete ✓" : "1 mix")}
           </div>
           {progress.saveState !== "idle" && <MixSaveBadge state={progress.saveState} onRetry={progress.retry} />}
         </div>
       </div>
 
-      <div className="space-y-1.5">
-        {g.recipes.map(r => (
-          <div key={r.recipeId} className="flex items-center justify-between bg-background/60 rounded-lg px-3 py-2">
-            <span className="font-medium">{r.recipeName}</span>
-            <span className="text-sm text-muted-foreground">
-              {formatBatches(r.batchesTarget)} {r.batchesTarget === 1 ? "batch" : "batches"} × {r.doughKgPerBatch.toFixed(2)} kg
-              {" "}({r.gramsPerPortion} g each) = <span className="font-semibold text-foreground">{r.doughKgTotal.toFixed(2)} kg</span>
-            </span>
-          </div>
-        ))}
-      </div>
+      {isWeigh && (
+        <p className="text-sm font-medium">
+          {g.recipes.map(r => `${formatBatches(r.batchesTarget)} ${r.batchesTarget === 1 ? "billet" : "billets"} of ${g.subRecipeName} (${fmtGrams(r.billetWeightG ?? r.doughKgPerBatch * 1000)} each)`).join(" · ")}
+        </p>
+      )}
 
       {mixCount > 1 && (
         <div className="flex items-center gap-2">
-          {Array.from({ length: mixCount }, (_, i) => i + 1).map(n => {
-            const nDone = status.completedMixes.has(n);
+          {mixNos.map(n => {
+            const nDone = isWeigh ? weighedAll(n) || status.completedMixes.has(n) : status.completedMixes.has(n);
             return (
               <button
                 key={n}
@@ -243,7 +323,7 @@ function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPr
                   nDone
                     ? "bg-emerald-500 text-white"
                     : n === activeMix
-                      ? "bg-amber-500 text-white"
+                      ? (isWeigh ? "bg-sky-500 text-white" : "bg-amber-500 text-white")
                       : "bg-secondary text-muted-foreground hover:text-foreground",
                   n === activeMix && nDone && "ring-2 ring-emerald-300",
                 )}
@@ -255,23 +335,28 @@ function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPr
         </div>
       )}
 
-      {/* Tick-off rows — same shape as the calzone Mix view so the
-          bench works identically on either dough. */}
+      {/* Tick-off rows — same shape as the calzone Mix view. */}
       <div className={cn(
         "rounded-xl border-2 overflow-hidden bg-card",
-        isMixComplete ? "border-emerald-300 dark:border-emerald-700" : "border-amber-400/60",
+        isMixComplete || (isWeigh && allChecked) ? "border-emerald-300 dark:border-emerald-700" : isWeigh ? "border-sky-400/60" : "border-amber-400/60",
       )}>
         <div className={cn(
           "px-5 py-3 flex items-center justify-between",
-          isMixComplete ? "bg-emerald-100/50 dark:bg-emerald-900/20" : "bg-amber-100/50 dark:bg-amber-900/20",
+          isMixComplete || (isWeigh && allChecked) ? "bg-emerald-100/50 dark:bg-emerald-900/20" : isWeigh ? "bg-sky-100/50 dark:bg-sky-900/20" : "bg-amber-100/50 dark:bg-amber-900/20",
         )}>
           <div>
-            <h3 className="font-display text-xl font-bold">{mixCount > 1 ? `Mix ${activeMix}` : "Mix"}</h3>
+            <h3 className="font-display text-xl font-bold">
+              {isWeigh ? `Weigh up${mixCount > 1 ? ` — ${mixLabel(activeMix)}` : ""}` : mixLabel(activeMix)}
+            </h3>
             <p className="text-sm text-muted-foreground">
-              {isMixComplete ? "All ingredients added" : `${checkedForMix.size} of ${g.ingredients.length} ingredients added`}
+              {isMixComplete
+                ? "Mixed ✓"
+                : allChecked
+                  ? (isWeigh ? "All weighed — ready for the morning" : "All ingredients weighed — mix them now")
+                  : `${g.ingredients.filter((ing, i) => checkedForMix.has(ingKeyOf(ing, i))).length} of ${g.ingredients.length} weighed${isWeigh ? "" : " — weigh the rest now"}`}
             </p>
           </div>
-          {isMixComplete && <CheckCircle2 className="w-7 h-7 text-emerald-500" />}
+          {(isMixComplete || (isWeigh && allChecked)) && <CheckCircle2 className="w-7 h-7 text-emerald-500" />}
         </div>
 
         <div className="divide-y divide-border/40">
@@ -302,14 +387,14 @@ function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPr
                   "text-2xl font-semibold tabular-nums flex-shrink-0",
                   isChecked ? "text-emerald-700 dark:text-emerald-300" : "text-foreground",
                 )}>
-                  {fmtDoughQty(mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit, ing.ingredientName)}
+                  {formatPrepWeight(mixCount > 1 ? ing.qtyPerMix : ing.totalQty, ing.unit)}
                 </p>
               </button>
             );
           })}
         </div>
 
-        {!isMixComplete && (
+        {!isWeigh && !isMixComplete && (
           <div className="px-5 py-3 border-t border-border/40">
             <button
               onClick={complete}
@@ -321,11 +406,13 @@ function SameDayDoughGroup({ group: g, isOnBreak }: { group: NonNullable<DoughPr
                   : "bg-secondary text-muted-foreground cursor-not-allowed",
               )}
             >
-              {allChecked ? `✓ ${mixCount > 1 ? `Mix ${activeMix} ` : "Mix "}Complete` : "Add all ingredients to continue"}
+              {allChecked ? `✓ ${mixLabel(activeMix)} complete` : "Weigh all ingredients to continue"}
             </button>
           </div>
         )}
       </div>
+
+      {!isWeigh && <BilletLines g={g} done={allMixed} />}
     </div>
   );
 }
@@ -386,7 +473,15 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   // The display target comes from doughData.recipes (next day), so tracking must match.
   const nextPlanId = doughData?.nextPlan?.id;
   const nextPlanItems = doughData?.nextPlanItems ?? [];
-  const trackingItems = nextPlanItems.length > 0 ? nextPlanItems : items;
+  // Only the recipes that are balled (doughData.recipes — the server leaves
+  // same-day/billet doughs out): bun batches must never take balls or count
+  // towards "N of M balls" (Graeme, 19 Oct 2026: "0 of 68 balls").
+  const balledRecipeIds = new Set((doughData?.recipes ?? []).map(r => r.recipeId));
+  const isBalled = (it: { recipeId?: number | null }) => it.recipeId != null && balledRecipeIds.has(it.recipeId);
+  const trackingItems: ProductionPlanItem[] | NonNullable<DoughPrepData["nextPlanItems"]> = nextPlanItems.length > 0
+    ? nextPlanItems.filter(isBalled)
+    : items.filter(isBalled);
+  const sameDayGroups = allSameDayGroups(doughData);
   const trackingPlanId = nextPlanId ?? plan.id;
   const isDraft = doughData?.nextPlan?.status === "draft";
 
@@ -620,10 +715,11 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   }
 
   if (!doughData || doughData.totalDoughKg <= 0) {
-    const sameDay = doughData?.sameDayDough ?? [];
+    const sameDay = sameDayGroups;
     return (
       <div className="space-y-4">
-        <SameDayDoughSection groups={sameDay} isOnBreak={isOnBreak} />
+        <SameDayDoughSection groups={sameDay} isOnBreak={isOnBreak} only="mix" />
+        <SameDayDoughSection groups={sameDay} isOnBreak={isOnBreak} only="weigh" />
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
           <h2 className="font-semibold text-lg mb-1">
@@ -631,7 +727,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
           </h2>
           <p className="text-muted-foreground text-sm">
             {sameDay.length > 0
-              ? "Tomorrow's plan needs no dough mixed today — only the same-day dough above."
+              ? "Tomorrow's plan needs no calzone dough mixed today — only the dough above."
               : "No dough recipes found for this plan."}
           </p>
         </div>
@@ -649,7 +745,8 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
   if (doughDueLater && !showEarly) {
     return (
       <div className="space-y-4">
-        <SameDayDoughSection groups={doughData.sameDayDough ?? []} isOnBreak={isOnBreak} />
+        {/* The next plan's weigh-up isn't due yet either — only today's mix. */}
+        <SameDayDoughSection groups={sameDayGroups} isOnBreak={isOnBreak} only="mix" />
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
           <h2 className="font-semibold text-lg mb-1">No dough to mix today</h2>
@@ -701,7 +798,8 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
         />
       )}
 
-      <SameDayDoughSection groups={doughData.sameDayDough ?? []} isOnBreak={isOnBreak} />
+      {/* Production morning: today's same-day dough (bun) — mix + billets. */}
+      <SameDayDoughSection groups={sameDayGroups} isOnBreak={isOnBreak} only="mix" />
 
       <div className="bg-card border border-border rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
@@ -959,6 +1057,10 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
           </button>
         </>
       )}
+
+      {/* Day before: the next plan's same-day dough (bun) — weigh up only;
+          it's mixed and portioned into billets on its production morning. */}
+      <SameDayDoughSection groups={sameDayGroups} isOnBreak={isOnBreak} only="weigh" />
 
       <AddDoughToPlanDialog
         planId={trackingPlanId}
