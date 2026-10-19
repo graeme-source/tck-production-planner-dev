@@ -96,3 +96,4 @@ export function cookedToRaw(cookedQty: number, processingRatio: number | null | 
 export * from "./order-quantity";
 export * from "./prep-weight";
 export * from "./length";
+export * from "./stock-check-unit";

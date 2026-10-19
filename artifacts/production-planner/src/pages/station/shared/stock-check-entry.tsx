@@ -1,50 +1,58 @@
 /**
- * THE stock-check entry — used by every place the prep room records a stock
- * count (Graeme, 15 Oct 2026; Objective F): the "Stock check records for
- * today" table at the top of every prep screen, the inline counts on Raw
- * Meat / Bases & Sauces (StationStockChecks), and the count after finishing
- * an item on Main Prep and Raw Meat (including Main Prep's "Stock check
- * required" pop-up).
+ * THE stock-check entry — used by every place a stock count is recorded
+ * (Objective F): the "Stock check records for today" table at the top of
+ * every prep screen, the inline counts on Raw Meat / Bases & Sauces
+ * (StationStockChecks), the count after finishing an item on Main Prep and
+ * Raw Meat (including Main Prep's "Stock check required" pop-up), and the
+ * stock column on the Orders page.
  *
- * Counted the way people physically count, with nothing to convert or pick
- * ("doesn't require someone to think hard"): an ingredient with a pack size
- * is FULL PACKS (big − / + stepper) plus the OPENED pack (None / ¼ / ½ / ¾,
- * or weigh an odd amount); one without is a single amount with its unit in
- * big text and an example. A plain-words read-back shows the total before
- * saving ("3 full packs + ½ a pack = 350 g"), and a total way out against
- * the ingredient's recent counts asks "check?" and needs a second tap.
- * Saved in the ingredient's own unit to the same endpoint as ever. Rules:
- * stock-count-units.ts.
+ * Two steps, so it's "almost impossible to get wrong" (Graeme, 19 Oct 2026 —
+ * replacing the 15 Oct full-packs + opened-fraction entry, which was
+ * "confusing"):
+ *   1. One sentence, one button: "This stock check must be recorded in
+ *      KILOGRAMS" → "I understand — record in kilograms".
+ *   2. One big number field with the unit huge and bold right after it, a
+ *      Dictate button (spoken numbers: "five hundred and fifty"), and one
+ *      big "Enter stock" button. A plain-words read-back says what will be
+ *      saved ("550 g = 5.5 packs of 100g"); a count way out against recent
+ *      counts asks "Are you sure — 5,500 g?" and needs a second tap.
+ *
+ * The unit is the item's stock-check unit (ingredients.stock_check_unit,
+ * GET /api/stock-check-units; resolveStockCheckUnit in @workspace/units).
+ * The number is converted to the ingredient's own unit before saving, so
+ * the endpoints and stored data are unchanged. Counts stay blind: nothing
+ * here shows an expected figure.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Loader2, Minus, Package, Plus, X as XIcon } from "lucide-react";
+import { AlertTriangle, ArrowLeft, CheckCircle2, Loader2, Package, X as XIcon } from "lucide-react";
+import {
+  describeStockCount,
+  formatStockCount,
+  nativeToStockCount,
+  resolveStockCheckUnit,
+  stockCheckPackLabel,
+  stockCheckUnitName,
+  stockCheckUnitSymbol,
+  stockCountToNative,
+  type StockCheckUnit,
+  type StockCheckUnitItem,
+} from "@workspace/units";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { guardedFetch } from "@/hooks/use-guarded-action";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
+import { DictateNumberButton } from "@/components/dictate-number-button";
 import { toastDraftBlocked } from "./prep-helpers";
-import {
-  OPENED_FRACTIONS,
-  describePackCount,
-  formatNativeStock,
-  nativeExample,
-  openedCustomUnit,
-  packCountToNative,
-  packLabel,
-  parseStockAmount,
-  sanityMessage,
-  stockCountMode,
-  stockCountSanity,
-  type OpenedPack,
-} from "./stock-count-units";
-import { formatCount, packNoun, unitWord } from "@workspace/units";
+import { parseStockAmount, sanityMessage, stockCountSanity } from "./stock-count-units";
 
 export interface StockCheckEntryIngredient {
   id: number;
   name: string;
   unit: string;
   packWeight?: number | string | null;
+  stockInPacks?: boolean | null;
+  stockCheckUnit?: string | null;
 }
 
 interface CommonProps {
@@ -59,6 +67,9 @@ interface CommonProps {
   planNeedNative?: number | null;
   /** After a successful save, with the stored (native) quantity. */
   onSaved?: (nativeQty: number) => void;
+  /** Save somewhere other than the prep stock-check endpoint (the Orders
+   *  page). Gets the amount in the ingredient's own unit; throw to fail. */
+  saveNative?: (nativeQty: number) => Promise<void>;
 }
 
 /** Recent counts per ingredient (native units), for the sanity check. */
@@ -76,86 +87,108 @@ export function useStockCheckHistory(checkDate: string) {
   });
 }
 
-/** "500 g (5 packs)" — a recorded count, with packs when it has a size. */
-export function recordedStockLabel(nativeQty: number, ing: StockCheckEntryIngredient): string {
-  const base = formatNativeStock(nativeQty, ing);
-  const pw = Number(ing.packWeight);
-  if (!Number.isFinite(pw) || pw <= 0 || nativeQty <= 0) return base;
-  const packs = Math.round((nativeQty / pw) * 100) / 100;
-  return `${base} (${formatCount(packs)} ${packNoun(ing.unit, packs)})`;
+type StockCheckUnitRow = StockCheckUnitItem & { resolved: StockCheckUnit; options: StockCheckUnit[] };
+export const stockCheckUnitsQueryKey = ["stock-check-units"] as const;
+
+/** Every ingredient's stock-check unit setting (GET /api/stock-check-units). */
+export function useStockCheckUnits() {
+  return useQuery<Record<string, StockCheckUnitRow>>({
+    queryKey: stockCheckUnitsQueryKey,
+    staleTime: 5 * 60_000,
+    queryFn: async () => {
+      const r = await fetch(`/api/stock-check-units`, { credentials: "include" });
+      if (!r.ok) throw new Error(`Stock-check units failed to load (${r.status})`);
+      const d = await r.json();
+      return (d?.items ?? {}) as Record<string, StockCheckUnitRow>;
+    },
+  });
 }
 
-/** The count form itself — embed it in any card or modal. */
+/** The ingredient with its saved stock-check setting merged in. */
+function withSetting(ing: StockCheckEntryIngredient, units: Record<string, StockCheckUnitRow> | undefined): StockCheckEntryIngredient {
+  const row = units?.[String(ing.id)];
+  if (!row) return ing;
+  return { ...ing, unit: row.unit ?? ing.unit, packWeight: row.packWeight ?? ing.packWeight, stockInPacks: row.stockInPacks, stockCheckUnit: row.stockCheckUnit };
+}
+
+/** "550 g", "12.4 kg" — a recorded (native) count, in the unit it's counted in. */
+export function recordedStockLabel(nativeQty: number, ing: StockCheckEntryIngredient): string {
+  const unit = resolveStockCheckUnit(ing);
+  const count = nativeToStockCount(nativeQty, unit, ing);
+  return count == null ? `${nativeQty} ${ing.unit}` : formatStockCount(Math.round(count * 1000) / 1000, unit, ing);
+}
+
+/** recordedStockLabel with each item's saved stock-check unit applied. */
+export function useRecordedStockLabel() {
+  const { data: units } = useStockCheckUnits();
+  return useCallback(
+    (nativeQty: number, ing: StockCheckEntryIngredient) => recordedStockLabel(nativeQty, withSetting(ing, units)),
+    [units],
+  );
+}
+
+async function postPrepStockCheck(ingredientId: number, checkDate: string, quantity: number) {
+  await guardedFetch("/api/production-plans/stock-checks", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ingredientId, checkDate, quantity }),
+  });
+}
+
+/** The two-step count itself — embed it in any card or modal. */
 export function StockCheckEntryForm({
-  ingredient, checkDate, isDraft = false, currentNative, planNeedNative, onSaved, onCancel, cancelLabel = "Cancel", autoFocus = true,
+  ingredient: ingredientProp, checkDate, isDraft = false, currentNative, planNeedNative, onSaved, saveNative,
+  onCancel, cancelLabel = "Cancel",
 }: CommonProps & {
+  /** Shown as a small link on step 1 (e.g. "Skip" on the forced pop-up). */
   onCancel?: () => void;
   cancelLabel?: string;
-  autoFocus?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const mode = stockCountMode(ingredient);
-  // Packs mode: full packs (stepper or typed) + the opened pack. The opened
-  // pack starts UNANSWERED — "None" is one tap, but it's a choice they make,
-  // so an untouched form can't save a silent zero.
-  const [fullRaw, setFullRaw] = useState("0");
-  const [opened, setOpened] = useState<OpenedPack | null>(null);
-  const [customOpen, setCustomOpen] = useState(false);
-  const [customRaw, setCustomRaw] = useState("");
-  // Native mode: one amount in the ingredient's own unit.
-  const [amountRaw, setAmountRaw] = useState("");
+  const unitsQ = useStockCheckUnits();
+  const ingredient = withSetting(ingredientProp, unitsQ.data);
+  const unit = resolveStockCheckUnit(ingredient);
+  const unitName = stockCheckUnitName(unit, ingredient);
+  const packLabel = stockCheckPackLabel(unit, ingredient);
+
+  const [step, setStep] = useState<"unit" | "amount">("unit");
+  const [raw, setRaw] = useState("");
   const [armed, setArmed] = useState(false);
   const [saving, setSaving] = useState(false);
-  const amountRef = useNoScrollAutoFocus<HTMLInputElement>(autoFocus && mode === "native");
+  const amountRef = useNoScrollAutoFocus<HTMLInputElement>(step === "amount");
   const { data: history } = useStockCheckHistory(checkDate);
 
-  const reset = () => {
-    setFullRaw("0"); setOpened(null); setCustomOpen(false); setCustomRaw(""); setAmountRaw(""); setArmed(false);
-  };
-  // A different ingredient (the forced pop-up moving on) starts clean.
-  useEffect(reset, [ingredient.id]);
-  // Any change after an "are you sure?" needs the check again.
-  const touched = () => setArmed(false);
+  // A different ingredient (the forced pop-up moving on) starts again at step 1.
+  useEffect(() => { setStep("unit"); setRaw(""); setArmed(false); }, [ingredientProp.id]);
 
-  const fullPacks = parseStockAmount(fullRaw);
-  const fullOk = fullPacks != null && Number.isInteger(fullPacks);
-  let nativeQty: number | null = null;
-  let readBack: string | null = null;
-  if (mode === "packs") {
-    if (fullOk && opened) {
-      nativeQty = packCountToNative(fullPacks!, opened, ingredient);
-      readBack = describePackCount(fullPacks!, opened, ingredient);
-    }
-  } else {
-    const amount = parseStockAmount(amountRaw);
-    if (amount != null) {
-      nativeQty = amount;
-      readBack = `${formatNativeStock(amount, ingredient)} left`;
-    }
-  }
+  const setValue = (v: string) => { setRaw(v); setArmed(false); };
+  const onDictated = useCallback((n: number) => { setRaw(String(n)); setArmed(false); }, []);
+
+  const value = parseStockAmount(raw);
+  const described = value != null ? describeStockCount(value, unit, ingredient) : null;
+  const nativeQty = described?.native ?? null;
   const sanity = nativeQty != null
     ? stockCountSanity({ nativeQty, recentNative: history?.[String(ingredient.id)], planNeedNative })
     : { level: "ok" as const };
-  const warning = sanityMessage(sanity, ingredient);
+  const warning = value != null ? sanityMessage(sanity, { value, unit, item: ingredient }) : null;
+  const invalid = raw.trim() !== "" && value == null;
   const canSave = nativeQty != null && !saving;
+  const readBack = described ? [described.entered, ...described.extras].join(" = ") : null;
 
   const save = async () => {
     if (nativeQty == null || saving) return;
-    if (isDraft) { toastDraftBlocked(); return; }
+    if (isDraft && !saveNative) { toastDraftBlocked(); return; }
     if (warning && !armed) { setArmed(true); return; }
     setSaving(true);
     try {
-      await guardedFetch("/api/production-plans/stock-checks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId: ingredient.id, checkDate, quantity: nativeQty }),
-      });
-      toast({ title: "Stock check saved", description: `${ingredient.name}: ${readBack ?? recordedStockLabel(nativeQty, ingredient)}` });
+      if (saveNative) await saveNative(nativeQty);
+      else await postPrepStockCheck(ingredient.id, checkDate, nativeQty);
+      toast({ title: "Stock check saved", description: `${ingredient.name}: ${readBack}` });
       void queryClient.invalidateQueries({ queryKey: ["prep-stock-checks"] });
       void queryClient.invalidateQueries({ queryKey: ["station-stock-checks"] });
       void queryClient.invalidateQueries({ queryKey: ["reminder-stock-checks"] });
       const saved = nativeQty;
-      reset();
+      setStep("unit"); setRaw(""); setArmed(false);
       onSaved?.(saved);
     } catch (err) {
       toast({ title: "Not saved", description: err instanceof Error ? err.message : "Stock check failed to save — please try again", variant: "destructive" });
@@ -164,204 +197,128 @@ export function StockCheckEntryForm({
     }
   };
 
-  const stepBtn = "w-16 h-16 rounded-xl border-2 border-border bg-background text-foreground flex items-center justify-center hover:border-blue-400 active:scale-95 disabled:opacity-40";
-  const noun = packNoun(ingredient.unit, 2);
-  const noun1 = packNoun(ingredient.unit, 1);
-  const customUnit = openedCustomUnit(ingredient);
-  const nativeWord = unitWord(ingredient.unit, 2) || ingredient.unit;
+  if (unitsQ.isLoading) {
+    return (
+      <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
+        <Loader2 className="w-6 h-6 animate-spin" /> Loading…
+      </div>
+    );
+  }
 
+  // ── Step 1: which unit — one sentence, one button ─────────────────────
+  if (step === "unit") {
+    return (
+      <div className="space-y-6 text-center">
+        <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Step 1 of 2</p>
+        <div className="space-y-2">
+          <p className="text-2xl font-bold leading-snug">This stock check must be recorded in</p>
+          <p className="text-5xl sm:text-6xl font-black uppercase tracking-tight text-blue-700 dark:text-blue-300 break-words">{unitName}</p>
+          {packLabel && <p className="text-lg font-semibold text-muted-foreground">{packLabel}</p>}
+        </div>
+        {currentNative != null && (
+          <p className="text-sm text-muted-foreground">
+            Already recorded today: <span className="font-semibold text-foreground">{recordedStockLabel(currentNative, ingredient)}</span>. A new count replaces it.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => setStep("amount")}
+          className="w-full min-h-[72px] rounded-2xl bg-blue-600 text-white text-xl font-bold hover:bg-blue-700 active:scale-[0.98] shadow-md px-4"
+        >
+          I understand — record in {unitName}
+        </button>
+        {onCancel && (
+          <button type="button" onClick={onCancel} className="text-base text-muted-foreground underline underline-offset-2 py-2">
+            {cancelLabel}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ── Step 2: one number, the unit huge right after it ──────────────────
+  const symbol = stockCheckUnitSymbol(unit, ingredient, value ?? 2);
   return (
     <div className="space-y-4">
-      {currentNative != null && (
-        <p className="text-sm text-muted-foreground">
-          Recorded today: <span className="font-semibold text-foreground">{recordedStockLabel(currentNative, ingredient)}</span>
-          {" "}— a new count replaces it.
-        </p>
-      )}
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => { setStep("unit"); setArmed(false); }}
+          className="inline-flex items-center gap-1.5 min-h-11 px-2 -ml-2 rounded-lg text-base font-semibold text-muted-foreground hover:bg-secondary/60"
+        >
+          <ArrowLeft className="w-5 h-5" /> Back
+        </button>
+        <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Step 2 of 2</p>
+      </div>
 
-      {mode === "packs" ? (
-        <>
-          <div className="space-y-2">
-            <label htmlFor={`sc-full-${ingredient.id}`} className="block text-base font-bold">
-              Full {noun} <span className="font-semibold text-muted-foreground">({packLabel(ingredient)})</span>
-            </label>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                aria-label={`One fewer full ${noun1}`}
-                className={stepBtn}
-                disabled={!fullOk || fullPacks! <= 0}
-                onClick={() => { setFullRaw(String(Math.max(0, (fullPacks ?? 0) - 1))); touched(); }}
-              >
-                <Minus className="w-7 h-7" />
-              </button>
-              <input
-                id={`sc-full-${ingredient.id}`}
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                value={fullRaw}
-                onFocus={e => e.currentTarget.select()}
-                onChange={e => { setFullRaw(e.target.value); touched(); }}
-                className={cn(
-                  "w-28 h-16 px-3 text-4xl font-bold text-center tabular-nums bg-background border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400",
-                  fullOk ? "border-blue-300 dark:border-blue-700" : "border-red-500",
-                )}
-              />
-              <button
-                type="button"
-                aria-label={`One more full ${noun1}`}
-                className={stepBtn}
-                onClick={() => { setFullRaw(String((fullOk ? fullPacks! : 0) + 1)); touched(); }}
-              >
-                <Plus className="w-7 h-7" />
-              </button>
-            </div>
-            {!fullOk && <p className="text-sm text-red-600">Whole {noun} only — the opened one goes below.</p>}
-          </div>
+      <label htmlFor={`sc-amount-${ingredient.id}`} className="block text-xl font-bold">
+        How much is there, in {unitName}?
+      </label>
+      <div className="flex items-center gap-3">
+        <input
+          id={`sc-amount-${ingredient.id}`}
+          ref={amountRef}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          enterKeyHint="done"
+          value={raw}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void save(); } }}
+          placeholder="0"
+          aria-describedby={`sc-unit-${ingredient.id}`}
+          className={cn(
+            "flex-1 min-w-0 h-24 px-4 text-6xl font-bold text-right tabular-nums bg-background border-4 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-300",
+            invalid ? "border-red-500" : "border-blue-400 dark:border-blue-600",
+          )}
+        />
+        <span id={`sc-unit-${ingredient.id}`} className="text-6xl font-black text-foreground flex-shrink-0">{symbol}</span>
+      </div>
+      {invalid && <p className="text-base font-semibold text-red-600">Numbers only — like 550 or 12.4.</p>}
+      {!invalid && raw === "" && <p className="text-sm text-muted-foreground">Type 0 if there&rsquo;s none left.</p>}
 
-          <div className="space-y-2">
-            <p className="text-base font-bold">Opened {noun1} — how much is left in it?</p>
-            <div className="grid grid-cols-4 gap-2">
-              {OPENED_FRACTIONS.map(f => {
-                const on = !customOpen && opened?.kind === "fraction" && opened.fraction === f.fraction;
-                return (
-                  <button
-                    key={f.label}
-                    type="button"
-                    aria-pressed={on}
-                    onClick={() => { setCustomOpen(false); setCustomRaw(""); setOpened({ kind: "fraction", fraction: f.fraction }); touched(); }}
-                    className={cn(
-                      "h-16 rounded-xl border-2 font-bold transition-colors active:scale-[0.98]",
-                      f.fraction === 0 ? "text-lg" : "text-3xl",
-                      on ? "bg-blue-600 border-blue-700 text-white shadow" : "bg-background border-border hover:border-blue-400",
-                    )}
-                  >
-                    {f.label}
-                  </button>
-                );
-              })}
-            </div>
-            {!customOpen ? (
-              <button
-                type="button"
-                onClick={() => { setCustomOpen(true); setOpened(null); touched(); }}
-                className="text-sm text-blue-700 dark:text-blue-300 underline underline-offset-2 py-2"
-              >
-                Odd amount? Enter {customUnit === "g" ? "grams" : unitWord(customUnit, 2)} instead
-              </button>
-            ) : (
-              <div className="flex items-center gap-2 flex-wrap">
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  autoComplete="off"
-                  aria-label={`${customUnit} left in the opened ${noun1}`}
-                  value={customRaw}
-                  placeholder="0"
-                  onChange={e => {
-                    setCustomRaw(e.target.value);
-                    const n = parseStockAmount(e.target.value);
-                    setOpened(n == null ? null : { kind: "custom", amount: n });
-                    touched();
-                  }}
-                  className="w-36 h-14 px-3 text-2xl font-bold text-right tabular-nums bg-background border-2 border-blue-300 dark:border-blue-700 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400"
-                />
-                <span className="text-2xl font-bold">{customUnit}</span>
-                <span className="text-sm text-muted-foreground">in the opened {noun1}</span>
-                <button
-                  type="button"
-                  onClick={() => { setCustomOpen(false); setCustomRaw(""); setOpened(null); touched(); }}
-                  className="ml-auto text-sm text-muted-foreground underline underline-offset-2 py-2"
-                >
-                  Use None / ¼ / ½ / ¾
-                </button>
-              </div>
-            )}
-          </div>
-        </>
-      ) : (
-        <div className="space-y-2">
-          <label htmlFor={`sc-amount-${ingredient.id}`} className="block text-base font-bold">
-            How much {ingredient.name.toLowerCase()} is left?
-          </label>
-          <div className="flex items-center gap-3">
-            <input
-              id={`sc-amount-${ingredient.id}`}
-              ref={amountRef}
-              type="text"
-              inputMode="decimal"
-              autoComplete="off"
-              value={amountRaw}
-              onChange={e => { setAmountRaw(e.target.value); touched(); }}
-              placeholder="0"
-              className={cn(
-                "flex-1 min-w-0 h-16 px-4 text-4xl font-bold text-right tabular-nums bg-background border-2 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-400",
-                amountRaw !== "" && parseStockAmount(amountRaw) == null ? "border-red-500" : "border-blue-300 dark:border-blue-700",
-              )}
-            />
-            <span className="text-4xl font-bold">{nativeWord}</span>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            <span className="font-semibold">{nativeWord}</span> — {nativeExample(ingredient.unit)}. Type 0 if there&rsquo;s none left.
-          </p>
-        </div>
-      )}
+      <DictateNumberButton onNumber={onDictated} />
 
       {readBack && (
         <div className="rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-4 py-3">
           <p className="text-xs uppercase tracking-wide text-blue-700 dark:text-blue-300 font-semibold">You&rsquo;re saving</p>
-          <p className="text-lg font-bold text-blue-900 dark:text-blue-100">{readBack}</p>
+          <p className="text-xl font-bold text-blue-900 dark:text-blue-100">{readBack}</p>
         </div>
       )}
 
       {warning && (
         <div className="rounded-xl bg-amber-50 dark:bg-amber-950/40 border-2 border-amber-400 px-4 py-3 flex gap-2" role="alert">
-          <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+          <AlertTriangle className="w-6 h-6 text-amber-600 flex-shrink-0 mt-0.5" />
           <div>
-            <p className="font-bold text-amber-900 dark:text-amber-200">{warning}</p>
+            <p className="text-lg font-bold text-amber-900 dark:text-amber-200">{warning}</p>
             {armed && (
-              <p className="text-sm font-semibold text-amber-900 dark:text-amber-200 mt-1">
-                Counted again and it&rsquo;s right? Tap &ldquo;Yes, it&rsquo;s right — save&rdquo;.
+              <p className="text-base font-semibold text-amber-900 dark:text-amber-200 mt-1">
+                Counted again and it&rsquo;s right? Tap &ldquo;Yes, it&rsquo;s right — enter stock&rdquo;.
               </p>
             )}
           </div>
         </div>
       )}
 
-      <div className="flex items-center gap-2">
-        {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={saving}
-            className="px-5 min-h-[56px] rounded-xl text-base font-semibold border border-border text-muted-foreground hover:bg-secondary/60 disabled:opacity-50"
-          >
-            {cancelLabel}
-          </button>
+      <button
+        type="button"
+        onClick={save}
+        disabled={!canSave}
+        className={cn(
+          "w-full min-h-[72px] rounded-2xl text-2xl font-bold transition-colors px-3 inline-flex items-center justify-center gap-2",
+          !canSave
+            ? "bg-blue-200 text-blue-500 cursor-not-allowed dark:bg-blue-900/30 dark:text-blue-500"
+            : warning
+              ? "bg-amber-600 text-white hover:bg-amber-700 active:scale-[0.98]"
+              : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98] shadow-md",
         )}
-        <button
-          type="button"
-          onClick={save}
-          disabled={!canSave}
-          className={cn(
-            "flex-1 min-h-[56px] rounded-xl text-lg font-bold transition-colors px-3",
-            !canSave
-              ? "bg-blue-200 text-blue-500 cursor-not-allowed dark:bg-blue-900/30 dark:text-blue-500"
-              : warning
-                ? "bg-amber-600 text-white hover:bg-amber-700 active:scale-[0.98]"
-                : "bg-blue-600 text-white hover:bg-blue-700 active:scale-[0.98]",
-          )}
-        >
-          {saving
-            ? <span className="inline-flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Saving…</span>
-            : warning && armed
-              ? "Yes, it's right — save"
-              : mode === "packs" && !opened
-                ? `Tap the opened ${noun1} first`
-                : "Save stock check"}
-        </button>
-      </div>
+      >
+        {saving
+          ? <><Loader2 className="w-6 h-6 animate-spin" /> Saving…</>
+          : warning && armed
+            ? "Yes, it's right — enter stock"
+            : <><CheckCircle2 className="w-6 h-6" /> Enter stock</>}
+      </button>
     </div>
   );
 }
@@ -384,13 +341,13 @@ export function StockCheckDialog(props: CommonProps & { onClose: () => void }) {
         role="dialog"
         aria-modal="true"
         aria-label={`Stock check: ${ingredient.name}`}
-        className="bg-card text-foreground border-2 border-blue-500 rounded-2xl shadow-2xl w-full max-w-lg max-h-[92dvh] flex flex-col"
+        className="bg-card text-foreground border-2 border-blue-500 rounded-2xl shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col"
       >
         <div className="flex items-start gap-3 px-5 pt-5 pb-3 border-b border-border/60">
           <Package className="w-6 h-6 text-blue-600 flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
             <h2 className="font-display font-bold text-xl leading-tight">Stock check</h2>
-            <p className="text-base font-semibold text-blue-700 dark:text-blue-300 truncate">{ingredient.name}</p>
+            <p className="text-lg font-semibold text-blue-700 dark:text-blue-300 break-words">{ingredient.name}</p>
           </div>
           <button
             type="button"
@@ -401,11 +358,10 @@ export function StockCheckDialog(props: CommonProps & { onClose: () => void }) {
             <XIcon className="w-6 h-6" />
           </button>
         </div>
-        <div className="px-5 py-4 overflow-y-auto">
+        <div className="px-5 py-5 overflow-y-auto">
           <StockCheckEntryForm
             {...props}
             onSaved={q => { onSaved?.(q); onClose(); }}
-            onCancel={onClose}
           />
         </div>
       </div>
@@ -413,30 +369,50 @@ export function StockCheckDialog(props: CommonProps & { onClose: () => void }) {
   );
 }
 
-/** The big "Stock check" button per item; opens the dialog. Shows what's
- *  recorded once there's a count, and tapping it again recounts. */
+/** The big "Record stock check for this item" button; opens the dialog.
+ *  Once there's a count it shows it, and tapping again records a new one. */
 export function StockCheckButton({ className, ...props }: CommonProps & { className?: string }) {
   const [open, setOpen] = useState(false);
+  const label = useRecordedStockLabel();
   const recorded = props.currentNative != null;
   return (
     <>
-      <button
-        type="button"
+      <StockCheckTrigger
+        recordedLabel={recorded ? label(props.currentNative!, props.ingredient) : null}
         onClick={() => setOpen(true)}
-        className={cn(
-          "min-h-[48px] px-4 rounded-xl text-base font-bold inline-flex items-center gap-2 transition-colors active:scale-[0.98]",
-          recorded
-            ? "bg-emerald-50 text-emerald-800 border-2 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800"
-            : "bg-blue-600 text-white hover:bg-blue-700 shadow",
-          className,
-        )}
-      >
-        <Package className="w-5 h-5 flex-shrink-0" />
-        {recorded
-          ? <span className="text-left leading-tight">{recordedStockLabel(props.currentNative!, props.ingredient)}<span className="block text-xs font-medium opacity-80">Tap to recount</span></span>
-          : "Stock check"}
-      </button>
+        className={className}
+      />
       {open && <StockCheckDialog {...props} onClose={() => setOpen(false)} />}
     </>
+  );
+}
+
+/** The trigger on its own, for hosts that manage the dialog themselves. */
+export function StockCheckTrigger({ recordedLabel, onClick, className, compact = false }: {
+  recordedLabel: string | null;
+  onClick: () => void;
+  className?: string;
+  /** Smaller, for dense tables (the Orders page). */
+  compact?: boolean;
+}) {
+  const recorded = recordedLabel != null;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "rounded-xl font-bold inline-flex items-center gap-2 transition-colors active:scale-[0.98] text-left",
+        compact ? "min-h-[40px] px-3 text-sm" : "min-h-[48px] px-4 text-base",
+        recorded
+          ? "bg-emerald-50 text-emerald-800 border-2 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800"
+          : "bg-blue-600 text-white hover:bg-blue-700 shadow",
+        className,
+      )}
+    >
+      <Package className={cn(compact ? "w-4 h-4" : "w-5 h-5", "flex-shrink-0")} />
+      {recorded
+        ? <span className={cn("leading-tight", compact && "whitespace-nowrap")}>{recordedLabel}<span className="block text-xs font-medium opacity-80">{compact ? "Record again" : "Record stock check again"}</span></span>
+        : <span className={cn("leading-tight", compact && "whitespace-nowrap")}>{compact ? "Record stock check" : "Record stock check for this item"}</span>}
+    </button>
   );
 }

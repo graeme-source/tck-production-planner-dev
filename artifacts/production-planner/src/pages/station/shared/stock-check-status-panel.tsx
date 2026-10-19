@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlarmClock, CheckCircle2, Package } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
-import { StockCheckDialog, recordedStockLabel } from "./stock-check-entry";
+import { StockCheckDialog, StockCheckTrigger, useRecordedStockLabel } from "./stock-check-entry";
 import { useTimedReminders } from "./timed-reminders";
 import {
   isPrepDayToday,
@@ -29,9 +29,9 @@ import {
 // items by name (tap one to record it); after the deadline it is solid red
 // "Overdue". Rules and wording: stock-check-alarm.ts.
 //
-// Each row's "Stock check" button (and each red chip) opens the shared
-// two-step entry — amount, then a unit the person taps (stock-check-entry.tsx,
-// Graeme 15 Oct 2026). Polls every 10s so writes from any device / station
+// Each row's "Record stock check for this item" button (and each red chip)
+// opens the shared two-step entry — the unit it's counted in, then one
+// number (stock-check-entry.tsx, Graeme 19 Oct 2026). Polls every 10s so writes from any device / station
 // show near real time.
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -85,6 +85,7 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   const reducedMotion = usePrefersReducedMotion();
   const clock = useLondonClock();
   const reminders = useTimedReminders();
+  const recordedStockLabel = useRecordedStockLabel();
 
   const { data, isLoading } = useQuery({
     queryKey: stockChecksQueryKey(checkDate),
@@ -215,21 +216,10 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                     : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
                   <span className="font-semibold text-base flex-1 min-w-[8rem] truncate">{it.name}</span>
                   {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
-                  <button
-                    type="button"
+                  <StockCheckTrigger
+                    recordedLabel={record && recordNative != null ? recordedStockLabel(recordNative, it) : null}
                     onClick={() => setActiveId(it.id)}
-                    className={cn(
-                      "min-h-[48px] px-4 rounded-xl text-base font-bold inline-flex items-center gap-2 transition-colors active:scale-[0.98]",
-                      record
-                        ? "bg-emerald-50 text-emerald-800 border-2 border-emerald-300 hover:bg-emerald-100 dark:bg-emerald-950/40 dark:text-emerald-200 dark:border-emerald-800"
-                        : "bg-blue-600 text-white hover:bg-blue-700 shadow",
-                    )}
-                  >
-                    <Package className="w-5 h-5 flex-shrink-0" />
-                    {record && recordNative != null
-                      ? <span className="text-left leading-tight">{recordedStockLabel(recordNative, it)}<span className="block text-xs font-medium opacity-80">Tap to recount</span></span>
-                      : "Stock check"}
-                  </button>
+                  />
                 </div>
               );
             })}

@@ -50,7 +50,9 @@ import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo 
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
 import { useNow } from "@/hooks/use-now";
 import { orderForSupplierSearch } from "@/lib/search-word-groups";
-import { kanbanOrderPacks, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
+import { formatCount, kanbanOrderPacks, nativeToStockCount, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
+import { StockCheckDialog, StockCheckTrigger } from "@/pages/station/shared/stock-check-entry";
+import { londonToday } from "@/lib/station-training";
 import { UsedInLink } from "@/components/ingredient-usage-dialog";
 import {
   buildOrderMessage,
@@ -80,7 +82,6 @@ import {
   expectedStockBasisLine,
   expectedStockHeadline,
   expectedStockTooltip,
-  shouldSaveStockOnBlur,
   stockBoxStartsBlank,
   type ExpectedStock,
   type StockBasis,
@@ -398,6 +399,8 @@ export default function Orders() {
   const [viewFilter, setViewFilter] = useState<"pending" | "placed">("pending");
   const [expandedSuppliers, setExpandedSuppliers] = useState<Set<number>>(new Set());
   const [editableLines, setEditableLines] = useState<Record<number, EditableLine[]>>({});
+  // The line whose stock-check dialog is open.
+  const [stockDialog, setStockDialog] = useState<{ supplierId: number; idx: number; line: EditableLine } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<{ supplierId: number; supplierName: string; deliveryDate: string; deliveryDateISO: string } | null>(null);
   const [deliveryDates, setDeliveryDates] = useState<Record<number, Date>>({});
   // Read by the calc-merge effect: a refetch must keep a moved delivery
@@ -1463,7 +1466,7 @@ export default function Orders() {
         credentials: "include",
         body: JSON.stringify({ ingredientId, quantity }),
       });
-      if (!res.ok) throw new Error("Failed to save");
+      if (!res.ok) throw new Error(res.status === 423 ? "PIN needed — unlock and try again" : `Stock check not saved (${res.status})`);
       const data = await res.json();
       // Update the lastStockCheckAt for this ingredient across all suppliers
       setEditableLines(prev => {
@@ -1479,6 +1482,7 @@ export default function Orders() {
       });
     } catch (err) {
       console.error("Stock check save failed:", err);
+      throw err;
     }
   }, []);
 
@@ -2217,26 +2221,15 @@ export default function Orders() {
                           </td>
                           <td className="p-3 text-right">
                             <div className="flex flex-col items-end gap-0.5">
-                              <div className="flex items-center gap-1">
-                                <input
-                                  type="number"
-                                  min={0}
-                                  step="any"
-                                  // Not-counted kanban items and expected figures: no
-                                  // made-up number in the box (it would be saved as a count).
-                                  value={line.editedStock === 0 || stockBoxStartsBlank(line) ? "" : line.editedStock}
-                                  onChange={e => updateStock(so.supplier.id, idx, e.target.value === "" ? 0 : parseFloat(e.target.value) || 0)}
-                                  onFocus={e => e.currentTarget.select()}
-                                  onBlur={e => {
-                                    if (!shouldSaveStockOnBlur(line)) return;
-                                    const val = parseFloat(e.target.value) || 0;
-                                    saveStockCheck(line.ingredientId, val);
-                                  }}
-                                  placeholder={line.stockBasis === "expected" && line.expectedStock ? `~${Number(line.expectedStock.qty.toFixed(2))}` : "0"}
-                                  className="w-20 h-7 rounded border border-border bg-background text-right text-sm tabular-nums px-1.5"
-                                />
-                                <span className="text-xs text-muted-foreground">{line.unit}</span>
-                              </div>
+                              {/* Same two-step entry as every prep screen (Graeme,
+                                  19 Oct 2026): the unit, then one number. Not-counted
+                                  kanban items and expected figures show no number
+                                  on the button — it would read as a count. */}
+                              <StockCheckTrigger
+                                compact
+                                recordedLabel={stockBoxStartsBlank(line) ? null : `${formatCount(line.editedStock)} ${line.unit}`}
+                                onClick={() => setStockDialog({ supplierId: so.supplier.id, idx, line })}
+                              />
                               {line.stockBasis === "expected" && line.expectedStock && !line.stockDirty ? (
                                 <span
                                   className="text-[10px] text-sky-700 dark:text-sky-300 flex flex-col items-end leading-tight"
@@ -3258,6 +3251,25 @@ export default function Orders() {
           )}
         </DialogContent>
       </Dialog>
+      {stockDialog && (() => {
+        const { supplierId, idx, line } = stockDialog;
+        const ownUnit = line.nativeUnit ?? line.unit;
+        // Pack-counted kanban lines keep their stock figure in packs.
+        const linePacks = ownUnit !== line.unit;
+        return (
+          <StockCheckDialog
+            ingredient={{ id: line.ingredientId, name: line.ingredientName, unit: ownUnit, packWeight: line.packWeight, stockInPacks: line.stockInPacks }}
+            checkDate={londonToday()}
+            planNeedNative={line.totalRequired}
+            saveNative={async native => {
+              const lineQty = linePacks ? (nativeToStockCount(native, "packs", { unit: ownUnit, packWeight: line.packWeight }) ?? native) : native;
+              updateStock(supplierId, idx, lineQty);
+              await saveStockCheck(line.ingredientId, native);
+            }}
+            onClose={() => setStockDialog(null)}
+          />
+        );
+      })()}
     </div>
     <DragOverlay dropAnimation={null}>
       {activeDrag && (

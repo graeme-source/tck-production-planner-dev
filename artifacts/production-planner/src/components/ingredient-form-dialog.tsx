@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
+import { StockCheckUnitField } from "@/components/stock-check-unit-field";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import {
@@ -1192,6 +1193,11 @@ export function IngredientFormDialog({
                   </select>
                 </div>
               )}
+              {/* The unit every stock check asks for (Graeme, 19 Oct) —
+                  autosaves on its own endpoint, so it needs a saved ingredient. */}
+              {editingItem?.id
+                ? <StockCheckUnitField ingredientId={editingItem.id} />
+                : <p className="text-xs text-muted-foreground">Save the ingredient first to choose the unit stock checks are recorded in.</p>}
               <div>
                 <label className="text-sm font-medium mb-1 block">Surplus % <span className="text-xs font-normal text-muted-foreground">(ordering buffer)</span></label>
                 <div className="relative max-w-[160px]">
