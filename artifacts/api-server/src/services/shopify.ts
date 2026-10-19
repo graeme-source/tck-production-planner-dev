@@ -693,6 +693,15 @@ export async function fulfillOrder(
   trackingCompany: string = "APC Overnight",
   trackingUrl?: string,
 ): Promise<void> {
+  // Chargeback hold — the last line of defence (Graeme, 19 Oct 2026): every
+  // route that reaches here has already checked, but no caller, present or
+  // future, may fulfil an order with an open dispute. Throws
+  // DispatchHeldError (routes answer 409). Dynamic import: the store imports
+  // this module for shopifyGraphQL.
+  const { assertDispatchAllowed } = await import("../lib/order-disputes-store");
+  const { DISPATCH_PATHS } = await import("../lib/order-disputes");
+  await assertDispatchAllowed({ orderId, mode: DISPATCH_PATHS["shopify.fulfillOrder"] });
+
   // Staging: never fulfil real Shopify orders. The staging DB may have
   // been seeded from production, so every orderId here corresponds to a
   // real customer's real order — fulfilling it would send them an APC
