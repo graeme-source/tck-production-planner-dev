@@ -32,6 +32,7 @@ import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { useLiveLabelRecipeIds } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 // Everyone can make back labels at the bench (Graeme, 12 Oct 2026); only the
@@ -174,6 +175,8 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [selectedItemId, setSelectedItemId] = useState<number | null>(null);
   // Back labels (Stage 2 first cut): founder feature while Graeme tests it.
   const canPrintBackLabels = useCanPrintBackLabels();
+  // Only recipes with a published label get the button (2026-10-19).
+  const liveLabelRecipeIds = useLiveLabelRecipeIds(canPrintBackLabels);
   const [backLabelsFor, setBackLabelsFor] = useState<{ recipeId: number; recipeName: string; planItemId: number; net: number } | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   // The toggle-row slot exists only after the parent's first commit, so
@@ -905,7 +908,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                   {/* A proper green button on every flavour panel (Graeme,
                       2026-10-12) — still only for whoever holds "Print back
                       labels". */}
-                  {canPrintBackLabels && (
+                  {canPrintBackLabels && liveLabelRecipeIds.has(item.recipeId) && (
                     <button
                       type="button"
                       onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net })}

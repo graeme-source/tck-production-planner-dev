@@ -27,8 +27,8 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, productLabelPrintsTable, productionPlanItemsTable, productionPlansTable, usersTable } from "@workspace/db";
-import { eq } from "drizzle-orm";
+import { db, productLabelPrintsTable, productLabelVersionsTable, productionPlanItemsTable, productionPlansTable, usersTable } from "@workspace/db";
+import { eq, isNotNull } from "drizzle-orm";
 import {
   buildPrintRecord, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, normaliseTemplate, testPrintSource, TEST_STAMP_TEXT,
   type LabelSnapshot, type PrintRefusal,
@@ -98,6 +98,18 @@ async function prepare(recipeId: number, planItemId: number | undefined, test: b
     png: proof ? (stamped ? pngDataUrl(proof.bitmap) : proof.png) : null,
   };
 }
+
+// Which recipes have a published (live) label — the wrapping station shows
+// "Print back labels" only for these (Graeme, 19 Oct 2026: the macaroni
+// cheese button showed although no mac cheese label was ever published, and
+// its preview used calzone cooking instructions). Real prints of anything
+// else are already refused below (printRefusal: no live label).
+router.get("/live-recipes", async (_req: Request, res: Response) => {
+  const rows = await db.selectDistinct({ recipeId: productLabelVersionsTable.recipeId })
+    .from(productLabelVersionsTable)
+    .where(isNotNull(productLabelVersionsTable.recipeId));
+  res.json({ recipeIds: rows.map(r => r.recipeId as number) });
+});
 
 router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Request, res: Response) => {
   const p = RecipeParams.safeParse(req.params);

@@ -205,3 +205,26 @@ export function fmtDateTime(iso: string | null | undefined): string {
 export function fmtDay(iso: string): string {
   return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 }
+
+/** Recipes with a published (live) label — only these get "Print back
+ *  labels" at the wrapping station (Graeme, 19 Oct 2026). Empty until it
+ *  loads, so the button never flashes up for an unpublished recipe. Under
+ *  ["product-labels", …] so publishing a label refreshes it too. */
+export function useLiveLabelRecipeIds(enabled = true): Set<number> {
+  const q = useQuery({
+    queryKey: ["product-labels", "live-recipe-ids"],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/product-label-print/live-recipes`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Couldn't load published labels (HTTP ${res.status})`);
+      return (await res.json()) as { recipeIds: number[] };
+    },
+  });
+  return liveRecipeIdSet(q.data?.recipeIds);
+}
+
+/** Pure: the published-label set (empty while unknown — never show the button on a guess). */
+export function liveRecipeIdSet(ids: number[] | undefined | null): Set<number> {
+  return new Set((ids ?? []).filter(n => Number.isInteger(n) && n > 0));
+}
