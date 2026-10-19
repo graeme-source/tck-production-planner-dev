@@ -4,7 +4,7 @@ import {
   packsPerBatch, packsFromBatches, batchesForPacks,
   kpiKitchenLine, countsInKpis,
   capacityBatchesFor, capacityUsed, capacityBreakdown, formatCapacityBreakdown,
-  usesShopifyStock,
+  usesShopifyStock, billetPortionG, billetGrams,
 } from "./recipe-route";
 import { mainKitchenBatches } from "./kitchen-scope";
 
@@ -24,6 +24,18 @@ describe("readRecipeRoute", () => {
   });
   it("ignores junk", () => {
     expect(readRecipeRoute({ defaultStorage: "garage", calzoneBatchEquivalent: "x" })).toMatchObject({ defaultStorage: "fridge", calzoneBatchEquivalent: null });
+  });
+});
+
+describe("billet portion weight (Graeme, 19 Oct 2026: made at 2,544 g, portioned at 2,467 g)", () => {
+  it("uses the recipe's billet weight when set", () => {
+    expect(readRecipeRoute({ billetWeightG: 2467 }).billetWeightG).toBe(2467);
+    expect(billetPortionG(2.544, 2467)).toBe(2467);
+  });
+  it("falls back to the dough per batch when unset or junk", () => {
+    expect(billetPortionG(2.544, null)).toBe(2544);
+    expect(billetPortionG(2.544, "0")).toBe(2544);
+    expect(billetGrams("abc")).toBeNull();
   });
 });
 

@@ -95,6 +95,9 @@ export const recipesTable = pgTable("recipes", {
   excludeFromKpis: boolean("exclude_from_kpis").notNull().default(false),
   // Calzone batches of day capacity one batch of this recipe uses. Null = 1.
   calzoneBatchEquivalent: numeric("calzone_batch_equivalent", { precision: 10, scale: 6 }),
+  // Grams each billet is portioned to on the dough station (migration 0203)
+  // — for doughs sheeted whole, not balled. Null = the dough per batch.
+  billetWeightG: integer("billet_weight_g"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

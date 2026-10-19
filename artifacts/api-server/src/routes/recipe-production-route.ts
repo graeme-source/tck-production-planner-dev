@@ -27,6 +27,7 @@ const routeColumns = {
   shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
   excludeFromKpis: recipesTable.excludeFromKpis,
   calzoneBatchEquivalent: recipesTable.calzoneBatchEquivalent,
+  billetWeightG: recipesTable.billetWeightG,
 };
 
 router.get("/production-routes", async (_req: Request, res: Response) => {
@@ -41,6 +42,8 @@ export const ProductionRouteBody = z.object({
   excludeFromKpis: z.boolean().optional(),
   /** Calzone batches of capacity one batch uses; null = 1 (standard). */
   calzoneBatchEquivalent: z.number().min(0).max(1000).nullable().optional(),
+  /** Grams each billet is portioned to (migration 0203); null = dough per batch. */
+  billetWeightG: z.number().int().min(1).max(100000).nullable().optional(),
 });
 
 router.patch("/:id/production-route", requireAdmin, validate(ProductionRouteBody), async (req: Request, res: Response) => {
@@ -55,6 +58,7 @@ router.patch("/:id/production-route", requireAdmin, validate(ProductionRouteBody
   if (body.calzoneBatchEquivalent !== undefined) {
     set.calzoneBatchEquivalent = body.calzoneBatchEquivalent === null ? null : String(Math.round(body.calzoneBatchEquivalent * 1e6) / 1e6);
   }
+  if (body.billetWeightG !== undefined) set.billetWeightG = body.billetWeightG;
   if (Object.keys(set).length === 0) { res.status(400).json({ error: "Nothing to change" }); return; }
   const [row] = await db.update(recipesTable).set(set).where(eq(recipesTable.id, id)).returning(routeColumns);
   if (!row) { res.status(404).json({ error: "Recipe not found" }); return; }

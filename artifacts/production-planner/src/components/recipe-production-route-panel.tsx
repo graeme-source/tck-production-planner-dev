@@ -14,7 +14,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useRecipeRoutes, RECIPE_ROUTES_QUERY_KEY } from "@/lib/recipe-routes";
 import { cn } from "@/lib/utils";
 
-type Patch = Partial<{ skipOvens: boolean; defaultStorage: "fridge" | "freezer"; shopifyPushOnWrap: boolean; excludeFromKpis: boolean; calzoneBatchEquivalent: number | null }>;
+type Patch = Partial<{ skipOvens: boolean; defaultStorage: "fridge" | "freezer"; shopifyPushOnWrap: boolean; excludeFromKpis: boolean; calzoneBatchEquivalent: number | null; billetWeightG: number | null }>;
 
 interface WrapSettings {
   locationId: string | null;
@@ -57,6 +57,20 @@ export function RecipeProductionRoutePanel({ recipeId, portionsPerBatch, packSiz
     if (next !== null && (!Number.isFinite(next) || next < 0)) return;
     if (next === route.calzoneBatchEquivalent) return;
     save.mutate({ calzoneBatchEquivalent: next });
+  };
+
+  // Billet portion weight (migration 0203): grams each billet of dough is
+  // portioned to at the dough station. Blank = the dough per batch.
+  const [billetDraft, setBilletDraft] = useState<string>("");
+  useEffect(() => {
+    setBilletDraft(route.billetWeightG == null ? "" : String(route.billetWeightG));
+  }, [route.billetWeightG]);
+  const commitBillet = () => {
+    const v = billetDraft.trim();
+    const next = v === "" ? null : Math.round(Number(v));
+    if (next !== null && (!Number.isFinite(next) || next <= 0)) return;
+    if (next === route.billetWeightG) return;
+    save.mutate({ billetWeightG: next });
   };
 
   const settings = useQuery<WrapSettings>({
@@ -129,6 +143,22 @@ export function RecipeProductionRoutePanel({ recipeId, portionsPerBatch, packSiz
           Blank = 1 (the normal rule). {route.calzoneBatchEquivalent != null
             ? `So ${ppb * 6} packs (6 batches) use ${Math.round(route.calzoneBatchEquivalent * 6 * 10) / 10} batches of capacity.`
             : `Example: 48 packs ≈ 20 calzone batches at ${ppb} packs a batch is ${Math.round((20 / Math.max(1, 48 / ppb)) * 1000) / 1000}.`}
+        </span>
+      </div>
+      <div className="rounded-lg border border-border px-3 py-2.5 flex flex-wrap items-center gap-2 text-sm">
+        <span>Portion each billet at</span>
+        <input
+          type="number" min={1} step={1} inputMode="numeric"
+          value={billetDraft} placeholder="—"
+          disabled={!isAdmin || busy}
+          onChange={e => setBilletDraft(e.target.value)}
+          onBlur={commitBillet}
+          onKeyDown={e => { if (e.key === "Enter") commitBillet(); }}
+          className="w-24 h-10 px-2 rounded-lg border border-border bg-background text-center tabular-nums"
+        />
+        <span>g</span>
+        <span className="text-xs text-muted-foreground w-full">
+          For dough sheeted whole (one billet a batch), not balled. The dough is still made at the recipe's dough per batch — the difference is the spare for wastage. Blank = portion the full dough per batch.
         </span>
       </div>
       {route.shopifyPushOnWrap && canSeeSettings && (

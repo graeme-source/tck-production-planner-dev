@@ -26,6 +26,8 @@ export interface RecipeRoute {
   excludeFromKpis: boolean;
   /** Null = one calzone batch of capacity per batch. */
   calzoneBatchEquivalent: number | null;
+  /** Grams each billet is portioned to (migration 0203); null = dough per batch. */
+  billetWeightG: number | null;
 }
 
 /** How every recipe behaved before the route existed. */
@@ -35,6 +37,7 @@ export const STANDARD_ROUTE: RecipeRoute = Object.freeze({
   shopifyPushOnWrap: false,
   excludeFromKpis: false,
   calzoneBatchEquivalent: null,
+  billetWeightG: null,
 }) as RecipeRoute;
 
 /** The raw shape as it arrives from the DB / API (numerics as strings). */
@@ -44,6 +47,7 @@ export interface RecipeRouteSource {
   shopifyPushOnWrap?: boolean | null;
   excludeFromKpis?: boolean | null;
   calzoneBatchEquivalent?: number | string | null;
+  billetWeightG?: number | string | null;
 }
 
 /** Normalise whatever the API/DB gave us; anything missing = standard. */
@@ -57,7 +61,25 @@ export function readRecipeRoute(src: RecipeRouteSource | null | undefined): Reci
     shopifyPushOnWrap: src.shopifyPushOnWrap === true,
     excludeFromKpis: src.excludeFromKpis === true,
     calzoneBatchEquivalent: eqNum !== null && Number.isFinite(eqNum) && eqNum >= 0 ? eqNum : null,
+    billetWeightG: billetGrams(src.billetWeightG),
   };
+}
+
+/** Whole grams per billet, or null when unset / not a positive number. */
+export function billetGrams(v: number | string | null | undefined): number | null {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Math.round(Number(v));
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/**
+ * The weight each billet is portioned to: the recipe's billet weight when
+ * set, else the dough made per batch (Graeme, 19 Oct 2026: bun dough is made
+ * at 2,544 g a batch but portioned at 2,467 g — the difference is the spare
+ * for wastage, so the mix maths stay on the dough per batch).
+ */
+export function billetPortionG(doughKgPerBatch: number, billetWeightG: number | string | null | undefined): number {
+  return billetGrams(billetWeightG) ?? Math.round((Number(doughKgPerBatch) || 0) * 1000);
 }
 
 // ── Station chain ───────────────────────────────────────────────────────────
