@@ -3457,6 +3457,12 @@ async function startup() {
     const { warmOrdersCache } = await import("./lib/orders-cache");
     warmOrdersCache();
 
+    // Chargeback holds — every 10 minutes, mirror the orders with an open
+    // Shopify Payments dispute so despatch refuses them (read-only towards
+    // Shopify). See lib/order-disputes-store.ts.
+    const { startDisputeRefreshJob } = await import("./lib/order-disputes-store");
+    startDisputeRefreshJob();
+
     // System-updates feed for the morning-meeting slide. Computed once
     // per deploy (this boot) and refreshed on a slow timer, then written
     // to the DB so the slide is a pure DB read — no live git/GitHub call

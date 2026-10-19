@@ -12,6 +12,7 @@ export * from "./sales";
 export * from "./dispatches";
 export * from "./sku_locations";
 export * from "./variant_locations";
+export * from "./order_disputes";
 export * from "./sku_barcodes";
 export * from "./auth";
 export * from "./ordering";
