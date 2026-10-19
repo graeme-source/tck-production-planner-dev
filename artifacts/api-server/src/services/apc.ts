@@ -6,6 +6,8 @@
 // If those are not set, production credentials are attempted but will likely fail on the
 // training server (which rejects production accounts with a 419 Authentication Error).
 
+import { buildCancelRequest, interpretCancelReply } from "../lib/apc-cancel";
+
 const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0";
 const APC_TRAINING_BASE = "https://apc-training.hypaship.com/api/3.0";
 const APC_ACCOUNT_NUMBER = process.env.APC_ACCOUNT_NUMBER ?? "";
@@ -1211,47 +1213,32 @@ export async function fetchTrackingRaw(
   }
 }
 
+/**
+ * Cancel a consignment. APC's guide (v3.1.2, section 7) says this is a PUT to
+ * /Orders/{waybill}.json?searchtype=CarrierWaybill with body
+ * {"CancelOrder":{"Order":{"Status":"CANCELLED"}}}; success comes back as
+ * CancelOrder.Messages Code 121 "Order Cancelled". The old code sent a DELETE,
+ * which the guide doesn't document (found 19 Oct 2026 building the reschedule
+ * cancel prompt). Request + reply handling are pure and tested in
+ * lib/apc-cancel.ts.
+ */
 export async function cancelShipment(waybill: string, apiBase?: string): Promise<void> {
   if (!isConfigured()) {
     throw new Error("APC credentials not configured.");
   }
-
   const base = apiBase ?? APC_API_BASE;
-  const url = `${base}/Orders/${encodeURIComponent(waybill)}.json`;
-
-  const res = await fetch(url, {
-    method: "DELETE",
+  const req = buildCancelRequest(base, waybill);
+  const res = await fetch(req.url, {
+    method: req.method,
     headers: {
       "remote-user": basicAuthHeader(base),
       "Content-Type": "application/json",
     },
+    body: req.body,
   });
-
-  if (!res.ok) {
-    const text = await res.text();
-    let errMsg = `APC cancel failed (${res.status})`;
-    try {
-      const json = JSON.parse(text);
-      const desc = json?.Orders?.Messages?.Description ?? json?.Orders?.Order?.Messages?.Description;
-      if (desc && desc !== "SUCCESS") errMsg = desc;
-    } catch {
-      errMsg = text || errMsg;
-    }
-    throw new Error(errMsg);
-  }
-
-  let body: Record<string, any> | undefined;
-  try {
-    body = (await res.json()) as Record<string, any>;
-  } catch {
-    return;
-  }
-
-  const topCode: string | undefined = body?.Orders?.Messages?.Code;
-  if (topCode && topCode !== "SUCCESS" && topCode !== "CANCELLED") {
-    const desc: string = body?.Orders?.Messages?.Description ?? "Unknown error";
-    throw new Error(`APC cancel failed: ${desc}`);
-  }
+  const text = await res.text();
+  const outcome = interpretCancelReply(res.status, text);
+  if (!outcome.ok) throw new Error(outcome.error);
 }
 
 export { isConfigured, getDefaultServiceCodes, APC_TRAINING_BASE, fetchLabel };
