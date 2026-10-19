@@ -45,6 +45,10 @@ export const ingredientsTable = pgTable("ingredients", {
   stockCheckEnabled: boolean("stock_check_enabled").notNull().default(false),
   stockCheckFrequency: text("stock_check_frequency").notNull().default("daily"),
   stockCheckDay: text("stock_check_day"),
+  // The unit a stock check is recorded in: 'g' | 'kg' | 'packs' | 'native'
+  // (the item's own count unit). NULL = the default rule. Read only through
+  // resolveStockCheckUnit (@workspace/units). Migration 0204. Objective F.
+  stockCheckUnit: text("stock_check_unit"),
   surplusPercent: numeric("surplus_percent", { precision: 8, scale: 2 }).notNull().default("10"),
   surplusMode: text("surplus_mode").notNull().default("percent"),
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),
