@@ -25,8 +25,45 @@ import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
 import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
 import { waybillSendDate, friendlyIsoDate } from "../lib/apc-consignment-reuse";
 import { londonDateString } from "../lib/london-time";
+import { DISPATCH_PATHS, DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback, type DispatchPath } from "../lib/order-disputes";
+import { checkDispatch, ensureFreshDisputes, loadOpenDisputes, orderIdForWaybill, DispatchHeldError, disputeListState } from "../lib/order-disputes-store";
 
 const router = Router();
+
+// ── Chargeback holds (Graeme, 19 Oct 2026; Objective D) ──────────────────
+// An order with an open Shopify Payments dispute must never be labelled,
+// booked, fulfilled or have tracking pushed. Every despatch route below
+// calls refuseIfChargeback with its own key from DISPATCH_PATHS (the test
+// in lib/order-disputes.test.ts fails if one stops doing so).
+
+/** Sends a 409 and returns true when the order is held for a chargeback. */
+async function refuseIfChargeback(
+  res: Response,
+  path: DispatchPath,
+  ref: { orderId?: number | null; orderName?: string | null; tags?: string | null },
+): Promise<boolean> {
+  const decision = await checkDispatch({ ...ref, mode: DISPATCH_PATHS[path] });
+  if (decision.allowed) return false;
+  res.status(409).json({ error: decision.message, code: decision.code, chargeback: true, disputes: decision.labels });
+  return true;
+}
+
+/** Same, for routes that only know the waybill — resolved via our ledger.
+ *  A waybill we have no record of (hand-raised, never scanned) passes:
+ *  its order is gated where it is completed. */
+async function refuseIfChargebackWaybill(res: Response, path: DispatchPath, waybill: string): Promise<boolean> {
+  const { orderId, orderName } = await orderIdForWaybill(waybill);
+  if (!orderId && !orderName) return false;
+  return refuseIfChargeback(res, path, { orderId, orderName });
+}
+
+/** Order ids currently held, after an on-demand refresh of the list when it
+ *  is more than a couple of minutes old. Queue filters + batch loops use this
+ *  (one Shopify call per request, not one per order). */
+async function heldOrderIdSet(_forPath?: DispatchPath): Promise<Set<number>> {
+  await ensureFreshDisputes(DISPUTE_ON_DEMAND_MIN_AGE_MS);
+  return new Set((await loadOpenDisputes()).keys());
+}
 
 /** Who is booking — recorded against each consignment so the end-of-day
  *  report can say who raised what. */
@@ -453,11 +490,17 @@ router.get("/orders", requireFulfilmentAccess, async (req: Request, res: Respons
     // them, and its upsell can still ADD ITEMS — packing one early risks
     // boxing the pre-upsell contents. After 15 minutes they are settled by
     // definition. See lib/order-age.ts.
-    const orders = settledOrders(
+    const settled = settledOrders(
       includeAll === "1"
         ? await getOrdersByTag(tag)
         : await getUnfulfilledOrdersByTag(tag),
     );
+    // Orders with an open chargeback are filtered out of the pack list
+    // (Graeme, 19 Oct 2026). They are listed on their own by
+    // GET /chargeback-holds so the bench sees "1 order held". A fulfilled
+    // one (includeAll) stays visible — it's history, not work.
+    const held = await heldOrderIdSet();
+    const orders = settled.filter(o => o.fulfillment_status === "fulfilled" || !isHeldForChargeback(o, held));
 
     const [allLocations, allVariantLocations, allBarcodes, ownership, recipeMappings] = await Promise.all([
       db.select().from(skuLocationsTable),
@@ -553,8 +596,12 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
     // Same 15-minute AfterSell settling rule as the picking list.
     const all = settledOrders(await getUnfulfilledOrdersByTag(tag));
 
-    // Only orders explicitly tagged for dispatch enter the packing queue.
-    let queue = all.filter(o => isDispatchTagged(o.tags));
+    // Only orders explicitly tagged for dispatch enter the packing queue —
+    // and never one with an open chargeback (Graeme, 19 Oct 2026).
+    const held = await heldOrderIdSet();
+    const heldForChargeback = all.filter(o => isDispatchTagged(o.tags) && isHeldForChargeback(o, held))
+      .map(o => ({ id: o.id, name: o.name }));
+    let queue = all.filter(o => isDispatchTagged(o.tags) && !isHeldForChargeback(o, held));
 
     if (category && category !== "all") {
       const wanted = category.toLowerCase();
@@ -578,7 +625,7 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
 
     const barcodes = await scanQueueBarcodes(variantIds);
 
-    res.json({ tag, orders: queue, barcodes });
+    res.json({ tag, orders: queue, barcodes, heldForChargeback });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[Fulfilment] scan-queue error:", msg);
@@ -616,6 +663,9 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
   // Never send the customer a waybill that isn't today's live booking —
   // the exact failure of #136845 (lib/apc-consignment-ledger.ts).
   if (await refuseStaleWaybill(res, consignmentNumber)) return;
+  // Chargeback hold — checked live against Shopify, BEFORE the stock
+  // decrement below, so a held order changes nothing.
+  if (await refuseIfChargeback(res, "POST /orders/:id/scan-complete", { orderId })) return;
 
   // Same no-barcode gate as /orders/:id/complete.
   if (!(await isManualTickEnabled())) {
@@ -674,6 +724,10 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
     if (consignmentNumber) await markConsignmentPushed(consignmentNumber);
     res.json({ ok: true, orderId });
   } catch (err: unknown) {
+    if (err instanceof DispatchHeldError) {
+      res.status(409).json({ error: err.message, code: err.code, chargeback: true, disputes: err.labels });
+      return;
+    }
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[scan-complete] fulfillOrder error:", msg);
     res.status(502).json({ error: msg });
@@ -735,6 +789,9 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       res.status(404).json({ error: `Order #${orderId} not found in tag "${tag}"` });
       return;
     }
+
+    // Chargeback hold: no label — booked or reused — for a disputed order.
+    if (await refuseIfChargeback(res, "POST /shipments", { orderId, orderName: order.name, tags: order.tags })) return;
 
     if (!order.shipping_address) {
       res.status(422).json({ error: "Order has no shipping address — cannot create shipment." });
@@ -987,6 +1044,7 @@ router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Reques
     res.status(400).json({ error: "orderName query param required, e.g. ?orderName=%23131377" });
     return;
   }
+  if (await refuseIfChargeback(res, "GET /consignment-for-order", { orderName })) return;
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
     return;
@@ -1048,6 +1106,7 @@ router.get("/reconcile-label", requireFulfilmentAccess, async (req: Request, res
     res.status(400).json({ error: "orderName query param required" });
     return;
   }
+  if (await refuseIfChargeback(res, "GET /reconcile-label", { orderName })) return;
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
     return;
@@ -1096,6 +1155,9 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
     return;
   }
   const { orderId, orderName, barcode } = parsed.data;
+
+  // Before the ledger claim below: a held order's label is never claimed.
+  if (await refuseIfChargeback(res, "POST /verify-label-scan", { orderId, orderName })) return;
 
   const scan = parseApcBarcode(barcode);
   if (!scan.ok) {
@@ -1361,6 +1423,8 @@ router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (re
     weight?: number; length?: number; width?: number; height?: number;
   };
 
+  if (await refuseIfChargebackWaybill(res, "POST /shipments/:waybill/add-parcel", waybill)) return;
+
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
     return;
@@ -1397,6 +1461,7 @@ router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (re
 
 router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
+  if (await refuseIfChargebackWaybill(res, "POST /shipments/:waybill/reprint-label", waybill)) return;
 
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
@@ -1462,6 +1527,9 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
   // how Graeme wants APC informed. A fetch WITHOUT print=1 (checking a label
   // in a browser tab) still marks nothing, so looking never manifests.
   const forPrint = req.query.print === "1";
+
+  // A held order's label is never printed (and so never marked printed/manifested).
+  if (await refuseIfChargebackWaybill(res, "GET /shipments/:waybill/label.pdf", waybill)) return;
 
   if (!isApcConfigured()) {
     res.status(503).json({ error: "APC credentials not configured." });
@@ -1782,6 +1850,9 @@ router.post("/tag-dispatch", requireFeature("ability.tag_dispatch"), async (req:
       res.status(404).json({ error: `Order ${orderName.trim()} not found` });
       return;
     }
+    // Never approve a held order for despatch — step one of the wave.
+    if (await refuseIfChargeback(res, "POST /tag-dispatch", { orderId: order.id, orderName: order.name, tags: order.tags })) return;
+
     const alreadyTagged = isDispatchTagged(order.tags);
     if (!alreadyTagged) {
       await addTagToOrder(order.id, order.tags, "dispatch");
@@ -1850,7 +1921,17 @@ router.post("/tag-dispatch-bulk", requireFeature("ability.tag_dispatch"), async 
     // A collection is never approved for despatch — it is bagged and handed
     // over at the unit. Excluded here as well as in the count so that a
     // "tag everything" call can't stamp one by accident.
-    const untagged = unfulfilled.filter(o => !isDispatchTagged(o.tags) && isPartOfDespatchWave(o.tags));
+    const candidates = unfulfilled.filter(o => !isDispatchTagged(o.tags) && isPartOfDespatchWave(o.tags));
+    // Orders with an open chargeback are never approved for despatch; they
+    // come back in `heldForChargeback` so the operator sees why.
+    await ensureFreshDisputes(DISPUTE_ON_DEMAND_MIN_AGE_MS);
+    const untagged: typeof candidates = [];
+    const heldForChargeback: string[] = [];
+    for (const o of candidates) {
+      const d = await checkDispatch({ orderId: o.id, orderName: o.name, tags: o.tags, mode: DISPATCH_PATHS["POST /tag-dispatch-bulk"] });
+      if (d.allowed) untagged.push(o);
+      else heldForChargeback.push(o.name);
+    }
 
     // Even when ids are supplied, only ever tag orders that are genuinely
     // untagged and unfulfilled *within this date tag* — a stale or hand-crafted
@@ -1889,7 +1970,7 @@ router.post("/tag-dispatch-bulk", requireFeature("ability.tag_dispatch"), async 
       }
     }
 
-    res.json({ ok: true, tagged, total: toTag.length, postcodeIssues });
+    res.json({ ok: true, tagged, total: toTag.length, postcodeIssues, heldForChargeback });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[Fulfilment] tag-dispatch-bulk error:", msg);
@@ -1917,7 +1998,7 @@ type PreflightOrder = {
   reviews: string[];
 };
 
-async function buildPreflight(tag: string, dispatchDate: Date) {
+async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: ReadonlySet<number> = new Set()) {
   const [smallWeekday, largeWeekday, smallFriday, largeFriday, weightThreshStr] = await Promise.all([
     getAppSetting("apc_service_code_small_weekday"),
     getAppSetting("apc_service_code_large_weekday"),
@@ -2009,6 +2090,13 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       continue;
     }
 
+    // Chargeback hold — blocked whatever else is true of it (19 Oct 2026).
+    if (isHeldForChargeback(order, chargebackHeld)) {
+      row.problems.push("Chargeback open — do not send");
+      blocked.push(row);
+      continue;
+    }
+
     // Same rule as booking (lib/apc-consignment-ledger.ts), read-only here:
     // only today's live booking for this date counts as "already booked". An
     // older one is listed as a note and a new consignment will be booked.
@@ -2059,7 +2147,9 @@ router.get("/batch-preflight", requireManagerForCourierActions, async (req: Requ
   const { tag, dispatchDate } = req.query as { tag?: string; dispatchDate?: string };
   if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
   try {
-    res.json(await buildPreflight(tag, dispatchDate ? new Date(dispatchDate) : new Date(tag)));
+    // The list is refreshed once here; each order is then judged from it.
+    const chargebackHeld = await heldOrderIdSet("GET /batch-preflight");
+    res.json(await buildPreflight(tag, dispatchDate ? new Date(dispatchDate) : new Date(tag), chargebackHeld));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[Fulfilment] batch-preflight error:", msg);
@@ -2111,6 +2201,9 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
     const all = await getOrdersByTag(tag);
     const wanted = new Set(orderIds);
     const orders = all.filter(o => wanted.has(o.id));
+    // Chargeback holds: refresh the list once for the whole batch, then judge
+    // each order from it — never a Shopify call per order.
+    await ensureFreshDisputes(DISPUTE_ON_DEMAND_MIN_AGE_MS);
 
     const results: Array<{
       orderId: number; orderName: string;
@@ -2148,6 +2241,14 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
           status: "skipped", reason: "Not tagged for dispatch — tag it first",
+        });
+        continue;
+      }
+      const hold = await checkDispatch({ orderId: order.id, orderName: order.name, tags: order.tags, mode: DISPATCH_PATHS["POST /batch-book"] });
+      if (!hold.allowed) {
+        results.push({
+          orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
+          status: "skipped", reason: hold.message,
         });
         continue;
       }
@@ -2653,6 +2754,10 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     return;
   }
 
+  // Chargeback hold — checked live against Shopify at the moment of
+  // despatch, before anything is fulfilled, tagged or decremented.
+  if (await refuseIfChargeback(res, "POST /orders/:id/complete", { orderId })) return;
+
   const apcMode = await getApcMode();
   const apcEnabled = apcMode !== "off";
   const { consignmentNumber, trackingUrl } = parsed.data;
@@ -2728,6 +2833,10 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     // end-of-dispatch audit can tell "scanned but never pushed" from "done".
     if (consignmentNumber) await markConsignmentPushed(consignmentNumber);
   } catch (err: any) {
+    if (err instanceof DispatchHeldError) {
+      res.status(409).json({ error: err.message, code: err.code, chargeback: true, disputes: err.labels });
+      return;
+    }
     console.error(`[Fulfilment] completeOrder fulfilOrder FAILED for order ${orderId}:`, err.message);
     res.status(502).json({ error: err.message });
     return;
@@ -3489,7 +3598,12 @@ router.get("/dispatch-progress", async (req: Request, res: Response) => {
     // day before. A collection carrying the same date tag is handed over on
     // the date itself, so counting it here put orders nobody was packing
     // today into today's totals (Graeme, 2026-09-03).
-    const allOrders = (await getOrdersByTag(tag)).filter(o => isPartOfDespatchWave(o.tags));
+    // An unfulfilled order held for an open chargeback isn't work for the
+    // bench, so it isn't counted as still to pack (Graeme, 19 Oct 2026).
+    const held = await heldOrderIdSet();
+    const allOrders = (await getOrdersByTag(tag))
+      .filter(o => isPartOfDespatchWave(o.tags))
+      .filter(o => o.fulfillment_status === "fulfilled" || !isHeldForChargeback(o, held));
 
     const categories = {
       smallBox: { total: 0, fulfilled: 0 },
