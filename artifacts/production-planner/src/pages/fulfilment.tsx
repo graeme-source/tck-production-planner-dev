@@ -298,7 +298,7 @@ interface LabelVerifyResult {
   consigneeName?: string;
   consigneePostcode?: string;
   parcel?: string | null;
-  problem?: "too-short" | "unrecognised-length" | "empty" | "wrong-order" | "already-used" | "no-consignment";
+  problem?: "too-short" | "unrecognised-length" | "empty" | "wrong-order" | "already-used" | "no-consignment" | "old-booking";
   message?: string;
   scannedCore?: string;
   expectedCore?: string;

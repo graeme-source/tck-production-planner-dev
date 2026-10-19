@@ -22,6 +22,9 @@ import { settledOrders } from "../lib/order-age";
 import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
+import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
+import { waybillSendDate, friendlyIsoDate } from "../lib/apc-consignment-reuse";
+import { londonDateString } from "../lib/london-time";
 
 const router = Router();
 
@@ -155,15 +158,70 @@ function pickServiceCode(
   return codes.smallWeekday;
 }
 
-/** The live consignment for an order, ignoring anything cancelled. */
-async function liveConsignmentFor(orderId: number): Promise<{ waybill: string; trackingUrl: string | null } | null> {
-  const rows = await db.execute<{ waybill: string; tracking_url: string | null }>(sql`
-    SELECT waybill, tracking_url FROM apc_consignments
-    WHERE shopify_order_id = ${orderId} AND cancelled_at IS NULL
-    ORDER BY created_at DESC LIMIT 1
-  `);
-  const r = rows.rows[0];
-  return r?.waybill ? { waybill: String(r.waybill), trackingUrl: r.tracking_url ?? null } : null;
+/* "Does this order already have a consignment?" lives in
+ * lib/apc-consignment-ledger.ts (reusableConsignmentFor) since incident
+ * #136845 (19 Oct 2026): an existing consignment is reused only when it is
+ * for TODAY's collection, for the order's current delivery date, not
+ * cancelled or superseded, and APC's tracking doesn't say it's dead. */
+
+/** A waybill APC holds under this order's reference that our ledger has
+ *  never seen, and that is for today's collection. Older ones (an earlier
+ *  delivery date, a cancelled re-raise) are never a reason not to book. */
+function todaysUnseenConsignment<T extends { waybill: string | null }>(matches: T[], known: Set<string>): T | undefined {
+  const today = londonDateString();
+  return matches.find(c => c.waybill && !known.has(c.waybill) && waybillSendDate(c.waybill) === today);
+}
+
+/** Shown on the packing screen's shipment panel (it already lists
+ *  warnings): the old booking was not reused, so any old label must go. */
+function oldBookingWarning(old: { waybill: string; message: string } | null): string | null {
+  return old ? `${old.message} Bin any old APC label for this order — only today's label may go on the box.` : null;
+}
+
+/** Reconcile mode: APC's consignments for a reference, cut down to the ones
+ *  that may go on a box TODAY — today's send date, and not something our
+ *  ledger has marked cancelled or replaced. `ignored` explains a 404. */
+async function todaysReconcileMatches<T extends { waybill: string | null }>(all: T[]): Promise<{ matches: T[]; ignored: T[] }> {
+  const today = londonDateString();
+  const waybills = all.map(m => m.waybill).filter((w): w is string => !!w);
+  const retired = new Set<string>();
+  if (waybills.length) {
+    const r = await db.execute<{ waybill: string }>(sql`
+      SELECT waybill FROM apc_consignments
+      WHERE waybill IN (${sql.join(waybills.map(w => sql`${w}`), sql`, `)})
+        AND (cancelled_at IS NOT NULL OR superseded_at IS NOT NULL)
+    `);
+    for (const row of r.rows) retired.add(String(row.waybill));
+  }
+  const ok = (m: T) => {
+    if (!m.waybill || retired.has(m.waybill)) return false;
+    const sent = waybillSendDate(m.waybill);
+    return sent === null || sent === today;
+  };
+  return { matches: all.filter(ok), ignored: all.filter(m => !ok(m)) };
+}
+
+function ignoredNote(ignored: Array<{ waybill: string | null }>): string {
+  if (!ignored.length) return "";
+  const list = ignored.slice(0, 3).map(m => `${m.waybill} (${friendlyIsoDate(waybillSendDate(m.waybill))})`).join(", ");
+  return ` APC only holds older or cancelled bookings for it: ${list} — those can't be used today.`;
+}
+
+/** The print / push guard as an HTTP answer. Returns true when it has
+ *  already responded (409) — the waybill is not today's live booking. */
+async function refuseStaleWaybill(res: Response, waybill: string | null | undefined): Promise<boolean> {
+  if (!waybill) return false;
+  let problem: string | null = null;
+  try {
+    problem = await staleProblemForWaybill(waybill);
+  } catch (err) {
+    // A ledger read failure must not stop packing — the guard is a backstop.
+    console.warn(`[Fulfilment] stale-waybill check failed for ${waybill}:`, err instanceof Error ? err.message : err);
+  }
+  if (!problem) return false;
+  console.warn(`[Fulfilment] refused stale waybill ${waybill}: ${problem}`);
+  res.status(409).json({ error: problem, code: "STALE_CONSIGNMENT", waybill });
+  return true;
 }
 
 /** Every waybill we already know about for an order, cancelled or not.
@@ -199,10 +257,11 @@ async function recordConsignment(params: {
     await db.execute(sql`
       INSERT INTO apc_consignments
         (waybill, reference, booking_reference, shopify_order_id, shopify_order_name,
-         consignee_postcode, tracking_url, service_code, dispatch_tag, booked_by)
+         consignee_postcode, tracking_url, service_code, dispatch_tag, booked_by, collection_date)
       VALUES
         (${params.waybill}, ${params.orderName}, ${params.reference}, ${params.orderId}, ${params.orderName},
-         ${params.postcode}, ${params.trackingUrl}, ${params.serviceCode}, ${params.dispatchTag}, ${params.bookedBy})
+         ${params.postcode}, ${params.trackingUrl}, ${params.serviceCode}, ${params.dispatchTag}, ${params.bookedBy},
+         ${collectionDateForInsert(params.waybill)})
       ON CONFLICT DO NOTHING
     `);
     return null;
@@ -554,6 +613,10 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
   }
   const { consignmentNumber, trackingUrl } = parsed.data;
 
+  // Never send the customer a waybill that isn't today's live booking —
+  // the exact failure of #136845 (lib/apc-consignment-ledger.ts).
+  if (await refuseStaleWaybill(res, consignmentNumber)) return;
+
   // Same no-barcode gate as /orders/:id/complete.
   if (!(await isManualTickEnabled())) {
     const order = await getOrderById(orderId);
@@ -706,28 +769,48 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     let reusedWaybill: string | null = null;
     let reusedTrackingUrl: string | null = null;
     let lookupFailure: string | null = null;
+    // An old consignment this call deliberately did NOT reuse (another day's
+    // collection, cancelled in APC, replaced by a reschedule) — told to the
+    // packer so a stale label already on the bench gets binned.
+    let replacedOldBooking: { waybill: string; message: string } | null = null;
+    let reuseWarning: string | null = null;
 
-    const prior = await liveConsignmentFor(orderId);
-    if (prior) {
-      reusedWaybill = prior.waybill;
+    // Reuse ONLY today's live booking for the order's current date
+    // (incident #136845 — lib/apc-consignment-ledger.ts). Asks APC's
+    // tracking whether a same-day booking was cancelled; APC down → the
+    // date rule alone, never a blocked bench.
+    const ctx = reuseContext(tag);
+    const prior = await reusableConsignmentFor(orderId, ctx, { apiBase, checkApc: true });
+    if (prior.decision.action === "reuse") {
+      reusedWaybill = prior.decision.waybill;
       reusedTrackingUrl = prior.trackingUrl;
-      console.log(`[Fulfilment] ${order.name} already has consignment ${reusedWaybill} — reusing, not re-booking`);
+      reuseWarning = prior.decision.warning ?? null;
+      console.log(`[Fulfilment] ${order.name} already has today's consignment ${reusedWaybill} — reusing, not re-booking`);
     } else {
+      if (prior.decision.waybill) replacedOldBooking = { waybill: prior.decision.waybill, message: prior.decision.message };
       try {
         // Only a consignment we have NEVER seen counts as a reason not to
         // book — one we recorded and then marked cancelled must not be
-        // resurrected here, and APC cannot tell us it is cancelled.
+        // resurrected here, and APC's Orders lookup cannot tell us it is
+        // cancelled. It must also be for TODAY's collection.
         const known = await knownWaybillsFor(orderId);
-        const live = (await lookupOrdersByReference(order.name, apiBase))
-          .find(c => c.waybill && !known.has(c.waybill));
+        const live = todaysUnseenConsignment(await lookupOrdersByReference(order.name, apiBase), known);
         if (live?.waybill) {
-          reusedWaybill = live.waybill;
-          console.log(`[Fulfilment] APC already holds ${live.waybill} for ${order.name} — reusing`);
+          const status = await liveStatusOf(live.waybill, apiBase);
           await db.execute(sql`
-            INSERT INTO apc_consignments (waybill, reference, booking_reference, shopify_order_id, shopify_order_name, consignee_postcode, dispatch_tag)
-            VALUES (${live.waybill}, ${order.name}, ${order.name}, ${orderId}, ${order.name}, ${postcode}, ${tag})
+            INSERT INTO apc_consignments (waybill, reference, booking_reference, shopify_order_id, shopify_order_name, consignee_postcode, dispatch_tag, collection_date)
+            VALUES (${live.waybill}, ${order.name}, ${order.name}, ${orderId}, ${order.name}, ${postcode}, ${tag}, ${collectionDateForInsert(live.waybill)})
             ON CONFLICT DO NOTHING
           `);
+          if (status.kind === "ok" && status.dead) {
+            await markCancelledInApc(live.waybill);
+            replacedOldBooking = { waybill: live.waybill, message: `APC says booking ${live.waybill} is cancelled — booking a new one.` };
+            console.log(`[Fulfilment] APC holds ${live.waybill} for ${order.name} but it is dead — booking new`);
+          } else {
+            reusedWaybill = live.waybill;
+            if (status.kind === "unreachable") reuseWarning = `Couldn't check APC's tracking for ${live.waybill} (${status.error}) — reused on the date rule alone.`;
+            console.log(`[Fulfilment] APC already holds today's ${live.waybill} for ${order.name} — reusing`);
+          }
         }
       } catch (lookupErr) {
         // A lookup outage must not stop packing — but say so loudly, because
@@ -765,6 +848,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
         orderId,
         orderName: order.name,
         reused: true,
+        ...(reuseWarning || replacedOldBooking ? { warnings: [reuseWarning, oldBookingWarning(replacedOldBooking)].filter((w): w is string => !!w) } : {}),
+        ...(replacedOldBooking ? { replacedOldBooking } : {}),
       });
       return;
     }
@@ -781,8 +866,9 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
         return;
       }
       res.status(409).json({
-        error: `${order.name} has no consignment yet — checked our ledger and APC by reference "${order.name}". Batch-book it from the queue, or upload it in Hypaship (reference must be exactly ${order.name}), then retry.`,
+        error: `${order.name} has no consignment for today yet — checked our ledger and APC by reference "${order.name}".${replacedOldBooking ? ` (${replacedOldBooking.message})` : ""} Batch-book it from the queue, or upload it in Hypaship (reference must be exactly ${order.name}), then retry.`,
         needsBooking: true,
+        ...(replacedOldBooking ? { replacedOldBooking } : {}),
       });
       return;
     }
@@ -876,7 +962,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       serviceCode,
       orderId,
       orderName: order.name,
-      ...(result.warnings?.length ? { warnings: result.warnings } : {}),
+      ...(result.warnings?.length || replacedOldBooking ? { warnings: [...(result.warnings ?? []), oldBookingWarning(replacedOldBooking)].filter((w): w is string => !!w) } : {}),
+      ...(replacedOldBooking ? { replacedOldBooking } : {}),
     });
   } catch (err: any) {
     console.error("[Fulfilment] createShipment error:", err.message);
@@ -911,11 +998,11 @@ router.get("/consignment-for-order", requireFulfilmentAccess, async (req: Reques
     // it up on the training server just returns a 419 that reads like bad
     // credentials. Nothing is booked here — it's a read — so there's no
     // side-effect risk in ignoring test mode.
-    const matches = await lookupOrdersByReference(orderName);
+    const { matches, ignored } = await todaysReconcileMatches(await lookupOrdersByReference(orderName));
     const lookup = matches[0];
     if (!lookup || !lookup.waybill) {
       res.status(404).json({
-        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship before packing this order.`,
+        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship before packing this order.${ignoredNote(ignored)}`,
         notFound: true,
       });
       return;
@@ -966,11 +1053,11 @@ router.get("/reconcile-label", requireFulfilmentAccess, async (req: Request, res
     return;
   }
   try {
-    const matches = await lookupOrdersByReference(orderName);
+    const { matches, ignored } = await todaysReconcileMatches(await lookupOrdersByReference(orderName));
     const lookup = matches[0];
     if (!lookup?.waybill) {
       res.status(404).json({
-        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship.`,
+        error: `APC has no consignment with reference "${orderName}". Check the reference in Hypaship.${ignoredNote(ignored)}`,
         notFound: true,
       });
       return;
@@ -1029,12 +1116,12 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
 
   try {
     // Live regardless of apc_test_mode — see the note in /consignment-for-order.
-    const matches = await lookupOrdersByReference(orderName);
+    const { matches, ignored } = await todaysReconcileMatches(await lookupOrdersByReference(orderName));
     if (!matches.length || !matches[0].waybill) {
       res.json({
         verified: false,
         problem: "no-consignment",
-        message: `APC has no consignment with reference "${orderName}". Check Hypaship before shipping this order.`,
+        message: `APC has no consignment with reference "${orderName}". Check Hypaship before shipping this order.${ignoredNote(ignored)}`,
       });
       return;
     }
@@ -1044,6 +1131,20 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
     // belongs to THIS order, so match the scan against all of them — the
     // matched consignment is the one recorded and pushed to Shopify.
     const lookup = matches.find(m => waybillCore(m.waybill ?? "") === scan.core);
+    const oldLabel = !lookup ? ignored.find(m => waybillCore(m.waybill ?? "") === scan.core) : undefined;
+    if (oldLabel?.waybill) {
+      // The label IS this order's — but from an old or cancelled booking
+      // (incident #136845). It must not go on the box.
+      res.json({
+        verified: false,
+        problem: "old-booking",
+        message: `That label is from an OLD APC booking for this order (${oldLabel.waybill}, ${friendlyIsoDate(waybillSendDate(oldLabel.waybill))}) — bin it and scan today's label.`,
+        scannedCore: scan.core,
+        expectedCore: waybillCore(matches[0].waybill ?? ""),
+        expectedCores: matches.map(m => waybillCore(m.waybill ?? "")),
+      });
+      return;
+    }
     if (!lookup || !lookup.waybill) {
       res.json({
         verified: false,
@@ -1077,6 +1178,7 @@ router.post("/verify-label-scan", requireFulfilmentAccess, async (req: Request, 
       trackingUrl,
       verifiedByUserId: userId,
       verifiedByName: userName,
+      collectionDate: collectionDateForInsert(lookup.waybill),
     }).onConflictDoNothing({ target: apcConsignmentsTable.waybill }).returning();
 
     if (!inserted) {
@@ -1263,6 +1365,8 @@ router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (re
     res.status(503).json({ error: "APC credentials not configured." });
     return;
   }
+  // No extra box on a dead or other-day consignment (incident #136845).
+  if (await refuseStaleWaybill(res, waybill)) return;
 
   try {
     const apiBase = await getTestModeApiBase();
@@ -1298,6 +1402,10 @@ router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async 
     res.status(503).json({ error: "APC credentials not configured." });
     return;
   }
+
+  // A reprint puts a label on a box: never one from an old or cancelled
+  // booking (incident #136845).
+  if (await refuseStaleWaybill(res, waybill)) return;
 
   try {
     const apiBase = await getTestModeApiBase();
@@ -1359,6 +1467,9 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
     res.status(503).json({ error: "APC credentials not configured." });
     return;
   }
+  // Printing for a box: refuse an old or cancelled booking's label
+  // (incident #136845 shipped one). Viewing without print=1 stays open.
+  if (forPrint && (await refuseStaleWaybill(res, waybill))) return;
 
   try {
     const apiBase = await getTestModeApiBase();
@@ -1631,7 +1742,7 @@ router.post("/shipments/:waybill/cancel", requireFulfilmentAccess, async (req: R
 
     // Stamp our ledger too. Without this the duplicate guard would keep
     // handing back this dead waybill and the order could never be re-raised.
-    await db.execute(sql`UPDATE apc_consignments SET cancelled_at = NOW() WHERE waybill = ${waybill}`);
+    await db.execute(sql`UPDATE apc_consignments SET cancelled_at = NOW(), cancelled_reason = COALESCE(cancelled_reason, 'cancelled from the packing screen') WHERE waybill = ${waybill}`);
 
     res.json({ ok: true });
   } catch (err: unknown) {
@@ -1884,12 +1995,16 @@ async function buildPreflight(tag: string, dispatchDate: Date) {
       continue;
     }
 
-    const live = await liveConsignmentFor(order.id);
-    if (live) {
-      row.existingWaybill = live.waybill;
+    // Same rule as booking (lib/apc-consignment-ledger.ts), read-only here:
+    // only today's live booking for this date counts as "already booked". An
+    // older one is listed as a note and a new consignment will be booked.
+    const existing = await peekReusableConsignment(order.id, reuseContext(tag));
+    if (existing.action === "reuse") {
+      row.existingWaybill = existing.waybill;
       alreadyBooked.push(row);
       continue;
     }
+    if (existing.waybill) row.reviews.push(existing.message);
 
     const sa = order.shipping_address;
     if (!sa) row.problems.push("No shipping address");
@@ -2026,9 +2141,11 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Local delivery — no courier label" });
         continue;
       }
-      const live = await liveConsignmentFor(order.id);
-      if (live) {
-        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Already has a consignment", waybill: live.waybill });
+      // Only today's live booking for this date is "already booked"
+      // (incident #136845). Anything older is retired and a new one booked.
+      const existing = await reusableConsignmentFor(order.id, reuseContext(tag), { apiBase, checkApc: true });
+      if (existing.decision.action === "reuse") {
+        results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Already has today's consignment", waybill: existing.decision.waybill });
         continue;
       }
       if (!order.shipping_address?.address1 || !order.shipping_address?.zip) {
@@ -2052,13 +2169,12 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
           // then cancelled must not be resurrected, and APC cannot tell us it
           // is cancelled.
           const known = await knownWaybillsFor(order.id);
-          const held = (await lookupOrdersByReference(order.name, apiBase))
-            .find(c => c.waybill && !known.has(c.waybill));
+          const held = todaysUnseenConsignment(await lookupOrdersByReference(order.name, apiBase), known);
           if (held?.waybill) {
             console.log(`[Fulfilment] APC already holds ${held.waybill} for ${order.name} — reusing, not re-booking`);
             await db.execute(sql`
-              INSERT INTO apc_consignments (waybill, reference, booking_reference, shopify_order_id, shopify_order_name, consignee_postcode, dispatch_tag)
-              VALUES (${held.waybill}, ${order.name}, ${order.name}, ${order.id}, ${order.name}, ${order.shipping_address.zip}, ${tag})
+              INSERT INTO apc_consignments (waybill, reference, booking_reference, shopify_order_id, shopify_order_name, consignee_postcode, dispatch_tag, collection_date)
+              VALUES (${held.waybill}, ${order.name}, ${order.name}, ${order.id}, ${order.name}, ${order.shipping_address.zip}, ${tag}, ${collectionDateForInsert(held.waybill)})
               ON CONFLICT DO NOTHING
             `);
             results.push({
@@ -2309,7 +2425,7 @@ router.post("/consignments/:waybill/mark-cancelled", requireFulfilmentAccess, as
   if (!waybill) { res.status(400).json({ error: "waybill required" }); return; }
   try {
     const result = await db.execute(sql`
-      UPDATE apc_consignments SET cancelled_at = NOW()
+      UPDATE apc_consignments SET cancelled_at = NOW(), cancelled_reason = COALESCE(cancelled_reason, 'marked cancelled by hand (cancelled in APC)')
       WHERE waybill = ${waybill} AND cancelled_at IS NULL
       RETURNING shopify_order_name
     `);
@@ -2342,19 +2458,16 @@ router.get("/consignments", requireFulfilmentAccess, async (req: Request, res: R
     const orders = await getOrdersByTag(tag);
     const ids = orders.map(o => o.id);
     if (ids.length === 0) { res.json({ tag, consignments: [] }); return; }
-    const rows = await db.execute<{ shopify_order_id: string; waybill: string; tracking_url: string | null }>(sql`
-      SELECT DISTINCT ON (shopify_order_id) shopify_order_id, waybill, tracking_url
-      FROM apc_consignments
-      WHERE shopify_order_id IN (${sql.join(ids.map(id => sql`${id}`), sql`, `)})
-        AND cancelled_at IS NULL
-      ORDER BY shopify_order_id, created_at DESC
-    `);
+    // Only what WILL be reused counts: today's live booking for this date
+    // (lib/apc-consignment-ledger.ts). An old one would be ignored on open,
+    // so the dialog must not promise to reuse it (incident #136845).
+    const reusable = await reusableConsignmentsFor(ids, () => reuseContext(tag));
     res.json({
       tag,
-      consignments: rows.rows.map(r => ({
-        orderId: Number(r.shopify_order_id),
-        waybill: r.waybill,
-        trackingUrl: r.tracking_url,
+      consignments: [...reusable.entries()].map(([orderId, c]) => ({
+        orderId,
+        waybill: c.waybill,
+        trackingUrl: c.trackingUrl,
       })),
     });
   } catch (err: unknown) {
@@ -2529,6 +2642,10 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
   const apcMode = await getApcMode();
   const apcEnabled = apcMode !== "off";
   const { consignmentNumber, trackingUrl } = parsed.data;
+  // Never send the customer a waybill that isn't today's live booking:
+  // #136845 went out on a consignment cancelled eight days earlier
+  // (lib/apc-consignment-ledger.ts). DB + waybill date only — no APC call.
+  if (apcEnabled && (await refuseStaleWaybill(res, consignmentNumber))) return;
   // Both "full" (label booked via API) and "reconcile" (label scanned off a
   // hand-raised consignment) must arrive with a number — shipping an order
   // with no tracking is exactly the failure this flow exists to prevent.

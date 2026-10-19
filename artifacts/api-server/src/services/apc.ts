@@ -1171,6 +1171,46 @@ export function apcTrackingUrl(waybill: string, postcode: string | null | undefi
   return `https://apc.co.uk/?consignment=${wb}&postcode=${formatted}`;
 }
 
+/**
+ * Raw tracking history for ONE consignment — read-only.
+ *
+ * GET /Tracks/{waybill}.json?searchtype=CarrierWaybill&history=yes. Never the
+ * multi-consignment /Tracks.json, which is a consuming queue (see
+ * ~/.claude/reference/apc-api-notes.md). searchtype must be set or APC looks
+ * the 22 digits up as an order number and says "NO TRACK FOUND".
+ *
+ * Short timeout: this runs on the packing path, and an APC outage must cost
+ * the packer seconds, not a hang. The caller decides what "unreachable"
+ * means; nothing here throws for a consignment APC doesn't know (404 → null).
+ * Parse the result with parseTrackingResponse (lib/apc-consignment-reuse.ts).
+ */
+export async function fetchTrackingRaw(
+  waybill: string,
+  opts: { apiBase?: string; timeoutMs?: number } = {},
+): Promise<unknown | null> {
+  if (!isConfigured()) throw new Error("APC credentials not configured.");
+  const digits = (waybill ?? "").replace(/\D/g, "");
+  if (digits.length !== 22) throw new Error("Waybill must be 22 digits.");
+  const base = opts.apiBase ?? APC_API_BASE;
+  const url = `${base}/Tracks/${digits}.json?searchtype=CarrierWaybill&history=yes`;
+  const res = await fetch(url, {
+    method: "GET",
+    headers: {
+      "remote-user": basicAuthHeader(base),
+      "Content-Type": "application/json",
+    },
+    signal: AbortSignal.timeout(opts.timeoutMs ?? 4000),
+  });
+  const text = await res.text();
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`APC tracking failed (${res.status})`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("APC tracking returned invalid JSON");
+  }
+}
+
 export async function cancelShipment(waybill: string, apiBase?: string): Promise<void> {
   if (!isConfigured()) {
     throw new Error("APC credentials not configured.");
