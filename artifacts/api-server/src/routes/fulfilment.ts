@@ -1669,6 +1669,19 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
     await updateOrderTagsAndAttributes(orderId, plan.tagChange.after, plan.attrChange.attributes);
     console.log(`[Fulfilment] ${plan.order.name} rescheduled ${fromDate} → ${toDate} by ${senderName}`);
 
+    // Any consignment the order holds belongs to the OLD date: retire it so
+    // it can never be reused on the new one (incident #136845 — booked for
+    // the 8th, moved to the 16th, packed on the 15th on the dead waybill).
+    // If it is still live at APC the dialog asks a manager whether to cancel
+    // it there; nothing is sent to APC from here.
+    let oldApcBookings: Array<{ waybill: string; collectionDate: string | null }> = [];
+    try {
+      oldApcBookings = await supersedeOrderConsignments(orderId, `rescheduled ${fromDate} → ${toDate} by ${senderName}`);
+    } catch (retireErr) {
+      // The packing-time date rule still refuses an other-day booking.
+      console.error(`[Fulfilment] could not retire ${plan.order.name}'s old consignment:`, retireErr instanceof Error ? retireErr.message : retireErr);
+    }
+
     let emailed = false;
     let emailError: string | null = null;
     if (sendCustomerEmail && plan.email.to) {
@@ -1712,6 +1725,7 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
       deliveryAttribute: toZapietDate(toDate),
       emailed,
       emailTo: plan.email.to,
+      oldApcBookings,
       ...(emailError ? { emailError } : {}),
       ...(!plan.email.to ? { emailSkipped: "Order has no email address" } : {}),
     });
@@ -3793,6 +3807,13 @@ router.post("/tag-fix", requireFulfilmentAccess, async (req: Request, res: Respo
   try {
     const tagsStr = Array.isArray(currentTags) ? currentTags.join(", ") : (currentTags ?? "");
     const updatedTags = await replaceTagOnOrder(orderId, tagsStr, badTag ?? "", correctTag);
+    // The delivery date changed: no consignment from before may be reused
+    // (incident #136845). Logged, never fails the fix.
+    try {
+      await supersedeOrderConsignments(orderId, `date tag fixed ${badTag || "(none)"} → ${correctTag}`);
+    } catch (retireErr) {
+      console.error(`[fulfilment/tag-fix] could not retire old consignments for ${orderId}:`, retireErr instanceof Error ? retireErr.message : retireErr);
+    }
     res.json({ ok: true, updatedTags });
   } catch (err: any) {
     console.error("[fulfilment/tag-fix]", err.message);
