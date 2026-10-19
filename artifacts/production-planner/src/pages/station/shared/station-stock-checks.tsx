@@ -17,8 +17,8 @@
  * (daily, or weekly on today's real day — the real day, not the plan
  * date, same rule as the checklist scheduling fix), shows the same
  * blue check card as main prep, and saves to the same endpoint through the
- * shared two-step entry (stock-check-entry.tsx — amount, then a unit the
- * person taps; Graeme 15 Oct 2026). Values poll every 5s so two iPads
+ * shared two-step entry (stock-check-entry.tsx — the unit it's counted
+ * in, then one number; Graeme 19 Oct 2026). Values poll every 5s so two iPads
  * agree. Renders nothing when nothing is due.
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -110,8 +110,8 @@ export function StationStockChecks({
 
   if (due.length === 0) return null;
 
-  /** The big "Stock check" button (shared two-step entry: amount, then a
-   *  unit the person taps) — identical in both shapes. */
+  /** The big "Record stock check for this item" button (shared two-step
+   *  entry: the unit, then one number) — identical in both shapes. */
   const control = (ing: StockCheckIngredient) => (
     <StockCheckButton
       ingredient={ing}
