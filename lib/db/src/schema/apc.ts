@@ -14,7 +14,7 @@
  * verifies the scanned label barcode belongs to the consignment before writing
  * the waybill to Shopify.
  */
-import { pgTable, serial, text, timestamp, integer, bigint, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, integer, bigint, index, date } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { usersTable } from "./users";
 
@@ -40,6 +40,27 @@ export const apcConsignmentsTable = pgTable("apc_consignments", {
   // audit can separate "scanned but never pushed" from "fully done".
   pushedToShopifyAt: timestamp("pushed_to_shopify_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
+  // Columns below were added by startup DDL (label_printed_at, cancelled_at,
+  // dispatch_tag) or migration 0205 — see that file for the #136845 story.
+  labelPrintedAt: timestamp("label_printed_at"),
+  cancelledAt: timestamp("cancelled_at"),
+  dispatchTag: text("dispatch_tag"),
+  // The day APC collects this consignment (London). An existing consignment
+  // is only ever reused on its own collection day.
+  collectionDate: date("collection_date", { mode: "string" }),
+  cancelledReason: text("cancelled_reason"),
+  // The order moved to another date, or the booking was for another day —
+  // never reuse it again.
+  supersededAt: timestamp("superseded_at"),
+  supersededReason: text("superseded_reason"),
+  apcStatus: text("apc_status"),
+  apcStatusCode: text("apc_status_code"),
+  apcDeadStatus: text("apc_dead_status"),
+  apcStatusCheckedAt: timestamp("apc_status_checked_at"),
+  apcCancelDecision: text("apc_cancel_decision"),
+  apcCancelDecidedBy: text("apc_cancel_decided_by"),
+  apcCancelDecidedAt: timestamp("apc_cancel_decided_at"),
+  mismatchNotifiedAt: timestamp("mismatch_notified_at"),
 }, (t) => ({
   orderIdx: index("ix_apc_consignments_order").on(t.shopifyOrderId),
   verifiedIdx: index("ix_apc_consignments_verified").on(t.verifiedAt),
