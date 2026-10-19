@@ -12,7 +12,7 @@ import { londonDateString } from "./london-time";
 import { fetchTrackingRaw, isConfigured as isApcConfigured } from "../services/apc";
 import {
   decideAcrossRows, collectionDateOf, applyLiveStatus, liveStatusFromTracking, parseTrackingResponse,
-  staleWaybillProblem, waybillSendDate,
+  staleWaybillProblem, waybillSendDate, retireReasonFor,
   type LedgerConsignment, type LiveStatus, type ReuseContext, type ReuseDecision, type IsoDate,
 } from "./apc-consignment-reuse";
 
@@ -169,7 +169,7 @@ export async function reusableConsignmentFor(
     decision = applyLiveStatus(decision, status, ctx);
     if (decision.action === "reuse" && decision.warning) console.warn(`[apc-ledger] order ${orderId}: ${decision.warning}`);
     if (decision.action === "book-new" && decision.waybill && decision.retire) {
-      await retire(decision.waybill, decision.retire, decision.message);
+      await retire(decision.waybill, decision.retire, retireReasonFor(decision, ctx));
     }
   }
   if (decision.action === "book-new" && decision.waybill) {

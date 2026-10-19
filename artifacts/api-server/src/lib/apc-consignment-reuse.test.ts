@@ -110,6 +110,11 @@ describe("decideConsignmentReuse — the date-and-ledger rule", () => {
     expect(d.action === "book-new" && d.retire).toBeNull();
   });
 
+  it("stores a short reason on the retired #136845 row", () => {
+    const r = decideAcrossRows([INCIDENT_ROW], PACK_DAY);
+    expect(r.retire[0].message).toBe("booked for collection on Wed 7 Oct, not reused on Thu 15 Oct");
+  });
+
   it("across rows: retires the stale ones and reuses today's", () => {
     const today = { ...INCIDENT_ROW, waybill: "2026101503036990011111", dispatchTag: "2026-10-16" };
     const r = decideAcrossRows([today, INCIDENT_ROW], PACK_DAY);

@@ -172,6 +172,18 @@ export function decideConsignmentReuse(c: LedgerConsignment | null, ctx: ReuseCo
   return { action: "reuse", waybill: c.waybill, collectionDate };
 }
 
+/** The short reason stored on a row this rule retires (superseded_reason),
+ *  read later on the check page and in the packer's refusal message. */
+export function retireReasonFor(d: ReuseDecision, ctx: ReuseContext): string {
+  if (d.action !== "book-new") return "";
+  switch (d.reason) {
+    case "not-today": return `booked for collection on ${friendlyIsoDate(d.collectionDate)}, not reused on ${friendlyIsoDate(ctx.today)}`;
+    case "other-delivery-date": return `booked for a different delivery date than ${friendlyIsoDate(ctx.orderDateTag)}`;
+    case "dead-in-apc": return "cancelled in APC";
+    default: return d.message;
+  }
+}
+
 /** Pick from all of an order's not-yet-retired rows (newest first): the
  *  newest that may be reused, plus every row that must be retired. */
 export function decideAcrossRows(rows: LedgerConsignment[], ctx: ReuseContext): {
@@ -187,7 +199,7 @@ export function decideAcrossRows(rows: LedgerConsignment[], ctx: ReuseContext): 
       if (!reuse) reuse = d;
       continue;
     }
-    if (d.retire) retire.push({ waybill: row.waybill, how: d.retire, message: d.message });
+    if (d.retire) retire.push({ waybill: row.waybill, how: d.retire, message: retireReasonFor(d, ctx) });
     if (!firstRefusal) firstRefusal = d;
   }
   if (reuse) return { decision: reuse, retire };
