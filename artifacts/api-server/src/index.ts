@@ -3488,6 +3488,12 @@ async function startup() {
     const { startBarcodeCheckScheduler } = await import("./lib/barcode-check-scheduler");
     startBarcodeCheckScheduler();
 
+    // Daily APC consignment check, 17:30 London — orders that went out on
+    // an old or cancelled APC booking (incident #136845). Read-only towards
+    // APC; tells Graeme via the bell. See lib/apc-consignment-check.ts.
+    const { startConsignmentCheckScheduler } = await import("./lib/apc-consignment-check");
+    startConsignmentCheckScheduler();
+
     const { startMetaAdsScheduler } = await import("./lib/meta-ads");
     startMetaAdsScheduler();
 

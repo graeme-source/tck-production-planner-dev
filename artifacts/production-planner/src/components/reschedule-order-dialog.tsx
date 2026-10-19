@@ -18,6 +18,8 @@ import { Loader2, AlertTriangle, CalendarClock, Mail, Tag, CheckCircle2, X, Exte
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { PostcodeServiceCard, type PostcodeServiceFacts } from "@/components/apc-postcode-service";
+import { useOldApcBookings } from "@/components/apc-consignment-check/api";
+import { OldBookingPrompt } from "@/components/apc-consignment-check/old-booking-prompt";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -44,6 +46,33 @@ interface ReschedulePreview {
     summary: string;
     service: { nextDay: boolean; saturdayDelivery: boolean; transitDays: number | null; matchedOn: string; depot: string; weekdayCutoff: string | null; saturday: string | null; restrictions?: PostcodeServiceFacts["restrictions"] } | null;
   } | null;
+}
+
+function OldApcBookingsAfterMove({ orderId, orderName }: { orderId: number; orderName: string }) {
+  const { data, isLoading, error } = useOldApcBookings(orderId, true);
+  if (isLoading) {
+    return (
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="w-4 h-4 animate-spin" /> Checking for an old APC booking…
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="rounded-lg border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+        Couldn't check for an old APC booking: {(error as Error).message}. It is listed on the APC consignment check page.
+      </div>
+    );
+  }
+  if (!data?.oldBookings.length) return null;
+  return (
+    <div className="space-y-2">
+      {data.oldBookings.map(b => (
+        <OldBookingPrompt key={b.waybill} waybill={b.waybill} orderName={orderName} collectionDate={b.collectionDate}
+          reason={b.supersededReason} apcStatus={b.apcStatus} liveInApc={b.liveInApc} />
+      ))}
+    </div>
+  );
 }
 
 function isSaturday(d: string): boolean {
@@ -173,6 +202,11 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
               </p>
             </div>
           )}
+
+          {/* The order's old APC booking was retired by the move, so it can
+              never be reused (incident #136845). If APC still has it live,
+              a manager decides whether to cancel it there. */}
+          {done && <OldApcBookingsAfterMove orderId={orderId} orderName={orderName} />}
 
           {preview && !done && (
             <>

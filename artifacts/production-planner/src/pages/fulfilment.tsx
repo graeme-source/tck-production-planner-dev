@@ -30,7 +30,7 @@ import {
   RefreshCw, MapPin, SkipForward, RotateCcw, XCircle, Loader2,
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
-  ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame,
+  ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame, ShieldCheck,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
@@ -4450,6 +4450,15 @@ export default function Fulfilment() {
                     2026-08-21) — merged with the unified-bar layout. */}
                 {apcMode === "full" && (
                   <BookingIssuesButton onOpen={() => setShowBookingIssues(true)} />
+                )}
+                {apcMode !== "off" && canBookCourier && (
+                  <button
+                    onClick={() => navigate("/fulfilment/apc-check")}
+                    className="px-5 py-3 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
+                    title="Orders that went out on an old or cancelled APC booking, and old bookings still live at APC"
+                  >
+                    <ShieldCheck className="w-5 h-5" /> APC check
+                  </button>
                 )}
                 {apcMode === "full" && canBookCourier && (
                   <button

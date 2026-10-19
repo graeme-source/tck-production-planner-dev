@@ -80,6 +80,8 @@ export function NotificationList({ active, onNavigated, large = false }: {
       navigate("/hub?section=todos");
     } else if (n.type === "contract") {
       navigate("/hub?section=contract");
+    } else if (n.type === "apc_mismatch") {
+      navigate("/fulfilment/apc-check");
     }
   }
 
