@@ -5,3 +5,5 @@ export * from "./approvals";
 export * from "./notes-todos";
 export * from "./email-cycle";
 export * from "./email-match";
+export * from "./phases";
+export * from "./email-approvals";
