@@ -83,6 +83,7 @@ import {
   expectedStockHeadline,
   expectedStockTooltip,
   stockBoxStartsBlank,
+  showsStockCheckButton,
   type ExpectedStock,
   type StockBasis,
 } from "@/lib/expected-stock-label";
@@ -2225,11 +2226,15 @@ export default function Orders() {
                                   19 Oct 2026): the unit, then one number. Not-counted
                                   kanban items and expected figures show no number
                                   on the button — it would read as a count. */}
-                              <StockCheckTrigger
-                                compact
-                                recordedLabel={stockBoxStartsBlank(line) ? null : `${formatCount(line.editedStock)} ${line.unit}`}
-                                onClick={() => setStockDialog({ supplierId: so.supplier.id, idx, line })}
-                              />
+                              {/* Kanban items nobody stock-checks get no button at
+                                  all — the card drives the order (#336). */}
+                              {showsStockCheckButton(line) && (
+                                <StockCheckTrigger
+                                  compact
+                                  recordedLabel={stockBoxStartsBlank(line) ? null : `${formatCount(line.editedStock)} ${line.unit}`}
+                                  onClick={() => setStockDialog({ supplierId: so.supplier.id, idx, line })}
+                                />
+                              )}
                               {line.stockBasis === "expected" && line.expectedStock && !line.stockDirty ? (
                                 <span
                                   className="text-[10px] text-sky-700 dark:text-sky-300 flex flex-col items-end leading-tight"
@@ -2238,13 +2243,12 @@ export default function Orders() {
                                   <span className="font-semibold">{expectedStockHeadline(line.expectedStock, line.nativeUnit ?? line.unit)}</span>
                                   <span className="text-muted-foreground">{expectedStockBasisLine(line.expectedStock)}</span>
                                 </span>
-                              ) : line.stockCounted === false && !line.stockDirty ? (
+                              ) : !showsStockCheckButton(line) && !line.stockDirty ? (
                                 <span
-                                  className="text-[10px] text-muted-foreground flex items-center gap-0.5"
-                                  title="Kanban item that has never been counted: the app only adds deliveries to it, so its figure isn't a real count. The kanban card drives the order. Type a count here once and the app keeps an expected figure from then on (count + deliveries − usage)."
+                                  className="text-[10px] text-muted-foreground"
+                                  title="Kanban item: no stock check needed. The kanban card drives the order. To count it, tick Requires Stock Check on the ingredient."
                                 >
-                                  <AlertCircle className="w-2.5 h-2.5" />
-                                  Not counted — kanban
+                                  Kanban — no stock check needed
                                 </span>
                               ) : line.lastStockCheckAt ? (() => {
                                 const d = new Date(line.lastStockCheckAt);

@@ -5,6 +5,7 @@ import {
   expectedStockHeadline,
   expectedStockTooltip,
   shouldSaveStockOnBlur,
+  showsStockCheckButton,
   stockBoxStartsBlank,
   type ExpectedStock,
 } from "./expected-stock-label";
@@ -37,5 +38,18 @@ describe("stock box", () => {
     expect(shouldSaveStockOnBlur({ stockBasis: "expected", stockDirty: true })).toBe(true);
     // A counted line saves on leave, as it always has.
     expect(shouldSaveStockOnBlur({ stockCounted: true, stockBasis: "count", stockDirty: false })).toBe(true);
+  });
+});
+
+describe("Record stock check button on Orders (#336)", () => {
+  it("is hidden for kanban items nobody stock-checks, including pulled kanbans", () => {
+    expect(showsStockCheckButton({ isKanban: true, stockCounted: false })).toBe(false);
+    // A pulled kanban added on screen before the server re-sends the line.
+    expect(showsStockCheckButton({ isKanban: true })).toBe(false);
+  });
+  it("stays for stock-checked items, kanban or not", () => {
+    expect(showsStockCheckButton({ isKanban: true, stockCounted: true })).toBe(true);
+    expect(showsStockCheckButton({ isKanban: false, stockCounted: true })).toBe(true);
+    expect(showsStockCheckButton({ isKanban: false })).toBe(true);
   });
 });
