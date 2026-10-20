@@ -55,8 +55,9 @@ export function TeamListsDashboardSection() {
 }
 
 /** The quick-actions panel's section: same lists, compact. Hidden on
- *  station screens by the caller. */
-export function TeamListsPanelSection({ onNavigate }: { onNavigate: () => void }) {
+ *  station screens by the caller. A list opens in the team list dock
+ *  (onOpenList); "All lists" goes to the page. */
+export function TeamListsPanelSection({ onNavigate, onOpenList }: { onNavigate: () => void; onOpenList: (id: number) => void }) {
   const { data } = useVisibleTeamLists();
   const lists = (data?.lists ?? []).filter(l => !l.archived);
   if (lists.length === 0) return null;
@@ -69,7 +70,7 @@ export function TeamListsPanelSection({ onNavigate }: { onNavigate: () => void }
         </Link>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {lists.map(l => <ListCard key={l.id} list={l} compact onClick={onNavigate} />)}
+        {lists.map(l => <ListCard key={l.id} list={l} compact onOpen={() => onOpenList(l.id)} />)}
       </div>
     </div>
   );

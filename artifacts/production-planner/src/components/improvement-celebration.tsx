@@ -121,7 +121,7 @@ export function ImprovementCelebration() {
           transition={{ type: "spring", damping: 22, stiffness: 260 }}
           // Bottom corner, above the dock, NO backdrop — the page behind
           // stays fully usable. pointer events only on the card itself.
-          className="fixed bottom-24 right-4 left-4 sm:left-auto sm:w-[24rem] z-[120]"
+          className="fixed bottom-24 right-4 sm:right-[calc(1rem+var(--team-dock-w,0px))] left-4 sm:left-auto sm:w-[24rem] z-[120]"
           onMouseEnter={pauseClock}
           onMouseLeave={resumeClock}
         >

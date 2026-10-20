@@ -18,22 +18,30 @@ export function ProgressBar({ progress, color }: { progress: Progress; color?: s
   );
 }
 
-export function ListCard({ list, compact = false, onClick }: { list: TeamListSummary; compact?: boolean; onClick?: () => void }) {
+/** `onOpen`: a button that opens the list somewhere else (the team list
+ *  dock) instead of a link to its page. */
+export function ListCard({ list, compact = false, onClick, onOpen }: { list: TeamListSummary; compact?: boolean; onClick?: () => void; onOpen?: () => void }) {
+  const cls = cn("block w-full text-left rounded-3xl border-2 border-border bg-card hover:border-primary/60 active:scale-[0.99] transition-all", compact ? "p-4" : "p-5");
+  const style = { borderLeftColor: list.color ?? undefined, borderLeftWidth: list.color ? 8 : undefined };
+  const body = <ListCardBody list={list} />;
+  if (onOpen) return <button type="button" onClick={onOpen} className={cls} style={style}>{body}</button>;
+  return <Link href={`/lists/${list.id}`} onClick={onClick} className={cls} style={style}>{body}</Link>;
+}
+
+function ListCardBody({ list }: { list: TeamListSummary }) {
   const p = list.progress;
   return (
-    <Link href={`/lists/${list.id}`} onClick={onClick}
-      className={cn("block rounded-3xl border-2 border-border bg-card hover:border-primary/60 active:scale-[0.99] transition-all", compact ? "p-4" : "p-5")}
-      style={{ borderLeftColor: list.color ?? undefined, borderLeftWidth: list.color ? 8 : undefined }}>
-      <div className="flex items-center gap-3">
+    <>
+      <span className="flex items-center gap-3">
         <span className="text-3xl leading-none">{list.emoji || "📋"}</span>
         <span className="min-w-0 flex-1">
-          <span className="block text-lg font-bold leading-tight truncate">{list.name}{list.archived ? " (archived)" : ""}</span>
+          <span className="block text-lg font-bold leading-tight break-words">{list.name}{list.archived ? " (archived)" : ""}</span>
           <span className={cn("block text-sm", p.overdue > 0 ? "text-amber-700 dark:text-amber-400 font-semibold" : "text-muted-foreground")}>{progressText(p)}</span>
         </span>
         {p.total > 0 && p.done === p.total && <Check className="w-7 h-7 text-emerald-600 shrink-0" />}
-      </div>
-      {p.total > 0 && <div className="mt-3"><ProgressBar progress={p} color={list.color} /></div>}
-    </Link>
+      </span>
+      {p.total > 0 && <span className="block mt-3"><ProgressBar progress={p} color={list.color} /></span>}
+    </>
   );
 }
 

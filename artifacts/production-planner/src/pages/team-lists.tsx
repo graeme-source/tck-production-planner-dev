@@ -102,7 +102,10 @@ function ListsIndex() {
 }
 
 // ── /lists/:id ────────────────────────────────────────────────────────────
-export function ListDetail({ id }: { id: number }) {
+/** `compact`: the narrow version in the team list dock (Graeme,
+ *  2026-10-20) — same data, ticks and add box, smaller rows, no page
+ *  header, sort, settings or "All tasks" (those live on the full page). */
+export function ListDetail({ id, compact = false }: { id: number; compact?: boolean }) {
   const { data, isLoading, error } = useTeamList(id);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -148,6 +151,7 @@ export function ListDetail({ id }: { id: number }) {
   const editing = editingId != null ? byId.get(editingId) ?? null : null;
 
   if (isLoading) return <p className="text-muted-foreground flex items-center gap-2"><Loader2 className="w-5 h-5 animate-spin" /> Loading…</p>;
+  if ((error || !data) && compact) return <p className="text-red-600">{(error as Error | null)?.message ?? "List not found"}</p>;
   if (error || !data) {
     return (
       <div className="space-y-3">
@@ -168,6 +172,75 @@ export function ListDetail({ id }: { id: number }) {
   const todays = sortEntries(entries.filter(e => !e.overdue && visible(e)));
   const hiddenDone = entries.filter(e => e.completion).length;
   const todayLabel = new Date(`${today}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", timeZone: "UTC" });
+
+  const row = (e: DayEntry, upcoming = false) => byId.get(e.itemId) && (
+    <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} compact={compact} upcoming={upcoming}
+      onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined}
+      justAdded={!upcoming && e.itemId === justAddedId} isNew={!upcoming && addedIds.has(e.itemId)} />
+  );
+  const modals = (
+    <>
+      {editing && list.canEdit && <ItemEditModal key={editing.id} item={editing} today={today} onClose={() => setEditingId(null)} />}
+      {settingsOpen && list.canEdit && <ListSettingsModal list={list} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); setImportOpen(true); }} />}
+      {importOpen && list.canEdit && <ImportModal listId={list.id} onClose={() => setImportOpen(false)} onEditItem={itemId => { setImportOpen(false); setEditingId(itemId); }} />}
+    </>
+  );
+  const emptyText = data.items.length === 0 ? (list.canEdit ? "No tasks yet — add the first one below." : "No tasks yet.") : hiddenDone > 0 && !showDone ? "All done for today 🎉" : "Nothing due today.";
+
+  if (compact) {
+    const comingCount = data.comingUp.reduce((n, d) => n + d.itemIds.length, 0);
+    return (
+      <div className="space-y-4 w-full">
+        {list.archived && <p className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 text-sm font-semibold">This list is archived.</p>}
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className={cn("text-sm font-semibold", progress.overdue > 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{progressText(progress)}</span>
+            <span className="flex-1" />
+            <button type="button" onClick={toggleDone} aria-pressed={showDone}
+              className="min-h-[40px] px-3 rounded-xl border-2 border-border bg-card text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-secondary/60">
+              {showDone ? <EyeOff className="w-4 h-4 text-muted-foreground" /> : <Eye className="w-4 h-4 text-muted-foreground" />}
+              {showDone ? "Hide done" : `Show done${hiddenDone > 0 ? ` (${hiddenDone})` : ""}`}
+            </button>
+          </div>
+          {progress.total > 0 && <ProgressBar progress={progress} color={list.color} />}
+        </div>
+        {overdue.length > 0 && (
+          <section className="space-y-2">
+            <h3 className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-400">Overdue</h3>
+            {overdue.map(e => row(e))}
+          </section>
+        )}
+        <section className="space-y-2">
+          {overdue.length > 0 && <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Today</h3>}
+          {todays.length === 0 && overdue.length === 0 && (
+            <p className="rounded-xl border-2 border-dashed border-border p-4 text-center text-muted-foreground">{emptyText}</p>
+          )}
+          {todays.map(e => row(e))}
+          {list.canEdit && <AddTask listId={list.id} today={today} onAdded={onAdded} compact />}
+        </section>
+        {comingCount > 0 && (
+          <section className="space-y-2">
+            <button type="button" onClick={toggleComing} aria-expanded={showComing} className="w-full min-h-[44px] flex items-center gap-2 text-left">
+              {showComing ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+              <span className="flex-1 text-xs font-bold uppercase tracking-wide text-muted-foreground">Coming up this week</span>
+              <span className="text-sm text-muted-foreground font-semibold tabular-nums">{comingCount}</span>
+            </button>
+            {showComing && data.comingUp.map(day => {
+              const rows = sortTasks(day.entries.filter(e => byId.has(e.itemId) && (showDone || !e.completion)), sort, e => teamTaskSortFields(byId.get(e.itemId)!));
+              if (rows.length === 0) return null;
+              return (
+                <div key={day.date} className="space-y-2">
+                  <h4 className="font-bold text-sm">{dayHeading(day.date, today)}</h4>
+                  {rows.map(e => row(e, true))}
+                </div>
+              );
+            })}
+          </section>
+        )}
+        {modals}
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 w-full">
@@ -211,7 +284,7 @@ export function ListDetail({ id }: { id: number }) {
         {overdue.length > 0 && <h3 className="text-sm font-bold uppercase tracking-wide text-muted-foreground">Today</h3>}
         {todays.length === 0 && overdue.length === 0 && (
           <p className="rounded-2xl border-2 border-dashed border-border p-6 text-center text-muted-foreground text-lg">
-            {data.items.length === 0 ? (list.canEdit ? "No tasks yet — add the first one below." : "No tasks yet.") : hiddenDone > 0 && !showDone ? "All done for today 🎉" : "Nothing due today."}
+            {emptyText}
           </p>
         )}
         {todays.map(e => byId.get(e.itemId) && <TaskRow key={`${e.itemId}-${e.dueDate}`} item={byId.get(e.itemId)!} entry={e} today={today} onEdit={list.canEdit ? () => setEditingId(e.itemId) : undefined} justAdded={e.itemId === justAddedId} isNew={addedIds.has(e.itemId)} />)}
@@ -243,9 +316,7 @@ export function ListDetail({ id }: { id: number }) {
         <AllTasks listId={list.id} items={data.items} onEdit={list.canEdit ? setEditingId : undefined} />
       </Collapsible>
 
-      {editing && list.canEdit && <ItemEditModal key={editing.id} item={editing} today={today} onClose={() => setEditingId(null)} />}
-      {settingsOpen && list.canEdit && <ListSettingsModal list={list} onClose={() => setSettingsOpen(false)} onImport={() => { setSettingsOpen(false); setImportOpen(true); }} />}
-      {importOpen && list.canEdit && <ImportModal listId={list.id} onClose={() => setImportOpen(false)} onEditItem={itemId => { setImportOpen(false); setEditingId(itemId); }} />}
+      {modals}
     </div>
   );
 }
@@ -268,8 +339,8 @@ function Collapsible({ open, onToggle, title, count, hint, children }: { open: b
 
 /** The task's title — a link when the task has one ("anything the UI
  *  names, it links"): pages in the app in place, websites in a new tab. */
-function TaskTitle({ item, done }: { item: TeamListItem; done: boolean }) {
-  const cls = cn("text-lg font-semibold leading-snug break-words", done && "line-through text-muted-foreground");
+function TaskTitle({ item, done, compact = false }: { item: TeamListItem; done: boolean; compact?: boolean }) {
+  const cls = cn(compact ? "text-base" : "text-lg", "font-semibold leading-snug break-words", done && "line-through text-muted-foreground");
   if (!item.url) return <span className={cls}>{item.title}</span>;
   if (item.url.startsWith("/")) return <Link href={item.url} className={cn(cls, "underline decoration-2 underline-offset-4 text-primary")}>{item.title}</Link>;
   return (
@@ -279,8 +350,10 @@ function TaskTitle({ item, done }: { item: TeamListItem; done: boolean }) {
   );
 }
 
-function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false, upcoming = false }: {
+function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false, upcoming = false, compact = false }: {
   item: TeamListItem; entry: DayEntry; today: string;
+  /** The dock's narrow row: smaller tick, icon-only Skip/Undo. */
+  compact?: boolean;
   /** In Coming up: ticking it now is ticking it early, for entry.dueDate. */
   upcoming?: boolean;
   /** Absent for people who can tick but not change the list. */
@@ -303,7 +376,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
 
   return (
     <div ref={ref} data-just-added={justAdded ? "true" : undefined}
-      className={cn("rounded-2xl border-2 bg-card p-3 sm:p-4 flex items-start gap-3 transition-all duration-500 scroll-mb-28",
+      className={cn("rounded-2xl border-2 bg-card flex items-start transition-all duration-500", compact ? "p-2 gap-2 scroll-mb-8" : "p-3 sm:p-4 gap-3 scroll-mb-28",
         justAdded ? "border-primary ring-4 ring-primary/30 bg-primary/5" : entry.overdue && !c ? "border-amber-300 dark:border-amber-700" : "border-border",
         c && "bg-muted/40")}>
       <button
@@ -311,14 +384,14 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
         onClick={() => run(c ? { undo: true } : { status: "done" })}
         disabled={tick.isPending}
         aria-label={c ? `Undo ${item.title}` : upcoming ? `Mark ${item.title} done early` : `Mark ${item.title} done`}
-        className={cn("w-14 h-14 rounded-full border-4 flex items-center justify-center shrink-0 transition-colors",
+        className={cn("rounded-full flex items-center justify-center shrink-0 transition-colors", compact ? "w-11 h-11 border-[3px]" : "w-14 h-14 border-4",
           c?.status === "done" ? "bg-emerald-500 border-emerald-500 text-white" : c?.status === "skipped" ? "bg-muted border-muted-foreground/40 text-muted-foreground" : PRIORITY_STYLES[item.priority].ring)}
       >
-        {tick.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : c?.status === "done" ? <Check className="w-8 h-8" /> : c?.status === "skipped" ? <SkipForward className="w-6 h-6" /> : null}
+        {tick.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : c?.status === "done" ? <Check className={compact ? "w-6 h-6" : "w-8 h-8"} /> : c?.status === "skipped" ? <SkipForward className="w-5 h-5" /> : null}
       </button>
-      <div className="min-w-0 flex-1 pt-1 space-y-1">
-        <TaskTitle item={item} done={!!c} />
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+      <div className={cn("min-w-0 flex-1 space-y-1", compact ? "pt-0.5" : "pt-1")}>
+        <TaskTitle item={item} done={!!c} compact={compact} />
+        <div className={cn("flex flex-wrap items-center gap-y-1 text-muted-foreground", compact ? "gap-x-2 text-xs" : "gap-x-3 text-sm")}>
           {justAdded && <span className="font-bold text-primary">Just added</span>}
           {isNew && !c && onEdit && (
             <button type="button" onClick={onEdit}
@@ -334,6 +407,21 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
         {item.notes && !c && <p className="text-sm text-muted-foreground whitespace-pre-line">{item.notes}</p>}
         {tick.error && <p className="text-sm text-red-600">{(tick.error as Error).message}</p>}
       </div>
+      {compact ? (
+        <div className="flex flex-col gap-1 shrink-0">
+          <button type="button" onClick={() => run(c ? { undo: true } : { status: "skipped" })} disabled={tick.isPending}
+            className="w-11 h-11 rounded-xl text-muted-foreground hover:bg-secondary/60 flex items-center justify-center"
+            aria-label={c ? `Undo ${item.title}` : upcoming ? `Skip ${item.title} on ${dayHeading(entry.dueDate, today)}` : `Skip ${item.title} today`}
+            title={c ? "Undo" : "Skip"}>
+            {c ? <Undo2 className="w-5 h-5" /> : <SkipForward className="w-5 h-5" />}
+          </button>
+          {onEdit && (
+            <button type="button" onClick={onEdit} className="w-11 h-11 rounded-xl text-muted-foreground hover:bg-secondary/60 flex items-center justify-center" aria-label={`Edit ${item.title}`} title="Edit">
+              <Pencil className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      ) : (
       <div className="flex flex-col sm:flex-row gap-1 shrink-0">
         {!c ? (
           <button type="button" onClick={() => run({ status: "skipped" })} disabled={tick.isPending}
@@ -352,6 +440,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
           </button>
         )}
       </div>
+      )}
     </div>
   );
 }
@@ -359,7 +448,7 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
 /** "Add a task": type and press Enter; it's added as every day and you
  *  stay on the list — the box clears and keeps the cursor for the next one
  *  (Graeme, 2026-10-13). The new row's "Set days" chip opens its editor. */
-function AddTask({ listId, today, onAdded }: { listId: number; today: string; onAdded: (id: number) => void }) {
+function AddTask({ listId, today, onAdded, compact = false }: { listId: number; today: string; onAdded: (id: number) => void; compact?: boolean }) {
   const [title, setTitle] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const add = useAddItem(listId);
@@ -390,9 +479,9 @@ function AddTask({ listId, today, onAdded }: { listId: number; today: string; on
     <form onSubmit={submit} className="space-y-1">
       <div className="flex gap-2">
         <input ref={inputRef} value={title} onChange={e => setTitle(e.target.value)} placeholder="Add a task" enterKeyHint="done"
-          className="flex-1 h-14 rounded-2xl border-2 border-dashed border-border bg-background px-4 text-lg focus:outline-none focus:border-primary focus:border-solid" aria-label="Add a task" maxLength={300} />
+          className={cn("flex-1 min-w-0 rounded-2xl border-2 border-dashed border-border bg-background focus:outline-none focus:border-primary focus:border-solid", compact ? "h-12 px-3 text-base" : "h-14 px-4 text-lg")} aria-label="Add a task" maxLength={300} />
         <button type="submit" disabled={!title.trim() || add.isPending}
-          className="h-14 px-5 rounded-2xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40">
+          className={cn(compact ? "h-12 px-3" : "h-14 px-5", "rounded-2xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40")}>
           {add.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />} Add
         </button>
       </div>
@@ -404,7 +493,7 @@ function AddTask({ listId, today, onAdded }: { listId: number; today: string; on
           {quick.time && <span className="inline-flex items-center gap-1"><Clock className="w-4 h-4" /> {quick.time}</span>}
         </p>
       )}
-      {!quick.rule && !quick.priority && title.trim() === "" && (
+      {!compact && !quick.rule && !quick.priority && title.trim() === "" && (
         <p className="text-xs text-muted-foreground px-1">Tip: type “p1” for priority, or “every 6 months”, “every mon at 9am”, “quarterly”.</p>
       )}
       {add.error && <p className="text-sm text-red-600">Couldn't add it — {(add.error as Error).message}. Your text is still here; try again.</p>}
