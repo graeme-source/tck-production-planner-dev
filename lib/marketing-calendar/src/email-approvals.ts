@@ -85,6 +85,30 @@ export function awaitsApproval(email: EmailFacts, status: ApprovalStatus, today:
   return email.date >= today;
 }
 
+/**
+ * The status shown on an email's row in the calendar (Graeme, 2026-10-20:
+ * "whether or not each one has been approved — on the calendar itself").
+ *   sent             sent (or sending) and it had been approved — grey
+ *   sent_unapproved  sent without approval — grey, too late to ask
+ *   approved         green tick
+ *   changed          approved before, then the subject / preview / send time
+ *                    changed in Klaviyo — amber, "Approve again"
+ *   needs_approval   amber, "Approve"
+ */
+export type EmailRowStatus = "sent" | "sent_unapproved" | "approved" | "changed" | "needs_approval";
+
+export function emailRowStatus(email: { status: string; approval: { status: ApprovalStatus; changed: readonly string[] } }): EmailRowStatus {
+  const approved = email.approval.status === "approved";
+  if (email.status === "Sent" || email.status === "Sending") return approved ? "sent" : "sent_unapproved";
+  if (approved) return "approved";
+  return email.approval.changed.length ? "changed" : "needs_approval";
+}
+
+/** Does the row offer an Approve button (to approvers)? Only before it sends, when not approved. */
+export function rowWantsApproval(s: EmailRowStatus): boolean {
+  return s === "needs_approval" || s === "changed";
+}
+
 /** "Approved by Graeme" / "Needs approval" — the badge words, one place. */
 export function approvalLabel(status: ApprovalStatus, approvedByName: string | null | undefined, changed: readonly string[] = []): string {
   if (status === "approved") {
