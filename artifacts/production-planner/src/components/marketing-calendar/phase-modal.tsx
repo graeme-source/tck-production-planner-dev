@@ -195,6 +195,7 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
       const pid = id;
       toast({
         title: `“${title}” deleted`,
+        duration: 10_000,
         description: "It's off the calendar for everyone.",
         action: (
           <ToastAction altText="Undo" onClick={() => {

@@ -58,7 +58,8 @@ export function OfferPicker({ value, onChange, disabled }: {
               value={typed}
               onChange={e => setTyped(e.target.value)}
               onFocus={() => setFocused(true)}
-              onBlur={() => setTimeout(() => setFocused(false), 150)}
+              onBlur={() => setTimeout(() => setFocused(false), 300)}
+              onKeyUp={e => { if (e.key === "Escape") setTyped(""); }}
               onKeyDown={e => {
                 if (e.key === "Enter" && clean) { e.preventDefault(); add(exact?.text ?? clean); }
               }}
@@ -76,7 +77,9 @@ export function OfferPicker({ value, onChange, disabled }: {
               <Plus className="w-4 h-4" /> Add
             </button>
           </div>
-          {focused && (suggestions.length > 0 || (clean && !exact && !already)) && (
+          {/* Open while typing (or focused on an empty box) — not tied to focus
+              alone, so a slow tap on a suggestion never lands on a closed list. */}
+          {(focused || clean !== "") && (suggestions.length > 0 || (clean && !exact && !already)) && (
             <ul className="absolute z-10 left-0 right-0 mt-1 rounded-xl border-2 border-border bg-card shadow-xl max-h-72 overflow-y-auto">
               {suggestions.map(o => (
                 <li key={o.id}>

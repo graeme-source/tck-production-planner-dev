@@ -64,17 +64,22 @@ export function MarketingCalendar() {
   const phases = useMemo(() => phasesQ.data?.events ?? [], [phasesQ.data]);
   const emailsQ = useCalendarEmails(range.from, range.to);
   const emails = useMemo(() => emailsQ.data?.emails ?? [], [emailsQ.data]);
-  const undated = emailsQ.data?.undatedDrafts ?? [];
+  const undatedAll = emailsQ.data?.undatedDrafts ?? [];
   const canApprove = emailsQ.data?.canApprove ?? false;
   const needed = useApprovalsNeeded(true);
   const waiting = needed.data?.items ?? [];
+  // An undated draft waiting for approval is already in that list above.
+  const undated = useMemo(() => {
+    const listed = new Set(waiting.map(w => w.id));
+    return undatedAll.filter(d => !listed.has(d.id));
+  }, [undatedAll, waiting]);
   const setDates = useSetPhaseDates();
 
   // The email panel always shows the freshest copy (after approving, say).
   const currentEmail = useMemo(() => {
     if (!openEmail) return null;
-    return [...emails, ...undated, ...waiting].find(e => e.id === openEmail.id) ?? openEmail;
-  }, [openEmail, emails, undated, waiting]);
+    return [...emails, ...undatedAll, ...waiting].find(e => e.id === openEmail.id) ?? openEmail;
+  }, [openEmail, emails, undatedAll, waiting]);
 
   const onDatesChange = (p: Phase, next: { startDate: string; endDate: string }, _mode: DragMode) => {
     setDragError(null);

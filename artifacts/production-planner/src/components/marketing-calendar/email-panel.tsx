@@ -25,6 +25,14 @@ export function sendLine(email: Pick<CalEmail, "status" | "sendAt">): string {
 
 export function ApprovalBadge({ email, className }: { email: CalEmail; className?: string }) {
   const a = email.approval;
+  // Once sent it's too late to ask — a quiet grey note instead of amber.
+  if (a.status !== "approved" && (email.status === "Sent" || email.status === "Sending")) {
+    return (
+      <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-semibold bg-secondary text-muted-foreground border-border", className)}>
+        Sent without approval
+      </span>
+    );
+  }
   return (
     <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-semibold", APPROVAL_TONE[a.status], className)}>
       {a.status === "approved" ? <BadgeCheck className="w-4 h-4" /> : <span className="w-2.5 h-2.5 rounded-full bg-amber-500" />}

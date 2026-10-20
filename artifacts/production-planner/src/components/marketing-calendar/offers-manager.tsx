@@ -142,6 +142,7 @@ function OfferRow({ offer }: { offer: Offer }) {
       await invalidateOffers(qc);
       toast({
         title: `“${offer.text}” deleted`,
+        duration: 10_000,
         description: offer.usedBy > 0 ? "Phases using it keep their wording." : undefined,
         action: (
           <ToastAction altText="Undo" onClick={() => {

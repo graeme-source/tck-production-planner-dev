@@ -101,7 +101,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                         key={`email-${m.id}`}
                         type="button"
                         onClick={() => onOpenEmail(m)}
-                        title={`${m.status === "Draft" ? "Klaviyo draft" : `Klaviyo · ${m.status}`}: “${m.subject ?? m.name}” · ${approved ? "Approved" : "Needs approval"}`}
+                        title={`${m.status === "Draft" ? "Klaviyo draft" : `Klaviyo · ${m.status}`}: “${m.subject ?? m.name}” · ${approved ? "Approved" : m.status === "Sent" || m.status === "Sending" ? "Sent without approval" : "Needs approval"}`}
                         className={cn(
                           "absolute pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 text-xs font-semibold overflow-hidden",
                           m.status === "Draft" ? KLAVIYO_TONE.draft : m.status === "Sent" ? KLAVIYO_TONE.sent : cn(KLAVIYO_TONE.solid, "shadow-sm"),
