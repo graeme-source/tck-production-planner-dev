@@ -16,11 +16,13 @@ import { SaveChip } from "@/components/save-chip";
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useEscapeToClose } from "./use-escape";
 import { createOffer, deleteOffer, invalidateOffers, patchOffer, restoreOffer, useOffers, type Offer } from "./api";
 
 export function OffersManager({ onClose }: { onClose: () => void }) {
   const qc = useQueryClient();
   const offersQ = useOffers();
+  useEscapeToClose(onClose);
   const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState<string | null>(null);

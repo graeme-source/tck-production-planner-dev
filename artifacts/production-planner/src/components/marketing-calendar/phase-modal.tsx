@@ -24,6 +24,7 @@ import { SaveChip } from "@/components/save-chip";
 import { ToastAction } from "@/components/ui/toast";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { useEscapeToClose } from "./use-escape";
 import {
   CAL_KEY, createPhase, deletePhase, invalidateCalendar, invalidateOffers, patchCachedPhase, patchPhase, putPhaseDates, restorePhase, usePhase,
   type Phase,
@@ -183,6 +184,7 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
     await Promise.all([fields.flush(), dates.flush()]);
     onClose();
   };
+  useEscapeToClose(() => void close());
 
   const remove = async () => {
     if (id == null) return;

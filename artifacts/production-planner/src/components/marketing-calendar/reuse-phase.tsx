@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import { ArrowLeft, CalendarPlus, Copy, Loader2, Search, Tag, Users, X } from "lucide-react";
 import { customerGroupChip, daysBetween, formatRange, reusePhase, searchPhases } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
+import { useEscapeToClose } from "./use-escape";
 import { useAllPhases, useCreatePhase, type Phase } from "./api";
 
 export function ReusePhase({ defaultStart, onClose, onCreated }: {
@@ -19,6 +20,7 @@ export function ReusePhase({ defaultStart, onClose, onCreated }: {
   onCreated: (id: number) => void;
 }) {
   const all = useAllPhases(true);
+  useEscapeToClose(onClose);
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Phase | null>(null);
   const [start, setStart] = useState(defaultStart);

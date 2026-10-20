@@ -13,6 +13,7 @@ import { format, parseISO } from "date-fns";
 import { BadgeCheck, ExternalLink, History, Loader2, Mail, PencilLine, Undo2, Users, X } from "lucide-react";
 import { approvalLabel } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
+import { useEscapeToClose } from "./use-escape";
 import { useApprovalHistory, useSetApproval, type CalEmail } from "./api";
 import { APPROVAL_TONE, emailStatusLabel, firstName } from "./constants";
 
@@ -67,6 +68,7 @@ export function ApproveButton({ email, size = "big" }: { email: CalEmail; size?:
 
 export function EmailPanel({ email, canApprove, onClose }: { email: CalEmail; canApprove: boolean; onClose: () => void }) {
   const history = useApprovalHistory(email.id);
+  useEscapeToClose(onClose);
   const draft = email.status === "Draft";
 
   return createPortal(

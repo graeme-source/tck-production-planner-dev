@@ -5,6 +5,10 @@
  * or shrink it, tap it to edit; tap an email to see it (and approve it); tap
  * an empty day to add a phase starting there.
  *
+ * Names are never cut short (Graeme's standing rule): each week is a CSS grid
+ * whose rows grow to fit, so an email's full subject wraps over two or three
+ * lines inside its day and a short phase bar wraps its full name.
+ *
  * Email chips: a draft is dashed, scheduled solid, sent faded. A green tick =
  * Approved; an amber dot = Needs approval.
  */
@@ -18,7 +22,7 @@ import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const HEADER_PX = 30;
-const BAR_PX = 28;
+const BAR_MIN_PX = 28;
 const GAP_PX = 4;
 
 /** A Klaviyo email as a one-day span, so it takes a lane like a phase. */
@@ -57,12 +61,11 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
       </div>
       <div className="rounded-xl border border-border overflow-hidden">
         {weeks.map(week => {
-          const { segments, laneCount } = layoutWeek<Phase | EmailSpan>(week, [...shown, ...emailSpans]);
-          const laneTop = (l: number) => l * (BAR_PX + GAP_PX);
-          const height = HEADER_PX + Math.max(laneTop(laneCount), 2 * (BAR_PX + GAP_PX)) + 8;
+          const { segments } = layoutWeek<Phase | EmailSpan>(week, [...shown, ...emailSpans]);
           return (
-            <div key={week[0]} className="relative border-b border-border last:border-b-0" style={{ height }}>
-              {/* Day cells: tap an empty day to add a phase starting there. */}
+            <div key={week[0]} className="relative border-b border-border last:border-b-0" style={{ minHeight: HEADER_PX + 2 * (BAR_MIN_PX + GAP_PX) + 8 }}>
+              {/* Day cells: tap an empty day to add a phase starting there.
+                  They fill the row, however tall its contents make it. */}
               <div className="absolute inset-0 grid grid-cols-7">
                 {week.map(day => {
                   const inMonth = day.slice(0, 7) === monthKey;
@@ -90,9 +93,18 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                 })}
               </div>
 
-              {/* Bars. The layer ignores taps so empty days stay tappable. */}
-              <div className="absolute inset-x-0 pointer-events-none" style={{ top: HEADER_PX }}>
+              {/* Bars and chips on a grid whose rows grow to fit the full text.
+                  The layer ignores taps so empty days stay tappable. */}
+              <div
+                className="relative grid grid-cols-7 pointer-events-none pb-2"
+                style={{ paddingTop: HEADER_PX, rowGap: GAP_PX }}
+              >
                 {segments.map(seg => {
+                  const place = {
+                    gridColumn: `${seg.startCol + 1} / ${seg.endCol + 2}`,
+                    gridRow: seg.lane + 1,
+                    minHeight: BAR_MIN_PX,
+                  };
                   if ("email" in seg.event) {
                     const m = seg.event.email;
                     const approved = m.approval.status === "approved";
@@ -103,21 +115,21 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                         onClick={() => onOpenEmail(m)}
                         title={`${m.status === "Draft" ? "Klaviyo draft" : `Klaviyo · ${m.status}`}: “${m.subject ?? m.name}” · ${approved ? "Approved" : m.status === "Sent" || m.status === "Sending" ? "Sent without approval" : "Needs approval"}`}
                         className={cn(
-                          "absolute pointer-events-auto flex items-center gap-1 rounded-lg px-1.5 text-xs font-semibold overflow-hidden",
+                          "self-start pointer-events-auto mx-[3px] flex flex-col gap-0.5 rounded-lg px-1 py-1 text-[10px] lg:text-[11px] leading-tight font-semibold text-left",
                           m.status === "Draft" ? KLAVIYO_TONE.draft : m.status === "Sent" ? KLAVIYO_TONE.sent : cn(KLAVIYO_TONE.solid, "shadow-sm"),
                         )}
-                        style={{
-                          left: `calc(${(seg.startCol / 7) * 100}% + 3px)`,
-                          width: `calc(${(1 / 7) * 100}% - 6px)`,
-                          top: laneTop(seg.lane),
-                          height: BAR_PX,
-                        }}
+                        style={place}
                       >
-                        {m.status === "Draft" ? <PencilLine className="w-3.5 h-3.5 flex-shrink-0" /> : <Mail className="w-3.5 h-3.5 flex-shrink-0" />}
-                        <span className="truncate flex-1 text-left">{m.subject ?? m.name}</span>
-                        {approved
-                          ? <BadgeCheck className={cn("w-4 h-4 flex-shrink-0", m.status === "Draft" || m.status === "Sent" ? "text-emerald-600" : "text-white")} aria-label="Approved" />
-                          : m.status !== "Sent" && <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white/80 flex-shrink-0" aria-label="Needs approval" />}
+                        {/* Icon and status on top, so the subject gets the
+                            chip's full width and wraps by whole words. */}
+                        <span className="flex items-center gap-1">
+                          {m.status === "Draft" ? <PencilLine className="w-3 h-3 flex-shrink-0" /> : <Mail className="w-3 h-3 flex-shrink-0" />}
+                          <span className="flex-1" />
+                          {approved
+                            ? <BadgeCheck className={cn("w-3.5 h-3.5 flex-shrink-0", m.status === "Draft" || m.status === "Sent" ? "text-emerald-600" : "text-white")} aria-label="Approved" />
+                            : m.status !== "Sent" && <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white/80 flex-shrink-0" aria-label="Needs approval" />}
+                        </span>
+                        <span className="break-words hyphens-auto" lang="en-GB">{m.subject ?? m.name}</span>
                       </button>
                     );
                   }
@@ -133,18 +145,13 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                       onKeyDown={ev => { if (ev.key === "Enter") onOpenPhase(p); }}
                       title={`${p.title}${p.offers.length ? ` — ${p.offers.join(" · ")}` : ""}${group ? ` · ${group}` : ""} — drag to move, drag the end to stretch`}
                       className={cn(
-                        "absolute pointer-events-auto touch-none cursor-grab flex items-center gap-1.5 text-sm font-semibold overflow-hidden shadow-sm",
+                        "relative self-start pointer-events-auto touch-none cursor-grab flex items-center gap-1.5 text-sm leading-tight font-semibold shadow-sm",
                         PHASE_TONE.bar,
-                        seg.continuesBefore ? "rounded-l-none" : "rounded-l-lg",
-                        seg.continuesAfter ? "rounded-r-none" : "rounded-r-lg",
+                        seg.continuesBefore ? "rounded-l-none ml-0" : "rounded-l-lg ml-[3px]",
+                        seg.continuesAfter ? "rounded-r-none mr-0" : "rounded-r-lg mr-[3px]",
                         p.endDate < today && "opacity-60",
                       )}
-                      style={{
-                        left: `calc(${(seg.startCol / 7) * 100}% + ${seg.continuesBefore ? 0 : 3}px)`,
-                        width: `calc(${((seg.endCol - seg.startCol + 1) / 7) * 100}% - ${(seg.continuesBefore ? 0 : 3) + (seg.continuesAfter ? 0 : 3)}px)`,
-                        top: laneTop(seg.lane),
-                        height: BAR_PX,
-                      }}
+                      style={place}
                     >
                       {!seg.continuesBefore && seg.endCol > seg.startCol && (
                         <span
@@ -153,13 +160,16 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                           aria-hidden
                         />
                       )}
-                      <span className="truncate pl-2">{seg.continuesBefore ? "… " : ""}{p.title}</span>
-                      {group && (
-                        <span className="flex-shrink-0 inline-flex items-center gap-0.5 rounded-full bg-white/25 px-1.5 text-[11px] font-bold">
-                          <Users className="w-3 h-3" />{group}
-                        </span>
-                      )}
-                      <span className="flex-1" />
+                      {/* The full name, wrapping when the bar is short — on a
+                          continuing segment too, so it is never cut off. */}
+                      <span className="flex-1 min-w-0 pl-2 py-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
+                        <span className="break-words hyphens-auto" lang="en-GB">{seg.continuesBefore ? "… " : ""}{p.title}</span>
+                        {group && (
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-white/25 px-1.5 text-[11px] font-bold">
+                            <Users className="w-3 h-3" />{group}
+                          </span>
+                        )}
+                      </span>
                       {!seg.continuesAfter && !fixedDates && (
                         <span
                           onPointerDown={ev => start(ev, p, "resize-end")}
