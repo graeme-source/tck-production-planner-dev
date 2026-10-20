@@ -1,6 +1,8 @@
 import React, { ReactNode, useCallback, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { TeamListsPanelSection } from "@/components/team-lists/team-lists-dashboard";
+import { LayoutTeamListDock } from "@/components/team-lists/team-list-dock";
+import { useTeamListDock } from "@/hooks/use-team-list-dock";
 import { motion, AnimatePresence } from "framer-motion";
 import { RecordImprovementModal } from "@/components/record-improvement-modal";
 import { RecordIssueModal } from "@/components/record-issue-modal";
@@ -932,7 +934,10 @@ export function Layout({ children }: { children: ReactNode }) {
             pull-to-refresh (which reloaded mid-shift — Graeme, 2026-09-07). */}
         {/* With a mouse, the right gutter clears the green Quick actions
             tab (44 px) so it never sits on top of a page's controls. */}
-        <div id="app-main-scroll" ref={mainScrollRef} className={cn("flex-1 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative", !accountantOnly && quickActionsHandleStyle(pointerKind) === "tab" && "pr-14 md:pr-14")}>
+        {/* The page and, when open, the team list dock beside it — the page
+            narrows to make room, like the left menu (Graeme, 2026-10-20). */}
+        <div className="flex-1 flex min-h-0">
+        <div id="app-main-scroll" ref={mainScrollRef} className={cn("flex-1 min-w-0 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative", !accountantOnly && quickActionsHandleStyle(pointerKind) === "tab" && "pr-14 md:pr-14")}>
           {/* Weekly lean lesson reminder — every main page, until completed.
               Not for accountants: they're external, the lean curriculum and
               the rest of the team machinery aren't theirs (Graeme,
@@ -950,6 +955,8 @@ export function Layout({ children }: { children: ReactNode }) {
           >
             {children}
           </motion.div>
+        </div>
+        {!accountantOnly && <LayoutTeamListDock />}
         </div>
       </main>
 
@@ -1054,6 +1061,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   onOpenIncident?: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const { openDock } = useTeamListDock();
   const openTodoCount = useMyOpenTodoCount();
   const tour = useSwipePanelTour(open);
   const onOpenChange = useCallback((next: boolean) => setOpen(next), []);
@@ -1119,7 +1127,9 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
             </button>
           ))}
         </div>
-        {!onStation && <TeamListsPanelSection onNavigate={() => setOpen(false)} />}
+        {/* A list opens in the docked panel, not the full page (Graeme,
+            2026-10-20); "All lists" still goes to the page. */}
+        {!onStation && <TeamListsPanelSection onNavigate={() => setOpen(false)} onOpenList={id => { setOpen(false); openDock(id); }} />}
       </SwipePanel>
       <SwipePanelTourCard tour={tour} />
     </>
