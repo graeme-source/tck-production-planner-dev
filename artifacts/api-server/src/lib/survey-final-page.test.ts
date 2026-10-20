@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import type { CycleConfig } from "@workspace/marketing-calendar";
 import { FINAL_LINK_PRESETS, currentOfferText, normaliseFinalLink, publicFinalPage, type FinalPageRow } from "./survey-final-page";
 
 describe("normaliseFinalLink — only our shop", () => {
@@ -28,36 +27,22 @@ describe("normaliseFinalLink — only our shop", () => {
   });
 });
 
-const offer = (id: number, name: string, featuresProduct = false) => ({
-  id, code: `O${id}`, name, tag: null, colour: "green", featuresProduct, subjects: {},
-});
-const config: Pick<CycleConfig, "startDate" | "weeklyPlan" | "pauses" | "offers"> = {
-  startDate: "2026-10-12",
-  weeklyPlan: ["launch", null, "follow_up", "new_angle", "last_call", "free_slot", null],
-  offers: [offer(1, "Free pack on orders over £39.95"), offer(2, "£5 off (Product)", true)],
-  pauses: [{ id: 1, name: "Black Friday", startDate: "2026-11-01", endDate: "2026-12-04" }],
-};
+const phases = [
+  { startDate: "2026-10-12", endDate: "2026-10-18", offers: ["Free pack on orders over £39.95"], customerGroup: "all" },
+  { startDate: "2026-10-19", endDate: "2026-10-25", offers: ["£5 off (Product)", "Free gravy pot"], customerGroup: "all" },
+  { startDate: "2026-10-15", endDate: "2026-10-15", offers: ["New customers 20% off"], customerGroup: "new" },
+];
 
-describe("currentOfferText — this week's offer, or nothing", () => {
-  it("gives the week's offer wording", () => {
-    expect(currentOfferText({ config, configured: true, today: "2026-10-15", weekProduct: null }))
-      .toBe("Free pack on orders over £39.95");
+describe("currentOfferText — today's offer from the calendar's phases, or nothing", () => {
+  it("gives the offers running today for everyone", () => {
+    expect(currentOfferText({ phases, today: "2026-10-15" })).toBe("Free pack on orders over £39.95");
+    expect(currentOfferText({ phases, today: "2026-10-21" })).toBe("Free gravy pot");
   });
 
-  it("fills the week's product", () => {
-    expect(currentOfferText({ config, configured: true, today: "2026-10-21", weekProduct: "Chilli Beef" }))
-      .toBe("£5 off Chilli Beef");
-  });
-
-  it("falls back to null when the offer needs a product and none is set", () => {
-    expect(currentOfferText({ config, configured: true, today: "2026-10-21", weekProduct: null })).toBeNull();
-  });
-
-  it("falls back to null when the plan isn't set up, the week is paused, before the cycle, or there are no offers", () => {
-    expect(currentOfferText({ config, configured: false, today: "2026-10-15", weekProduct: null })).toBeNull();
-    expect(currentOfferText({ config, configured: true, today: "2026-11-10", weekProduct: null })).toBeNull();
-    expect(currentOfferText({ config, configured: true, today: "2026-10-01", weekProduct: null })).toBeNull();
-    expect(currentOfferText({ config: { ...config, offers: [] }, configured: true, today: "2026-10-15", weekProduct: null })).toBeNull();
+  it("is null when nothing runs today, or only a (Product) placeholder would show", () => {
+    expect(currentOfferText({ phases, today: "2026-11-10" })).toBeNull();
+    expect(currentOfferText({ phases: [{ ...phases[1], offers: ["£5 off (Product)"] }], today: "2026-10-21" })).toBeNull();
+    expect(currentOfferText({ phases: [], today: "2026-10-15" })).toBeNull();
   });
 });
 

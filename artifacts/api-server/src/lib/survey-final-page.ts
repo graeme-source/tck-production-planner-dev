@@ -1,17 +1,15 @@
 /**
  * The optional final page of a customer survey (Graeme, 2026-10-16): shown
  * on the Shopify feedback page once the customer submits — a heading, a
- * short formatted body, one big button and, if chosen, this week's offer
- * from the email plan. Off by default; switched on per survey.
+ * short formatted body, one big button and, if chosen, today's offer
+ * from the marketing calendar. Off by default; switched on per survey.
  *
  * Pure rules only (link allow-list, offer wording, what the public API
  * sends). The body HTML goes through the same sanitiser as the intro.
  * Objective I (customer feedback shapes what we launch — and the moment
  * after feedback is a good time to order).
  */
-import {
-  fillProduct, offerIndexForWeek, startOfWeek, PRODUCT_TOKEN, type CycleConfig,
-} from "@workspace/marketing-calendar";
+import { currentPublicOffers } from "@workspace/marketing-calendar";
 import { sanitiseSurveyIntroHtml } from "./survey-intro";
 
 /** The shop the button may point at. Nothing else is allowed. */
@@ -47,26 +45,18 @@ export function normaliseFinalLink(raw: string | null | undefined): string | nul
 }
 
 /**
- * This week's offer as customers read it, from the email plan — or null
- * when there isn't one (plan not set up, a paused week, no offers, or the
- * offer names the week's product and no product is set for the week).
+ * Today's offer as customers read it, from the marketing calendar's phases
+ * (2026-10-20 — the weekly offer cycle it used to come from is retired):
+ * the offers on phases running today for ALL customers, joined with " · " —
+ * or null when there isn't one. An offer still carrying a "(Product)"
+ * placeholder is never shown (currentPublicOffers).
  */
 export function currentOfferText(input: {
-  config: Pick<CycleConfig, "startDate" | "weeklyPlan" | "pauses" | "offers">;
-  configured: boolean;
+  phases: ReadonlyArray<{ startDate: string; endDate: string; offers: readonly string[]; customerGroup: string }>;
   today: string;
-  weekProduct: string | null;
 }): string | null {
-  if (!input.configured) return null;
-  const idx = offerIndexForWeek(startOfWeek(input.today), input.config);
-  if (idx == null) return null;
-  const offer = input.config.offers[idx];
-  if (!offer) return null;
-  const text = fillProduct(offer.name, offer.featuresProduct ? input.weekProduct : null).trim();
-  if (!text) return null;
-  // Never show a customer the "(Product)" placeholder.
-  if (text.toLowerCase().includes(PRODUCT_TOKEN.toLowerCase())) return null;
-  return text;
+  const offers = currentPublicOffers(input.phases, input.today);
+  return offers.length ? offers.join(" · ") : null;
 }
 
 export interface FinalPageRow {

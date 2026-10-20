@@ -980,7 +980,7 @@ function FromCollectionDialog({ onClose, onBuilt }: {
 
 interface FinalPageOptions { presets: LinkPreset[]; currentOffer: string | null }
 
-/** Link presets + this week's offer from the email plan (read-only). */
+/** Link presets + today's offer from the marketing calendar's phases (read-only). */
 function useFinalPageOptions() {
   return useQuery<FinalPageOptions>({
     queryKey: ["survey-final-page-options"],
@@ -1311,14 +1311,14 @@ function FinalPageEditor({ value, onChange, presets, currentOffer, problems }: {
 
           <label className="flex items-start justify-between gap-4 rounded-lg border border-border p-3 cursor-pointer">
             <span>
-              <span className="block text-sm font-semibold">Show this week's offer</span>
+              <span className="block text-sm font-semibold">Show today's offer</span>
               <span className="block text-sm text-muted-foreground">
                 {currentOffer
-                  ? <>From the email plan: <span className="font-medium text-foreground">{currentOffer}</span></>
-                  : "The email plan has no offer this week, so nothing extra shows. It updates by itself each week."}
+                  ? <>From the marketing calendar: <span className="font-medium text-foreground">{currentOffer}</span></>
+                  : "No phase on the marketing calendar has an offer for all customers today, so nothing extra shows. It updates by itself."}
               </span>
             </span>
-            <Switch checked={value.showOffer} onCheckedChange={(showOffer) => set({ showOffer })} aria-label="Show this week's offer" />
+            <Switch checked={value.showOffer} onCheckedChange={(showOffer) => set({ showOffer })} aria-label="Show today's offer" />
           </label>
 
           {problems.length > 0 && (
