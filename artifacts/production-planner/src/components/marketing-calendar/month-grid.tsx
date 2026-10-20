@@ -9,8 +9,10 @@
  * whose rows grow to fit, so an email's full subject wraps over two or three
  * lines inside its day and a short phase bar wraps its full name.
  *
- * Email chips: a draft is dashed, scheduled solid, sent faded. A green tick =
- * Approved; an amber dot = Needs approval.
+ * Email chips: a draft is dashed, scheduled solid, sent grey. A green tick =
+ * Approved; an amber dot = Needs approval. Today's cell is ringed and tinted
+ * green with a "Today" label. The status shows on the chip itself — there is
+ * no separate approvals list (Graeme, 2026-10-20).
  */
 import { useMemo } from "react";
 import { BadgeCheck, Mail, PencilLine, Users } from "lucide-react";
@@ -80,6 +82,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                       className={cn(
                         "relative flex flex-col items-start justify-start text-left border-r border-border last:border-r-0 px-1.5 pt-1 hover:bg-secondary/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                         !inMonth && "bg-secondary/30",
+                        isToday && "bg-primary/10 ring-2 ring-inset ring-primary",
                       )}
                     >
                       <span className={cn(
@@ -88,6 +91,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                       )}>
                         {Number(day.slice(8, 10))}
                       </span>
+                      {isToday && <span className="absolute top-1.5 right-1.5 text-[10px] font-bold uppercase text-primary">Today</span>}
                     </button>
                   );
                 })}

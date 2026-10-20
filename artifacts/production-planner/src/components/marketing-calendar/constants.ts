@@ -1,7 +1,7 @@
 /**
  * Colours and small helpers for the marketing calendar (2026-10-20: phases +
  * Klaviyo emails). Phases are VIOLET bars; Klaviyo emails are TEAL chips —
- * a draft dashed, a scheduled one solid, a sent one faded.
+ * a draft dashed, a scheduled one solid, a sent one grey.
  */
 
 export const PHASE_TONE = {
@@ -14,7 +14,7 @@ export const PHASE_TONE = {
 export const KLAVIYO_TONE = {
   solid: "bg-teal-600 text-white",
   draft: "border-2 border-dashed border-teal-600/70 bg-teal-500/10 text-teal-900 dark:text-teal-100",
-  sent: "bg-teal-500/15 text-teal-900/70 dark:text-teal-100/70",
+  sent: "bg-secondary text-muted-foreground border border-border",
   icon: "text-teal-600",
 };
 
