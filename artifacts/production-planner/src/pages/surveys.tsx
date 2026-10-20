@@ -7,17 +7,24 @@
  * The public survey page itself lives on Shopify — this page only manages
  * surveys and shows what came back.
  */
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, ArrowLeft, ArrowUp, ArrowDown, Trash2, Copy, Check,
   QrCode, BarChart2, Pencil, Star, AlertTriangle, Download, ExternalLink,
-  MessagesSquare, Lock, LockOpen, Eye, Boxes, Filter, Mail, ExternalLink as ExternalLinkIcon,
+  MessagesSquare, Lock, LockOpen, Boxes, Filter, Mail, ExternalLink as ExternalLinkIcon, Search, X, GripVertical, Undo2, Redo2,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { activeRecipes } from "@/lib/recipe-archive";
+import { isDraftRecipe, notArchivedRecipes } from "@/lib/recipe-archive";
+import { filterRecipeOptions } from "@/lib/recipe-option-search";
+import { RecipeDraftBadge } from "@/components/recipe-archive";
 import { toast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
+import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { canRedo, canUndo, moveItem, record, redo, startHistory, undo, type History } from "@/lib/undo-history";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -69,7 +76,7 @@ interface SurveyListItem {
   collectionTitle: string | null;
 }
 
-interface RecipeOption { id: number; name: string; category: string | null; imageUrl: string | null; archivedAt?: string | null }
+interface RecipeOption { id: number; name: string; category: string | null; imageUrl: string | null; archivedAt?: string | null; isDraft?: boolean | null }
 
 interface CollectionOption { id: number; title: string }
 
@@ -197,30 +204,117 @@ function RecipePicker({ recipes, value, onChange }: {
   value: number | null;
   onChange: (id: number | null) => void;
 }) {
+  // A search box rather than a dropdown (Graeme, 20 Oct: the long dropdown
+  // couldn't be scrolled on the iPad, so later recipes were unreachable).
+  // Opens inline, not as a floating menu, so it scrolls with the page.
   // Archived recipes (migration 0141) aren't offered, except the one this
-  // question already uses.
-  const groups = useMemo(() => groupRecipeOptions(activeRecipes(recipes, [value])), [recipes, value]);
+  // question already uses; drafts are — surveys are where they're trialled.
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const offered = useMemo(() => notArchivedRecipes(recipes, [value]), [recipes, value]);
+  const matches = useMemo(() => filterRecipeOptions(offered, query), [offered, query]);
+  const groups = useMemo(() => groupRecipeOptions(matches), [matches]);
+  const selected = value == null ? null : recipes.find(r => r.id === value) ?? null;
+
+  const pick = (id: number | null) => {
+    onChange(id);
+    setOpen(false);
+    setQuery("");
+  };
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex w-full min-h-10 items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-left text-sm"
+      >
+        <span className={cn("flex items-center gap-2 min-w-0", !selected && "text-muted-foreground")}>
+          <span className="break-words">{selected ? selected.name : "No recipe"}</span>
+          {selected && isDraftRecipe(selected) && <RecipeDraftBadge />}
+        </span>
+        <Search className="w-4 h-4 shrink-0 opacity-50" />
+      </button>
+    );
+  }
+
   return (
-    <Select
-      value={value == null ? "none" : String(value)}
-      onValueChange={(v) => onChange(v === "none" ? null : Number(v))}
-    >
-      <SelectTrigger className="w-full">
-        <SelectValue placeholder="No recipe" />
-      </SelectTrigger>
-      <SelectContent>
-        <SelectItem value="none">No recipe</SelectItem>
+    <div className="rounded-md border border-input bg-background">
+      <div className="flex items-center gap-2 border-b border-border px-3">
+        <Search className="w-4 h-4 shrink-0 opacity-50" />
+        <input
+          autoFocus
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") { setOpen(false); setQuery(""); }
+            if (e.key === "Enter" && matches.length > 0) { e.preventDefault(); pick(matches[0].id); }
+          }}
+          placeholder="Type to find a recipe…"
+          aria-label="Search recipes"
+          className="h-11 w-full bg-transparent text-base sm:text-sm outline-none placeholder:text-muted-foreground"
+        />
+        <button
+          type="button"
+          onClick={() => { setOpen(false); setQuery(""); }}
+          aria-label="Close recipe search"
+          className="p-1 text-muted-foreground hover:text-foreground"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="max-h-[50dvh] overflow-y-auto overscroll-contain p-1">
+        {!query.trim() && (
+          <button type="button" onClick={() => pick(null)} className="w-full rounded-sm px-2 py-2 text-left text-sm text-muted-foreground hover:bg-accent">
+            No recipe
+          </button>
+        )}
         {groups.map(g => (
-          <SelectGroup key={g.label}>
-            <SelectLabel>{g.label}</SelectLabel>
+          <div key={g.label}>
+            <div className="px-2 pt-2 pb-1 text-xs font-semibold text-muted-foreground">{g.label}</div>
             {g.recipes.map(r => (
-              <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>
+              <button
+                key={r.id}
+                type="button"
+                onClick={() => pick(r.id)}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 rounded-sm px-2 py-2 text-left text-sm hover:bg-accent",
+                  r.id === value && "bg-primary/10 font-medium",
+                )}
+              >
+                <span className="break-words">{r.name}</span>
+                <span className="flex items-center gap-1 shrink-0">
+                  {isDraftRecipe(r) && <RecipeDraftBadge />}
+                  {r.id === value && <Check className="w-4 h-4 text-primary" />}
+                </span>
+              </button>
             ))}
-          </SelectGroup>
+          </div>
         ))}
-      </SelectContent>
-    </Select>
+        {matches.length === 0 && (
+          <p className="px-2 py-4 text-center text-sm text-muted-foreground">No recipes match “{query.trim()}”.</p>
+        )}
+      </div>
+    </div>
   );
+}
+
+// ── Preview = the real thing ───────────────────────────────────────────────
+// Graeme, 20 Oct: the in-app preview showed nothing the builder doesn't, so
+// Preview opens the survey at its public link in a new tab instead.
+
+function openSurveyLink(survey: { shareUrl: string; status: SurveyStatus }, opts: { unsaved?: boolean } = {}) {
+  if (survey.status === "draft") {
+    toast({
+      title: "Drafts aren't on the website yet",
+      description: "The link only works once the survey is open — open it from the survey list, then Preview.",
+    });
+    return;
+  }
+  window.open(survey.shareUrl, "_blank", "noopener,noreferrer");
+  if (opts.unsaved) {
+    toast({ title: "Opened the last saved version", description: "Save to see your latest changes at the link." });
+  }
 }
 
 // ── Share dialog (URL + QR) ────────────────────────────────────────────────
@@ -884,26 +978,6 @@ function FromCollectionDialog({ onClose, onBuilt }: {
   );
 }
 
-// ── Customer preview ───────────────────────────────────────────────────────
-// An in-planner approximation of what the Shopify widget renders: same
-// content, question order, images and controls, in a narrow customer-width
-// card. Controls are interactive so the flow can be felt out, but nothing is
-// ever submitted from here. (The real thing lives in the tck-theme survey
-// section — this is a preview, not a pixel-perfect copy.)
-
-interface PreviewQuestion {
-  key: string;
-  type: QuestionType;
-  prompt: string;
-  required: boolean;
-  max: number;
-  options: string[];
-  recipe: { name: string; imageUrl: string | null } | null;
-}
-
-interface PreviewFinalPage { heading: string | null; html: string | null; button: { label: string; url: string } | null; offer: string | null }
-interface PreviewData { title: string; introHtml: string | null; questions: PreviewQuestion[]; finalPage: PreviewFinalPage | null }
-
 interface FinalPageOptions { presets: LinkPreset[]; currentOffer: string | null }
 
 /** Link presets + this week's offer from the email plan (read-only). */
@@ -913,225 +987,6 @@ function useFinalPageOptions() {
     queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/final-page-options`, { credentials: "include" }), "Failed to load final page options"),
     staleTime: 5 * 60 * 1000,
   });
-}
-
-/** What the customer would see after submitting (null = page switched off). */
-function toPreviewFinalPage(fp: FinalPageDraft, currentOffer: string | null): PreviewFinalPage | null {
-  if (!fp.enabled) return null;
-  const label = fp.buttonLabel.trim();
-  return {
-    heading: fp.heading.trim() || null,
-    html: fp.html || null,
-    button: label && isShopLink(fp.buttonUrl) ? { label, url: fp.buttonUrl.trim() } : null,
-    offer: fp.showOffer ? currentOffer : null,
-  };
-}
-
-/** The final page as the Shopify page shows it after a successful submit. */
-function FinalPagePreview({ page }: { page: PreviewFinalPage }) {
-  return (
-    <div className="text-center space-y-4 py-4">
-      {page.heading && <h2 className="text-2xl font-bold tck-font-heading">{page.heading}</h2>}
-      {page.html && <SurveyRichText html={page.html} className="text-sm text-muted-foreground" />}
-      {page.offer && (
-        <div className="rounded-xl border-2 border-dashed border-[#7cb342] bg-[#7cb342]/10 px-4 py-3">
-          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">This week's offer</p>
-          <p className="text-base font-semibold mt-1">{page.offer}</p>
-        </div>
-      )}
-      {page.button && (
-        <a
-          href={page.button.url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="block w-full rounded-full bg-[#7cb342] px-6 py-4 text-lg font-bold text-white hover:opacity-90"
-        >
-          {page.button.label}
-        </a>
-      )}
-    </div>
-  );
-}
-
-function PreviewStars({ max }: { max: number }) {
-  const [value, setValue] = useState(0);
-  return (
-    <div className="flex gap-1">
-      {Array.from({ length: max }, (_, i) => (
-        <button key={i} type="button" onClick={() => setValue(i + 1)} className="p-0.5">
-          <Star className={cn(
-            "w-7 h-7 transition-colors",
-            i < value ? "fill-amber-400 text-amber-400" : "text-muted-foreground/40",
-          )} />
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function PreviewSlider() {
-  const [value, setValue] = useState<number | null>(null);
-  return (
-    <div className="space-y-1">
-      <input
-        type="range" min={0} max={100} step={1}
-        value={value ?? 50}
-        onChange={(e) => setValue(Number(e.target.value))}
-        className="w-full accent-primary"
-      />
-      <p className="text-sm text-muted-foreground text-right">{value == null ? "Slide to answer" : `${value}%`}</p>
-    </div>
-  );
-}
-
-function PreviewOptions({ options, multi }: { options: string[]; multi: boolean }) {
-  const [selected, setSelected] = useState<string[]>([]);
-  const toggle = (opt: string) => setSelected(prev =>
-    multi
-      ? (prev.includes(opt) ? prev.filter(o => o !== opt) : [...prev, opt])
-      : [opt]);
-  return (
-    <div className="space-y-1.5">
-      {options.map(opt => (
-        <button
-          key={opt} type="button" onClick={() => toggle(opt)}
-          className={cn(
-            "w-full text-left text-sm rounded-lg border px-3 py-2 transition-colors",
-            selected.includes(opt) ? "border-primary bg-primary/10" : "border-border bg-background",
-          )}
-        >
-          {opt}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function PreviewRank({ options }: { options: string[] }) {
-  const [order, setOrder] = useState(options);
-  const move = (idx: number, dir: -1 | 1) => setOrder(prev => {
-    const target = idx + dir;
-    if (target < 0 || target >= prev.length) return prev;
-    const next = [...prev];
-    [next[idx], next[target]] = [next[target], next[idx]];
-    return next;
-  });
-  return (
-    <div className="space-y-1.5">
-      {order.map((opt, i) => (
-        <div key={opt} className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-1.5 text-sm">
-          <span className="w-5 h-5 rounded-full bg-primary/15 text-primary text-xs font-semibold flex items-center justify-center flex-shrink-0">
-            {i + 1}
-          </span>
-          <span className="flex-1">{opt}</span>
-          <button type="button" disabled={i === 0} onClick={() => move(i, -1)} className="p-1 disabled:opacity-30">
-            <ArrowUp className="w-3.5 h-3.5" />
-          </button>
-          <button type="button" disabled={i === order.length - 1} onClick={() => move(i, 1)} className="p-1 disabled:opacity-30">
-            <ArrowDown className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function PreviewQuestionCard({ q }: { q: PreviewQuestion }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-      {q.recipe && (
-        <div className="flex items-center gap-3">
-          {q.recipe.imageUrl && (
-            <img src={q.recipe.imageUrl} alt={q.recipe.name} className="w-12 h-12 rounded-lg object-cover border border-border" />
-          )}
-          <span className="font-semibold text-sm">{q.recipe.name}</span>
-        </div>
-      )}
-      <p className="text-sm font-medium">
-        {q.prompt || <span className="text-muted-foreground italic">(no prompt yet)</span>}
-        {q.required && <span className="text-destructive ml-1">*</span>}
-      </p>
-      {q.type === "rating" && <PreviewStars max={q.max} />}
-      {q.type === "slider" && <PreviewSlider />}
-      {q.type === "choice" && <PreviewOptions options={q.options} multi={false} />}
-      {q.type === "multi" && <PreviewOptions options={q.options} multi />}
-      {q.type === "text" && <Textarea rows={3} placeholder="The customer types here…" />}
-      {q.type === "rank" && <PreviewRank options={q.options} />}
-    </div>
-  );
-}
-
-function SurveyPreviewDialog({ data, onClose }: { data: PreviewData | null; onClose: () => void }) {
-  const [submitted, setSubmitted] = useState(false);
-  if (!data) return null;
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-md max-h-[92dvh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-            <Eye className="w-4 h-4" /> Customer preview — nothing is recorded
-          </DialogTitle>
-        </DialogHeader>
-        {submitted && data.finalPage ? (
-          <div className="space-y-3">
-            <FinalPagePreview page={data.finalPage} />
-            <Button variant="outline" className="w-full" onClick={() => setSubmitted(false)}>
-              <ArrowLeft className="w-4 h-4 mr-2" /> Back to the questions
-            </Button>
-          </div>
-        ) : (
-        <div className="space-y-3">
-          <div className="text-center space-y-2 pb-1">
-            <h2 className="text-lg font-bold uppercase tck-font-heading">{data.title || "Untitled survey"}</h2>
-            {data.introHtml && <SurveyRichText html={data.introHtml} className="text-sm text-muted-foreground" />}
-          </div>
-          {data.questions.map(q => <PreviewQuestionCard key={q.key} q={q} />)}
-          <Button
-            className="w-full"
-            onClick={() => {
-              if (data.finalPage) setSubmitted(true);
-              else toast({ title: "Preview only", description: "Nothing is recorded from the preview." });
-            }}
-          >
-            Send feedback
-          </Button>
-          {data.finalPage && (
-            <p className="text-center text-xs text-muted-foreground">Tap Send feedback to see the final page. Nothing is recorded.</p>
-          )}
-        </div>
-        )}
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-/** List-card preview: fetches the saved survey, then shows the dialog. */
-function SavedSurveyPreview({ surveyId, onClose }: { surveyId: number; onClose: () => void }) {
-  const { data, isLoading } = useQuery<SurveyDetail>({
-    queryKey: ["survey", surveyId],
-    queryFn: async () => jsonOrThrow(await fetch(`${BASE}/api/surveys/${surveyId}`, { credentials: "include" }), "Failed to load survey"),
-  });
-  const { data: options } = useFinalPageOptions();
-  if (isLoading || !data) return null;
-  return (
-    <SurveyPreviewDialog
-      onClose={onClose}
-      data={{
-        title: data.title,
-        introHtml: data.introHtml,
-        finalPage: toPreviewFinalPage(finalDraftFrom(data), options?.currentOffer ?? null),
-        questions: data.questions.map(q => ({
-          key: String(q.id),
-          type: q.type,
-          prompt: q.prompt,
-          required: q.required,
-          max: q.max,
-          options: q.options ?? [],
-          recipe: q.recipe ? { name: q.recipe.name, imageUrl: q.recipe.imageUrl } : null,
-        })),
-      }}
-    />
-  );
 }
 
 // ── Builder ────────────────────────────────────────────────────────────────
@@ -1154,14 +1009,43 @@ function toDraftQuestions(questions: ServerQuestion[]): DraftQuestion[] {
   }));
 }
 
-function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst, isLast }: {
+/** A question card that can be dragged by its grip (dnd-kit; works with
+ *  touch on the iPad because the grip has touch-action: none). */
+function SortableQuestion({ id, children }: { id: string; children: (dragHandle: ReactNode) => ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  return (
+    <div
+      ref={setNodeRef}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
+      className={cn(isDragging && "z-10 opacity-80 shadow-lg")}
+    >
+      {children(
+        <button
+          type="button"
+          ref={setActivatorNodeRef}
+          {...attributes}
+          {...listeners}
+          aria-label="Drag to reorder"
+          title="Drag to reorder"
+          className="touch-none cursor-grab active:cursor-grabbing rounded p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <GripVertical className="w-5 h-5" />
+        </button>,
+      )}
+    </div>
+  );
+}
+
+function QuestionEditor({ question, recipes, onChange, onRemove, onDuplicate, onMove, isFirst, isLast, dragHandle }: {
   question: DraftQuestion;
   recipes: RecipeOption[];
   onChange: (q: DraftQuestion) => void;
   onRemove: () => void;
+  onDuplicate: () => void;
   onMove: (dir: -1 | 1) => void;
   isFirst: boolean;
   isLast: boolean;
+  dragHandle?: ReactNode;
 }) {
   const recipe = question.recipeId != null ? recipes.find(r => r.id === question.recipeId) : undefined;
   const needsOptions = OPTION_TYPES.includes(question.type);
@@ -1178,7 +1062,8 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
   return (
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       <div className="flex items-start gap-2">
-        <div className="flex-1 space-y-3">
+        {dragHandle && <div className="pt-1.5">{dragHandle}</div>}
+        <div className="flex-1 min-w-0 space-y-3">
           <div className="flex flex-wrap gap-3">
             <div className="w-44">
               <Select
@@ -1219,7 +1104,10 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onMove, isFirst
           <Button variant="ghost" size="icon" className="h-7 w-7" disabled={isLast} onClick={() => onMove(1)}>
             <ArrowDown className="w-4 h-4" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onRemove}>
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onDuplicate} aria-label="Duplicate question" title="Duplicate question">
+            <Copy className="w-4 h-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={onRemove} aria-label="Delete question" title="Delete question">
             <Trash2 className="w-4 h-4" />
           </Button>
         </div>
@@ -1482,7 +1370,6 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
     })));
   const [loadedFor, setLoadedFor] = useState<number | null>(null);
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
 
   const { data: recipes } = useQuery<RecipeOption[]>({
     queryKey: ["survey-recipe-options"],
@@ -1511,6 +1398,92 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
     setSavedSnapshot(formSnapshot(hydrated));
     setLoadedFor(existing.id);
   }
+
+  // ── Undo / redo (Graeme, 20 Oct: "undo a change and go back through if
+  // I've accidentally deleted something"). Every form change is recorded;
+  // quick typing joins one step, while delete / duplicate / move / add are
+  // always their own step (separateNext).
+  type BuilderForm = { title: string; intro: string; questions: DraftQuestion[]; finalPage: FinalPageDraft };
+  const historyRef = useRef<History<BuilderForm>>(startHistory({ title, intro, questions, finalPage }));
+  const historyFor = useRef<number | null>(loadedFor);
+  const separateNext = useRef(false);
+  const [, rerender] = useReducer((n: number) => n + 1, 0);
+
+  useEffect(() => {
+    const form = { title, intro, questions, finalPage };
+    const h = historyRef.current;
+    if (historyFor.current !== loadedFor) {
+      // A saved survey just loaded: that's the starting point, not a change.
+      historyFor.current = loadedFor;
+      historyRef.current = startHistory(form);
+      rerender();
+      return;
+    }
+    const p = h.present;
+    if (p.title === title && p.intro === intro && p.questions === questions && p.finalPage === finalPage) return;
+    historyRef.current = record(h, form, Date.now(), separateNext.current);
+    separateNext.current = false;
+    rerender();
+  }, [title, intro, questions, finalPage, loadedFor]);
+
+  const restore = (h: History<BuilderForm>) => {
+    historyRef.current = h;
+    setTitle(h.present.title);
+    setIntro(h.present.intro);
+    setQuestions(h.present.questions);
+    setFinalPage(h.present.finalPage);
+    rerender();
+  };
+  const doUndo = useCallback(() => restore(undo(historyRef.current)), []);
+  const doRedo = useCallback(() => restore(redo(historyRef.current)), []);
+
+  // Cmd/Ctrl+Z and Shift+Cmd/Ctrl+Z (or Ctrl+Y) — outside text boxes, which
+  // keep their own typing undo.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest("input, textarea, select, [contenteditable='true']"))) return;
+      const k = e.key.toLowerCase();
+      if (k === "z" && !e.shiftKey) { e.preventDefault(); doUndo(); }
+      else if ((k === "z" && e.shiftKey) || k === "y") { e.preventDefault(); doRedo(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [doUndo, doRedo]);
+
+  /** Structural question edits: always their own undo step. */
+  const changeQuestions = (fn: (qs: DraftQuestion[]) => DraftQuestion[]) => {
+    separateNext.current = true;
+    setQuestions(fn);
+  };
+  const removeQuestion = (key: string) => {
+    changeQuestions(qs => qs.filter(x => x.key !== key));
+    toast({
+      title: "Question deleted",
+      action: <ToastAction altText="Undo delete" onClick={doUndo}>Undo</ToastAction>,
+    });
+  };
+  const duplicateQuestion = (key: string) => changeQuestions(qs => {
+    const idx = qs.findIndex(x => x.key === key);
+    if (idx < 0) return qs;
+    // A fresh question (no id): saving creates it rather than moving answers.
+    const copy: DraftQuestion = { ...qs[idx], key: nextKey(), id: undefined, options: [...qs[idx].options] };
+    return [...qs.slice(0, idx + 1), copy, ...qs.slice(idx + 1)];
+  });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+  const onDragEnd = (e: DragEndEvent) => {
+    if (!e.over || e.active.id === e.over.id) return;
+    changeQuestions(qs => moveItem(
+      qs,
+      qs.findIndex(q => q.key === e.active.id),
+      qs.findIndex(q => q.key === e.over!.id),
+    ));
+  };
 
   const save = useMutation({
     mutationFn: async () => {
@@ -1580,8 +1553,19 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
         </Button>
         <div className="flex flex-wrap items-center gap-2">
           <SaveState saving={save.isPending} dirty={isDirty} isNew={surveyId == null} />
-          <Button variant="outline" onClick={() => setPreviewOpen(true)} disabled={questions.length === 0}>
-            <Eye className="w-4 h-4 mr-2" /> Preview
+          <Button variant="outline" size="icon" onClick={doUndo} disabled={!canUndo(historyRef.current)} aria-label="Undo" title="Undo (⌘Z)">
+            <Undo2 className="w-4 h-4" />
+          </Button>
+          <Button variant="outline" size="icon" onClick={doRedo} disabled={!canRedo(historyRef.current)} aria-label="Redo" title="Redo (⇧⌘Z)">
+            <Redo2 className="w-4 h-4" />
+          </Button>
+          <Button
+            variant="outline"
+            disabled={existing == null}
+            title={existing == null ? "Save the survey first — then it has a link to open" : "Open the survey at its link in a new tab"}
+            onClick={() => existing && openSurveyLink(existing, { unsaved: isDirty })}
+          >
+            <ExternalLink className="w-4 h-4 mr-2" /> Preview
           </Button>
           <Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
             {save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
@@ -1616,29 +1600,36 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
         </div>
       </div>
 
-      {questions.map((q, i) => (
-        <QuestionEditor
-          key={q.key}
-          question={q}
-          recipes={recipes ?? []}
-          isFirst={i === 0}
-          isLast={i === questions.length - 1}
-          onChange={(updated) => setQuestions(qs => qs.map(x => x.key === q.key ? updated : x))}
-          onRemove={() => setQuestions(qs => qs.filter(x => x.key !== q.key))}
-          onMove={(dir) => setQuestions(qs => {
-            const idx = qs.findIndex(x => x.key === q.key);
-            const target = idx + dir;
-            if (target < 0 || target >= qs.length) return qs;
-            const next = [...qs];
-            [next[idx], next[target]] = [next[target], next[idx]];
-            return next;
-          })}
-        />
-      ))}
+      <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+        <SortableContext items={questions.map(q => q.key)} strategy={verticalListSortingStrategy}>
+          <div className="space-y-4">
+            {questions.map((q, i) => (
+              <SortableQuestion key={q.key} id={q.key}>
+                {(dragHandle) => (
+                  <QuestionEditor
+                    question={q}
+                    recipes={recipes ?? []}
+                    isFirst={i === 0}
+                    isLast={i === questions.length - 1}
+                    dragHandle={dragHandle}
+                    onChange={(updated) => setQuestions(qs => qs.map(x => x.key === q.key ? updated : x))}
+                    onRemove={() => removeQuestion(q.key)}
+                    onDuplicate={() => duplicateQuestion(q.key)}
+                    onMove={(dir) => changeQuestions(qs => {
+                      const idx = qs.findIndex(x => x.key === q.key);
+                      return moveItem(qs, idx, idx + dir);
+                    })}
+                  />
+                )}
+              </SortableQuestion>
+            ))}
+          </div>
+        </SortableContext>
+      </DndContext>
 
       <Button
         variant="outline" className="w-full"
-        onClick={() => setQuestions(qs => [...qs, {
+        onClick={() => changeQuestions(qs => [...qs, {
           key: nextKey(), type: "rating", prompt: "", promptEdited: false, recipeId: null, options: [], required: true, max: 5,
         }])}
       >
@@ -1655,29 +1646,6 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
 
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
 
-      {previewOpen && (
-        <SurveyPreviewDialog
-          onClose={() => setPreviewOpen(false)}
-          // Built from the live draft state, so unsaved edits preview too.
-          data={{
-            title: title.trim(),
-            introHtml: intro || null,
-            finalPage: toPreviewFinalPage(finalPage, finalOptions?.currentOffer ?? null),
-            questions: questions.map(q => {
-              const recipe = q.recipeId != null ? (recipes ?? []).find(r => r.id === q.recipeId) : undefined;
-              return {
-                key: q.key,
-                type: q.type,
-                prompt: q.prompt,
-                required: q.required,
-                max: q.type === "rating" ? clampRatingMax(q.max) : q.max,
-                options: q.options.map(o => o.trim()).filter(Boolean),
-                recipe: recipe ? { name: recipe.name, imageUrl: recipe.imageUrl } : null,
-              };
-            }),
-          }}
-        />
-      )}
     </div>
   );
 }
@@ -1951,8 +1919,8 @@ function SurveyCard({ survey, onEdit, onResults, onShare, onPreview, onEmail }: 
         <Button variant="outline" size="sm" onClick={onEdit}>
           <Pencil className="w-3.5 h-3.5 mr-1.5" /> Edit
         </Button>
-        <Button variant="outline" size="sm" onClick={onPreview}>
-          <Eye className="w-3.5 h-3.5 mr-1.5" /> Preview
+        <Button variant="outline" size="sm" onClick={onPreview} title="Open the survey at its link in a new tab">
+          <ExternalLink className="w-3.5 h-3.5 mr-1.5" /> Preview
         </Button>
         <Button variant="outline" size="sm" onClick={onResults}>
           <BarChart2 className="w-3.5 h-3.5 mr-1.5" /> Results
@@ -1993,7 +1961,6 @@ type View =
 export default function Surveys() {
   const [view, setView] = useState<View>({ name: "list" });
   const [shareTarget, setShareTarget] = useState<{ id: number; title: string; shareUrl: string } | null>(null);
-  const [previewId, setPreviewId] = useState<number | null>(null);
   const [fromCollectionOpen, setFromCollectionOpen] = useState(false);
   const [emailTarget, setEmailTarget] = useState<SurveyListItem | null>(null);
 
@@ -2056,7 +2023,7 @@ export default function Surveys() {
                 onEdit={() => setView({ name: "builder", surveyId: s.id })}
                 onResults={() => setView({ name: "results", surveyId: s.id })}
                 onShare={() => setShareTarget({ id: s.id, title: s.title, shareUrl: s.shareUrl })}
-                onPreview={() => setPreviewId(s.id)}
+                onPreview={() => openSurveyLink(s)}
                 onEmail={() => setEmailTarget(s)}
               />
             ))}
@@ -2065,9 +2032,6 @@ export default function Surveys() {
       )}
 
       <ShareDialog survey={shareTarget} onClose={() => setShareTarget(null)} />
-      {previewId != null && (
-        <SavedSurveyPreview surveyId={previewId} onClose={() => setPreviewId(null)} />
-      )}
       {emailTarget != null && (
         <EmailDialog survey={emailTarget} onClose={() => setEmailTarget(null)} />
       )}

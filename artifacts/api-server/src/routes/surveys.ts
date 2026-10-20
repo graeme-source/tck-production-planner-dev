@@ -11,6 +11,7 @@ import { eq, asc, desc, inArray, sql } from "drizzle-orm";
 import * as z from "zod";
 import { surveyShareUrl } from "../lib/survey-config";
 import { getRecipeImagesByName } from "../lib/recipe-images";
+import { buildRecipeMatcher } from "../lib/recipe-name-match";
 import { questionOptions } from "../lib/survey-answers";
 import { getCollections, getCollectionProducts, getOrdersForPnl } from "../services/shopify";
 import {
@@ -427,9 +428,10 @@ router.get("/collection-template", async (req, res) => {
     if (!collection) { res.status(404).json({ error: "Collection not found" }); return; }
     if (products.length === 0) { res.status(422).json({ error: "That collection has no products" }); return; }
 
-    // Recipe links by exact name match (same rule as the images).
-    const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable);
-    const recipeByName = new Map(recipes.map(r => [r.name.trim().toLowerCase(), r.id]));
+    // Recipe links by name, tolerant of the shop's dashes, emojis and
+    // capitals (lib/recipe-name-match).
+    const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name, archivedAt: recipesTable.archivedAt }).from(recipesTable);
+    const recipeFor = buildRecipeMatcher(recipes);
 
     // Delivery dates from date-tagged orders containing these products.
     const { matchingOrders, dispatchTags } = await collectionOrderStats(new Set(products.map(p => p.id)), days);
@@ -447,7 +449,7 @@ router.get("/collection-template", async (req, res) => {
       });
     }
     for (const product of products) {
-      const recipeId = recipeByName.get(product.title.trim().toLowerCase()) ?? null;
+      const recipeId = recipeFor(product.title);
       // Approval slider by default (Graeme, 2026-08-06) — stars stay
       // available in the builder for anyone who swaps the type by hand.
       questions.push({
@@ -475,7 +477,7 @@ router.get("/collection-template", async (req, res) => {
       deliveryDates,
       matchingOrders,
       lookbackDays: days,
-      unmatchedProducts: products.filter(p => !recipeByName.has(p.title.trim().toLowerCase())).map(p => p.title),
+      unmatchedProducts: products.filter(p => recipeFor(p.title) == null).map(p => p.title),
     });
   } catch (err) {
     console.error("[surveys] collection-template failed:", err instanceof Error ? err.message : String(err));
