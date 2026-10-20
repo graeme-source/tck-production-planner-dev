@@ -8,14 +8,15 @@
  *   - Delivery dates: each one works BACKWARDS to its own deadlines; orders
  *     close BY HAND ("Close orders for 16 Oct"), and the card shows the
  *     latest day they can close (specialist ingredients pull it earlier).
- *   - Only the out-of-the-norm steps are to-dos on the owner's list (launch
+ *   - Only the out-of-the-norm steps are tickable on the box (launch
  *     checklist; per delivery: close orders, order the NEW ingredients —
  *     one tickable line each — Zapiet off, test-or-normal). Ingredients in,
  *     prep & dough, production, despatch and delivery are small dated
  *     milestones, not checkboxes (Graeme, 2026-10-08).
  *   - Closing orders queues the production from the box's SALES (preview
  *     first, one confirm) — components/test-boxes/delivery-production.tsx.
- *   - The box sits on the marketing calendar with its VIP launch email.
+ *   - The box sits on the marketing calendar as a phase. Since 2026-10-20 it
+ *     makes no to-dos and no planned launch email (Graeme: "carnage").
  *
  * The launch checklist's Shopify steps (products, collection, 20% code)
  * carry the app's buttons — components/test-boxes/launch-step-actions.tsx —
@@ -220,7 +221,7 @@ function TestBoxList() {
       </Link>
       <PageHeader
         title="Test boxes"
-        description="Pick the VIP launch day, add delivery dates as you go — the app works out every deadline and puts each step on the owner's to-do list."
+        description="Pick the VIP launch day, add delivery dates as you go — the app works out every deadline and keeps the checklist here on the box."
       />
       <button onClick={() => setCreating(true)}
         className="px-5 py-3 rounded-2xl bg-primary text-primary-foreground text-base font-semibold flex items-center gap-2 hover:bg-primary/90">
@@ -336,7 +337,7 @@ function NewBoxModal({ onClose }: { onClose: () => void }) {
         <input type="date" value={deliveryDate} min={launchDate || undefined} onChange={e => setDeliveryDate(e.target.value)}
           className="w-full px-4 py-3 rounded-xl border-2 border-border bg-background text-base" />
       </label>
-      <p className="text-sm text-muted-foreground">Next you'll pick 2–4 recipes. The launch checklist and each delivery's deadlines are worked out from these dates, and land on your to-do list.</p>
+      <p className="text-sm text-muted-foreground">Next you'll pick 2–4 recipes. The launch checklist and each delivery's deadlines are worked out from these dates, on the box's checklist.</p>
       {create.isError && <p className="text-sm text-destructive">{(create.error as Error).message}</p>}
       <button onClick={() => create.mutate()} disabled={!valid || create.isPending}
         className="w-full px-5 py-3 rounded-xl bg-primary text-primary-foreground text-base font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
@@ -529,7 +530,7 @@ function TestBoxDetail({ id }: { id: number }) {
             )}
           </div>
           <label className="block space-y-1.5">
-            <span className="text-sm font-semibold">Owner <span className="font-normal text-muted-foreground">— gets the to-dos</span></span>
+            <span className="text-sm font-semibold">Owner <span className="font-normal text-muted-foreground">— runs the checklist</span></span>
             <select value={draft.ownerId ?? ""} onChange={e => set("ownerId", Number(e.target.value), true)}
               className="w-full px-4 py-3 rounded-xl border-2 border-border bg-background text-lg font-semibold">
               {draft.ownerId == null && <option value="">Choose…</option>}
@@ -568,7 +569,7 @@ function TestBoxDetail({ id }: { id: number }) {
       <section className="space-y-3">
         <div className="flex items-baseline gap-3 flex-wrap">
           <h2 className="text-xl font-bold">Launch checklist</h2>
-          <span className="text-sm text-muted-foreground flex-1">{launchDone} of {schedule.launchTasks.length} done · on {firstName(data.box.owner?.name)}'s to-do list</span>
+          <span className="text-sm text-muted-foreground flex-1">{launchDone} of {schedule.launchTasks.length} done · run by {firstName(data.box.owner?.name)}</span>
           <ShowDoneToggle showDone={showDone} onChange={setShowDone} />
         </div>
         {tickErr && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Couldn't save the tick: {tickErr.message}</p>}
@@ -623,7 +624,7 @@ function TestBoxDetail({ id }: { id: number }) {
           <div className="flex flex-wrap gap-2">
             {BOX_STATUSES.map(s => <Chip key={s.key} active={draft.status === s.key} onClick={() => set("status", s.key, true)}>{s.label}</Chip>)}
           </div>
-          {draft.status === "cancelled" && <p className="text-sm text-muted-foreground">Cancelled: it's off the calendar and its open to-dos have been removed.</p>}
+          {draft.status === "cancelled" && <p className="text-sm text-muted-foreground">Cancelled: it's off the calendar.</p>}
         </div>
         <p className="text-sm text-muted-foreground">
           Added by {firstName(data.box.createdBy)} · last changed by {firstName(data.box.updatedBy)} {formatDistanceToNowStrict(parseISO(data.box.updatedAt))} ago
@@ -637,7 +638,7 @@ function TestBoxDetail({ id }: { id: number }) {
           </button>
         ) : (
           <div className="rounded-xl border-2 border-red-500/50 bg-red-500/10 p-4 space-y-3">
-            <p className="font-semibold text-base">Are you sure? “{draft.name}”, its calendar bar, its planned launch email and note, and its open to-dos come off for everyone.</p>
+            <p className="font-semibold text-base">Are you sure? “{draft.name}”, and its phase on the marketing calendar come off for everyone.</p>
             {del.isError && <p className="text-sm text-destructive">{(del.error as Error).message}</p>}
             <div className="flex gap-2 flex-wrap">
               <button onClick={() => del.mutate()} disabled={del.isPending} className="px-4 py-2.5 rounded-xl bg-red-600 text-white font-semibold flex items-center gap-2 disabled:opacity-60">
@@ -682,7 +683,7 @@ function AddDeliveryModal({ boxId, launchDate, expectedBoxes, onClose, onAdded }
         <input type="date" value={date} min={launchDate} autoFocus onChange={e => setDate(e.target.value)}
           className="w-full px-4 py-3 rounded-xl border-2 border-border bg-background text-lg font-semibold" />
       </label>
-      <p className="text-sm text-muted-foreground">It gets its own deadlines and to-dos, and a "switch it on in Zapiet" step on the launch checklist.</p>
+      <p className="text-sm text-muted-foreground">It gets its own deadlines and checklist steps, and a "switch it on in Zapiet" step on the launch checklist.</p>
       {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}
       <button onClick={() => add.mutate()} disabled={!valid || add.isPending}
         className="w-full px-5 py-3 rounded-xl bg-rose-600 text-white text-base font-semibold flex items-center justify-center gap-2 disabled:opacity-50">
@@ -869,7 +870,7 @@ function DeliveryCard({ boxId, boxName, delivery: d, today, specialistExtraDays,
           </button>
         ) : (
           <span className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm font-semibold">Remove {dayMonth(d.deliveryDate)} from “{boxName}”? Its open to-dos and queued production go too.</span>
+            <span className="text-sm font-semibold">Remove {dayMonth(d.deliveryDate)} from “{boxName}”? Its queued production goes too.</span>
             <button onClick={() => remove.mutate()} disabled={remove.isPending} className="px-3 py-2 rounded-xl bg-red-600 text-white font-semibold">Remove</button>
             <button onClick={() => setConfirmRemove(false)} className="px-3 py-2 rounded-xl border-2 border-border font-semibold">Keep</button>
           </span>

@@ -3,14 +3,14 @@
  * Objectives A (a trial recipe reaches customers without "it silently didn't
  * get ordered" surprises), C (ingredients — specialist ones especially —
  * ordered in time for every delivery) and I (the founder and marketing see
- * the whole run-up on the calendar and in their to-do lists).
+ * the whole run-up on the box's checklist and as a phase on the calendar).
  *
  * A box: a VIP launch date (first sale), an optional public launch date, an
  * owner, recipes, buffers; one or more delivery dates added over time, each
  * closed BY HAND. Deadlines are computed on read (lib/test-box-schedule.ts);
- * the calendar bar, the planned launch email + social note and the owner's
- * to-dos are kept in step by syncTestBox (lib/test-box-data.ts) inside the
- * same transaction as every change. Nothing here calls Shopify, Zapiet or
+ * its phase on the marketing calendar is kept in step by syncTestBox
+ * (lib/test-box-data.ts) inside the same transaction as every change. Since
+ * 2026-10-20 a box makes no to-dos and no planned launch email. Nothing here calls Shopify, Zapiet or
  * Klaviyo, and no email is sent.
  *
  * Same access as Sales & Marketing: the founder, or anyone granted
@@ -259,7 +259,7 @@ async function ownerAllowed(ownerId: number): Promise<boolean> {
   return (await salesAreaPeople()).some(p => p.id === ownerId);
 }
 
-const OWNER_REFUSED = "That person can't open Test boxes, so the to-dos would point somewhere they can't go — give them Sales & Marketing access first.";
+const OWNER_REFUSED = "That person can't open Test boxes, so they couldn't open its checklist — give them Sales & Marketing access first.";
 
 router.post("/", validate(CreateBody), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof CreateBody>;
@@ -331,7 +331,7 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
     if (b.ownerId !== undefined && b.ownerId !== previousOwner && b.ownerId !== user.id) {
       await tx.execute(sql`
         INSERT INTO notifications (user_id, type, message, read)
-        VALUES (${b.ownerId}, 'todo', ${`${user.name} made you the owner of the test box “${b.name ?? before.name}” — its checklist is on your to-do list.`.slice(0, 500)}, false)
+        VALUES (${b.ownerId}, 'todo', ${`${user.name} made you the owner of the test box “${b.name ?? before.name}” — its checklist is on the test box page.`.slice(0, 500)}, false)
       `);
     }
     return { status: 200 as const };
@@ -550,7 +550,7 @@ router.put("/:id/tasks/:key", validate(TickBody), async (req: Request, res: Resp
   res.json({ ...(await fullBox(id)), notice });
 });
 
-// ── Delete (soft; calendar bar, planned email, note and open to-dos come off) ─
+// ── Delete (soft; its phase comes off the calendar) ─
 router.delete("/:id", async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }

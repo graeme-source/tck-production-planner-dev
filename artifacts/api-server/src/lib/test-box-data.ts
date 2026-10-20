@@ -8,25 +8,22 @@
  *   - the box's calendar event (marketing_events.test_box_id, type
  *     "test_box") spans VIP launch → last live delivery, with a history line
  *     for every visible change;
- *   - ONE planned VIP launch email (marketing_emails, stage Planned) and ONE
- *     (no social-post note any more — it is a launch-checklist to-do), remembered on the box so a re-save
- *     never duplicates them, and moved with the launch while still only a
- *     plan (an email linked to Klaviyo or past Planned is left alone);
- *   - every task as a to-do on the owner's list (test-box-todos.ts).
+ *     — on the calendar it is just a phase.
+ * Since 2026-10-20 it no longer plans a VIP launch email or puts tasks on
+ * the owner's to-do list (the checklist lives on the box page).
  * Nothing here talks to Shopify, Zapiet or Klaviyo, and no email is sent.
  */
 import {
-  db, marketingEventsTable, marketingEventHistoryTable, marketingEmailsTable, marketingEmailHistoryTable,
+  db, marketingEventsTable, marketingEventHistoryTable,
   testBoxesTable, testBoxRecipesTable, testBoxDeliveriesTable, testBoxTasksTable, recipesTable,
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { describeDateChange, describeEmailMove } from "@workspace/marketing-calendar";
+import { describeDateChange } from "@workspace/marketing-calendar";
 import { intArrayLiteral } from "./int-array-literal";
 import {
-  buildTestBoxSchedule, calendarMilestones, calendarSpan,
+  buildTestBoxSchedule, calendarSpan,
   type DeliveryStatus, type ProductionMix, type SpecialistIngredient, type TestBoxSchedule,
 } from "./test-box-schedule";
-import { syncTestBoxTodos } from "./test-box-todos";
 
 export type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 type Db = typeof db | Tx;
@@ -252,88 +249,14 @@ export async function syncTestBoxEvent(tx: Tx, box: TestBoxRow, schedule: TestBo
   return existing.id;
 }
 
-export const launchEmailSubject = (boxName: string) => `${boxName} — VIP launch`;
-
 /**
- * The box's ONE planned VIP launch email, on the launch day (the social
- * post is a to-do on the launch checklist, not a separate note). Created once (ids remembered on the box); afterwards only moved
- * / renamed while still the box's own plan. A person deleting either is
- * respected — it isn't recreated. A removed or cancelled box takes them off
- * (soft) while they're still unsent plans.
- */
-export async function syncLaunchMarketing(tx: Tx, box: TestBoxRow, user: Actor): Promise<void> {
-  const live = isLive(box);
-  const subject = launchEmailSubject(box.name);
-  const patch: Partial<Pick<TestBoxRow, "launchEmailId" | "socialNoteEventId">> = {};
-
-  // ── The email ──
-  const [email] = box.launchEmailId != null
-    ? await tx.select().from(marketingEmailsTable).where(eq(marketingEmailsTable.id, box.launchEmailId))
-    : [];
-  const stillOurPlan = email && email.deletedAt == null && email.status === "planned" && email.klaviyoCampaignId == null;
-  if (!email && box.launchEmailId == null && live) {
-    const [created] = await tx.insert(marketingEmailsTable).values({
-      sendDate: box.launchDate, subject, audiences: ["vip"], status: "planned",
-      coreMessage: `Launch of the ${box.name} to VIP Calzoney Club members — they get it first, for at least 48 hours.`,
-      notes: `Planned by the test box “${box.name}” (/test-boxes/${box.id}). Nothing is sent from here: write it in Klaviyo and link it.`,
-      createdById: user.id, createdByName: user.name, updatedById: user.id, updatedByName: user.name,
-    }).returning();
-    await tx.insert(marketingEmailHistoryTable).values({
-      emailId: created.id, userId: user.id, userName: user.name, action: "created",
-      summary: `added this (VIP launch email for the test box “${box.name}”)`,
-    });
-    patch.launchEmailId = created.id;
-  } else if (stillOurPlan && live) {
-    const set: Partial<typeof marketingEmailsTable.$inferInsert> = {};
-    const lines: string[] = [];
-    if (email.sendDate !== box.launchDate) {
-      set.sendDate = box.launchDate;
-      lines.push(describeEmailMove(email.sendDate, box.launchDate, null, null) ?? "moved it");
-    }
-    if (email.subject !== subject && / — VIP launch$/.test(email.subject)) {
-      set.subject = subject;
-      lines.push(`changed the subject line to “${subject}”`);
-    }
-    if (lines.length) {
-      await tx.update(marketingEmailsTable).set({ ...set, updatedById: user.id, updatedByName: user.name, updatedAt: new Date() })
-        .where(eq(marketingEmailsTable.id, email.id));
-      await tx.insert(marketingEmailHistoryTable).values({
-        emailId: email.id, userId: user.id, userName: user.name, action: set.sendDate ? "moved" : "edited",
-        summary: `${lines.join(" and ")} (test box launch changed)`,
-      });
-    }
-  } else if (stillOurPlan && !live) {
-    await tx.update(marketingEmailsTable).set({ deletedAt: new Date(), deletedById: user.id, deletedByName: user.name, updatedAt: new Date() })
-      .where(eq(marketingEmailsTable.id, email.id));
-    await tx.insert(marketingEmailHistoryTable).values({
-      emailId: email.id, userId: user.id, userName: user.name, action: "deleted",
-      summary: box.deletedAt ? "deleted this (test box removed)" : "deleted this (test box cancelled)",
-    });
-  }
-
-  // ── The social-post note ── no longer made (Graeme, 2026-10-02): the
-  // launch checklist's "Post on social media" to-do already shows on the
-  // calendar, so a note too was a duplicate. Any note made before is taken
-  // off (soft) the next time the box is saved.
-  const [note] = box.socialNoteEventId != null
-    ? await tx.select().from(marketingEventsTable).where(eq(marketingEventsTable.id, box.socialNoteEventId))
-    : [];
-  if (note && note.deletedAt == null) {
-    await tx.update(marketingEventsTable).set({ deletedAt: new Date(), deletedById: user.id, deletedByName: user.name, updatedAt: new Date() })
-      .where(eq(marketingEventsTable.id, note.id));
-    await tx.insert(marketingEventHistoryTable).values({
-      eventId: note.id, userId: user.id, userName: user.name, action: "deleted",
-      summary: "took this off the calendar (the box's 'Post on social media' to-do replaces it)",
-    });
-  }
-
-  if (Object.keys(patch).length) await tx.update(testBoxesTable).set(patch).where(eq(testBoxesTable.id, box.id));
-}
-
-/**
- * Bring everything hanging off a box in step with it: calendar bar, launch
- * email + social note, and the owner's to-dos. Call inside the transaction
- * that changed the box (or its deliveries / ticks).
+ * Bring what hangs off a box in step with it: its phase on the marketing
+ * calendar. Call inside the transaction that changed the box (or its
+ * deliveries / ticks).
+ *
+ * Since 2026-10-20 (Graeme) a box no longer plans a VIP launch email (emails
+ * are built in Klaviyo only) or puts its tasks on the owner's to-do list.
+ * Launch emails and to-dos made before then are left untouched.
  */
 export async function syncTestBox(tx: Tx, boxId: number, user: Actor): Promise<TestBoxSchedule | null> {
   const [box] = await tx.select().from(testBoxesTable).where(eq(testBoxesTable.id, boxId));
@@ -343,24 +266,5 @@ export async function syncTestBox(tx: Tx, boxId: number, user: Actor): Promise<T
   const specialists = await loadSpecialistIngredients(tx, recipes.map(r => r.id));
   const schedule = scheduleFrom(box, recipes, deliveries, specialists, await loadDoneKeys(tx, box.id));
   await syncTestBoxEvent(tx, box, schedule, user);
-  await syncLaunchMarketing(tx, box, user);
-  await syncTestBoxTodos(tx, box, schedule, deliveries, user, isLive(box));
   return schedule;
-}
-
-/** Calendar extras for test-box events: name, launch, last delivery and milestones. */
-export async function testBoxCalendarInfo(boxIds: number[]) {
-  const out = new Map<number, { id: number; name: string; launchDate: string; vipWindowEnds: string; lastDeliveryDate: string | null; milestones: ReturnType<typeof calendarMilestones> }>();
-  if (boxIds.length === 0) return out;
-  const boxes = await db.select().from(testBoxesTable).where(and(inArray(testBoxesTable.id, boxIds), isNull(testBoxesTable.deletedAt)));
-  for (const b of boxes) {
-    const schedule = await scheduleForBox(db, b);
-    const live = schedule.deliveries.filter(d => d.status !== "cancelled");
-    out.set(b.id, {
-      id: b.id, name: b.name, launchDate: b.launchDate, vipWindowEnds: schedule.vipWindowEnds,
-      lastDeliveryDate: live.length ? live[live.length - 1].deliveryDate : null,
-      milestones: calendarMilestones(schedule),
-    });
-  }
-  return out;
 }

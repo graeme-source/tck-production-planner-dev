@@ -1,27 +1,22 @@
 /**
- * Test-box tasks as to-dos on the box owner's list — the database side. The
- * rules (what to create / move / tick / remove) are pure and tested in
- * test-box-todo-rules.ts; this file only reads the state and carries out the
- * plan, inside the caller's transaction.
+ * Test-box checklist ticks — the database side (rules: test-box-todo-rules.ts).
  *
- * SOURCE OF TRUTH: test_box_tasks.done (the tick). The to-do shows it:
- *   - ticking on the box page → tickTestBoxTask() writes the tick and sets
- *     the linked to-do done/open;
- *   - ticking the to-do on the to-do list → onTodoDoneChanged() (called from
- *     routes/todos.ts) writes the tick;
- *   - every box change → syncTestBoxTodos() re-derives all of them.
+ * SOURCE OF TRUTH: test_box_tasks.done (the tick), shown on the box page.
  *
- * To-dos are added already acknowledged: they come from the box the owner
- * runs, so they don't raise the full-screen "you've been asked to…" prompt
- * one by one. todo_tasks has no soft delete, so an open to-do whose task has
- * gone is deleted — the tick row (with who/when) stays on the box.
+ * Test boxes STOPPED putting their tasks on the owner's to-do list on
+ * 2026-10-20 (Graeme: the to-dos they made were "carnage"). No to-do is
+ * created, moved or removed from a box any more. To-dos made before then
+ * are left as they are: still linked (test_box_tasks.todo_task_id), so
+ *   - ticking on the box page → tickTestBoxTask() also sets an old linked
+ *     to-do done/open;
+ *   - ticking an old to-do on the to-do list → onTodoDoneChanged() (called
+ *     from routes/todos.ts) still writes the tick.
  */
 import { db, testBoxesTable, testBoxDeliveriesTable, testBoxTasksTable, usersTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
-import { intArrayLiteral } from "./int-array-literal";
-import { orderSubParent, todoTasks, type TestBoxSchedule } from "./test-box-schedule";
-import { orderTickCascade, planTodoSync, todoNotes, todoTitle, type TodoState, type WantedTodo } from "./test-box-todo-rules";
-import type { Actor, DeliveryRow, TestBoxRow, Tx } from "./test-box-data";
+import { orderSubParent, type TestBoxSchedule } from "./test-box-schedule";
+import { orderTickCascade } from "./test-box-todo-rules";
+import type { Actor, DeliveryRow, Tx } from "./test-box-data";
 
 /** Task keys that, ticked, close the delivery's orders (and unticked, reopen them). */
 const CLOSE_ORDERS = /^d(\d+):close-orders$/;
@@ -31,65 +26,6 @@ async function addTimeline(tx: Tx, taskId: number, user: Actor | null, body: str
     INSERT INTO todo_task_comments (task_id, user_id, user_name, kind, body)
     VALUES (${taskId}, ${user?.id ?? null}, ${user?.name ?? "Test box"}, 'event', ${body})
   `);
-}
-
-export async function syncTestBoxTodos(
-  tx: Tx, box: TestBoxRow, schedule: TestBoxSchedule, deliveries: DeliveryRow[], user: Actor, active: boolean,
-): Promise<void> {
-  const deliveryDate = new Map(deliveries.map(d => [d.id, d.deliveryDate]));
-  // Only the out-of-the-norm tasks are to-dos; milestones never are.
-  const wanted: WantedTodo[] = todoTasks(schedule).map(t => ({
-    key: t.key,
-    title: todoTitle(box.name, t, t.deliveryId != null ? deliveryDate.get(t.deliveryId) : null),
-    dueDate: t.date,
-    notes: todoNotes(t),
-  }));
-  const links = await tx.select().from(testBoxTasksTable).where(eq(testBoxTasksTable.testBoxId, box.id));
-  const todoIds = links.map(l => l.todoTaskId).filter((x): x is number => x != null);
-  const todos = new Map<number, TodoState>();
-  if (todoIds.length) {
-    const rows = await tx.execute<{ id: number; status: "open" | "done"; assignee_id: number; title: string; due_date: string | null; notes: string | null }>(sql`
-      SELECT id, status, assignee_id, title, to_char(due_date, 'YYYY-MM-DD') AS due_date, notes
-      FROM todo_tasks WHERE id = ANY(${intArrayLiteral(todoIds)}::int[])
-    `);
-    for (const r of rows.rows) todos.set(Number(r.id), { id: Number(r.id), status: r.status, assigneeId: Number(r.assignee_id), title: r.title, dueDate: r.due_date, notes: r.notes });
-  }
-
-  const actions = planTodoSync({
-    wanted,
-    links: links.map(l => ({ key: l.taskKey, done: l.done, todoId: l.todoTaskId })),
-    todos,
-    ownerId: box.ownerId ?? box.createdById ?? null,
-    active,
-  });
-
-  for (const a of actions) {
-    if (a.kind === "create") {
-      const r = await tx.execute<{ id: number }>(sql`
-        INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, acknowledged_at)
-        VALUES (${a.assigneeId}, ${user.id}, ${user.name}, ${a.title}, ${a.notes}, ${`/test-boxes/${box.id}`}, 'normal', ${a.dueDate}, 'open', NOW())
-        RETURNING id
-      `);
-      const todoId = Number(r.rows[0].id);
-      await addTimeline(tx, todoId, user, `Added from the test box “${box.name}”`);
-      await tx.insert(testBoxTasksTable).values({ testBoxId: box.id, taskKey: a.key, todoTaskId: todoId })
-        .onConflictDoUpdate({ target: [testBoxTasksTable.testBoxId, testBoxTasksTable.taskKey], set: { todoTaskId: todoId } });
-    } else if (a.kind === "update") {
-      await tx.execute(sql`
-        UPDATE todo_tasks SET title = ${a.title}, due_date = ${a.dueDate}, notes = ${a.notes}, assignee_id = ${a.assigneeId}, updated_at = NOW()
-        WHERE id = ${a.todoId}
-      `);
-    } else if (a.kind === "set-status") {
-      await tx.execute(sql`
-        UPDATE todo_tasks SET status = ${a.done ? "done" : "open"}, completed_at = ${a.done ? sql`NOW()` : null}, updated_at = NOW()
-        WHERE id = ${a.todoId}
-      `);
-    } else {
-      await tx.execute(sql`DELETE FROM todo_tasks WHERE id = ${a.todoId} AND status = 'open'`);
-      await tx.update(testBoxTasksTable).set({ todoTaskId: null })
-        .where(and(eq(testBoxTasksTable.testBoxId, box.id), eq(testBoxTasksTable.taskKey, a.key)));
-    }
-  }
 }
 
 /** Write a tick on the box and set its to-do to match. */
