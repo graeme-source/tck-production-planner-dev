@@ -118,10 +118,41 @@ export function campaignsToCalendar(input: {
   return out.sort((x, y) => x.sendAt.localeCompare(y.sendAt));
 }
 
-/** One campaign as the approval needs it (current subject line and status),
- *  from GET /api/campaigns/{id}?include=campaign-messages. */
+/** A Klaviyo draft with no send date yet (2026-10-20): it can't sit on a
+ *  day, so the calendar lists it under "Drafts without a date". */
+export type KlaviyoUndatedDraft = Omit<KlaviyoCalendarEmail, "date" | "sendAt" | "status"> & {
+  status: "Draft"; date: null; sendAt: null; updatedAt: string | null;
+};
+
+/** Drafts with no send date, edited on or after `since` (ISO), newest first.
+ *  Older undated drafts are taken as abandoned and not shown. */
+export function undatedDrafts(input: { campaigns: RawCampaign[]; messages: RawMessage[]; since: string }): KlaviyoUndatedDraft[] {
+  const msgById = new Map(input.messages.map(m => [m.id, m]));
+  const out: KlaviyoUndatedDraft[] = [];
+  const seen = new Set<string>();
+  for (const c of input.campaigns) {
+    const a = c.attributes;
+    if (a.status !== "Draft" || seen.has(c.id) || campaignSendAt(a)) continue;
+    if ((a.updated_at ?? "") < input.since) continue;
+    seen.add(c.id);
+    const { msgIds, first } = firstMessage(c, msgById);
+    out.push({
+      id: c.id, name: a.name, status: "Draft", date: null, sendAt: null, updatedAt: a.updated_at ?? null,
+      subject: first?.attributes.content?.subject?.trim() || null,
+      previewText: first?.attributes.content?.preview_text?.trim() || null,
+      abTest: msgIds.length > 1,
+      audiences: [],
+      excludedCount: a.audiences?.excluded?.length ?? 0,
+      klaviyoUrl: klaviyoUrlFor(c.id, "Draft"),
+    });
+  }
+  return out.sort((x, y) => (y.updatedAt ?? "").localeCompare(x.updatedAt ?? ""));
+}
+
+/** One campaign as the approval needs it (current subject line, preview
+ *  text, send time and status), from GET /api/campaigns/{id}?include=campaign-messages. */
 export function campaignSnapshot(c: RawCampaign, messages: RawMessage[]): {
-  id: string; name: string; status: string; subject: string | null; date: string | null;
+  id: string; name: string; status: string; subject: string | null; previewText: string | null; sendAt: string | null; date: string | null;
 } {
   const { first } = firstMessage(c, new Map(messages.map(m => [m.id, m])));
   const sendAt = campaignSendAt(c.attributes);
@@ -130,6 +161,8 @@ export function campaignSnapshot(c: RawCampaign, messages: RawMessage[]): {
     name: c.attributes.name,
     status: calendarStatus(c.attributes.status) ?? c.attributes.status,
     subject: first?.attributes.content?.subject?.trim() || null,
+    previewText: first?.attributes.content?.preview_text?.trim() || null,
+    sendAt,
     date: sendAt ? londonDay(sendAt) : null,
   };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calendarStatus, campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay } from "./klaviyo-campaign-map";
+import { calendarStatus, campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay, undatedDrafts } from "./klaviyo-campaign-map";
 
 const camp = (id: string, status: string, send: string | null, msgs: string[], included: string[] = ["L1"]) => ({
   id, relationships: { "campaign-messages": { data: msgs.map(m => ({ id: m })) } },
@@ -47,7 +47,28 @@ describe("Klaviyo campaigns on the marketing calendar", () => {
 
   it("snapshots one campaign's current subject and status for approvals", () => {
     const snap = campaignSnapshot(base.campaigns[1], base.messages);
-    expect(snap).toEqual({ id: "b", name: "Campaign b", status: "Scheduled", subject: "Payday Freepack 🎁", date: "2026-09-30" });
+    expect(snap).toEqual({
+      id: "b", name: "Campaign b", status: "Scheduled", subject: "Payday Freepack 🎁", previewText: "Preview",
+      sendAt: "2026-09-30T09:07:00+00:00", date: "2026-09-30",
+    });
+  });
+
+  it("lists recent drafts with no send date as undated, newest first (2026-10-20)", () => {
+    const draft = (id: string, updated: string, datetime: string | null = null) => ({
+      id, relationships: { "campaign-messages": { data: [{ id: `m-${id}` }] } },
+      attributes: {
+        name: `Draft ${id}`, status: "Draft", send_time: null, scheduled_at: null, updated_at: updated,
+        send_strategy: datetime ? { method: "static", options_static: { datetime } } : null,
+      },
+    });
+    const res = undatedDrafts({
+      campaigns: [draft("old", "2026-01-01T00:00:00Z"), draft("x", "2026-10-18T10:00:00Z"), draft("y", "2026-10-19T10:00:00Z"),
+        draft("dated", "2026-10-19T11:00:00Z", "2026-10-25T08:00:00Z"), camp("s", "Sent", "2026-10-01T09:00:00Z", ["m1"])],
+      messages: [msg("m-x", "Hello", "Pre")],
+      since: "2026-09-01T00:00:00Z",
+    });
+    expect(res.map(d => d.id)).toEqual(["y", "x"]);
+    expect(res[1]).toMatchObject({ date: null, sendAt: null, subject: "Hello", previewText: "Pre", klaviyoUrl: "https://www.klaviyo.com/campaign/x/wizard/1" });
   });
 
   it("carries the campaign name, subject line, preview text and audience names", () => {

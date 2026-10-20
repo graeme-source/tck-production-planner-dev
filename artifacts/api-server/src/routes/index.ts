@@ -134,10 +134,8 @@ import founderSalesRouter from "./founder-sales";
 import salesDriversRouter from "./sales-drivers";
 import revenueTargetsRouter from "./revenue-targets";
 import marketingCalendarRouter from "./marketing-calendar";
-import marketingEmailsRouter from "./marketing-emails";
-import marketingEmailCycleRouter from "./marketing-email-cycle";
 import marketingApprovalsRouter from "./marketing-approvals";
-import marketingTodosRouter from "./marketing-todos";
+import marketingOffersRouter from "./marketing-offers";
 import testBoxesRouter from "./test-boxes";
 import testBoxShopifyRouter from "./test-box-shopify";
 import testBoxProductionRouter from "./test-box-production";
@@ -384,15 +382,12 @@ router.use("/sales-drivers", salesDriversRouter);
 router.use("/revenue-targets", revenueTargetsRouter);
 // Marketing calendar (Sales & Marketing page): founder + "founder.sales"
 // grantees, guarded inside the router.
-// Planned emails on the calendar (same access, guarded inside the router).
-router.use("/marketing-calendar/emails", marketingEmailsRouter);
-// The email plan's offer cycle (2026-10-14): same access; setup is founder-only inside.
-router.use("/marketing-calendar/cycle", marketingEmailCycleRouter);
-// Approvals (2026-09-30): see founder.sales; approve = "marketing.approve_emails".
+// Phases + Klaviyo emails (2026-10-20). Planned emails, the offer cycle and
+// notes/to-dos on the calendar are retired; their tables stay in the database.
+// Approvals of Klaviyo emails: see founder.sales; approve = "marketing.approve_emails".
 router.use("/marketing-calendar/approvals", marketingApprovalsRouter);
-// To-dos on the calendar (2026-10-01): your own only; the founder may add
-// other calendar users'. Read-only, guarded inside the router.
-router.use("/marketing-calendar/todos", marketingTodosRouter);
+// The offer library (same access, guarded inside the router).
+router.use("/marketing-calendar/offers", marketingOffersRouter);
 router.use("/marketing-calendar", marketingCalendarRouter);
 // Test-box scheduling (same access as Sales & Marketing, guarded inside).
 // /:id/shopify/* — draft Shopify products for a box (guarded inside; writes

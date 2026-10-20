@@ -154,6 +154,13 @@ describe("history summaries", () => {
     })).toBe("renamed it to “Bonfire Box”, set the channels to vip email, social and cleared the offer details");
     expect(describeFieldChanges({})).toBeNull();
   });
+  it("words phase offers and customer group changes (2026-10-20)", () => {
+    expect(describeFieldChanges({
+      offers: { from: [], to: ["Free pack over £39.95", "Philly ending"] },
+      customerGroup: { from: "all", to: "returning" },
+    })).toBe("set the offers to “Free pack over £39.95”, “Philly ending” and set it for returning customers");
+    expect(describeFieldChanges({ offers: { from: ["A"], to: [] } })).toBe("took the offers off");
+  });
   it("history lines use the first name", () => {
     expect(historyLine("Tommy Smith", "moved it from 16–29 Oct to 18–31 Oct")).toBe("Tommy moved it from 16–29 Oct to 18–31 Oct");
     expect(historyLine(null, "added this")).toBe("Someone added this");

@@ -14,11 +14,22 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 
 import {
-  campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay,
-  type KlaviyoCalendarEmail, type KlaviyoCampaignResult, type RawCampaign, type RawCampaignValuesRow, type RawMessage,
+  campaignResultsFromReport, campaignSnapshot, campaignsToCalendar, londonDay, undatedDrafts,
+  type KlaviyoCalendarEmail, type KlaviyoCampaignResult, type KlaviyoUndatedDraft, type RawCampaign, type RawCampaignValuesRow, type RawMessage,
 } from "./klaviyo-campaign-map";
 
-export type { KlaviyoCalendarEmail, KlaviyoCampaignResult };
+export type { KlaviyoCalendarEmail, KlaviyoCampaignResult, KlaviyoUndatedDraft };
+
+/** How far back an undated draft still counts as live (older = abandoned). */
+const UNDATED_DRAFT_DAYS = 60;
+
+/** Drafts with no send date yet, edited in the last 60 days (same 3-minute cache). */
+export async function klaviyoUndatedDrafts(): Promise<KlaviyoUndatedDraft[] | null> {
+  const apiKey = await getKlaviyoKey();
+  if (!apiKey) return null;
+  const { campaigns, messages } = await loadDrafts(apiKey);
+  return undatedDrafts({ campaigns, messages, since: new Date(Date.now() - UNDATED_DRAFT_DAYS * 86_400_000).toISOString() });
+}
 
 // ── Fetching ──────────────────────────────────────────────────────────────
 const REVISION = "2024-10-15";

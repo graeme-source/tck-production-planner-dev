@@ -40,6 +40,13 @@ export const FIELD_LABELS: Record<string, string> = {
   channels: "channels",
   audience: "audience",
   status: "status",
+  // Phases (2026-10-20).
+  offers: "offers",
+  customerGroup: "customer group",
+};
+
+const GROUP_WORDS: Record<string, string> = {
+  all: "all customers", new: "new customers only", returning: "returning customers", subscription: "subscription customers",
 };
 
 export type FieldValue = string | string[] | null | undefined;
@@ -92,6 +99,11 @@ export function describeFieldChanges(changes: Record<string, FieldChange>): stri
     else if (key === "channels") {
       const list = Array.isArray(to) ? to : [];
       parts.push(list.length ? `set the channels to ${list.map(humanise).join(", ")}` : "cleared the channels");
+    } else if (key === "offers") {
+      const list = Array.isArray(to) ? to : [];
+      parts.push(list.length ? `set the offers to ${list.map(o => `“${o}”`).join(", ")}` : "took the offers off");
+    } else if (key === "customerGroup") {
+      parts.push(`set it for ${GROUP_WORDS[String(to ?? "all")] ?? humanise(String(to ?? ""))}`);
     } else if (to == null || to === "") parts.push(`cleared the ${FIELD_LABELS[key]}`);
     else parts.push(`edited the ${FIELD_LABELS[key]}`);
   }
