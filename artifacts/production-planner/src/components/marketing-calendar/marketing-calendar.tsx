@@ -1,41 +1,43 @@
 /**
- * The marketing calendar on the Sales & Marketing page — stripped back
- * (Graeme, 2026-10-20): "In the calendar we'll just have PHASES, easy to
- * edit … We just want to see what emails are drafted in Klaviyo and
- * scheduled for which dates, with ONE approval status." Objective I.
+ * The marketing calendar on the Sales & Marketing page. Objective I.
  *
- *   - PHASES: dated periods of any length, with optional offers (picked from
- *     the offer library or typed new), customer group and notes. Drag to
- *     move or stretch, tap to edit everything, tap an empty day to add one,
- *     or "Re-use a past phase".
- *   - KLAVIYO EMAILS: drafts, scheduled and sent, read from Klaviyo on their
- *     send days (drafts with no date listed on their own). Each is Approved
- *     or Needs approval; approvers approve with one tap. Emails are only
- *     ever built in Klaviyo.
- *   - OFFERS: the list of offers, managed from the "Offers" button.
+ * ONE calendar (Graeme, 2026-10-20): "We just want ONE calendar, in list
+ * view or calendar view, that has the emails on it. If it's something I need
+ * to approve, it should show me that IN the calendar." So there is no
+ * separate approvals box, phase list or email list — each Klaviyo email
+ * appears once, on its send day, with its status (and an Approve button for
+ * approvers) right there.
  *
- * Planned emails, the weekly offer cycle, notes and to-dos are no longer on
- * the calendar (their data stays in the database).
+ *   - LIST (default, remembered per device): weeks top to bottom, phases
+ *     starting and ending in the flow with a coloured stripe on every day
+ *     they cover, a highlighted Today marker it opens scrolled to, and
+ *     drafts with no send date yet at the Today marker. See agenda-list.tsx.
+ *   - MONTH: the month grid — phases as bars (drag to move / stretch), email
+ *     chips with a status dot. Undated drafts sit in a "No send date yet"
+ *     line above the grid.
+ *   - PHASES: dated periods with optional offers, customer group and notes;
+ *     tap to edit, "+ Add phase" or "Re-use a past phase".
+ *   - OFFERS: the offer library, from the "Offers" button.
  */
 import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { format, parseISO } from "date-fns";
 import {
-  AlertTriangle, BadgeCheck, ChevronLeft, ChevronRight, Copy, Loader2, Lock, Mail, Megaphone, Package, PencilLine, Plus, ShieldAlert, Sparkles, Tag, Users, X,
+  AlertTriangle, BadgeCheck, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Copy, List, Loader2, Lock, Mail, Megaphone, Package, PencilLine, Plus, Sparkles, Tag, X,
 } from "lucide-react";
 import {
-  addDays, addMonths, customerGroupChip, formatRange, monthGridWeeks, monthStart, overlaps, type DragMode,
+  addMonths, agendaRange, formatRange, monthGridWeeks, monthStart, type DragMode,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import {
-  calApi, useApprovalsNeeded, useCalendarEmails, useCreatePhase, usePhases, useSetPhaseDates,
+  calApi, useCalendarEmails, useCreatePhase, usePhases, useSetPhaseDates,
   type CalEmail, type Phase, type Suggestion,
 } from "./api";
-import { KLAVIYO_TONE, PHASE_TONE, emailStatusLabel } from "./constants";
+import { KLAVIYO_TONE, PHASE_TONE } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { PhaseModal } from "./phase-modal";
-import { EmailPanel, ApprovalBadge, ApproveButton, sendLine } from "./email-panel";
+import { EmailPanel } from "./email-panel";
+import { AgendaList } from "./agenda-list";
 import { OffersManager } from "./offers-manager";
 import { ReusePhase } from "./reuse-phase";
 
@@ -45,9 +47,27 @@ function londonToday(): string {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
 }
 
+type View = "list" | "month";
+const VIEW_KEY = "tck.marketingCalendar.view";
+
+function readView(): View {
+  try { return localStorage.getItem(VIEW_KEY) === "month" ? "month" : "list"; } catch { return "list"; }
+}
+function saveView(v: View) {
+  try { localStorage.setItem(VIEW_KEY, v); } catch { /* private window etc. — just don't remember */ }
+}
+
+/** How many weeks each "Show earlier" / "Show later" adds. */
+const MORE_WEEKS = 4;
+
 export function MarketingCalendar() {
   const localToday = londonToday();
+  const [view, setViewState] = useState<View>(readView);
+  const setView = (v: View) => { setViewState(v); saveView(v); };
   const [anchor, setAnchor] = useState(() => monthStart(localToday));
+  const [weeksBack, setWeeksBack] = useState(2);
+  const [weeksAhead, setWeeksAhead] = useState(10);
+  const [todaySignal, setTodaySignal] = useState(0);
   const [open, setOpen] = useState<{ id: number | null; newOn?: string; key: number } | null>(null);
   const [openEmail, setOpenEmail] = useState<CalEmail | null>(null);
   const [offersOpen, setOffersOpen] = useState(false);
@@ -55,31 +75,25 @@ export function MarketingCalendar() {
   const [dragError, setDragError] = useState<string | null>(null);
 
   const range = useMemo(() => {
+    if (view === "list") return agendaRange(localToday, weeksBack, weeksAhead);
     const weeks = monthGridWeeks(anchor);
     return { from: weeks[0][0], to: weeks[weeks.length - 1][6] };
-  }, [anchor]);
+  }, [view, anchor, localToday, weeksBack, weeksAhead]);
 
   const phasesQ = usePhases(range.from, range.to);
   const today = phasesQ.data?.today ?? localToday;
   const phases = useMemo(() => phasesQ.data?.events ?? [], [phasesQ.data]);
   const emailsQ = useCalendarEmails(range.from, range.to);
   const emails = useMemo(() => emailsQ.data?.emails ?? [], [emailsQ.data]);
-  const undatedAll = emailsQ.data?.undatedDrafts ?? [];
+  const undated = useMemo(() => emailsQ.data?.undatedDrafts ?? [], [emailsQ.data]);
   const canApprove = emailsQ.data?.canApprove ?? false;
-  const needed = useApprovalsNeeded(true);
-  const waiting = needed.data?.items ?? [];
-  // An undated draft waiting for approval is already in that list above.
-  const undated = useMemo(() => {
-    const listed = new Set(waiting.map(w => w.id));
-    return undatedAll.filter(d => !listed.has(d.id));
-  }, [undatedAll, waiting]);
   const setDates = useSetPhaseDates();
 
   // The email panel always shows the freshest copy (after approving, say).
   const currentEmail = useMemo(() => {
     if (!openEmail) return null;
-    return [...emails, ...undatedAll, ...waiting].find(e => e.id === openEmail.id) ?? openEmail;
-  }, [openEmail, emails, undatedAll, waiting]);
+    return [...emails, ...undated].find(e => e.id === openEmail.id) ?? openEmail;
+  }, [openEmail, emails, undated]);
 
   const onDatesChange = (p: Phase, next: { startDate: string; endDate: string }, _mode: DragMode) => {
     setDragError(null);
@@ -89,12 +103,12 @@ export function MarketingCalendar() {
   };
 
   const monthEnd = addMonths(anchor, 1);
-  const monthLast = addDays(monthEnd, -1);
-  const monthPhases = phases.filter(p => overlaps(p, anchor, monthLast));
-  const monthEmails = emails.filter(m => m.date != null && m.date >= anchor && m.date < monthEnd);
   const inThisMonth = today >= anchor && today < monthEnd;
+  const newPhaseDay = view === "list" || inThisMonth ? today : anchor;
   const newPhase = (on: string) => setOpen({ id: null, newOn: on, key: Date.now() });
   const monthName = `${MONTH_NAMES[Number(anchor.slice(5, 7)) - 1]} ${anchor.slice(0, 4)}`;
+  const loading = (phasesQ.isLoading && !phasesQ.data) || (emailsQ.isLoading && !emailsQ.data);
+  const settled = !!phasesQ.data && !!emailsQ.data && !phasesQ.isPlaceholderData && !emailsQ.isPlaceholderData;
 
   return (
     <section className="rounded-2xl border border-border bg-card p-4 sm:p-5 space-y-4 scroll-mt-4">
@@ -115,49 +129,53 @@ export function MarketingCalendar() {
             className="px-3.5 py-2.5 rounded-xl border-2 border-violet-500/40 text-sm font-semibold flex items-center gap-1.5 hover:bg-violet-500/10">
             <Copy className="w-4 h-4 text-violet-600" /> Re-use a past phase
           </button>
-          <button onClick={() => newPhase(inThisMonth ? today : anchor)}
+          <button onClick={() => newPhase(newPhaseDay)}
             className="px-3.5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/90">
             <Plus className="w-4 h-4" /> Add phase
           </button>
         </div>
       </div>
 
-      {/* Emails waiting for approval (everyone sees the list; approvers get the button). */}
-      {waiting.length > 0 && (
-        <div className="rounded-2xl border-2 border-amber-500/50 bg-amber-500/10 p-3 sm:p-4 space-y-3" role="status">
-          <p className="text-base font-semibold text-amber-900 dark:text-amber-200 flex items-center gap-2">
-            <ShieldAlert className="w-5 h-5 text-amber-600 flex-shrink-0" />
-            {waiting.length} Klaviyo email{waiting.length === 1 ? "" : "s"} need{waiting.length === 1 ? "s" : ""} approval
-          </p>
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2">
-            {waiting.map(m => <EmailCard key={m.id} email={m} canApprove={canApprove} onOpen={() => setOpenEmail(m)} />)}
-          </div>
-          {needed.data?.klaviyoError && <p className="text-sm text-amber-800 dark:text-amber-300">{needed.data.klaviyoError}</p>}
-        </div>
-      )}
-
-      {/* Navigation row */}
+      {/* View toggle + this view's navigation */}
       <div className="flex items-center gap-2 flex-wrap">
-        <div className="flex items-center gap-1">
-          <button onClick={() => setAnchor(a => addMonths(a, -1))} className="p-2.5 rounded-xl border-2 border-border hover:bg-secondary/50" aria-label="Previous month">
-            <ChevronLeft className="w-5 h-5" />
-          </button>
-          <span className="min-w-[9.5rem] text-center text-base font-bold">{monthName}</span>
-          <button onClick={() => setAnchor(a => addMonths(a, 1))} className="p-2.5 rounded-xl border-2 border-border hover:bg-secondary/50" aria-label="Next month">
-            <ChevronRight className="w-5 h-5" />
-          </button>
+        <div className="inline-flex rounded-xl border-2 border-border p-0.5" role="tablist" aria-label="Calendar view">
+          {([["list", "List", List], ["month", "Month", CalendarDays]] as const).map(([v, label, Icon]) => (
+            <button key={v} type="button" role="tab" aria-selected={view === v} onClick={() => setView(v)}
+              className={cn("px-4 h-10 rounded-lg text-sm font-semibold flex items-center gap-1.5",
+                view === v ? "bg-primary text-primary-foreground" : "hover:bg-secondary/50")}>
+              <Icon className="w-4 h-4" /> {label}
+            </button>
+          ))}
         </div>
-        <button onClick={() => setAnchor(monthStart(today))} className="px-3 py-2.5 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary/50">Today</button>
-        <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-          <span className="sr-only sm:not-sr-only">Jump to</span>
-          <input
-            type="month"
-            value={anchor.slice(0, 7)}
-            onChange={e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) setAnchor(`${e.target.value}-01`); }}
-            className="px-2.5 py-2 rounded-xl border-2 border-border bg-background text-sm text-foreground"
-            aria-label="Jump to month"
-          />
-        </label>
+        {view === "list" ? (
+          <>
+            <button onClick={() => setTodaySignal(n => n + 1)} className="px-3 h-11 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary/50">Today</button>
+            <span className="text-sm text-muted-foreground">{formatRange(range.from, range.to)}</span>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setAnchor(a => addMonths(a, -1))} className="p-2.5 rounded-xl border-2 border-border hover:bg-secondary/50" aria-label="Previous month">
+                <ChevronLeft className="w-5 h-5" />
+              </button>
+              <span className="min-w-[9.5rem] text-center text-base font-bold">{monthName}</span>
+              <button onClick={() => setAnchor(a => addMonths(a, 1))} className="p-2.5 rounded-xl border-2 border-border hover:bg-secondary/50" aria-label="Next month">
+                <ChevronRight className="w-5 h-5" />
+              </button>
+            </div>
+            <button onClick={() => setAnchor(monthStart(today))} className="px-3 py-2.5 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary/50">Today</button>
+            <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+              <span className="sr-only sm:not-sr-only">Jump to</span>
+              <input
+                type="month"
+                value={anchor.slice(0, 7)}
+                onChange={e => { if (/^\d{4}-\d{2}$/.test(e.target.value)) setAnchor(`${e.target.value}-01`); }}
+                className="px-2.5 py-2 rounded-xl border-2 border-border bg-background text-sm text-foreground"
+                aria-label="Jump to month"
+              />
+            </label>
+          </>
+        )}
       </div>
 
       {phasesQ.isError && (
@@ -169,71 +187,79 @@ export function MarketingCalendar() {
           <button onClick={() => setDragError(null)} aria-label="Dismiss" className="p-1"><X className="w-4 h-4" /></button>
         </div>
       )}
-
-      <div className="relative">
-        {phasesQ.isLoading && !phasesQ.data && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
-        )}
-        <MonthGrid
-          month={anchor}
-          today={today}
-          phases={phases}
-          emails={emails}
-          onOpenPhase={p => setOpen({ id: p.id, key: p.id })}
-          onOpenEmail={setOpenEmail}
-          onAddOn={newPhase}
-          onDatesChange={onDatesChange}
-        />
-      </div>
-
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
-        <span className="inline-flex items-center gap-1.5"><span className={cn("w-6 h-3 rounded-sm", PHASE_TONE.edge)} />Phase (drag to move, drag its end to stretch)</span>
-        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.draft)}><PencilLine className="w-3 h-3" /></span>Klaviyo draft</span>
-        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.solid)}><Mail className="w-3 h-3" /></span>Klaviyo scheduled</span>
-        <span className="inline-flex items-center gap-1.5"><span className={cn("inline-flex items-center justify-center w-5 h-4 rounded", KLAVIYO_TONE.sent)}><Mail className="w-3 h-3" /></span>Sent</span>
-        <span className="inline-flex items-center gap-1.5"><BadgeCheck className="w-4 h-4 text-emerald-600" />Approved</span>
-        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" />Needs approval</span>
-      </div>
       {emailsQ.data?.error && <p className="text-sm text-amber-700 dark:text-amber-400">Klaviyo emails: {emailsQ.data.error}</p>}
       {emailsQ.data && !emailsQ.data.connected && <p className="text-sm text-muted-foreground">Klaviyo isn't connected, so no emails show.</p>}
 
-      {/* Klaviyo drafts that have no send date yet. */}
-      {undated.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Klaviyo drafts without a date</h3>
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2">
-            {undated.map(m => <EmailCard key={m.id} email={m} canApprove={canApprove} onOpen={() => setOpenEmail(m)} />)}
+      {view === "list" ? (
+        <AgendaList
+          from={range.from}
+          to={range.to}
+          today={today}
+          phases={phases}
+          emails={emails}
+          undated={undated}
+          canApprove={canApprove}
+          loading={loading}
+          settled={settled}
+          onOpenPhase={p => setOpen({ id: p.id, key: p.id })}
+          onOpenEmail={setOpenEmail}
+          onEarlier={() => setWeeksBack(n => n + MORE_WEEKS)}
+          onLater={() => setWeeksAhead(n => n + MORE_WEEKS)}
+          scrollToTodaySignal={todaySignal}
+        />
+      ) : (
+        <>
+          {/* Drafts with no send date can't sit on a day, so they line up
+              here, above the month — once each, with their status. */}
+          {undated.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-semibold flex items-center gap-1.5"><CalendarClock className="w-4 h-4 text-muted-foreground" /> No send date yet:</span>
+              {undated.map(m => (
+                <button key={m.id} type="button" onClick={() => setOpenEmail(m)}
+                  className={cn("inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold text-left", KLAVIYO_TONE.draft)}>
+                  <PencilLine className="w-3.5 h-3.5 flex-shrink-0" />
+                  <span className="break-words">{m.subject ?? m.name}</span>
+                  {m.approval.status === "approved"
+                    ? <BadgeCheck className="w-4 h-4 flex-shrink-0 text-emerald-600" aria-label="Approved" />
+                    : <span className="w-2.5 h-2.5 rounded-full bg-amber-400 flex-shrink-0" aria-label="Needs approval" />}
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="relative">
+            {loading && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+            )}
+            <MonthGrid
+              month={anchor}
+              today={today}
+              phases={phases}
+              emails={emails}
+              onOpenPhase={p => setOpen({ id: p.id, key: p.id })}
+              onOpenEmail={setOpenEmail}
+              onAddOn={newPhase}
+              onDatesChange={onDatesChange}
+            />
           </div>
-        </div>
+        </>
       )}
 
-      {/* This month as big cards (the grid is small on a phone). */}
-      <div className="space-y-2">
-        <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Phases in {monthName}</h3>
-        {monthPhases.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No phases this month yet — tap a day to add one.</p>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 gap-3">
-            {monthPhases.map(p => <PhaseCard key={p.id} phase={p} today={today} onOpen={() => setOpen({ id: p.id, key: p.id })} />)}
-          </div>
-        )}
+      {/* Legend */}
+      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+        <span className="inline-flex items-center gap-1.5"><span className={cn("w-6 h-3 rounded-sm", PHASE_TONE.edge)} />Phase{view === "month" ? " (drag to move, drag its end to stretch)" : " (tap to edit)"}</span>
+        <span className="inline-flex items-center gap-1.5"><PencilLine className="w-4 h-4 text-teal-600" />Klaviyo draft</span>
+        <span className="inline-flex items-center gap-1.5"><Mail className="w-4 h-4 text-teal-600" />Klaviyo scheduled</span>
+        <span className="inline-flex items-center gap-1.5"><BadgeCheck className="w-4 h-4 text-emerald-600" />Approved</span>
+        <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" />Needs approval</span>
+        <span className="inline-flex items-center gap-1.5"><span className="w-4 h-3 rounded-sm bg-secondary border border-border" />Sent</span>
       </div>
-      {monthEmails.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Klaviyo emails in {monthName}</h3>
-          <div className="grid grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3 gap-2">
-            {monthEmails.map(m => <EmailCard key={m.id} email={m} canApprove={canApprove} onOpen={() => setOpenEmail(m)} />)}
-          </div>
-        </div>
-      )}
 
       <Suggestions />
 
       {offersOpen && <OffersManager onClose={() => setOffersOpen(false)} />}
       {reuseOpen && (
         <ReusePhase
-          defaultStart={inThisMonth ? today : anchor}
+          defaultStart={newPhaseDay}
           onClose={() => setReuseOpen(false)}
           onCreated={id => { setReuseOpen(false); setOpen({ id, key: id }); }}
         />
@@ -243,57 +269,6 @@ export function MarketingCalendar() {
         <PhaseModal key={open.key} phaseId={open.id} newOn={open.newOn} onClose={() => setOpen(null)} />
       )}
     </section>
-  );
-}
-
-function PhaseCard({ phase: p, today, onOpen }: { phase: Phase; today: string; onOpen: () => void }) {
-  const running = p.startDate <= today && p.endDate >= today;
-  const group = customerGroupChip(p.customerGroup);
-  return (
-    <button onClick={onOpen} className={cn("text-left rounded-2xl border-2 bg-background hover:bg-secondary/30 overflow-hidden flex", PHASE_TONE.card, p.endDate < today && "opacity-70")}>
-      <span className={cn("w-2 flex-shrink-0", PHASE_TONE.edge)} />
-      <span className="flex-1 min-w-0 p-3.5 space-y-1.5">
-        <span className="flex items-center gap-2 flex-wrap">
-          <span className="text-base font-bold break-words">{p.title}</span>
-          {running && <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-primary text-primary-foreground">On now</span>}
-        </span>
-        <span className="block text-sm font-semibold">{formatRange(p.startDate, p.endDate)}</span>
-        {(p.offers.length > 0 || group) && (
-          <span className="flex flex-wrap gap-1.5">
-            {p.offers.map(o => (
-              <span key={o} className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold break-words", PHASE_TONE.chip)}>
-                <Tag className="w-3.5 h-3.5 flex-shrink-0" />{o}
-              </span>
-            ))}
-            {group && <span className="inline-flex items-center gap-1 rounded-full bg-secondary px-2.5 py-1 text-sm font-semibold"><Users className="w-3.5 h-3.5" />{group}</span>}
-          </span>
-        )}
-        {p.notes && <span className="block text-sm text-muted-foreground line-clamp-2 whitespace-pre-line">{p.notes}</span>}
-      </span>
-    </button>
-  );
-}
-
-function EmailCard({ email: m, canApprove, onOpen }: { email: CalEmail; canApprove: boolean; onOpen: () => void }) {
-  return (
-    <div className={cn("rounded-2xl border-2 bg-background p-3 flex gap-3 items-start", m.status === "Draft" ? "border-dashed border-teal-500/60" : "border-teal-500/40", m.status === "Sent" && "opacity-75")}>
-      <button type="button" onClick={onOpen} className="flex-1 min-w-0 text-left flex gap-3">
-        {m.status === "Draft"
-          ? <PencilLine className={cn("w-5 h-5 flex-shrink-0 mt-0.5", KLAVIYO_TONE.icon)} />
-          : <Mail className={cn("w-5 h-5 flex-shrink-0 mt-0.5", KLAVIYO_TONE.icon)} />}
-        <span className="min-w-0 space-y-1">
-          <span className="block text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            {emailStatusLabel(m.status)} · {m.date ? format(parseISO(m.sendAt ?? m.date), m.sendAt ? "EEE d MMM, HH:mm" : "EEE d MMM") : "no date yet"}
-          </span>
-          <span className="block font-semibold break-words">{m.subject ?? m.name}</span>
-          {m.subject && <span className="block text-sm text-muted-foreground break-words">{m.name}</span>}
-          <ApprovalBadge email={m} className="mt-1" />
-        </span>
-      </button>
-      {canApprove && m.status !== "Sent" && m.approval.status !== "approved" && (
-        <div className="flex-shrink-0" title={sendLine(m)}><ApproveButton email={m} size="small" /></div>
-      )}
-    </div>
   );
 }
 

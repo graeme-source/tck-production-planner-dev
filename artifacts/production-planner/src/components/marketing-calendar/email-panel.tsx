@@ -43,7 +43,7 @@ export function ApprovalBadge({ email, className }: { email: CalEmail; className
 }
 
 /** The one-tap Approve / Undo button (approvers only). */
-export function ApproveButton({ email, size = "big" }: { email: CalEmail; size?: "big" | "small" }) {
+export function ApproveButton({ email, size = "big", label = "Approve" }: { email: CalEmail; size?: "big" | "small"; label?: string }) {
   const set = useSetApproval();
   const approved = email.approval.status === "approved";
   return (
@@ -59,7 +59,7 @@ export function ApproveButton({ email, size = "big" }: { email: CalEmail; size?:
         )}
       >
         {set.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : approved ? <Undo2 className="w-4 h-4" /> : <BadgeCheck className="w-5 h-5" />}
-        {approved ? "Undo approval" : "Approve"}
+        {approved ? "Undo approval" : label}
       </button>
       {set.isError && <p className="text-sm text-destructive">{(set.error as Error).message}</p>}
     </div>
