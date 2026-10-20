@@ -8,6 +8,9 @@
  */
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
+import { segmentStatusFromAttributes, type SegmentStatus } from "./klaviyo-segment-status";
+
+export { segmentStatusFromAttributes, type SegmentStatus };
 
 export const SURVEYS_KLAVIYO_SETTING = "klaviyo_surveys_api_key";
 export const KLAVIYO_REVISION = "2024-10-15";
@@ -288,23 +291,13 @@ export async function createBuyersSegment(apiKey: string, input: BuyersSegmentIn
   return created.data.id;
 }
 
-export interface SegmentStatus {
-  exists: boolean;
-  name: string | null;
-  /** Null while Klaviyo is still materialising a fresh segment. */
-  profileCount: number | null;
-}
 
 export async function getSegmentStatus(apiKey: string, segmentId: string): Promise<SegmentStatus> {
   try {
-    const got = await klaviyoFetch<{ data: { attributes?: { name?: string; profile_count?: number | null } } }>(
-      apiKey, `/api/segments/${segmentId}?additional-fields[segment]=profile_count`,
+    const got = await klaviyoFetch<{ data: { attributes?: { name?: string; profile_count?: number | null; is_processing?: boolean | null } } }>(
+      apiKey, `/api/segments/${segmentId}?fields[segment]=name,is_processing,profile_count&additional-fields[segment]=profile_count`,
     );
-    return {
-      exists: true,
-      name: got.data.attributes?.name ?? null,
-      profileCount: got.data.attributes?.profile_count ?? null,
-    };
+    return segmentStatusFromAttributes(got.data.attributes);
   } catch (err) {
     if (err instanceof Error && err.message.includes("Klaviyo 404")) {
       return { exists: false, name: null, profileCount: null };

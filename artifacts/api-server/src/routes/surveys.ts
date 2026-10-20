@@ -605,8 +605,9 @@ router.post("/:id/audience", async (req, res) => {
     // seconds to appear so the dialog usually shows it first time. The UI
     // refetches if it's still null.
     let status = await getSegmentStatus(key, segmentId);
-    for (let attempt = 0; status.profileCount == null && attempt < 3; attempt++) {
-      await sleep(1500);
+    // A new segment takes ~10-15 s to count (Properoni, 20 Oct: 12 s).
+    for (let attempt = 0; status.profileCount == null && attempt < 8; attempt++) {
+      await sleep(2000);
       status = await getSegmentStatus(key, segmentId);
     }
 
