@@ -11,6 +11,10 @@
  */
 import { addDays, daysBetween } from "./calendar";
 
+/** The old one-day "note" events (2026-10-01). They stay in the database
+ *  but are not phases: the calendar never lists them. */
+export const NOTE_EVENT_TYPE = "note";
+
 // ── Customer group ─────────────────────────────────────────────────────────
 
 export const CUSTOMER_GROUPS = ["all", "new", "returning", "subscription"] as const;
