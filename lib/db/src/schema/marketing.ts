@@ -22,6 +22,11 @@ export const marketingEventsTable = pgTable("marketing_events", {
   // idea | planned | live | done
   status: text("status").notNull().default("planned"),
   source: text("source").notNull().default("manual"),
+  // A phase's offers, as text (migration 0208). `offer` above is kept in
+  // step (offers joined) for older readers.
+  offers: text("offers").array().notNull().default(sql`'{}'::text[]`),
+  // all | new | returning | subscription (migration 0208).
+  customerGroup: text("customer_group").notNull().default("all"),
   // Set on a test box's own event (migration 0136); dates follow the box.
   testBoxId: integer("test_box_id").references(() => testBoxesTable.id, { onDelete: "set null" }),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
@@ -48,6 +53,27 @@ export const marketingEventHistoryTable = pgTable("marketing_event_history", {
 });
 
 export type MarketingEvent = typeof marketingEventsTable.$inferSelect;
+
+// The offer library (migration 0208, Graeme 2026-10-20): offers to pick for
+// a phase. Phases hold the TEXT, so editing or deleting one here never
+// changes a phase. archived = kept, not offered for new phases.
+export const marketingOffersTable = pgTable("marketing_offers", {
+  id: serial("id").primaryKey(),
+  text: text("text").notNull(),
+  notes: text("notes"),
+  archived: boolean("archived").notNull().default(false),
+  createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  createdByName: text("created_by_name"),
+  updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  updatedByName: text("updated_by_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at"),
+  deletedById: integer("deleted_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  deletedByName: text("deleted_by_name"),
+});
+
+export type MarketingOffer = typeof marketingOffersTable.$inferSelect;
 export type MarketingEventHistory = typeof marketingEventHistoryTable.$inferSelect;
 
 // ── The email plan's offer cycle (migration 0194, Graeme 2026-10-14) ─────────
@@ -195,6 +221,12 @@ export const marketingEmailApprovalsTable = pgTable("marketing_email_approvals",
   subject: text("subject"),
   klaviyoCampaignName: text("klaviyo_campaign_name"),
   sendDate: date("send_date"),
+  // Rest of the snapshot (migration 0208): a change to any of subject,
+  // preview text or send time means it needs approving again.
+  previewText: text("preview_text"),
+  sendAt: timestamp("send_at", { withTimezone: true }),
+  // false = an older approval that snapshotted the subject only.
+  snapshotFull: boolean("snapshot_full").notNull().default(false),
   approvedById: integer("approved_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   approvedByName: text("approved_by_name"),
   approvedAt: timestamp("approved_at"),
