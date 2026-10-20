@@ -67,7 +67,8 @@ router.get("/needed", async (req: Request, res: Response) => {
     canApprove: await canApproveEmails(req),
     count: items.length,
     klaviyoError,
-    items: items.map(e => ({ id: e.id, name: e.name, subject: e.subject, date: e.date, status: e.status })),
+    // Soonest first; drafts with no date at the end.
+    items: items.sort((a, b) => (a.date ?? "9999").localeCompare(b.date ?? "9999") || (a.sendAt ?? "").localeCompare(b.sendAt ?? "")),
   });
 });
 
