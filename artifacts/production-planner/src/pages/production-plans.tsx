@@ -56,7 +56,7 @@ import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-
 import { SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { PlanChecksRow } from "@/components/plan-checks-row";
 import { PlanDateClashDialog } from "@/components/plan-date-clash-dialog";
-import { TeamListPopoutButton } from "@/components/team-list-popout";
+import { TeamListDialogDock, TeamListDockButton } from "@/components/team-lists/team-list-dock";
 import { RowMarginNote, MarginSaveGuard } from "@/components/plan-margin-panel";
 import { usePlanMargin } from "@/hooks/use-plan-margin";
 import { addMarginBatches, marginCheckForRow, marginWarningsForRows } from "@/lib/plan-margin-rows";
@@ -2872,8 +2872,9 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
               <CalendarDays className="w-5 h-5 text-primary" />
               Create Production Plan
             </DialogTitle>
-            {/* Production Flow Manager list, popped out over the plan (2026-10-15). */}
-            <TeamListPopoutButton className="ml-auto" />
+            {/* Production Flow Manager list (2026-10-15): opens the team
+                list dock, which sits beside the plan (2026-10-20). */}
+            <TeamListDockButton className="ml-auto" />
           </div>
         </DialogHeader>
 
@@ -2881,7 +2882,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
             isn't a recipe row), right = the recipes table given the full
             vertical height. Means operators can see every recipe at once
             without scrolling between fields and the table. */}
-        <div className="flex-1 flex min-h-0">
+        <div className="flex-1 flex min-h-0 relative">
           {/* LEFT — plan meta + footer-style controls */}
           <aside className="w-[340px] flex-shrink-0 border-r border-border flex flex-col">
             <div className="overflow-y-auto p-5 space-y-4 flex-1">
@@ -3400,6 +3401,8 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
           )}
           </div>
           </div>
+          {/* The team list dock, beside the plan (or over its right on an iPad). */}
+          <TeamListDialogDock />
         </div>
       </DialogContent>
     </Dialog>
