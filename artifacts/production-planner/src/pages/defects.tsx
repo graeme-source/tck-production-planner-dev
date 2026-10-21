@@ -137,7 +137,10 @@ export default function DefectsPage() {
             Nothing recorded in these dates. Wonkies and dog bins still count in the figures above.
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Columns follow the panel's width, not the screen's: with the side
+            menu open on an iPad, two screen-based columns squeezed each card
+            to a word per line. */}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))] gap-3">
           {listQ.data?.map(d => (
             <DefectCard key={d.id} d={d} today={today} onEdit={() => { setEditing(d); setRecordOpen(true); }} />
           ))}

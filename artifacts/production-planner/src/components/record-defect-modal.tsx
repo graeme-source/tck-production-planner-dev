@@ -557,7 +557,8 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
                 </p>
               )}
               {typeId == null && <p className="text-sm text-muted-foreground">Choose what went wrong to save.</p>}
-              {typeId != null && !itemValid && <p className="text-sm text-muted-foreground">Say how much to save.</p>}
+              {typeId != null && !reasonValid && <p className="text-sm text-muted-foreground">Say what went wrong to save.</p>}
+              {typeId != null && reasonValid && !itemValid && <p className="text-sm text-muted-foreground">Say how much to save.</p>}
               <button
                 type="button"
                 onClick={submit}
