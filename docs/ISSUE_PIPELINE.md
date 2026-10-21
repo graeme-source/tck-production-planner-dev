@@ -212,6 +212,31 @@ migration `0191`):
 - The reviewer sees reporter replies in each card's `thread` (who
   `reporter`).
 
+### One conversation per card, unread replies (2026-10-21)
+
+Graeme: "I don't think I can see Jane's replies to my messages to her."
+Jane had never written one — on 20 Oct she tapped **Got it** on three
+messages in one batched pop-up, and the card said "New reply from Jane"
+with no words in it. Now (`reporterResponsePlan`, migration `0210`):
+
+- **"Got it" is a read receipt**, not a reply: the thread shows "Jane — read
+  your message", the card is not flagged, and "Waiting for Jane's reply"
+  stays until she writes something. Only typed words flag the card.
+- **One chat on every card** (`FixQueueThread`): Claude, Graeme's messages
+  to the reporter, his replies to Claude (marked "Jane doesn't see this"),
+  the reporter's replies by first name, oldest first, with times; the
+  "Message <name>" box sits at the bottom (same `POST /review/:id/message`).
+- **Unread**: `issue_triage.founder_read_at`; each item carries
+  `unreadReplies`, the list is sorted unread-first, `GET /review/unread`
+  feeds a green count on the Fix queue nav item, and `POST /review/:id/read`
+  (fired when the bottom of the conversation has been on screen for two
+  seconds, with no pop-up over it) clears the badge without moving the card.
+- **The reporter's side**: `GET /my-fixed-notices` items carry
+  `conversation` — the comments on their report in the issue log (never the
+  Fix queue events, which hold Graeme's private notes to Claude) — so the
+  "A reply to your report" pop-up shows the back-and-forth with "Reply to
+  Graeme" under the newest message, every time he writes again.
+
 ### Send and fix it this way (2026-10-15)
 
 Graeme's replies are usually the fix itself, and waiting an hour for Claude
