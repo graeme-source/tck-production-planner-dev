@@ -23,7 +23,7 @@ import {
   useDefectList, useDefectSummary, useDefectTypes, useDeleteDefect, useSaveDefectType, type DefectRange,
 } from "@/hooks/use-defects";
 import {
-  barWidth, dayText, defectHeadline, gbpText, minutesText, orderRefList, pctText, plural, quantityText, rangeText, recordItemName, stationText,
+  barWidth, dayText, defectHeadline, gbpText, minutesText, orderRefList, pctText, plural, quantityText, rangeText, reasonText, recordItemName, stationText,
   type DefectRecord, type DefectSummary, type DefectType,
 } from "@/lib/defects-view";
 
@@ -137,7 +137,10 @@ export default function DefectsPage() {
             Nothing recorded in these dates. Wonkies and dog bins still count in the figures above.
           </div>
         )}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Columns follow the panel's width, not the screen's: with the side
+            menu open on an iPad, two screen-based columns squeezed each card
+            to a word per line. */}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,24rem),1fr))] gap-3">
           {listQ.data?.map(d => (
             <DefectCard key={d.id} d={d} today={today} onEdit={() => { setEditing(d); setRecordOpen(true); }} />
           ))}
@@ -256,13 +259,14 @@ function DefectCard({ d, today, onEdit }: { d: DefectRecord; today: string; onEd
   const refs = orderRefList(d.orderRefs);
   const itemName = recordItemName(d);
   const amount = quantityText(d);
+  const reason = reasonText(d);
   return (
     <article className="rounded-3xl border border-border bg-card p-5 space-y-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-muted-foreground">{dayText(d.occurredOn, today)}</p>
-          <h3 className="text-xl font-bold leading-tight">{itemName ?? d.typeName}</h3>
-          {itemName && <p className="text-lg">{d.typeName}</p>}
+          <h3 className="text-xl font-bold leading-tight">{itemName ?? reason}</h3>
+          {itemName && <p className="text-lg break-words">{reason}</p>}
         </div>
         {amount ? (
           <span className="flex-shrink-0 rounded-2xl bg-secondary px-3 py-2 text-lg font-bold tabular-nums">{amount}</span>
@@ -380,6 +384,7 @@ function TypeRow({ t }: { t: DefectType }) {
         aria-label="Type name"
         className="flex-1 h-12 px-4 rounded-xl border-2 border-border bg-background text-base font-semibold"
       />
+      {t.asksForDetail && <span className="text-sm text-muted-foreground">Always last — asks people to type what went wrong</span>}
       <span className="text-sm min-w-[90px] flex items-center gap-1" aria-live="polite">
         {save.isPending ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
           : save.isError ? <span className="text-destructive font-semibold">Not saved — {(save.error as Error).message}</span>

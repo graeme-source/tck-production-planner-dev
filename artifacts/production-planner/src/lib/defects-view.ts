@@ -20,7 +20,11 @@ export interface DefectSummary {
   waste: { entries: number; ingredientCost: number; timeCost: number; totalCost: number };
 }
 
-export interface DefectType { id: number; name: string; active: boolean; sortOrder: number }
+export interface DefectType {
+  id: number; name: string; active: boolean; sortOrder: number;
+  /** "Something else…": the record must say in words what went wrong (migration 0211). */
+  asksForDetail?: boolean;
+}
 
 export type WasteItemKind = "ingredient" | "sub_recipe" | "product";
 export type PackKind = "pack" | "eight_pack_bag";
@@ -62,6 +66,8 @@ export interface DefectRecord {
   station: string | null;
   orderRefs: string | null;
   note: string | null;
+  /** What went wrong, typed — only for a type that asks for it. */
+  reasonOther: string | null;
   recordedById: number | null;
   recordedByName: string | null;
   updatedByName: string | null;
@@ -172,4 +178,28 @@ export function orderRefList(refs: string | null): string[] {
 export function barWidth(packs: number, max: number): number {
   if (!(max > 0) || !(packs > 0)) return 0;
   return Math.max(4, Math.round((packs / max) * 100));
+}
+
+/** Most a typed "what went wrong" may be (the API checks it too). */
+export const REASON_DETAIL_MAX = 200;
+export const REASON_DETAIL_MIN = 3;
+
+/** True when typed text is long enough to save for a type that asks for it. */
+export function reasonDetailValid(text: string): boolean {
+  const t = text.replace(/\s+/g, " ").trim();
+  return t.length >= REASON_DETAIL_MIN && t.length <= REASON_DETAIL_MAX;
+}
+
+/** A record's reason as the lists show it: the type, plus what was typed
+ *  for "Something else" — "Something else: extra dough made". */
+export function reasonText(r: Pick<DefectRecord, "typeName" | "reasonOther">): string {
+  const other = r.reasonOther?.trim();
+  return other ? `${r.typeName}: ${other}` : r.typeName;
+}
+
+/** Reasons in the order the form shows them: by sort order, with the
+ *  type(s) that ask for typed detail ("Something else…") always last. */
+export function formTypeOrder<T extends Pick<DefectType, "id" | "sortOrder" | "asksForDetail">>(types: T[]): T[] {
+  return [...types].sort((a, b) =>
+    Number(Boolean(a.asksForDetail)) - Number(Boolean(b.asksForDetail)) || a.sortOrder - b.sortOrder || a.id - b.id);
 }

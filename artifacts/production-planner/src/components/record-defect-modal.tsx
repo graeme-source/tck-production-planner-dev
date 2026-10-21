@@ -20,11 +20,12 @@ import { cn } from "@/lib/utils";
 import { STATIONS } from "@/pages/station/shared/constants";
 import { londonDay } from "@/lib/day-rollover";
 import {
-  dayText, gbpText, minutesText, parseAmount,
+  dayText, formTypeOrder, gbpText, minutesText, parseAmount, reasonDetailValid, REASON_DETAIL_MAX,
   type DefectRecord, type PackKind, type WasteCost, type WasteItem,
 } from "@/lib/defects-view";
 import { KIND_LABEL, searchItems } from "@/lib/defect-item-search";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
+import { DictateButton } from "@/components/dictate-button";
 import {
   useDefectTypes, useSaveDefect, useWasteCost, useWasteItems, type DefectInput, type WasteItemInput,
 } from "@/hooks/use-defects";
@@ -93,6 +94,8 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
   const [stationOther, setStationOther] = useState(Boolean(editing?.station && !knownStation));
   const [orderRefs, setOrderRefs] = useState(editing?.orderRefs ?? "");
   const [note, setNote] = useState(editing?.note ?? "");
+  // "Something else…" — what went wrong, in words (2026-10-21).
+  const [reasonOther, setReasonOther] = useState(editing?.reasonOther ?? "");
   const [savedOnce, setSavedOnce] = useState(false);
 
   // ── The item ──
@@ -157,15 +160,17 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
   const standardActive = remakeMinutes === null && cost?.suggestedMinutes != null;
 
   const types = useMemo(
-    () => (typesQ.data ?? []).filter(t => t.active || t.id === editing?.defectTypeId),
+    () => formTypeOrder((typesQ.data ?? []).filter(t => t.active || t.id === editing?.defectTypeId)),
     [typesQ.data, editing?.defectTypeId],
   );
+  const askingDetail = Boolean(types.find(t => t.id === typeId)?.asksForDetail);
+  const reasonValid = !askingDetail || reasonDetailValid(reasonOther);
 
   const packs = Number(packsText);
   const packsValid = Number.isInteger(packs) && packs >= 1 && packs <= 100000;
   const dateValid = /^\d{4}-\d{2}-\d{2}$/.test(occurredOn) && occurredOn <= today;
   const itemValid = item ? amount != null && (isProduct || Boolean(unit)) : packsValid;
-  const canSave = typeId != null && itemValid && dateValid && !save.isPending;
+  const canSave = typeId != null && reasonValid && itemValid && dateValid && !save.isPending;
 
   const submit = () => {
     if (!canSave || typeId == null) return;
@@ -175,6 +180,7 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
       station: stationOther ? (otherStation.trim() || null) : station,
       orderRefs: orderRefs.trim() || null,
       note: note.trim() || null,
+      reasonOther: askingDetail ? reasonOther.trim() : null,
     };
     let input: DefectInput;
     if (item && costInput && (itemDirty || !legacy)) {
@@ -201,7 +207,7 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
     setSavedOnce(false); save.reset();
     setTypeId(null); setItemKey(null); setAmountText(""); setUnit(""); setPackKind("pack"); setRemakeMinutes(null);
     setCustomMinutes(""); setPacksText("1"); setStation(null); setStationOther(false);
-    setOtherStation(""); setOrderRefs(""); setNote(""); setSearch(""); setItemDirty(true);
+    setOtherStation(""); setOrderRefs(""); setNote(""); setReasonOther(""); setSearch(""); setItemDirty(true);
   };
 
   const title = editing ? "Edit defect / waste" : REPORT_DEFECT_LABEL;
@@ -380,10 +386,33 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
                         typeId === t.id ? "border-primary bg-primary/10" : "border-border bg-card hover:border-primary/50",
                       )}
                     >
-                      {t.name}{!t.active && <span className="block text-sm font-normal text-muted-foreground">No longer in use</span>}
+                      {t.asksForDetail ? `${t.name}…` : t.name}{!t.active && <span className="block text-sm font-normal text-muted-foreground">No longer in use</span>}
                     </button>
                   ))}
                 </div>
+                {askingDetail && (
+                  <div className="space-y-2">
+                    <textarea
+                      autoFocus
+                      value={reasonOther}
+                      onChange={e => setReasonOther(e.target.value.slice(0, REASON_DETAIL_MAX))}
+                      maxLength={REASON_DETAIL_MAX}
+                      rows={2}
+                      placeholder="Say what went wrong"
+                      aria-label="Say what went wrong"
+                      aria-required="true"
+                      className={cn(
+                        "w-full rounded-2xl border-2 bg-card px-4 py-3 text-lg focus:outline-none focus:border-primary",
+                        reasonOther.trim() && !reasonValid ? "border-destructive" : "border-border",
+                      )}
+                    />
+                    <div className="flex items-center justify-between gap-3 text-sm text-muted-foreground">
+                      <span className={cn(!reasonValid && "text-destructive")}>{reasonValid ? "Thanks — this goes on the record." : "Needed — a few words is fine."}</span>
+                      <span className="tabular-nums">{reasonOther.length}/{REASON_DETAIL_MAX}</span>
+                    </div>
+                    <DictateButton value={reasonOther} onChange={t => setReasonOther(t.slice(0, REASON_DETAIL_MAX))} context="title" />
+                  </div>
+                )}
               </section>
 
               {/* ── When ── */}
@@ -528,7 +557,8 @@ function DefectForm({ onClose, editing }: { onClose: () => void; editing: Defect
                 </p>
               )}
               {typeId == null && <p className="text-sm text-muted-foreground">Choose what went wrong to save.</p>}
-              {typeId != null && !itemValid && <p className="text-sm text-muted-foreground">Say how much to save.</p>}
+              {typeId != null && !reasonValid && <p className="text-sm text-muted-foreground">Say what went wrong to save.</p>}
+              {typeId != null && reasonValid && !itemValid && <p className="text-sm text-muted-foreground">Say how much to save.</p>}
               <button
                 type="button"
                 onClick={submit}

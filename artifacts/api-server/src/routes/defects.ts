@@ -34,6 +34,7 @@ import { requireAdmin } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
 import { canEditDefect, standardPeriods } from "../lib/defects-kpi";
 import { loadDefectSummary } from "../services/defects-summary";
+import { ReasonOtherField, resolveReasonDetail } from "../lib/defect-reason";
 import { daysBetween } from "../lib/team-efficiency-labour";
 import { costWaste, loadWasteCatalogue, WasteInputError, type WasteCosting, type WasteItemInput } from "../services/waste-costing";
 import { restateDays } from "../services/team-efficiency-job";
@@ -77,6 +78,7 @@ function parseRange(req: Request, res: Response): { from: string; to: string } |
 router.get("/types", async (_req: Request, res: Response) => {
   const types = await db.select({
     id: defectTypesTable.id, name: defectTypesTable.name, active: defectTypesTable.active, sortOrder: defectTypesTable.sortOrder,
+    asksForDetail: defectTypesTable.asksForDetail,
   }).from(defectTypesTable).orderBy(asc(defectTypesTable.sortOrder), asc(defectTypesTable.id));
   res.json({ types });
 });
@@ -259,6 +261,7 @@ router.get("/", async (req: Request, res: Response) => {
     station: defectsTable.station,
     orderRefs: defectsTable.orderRefs,
     note: defectsTable.note,
+    reasonOther: defectsTable.reasonOther,
     recordedById: defectsTable.recordedById,
     recordedByName: defectsTable.recordedByName,
     updatedByName: defectsTable.updatedByName,
@@ -309,6 +312,9 @@ const DefectFields = {
   station: Optional(60),
   orderRefs: Optional(300),
   note: Optional(2000),
+  // What went wrong, in words — required (3–200 chars) when the type asks
+  // for it ("Something else…"), dropped for every other type.
+  reasonOther: ReasonOtherField,
   // Waste: send all of these together, or none (an entry with no item).
   itemKind: WasteFields.itemKind.optional(),
   itemId: WasteFields.itemId.optional(),
@@ -349,6 +355,11 @@ async function checkTypeAndDay(
   return null;
 }
 
+async function typeAsksForDetail(typeId: number): Promise<boolean> {
+  const [t] = await db.select({ asks: defectTypesTable.asksForDetail }).from(defectTypesTable).where(eq(defectTypesTable.id, typeId));
+  return Boolean(t?.asks);
+}
+
 router.post("/", validate(CreateDefectBody), async (req: Request, res: Response) => {
   const body = req.body as z.infer<typeof CreateDefectBody>;
   const problem = await checkTypeAndDay(body, { mustBeActive: true });
@@ -356,6 +367,8 @@ router.post("/", validate(CreateDefectBody), async (req: Request, res: Response)
   const item = itemFromBody(body);
   if (typeof item === "string") { res.status(400).json({ error: item }); return; }
   if (item === null && body.packs === undefined) { res.status(400).json({ error: "Say how many packs, or choose what was wasted" }); return; }
+  const reason = resolveReasonDetail(await typeAsksForDetail(body.defectTypeId), body.reasonOther);
+  if (!reason.ok) { res.status(400).json({ error: reason.error }); return; }
   const user = await me(req);
   try {
     let waste: Partial<typeof defectsTable.$inferInsert> = {};
@@ -375,6 +388,7 @@ router.post("/", validate(CreateDefectBody), async (req: Request, res: Response)
       station: blankToNull(body.station),
       orderRefs: blankToNull(body.orderRefs),
       note: blankToNull(body.note),
+      reasonOther: reason.value,
       recordedById: user.id,
       recordedByName: user.name,
       ...waste,
@@ -395,7 +409,7 @@ async function loadEditable(req: Request, res: Response) {
     occurredOn: defectsTable.occurredOn, lostValue: defectsTable.lostValue, itemKind: defectsTable.itemKind,
     ingredientId: defectsTable.ingredientId, subRecipeId: defectsTable.subRecipeId, recipeId: defectsTable.recipeId,
     packKind: defectsTable.packKind, quantity: defectsTable.quantity, quantityUnit: defectsTable.quantityUnit,
-    remakeMinutes: defectsTable.remakeMinutes,
+    remakeMinutes: defectsTable.remakeMinutes, reasonOther: defectsTable.reasonOther,
   })
     .from(defectsTable).where(and(eq(defectsTable.id, id), isNull(defectsTable.deletedAt)));
   if (!row) { res.status(404).json({ error: "Defect not found" }); return null; }
@@ -430,6 +444,15 @@ router.patch("/:id", validate(UpdateDefectBody), async (req: Request, res: Respo
   if (body.station !== undefined) patch.station = blankToNull(body.station);
   if (body.orderRefs !== undefined) patch.orderRefs = blankToNull(body.orderRefs);
   if (body.note !== undefined) patch.note = blankToNull(body.note);
+  // The typed reason follows the type the record ends up with: kept (or
+  // replaced) for a type that asks for it, cleared for any other.
+  if (body.defectTypeId !== undefined || body.reasonOther !== undefined) {
+    const reason = resolveReasonDetail(
+      await typeAsksForDetail(body.defectTypeId ?? found.row.defectTypeId), body.reasonOther, found.row.reasonOther,
+    );
+    if (!reason.ok) { res.status(400).json({ error: reason.error }); return; }
+    patch.reasonOther = reason.value;
+  }
 
   // The item: a new or changed item/amount is costed afresh (today's
   // prices). Only the remake time changing on an entry that has an item
