@@ -3,21 +3,21 @@
  *
  * Daily conversion against the delivery wait customers faced, with every
  * website/offer/email change marked on the same timeline; the findings say
- * what the history suggests as a likelihood, never a verdict; and a quick
- * changelog so the things the system can't see (ads, A/B tests, a heatwave)
- * get recorded the day they happen.
+ * what the history suggests as a likelihood, never a verdict. The change
+ * log itself lives collapsed at the very bottom of the page (change-log.tsx,
+ * Graeme 2026-10-21) — the chart still marks each change.
  */
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
 import {
   ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, CartesianGrid, ReferenceLine, ResponsiveContainer,
 } from "recharts";
-import { Activity, Download, Loader2, RefreshCw, Trash2, Truck, Plus, Check, AlertTriangle } from "lucide-react";
+import { Activity, Download, Loader2, RefreshCw, Truck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import {
-  useSalesDrivers, useAddChange, useDeleteChange, useRefreshDrivers, exportUrl,
-  CHANGE_CATEGORIES, type Change, type ChangeCategory, type Overview,
+  useSalesDrivers, useRefreshDrivers, exportUrl,
+  CHANGE_CATEGORIES, type Change, type Overview,
 } from "./api";
 
 const pct = (x: number | null | undefined, dp = 1) => (x == null ? "—" : `${(x * 100).toFixed(dp)}%`);
@@ -75,7 +75,6 @@ export function SalesDriversSection({ canEdit }: { canEdit: boolean }) {
           <LatestCheck check={q.data.latestCheck} />
           <DriversChart data={q.data} />
           <Findings data={q.data} />
-          <Changelog changes={q.data.changes} canEdit={canEdit} />
         </>
       ) : null}
     </section>
@@ -205,109 +204,5 @@ function Findings({ data }: { data: Overview }) {
         </table>
       </div>
     </div>
-  );
-}
-
-function nowLocalInput(): string {
-  const d = new Date();
-  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  return d.toISOString().slice(0, 16);
-}
-
-function Changelog({ changes, canEdit }: { changes: Change[]; canEdit: boolean }) {
-  const add = useAddChange();
-  const del = useDeleteChange();
-  const [when, setWhen] = useState(nowLocalInput);
-  const [category, setCategory] = useState<ChangeCategory>("offer");
-  const [title, setTitle] = useState("");
-  const [detail, setDetail] = useState("");
-  const [savedAt, setSavedAt] = useState<number | null>(null);
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!title.trim()) return;
-    add.mutate(
-      { effectiveAt: new Date(when).toISOString(), category, title: title.trim(), detail: detail.trim() || null },
-      { onSuccess: () => { setTitle(""); setDetail(""); setSavedAt(Date.now()); } },
-    );
-  };
-
-  return (
-    <div className="space-y-3">
-      <h3 className="text-sm font-semibold">Changelog</h3>
-      {canEdit && (
-        <form onSubmit={submit} className="rounded-xl border border-border bg-muted/30 p-3 grid grid-cols-1 md:grid-cols-[11rem_9rem_minmax(0,1fr)_auto] gap-2 items-start">
-          <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)} aria-label="When it went live"
-            className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm" />
-          <select value={category} onChange={e => setCategory(e.target.value as ChangeCategory)} aria-label="Category"
-            className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm">
-            {CHANGE_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
-          </select>
-          <div className="space-y-2">
-            <input value={title} onChange={e => { setTitle(e.target.value); setSavedAt(null); }} maxLength={300}
-              placeholder="What changed — e.g. Meta broad ad set raised to £600/day; free delivery threshold £60 → £50"
-              className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" aria-label="What changed" />
-            <input value={detail} onChange={e => setDetail(e.target.value)} maxLength={2000} placeholder="Detail (optional)"
-              className="w-full rounded-lg border border-border bg-background px-2 py-1.5 text-sm" aria-label="Detail" />
-          </div>
-          <div className="flex flex-col items-stretch gap-1">
-            <button type="submit" disabled={add.isPending || !title.trim()}
-              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-primary text-primary-foreground px-3 py-1.5 text-sm font-medium disabled:opacity-50">
-              {add.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add
-            </button>
-            <span className="text-xs text-center min-h-4" aria-live="polite">
-              {add.isPending ? "Saving…" : add.error ? <span className="text-destructive">Not saved — {(add.error as Error).message}</span>
-                : savedAt ? <span className="text-primary inline-flex items-center gap-1"><Check className="w-3 h-3" />Saved</span> : null}
-            </span>
-          </div>
-        </form>
-      )}
-      {del.error && <p className="text-sm text-destructive">Couldn't remove — {(del.error as Error).message}</p>}
-      {changes.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No changes recorded in this period yet. Theme changes and Klaviyo emails arrive automatically each morning.</p>
-      ) : (
-        <ul className="divide-y divide-border/60">
-          {changes.map(c => <ChangeItem key={c.id} change={c} canDelete={canEdit && c.source === "manual"} onDelete={() => del.mutate(c.id)} deleting={del.isPending && del.variables === c.id} />)}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-function ChangeItem({ change: c, canDelete, onDelete, deleting }: { change: Change; canDelete: boolean; onDelete: () => void; deleting: boolean }) {
-  const [confirming, setConfirming] = useState(false);
-  const imp = c.impact;
-  return (
-    <li className="py-2.5 flex gap-3 items-start">
-      <span className="mt-1 w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: CAT_COLOUR[c.category] ?? "#64748b" }} />
-      <div className="min-w-0 flex-1 space-y-0.5">
-        <p className="text-sm">
-          <span className="text-muted-foreground">{format(new Date(c.effectiveAt), "EEE d MMM, HH:mm")} · {catLabel(c.category)} · </span>
-          <span className="font-medium">{c.title}</span>
-        </p>
-        {c.detail && <p className="text-xs text-muted-foreground line-clamp-2">{c.detail}</p>}
-        {imp && imp.effect != null && (
-          <p className={cn("text-xs flex items-center gap-1", imp.likelihood.includes("lower") ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>
-            {imp.likelihood.includes("lower") && <AlertTriangle className="w-3 h-3" />}
-            Fortnight after vs before (same weekdays): conversion {imp.likelihood}
-            {imp.likelihood !== "no clear difference" && ` (${imp.effect < 0 ? "−" : "+"}${Math.round(Math.abs(imp.effect) * 100)}%)`}
-            {imp.leadShift != null && Math.abs(imp.leadShift) >= 0.5 && ` — but the delivery wait also moved ${imp.leadShift > 0 ? "+" : ""}${imp.leadShift.toFixed(1)} days`}
-          </p>
-        )}
-        <p className="text-[11px] text-muted-foreground/80">{c.source === "manual" ? "Added by hand" : c.source === "theme" ? "From the live theme (GitHub)" : c.source === "klaviyo" ? "From Klaviyo" : c.source}</p>
-      </div>
-      {canDelete && (confirming ? (
-        <span className="flex items-center gap-1 text-xs">
-          <button type="button" onClick={onDelete} disabled={deleting} className="rounded-md bg-destructive text-destructive-foreground px-2 py-1">
-            {deleting ? "Removing…" : "Remove"}
-          </button>
-          <button type="button" onClick={() => setConfirming(false)} className="rounded-md border border-border px-2 py-1">Keep</button>
-        </span>
-      ) : (
-        <button type="button" onClick={() => setConfirming(true)} aria-label="Remove change" className="p-1 text-muted-foreground hover:text-destructive">
-          <Trash2 className="w-4 h-4" />
-        </button>
-      ))}
-    </li>
   );
 }
