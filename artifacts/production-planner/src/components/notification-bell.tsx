@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
-import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper, ListTodo, FileSignature } from "lucide-react";
+import { Bell, CheckCheck, MessageSquare, ShieldCheck, CircleCheck, PartyPopper, ListTodo, FileSignature, Star, Crown } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { useNotifications, type AppNotification } from "@/hooks/use-notifications";
@@ -11,6 +11,9 @@ const TYPE_ICONS: Record<string, typeof MessageSquare> = {
   acknowledged: ShieldCheck,
   resolved: CircleCheck,
   improvement: PartyPopper,
+  // Your improvement was rated ×2 / ×3 (2026-10-21).
+  improvement_great: Star,
+  improvement_substantial: Crown,
   todo: ListTodo,
   contract: FileSignature,
 };
