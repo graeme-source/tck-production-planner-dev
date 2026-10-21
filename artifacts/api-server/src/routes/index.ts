@@ -43,6 +43,7 @@ import appSettingsRouter from "./app-settings";
 import reportsRouter from "./reports";
 import fulfilmentRouter from "./fulfilment";
 import chargebackHoldsRouter from "./chargeback-holds";
+import cancelledOrderLabelsRouter from "./cancelled-order-labels";
 import fulfilmentAvailabilityRouter from "./fulfilment-availability";
 import apcBookingIssuesRouter from "./apc-booking-issues";
 import apcConsignmentCheckRouter from "./apc-consignment-check";
@@ -322,6 +323,7 @@ router.use("/fulfilment", fulfilmentAvailabilityRouter);
 router.use("/fulfilment", apcBookingIssuesRouter);
 router.use("/fulfilment", apcConsignmentCheckRouter);
 router.use("/fulfilment", chargebackHoldsRouter);
+router.use("/fulfilment", cancelledOrderLabelsRouter);
 // Barcodes: set in the app, our table is the source of truth for scanning
 // (Shopify only read). lib/barcode-store.ts.
 router.use("/barcodes", barcodesRouter);
