@@ -8,14 +8,16 @@
  * "quiet" line for runs of empty days. Phases start and end in the flow and
  * every row they cover carries their coloured stripe and name. Each Klaviyo
  * email sits once on its send day with its status and, for approvers, an
- * Approve button right on the row. The Today marker is highlighted, with
- * drafts that have no send date yet hanging off it, and the list opens
- * scrolled (inside its own box) to today. The ordering is buildAgenda() in
+ * Approve button right on the row. Today is ONE highlighted row — the
+ * Today bar with today's phases and emails directly under it — and the
+ * list opens scrolled (inside its own box) to it. Drafts with no send date
+ * are not here: they have their own collapsible section above the list
+ * (drafts-section.tsx, Graeme 2026-10-21). The ordering is buildAgenda() in
  * @workspace/marketing-calendar — tested there.
  */
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { format, parseISO } from "date-fns";
-import { BadgeCheck, CalendarClock, ChevronDown, ChevronUp, Flag, Loader2, Mail, PencilLine, Play, Tag, Users } from "lucide-react";
+import { BadgeCheck, ChevronDown, ChevronUp, Flag, Loader2, Mail, PencilLine, Play, Tag, Users } from "lucide-react";
 import {
   buildAgenda, customerGroupChip, emailRowStatus, formatRange, rowWantsApproval, type AgendaRow, type EmailRowStatus, type PhaseOnRow,
 } from "@workspace/marketing-calendar";
@@ -38,14 +40,13 @@ const day = (iso: string, f: string) => format(parseISO(iso), f);
 const ROW_SELECTOR = '[data-row-key]:not([data-row-key^="week-"])';
 
 export function AgendaList({
-  from, to, today, phases, emails, undated, canApprove, loading, settled, onOpenPhase, onOpenEmail, onEarlier, onLater, scrollToTodaySignal,
+  from, to, today, phases, emails, canApprove, loading, settled, onOpenPhase, onOpenEmail, onEarlier, onLater, scrollToTodaySignal,
 }: {
   from: string;
   to: string;
   today: string;
   phases: Phase[];
   emails: CalEmail[];
-  undated: CalEmail[];
   canApprove: boolean;
   loading: boolean;
   /** Data for the current range has arrived (not the previous range's placeholder). */
@@ -58,8 +59,8 @@ export function AgendaList({
   scrollToTodaySignal: number;
 }) {
   const { rows, laneCount } = useMemo(
-    () => buildAgenda<Phase, CalEmail>({ from, to, today, phases, emails, undated }),
-    [from, to, today, phases, emails, undated],
+    () => buildAgenda<Phase, CalEmail>({ from, to, today, phases, emails }),
+    [from, to, today, phases, emails],
   );
 
   const box = useRef<HTMLDivElement>(null);
@@ -118,7 +119,7 @@ export function AgendaList({
         </div>
 
         {rows.map(r => (
-          <div key={r.key} data-row-key={r.key} ref={r.kind === "today" ? todayRef : undefined}
+          <div key={r.key} data-row-key={r.key} ref={r.kind === "day" && r.isToday ? todayRef : undefined}
             className={r.kind === "week" ? "sticky top-0 z-10" : undefined}>
             <AgendaRowView row={r} laneCount={laneCount} canApprove={canApprove} onOpenPhase={onOpenPhase} onOpenEmail={onOpenEmail} />
           </div>
@@ -162,26 +163,6 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
     );
   }
 
-  if (r.kind === "today") {
-    return (
-      <div className="border-y-2 border-primary bg-primary/10">
-        <div className="px-3 py-2 flex items-center gap-2 text-primary">
-          <span className="w-3 h-3 rounded-full bg-primary ring-4 ring-primary/25" />
-          <span className="text-base font-bold">Today · {day(r.date, "EEEE d MMMM")}</span>
-          <span className="text-sm font-medium text-muted-foreground">— past above, coming up below</span>
-        </div>
-        {r.undated.length > 0 && (
-          <div className="px-3 pb-3 space-y-2">
-            <p className="text-sm font-semibold flex items-center gap-1.5">
-              <CalendarClock className="w-4 h-4 text-muted-foreground" /> No send date yet ({r.undated.length})
-            </p>
-            {r.undated.map(m => <EmailRow key={m.id} email={m} canApprove={canApprove} onOpen={() => onOpenEmail(m)} />)}
-          </div>
-        )}
-      </div>
-    );
-  }
-
   if (r.kind === "quiet") {
     const names = r.phases.map(p => p.phase.title).join(" · ");
     return (
@@ -195,18 +176,19 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
     );
   }
 
-  // A day with something on it.
+  // A day with something on it — or today, which is ONE row: the Today bar
+  // with today's phases and emails straight under it.
   const startingIds = new Set(r.starts.map(p => p.id));
   const runningOn = r.phases.filter(p => !startingIds.has(p.phase.id));
-  return (
-    <div className={cn("flex items-stretch gap-2 border-b border-border",
-      r.isToday && "bg-primary/5", r.isPast && "opacity-70")}>
+  const body = (
+    <div className={cn("flex items-stretch gap-2", !r.isToday && "border-b border-border", r.isPast && "opacity-70")}>
       <Stripes phases={r.phases} laneCount={laneCount} />
-      <div className="flex-1 min-w-0 py-2.5 pr-2 sm:pr-3 flex flex-col sm:flex-row gap-1.5 sm:gap-3">
-        <div className="sm:w-24 flex-shrink-0">
-          <p className={cn("text-base font-bold leading-tight", r.isToday && "text-primary")}>{day(r.date, "EEE d MMM")}</p>
-          {r.isToday && <p className="text-xs font-bold uppercase text-primary">Today</p>}
-        </div>
+      <div className={cn("flex-1 min-w-0 pr-2 sm:pr-3 flex flex-col sm:flex-row gap-1.5 sm:gap-3", r.isToday ? "pt-1 pb-3 pl-1" : "py-2.5")}>
+        {!r.isToday && (
+          <div className="sm:w-24 flex-shrink-0">
+            <p className="text-base font-bold leading-tight">{day(r.date, "EEE d MMM")}</p>
+          </div>
+        )}
         <div className="flex-1 min-w-0 space-y-2">
           {r.starts.map(p => {
             const lane = r.phases.find(x => x.phase.id === p.id)?.lane ?? 0;
@@ -238,6 +220,17 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
           })}
         </div>
       </div>
+    </div>
+  );
+  if (!r.isToday) return body;
+  return (
+    <div className="border-y-2 border-primary bg-primary/10">
+      <div className="px-3 py-2 flex items-center gap-2 text-primary flex-wrap">
+        <span className="w-3 h-3 rounded-full bg-primary ring-4 ring-primary/25" />
+        <span className="text-base font-bold">Today · {day(r.date, "EEEE d MMMM")}</span>
+        <span className="text-sm font-medium text-muted-foreground">— past above, coming up below</span>
+      </div>
+      {body}
     </div>
   );
 }

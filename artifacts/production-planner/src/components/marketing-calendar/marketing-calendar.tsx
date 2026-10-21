@@ -10,11 +10,13 @@
  *
  *   - LIST (default, remembered per device): weeks top to bottom, phases
  *     starting and ending in the flow with a coloured stripe on every day
- *     they cover, a highlighted Today marker it opens scrolled to, and
- *     drafts with no send date yet at the Today marker. See agenda-list.tsx.
+ *     they cover, and ONE highlighted Today row it opens scrolled to. See
+ *     agenda-list.tsx.
  *   - MONTH: the month grid — phases as bars (drag to move / stretch), email
- *     chips with a status dot. Undated drafts sit in a "No send date yet"
- *     line above the grid.
+ *     chips with a status dot.
+ *   - DRAFTS: Klaviyo drafts with no send date sit in their own collapsible
+ *     "Drafts" section above either view, never under Today (Graeme,
+ *     2026-10-21). See drafts-section.tsx.
  *   - PHASES: dated periods with optional offers, customer group and notes;
  *     tap to edit, "+ Add phase" or "Re-use a past phase".
  *   - OFFERS: the offer library, from the "Offers" button.
@@ -23,7 +25,7 @@ import { useMemo, useState } from "react";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
 import {
-  AlertTriangle, BadgeCheck, CalendarClock, CalendarDays, ChevronLeft, ChevronRight, Copy, List, Loader2, Lock, Mail, Megaphone, Package, PencilLine, Plus, Sparkles, Tag, X,
+  AlertTriangle, BadgeCheck, CalendarDays, ChevronLeft, ChevronRight, Copy, List, Loader2, Lock, Mail, Megaphone, Package, PencilLine, Plus, Sparkles, Tag, X,
 } from "lucide-react";
 import {
   addMonths, agendaRange, formatRange, monthGridWeeks, monthStart, type DragMode,
@@ -33,11 +35,12 @@ import {
   calApi, useCalendarEmails, useCreatePhase, usePhases, useSetPhaseDates,
   type CalEmail, type Phase, type Suggestion,
 } from "./api";
-import { KLAVIYO_TONE, PHASE_TONE } from "./constants";
+import { PHASE_TONE } from "./constants";
 import { MonthGrid } from "./month-grid";
 import { PhaseModal } from "./phase-modal";
 import { EmailPanel } from "./email-panel";
 import { AgendaList } from "./agenda-list";
+import { DraftsSection } from "./drafts-section";
 import { OffersManager } from "./offers-manager";
 import { ReusePhase } from "./reuse-phase";
 
@@ -190,6 +193,10 @@ export function MarketingCalendar() {
       {emailsQ.data?.error && <p className="text-sm text-amber-700 dark:text-amber-400">Klaviyo emails: {emailsQ.data.error}</p>}
       {emailsQ.data && !emailsQ.data.connected && <p className="text-sm text-muted-foreground">Klaviyo isn't connected, so no emails show.</p>}
 
+      {/* Drafts with no send date aren't on any day — their own collapsible
+          section, above the list's scroll box and the month grid alike. */}
+      <DraftsSection drafts={undated} canApprove={canApprove} onOpenEmail={setOpenEmail} />
+
       {view === "list" ? (
         <AgendaList
           from={range.from}
@@ -197,7 +204,6 @@ export function MarketingCalendar() {
           today={today}
           phases={phases}
           emails={emails}
-          undated={undated}
           canApprove={canApprove}
           loading={loading}
           settled={settled}
@@ -209,23 +215,6 @@ export function MarketingCalendar() {
         />
       ) : (
         <>
-          {/* Drafts with no send date can't sit on a day, so they line up
-              here, above the month — once each, with their status. */}
-          {undated.length > 0 && (
-            <div className="flex flex-wrap items-center gap-2 text-sm">
-              <span className="font-semibold flex items-center gap-1.5"><CalendarClock className="w-4 h-4 text-muted-foreground" /> No send date yet:</span>
-              {undated.map(m => (
-                <button key={m.id} type="button" onClick={() => setOpenEmail(m)}
-                  className={cn("inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 font-semibold text-left", KLAVIYO_TONE.draft)}>
-                  <PencilLine className="w-3.5 h-3.5 flex-shrink-0" />
-                  <span className="break-words">{m.subject ?? m.name}</span>
-                  {m.approval.status === "approved"
-                    ? <BadgeCheck className="w-4 h-4 flex-shrink-0 text-emerald-600" aria-label="Approved" />
-                    : <span className="w-2.5 h-2.5 rounded-full bg-amber-400 flex-shrink-0" aria-label="Needs approval" />}
-                </button>
-              ))}
-            </div>
-          )}
           <div className="relative">
             {loading && (
               <div className="absolute inset-0 z-10 flex items-center justify-center bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>

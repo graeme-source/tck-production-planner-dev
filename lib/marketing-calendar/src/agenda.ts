@@ -7,11 +7,17 @@
  * buildAgenda() turns phases + Klaviyo emails into rows, top to bottom:
  *
  *   week    "Week of Mon 19 Oct" — every week in the range gets one
- *   day     a day with an email, a phase starting or ending, or today
+ *   day     a day with an email, a phase starting or ending, or today.
+ *           Today's row (isToday) IS the Today marker: one Today, with
+ *           today's phases and emails directly under it, never a second
+ *           row repeating it (Graeme, 2026-10-21)
  *   quiet   a run of empty days inside one week, all under the same phases
  *           (a thin line, so the timeline stays continuous)
- *   today   the Today marker, just before today's day row; Klaviyo drafts
- *           with no send date yet hang off it
+ *
+ * Klaviyo drafts with no send date are NOT in the rows — "these aren't
+ * scheduled for today, they're not scheduled at all" (Graeme, 2026-10-21).
+ * They get their own collapsible Drafts section: sortDrafts() and
+ * draftsOpen() below.
  *
  * Phases get a lane (assignLanes), so a phase's stripe sits in the same
  * place on every row it covers and overlapping phases sit side by side.
@@ -34,8 +40,7 @@ export type AgendaRow<P extends AgendaPhase, E extends AgendaEmail> =
     /** Klaviyo emails sending this day, by send time. */
     emails: E[];
   }
-  | { kind: "quiet"; key: string; from: string; to: string; days: number; isPast: boolean; phases: PhaseOnRow<P>[] }
-  | { kind: "today"; key: string; date: string; undated: E[] };
+  | { kind: "quiet"; key: string; from: string; to: string; days: number; isPast: boolean; phases: PhaseOnRow<P>[] };
 
 export interface Agenda<P extends AgendaPhase, E extends AgendaEmail> {
   rows: AgendaRow<P, E>[];
@@ -67,10 +72,8 @@ export function buildAgenda<P extends AgendaPhase, E extends AgendaEmail>(input:
   to: string;
   today: string;
   phases: readonly P[];
-  /** Emails with a send date (others in the range are ignored). */
+  /** Emails with a send date (undated ones and those outside the range are ignored). */
   emails: readonly E[];
-  /** Klaviyo drafts with no send date yet — shown at the Today marker. */
-  undated?: readonly E[];
 }): Agenda<P, E> {
   const { from, to, today } = input;
   const rows: AgendaRow<P, E>[] = [];
@@ -88,11 +91,6 @@ export function buildAgenda<P extends AgendaPhase, E extends AgendaEmail>(input:
     byDay.set(e.date, list);
   }
   for (const list of byDay.values()) list.sort(sendOrder);
-  const undated = [...(input.undated ?? [])].sort(sendOrder);
-
-  // Today's marker sits on today's row; when today is outside the range it
-  // goes at the nearer end, so undated drafts are never lost.
-  const markerDay = today < from ? from : today > to ? to : today;
 
   const covering = (day: string): PhaseOnRow<P>[] => phases
     .filter(p => p.startDate <= day && p.endDate >= day)
@@ -117,16 +115,12 @@ export function buildAgenda<P extends AgendaPhase, E extends AgendaEmail>(input:
     const starts = phases.filter(p => p.startDate === day);
     const ends = phases.filter(p => p.endDate === day);
     const emails = byDay.get(day) ?? [];
-    const isMarker = day === markerDay;
+    const isToday = day === today;
     const isPast = day < today;
 
-    if (isMarker) {
+    if (isToday || starts.length || ends.length || emails.length) {
       flushQuiet();
-      rows.push({ kind: "today", key: `today-${day}`, date: today, undated });
-    }
-    if (isMarker || starts.length || ends.length || emails.length) {
-      flushQuiet();
-      rows.push({ kind: "day", key: `day-${day}`, date: day, isToday: day === today, isPast, phases: onDay, starts, ends, emails });
+      rows.push({ kind: "day", key: `day-${day}`, date: day, isToday, isPast, phases: onDay, starts, ends, emails });
       continue;
     }
     // An empty day: extend the quiet run if it's under the same phases and
@@ -142,4 +136,23 @@ export function buildAgenda<P extends AgendaPhase, E extends AgendaEmail>(input:
   }
   flushQuiet();
   return { rows, laneCount };
+}
+
+// ── Drafts with no send date (Graeme, 2026-10-21) ─────────────────────────
+// Their own collapsible section at the top of the calendar (List and Month
+// views alike), never under Today.
+
+/** Undated drafts in a stable order (any with a time first, then by id). */
+export function sortDrafts<E extends AgendaEmail>(drafts: readonly E[]): E[] {
+  return [...drafts].sort(sendOrder);
+}
+
+/**
+ * Is the Drafts section open? This device's own choice when it has made one
+ * ("open" / "closed"); otherwise open only when a draft needs approval.
+ */
+export function draftsOpen(saved: string | null | undefined, anyNeedsApproval: boolean): boolean {
+  if (saved === "open") return true;
+  if (saved === "closed") return false;
+  return anyNeedsApproval;
 }
