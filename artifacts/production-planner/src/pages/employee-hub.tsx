@@ -29,6 +29,9 @@ import { TodoSheet, useMyOpenTodoCount } from "@/components/todo-lists";
 import { jsPDF } from "jspdf";
 import { toast } from "@/hooks/use-toast";
 import { isCreditedTo } from "@/lib/improvement-credits";
+import { cn } from "@/lib/utils";
+import { premiumStyle } from "@/lib/improvement-premium";
+import { CreditBadge, PremiumStrip } from "@/components/improvement-credit-weight";
 
 // HMRC Approved Mileage Allowance Payment (AMAP) rates — cars and
 // vans. Unchanged since 2011 but stored in one place so updating
@@ -960,6 +963,8 @@ interface ImprovementRow {
    *  someone else is on both people's lists. */
   credits?: Array<{ userId: number; name: string | null }>;
   creditNames?: string | null;
+  /** 1, or 2 / 3 for a Great one / Substantial (migration 0171). */
+  creditWeight?: number;
 }
 
 interface AndonRow {
@@ -1027,10 +1032,15 @@ function MyImprovementsList({ userId }: { userId: number | null }) {
   }
   return (
     <ul className="divide-y divide-border border border-border rounded-xl overflow-hidden">
-      {rows.map(r => (
-        <li key={r.id} className="px-4 py-3 bg-card">
+      {rows.map(r => {
+        // Your ×2 / ×3 shows in gold here too (2026-10-21).
+        const premium = premiumStyle(r.creditWeight);
+        return (
+        <li key={r.id} className={cn("px-4 py-3 bg-card", premium.cardClass && cn("relative overflow-hidden border-2 pt-5", premium.cardClass))}>
+          <PremiumStrip weight={r.creditWeight} />
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0 flex-1">
+              {premium.badgeText && <div className="mb-1.5"><CreditBadge weight={r.creditWeight} /></div>}
               <p className="text-sm font-medium truncate">{r.title}</p>
               <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{r.description}</p>
               {(r.credits?.length ?? 0) > 1 && r.creditNames && (
@@ -1050,7 +1060,8 @@ function MyImprovementsList({ userId }: { userId: number | null }) {
             <p className="text-[10px] text-muted-foreground/70 mt-1.5 uppercase tracking-wide">{r.station.replace(/_/g, " ")}</p>
           )}
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 }

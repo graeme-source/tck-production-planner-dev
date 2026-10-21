@@ -41,7 +41,8 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { CreditPeoplePicker, ImprovementCreditEditor } from "@/components/credit-people-picker";
 import { creditIds, creditLabel, isCreditedTo } from "@/lib/improvement-credits";
 import { LeanerBoard } from "@/components/leaner-board";
-import { CreditBadge, CreditWeightControl, useIsFounder } from "@/components/improvement-credit-weight";
+import { CreditBadge, CreditWeightControl, PremiumStrip, useIsFounder } from "@/components/improvement-credit-weight";
+import { premiumStyle } from "@/lib/improvement-premium";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -553,6 +554,7 @@ function LoadOlder({ remaining, onLoad }: { remaining: number; onLoad: () => voi
 
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
   const isFounder = useIsFounder();
+  const premium = premiumStyle(item.creditWeight);
   // Read it and scroll past it = seen (Graeme, 2026-10-01). Recorded at
   // once (nav count, NEW badge), but the card stays where it is — showing
   // "Seen ✓" — until the list next refreshes, so the To review list never
@@ -570,10 +572,21 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
     <div ref={seenRef} className={cn(
       // A thick coloured edge — amber for ideas, green for improvements — so
       // the two read apart at a glance while scrolling (Graeme, 2026-09-24).
-      "w-full text-left rounded-2xl border-2 border-l-[10px] bg-card hover:border-primary/50 transition-all p-4 shadow-sm",
-      isIdea(item) ? "border-border border-l-amber-400" : "border-border border-l-emerald-600",
+      // A ×2 / ×3 goes gold all the way round on top of that, with a gold
+      // strip and tint, so a great one jumps out of the feed (2026-10-21).
+      "relative overflow-hidden w-full text-left rounded-2xl border-2 border-l-[10px] bg-card hover:border-primary/50 transition-all p-4 shadow-sm",
+      isIdea(item)
+        ? "border-border border-l-amber-400"
+        : cn("border-border", premium.cardClass, "border-l-emerald-600"),
+      !isIdea(item) && premium.stripClass && "pt-6",
     )}>
+      {!isIdea(item) && <PremiumStrip weight={item.creditWeight} />}
       <button onClick={onOpen} className="w-full text-left">
+      {/* The rating leads the card, above the title, where a scrolling
+          eye lands first. */}
+      {!isIdea(item) && premium.badgeText && (
+        <div className="mb-2"><CreditBadge weight={item.creditWeight} /></div>
+      )}
       <div className="flex items-start justify-between gap-3">
         <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
         <span className="flex items-center gap-1.5 flex-shrink-0">
@@ -591,7 +604,6 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
           <span className={cn("text-xs px-2.5 py-1 rounded-lg font-bold whitespace-nowrap", STAGE_STYLE[item.stage])}>
             {stageChipText(item)}
           </span>
-          {!isIdea(item) && <CreditBadge weight={item.creditWeight} />}
           {needsReview(item) && (
             <span className="text-xs px-2 py-1 rounded-lg font-bold bg-blue-600 text-white" title="You haven't opened this yet">NEW</span>
           )}
@@ -815,8 +827,9 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
     queryFn: () => api<Improvement[]>("/improvements"),
   });
   const item = items.find(i => i.id === id);
+  const detailPremium = premiumStyle(item?.creditWeight);
 
-  const refresh = () => queryClient.invalidateQueries({ queryKey: ["improvements"] });
+  const refresh =() => queryClient.invalidateQueries({ queryKey: ["improvements"] });
   const fadePair = pickFadePair(item?.media);
 
   // "Create SOP from this improvement" — the server copies title, text and
@@ -898,12 +911,17 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         <ChevronLeft className="w-5 h-5" /> Back
       </button>
 
-      <div>
+      {/* A ×2 / ×3 gets the same gold card as in the feed (2026-10-21). */}
+      <div className={cn(
+        !isIdea(item) && detailPremium.cardClass &&
+          cn("relative overflow-hidden rounded-2xl border-2 p-5 pt-7", detailPremium.cardClass),
+      )}>
+        {!isIdea(item) && <PremiumStrip weight={item.creditWeight} />}
         <div className="flex items-center gap-2 flex-wrap mb-3">
+          {!isIdea(item) && <CreditBadge weight={item.creditWeight} size="lg" />}
           <span className={cn("text-sm px-3 py-1.5 rounded-lg font-bold inline-block", STAGE_STYLE[item.stage])}>
             {stageChipText(item)}
           </span>
-          {!isIdea(item) && <CreditBadge weight={item.creditWeight} className="text-sm px-3 py-1.5" />}
         </div>
         <h1 className="text-3xl font-bold leading-snug break-words">{item.title}</h1>
         {item.description && item.description !== item.title && (
