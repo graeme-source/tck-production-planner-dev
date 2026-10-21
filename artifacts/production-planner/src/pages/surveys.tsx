@@ -1657,12 +1657,15 @@ function CountBars({ counts, total }: { counts: Record<string, number>; total: n
   return (
     <div className="space-y-1.5">
       {Object.entries(counts).map(([label, count]) => (
-        <div key={label} className="flex items-center gap-2 text-sm">
-          <span className="w-40 truncate flex-shrink-0" title={label}>{label}</span>
-          <div className="flex-1 h-5 rounded bg-muted overflow-hidden">
+        // Full names, never cut off (Graeme, 2026-10-19): on a phone the
+        // name sits on its own line above the bar; from sm up, name | bar |
+        // count in three columns with the name column wide enough to read.
+        <div key={label} className="grid grid-cols-[1fr_auto] sm:grid-cols-[minmax(14rem,38%)_1fr_auto] items-center gap-x-3 gap-y-1 text-sm">
+          <span className="col-span-2 sm:col-span-1 break-words leading-snug">{label}</span>
+          <div className="h-5 rounded bg-muted overflow-hidden">
             <div className="h-full bg-primary/70" style={{ width: `${(count / maxCount) * 100}%` }} />
           </div>
-          <span className="w-14 text-right text-muted-foreground text-xs">
+          <span className="whitespace-nowrap text-right text-muted-foreground text-xs tabular-nums">
             {count}{total > 0 ? ` (${Math.round((count / total) * 100)}%)` : ""}
           </span>
         </div>
@@ -1795,7 +1798,7 @@ function ResultsView({ surveyId, onBack }: { surveyId: number; onBack: () => voi
   }
 
   return (
-    <div className="max-w-3xl mx-auto space-y-4">
+    <div className="w-full space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <Button variant="ghost" onClick={onBack}>
           <ArrowLeft className="w-4 h-4 mr-2" /> Back to surveys
@@ -2014,7 +2017,7 @@ export default function Surveys() {
             </Button>
           </div>
         ) : (
-          <div className="max-w-3xl mx-auto grid gap-3">
+          <div className="w-full grid gap-3">
             <KlaviyoCard />
             {surveys.map(s => (
               <SurveyCard
