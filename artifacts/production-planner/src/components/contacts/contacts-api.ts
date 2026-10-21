@@ -38,6 +38,8 @@ export interface SupplierContact {
   /** The supplier's account manager (short-shelf-life reports go here). */
   accountManagerName?: string | null;
   accountManagerEmail?: string | null;
+  /** Our account number with the supplier (edited on the supplier record). */
+  accountNumber?: string | null;
 }
 
 export interface ContactsResponse {

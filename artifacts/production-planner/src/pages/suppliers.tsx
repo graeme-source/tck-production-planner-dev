@@ -10,6 +10,7 @@ import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { SupplierAccountNumberField } from "@/components/supplier-account-number-field";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -33,6 +34,9 @@ const schema = z.object({
   // are emailed here automatically.
   accountManagerName: z.string().optional(),
   accountManagerEmail: z.string().email("Invalid email").optional().or(z.literal("")),
+  // Our account number with the supplier (new suppliers only — an existing
+  // one autosaves it separately).
+  accountNumber: z.string().max(100).optional(),
   // Minimum order spend in £ — blank = no minimum.
   minimumOrderValue: z
     .string()
@@ -59,6 +63,7 @@ type SupplierBody = CreateSupplier & {
   minimumOrderValue?: number | null;
   accountManagerName?: string | null;
   accountManagerEmail?: string | null;
+  accountNumber?: string | null;
 };
 
 type SupplierItem = {
@@ -79,11 +84,12 @@ type SupplierItem = {
   minimumOrderValue?: number | null;
   accountManagerName?: string | null;
   accountManagerEmail?: string | null;
+  accountNumber?: string | null;
   createdAt: string;
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, minimumOrderValue: "", accountManagerName: "", accountManagerEmail: "",
+  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, minimumOrderValue: "", accountManagerName: "", accountManagerEmail: "", accountNumber: "",
 };
 
 /** Form text → £ amount for the API: blank or 0 = no minimum (null). */
@@ -98,11 +104,15 @@ function SupplierForm({
   onSubmit,
   isPending,
   isEdit,
+  editing,
 }: {
   values: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
   isEdit: boolean;
+  /** An existing supplier: the account number autosaves on its own
+   *  (SupplierAccountNumberField). A new one sends it with the form. */
+  editing?: { id: number; accountNumber: string | null };
 }) {
   const { register, handleSubmit, formState: { errors }, watch, setValue } = useForm<FormValues>({
     resolver: zodResolver(schema),
@@ -190,6 +200,20 @@ function SupplierForm({
             {errors.accountManagerEmail && <span className="text-destructive text-xs">{errors.accountManagerEmail.message}</span>}
           </div>
         </div>
+        {editing ? (
+          <SupplierAccountNumberField supplierId={editing.id} initial={editing.accountNumber} />
+        ) : (
+          <div>
+            <label className="text-sm font-medium mb-1 block">Our account number</label>
+            <input
+              {...register("accountNumber")}
+              maxLength={100}
+              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              placeholder="e.g. 1867332"
+            />
+            <span className="text-xs text-muted-foreground">Quoted at the top of goods-in issue emails.</span>
+          </div>
+        )}
       </div>
 
       <div>
@@ -547,7 +571,7 @@ export default function Suppliers() {
             isEdit={false}
             isPending={createSupplier.isPending}
             onSubmit={(data) => {
-              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null };
+              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null, accountNumber: data.accountNumber?.trim() || null };
               createSupplier.mutate(
                 { data: body },
                 { onSuccess: () => setIsAddOpen(false) }
@@ -584,6 +608,7 @@ export default function Suppliers() {
                 accountManagerEmail: editingItem.accountManagerEmail ?? "",
               }}
               isEdit
+              editing={{ id: editingItem.id, accountNumber: editingItem.accountNumber ?? null }}
               isPending={updateSupplier.isPending}
               onSubmit={(data) => {
                 const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null };

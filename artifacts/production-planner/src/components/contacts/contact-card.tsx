@@ -160,6 +160,7 @@ export function SupplierContactCard({ supplier, canEdit }: { supplier: SupplierC
           <div className="min-w-0 flex-1">
             <p className="text-xs font-semibold text-muted-foreground">Account manager</p>
             {supplier.accountManagerName && <p className="text-sm font-semibold break-words">{supplier.accountManagerName}</p>}
+            {supplier.accountNumber?.trim() && <p className="text-xs text-muted-foreground break-words">Our account no. {supplier.accountNumber.trim()}</p>}
           </div>
           <EmailButton email={supplier.accountManagerEmail} />
         </div>

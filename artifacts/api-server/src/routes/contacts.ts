@@ -75,6 +75,8 @@ router.get("/", async (_req: Request, res: Response) => {
     // Account manager (migration 0198) — edited on the supplier's record.
     accountManagerName: suppliersTable.accountManagerName,
     accountManagerEmail: suppliersTable.accountManagerEmail,
+    // Our account number with them (migration 0213) — handy on a call.
+    accountNumber: suppliersTable.accountNumber,
   }).from(suppliersTable).orderBy(asc(suppliersTable.name));
   res.json({
     contacts: contacts.map(serialise),
