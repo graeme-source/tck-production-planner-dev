@@ -62,8 +62,12 @@ describe("re-using a past phase", () => {
   it("copies name, offers, group and notes and keeps the length", () => {
     expect(reusePhase(past, "2026-10-26")).toEqual({
       title: "Halloween Week", startDate: "2026-10-26", endDate: "2026-10-31",
-      offers: ["Free pack over £39.95"], customerGroup: "returning", notes: "Spooky",
+      offers: ["Free pack over £39.95"], customerGroup: "returning", notes: "Spooky", color: null,
     });
+  });
+  it("keeps the phase's colour; an unknown colour becomes the default", () => {
+    expect(reusePhase({ ...past, color: "mint" }, "2026-10-26").color).toBe("mint");
+    expect(reusePhase({ ...past, color: "violet-600" }, "2026-10-26").color).toBeNull();
   });
   it("keeps a one-day phase one day, across a month end and a clock change", () => {
     expect(reusePhase({ ...past, startDate: "2025-12-25", endDate: "2025-12-25" }, "2026-10-25"))

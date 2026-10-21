@@ -5,6 +5,7 @@
  * the screen puts it in front — so the same words work for anyone.
  */
 import { daysBetween, formatRange } from "./calendar";
+import { phaseColourLabel } from "./phase-colours";
 
 export type HistoryAction = "created" | "edited" | "moved" | "resized" | "deleted";
 
@@ -43,6 +44,8 @@ export const FIELD_LABELS: Record<string, string> = {
   // Phases (2026-10-20).
   offers: "offers",
   customerGroup: "customer group",
+  // Phase colour (2026-10-21).
+  color: "colour",
 };
 
 const GROUP_WORDS: Record<string, string> = {
@@ -102,6 +105,8 @@ export function describeFieldChanges(changes: Record<string, FieldChange>): stri
     } else if (key === "offers") {
       const list = Array.isArray(to) ? to : [];
       parts.push(list.length ? `set the offers to ${list.map(o => `“${o}”`).join(", ")}` : "took the offers off");
+    } else if (key === "color") {
+      parts.push(`changed the colour to ${phaseColourLabel(typeof to === "string" ? to : null).toLowerCase()}`);
     } else if (key === "customerGroup") {
       parts.push(`set it for ${GROUP_WORDS[String(to ?? "all")] ?? humanise(String(to ?? ""))}`);
     } else if (to == null || to === "") parts.push(`cleared the ${FIELD_LABELS[key]}`);

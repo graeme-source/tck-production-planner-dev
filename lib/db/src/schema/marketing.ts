@@ -27,6 +27,9 @@ export const marketingEventsTable = pgTable("marketing_events", {
   offers: text("offers").array().notNull().default(sql`'{}'::text[]`),
   // all | new | returning | subscription (migration 0208).
   customerGroup: text("customer_group").notNull().default("all"),
+  // Palette key from @workspace/marketing-calendar phase-colours.ts
+  // (migration 0209); null = the default, soft lavender.
+  color: text("color"),
   // Set on a test box's own event (migration 0136); dates follow the box.
   testBoxId: integer("test_box_id").references(() => testBoxesTable.id, { onDelete: "set null" }),
   createdById: integer("created_by_id").references(() => usersTable.id, { onDelete: "set null" }),

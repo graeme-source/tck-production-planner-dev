@@ -10,6 +10,7 @@
  * the text, so editing or deleting a library offer never changes a phase.
  */
 import { addDays, daysBetween } from "./calendar";
+import { isPhaseColour, type PhaseColourKey } from "./phase-colours";
 
 /** The old one-day "note" events (2026-10-01). They stay in the database
  *  but are not phases: the calendar never lists them. */
@@ -104,11 +105,14 @@ export interface PhaseLike {
   offers: readonly string[];
   customerGroup: string;
   notes: string | null;
+  /** Its colour key (phase-colours.ts); null/absent = the default. */
+  color?: string | null;
 }
 
-/** A copy of a past phase starting on `newStart`, the same number of days long. */
+/** A copy of a past phase starting on `newStart`, the same number of days long (and the same colour). */
 export function reusePhase(p: PhaseLike, newStart: string): {
   title: string; startDate: string; endDate: string; offers: string[]; customerGroup: CustomerGroup; notes: string | null;
+  color: PhaseColourKey | null;
 } {
   const length = Math.max(0, daysBetween(p.startDate, p.endDate));
   return {
@@ -118,6 +122,7 @@ export function reusePhase(p: PhaseLike, newStart: string): {
     offers: dedupeOffers(p.offers),
     customerGroup: isCustomerGroup(p.customerGroup) ? p.customerGroup : "all",
     notes: p.notes,
+    color: isPhaseColour(p.color) ? p.color : null,
   };
 }
 

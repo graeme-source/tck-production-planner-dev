@@ -1,0 +1,14 @@
+-- Phase colours (Graeme, 21 Oct 2026). Objective I.
+--
+-- "It's currently a very dark purple and distracting. I want a lighter
+-- colour, and let me change it in the phase editing section."
+--
+-- marketing_events.color holds a palette key from
+-- lib/marketing-calendar/src/phase-colours.ts (lavender, sky, mint, peach,
+-- butter, blush, sage, grey). NULL = the default, soft lavender. The server
+-- validates the key (zod enum), so there is no CHECK here — adding a colour
+-- to the palette needs no migration.
+--
+-- Additive and idempotent: every existing phase stays NULL, so it simply
+-- shows in the new light default.
+ALTER TABLE marketing_events ADD COLUMN IF NOT EXISTS color TEXT;

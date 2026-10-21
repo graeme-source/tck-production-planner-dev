@@ -24,7 +24,7 @@ import { z } from "zod";
 import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, testBoxDeliveriesTable, usersTable } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
 import {
-  CUSTOMER_GROUPS, NOTE_EVENT_TYPE, addDays, dedupeOffers, describeDateChange, describeFieldChanges, diffFields, daysBetween, offersSummary,
+  CUSTOMER_GROUPS, NOTE_EVENT_TYPE, PHASE_COLOUR_KEYS, addDays, dedupeOffers, describeDateChange, describeFieldChanges, diffFields, daysBetween, offersSummary,
   type FieldChange,
 } from "@workspace/marketing-calendar";
 import { syncTestBox } from "../lib/test-box-data";
@@ -62,6 +62,8 @@ function phaseJson(e: EventRow) {
     endDate: e.endDate,
     offers: e.offers ?? [],
     customerGroup: e.customerGroup,
+    /** Palette key (phase-colours.ts); null = the default, soft lavender. */
+    color: e.color,
     notes: e.notes,
     source: e.source,
     /** Set on a test box's own phase: its dates follow the box. */
@@ -140,6 +142,8 @@ router.get("/events/:id", async (req: Request, res: Response) => {
 const Offers = z.array(z.string().trim().max(300)).max(20);
 const Notes = z.string().trim().max(10000).nullish();
 const Group = z.enum(CUSTOMER_GROUPS);
+/** A palette key, or null for the default colour (Graeme, 2026-10-21). */
+const Colour = z.enum(PHASE_COLOUR_KEYS).nullable();
 
 const CreateBody = z.object({
   title: z.string().trim().min(1, "Give it a name").max(160),
@@ -147,8 +151,9 @@ const CreateBody = z.object({
   endDate: IsoDate,
   offers: Offers.optional(),
   customerGroup: Group.optional(),
+  color: Colour.optional(),
   notes: Notes,
-  // "ai" = the phase came from an AI suggestion; "reuse" = copied from a past phase.
+  // "ai" =the phase came from an AI suggestion; "reuse" = copied from a past phase.
   source: z.enum(["manual", "ai", "reuse"]).optional(),
   /** Re-use: the phase it was copied from (for the history line). */
   copiedFromId: z.number().int().positive().optional(),
@@ -172,6 +177,7 @@ router.post("/events", validate(CreateBody), async (req: Request, res: Response)
       offers,
       offer: offersSummary(offers),
       customerGroup: b.customerGroup ?? "all",
+      color: b.color ?? null,
       notes: b.notes || null,
       eventType: "campaign",
       status: "planned",
@@ -194,6 +200,7 @@ const PatchBody = z.object({
   title: z.string().trim().min(1, "The name can't be empty").max(160).optional(),
   offers: Offers.optional(),
   customerGroup: Group.optional(),
+  color: Colour.optional(),
   notes: Notes,
 });
 
@@ -219,9 +226,10 @@ router.patch("/events/:id", validate(PatchBody), async (req: Request, res: Respo
     if (b.title !== undefined) patch["name"] = b.title;
     if (b.offers !== undefined) patch["offers"] = dedupeOffers(b.offers);
     if (b.customerGroup !== undefined) patch["customerGroup"] = b.customerGroup;
+    if (b.color !== undefined) patch["color"] = b.color;
     if (b.notes !== undefined) patch["notes"] = b.notes || null;
     const changes = diffFields(
-      { name: before.name, offers: before.offers, customerGroup: before.customerGroup, notes: before.notes },
+      { name: before.name, offers: before.offers, customerGroup: before.customerGroup, color: before.color, notes: before.notes },
       patch,
     );
     if (Object.keys(changes).length === 0) return { status: 200 as const, row: before };
@@ -231,6 +239,7 @@ router.patch("/events/:id", validate(PatchBody), async (req: Request, res: Respo
       ...(changes["name"] ? { name: patch["name"] as string } : {}),
       ...(offers ? { offers, offer: offersSummary(offers) } : {}),
       ...(changes["customerGroup"] ? { customerGroup: patch["customerGroup"] as string } : {}),
+      ...(changes["color"] ? { color: patch["color"] as string | null } : {}),
       ...(changes["notes"] ? { notes: patch["notes"] as string | null } : {}),
       updatedById: user.id, updatedByName: user.name, updatedAt: new Date(),
     }).where(eq(marketingEventsTable.id, id)).returning();
