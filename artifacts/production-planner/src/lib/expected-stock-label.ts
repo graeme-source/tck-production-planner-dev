@@ -64,6 +64,14 @@ export function stockBoxStartsBlank(line: StockBoxLine): boolean {
   return line.stockCounted === false || line.stockBasis === "expected";
 }
 
+/** Kanban items nobody stock-checks get no "Record stock check" button on
+ *  Orders — the kanban card drives the order (Graeme, 20 Oct 2026, #336:
+ *  "No button at all. We don't need to stock check kanban items"). Kanban
+ *  items that ARE stock-checked keep it. */
+export function showsStockCheckButton(line: { isKanban?: boolean; stockCounted?: boolean }): boolean {
+  return !(line.isKanban && line.stockCounted !== true);
+}
+
 /** Leaving the box saves a count — except when nothing was typed into a
  *  box that started blank (that would record a made-up 0 or the expected
  *  figure as if someone had counted it). */
