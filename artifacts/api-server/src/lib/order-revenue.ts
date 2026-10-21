@@ -90,3 +90,52 @@ export function orderTags(o: Pick<RevenueOrder, "tags">): string[] {
 export function orderHasTag(o: Pick<RevenueOrder, "tags">, tag: string): boolean {
   return orderTags(o).includes(tag.toLowerCase());
 }
+
+/**
+ * A day's orders split into new-customer and returning, for the At a Glance
+ * "New customers today" tile (Graeme, 2026-10-21). It applies the SAME rules
+ * as Today's Sales, so the two tiles reconcile:
+ *
+ *   counted     isCountableOrder — cancelled, refunded and voided left out
+ *   valued      getNetRevenue — partial refunds come off, summed in pence
+ *   new         orderHasTag(o, NEW_CUSTOMER_TAG) — the one new-customer rule
+ *               used by the New Customers tile, New vs returning and ROAS
+ *   returning   every other counted order
+ *
+ * Pass orders already de-duplicated (the sales summary does). Shares are
+ * null (not 0%) when there is nothing to divide by.
+ */
+export interface NewVsReturningTotals {
+  revenue: number;
+  orders: number;
+  newCustomerRevenue: number;
+  newCustomerOrders: number;
+  returningRevenue: number;
+  returningOrders: number;
+  /** New-customer share of net revenue, 0–100; null with no revenue. */
+  newRevenueSharePercent: number | null;
+  /** New-customer share of counted orders, 0–100; null with no orders. */
+  newOrderSharePercent: number | null;
+}
+
+export function newVsReturningTotals(orders: ReadonlyArray<RevenueOrder>): NewVsReturningTotals {
+  const counted = orders.filter(isCountableOrder);
+  let revenueP = 0;
+  let newP = 0;
+  let newOrders = 0;
+  for (const o of counted) {
+    const p = Math.round(getNetRevenue(o) * 100);
+    revenueP += p;
+    if (orderHasTag(o, NEW_CUSTOMER_TAG)) { newP += p; newOrders += 1; }
+  }
+  return {
+    revenue: revenueP / 100,
+    orders: counted.length,
+    newCustomerRevenue: newP / 100,
+    newCustomerOrders: newOrders,
+    returningRevenue: (revenueP - newP) / 100,
+    returningOrders: counted.length - newOrders,
+    newRevenueSharePercent: revenueP > 0 ? Math.min(100, Math.max(0, (newP / revenueP) * 100)) : null,
+    newOrderSharePercent: counted.length > 0 ? (newOrders / counted.length) * 100 : null,
+  };
+}
