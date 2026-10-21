@@ -30,6 +30,9 @@ export const suppliersTable = pgTable("suppliers", {
   // goods-in are emailed here.
   accountManagerName: text("account_manager_name"),
   accountManagerEmail: text("account_manager_email"),
+  // Our account number with this supplier (migration 0213) — printed near
+  // the top of the goods-in issue email. NULL = none on file.
+  accountNumber: text("account_number"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
