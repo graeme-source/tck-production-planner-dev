@@ -168,6 +168,57 @@ describe("deliveryIssueReportEmail — one email per receive", () => {
     expect(e.html).not.toContain("<b>split</b>");
   });
 
+  describe("account number and product codes (Graeme, 21 Oct 2026)", () => {
+    const coded: DeliveryEmailIssue = { ...shortChicken, productName: "British Red Tractor Diced Chicken Breast", productCode: "70946" };
+
+    it("account number near the top, product code on the line, in text and HTML", () => {
+      const e = deliveryIssueReportEmail({ ...base, accountNumber: "1867332", issues: [coded] });
+      const lines = e.text.split("\n");
+      // First fact after the intro.
+      expect(lines[4]).toBe("Account number: 1867332");
+      expect(e.text).toContain("British Red Tractor Diced Chicken Breast — short shelf life\n  Product code: 70946\n  Quantity: 8 packs");
+      expect(e.html).toContain("Account number</td><td style=\"padding:4px 0;font-weight:600;\">1867332");
+      expect(e.html).toContain("Product code</td><td style=\"padding:4px 0;font-weight:600;\">70946");
+      // The one-product subject already names it, so it carries the code.
+      expect(e.subject).toBe("Short shelf life on delivery — British Red Tractor Diced Chicken Breast (code 70946) — Fri 16 Oct (our order #1234)");
+    });
+
+    it("no account number, no code: those lines are left out — never 'null'", () => {
+      for (const accountNumber of [null, undefined, "", "   "]) {
+        const e = deliveryIssueReportEmail({ ...base, accountNumber, issues: [{ ...shortChicken, productCode: accountNumber }] });
+        expect(e.text).not.toContain("Account number");
+        expect(e.text).not.toContain("Product code");
+        expect(e.html).not.toContain("Account number");
+        expect(e.html).not.toContain("Product code");
+        expect(e.text).not.toContain("null");
+        expect(e.subject).toBe("Short shelf life on delivery — Diced Chicken Breast — Fri 16 Oct (our order #1234)");
+      }
+    });
+
+    it("several lines: each carries its own code (odd formats kept as stored); the subject doesn't list products", () => {
+      const e = deliveryIssueReportEmail({
+        ...base, accountNumber: " 1867332 ", photoCount: 2,
+        issues: [
+          coded,
+          { ...shortChicken, productName: "Diced Chicken Thigh", productCode: null },
+          { ...damagedFlour, productCode: "A 125111" },
+        ],
+      });
+      expect(e.text).toContain("Account number: 1867332");
+      expect(e.text).toContain("British Red Tractor Diced Chicken Breast — short shelf life\n  Product code: 70946");
+      expect(e.text).toContain("Diced Chicken Thigh — short shelf life\n  Quantity: 8 packs");
+      expect(e.text).toContain("Flour — damaged / broken\n  Product code: A 125111\n  Quantity damaged: 2 bags");
+      expect(e.text.match(/Product code:/g)).toHaveLength(2);
+      expect(e.subject).toBe("Problems with our delivery — 3 items — Fri 16 Oct (our order #1234)");
+    });
+
+    it("codes are HTML-escaped", () => {
+      const e = deliveryIssueReportEmail({ ...base, accountNumber: "<1>", issues: [{ ...damagedFlour, productCode: "F&150200" }] });
+      expect(e.html).toContain("&lt;1&gt;");
+      expect(e.html).toContain("F&amp;150200");
+    });
+  });
+
   it("photo sentence counts the photos", () => {
     expect(photoSentenceFor([shortChicken], 3)).toBe("3 photos attached showing all 8 packs of Diced Chicken Breast and their use-by dates.");
     expect(photoSentenceFor([damagedFlour], 1)).toBe("Photo attached showing all 2 bags of Flour and the damage.");

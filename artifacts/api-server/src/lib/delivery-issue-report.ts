@@ -30,7 +30,7 @@
 import { and, eq, inArray, desc } from "drizzle-orm";
 import {
   db, deliveryShelfLifeReportsTable, deliveryDamageReportsTable, deliveryIssuePhotosTable,
-  deliveryRecordsTable, suppliersTable,
+  deliveryRecordsTable, suppliersTable, ingredientsTable,
 } from "@workspace/db";
 import {
   londonDeliveryDay, shelfLifeReportFor, damageReportFor, deliveryIssueReportEmail, formatReportQty,
@@ -140,10 +140,20 @@ export async function recordDeliveryIssues(input: {
       name: suppliersTable.name,
       accountManagerName: suppliersTable.accountManagerName,
       accountManagerEmail: suppliersTable.accountManagerEmail,
+      accountNumber: suppliersTable.accountNumber,
     })
     .from(suppliersTable)
     .where(eq(suppliersTable.id, input.supplierId));
   const supplierName = supplier?.name ?? "the supplier";
+  // The supplier's product code for each line (ingredients.supplier_part_
+  // number), quoted in the email as stored (Graeme, 21 Oct 2026).
+  const ingredientIds = [...new Set([...input.shelfLife, ...input.damage]
+    .map(c => c.ingredientId).filter((id): id is number => id != null))];
+  const codeByIngredient = new Map<number, string | null>(ingredientIds.length
+    ? (await db.select({ id: ingredientsTable.id, code: ingredientsTable.supplierPartNumber })
+        .from(ingredientsTable).where(inArray(ingredientsTable.id, ingredientIds))).map(r => [r.id, r.code])
+    : []);
+  const productCodeOf = (ingredientId: number | null) => (ingredientId != null ? codeByIngredient.get(ingredientId) ?? null : null);
   const recipientName = supplier?.accountManagerName?.trim() || null;
   const recipientEmail = supplier?.accountManagerEmail?.trim() || null;
 
@@ -192,6 +202,7 @@ export async function recordDeliveryIssues(input: {
     emailIssues.push({
       kind: "short_shelf_life",
       productName: c.ingredientName,
+      productCode: productCodeOf(c.ingredientId),
       quantityText: formatReportQty(c.quantityForReport, c.qty),
       useByDate: report.useByDate,
       days: report.check.days,
@@ -229,6 +240,7 @@ export async function recordDeliveryIssues(input: {
     emailIssues.push({
       kind: "damaged",
       productName: c.ingredientName,
+      productCode: productCodeOf(c.ingredientId),
       quantityText: formatReportQty(report.quantity, c.qty),
       note: report.note,
       disposition: report.disposition,
@@ -258,6 +270,7 @@ export async function recordDeliveryIssues(input: {
         : [];
       const email = deliveryIssueReportEmail({
         supplierName,
+        accountNumber: supplier?.accountNumber ?? null,
         recipientName,
         orderNumber: input.purchaseOrderId,
         deliveryDate: input.deliveryDate,

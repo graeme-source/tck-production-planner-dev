@@ -206,6 +206,9 @@ export function issuePhotoGate(input: {
 export type ShelfLifeEmailIssue = {
   kind: "short_shelf_life";
   productName: string;
+  /** The supplier's product code (ingredients.supplier_part_number), kept
+   *  exactly as stored ("70946", "A 125111"); blank/null = not printed. */
+  productCode?: string | null;
   /** "20 kg", "8 packs" — already formatted. */
   quantityText: string;
   useByDate: string;
@@ -217,6 +220,7 @@ export type ShelfLifeEmailIssue = {
 export type DamagedEmailIssue = {
   kind: "damaged";
   productName: string;
+  productCode?: string | null;
   quantityText: string;
   note: string | null;
   disposition: DamageDisposition;
@@ -226,6 +230,9 @@ export type DeliveryEmailIssue = ShelfLifeEmailIssue | DamagedEmailIssue;
 
 export interface DeliveryIssueEmailInput {
   supplierName: string;
+  /** Our account number with the supplier (suppliers.account_number);
+   *  blank/null = the line is left out. */
+  accountNumber?: string | null;
   recipientName?: string | null;
   /** Our order number (the purchase order id). */
   orderNumber: number | string;
@@ -260,12 +267,23 @@ function daysPhrase(n: number): string {
   return `${n} ${n === 1 ? "day" : "days"}`;
 }
 
-/** One issue as a heading + fact rows. */
+/** A stored code or account number, trimmed; blank/null → null, so it is
+ *  left out rather than printed as "null". */
+export function cleanCode(v: string | null | undefined): string | null {
+  const t = typeof v === "string" ? v.trim() : "";
+  return t ? t : null;
+}
+
+/** One issue as a heading + fact rows. The product code (when there is one)
+ *  comes first, so the account manager can find the line straight away. */
 function issueBlock(i: DeliveryEmailIssue): { heading: string; facts: Array<[string, string]> } {
+  const code = cleanCode(i.productCode);
+  const codeFacts: Array<[string, string]> = code ? [["Product code", code]] : [];
   if (i.kind === "short_shelf_life") {
     return {
       heading: `${i.productName} — short shelf life`,
       facts: [
+        ...codeFacts,
         ["Quantity", i.quantityText],
         ["Use-by date received", longDayLabel(i.useByDate)],
         ["Shelf life on arrival", shelfLifePhrase(i.days)],
@@ -274,7 +292,7 @@ function issueBlock(i: DeliveryEmailIssue): { heading: string; facts: Array<[str
       ],
     };
   }
-  const facts: Array<[string, string]> = [["Quantity damaged", i.quantityText]];
+  const facts: Array<[string, string]> = [...codeFacts, ["Quantity damaged", i.quantityText]];
   if (i.note?.trim()) facts.push(["Damage", i.note.trim()]);
   facts.push(["What we did", i.disposition === "kept" ? "Kept (we'll use what we can)" : "Rejected — not received into our stock"]);
   return { heading: `${i.productName} — damaged / broken`, facts };
@@ -301,8 +319,10 @@ export function deliveryIssueReportEmail(r: DeliveryIssueEmailInput): DeliveryIs
   const label = kinds.size > 1
     ? "Problems with our delivery"
     : kinds.has("damaged") ? "Damaged on delivery" : "Short shelf life on delivery";
+  // The subject names the product only when there's one — and then its code.
+  const onlyCode = r.issues.length === 1 ? cleanCode(r.issues[0]!.productCode) : null;
   const subject = r.issues.length === 1
-    ? `${label} — ${r.issues[0]!.productName} — ${day} (our order #${r.orderNumber})`
+    ? `${label} — ${r.issues[0]!.productName}${onlyCode ? ` (code ${onlyCode})` : ""} — ${day} (our order #${r.orderNumber})`
     : `${label} — ${r.issues.length} items — ${day} (our order #${r.orderNumber})`;
 
   const what = kinds.size > 1
@@ -318,7 +338,9 @@ export function deliveryIssueReportEmail(r: DeliveryIssueEmailInput): DeliveryIs
     : "Please could you look into this and let us know what will be done to make sure future deliveries meet the agreed minimum shelf life.";
   const signOff = ["Kind regards,", "The Calzone Kitchen"];
   const blocks = r.issues.map(issueBlock);
+  const accountNumber = cleanCode(r.accountNumber);
   const general: Array<[string, string]> = [
+    ...(accountNumber ? [["Account number", accountNumber] as [string, string]] : []),
     ["Supplier", r.supplierName],
     ["Our order number", `#${r.orderNumber}`],
     ["Delivery date", longDayLabel(r.deliveryDate)],
