@@ -10,7 +10,8 @@
  *
  *   - LIST (default, remembered per device): weeks top to bottom, phases
  *     starting and ending in the flow with a coloured stripe on every day
- *     they cover, and ONE highlighted Today row it opens scrolled to. See
+ *     they cover, and ONE highlighted Today row the page opens scrolled
+ *     to. No inner scroll box — the page scrolls (2026-10-21). See
  *     agenda-list.tsx.
  *   - MONTH: the month grid — phases as bars (drag to move / stretch), email
  *     chips with a status dot.
@@ -197,7 +198,7 @@ export function MarketingCalendar() {
       {emailsQ.data && !emailsQ.data.connected && <p className="text-sm text-muted-foreground">Klaviyo isn't connected, so no emails show.</p>}
 
       {/* Drafts with no send date aren't on any day — their own collapsible
-          section, above the list's scroll box and the month grid alike. */}
+          section, above the list and the month grid alike. */}
       <DraftsSection drafts={undated} canApprove={canApprove} onOpenEmail={setOpenEmail} />
 
       {view === "list" ? (

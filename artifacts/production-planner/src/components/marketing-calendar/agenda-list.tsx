@@ -10,7 +10,9 @@
  * email sits once on its send day with its status and, for approvers, an
  * Approve button right on the row. Today is ONE highlighted row — the
  * Today bar with today's phases and emails directly under it — and the
- * list opens scrolled (inside its own box) to it. Drafts with no send date
+ * page opens scrolled to it. There is no inner scroll box (Graeme,
+ * 2026-10-21): the list flows in the page and the page scrolls, with the
+ * week headings sticking under the top bar. Drafts with no send date
  * are not here: they have their own collapsible section above the list
  * (drafts-section.tsx, Graeme 2026-10-21). The ordering is buildAgenda() in
  * @workspace/marketing-calendar — tested there.
@@ -22,6 +24,7 @@ import {
   buildAgenda, customerGroupChip, emailRowStatus, formatRange, rowWantsApproval, type AgendaRow, type EmailRowStatus, type PhaseOnRow,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
+import { appScrollContainer } from "@/lib/scroll";
 import type { CalEmail, Phase } from "./api";
 import { ApproveButton } from "./email-panel";
 import { PHASE_CLS, usePhaseVars } from "./constants";
@@ -34,6 +37,18 @@ type Row = AgendaRow<Phase, CalEmail>;
 
 const day = (iso: string, f: string) => format(parseISO(iso), f);
 const ROW_SELECTOR = '[data-row-key]:not([data-row-key^="week-"])';
+
+/** The page's scroll area: the app's main content (sidebar pages), else the window. */
+function pageScroller(): HTMLElement {
+  return appScrollContainer() ?? (document.scrollingElement as HTMLElement | null) ?? document.documentElement;
+}
+
+/** Where an element sits from the top edge of the visible page area, in px. */
+function topInScroller(el: HTMLElement): number {
+  const s = appScrollContainer();
+  const edge = s ? s.getBoundingClientRect().top : 0;
+  return el.getBoundingClientRect().top - edge;
+}
 
 export function AgendaList({
   from, to, today, phases, emails, canApprove, loading, settled, onOpenPhase, onOpenEmail, onEarlier, onLater, scrollToTodaySignal,
@@ -59,6 +74,10 @@ export function AgendaList({
     [from, to, today, phases, emails],
   );
 
+  // The list flows in the page and the PAGE scrolls (Graeme, 2026-10-21:
+  // "Get rid of having to scroll in the container of the calendar … I want
+  // to see the whole thing by scrolling down the page"). So every scroll
+  // below moves the app's main scroll area, not a box of our own.
   const box = useRef<HTMLDivElement>(null);
   const todayRef = useRef<HTMLDivElement>(null);
   const scrolledOnce = useRef(false);
@@ -66,11 +85,10 @@ export function AgendaList({
   const anchor = useRef<{ key: string; offset: number } | null>(null);
 
   const scrollToToday = (smooth: boolean) => {
-    const b = box.current, t = todayRef.current;
-    if (!b || !t) return;
+    const t = todayRef.current;
+    if (!t) return;
     // Leave room for the sticky week heading, and show a sliver of the past.
-    const top = t.offsetTop - 56;
-    b.scrollTo({ top: Math.max(0, top), behavior: smooth ? "smooth" : "auto" });
+    pageScroller().scrollBy({ top: topInScroller(t) - 56, behavior: smooth ? "smooth" : "auto" });
   };
 
   useLayoutEffect(() => {
@@ -85,18 +103,19 @@ export function AgendaList({
     const a = anchor.current, b = box.current;
     if (!a || !b) return;
     const el = b.querySelector<HTMLElement>(`[data-row-key="${a.key}"]`);
-    if (el) b.scrollTop = el.offsetTop - a.offset;
+    if (el) pageScroller().scrollTop += topInScroller(el) - a.offset;
     if (settled) anchor.current = null;
   });
 
   const showEarlier = () => {
     const b = box.current;
     if (b) {
-      // The first row at or below the top edge is the one to hold still.
-      // (Not a week heading: a sticky element reports where it is stuck.)
+      // The first row at or below the top of the page area is the one to
+      // hold still. (Not a week heading: a sticky element reports where it
+      // is stuck.) If the list is scrolled out of view, the first row.
       const rowsEls = Array.from(b.querySelectorAll<HTMLElement>(ROW_SELECTOR));
-      const first = rowsEls.find(el => el.offsetTop + el.offsetHeight > b.scrollTop) ?? rowsEls[0];
-      if (first) anchor.current = { key: first.dataset.rowKey!, offset: first.offsetTop - b.scrollTop };
+      const first = rowsEls.find(el => topInScroller(el) + el.offsetHeight > 0) ?? rowsEls[0];
+      if (first) anchor.current = { key: first.dataset.rowKey!, offset: topInScroller(first) };
     }
     onEarlier();
   };
@@ -104,9 +123,9 @@ export function AgendaList({
   return (
     <div className="relative">
       {loading && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        <div className="absolute inset-0 z-20 flex items-start justify-center pt-24 bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       )}
-      <div ref={box} className="relative max-h-[75dvh] overflow-y-auto overscroll-contain rounded-xl border border-border bg-background">
+      <div ref={box} className="relative rounded-xl border border-border bg-background">
         <div className="p-2 border-b border-border">
           <button type="button" onClick={showEarlier}
             className="w-full h-11 rounded-xl border-2 border-dashed border-border text-sm font-semibold text-muted-foreground flex items-center justify-center gap-1.5 hover:bg-secondary/40">
@@ -116,7 +135,10 @@ export function AgendaList({
 
         {rows.map(r => (
           <div key={r.key} data-row-key={r.key} ref={r.kind === "day" && r.isToday ? todayRef : undefined}
-            className={r.kind === "week" ? "sticky top-0 z-10" : undefined}>
+            // Sticks flush under the top bar: the page area has p-4 / md:p-8
+            // padding, and a plain top-0 would stick below it with rows
+            // showing through the gap.
+            className={r.kind === "week" ? "sticky -top-4 md:-top-8 z-10" : undefined}>
             <AgendaRowView row={r} laneCount={laneCount} canApprove={canApprove} onOpenPhase={onOpenPhase} onOpenEmail={onOpenEmail} />
           </div>
         ))}
