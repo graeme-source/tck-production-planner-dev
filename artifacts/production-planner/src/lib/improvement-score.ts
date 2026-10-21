@@ -4,10 +4,39 @@
  * wording, the encouraging steps, the bar and the ×2/×3 badge.
  */
 
-/** The lines under the Leaner-board heading. */
-export const SCORE_EXPLAINER = "Last 30 days · most improvements at the top";
+/** The lines under the Leaner-board heading. Credits lead since 2026-10-21
+ *  (Graeme: "an extra credit for ×2 and 2 extra credits for ×3 on the
+ *  leaderboard") — it was the plain count before. */
+export const SCORE_EXPLAINER = "Last 30 days · most credits at the top";
 export const SCORE_SMALL_PRINT =
-  "Score = improvements ÷ shifts worked (1 a shift = 100%). A ×2 or ×3 improvement counts double or triple in the score, not in the count.";
+  "Every improvement is 1 credit; a Great one is ×2 and a Substantial one ×3. Score = credits ÷ shifts worked (1 a shift = 100%).";
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** "7 credits" / "5 improvements" — the two numbers in a Leaner-board row. */
+export function creditsText(n: number): string {
+  return plural(n, "credit");
+}
+export function improvementsText(n: number): string {
+  return plural(n, "improvement");
+}
+
+/** "All-time: 15 credits · 12 improvements" — or just the count when no
+ *  ×2/×3 has ever changed the sum. */
+export function allTimeText(row: { count: number; creditsAll?: number }): string {
+  const credits = row.creditsAll ?? row.count;
+  return credits === row.count
+    ? `All-time: ${improvementsText(row.count)}`
+    : `All-time: ${creditsText(credits)} · ${improvementsText(row.count)}`;
+}
+
+/** The team's totals from GET /api/improvements/stats. */
+export interface ImprovementTotals {
+  improvements: number;
+  credits: number;
+  great: number;
+  substantial: number;
+}
 
 export function scoreText(pct: number | null | undefined): string {
   return pct == null ? "—" : `${pct}%`;
@@ -56,8 +85,6 @@ export function stepBarFill(pct: number | null | undefined, nextPct: number | nu
   if (nextPct == null) return 100;
   return Math.min(100, Math.round((pct / nextPct) * 100));
 }
-
-const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /**
  * "4 improvements · 10 shifts" — the maths under the score, so anyone can

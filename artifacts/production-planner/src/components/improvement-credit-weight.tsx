@@ -1,19 +1,23 @@
 /**
  * ×2 / ×3 credits on an improvement (Graeme, 2026-10-12; Objective E).
  *
- * CreditBadge — the small "×2 — great one" mark everyone sees on a
- *   special improvement.
+ * CreditBadge — the gold "★ Great one ×2" / "♛ Substantial ×3" badge
+ *   everyone sees on a special improvement.
+ * PremiumStrip — the gold strip across the top of a ×2 / ×3 card (Graeme,
+ *   2026-10-21: "really obvious it's a great one or a substantial one").
+ *   The card's own gold border / tint / glow come from premiumStyle().
  * CreditWeightControl — the founder's ×1 / ×2 / ×3 buttons, on the feed
  *   card and the improvement itself. One tap saves at once; the control says
  *   "Saving…", then "Saved", or the error in red with the old value put back.
  */
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Check, Sparkles } from "lucide-react";
+import { Loader2, Check, Star, Crown } from "lucide-react";
 import { FOUNDER_EMAIL } from "@workspace/feature-registry";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
-import { CREDIT_OPTIONS, creditBadge, normaliseCreditWeight, type CreditWeight } from "@/lib/improvement-score";
+import { CREDIT_OPTIONS, normaliseCreditWeight, type CreditWeight } from "@/lib/improvement-score";
+import { premiumStyle } from "@/lib/improvement-premium";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -22,20 +26,39 @@ export function useIsFounder(): boolean {
   return state.status === "authenticated" && state.user.email === FOUNDER_EMAIL;
 }
 
-export function CreditBadge({ weight, className }: { weight: unknown; className?: string }) {
-  const text = creditBadge(weight);
-  if (!text) return null;
+export function CreditBadge({ weight, className, size = "md" }: {
+  weight: unknown;
+  className?: string;
+  size?: "md" | "lg";
+}) {
+  const p = premiumStyle(weight);
+  if (!p.badgeText) return null;
+  const Icon = p.icon === "crown" ? Crown : Star;
+  const icon = size === "lg" ? "w-5 h-5" : "w-4 h-4";
   return (
     <span
       className={cn(
-        "text-xs px-2.5 py-1 rounded-lg font-extrabold whitespace-nowrap inline-flex items-center gap-1 bg-violet-600 text-white",
+        "rounded-full font-extrabold whitespace-nowrap inline-flex items-center gap-1.5",
+        size === "lg" ? "text-base px-4 py-1.5" : "text-sm px-3 py-1",
+        p.badgeClass,
         className,
       )}
-      title="Counts as more than one on the improvement score"
+      title={p.tier === "substantial"
+        ? "Rated Substantial — counts as 3 credits"
+        : "Rated a Great one — counts as 2 credits"}
     >
-      <Sparkles className="w-3.5 h-3.5" /> {text}
+      <Icon className={cn(icon, p.tier === "substantial" ? "text-yellow-300 fill-yellow-300" : "fill-amber-700 text-amber-800")} aria-hidden />
+      {p.badgeText}
     </span>
   );
+}
+
+/** The gold strip along the top of a ×2 / ×3 card. The card needs
+ *  `relative overflow-hidden`; nothing renders for a standard one. */
+export function PremiumStrip({ weight }: { weight: unknown }) {
+  const p = premiumStyle(weight);
+  if (!p.stripClass) return null;
+  return <div aria-hidden className={cn("absolute inset-x-0 top-0", p.stripClass)} />;
 }
 
 type SaveState = "idle" | "saving" | "saved" | "error";
@@ -103,7 +126,7 @@ export function CreditWeightControl({ improvementId, weight, size = "feed" }: {
                   big ? "h-16 min-w-[6rem] px-3" : "h-14 min-w-[4.75rem] px-2",
                   opt.weight > 1 && "border-l-2 border-border",
                   on
-                    ? opt.weight === 1 ? "bg-secondary text-foreground" : "bg-violet-600 text-white"
+                    ? opt.weight === 1 ? "bg-secondary text-foreground" : premiumStyle(opt.weight).badgeClass
                     : "bg-card hover:bg-secondary/50",
                 )}
               >

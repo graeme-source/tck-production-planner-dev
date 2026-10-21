@@ -44,6 +44,8 @@ import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
 import ImprovementsPage from "@/pages/improvements";
 import { creditLabel } from "@/lib/improvement-credits";
+import { premiumStyle } from "@/lib/improvement-premium";
+import { CreditBadge, PremiumStrip } from "@/components/improvement-credit-weight";
 import { defectHeadline, pctText, plural } from "@/lib/defects-view";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { DictateButton } from "@/components/dictate-button";
@@ -3286,6 +3288,8 @@ interface MeetingFeedImprovement {
   /** Everyone credited, joined — "Graeme & Bodan" (migration 0125). */
   creditNames?: string | null;
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
+  /** 1, or 2 / 3 for a Great one / Substantial (migration 0171). */
+  creditWeight?: number;
 }
 
 /** The finished-work feed, shared by the merged Improvements slide and the
@@ -3322,11 +3326,18 @@ function ImprovementsFeedList({ limit }: { limit: number }) {
       {items.map(imp => {
         // Everyone credited is named on the slide, not just the first.
         const who = creditLabel(imp);
+        // A ×2 / ×3 is gold on the slide too, so the room sees it (2026-10-21).
+        const premium = premiumStyle(imp.creditWeight);
         return (
-          <div key={imp.id} className="glass-panel rounded-2xl px-6 py-5">
+          <div key={imp.id} className={cn(
+            "glass-panel rounded-2xl px-6 py-5",
+            premium.cardClass && cn("relative overflow-hidden border-2 pt-8", premium.cardClass),
+          )}>
+            <PremiumStrip weight={imp.creditWeight} />
             <div className="flex items-start gap-4">
               <CheckCircle2 className="w-7 h-7 text-green-500 shrink-0 mt-1" />
               <div className="flex-1 min-w-0">
+                {premium.badgeText && <div className="mb-2"><CreditBadge weight={imp.creditWeight} size="lg" /></div>}
                 <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
                 <p className="text-lg text-muted-foreground mt-0.5">
                   {who ? `By ${who}` : "Team effort"}

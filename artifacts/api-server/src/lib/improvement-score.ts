@@ -149,18 +149,63 @@ export function buildScores(input: {
 }
 
 /**
- * Leaner-board order (Graeme, 2026-10-12: "the number of improvements ...
- * I wanted to be the main thing on the leaderboard. I want both"):
- *   1. most improvements in the last 30 days (the plain count, no ×2/×3);
+ * Leaner-board order.
+ *
+ * Graeme, 2026-10-12, wanted the plain count first ("the number of
+ * improvements ... I wanted to be the main thing on the leaderboard"). On
+ * 2026-10-21 he asked for a ×2 / ×3 to show on the board too ("an extra
+ * credit for ×2 and 2 extra credits for ×3 on the leaderboard"), so the
+ * main figure and the first key are now CREDITS, with the plain count shown
+ * beside them:
+ *   1. most credits in the last 30 days (1 / 2 / 3 per improvement);
  *   2. then the better score — anyone without one ("—") after everyone with;
- *   3. then the all-time count, then name.
+ *   3. then all-time credits, then the all-time count, then name.
+ * `creditsAll` is optional so a caller without it falls back to the count.
  */
-export function rankLeanerBoard<T extends { improvements30: number; scorePct: number | null; count: number; name: string }>(rows: ReadonlyArray<T>): T[] {
+export function rankLeanerBoard<T extends {
+  credits30: number;
+  scorePct: number | null;
+  creditsAll?: number;
+  count: number;
+  name: string;
+}>(rows: ReadonlyArray<T>): T[] {
   return [...rows].sort((a, b) => {
-    if (a.improvements30 !== b.improvements30) return b.improvements30 - a.improvements30;
+    if (a.credits30 !== b.credits30) return b.credits30 - a.credits30;
     if (a.scorePct == null && b.scorePct != null) return 1;
     if (b.scorePct == null && a.scorePct != null) return -1;
     if (a.scorePct != null && b.scorePct != null && a.scorePct !== b.scorePct) return b.scorePct - a.scorePct;
-    return b.count - a.count || a.name.localeCompare(b.name);
+    const ac = a.creditsAll ?? a.count;
+    const bc = b.creditsAll ?? b.count;
+    return bc - ac || b.count - a.count || a.name.localeCompare(b.name);
   });
+}
+
+/** The team's totals over one period: how many improvements, the credits
+ *  they're worth, and how many were rated a Great one (×2) or Substantial
+ *  (×3) (Graeme, 2026-10-21). Counted once per IMPROVEMENT, not per person
+ *  credited — a shared improvement is one improvement here. */
+export interface ImprovementTotals {
+  improvements: number;
+  credits: number;
+  great: number;
+  substantial: number;
+}
+
+export function improvementTotals(
+  rows: ReadonlyArray<{ id: number; weight: unknown; doneDate: string }>,
+  w?: ScoreWindow,
+): ImprovementTotals {
+  const out: ImprovementTotals = { improvements: 0, credits: 0, great: 0, substantial: 0 };
+  const seen = new Set<number>();
+  for (const r of rows) {
+    if (w && !inWindow(r.doneDate, w)) continue;
+    if (seen.has(r.id)) continue;
+    seen.add(r.id);
+    const weight = normaliseCreditWeight(r.weight);
+    out.improvements += 1;
+    out.credits += weight;
+    if (weight === 2) out.great += 1;
+    if (weight === 3) out.substantial += 1;
+  }
+  return out;
 }
