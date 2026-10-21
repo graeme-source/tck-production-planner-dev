@@ -32,6 +32,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { feedTimestamp } from "@/lib/feed-time";
 import { cn } from "@/lib/utils";
+import { DAILY_CHECKIN_PROMPT_KEY, usePromptKeyShowing } from "@/lib/prompt-presence";
 import { batchedNoticeCopy, chatFirstName, clockLabel, noticeChat, safeTestPath, type MyFixedNotice } from "@/lib/issue-pipeline";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -82,6 +83,7 @@ export function FixedNoticeInterstitial() {
   const meId = loggedIn ? state.user.id : null;
   const qc = useQueryClient();
   const [, navigate] = useLocation();
+  const checkinShowing = usePromptKeyShowing(DAILY_CHECKIN_PROMPT_KEY);
 
   const { data } = useQuery<{ notices: MyFixedNotice[] }>({
     // Keyed by user so a shared iPad never shows one person's notice to the next.
@@ -143,7 +145,8 @@ export function FixedNoticeInterstitial() {
 
   const queue = data?.notices ?? [];
   const notice = queue[0] ?? null;
-  if (!loggedIn || !notice) return null;
+  // The daily improvement check-in goes first (2026-10-21).
+  if (!loggedIn || !notice || checkinShowing) return null;
   if (queue.length > 1) return <BatchedNotices queue={queue} busy={ackAll.isPending} replies={replies} onReply={setReply} onDone={(testId, path) => {
     ackAll.mutate({ ids: queue.map(n => n.id), testId }, { onSuccess: () => { if (path) navigate(path); } });
   }} />;

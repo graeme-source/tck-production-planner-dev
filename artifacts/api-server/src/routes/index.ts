@@ -65,6 +65,7 @@ import eightPackStockRouter from "./eight-pack-stock";
 import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
 import improvementCreditWeightRouter from "./improvement-credit-weight";
+import dailyCheckinRouter from "./daily-checkin";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
@@ -408,6 +409,8 @@ router.use("/google-ads-link", googleAdsLinkRouter);
 // ×2 / ×3 credits on an improvement — founder only, guarded per route.
 router.use("/improvements", improvementCreditWeightRouter);
 router.use("/improvements", improvementsRouter);
+// The first-of-the-day improvement check-in card (the signed-in person only).
+router.use("/daily-checkin", dailyCheckinRouter);
 router.use("/andon", andonRouter);
 // Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
 // and each reporter's own "your report has been fixed" notices.

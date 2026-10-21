@@ -20,6 +20,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, isBefore, isToday, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/auth-context";
+import { DAILY_CHECKIN_PROMPT_KEY, usePromptKeyShowing } from "@/lib/prompt-presence";
 import { useVisibleTeamLists } from "@/components/team-lists/team-lists-dashboard";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
@@ -1458,6 +1459,7 @@ export function TodoInterstitial() {
 
   const [question, setQuestion] = useState("");
   const [askOpen, setAskOpen] = useState(false);
+  const checkinShowing = usePromptKeyShowing(DAILY_CHECKIN_PROMPT_KEY);
 
   const task = pending?.[0] ?? null;
 
@@ -1478,7 +1480,8 @@ export function TodoInterstitial() {
     onError: (e: Error) => toast({ title: "Couldn't acknowledge", description: e.message, variant: "destructive" }),
   });
 
-  if (!task || meId === null) return null;
+  // The daily improvement check-in goes first (2026-10-21).
+  if (!task || meId === null || checkinShowing) return null;
 
   // "Review now": acknowledge FIRST (that's what dismisses this modal on
   // every page), then follow the task's link with a full navigation.

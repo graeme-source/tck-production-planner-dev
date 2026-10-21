@@ -20,7 +20,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { INITIAL_SIGN_IN, nextSignIn, shouldShowEmergencyPrompt, type SignInTracker } from "@/lib/emergency-contacts";
 import { useMyEmergencyContact, useSaveMyEmergencyContact, toInput } from "./emergency-contacts-api";
 import { EmergencyContactForm } from "./emergency-contact-form";
-import { useReportPromptShowing } from "@/lib/prompt-presence";
+import { DAILY_CHECKIN_PROMPT_KEY, usePromptKeyShowing, useReportPromptShowing } from "@/lib/prompt-presence";
 
 export function EmergencyContactPrompt() {
   const { state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
@@ -31,6 +31,7 @@ export function EmergencyContactPrompt() {
   const [tracker, setTracker] = useState<SignInTracker>(INITIAL_SIGN_IN);
   useEffect(() => { setTracker(t => nextSignIn(t, { userId, pinLocked })); }, [userId, pinLocked]);
   const [deferredInEpoch, setDeferredInEpoch] = useState<number | null>(null);
+  const checkinShowing = usePromptKeyShowing(DAILY_CHECKIN_PROMPT_KEY);
 
   // Only asked for once signed in and unlocked; the answer is per person.
   const mine = useMyEmergencyContact(userId != null && !pinLocked);
@@ -41,7 +42,8 @@ export function EmergencyContactPrompt() {
   const show = !justSaved && mine.data != null && shouldShowEmergencyPrompt({
     promptNeeded: mine.data.promptNeeded,
     pinLocked,
-    otherPromptShowing: peoplePinPrompt || peoplePinSetupPrompt,
+    // The daily improvement check-in goes first (Graeme, 2026-10-21).
+    otherPromptShowing: peoplePinPrompt || peoplePinSetupPrompt || checkinShowing,
     path: location,
     deferredInEpoch,
     epoch: tracker.epoch,

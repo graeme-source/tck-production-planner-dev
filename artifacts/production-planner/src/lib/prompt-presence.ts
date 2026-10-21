@@ -35,6 +35,20 @@ export function useAnyPromptShowing(except?: string): boolean {
   return [...showing].some(k => k !== except);
 }
 
+/** Is ONE named prompt reporting itself — e.g. the daily improvement
+ *  check-in ("daily-checkin"), which the other first-of-day pop-ups wait
+ *  for (Graeme, 2026-10-21). */
+export function usePromptKeyShowing(key: string): boolean {
+  useSyncExternalStore(
+    cb => { listeners.add(cb); return () => listeners.delete(cb); },
+    () => version,
+  );
+  return showing.has(key);
+}
+
+/** The key the daily improvement check-in reports under. */
+export const DAILY_CHECKIN_PROMPT_KEY = "daily-checkin";
+
 /**
  * Is ANY full-screen pop-up on screen — including the many that don't report
  * themselves above (new to-do, station messages, team messages…)? Found on

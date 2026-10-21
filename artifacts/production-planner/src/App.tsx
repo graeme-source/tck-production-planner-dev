@@ -93,6 +93,7 @@ import { PinLockOverlay } from "@/components/pin-lock-overlay";
 import { PeoplePinOverlay } from "@/components/people-pin-overlay";
 import { PeoplePinSetupCard } from "@/components/people-pin-setup-card";
 import { EmergencyContactPrompt } from "@/components/emergency-contacts/emergency-contact-prompt";
+import { DailyCheckin } from "@/components/daily-checkin";
 import { PasswordResetGate } from "@/components/password-reset-gate";
 import { LeanReviewPage } from "@/components/lean-weekly-review";
 import { toast } from "@/hooks/use-toast";
@@ -368,6 +369,10 @@ function AuthGate() {
       {pinLocked && <PinLockOverlay />}
       {!pinLocked && peoplePinPrompt && <PeoplePinOverlay />}
       {!pinLocked && peoplePinSetupPrompt && <PeoplePinSetupCard />}
+      {/* The daily improvement check-in — first sign-in of each London day,
+          after the PIN pad and People prompts, before every other pop-up
+          (they wait on its "daily-checkin" prompt key). */}
+      <DailyCheckin />
       {/* "Add your emergency contact" — at sign-in only, never over the PIN pad
           or the People prompts; "Not now" lasts until the next sign-in. */}
       <EmergencyContactPrompt />
