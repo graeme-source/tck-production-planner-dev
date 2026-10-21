@@ -329,18 +329,23 @@ export function messagePlan(close: boolean): MessagePlan {
 export interface ReporterResponsePlan {
   event: "reporter_replied" | "notice_ack";
   note: string;
-  /** Put the card back in To review with "New reply from <name>" (for
-   *  Graeme only — it is never handed to Claude by itself). */
+  /** Put the card back in To review with "<name> replied" (for Graeme
+   *  only — it is never handed to Claude by itself). */
   flagForGraeme: boolean;
+  /** They answered in words, so Graeme is no longer waiting for a reply. */
+  answers: boolean;
 }
 
 /**
  * The reporter answering, from their pop-up (a typed reply, or just "Got
  * it" / "I'll test it later") or a comment on the issue log.
- *  - Anything they TYPE always comes back to Graeme.
- *  - "Got it" on a message comes back only when he was waiting for an answer
- *    (he asked something with "Message <name>"); "Got it" on a "Send and
- *    close" is just the loop closing, so the card stays in Done.
+ *  - Anything they TYPE always comes back to Graeme as a reply.
+ *  - "Got it" on a message is a READ RECEIPT, not a reply (Graeme, 21 Oct
+ *    2026). It used to flag the card "New reply from Jane" when Jane had
+ *    only tapped Got it (#336, #337 on 20 Oct) — a "reply" with no words in
+ *    it, so it looked as if her answer had gone missing. Now it shows in the
+ *    conversation as "Jane read your message", and if Graeme asked her
+ *    something the card keeps waiting for her actual answer.
  *  - Acknowledging a fix ("testing it now" / "will test later") is recorded
  *    on the thread but doesn't pull the card back.
  */
@@ -349,14 +354,15 @@ export function reporterResponsePlan(
   r: { kind: string; action: NoticeAckAction | "comment"; reply?: string | null },
 ): ReporterResponsePlan {
   const reply = r.reply?.trim();
-  if (reply) return { event: "reporter_replied", note: reply, flagForGraeme: true };
+  if (reply) return { event: "reporter_replied", note: reply, flagForGraeme: true, answers: true };
   if (r.kind === "message") {
-    return { event: "notice_ack", note: `Issue #${t.andonIssueId}: read your message`, flagForGraeme: !!t.awaitingReporterSince };
+    return { event: "notice_ack", note: `Issue #${t.andonIssueId}: read your message`, flagForGraeme: false, answers: false };
   }
   return {
     event: "notice_ack",
     note: r.action === "test_now" ? `Issue #${t.andonIssueId}: testing it now` : `Issue #${t.andonIssueId}: will test later`,
     flagForGraeme: false,
+    answers: false,
   };
 }
 
@@ -461,7 +467,10 @@ export function improvementDoneAt(completedOn: string | null | undefined, now: D
 export interface ThreadEntry {
   at: string;
   who: "claude" | "you" | "reporter";
-  kind: "question" | "recommendation" | "reply" | "message" | "decision";
+  /** who "you": "reply" = to Claude (never seen by the reporter), "message"
+   *  = to the reporter. who "reporter": "reply" = their words, "read" = a
+   *  read receipt ("Got it" on a message, "will test later" on a fix). */
+  kind: "question" | "recommendation" | "reply" | "message" | "decision" | "read";
   text: string;
 }
 
@@ -507,12 +516,77 @@ export function buildThread(events: EventLike[]): ThreadEntry[] {
       const text = !e.note ? word : e.note.toLowerCase().startsWith(first) ? e.note : `${word} — ${e.note}`;
       out.push({ at, who: "you", kind: "decision", text });
     } else if (e.event === "notice_ack" && e.note) {
-      out.push({ at, who: "reporter", kind: "decision", text: e.note });
+      // "Issue #323: read your message" → "Read your message".
+      const words = e.note.replace(/^Issue #\d+:\s*/, "");
+      out.push({ at, who: "reporter", kind: "read", text: words.charAt(0).toUpperCase() + words.slice(1) });
     }
   }
   // Consecutive identical Claude lines (a refine that didn't change the
   // headline) add nothing.
   return out.filter((x, i) => !(i > 0 && x.who === "claude" && out[i - 1].who === "claude" && out[i - 1].text === x.text));
+}
+
+// ── Unread replies from the reporter (Graeme, 21 Oct 2026) ─────────────────
+// "I don't think I can see Jane's replies… make it very obvious." Graeme's
+// read mark (issue_triage.founder_read_at, migration 0210) is kept apart from
+// reporter_reply_at (which holds the card in To review until he acts), so
+// reading a reply never makes the card jump tab under him.
+
+/** The reporter's words Graeme hasn't read yet (oldest first). A null read
+ *  mark means he has never opened this card's conversation. */
+export function unreadReporterReplies(thread: ThreadEntry[], founderReadAt: Date | string | null | undefined): ThreadEntry[] {
+  const readMs = founderReadAt ? new Date(founderReadAt).getTime() : -Infinity;
+  return thread.filter(e => e.who === "reporter" && e.kind === "reply" && new Date(e.at).getTime() > readMs);
+}
+
+/** Fix queue order: cards with unread replies first (newest reply on top),
+ *  then cards the reporter answered that Graeme hasn't acted on yet, then
+ *  the rest in the order given. Stable. */
+export function sortByReporterReplies<T extends { unreadReplies: number; latestUnreadAt: string | null; reporterReplyAt: Date | string | null }>(items: T[]): T[] {
+  const rank = (x: T) => (x.unreadReplies > 0 ? 0 : x.reporterReplyAt ? 1 : 2);
+  return items
+    .map((x, i) => ({ x, i }))
+    .sort((a, b) => {
+      const r = rank(a.x) - rank(b.x);
+      if (r !== 0) return r;
+      if (rank(a.x) === 0) {
+        const d = new Date(b.x.latestUnreadAt ?? 0).getTime() - new Date(a.x.latestUnreadAt ?? 0).getTime();
+        if (d !== 0) return d;
+      }
+      return a.i - b.i;
+    })
+    .map(({ x }) => x);
+}
+
+// ── The reporter's side of the conversation (Graeme, 21 Oct 2026) ──────────
+// The reporter sees the conversation where they already get Graeme's
+// messages — the "A reply to your report" pop-up — so it can go back and
+// forth. It is built ONLY from the comments on their report in the issue
+// log (what they could already read there), never from the Fix queue's
+// events, which hold Graeme's private replies to Claude.
+
+export interface ReporterChatEntry {
+  id: number;
+  at: string;
+  /** "me" = the reporter; "them" = anyone else (Graeme, a manager, the app). */
+  who: "me" | "them";
+  name: string;
+  text: string;
+}
+
+export function reporterConversation(
+  comments: Array<{ id: number; userId: number | null; userName: string | null; comment: string; createdAt: Date | string }>,
+  reporterUserId: number,
+): ReporterChatEntry[] {
+  return [...comments]
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime() || a.id - b.id)
+    .map(c => ({
+      id: c.id,
+      at: typeof c.createdAt === "string" ? c.createdAt : c.createdAt.toISOString(),
+      who: c.userId === reporterUserId ? "me" as const : "them" as const,
+      name: c.userId === reporterUserId ? "You" : (c.userName?.trim() || "The Calzone Kitchen"),
+      text: c.comment,
+    }));
 }
 
 // ── Find a card wherever it went (Graeme, 2026-10-13) ───────────────────────

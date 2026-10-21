@@ -56,14 +56,18 @@ describe("reporterResponsePlan — the reporter's answer comes back to Graeme", 
 
   it("a typed reply always flags the card, whatever kind of notice", () => {
     expect(reporterResponsePlan(notWaiting, { kind: "message", action: "later", reply: "Only XXL — the others are right" }))
-      .toEqual({ event: "reporter_replied", note: "Only XXL — the others are right", flagForGraeme: true });
+      .toEqual({ event: "reporter_replied", note: "Only XXL — the others are right", flagForGraeme: true, answers: true });
     expect(reporterResponsePlan(notWaiting, { kind: "fixed", action: "later", reply: "Still broken" }).flagForGraeme).toBe(true);
     expect(reporterResponsePlan(notWaiting, { kind: "fixed", action: "comment", reply: "a comment on the log" }).event).toBe("reporter_replied");
   });
 
-  it("'Got it' on a question Graeme is waiting on flags it — and says 'read your message', not 'will test later' (#323)", () => {
+  // Regression (Graeme, 21 Oct 2026): on 20 Oct Jane tapped "Got it" on
+  // three messages at once (#335–#337). #336 and #337 then said "New reply
+  // from Jane" with no words in them, so Graeme went looking for replies
+  // that had never been written. "Got it" is a read receipt, not a reply.
+  it("'Got it' on a question Graeme is waiting on is a read receipt: no 'New reply', still waiting (#336, #337)", () => {
     const p = reporterResponsePlan(waiting, { kind: "message", action: "later", reply: "  " });
-    expect(p).toEqual({ event: "notice_ack", note: "Issue #323: read your message", flagForGraeme: true });
+    expect(p).toEqual({ event: "notice_ack", note: "Issue #323: read your message", flagForGraeme: false, answers: false });
   });
 
   it("'Got it' on a Send-and-close message just closes the loop", () => {
@@ -71,7 +75,7 @@ describe("reporterResponsePlan — the reporter's answer comes back to Graeme", 
   });
 
   it("acknowledging a fix is recorded but doesn't pull the card back", () => {
-    expect(reporterResponsePlan(waiting, { kind: "fixed", action: "test_now" })).toEqual({ event: "notice_ack", note: "Issue #323: testing it now", flagForGraeme: false });
+    expect(reporterResponsePlan(waiting, { kind: "fixed", action: "test_now" })).toEqual({ event: "notice_ack", note: "Issue #323: testing it now", flagForGraeme: false, answers: false });
     expect(reporterResponsePlan(notWaiting, { kind: "fixed", action: "later" }).note).toBe("Issue #323: will test later");
   });
 });
@@ -106,7 +110,7 @@ describe("buildThread — the whole conversation shows on the card", () => {
     expect(thread.map(e => [e.who, e.kind, e.text])).toEqual([
       ["claude", "recommendation", "Remove the XXL tin label"],
       ["you", "message", "Only XXL tins?"],
-      ["reporter", "decision", "Issue #323: read your message"],
+      ["reporter", "read", "Read your message"],
       ["reporter", "reply", "Yes, only XXL"],
       ["you", "message", "Thanks — why?"],
     ]);
