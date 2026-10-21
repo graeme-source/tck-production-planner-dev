@@ -14,6 +14,9 @@ export const defectTypesTable = pgTable("defect_types", {
   name: text("name").notNull(),
   active: boolean("active").notNull().default(true),
   sortOrder: integer("sort_order").notNull().default(0),
+  /** Records of this type must say in words what went wrong — the
+   *  "Something else…" reason (migration 0211). Listed last on the form. */
+  asksForDetail: boolean("asks_for_detail").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -31,6 +34,9 @@ export const defectsTable = pgTable("defects", {
   station: text("station"),
   orderRefs: text("order_refs"),
   note: text("note"),
+  /** What went wrong, typed — only for a type that asks for it (migration
+   *  0211, api-server lib/defect-reason.ts). NULL otherwise. */
+  reasonOther: text("reason_other"),
   recordedById: integer("recorded_by_id").references(() => usersTable.id, { onDelete: "set null" }),
   recordedByName: text("recorded_by_name"),
   updatedById: integer("updated_by_id").references(() => usersTable.id, { onDelete: "set null" }),
