@@ -31,9 +31,50 @@ import { CheckCircle2, Clock, Loader2, MessageSquareText, PlayCircle, Send, X } 
 import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { feedTimestamp } from "@/lib/feed-time";
-import { batchedNoticeCopy, safeTestPath, type MyFixedNotice } from "@/lib/issue-pipeline";
+import { cn } from "@/lib/utils";
+import { batchedNoticeCopy, chatFirstName, clockLabel, noticeChat, safeTestPath, type MyFixedNotice } from "@/lib/issue-pipeline";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/** Who wrote the newest message ("Graeme"), for "Reply to Graeme". */
+function senderFirstName(n: MyFixedNotice): string {
+  const { earlier } = noticeChat(n.conversation, n.whatChanged);
+  const sender = [...(n.conversation ?? [])].slice(earlier.length).find(e => e.who === "them");
+  return sender ? chatFirstName(sender.name) : "Graeme";
+}
+
+/** The conversation on one report, oldest first; the newest message from
+ *  Graeme highlighted at the bottom. `compact` shows only the last few
+ *  earlier lines (the several-at-once pop-up). */
+function NoticeChat({ notice, compact = false }: { notice: MyFixedNotice; compact?: boolean }) {
+  const { earlier, latest } = noticeChat(notice.conversation, notice.whatChanged);
+  const shown = compact ? earlier.slice(-3) : earlier;
+  const sender = senderFirstName(notice);
+  return (
+    <ol className="space-y-2" aria-label="Messages about your report">
+      {compact && earlier.length > shown.length && (
+        <li className="text-xs text-muted-foreground text-center">{earlier.length - shown.length} earlier message{earlier.length - shown.length === 1 ? "" : "s"}</li>
+      )}
+      {shown.map(e => (
+        <li key={e.id} className={cn("flex", e.who === "me" ? "justify-end" : "justify-start")}>
+          <div className={cn(
+            "max-w-[88%] rounded-2xl px-3.5 py-2",
+            e.who === "me" ? "bg-emerald-100 dark:bg-emerald-900/40 rounded-br-md" : "bg-secondary rounded-bl-md",
+          )}>
+            <p className="text-xs font-bold text-muted-foreground">{chatFirstName(e.name)} · {clockLabel(e.at)}</p>
+            <p className="text-base whitespace-pre-wrap break-words">{e.text}</p>
+          </div>
+        </li>
+      ))}
+      <li className="flex justify-start">
+        <div className="max-w-[94%] rounded-2xl rounded-bl-md px-4 py-3 bg-primary/10 border-2 border-primary/50">
+          <p className="text-xs font-bold uppercase tracking-wide text-primary">New from {sender} · {clockLabel(notice.createdAt)}</p>
+          <p className={cn("font-semibold whitespace-pre-wrap break-words", compact ? "text-base" : "text-lg md:text-xl")}>{latest}</p>
+        </div>
+      </li>
+    </ol>
+  );
+}
 
 export function FixedNoticeInterstitial() {
   const { state } = useAuth();
@@ -160,14 +201,21 @@ export function FixedNoticeInterstitial() {
             </blockquote>
             <p className="text-sm text-muted-foreground mt-1.5 pl-5">{feedTimestamp(notice.reportedAt)} · {notice.station}</p>
           </div>
-          <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">{isMessage ? "Reply" : "What's different"}</p>
-            <p className="text-lg md:text-xl font-semibold whitespace-pre-wrap">{notice.whatChanged}</p>
-          </div>
+          {isMessage ? (
+            // The whole conversation on this report, like a chat, with the
+            // newest message at the bottom and the reply box under it — so
+            // it can go back and forth (Graeme, 21 Oct 2026).
+            <NoticeChat notice={notice} />
+          ) : (
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">What's different</p>
+              <p className="text-lg md:text-xl font-semibold whitespace-pre-wrap">{notice.whatChanged}</p>
+            </div>
+          )}
           {isMessage && (
             <div>
-              <label htmlFor={`notice-reply-${notice.id}`} className="block text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
-                Your reply (optional)
+              <label htmlFor={`notice-reply-${notice.id}`} className="block text-base font-bold mb-1.5">
+                Reply to {senderFirstName(notice)}
               </label>
               <textarea
                 id={`notice-reply-${notice.id}`}
@@ -175,8 +223,8 @@ export function FixedNoticeInterstitial() {
                 onChange={e => setReply(notice.id, e.target.value)}
                 maxLength={2000}
                 rows={3}
-                placeholder="Answer here if you were asked something"
-                className="w-full px-3 py-2.5 bg-background border-2 border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder={`Type your answer to ${senderFirstName(notice)} here — or just tap Got it`}
+                className="w-full px-3 py-2.5 bg-background border-2 border-primary/50 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
               />
             </div>
           )}
@@ -228,6 +276,7 @@ function BatchedNotices({ queue, busy, replies, onReply, onDone }: {
   onDone: (testId?: number, path?: string) => void;
 }) {
   const copy = batchedNoticeCopy(queue);
+  const typedReplies = queue.filter(n => n.kind === "message" && replies[n.id]?.trim()).length;
   return createPortal(
     <div className="fixed inset-0 z-[60] bg-black/75 flex items-center justify-center p-3 md:p-8">
       <div
@@ -265,16 +314,18 @@ function BatchedNotices({ queue, busy, replies, onReply, onDone }: {
                 <blockquote className="text-base leading-snug border-l-4 border-primary/60 pl-3 text-muted-foreground line-clamp-3">
                   “{n.quote}”
                 </blockquote>
-                <p className="text-lg font-semibold whitespace-pre-wrap">{n.whatChanged}</p>
+                {isMessage
+                  ? <NoticeChat notice={n} compact />
+                  : <p className="text-lg font-semibold whitespace-pre-wrap">{n.whatChanged}</p>}
                 {isMessage && (
                   <textarea
                     value={replies[n.id] ?? ""}
                     onChange={e => onReply(n.id, e.target.value)}
                     maxLength={2000}
                     rows={2}
-                    aria-label="Your reply (optional)"
-                    placeholder="Your reply (optional) — answer here if you were asked something"
-                    className="w-full px-3 py-2 bg-background border-2 border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    aria-label={`Reply to ${senderFirstName(n)}`}
+                    placeholder={`Reply to ${senderFirstName(n)} — type your answer here`}
+                    className="w-full px-3 py-2 bg-background border-2 border-primary/50 rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
                   />
                 )}
                 {path && !isMessage && (
@@ -298,8 +349,8 @@ function BatchedNotices({ queue, busy, replies, onReply, onDone }: {
             disabled={busy}
             className="w-full h-16 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 hover:bg-primary/90 disabled:opacity-50"
           >
-            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-            {copy.button}
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : typedReplies > 0 ? <Send className="w-5 h-5" /> : <CheckCircle2 className="w-5 h-5" />}
+            {typedReplies > 0 ? `Send ${typedReplies === 1 ? "reply" : `${typedReplies} replies`}` : copy.button}
           </button>
         </div>
       </div>
