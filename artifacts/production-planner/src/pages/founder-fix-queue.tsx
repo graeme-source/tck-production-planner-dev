@@ -11,7 +11,7 @@
  * Founder account only (same email gate as the rest of /founder; the API
  * enforces it too). Big cards, not a table — it's read on a phone or iPad.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -22,13 +22,15 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { MarkdownBlock } from "@/components/lesson-media";
 import { ImprovementSuggestions, NoActionButton, useNoAction } from "@/components/fix-queue-extras";
-import { FixQueueSearch, MessageReporterDialog, ReporterReplyBox } from "@/components/fix-queue-conversation";
+import {
+  FixQueueSearch, FixQueueThread, ReporterRepliedStrip, useFixQueueUnread, type FixQueueThreadHandle,
+} from "@/components/fix-queue-conversation";
 import { DictateButton } from "@/components/dictate-button";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import {
-  LANE_LABELS, QUEUE_TAB_LABELS, cardActions, noticeStatusLine, tabCount, waitingForReporterLabel, withMessageSent, withReplySent,
+  LANE_LABELS, QUEUE_TAB_LABELS, cardActions, noticeStatusLine, tabCount, unreadLabel, waitingForReporterLabel, withMessageSent, withReplySent,
   type FixQueueItem, type FixQueueResponse, type FixQueueTab, type TriageLane, type TriageStatus,
 } from "@/lib/issue-pipeline";
 
@@ -189,13 +191,14 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
 }) {
   const { triage: t, issue } = item;
   const [whyOpen, setWhyOpen] = useState(false);
-  const [dialog, setDialog] = useState<null | "reject" | "reply" | "message">(null);
+  const [dialog, setDialog] = useState<null | "reject" | "reply">(null);
+  const threadRef = useRef<FixQueueThreadHandle>(null);
+  const unread = item.unreadReplies ?? 0;
   const [snoozeOpen, setSnoozeOpen] = useState(false);
   const snoozedUntil = t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now() ? new Date(t.snoozedUntil) : null;
   const actions = cardActions(t);
   const thread = item.thread ?? [];
   const firstName = issue?.reporter.name?.split(" ")[0] ?? "the reporter";
-  const reporterName = issue?.reporter.name ?? "the reporter";
   const waitingLabel = waitingForReporterLabel(t, firstName);
   // Claude's draft pre-fills only the first message; follow-ups start blank.
   const alreadyMessaged = thread.some(e => e.who === "you" && e.kind === "message");
@@ -204,7 +207,13 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
   const videos = issue?.attachments.filter(a => a.kind !== "image") ?? [];
 
   return (
-    <article className={cn("rounded-3xl border-2 border-border bg-card p-5 md:p-6 space-y-4 transition-opacity", saving && "opacity-60")}>
+    <article className={cn(
+      "rounded-3xl border-2 bg-card p-5 md:p-6 space-y-4 transition-opacity",
+      // A reply from the reporter you haven't read: a green strip down the
+      // card, so it stands out in the list (21 Oct 2026).
+      unread > 0 ? "border-emerald-500 border-l-[10px]" : t.reporterReplyAt ? "border-emerald-300 border-l-[10px]" : "border-border",
+      saving && "opacity-60",
+    )}>
       {/* Chips */}
       <div className="flex flex-wrap items-center gap-2">
         <Chip className={LANE_STYLES[t.lane]}>{LANE_LABELS[t.lane]}</Chip>
@@ -223,8 +232,8 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
         {showTab && item.tab && (
           <Chip className="bg-primary text-primary-foreground">In: {QUEUE_TAB_LABELS[item.tab]}</Chip>
         )}
-        {t.reporterReplyAt && (
-          <Chip className="bg-emerald-600 text-white"><MessageSquareReply className="w-3.5 h-3.5" /> New reply from {firstName}</Chip>
+        {(unread > 0 || t.reporterReplyAt) && (
+          <Chip className="bg-emerald-600 text-white"><MessageSquareReply className="w-3.5 h-3.5" /> {unreadLabel(firstName, unread)}</Chip>
         )}
         {waitingLabel && !t.reporterReplyAt && (
           <Chip className="bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200"><Hourglass className="w-3.5 h-3.5" /> {waitingLabel}</Chip>
@@ -238,15 +247,8 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
       </div>
 
       {/* The reporter answered — it's back here for you (not Claude). */}
-      {t.reporterReplyAt && (
-        <ReporterReplyBox
-          triageId={t.id}
-          reporterName={reporterName}
-          firstName={firstName}
-          thread={thread}
-          saving={saving}
-          onMessage={() => setDialog("message")}
-        />
+      {(unread > 0 || t.reporterReplyAt) && (
+        <ReporterRepliedStrip item={item} firstName={firstName} saving={saving} onOpen={() => threadRef.current?.focusReply()} />
       )}
 
       {/* Claude's question — the conversation to finish before there's a
@@ -343,26 +345,18 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
         </div>
       )}
 
-      {/* The back-and-forth so far — only worth showing once there's more
-          than Claude's first word. */}
-      {thread.length > 1 && (
-        <div className="rounded-2xl border border-border p-4 space-y-2.5">
-          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Conversation</p>
-          {thread.map((m, i) => (
-            <div key={i} className={cn("flex", m.who === "claude" ? "justify-start" : "justify-end")}>
-              <div className={cn(
-                "max-w-[85%] rounded-2xl px-3.5 py-2 text-sm",
-                m.who === "claude" ? "bg-secondary/60" : m.who === "reporter" ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-primary/10",
-              )}>
-                <p className="text-[11px] font-bold uppercase tracking-wide text-muted-foreground">
-                  {m.who === "claude" ? (m.kind === "question" ? "Claude asked" : "Claude") : m.who === "reporter" ? issue?.reporter.name ?? "Reporter" : m.kind === "message" ? `You → ${issue?.reporter.name?.split(" ")[0] ?? "reporter"}` : "You"}
-                  {" · "}{feedTimestamp(m.at)}
-                </p>
-                <p className="whitespace-pre-wrap">{m.text}</p>
-              </div>
-            </div>
-          ))}
-        </div>
+      {/* ONE conversation (21 Oct 2026): Claude, you and the reporter in
+          time order, with the box to message the reporter at the bottom. */}
+      {(thread.length > 0 || issue?.reporter.id != null) && (
+        <FixQueueThread
+          ref={threadRef}
+          item={item}
+          firstName={firstName}
+          canMessage={issue?.reporter.id != null}
+          canClose={["proposed", "approved", "rejected", "wont_fix"].includes(status)}
+          saving={saving}
+          onMessage={onMessage}
+        />
       )}
 
       {/* Proposed fix — Approve / Dismiss live here, on what they act on.
@@ -425,9 +419,9 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
             </p>
             <p className="text-base whitespace-pre-wrap">{t.suggestedReply}</p>
           </div>
-          <button onClick={() => setDialog("message")} disabled={saving}
+          <button onClick={() => threadRef.current?.focusReply(t.suggestedReply ?? "")} disabled={saving}
             className="h-12 px-5 rounded-xl border-2 border-primary/40 bg-background text-primary font-bold flex items-center gap-2 hover:bg-primary/10 disabled:opacity-50">
-            <Send className="w-4 h-4" /> Send to {firstName}…
+            <Send className="w-4 h-4" /> Use this — check it and send to {firstName}
           </button>
         </div>
       )}
@@ -535,7 +529,7 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
         {/* Message the reporter as often as you like (2026-10-13) — it never
             closes the card by itself. */}
         {issue?.reporter.id != null && (
-          <button onClick={() => setDialog("message")} disabled={saving}
+          <button onClick={() => threadRef.current?.focusReply()} disabled={saving}
             className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
             <MessageSquareText className="w-5 h-5" /> {alreadyMessaged ? `Message ${firstName} again` : `Message ${firstName}`}
           </button>
@@ -559,16 +553,6 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
         </Link>
       </div>
 
-      {dialog === "message" && (
-        <MessageReporterDialog
-          reporterName={reporterName}
-          firstName={firstName}
-          suggested={alreadyMessaged ? null : t.suggestedReply}
-          canClose={["proposed", "approved", "rejected", "wont_fix"].includes(status)}
-          onCancel={() => setDialog(null)}
-          onSubmit={(message, close) => { setDialog(null); onMessage(message, close); }}
-        />
-      )}
       {(dialog === "reject" || dialog === "reply") && (
         <NoteDialog
           mode={dialog}
@@ -709,6 +693,7 @@ export default function FounderFixQueue() {
     onSettled: (_d, _e, { id }) => {
       setSavingIds(s => { const n = new Set(s); n.delete(id); return n; });
       void qc.invalidateQueries({ queryKey: ["issue-pipeline", "review"] });
+      void qc.invalidateQueries({ queryKey: ["issue-pipeline", "unread"] });
     },
   });
 
@@ -775,6 +760,9 @@ export default function FounderFixQueue() {
   });
 
   const noAction = useNoAction();
+  // Replies from reporters you haven't read, on any tab (21 Oct 2026).
+  const unread = useFixQueueUnread(isFounder);
+  const unreadElsewhere = (unread.data?.items ?? []).filter(u => !(data?.items ?? []).some(i => i.triage.id === u.triageId));
 
   if (state.status === "authenticated" && !isFounder) return <Redirect to="/" />;
   if (state.status !== "authenticated") return null;
@@ -789,7 +777,7 @@ export default function FounderFixQueue() {
   const changeTab = (next: FixQueueTab) => { setSentItems(new Map()); setSearch(""); setQ(""); setTab(next); };
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6">
       {/* Its own line in the sidebar since 2026-09-29 (/fix-queue) — no
           longer a tab of The Business. Founder account only, as before. */}
       <PageHeader
@@ -804,6 +792,20 @@ export default function FounderFixQueue() {
 
       {/* Find a card in ANY tab — one that moved is never lost (2026-10-13). */}
       <FixQueueSearch value={search} onChange={setSearch} />
+
+      {/* New replies on cards that aren't in this list — one tap finds each. */}
+      {unreadElsewhere.length > 0 && (
+        <div className="rounded-2xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 p-4 flex flex-wrap items-center gap-2">
+          <MessageSquareReply className="w-6 h-6 text-emerald-700 dark:text-emerald-300" />
+          <p className="font-bold text-emerald-900 dark:text-emerald-200 mr-1">New replies on other tabs:</p>
+          {unreadElsewhere.map(u => (
+            <button key={u.triageId} onClick={() => setSearch(String(u.andonIssueId))}
+              className="h-11 px-4 rounded-xl bg-emerald-700 text-white font-bold hover:bg-emerald-800">
+              {unreadLabel(u.reporterName?.split(" ")[0] ?? "Reporter", u.count)} · #{u.andonIssueId}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Status tabs with counts */}
       <div className="grid grid-cols-3 md:grid-cols-7 gap-2">

@@ -67,6 +67,7 @@ import { MessagesButton } from "@/components/messages/messages-button";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 import { PageSopButton } from "@/components/page-sop-rail";
 import { useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
+import { useFixQueueUnread } from "@/components/fix-queue-conversation";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { NotificationFlash } from "@/components/notification-flash";
 import { ImprovementCelebration } from "@/components/improvement-celebration";
@@ -301,6 +302,9 @@ export function NavLinks({
 }) {
   const fullPath = location + (search ? search : "");
   const unseenImprovements = useUnseenImprovementCount();
+  // Replies from reporters Graeme hasn't read (21 Oct 2026) — founder only.
+  const isFounder = useFounderArea().isFounder;
+  const fixQueueUnread = useFixQueueUnread(isFounder).data?.cards ?? 0;
   const isRtwManager = useIsRtwManager();
   const isOnProductPage = PRODUCT_PATHS.includes(location) || location.startsWith("/labels/");
   const isOnDispatchPage = DISPATCH_PATHS.includes(location);
@@ -497,6 +501,14 @@ export function NavLinks({
               title={`${unseenImprovements} improvement${unseenImprovements === 1 ? "" : "s"} you haven't looked at yet`}
             >
               {unseenImprovements > 99 ? "99+" : unseenImprovements}
+            </span>
+          )}
+          {item.href === "/fix-queue" && fixQueueUnread > 0 && (
+            <span
+              className="absolute -top-1.5 -right-2 min-w-[1rem] px-1 rounded-full bg-emerald-600 text-white text-[10px] font-bold tabular-nums text-center leading-4 shadow-sm"
+              title={`${fixQueueUnread} card${fixQueueUnread === 1 ? "" : "s"} with a reply you haven't read`}
+            >
+              {fixQueueUnread > 99 ? "99+" : fixQueueUnread}
             </span>
           )}
         </span>
