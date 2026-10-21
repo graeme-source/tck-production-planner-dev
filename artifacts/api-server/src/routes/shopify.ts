@@ -7,7 +7,7 @@ import { londonDateString, londonStartOfDay, londonWeekdayName } from "../lib/lo
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 import { CLUB_SPECIAL_TITLE_LC } from "@workspace/barcodes";
 import {
-  averageOrderValue, CUSTOMER_TYPE_TAGS, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, orderHasTag,
+  averageOrderValue, CUSTOMER_TYPE_TAGS, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, newVsReturningTotals, orderHasTag,
 } from "../lib/order-revenue";
 
 const WEEKDAY_TO_NUM: Record<string, number> = { Sunday: 0, Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6 };
@@ -268,6 +268,9 @@ router.get("/sales-summary", requireNumbers, async (req, res) => {
     const roundedToday = Math.round(todayRevenue * 100) / 100;
     const paidOrderCount = validPeriod.filter(isPaidOrder).length;
     const todayPaidOrderCount = todayOrdersFinal.filter(isPaidOrder).length;
+    // New customers today — the SAME orders as Today's Sales, split by the
+    // "new-customer" tag, so new-customer revenue/orders never exceed it.
+    const todayNew = newVsReturningTotals(todayOrdersFinal);
 
     res.json({
       from,
@@ -283,6 +286,10 @@ router.get("/sales-summary", requireNumbers, async (req, res) => {
       todayOrderCount: todayOrdersFinal.length,
       todayPaidOrderCount,
       todayAov: averageOrderValue(roundedToday, todayPaidOrderCount),
+      todayNewCustomerRevenue: todayNew.newCustomerRevenue,
+      todayNewCustomerOrderCount: todayNew.newCustomerOrders,
+      todayNewCustomerRevenueSharePercent: todayNew.newRevenueSharePercent,
+      todayNewCustomerOrderSharePercent: todayNew.newOrderSharePercent,
     });
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
