@@ -23,6 +23,7 @@ import {
   DISPUTE_REFRESH_EVERY_MS,
   type DirectDisputeCheck,
   type DispatchGateDecision,
+  type DispatchRefusalCode,
 } from "./order-disputes";
 
 type DisputeNode = {
@@ -30,6 +31,8 @@ type DisputeNode = {
   name: string;
   tags: string[];
   disputes: Array<{ status: string; initiatedAs: string | null }>;
+  /** Only on the per-order queries (the cancelled-order refusal). */
+  cancelledAt?: string | null;
 };
 
 const LIST_QUERY = `
@@ -141,10 +144,10 @@ export function startDisputeRefreshJob(): void {
 }
 
 const ORDER_BY_ID_QUERY = `
-  query OrderDisputes($id: ID!) { order(id: $id) { id name tags disputes { status initiatedAs } } }
+  query OrderDisputes($id: ID!) { order(id: $id) { id name tags cancelledAt disputes { status initiatedAs } } }
 `;
 const ORDER_BY_NAME_QUERY = `
-  query OrderDisputesByName($q: String!) { orders(first: 5, query: $q) { nodes { id name tags disputes { status initiatedAs } } } }
+  query OrderDisputesByName($q: String!) { orders(first: 5, query: $q) { nodes { id name tags cancelledAt disputes { status initiatedAs } } } }
 `;
 
 function normaliseName(name: string): string {
@@ -180,7 +183,7 @@ async function directCheck(ref: { orderId?: number | null; orderName?: string | 
         console.warn("[order-disputes] could not update stored row after direct check:", dbErr instanceof Error ? dbErr.message : dbErr);
       }
     }
-    return { ok: true, openLabels: labels, tags: node.tags ?? [], orderId: id ?? undefined, orderName: node.name };
+    return { ok: true, openLabels: labels, tags: node.tags ?? [], cancelledAt: node.cancelledAt ?? null, orderId: id ?? undefined, orderName: node.name };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -200,6 +203,13 @@ export type DispatchRef = {
    *           ensureFreshDisputes has already been tried once).
    */
   mode?: "live" | "list" | "listOnly";
+  /**
+   * Shopify's cancelled_at, when the caller fetched the order with it
+   * (null = known not cancelled). Left undefined, a "list" check asks
+   * Shopify about this one order so a cancellation is never missed
+   * (21 Oct 2026); "listOnly" callers must pass it.
+   */
+  cancelledAt?: string | null;
 };
 
 /** The gate. Every despatch path calls this (or assertDispatchAllowed). */
@@ -226,24 +236,26 @@ export async function checkDispatch(ref: DispatchRef): Promise<DispatchGateDecis
 
   const now = new Date();
   let direct: DirectDisputeCheck | undefined;
-  const wantDirect = mode === "live" || (mode === "list" && isDisputeListStale(state.fetchedAt, now));
+  // A cancellation has no stored list, so a "list" caller that doesn't know
+  // the order's cancelled_at asks Shopify about this one order.
+  const cancellationUnknown = ref.cancelledAt === undefined;
+  const wantDirect = mode === "live" || (mode === "list" && (isDisputeListStale(state.fetchedAt, now) || cancellationUnknown));
   if (wantDirect && (ref.orderId || ref.orderName)) {
     const result = await directCheck(ref);
     if (!ref.orderName && result.ok && result.orderName) label = result.orderName;
     direct = result;
   }
 
-  const decision = decideDispatch({ orderLabel: label, listed, tags: ref.tags, listFetchedAt: state.fetchedAt, now, direct });
+  const decision = decideDispatch({ orderLabel: label, listed, tags: ref.tags, listFetchedAt: state.fetchedAt, now, direct, cancelledAt: ref.cancelledAt });
   if (decision.allowed && decision.warning) console.warn(`[order-disputes] ${decision.warning}`);
-  if (!decision.allowed) console.warn(`[order-disputes] REFUSED despatch of ${label}: ${decision.labels.join(", ") || "manual tag"}`);
+  if (!decision.allowed) console.warn(`[order-disputes] REFUSED despatch of ${label}: ${decision.code === "ORDER_CANCELLED" ? "order cancelled" : decision.labels.join(", ") || "manual tag"}`);
   return decision;
 }
 
 /** Thrown when an order must not be despatched. Routes turn it into a 409. */
 export class DispatchHeldError extends Error {
-  readonly code = "OPEN_CHARGEBACK";
   readonly status = 409;
-  constructor(message: string, readonly labels: string[]) {
+  constructor(message: string, readonly labels: string[], readonly code: DispatchRefusalCode = "OPEN_CHARGEBACK") {
     super(message);
     this.name = "DispatchHeldError";
   }
@@ -251,7 +263,7 @@ export class DispatchHeldError extends Error {
 
 export async function assertDispatchAllowed(ref: DispatchRef): Promise<void> {
   const d = await checkDispatch(ref);
-  if (!d.allowed) throw new DispatchHeldError(d.message, d.labels);
+  if (!d.allowed) throw new DispatchHeldError(d.message, d.labels, d.code);
 }
 
 /** The order a consignment belongs to, from our ledger (waybill routes). */

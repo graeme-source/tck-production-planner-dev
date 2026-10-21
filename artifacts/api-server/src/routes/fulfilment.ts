@@ -8,7 +8,7 @@ import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { recordBookingRun, rescheduleRulesForOrder, appendIssueAction, type RescheduleRules } from "../lib/apc-booking-issues-db";
 import { loadOwnership, reconcileBarcodes, scanQueueBarcodes } from "../lib/barcode-store";
 import { MANUAL_TICK_KEY, isManualTickEnabled, checkPackedLines } from "../lib/packing-barcode-gate";
-import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
+import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getOrdersByTagIncludingCancelled, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
 import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, greetingNameOf, toZapietDate } from "../lib/order-reschedule";
 import { rescheduleEmailFor, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { validate } from "../middleware/validate";
@@ -19,13 +19,13 @@ import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure, isDataFixableFailure } from "../lib/apc-failure-tags";
 import { settledOrders } from "../lib/order-age";
-import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave } from "../lib/dispatch-tag";
+import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
 import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
 import { waybillSendDate, friendlyIsoDate } from "../lib/apc-consignment-reuse";
 import { londonDateString } from "../lib/london-time";
-import { DISPATCH_PATHS, DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback, type DispatchPath } from "../lib/order-disputes";
+import { DISPATCH_PATHS, DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback, type DispatchPath, type DispatchRefusalCode } from "../lib/order-disputes";
 import { checkDispatch, ensureFreshDisputes, loadOpenDisputes, orderIdForWaybill, DispatchHeldError, disputeListState } from "../lib/order-disputes-store";
 
 const router = Router();
@@ -36,15 +36,26 @@ const router = Router();
 // calls refuseIfChargeback with its own key from DISPATCH_PATHS (the test
 // in lib/order-disputes.test.ts fails if one stops doing so).
 
-/** Sends a 409 and returns true when the order is held for a chargeback. */
+// The same gate refuses CANCELLED orders (Graeme, 21 Oct 2026: #137271 was
+// cancelled on 16 Oct and still got tagged and booked). Pass the order's
+// cancelled_at when the route has fetched it; otherwise the gate asks Shopify.
+
+/** The 409 body for a refused despatch — chargeback or cancellation. */
+function heldBody(d: { message: string; code: DispatchRefusalCode; labels: string[] }) {
+  return d.code === "ORDER_CANCELLED"
+    ? { error: d.message, code: d.code, cancelled: true }
+    : { error: d.message, code: d.code, chargeback: true, disputes: d.labels };
+}
+
+/** Sends a 409 and returns true when the order is held (chargeback) or cancelled. */
 async function refuseIfChargeback(
   res: Response,
   path: DispatchPath,
-  ref: { orderId?: number | null; orderName?: string | null; tags?: string | null },
+  ref: { orderId?: number | null; orderName?: string | null; tags?: string | null; cancelledAt?: string | null },
 ): Promise<boolean> {
   const decision = await checkDispatch({ ...ref, mode: DISPATCH_PATHS[path] });
   if (decision.allowed) return false;
-  res.status(409).json({ error: decision.message, code: decision.code, chargeback: true, disputes: decision.labels });
+  res.status(409).json(heldBody(decision));
   return true;
 }
 
@@ -601,7 +612,9 @@ router.get("/scan-queue", requireFulfilmentAccess, async (req: Request, res: Res
     const held = await heldOrderIdSet();
     const heldForChargeback = all.filter(o => isDispatchTagged(o.tags) && isHeldForChargeback(o, held))
       .map(o => ({ id: o.id, name: o.name }));
-    let queue = all.filter(o => isDispatchTagged(o.tags) && !isHeldForChargeback(o, held));
+    // packQueueOrders also drops a cancelled order (21 Oct 2026) — the
+    // fetch already leaves them out; this keeps the queue rule in one place.
+    let queue = packQueueOrders(all, o => isHeldForChargeback(o, held));
 
     if (category && category !== "all") {
       const wanted = category.toLowerCase();
@@ -725,7 +738,7 @@ router.post("/orders/:id/scan-complete", requireFulfilmentAccess, async (req: Re
     res.json({ ok: true, orderId });
   } catch (err: unknown) {
     if (err instanceof DispatchHeldError) {
-      res.status(409).json({ error: err.message, code: err.code, chargeback: true, disputes: err.labels });
+      res.status(409).json(heldBody(err));
       return;
     }
     const msg = err instanceof Error ? err.message : String(err);
@@ -782,7 +795,9 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     }
 
     const weightThresholdG = Number(weightThreshStr) || 1000;
-    const orders = await getOrdersByTag(tag);
+    // Including cancelled orders so a cancelled one is REFUSED by name
+    // below rather than reported as "not found" (21 Oct 2026).
+    const orders = await getOrdersByTagIncludingCancelled(tag);
     const order = orders.find(o => o.id === orderId);
 
     if (!order) {
@@ -790,8 +805,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
       return;
     }
 
-    // Chargeback hold: no label — booked or reused — for a disputed order.
-    if (await refuseIfChargeback(res, "POST /shipments", { orderId, orderName: order.name, tags: order.tags })) return;
+    // Chargeback hold or cancelled order: no label — booked or reused.
+    if (await refuseIfChargeback(res, "POST /shipments", { orderId, orderName: order.name, tags: order.tags, cancelledAt: order.cancelled_at ?? null })) return;
 
     if (!order.shipping_address) {
       res.status(422).json({ error: "Order has no shipping address — cannot create shipment." });
@@ -1850,8 +1865,9 @@ router.post("/tag-dispatch", requireFeature("ability.tag_dispatch"), async (req:
       res.status(404).json({ error: `Order ${orderName.trim()} not found` });
       return;
     }
-    // Never approve a held order for despatch — step one of the wave.
-    if (await refuseIfChargeback(res, "POST /tag-dispatch", { orderId: order.id, orderName: order.name, tags: order.tags })) return;
+    // Never approve a held or cancelled order for despatch — step one of
+    // the wave. "#137271 was cancelled on 16 Oct — not despatched."
+    if (await refuseIfChargeback(res, "POST /tag-dispatch", { orderId: order.id, orderName: order.name, tags: order.tags, cancelledAt: order.cancelled_at ?? null })) return;
 
     const alreadyTagged = isDispatchTagged(order.tags);
     if (!alreadyTagged) {
@@ -1917,18 +1933,17 @@ router.post("/tag-dispatch-bulk", requireFeature("ability.tag_dispatch"), async 
 
   try {
     const orders = await getOrdersByTag(tag);
-    const unfulfilled = orders.filter(o => o.fulfillment_status !== "fulfilled");
-    // A collection is never approved for despatch — it is bagged and handed
-    // over at the unit. Excluded here as well as in the count so that a
-    // "tag everything" call can't stamp one by accident.
-    const candidates = unfulfilled.filter(o => !isDispatchTagged(o.tags) && isPartOfDespatchWave(o.tags));
+    // bulkTagCandidates: unfulfilled, NOT CANCELLED (#137271, 21 Oct 2026),
+    // not already tagged, and never a collection — a collection is bagged
+    // and handed over at the unit, so a "tag everything" call can't stamp one.
+    const candidates = bulkTagCandidates(orders);
     // Orders with an open chargeback are never approved for despatch; they
     // come back in `heldForChargeback` so the operator sees why.
     await ensureFreshDisputes(DISPUTE_ON_DEMAND_MIN_AGE_MS);
     const untagged: typeof candidates = [];
     const heldForChargeback: string[] = [];
     for (const o of candidates) {
-      const d = await checkDispatch({ orderId: o.id, orderName: o.name, tags: o.tags, mode: DISPATCH_PATHS["POST /tag-dispatch-bulk"] });
+      const d = await checkDispatch({ orderId: o.id, orderName: o.name, tags: o.tags, cancelledAt: o.cancelled_at ?? null, mode: DISPATCH_PATHS["POST /tag-dispatch-bulk"] });
       if (d.allowed) untagged.push(o);
       else heldForChargeback.push(o.name);
     }
@@ -2012,9 +2027,15 @@ async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: R
   const { normaliseAddress } = await import("../services/apc");
   // settledOrders: an order still inside AfterSell's 15-minute window can
   // gain items — a consignment booked now would carry the pre-upsell weight.
-  const unfulfilled = settledOrders(await getOrdersByTag(tag)).filter(o =>
+  const tagged = settledOrders(await getOrdersByTagIncludingCancelled(tag)).filter(o =>
     o.fulfillment_status !== "fulfilled",
   );
+  // Cancelled orders are never booked (21 Oct 2026). One that was already
+  // approved for dispatch before it was cancelled (#137271) is listed as
+  // blocked so the operator sees why it isn't in the wave; an untagged
+  // cancelled order simply isn't part of the day.
+  const cancelledTagged = tagged.filter(o => isCancelledOrder(o) && isDispatchTagged(o.tags) && isPartOfDespatchWave(o.tags));
+  const unfulfilled = tagged.filter(o => !isCancelledOrder(o));
   // Collections are handled on their own collection day, not by the despatch
   // wave that shares their date tag — so they are neither booked nor chased
   // for approval here. Kept aside rather than dropped: they still get their
@@ -2057,6 +2078,10 @@ async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: R
   const notTagged: PreflightOrder[] = waveOrders
     .filter(o => !isDispatchTagged(o.tags))
     .map(order => basicRow(order, ["Not tagged for dispatch — tag it first"]));
+
+  for (const order of cancelledTagged) {
+    blocked.push(basicRow(order, [cancelledOrderMessage(order.name, order.cancelled_at)]));
+  }
 
   for (const order of orders) {
     const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
@@ -2198,7 +2223,9 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
     const apiBase = testModeSetting === "true" ? APC_TRAINING_BASE : undefined;
     const weightThresholdG = Number(weightThreshStr) || 1000;
 
-    const all = await getOrdersByTag(tag);
+    // Including cancelled orders so a cancelled id comes back "skipped —
+    // was cancelled" instead of vanishing from the report (21 Oct 2026).
+    const all = await getOrdersByTagIncludingCancelled(tag);
     const wanted = new Set(orderIds);
     const orders = all.filter(o => wanted.has(o.id));
     // Chargeback holds: refresh the list once for the whole batch, then judge
@@ -2244,7 +2271,7 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         });
         continue;
       }
-      const hold = await checkDispatch({ orderId: order.id, orderName: order.name, tags: order.tags, mode: DISPATCH_PATHS["POST /batch-book"] });
+      const hold = await checkDispatch({ orderId: order.id, orderName: order.name, tags: order.tags, cancelledAt: order.cancelled_at ?? null, mode: DISPATCH_PATHS["POST /batch-book"] });
       if (!hold.allowed) {
         results.push({
           orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id),
@@ -2507,11 +2534,15 @@ router.get("/booked-not-dispatched", requireFulfilmentAccess, async (req: Reques
     `);
     if (rows.rows.length === 0) { res.json({ tag, outstanding: [] }); return; }
 
-    const orders = await getOrdersByTag(tag);
+    const orders = await getOrdersByTagIncludingCancelled(tag);
     const fulfilled = new Set(orders.filter(o => o.fulfillment_status === "fulfilled").map(o => o.id));
+    // A label for an order cancelled in Shopify since it was booked must be
+    // cancelled by a person (21 Oct 2026) — flagged so it reads that way.
+    const cancelled = new Set(orders.filter(isCancelledOrder).map(o => o.id));
     const outstanding = rows.rows
       .filter(r => !fulfilled.has(Number(r.shopify_order_id)))
       .map(r => ({
+        cancelledInShopify: cancelled.has(Number(r.shopify_order_id)),
         waybill: r.waybill,
         orderId: Number(r.shopify_order_id),
         orderName: r.shopify_order_name,
@@ -2834,7 +2865,7 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
     if (consignmentNumber) await markConsignmentPushed(consignmentNumber);
   } catch (err: any) {
     if (err instanceof DispatchHeldError) {
-      res.status(409).json({ error: err.message, code: err.code, chargeback: true, disputes: err.labels });
+      res.status(409).json(heldBody(err));
       return;
     }
     console.error(`[Fulfilment] completeOrder fulfilOrder FAILED for order ${orderId}:`, err.message);

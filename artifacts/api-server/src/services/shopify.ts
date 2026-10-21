@@ -1,5 +1,6 @@
 import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
 import { apcTrackingUrl } from "./apc";
+import { withoutCancelledOrders } from "../lib/dispatch-tag";
 // Circular at module level (orders-cache imports shopifyFetchRaw from here)
 // but both sides only touch the other at call time, so ESM resolves it fine.
 import { getCachedOrders, getCachedOrdersLondonDays } from "../lib/orders-cache";
@@ -448,7 +449,27 @@ export interface ShopifyProduct {
   image: { src: string } | null;
 }
 
+/**
+ * Every order carrying this tag that is still to be worked — CANCELLED
+ * ORDERS ARE LEFT OUT (Graeme, 21 Oct 2026). Every consumer of tag reads is
+ * operational (pick lists, scan queue, dispatch tagging, APC booking, day
+ * counts and weights, production counts, KPIs), and a cancelled order is
+ * none of those: #137271, cancelled and refunded on 16 Oct, was tagged for
+ * dispatch and booked with APC on 21 Oct because this fetch never even
+ * asked Shopify for cancelled_at. Refunded-but-not-cancelled orders stay in.
+ *
+ * getOrdersByTagIncludingCancelled() is for the few reads that must SEE a
+ * cancelled order to say so: APC booking reports it as refused rather than
+ * silently missing, and a label already booked for an order cancelled
+ * afterwards is shown to the bench as "cancel this label".
+ */
 export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
+  return withoutCancelledOrders(await getOrdersByTagIncludingCancelled(tag));
+}
+
+/** Every order carrying this tag, cancelled ones included (cancelled_at set).
+ *  Callers MUST judge each order with isCancelledOrder / the dispatch gate. */
+export async function getOrdersByTagIncludingCancelled(tag: string): Promise<ShopifyOrder[]> {
   const allOrders: ShopifyOrder[] = [];
   let pageInfo: string | null = null;
   const limit = "250";
@@ -457,8 +478,10 @@ export async function getOrdersByTag(tag: string): Promise<ShopifyOrder[]> {
     const params: Record<string, string> = {
       limit,
       status: "any",
+      // cancelled_at: without it a cancelled order looks exactly like a
+      // live one (status "any" returns cancelled orders too).
       fields:
-        "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,note_attributes,fulfillments",
+        "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,note_attributes,fulfillments",
     };
     if (pageInfo) {
       params.page_info = pageInfo;
@@ -836,7 +859,7 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
           fulfillment_status: "unfulfilled",
           created_at_min: since,
           fields:
-            "id,name,tags,created_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
+            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
         };
 
     const res = await shopifyFetchRaw("/orders.json", params);
@@ -845,7 +868,9 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
     pageInfo = parseNextPageInfo(res.headers.get("Link"));
   } while (pageInfo);
 
-  return allOrders.filter(o => o.fulfillment_status !== "fulfilled").map(toPackableLineItems);
+  // status "open" already leaves cancelled orders out; the explicit check is
+  // belt and braces for the day-card counts and weights (21 Oct 2026).
+  return withoutCancelledOrders(allOrders.filter(o => o.fulfillment_status !== "fulfilled")).map(toPackableLineItems);
 }
 
 /**
@@ -860,7 +885,7 @@ export async function getOrderById(orderId: number): Promise<ShopifyOrder | null
     const data = (await shopifyFetch(`/orders/${orderId}.json`, {
       // email/contact_email/customer: the wholesale-processing flow emails
       // the customer their scheduled delivery date (Graeme, 2026-09-15).
-      fields: "id,name,tags,created_at,fulfillment_status,line_items,email,contact_email,customer",
+      fields: "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,line_items,email,contact_email,customer",
     })) as { order: ShopifyOrder };
     return data.order ? toPackableLineItems(data.order) : null;
   } catch (err) {
@@ -875,7 +900,7 @@ export async function findOrderByName(name: string): Promise<ShopifyOrder | null
   const data = (await shopifyFetch("/orders.json", {
     name: searchName,
     status: "any",
-    fields: "id,name,tags,created_at,financial_status,fulfillment_status,total_price,customer,shipping_address,line_items,note",
+    fields: "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,customer,shipping_address,line_items,note",
   })) as { orders: ShopifyOrder[] };
   return data.orders[0] ? toPackableLineItems(data.orders[0]) : null;
 }

@@ -17,7 +17,12 @@
  * raised outside Shopify Payments (PayPal, Klarna…) that Shopify can't see.
  *
  * Everything here is pure; the DB + Shopify half is order-disputes-store.ts.
+ *
+ * The same gate also refuses CANCELLED orders (Graeme, 21 Oct 2026) — every
+ * despatch path already calls it, so a cancellation is refused everywhere a
+ * chargeback is, with its own code and message.
  */
+import { cancelledOrderMessage } from "./dispatch-tag";
 
 /** Dispute statuses that mean the bank still has the money in question —
  *  the order must not ship. Shopify DisputeStatus enum, lower-cased. */
@@ -89,7 +94,7 @@ export function isDisputeListStale(fetchedAt: Date | null, now: Date, staleAfter
 
 /** Result of asking Shopify directly about ONE order. */
 export type DirectDisputeCheck =
-  | { ok: true; openLabels: string[]; tags: string[] }
+  | { ok: true; openLabels: string[]; tags: string[]; cancelledAt?: string | null }
   | { ok: false; error: string };
 
 export type DispatchGateInput = {
@@ -105,16 +110,24 @@ export type DispatchGateInput = {
    *  stale, or the caller asked for a live check at the moment of despatch). */
   direct?: DirectDisputeCheck;
   staleAfterMs?: number;
+  /** Shopify's cancelled_at when the caller has the order. A successful
+   *  direct check supplies it too. */
+  cancelledAt?: string | null;
 };
+
+export type DispatchRefusalCode = "OPEN_CHARGEBACK" | "ORDER_CANCELLED";
 
 export type DispatchGateDecision =
   | { allowed: true; warning?: string }
-  | { allowed: false; code: "OPEN_CHARGEBACK"; message: string; labels: string[] };
+  | { allowed: false; code: DispatchRefusalCode; message: string; labels: string[] };
 
 /**
  * May this order be despatched (labelled, booked, fulfilled, tracking pushed)?
  *
  * Rules:
+ *  - A CANCELLED order always refuses (#137271, cancelled 16 Oct, still got
+ *    a label on 21 Oct). cancelled_at only — a refunded or partially
+ *    refunded order that isn't cancelled is not held by this rule.
  *  - A manual hold tag always refuses.
  *  - A successful direct check is the freshest truth: open → refuse,
  *    none open → allow (the dispute may have closed since the last refresh).
@@ -125,6 +138,11 @@ export type DispatchGateDecision =
  *    only orders already known disputed are failed safe.
  */
 export function decideDispatch(input: DispatchGateInput): DispatchGateDecision {
+  const cancelledAt = input.cancelledAt || (input.direct?.ok ? input.direct.cancelledAt : null) || null;
+  if (cancelledAt) {
+    return { allowed: false, code: "ORDER_CANCELLED", labels: [], message: cancelledOrderMessage(input.orderLabel, cancelledAt) };
+  }
+
   const staleAfter = input.staleAfterMs ?? DISPUTE_LIST_STALE_AFTER_MS;
   const directTags = input.direct?.ok ? input.direct.tags : [];
   const manual = hasManualChargebackTag(input.tags) || hasManualChargebackTag(directTags);
