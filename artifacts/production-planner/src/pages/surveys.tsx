@@ -749,7 +749,7 @@ function EmailDialog({ survey, onClose }: { survey: SurveyListItem; onClose: () 
                 )}
                 {(testList?.members ?? []).map(m => (
                   <div key={m.email} className="flex items-center justify-between gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-sm">
-                    <span className="truncate">{m.email}</span>
+                    <span className="break-all">{m.email}</span>
                     {m.consent === "SUBSCRIBED" ? (
                       <Badge className="bg-primary/15 text-primary text-xs">subscribed</Badge>
                     ) : (
@@ -1908,7 +1908,7 @@ function SurveyCard({ survey, onEdit, onResults, onShare, onPreview, onEmail }: 
     <div className="rounded-xl border border-border bg-card p-4 space-y-3">
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="font-semibold truncate">{survey.title}</h3>
+          <h3 className="font-semibold break-words">{survey.title}</h3>
           <p className="text-xs text-muted-foreground mt-0.5">
             {survey.questionCount} question{survey.questionCount === 1 ? "" : "s"} ·{" "}
             {survey.responseCount} response{survey.responseCount === 1 ? "" : "s"} ·{" "}
