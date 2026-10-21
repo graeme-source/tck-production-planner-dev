@@ -27,7 +27,7 @@ import { UnexpectedDeliveryDialog } from "@/components/unexpected-delivery-dialo
 import {
   canCompleteGoodsIn, initialDecision, initialQuantity, isReceivedOrderStatus, lineStatus, lineToSubmit,
   orderShortage, shortLinesOf, shortSignature, undecidedLines, type LineDecision,
-  checkShelfLife, londonDeliveryDay, issueEmailToldText, issueLinesOf, newIssueLines, issuePhotoGate,
+  checkShelfLife, londonDeliveryDay, issueEmailToldText, issueLinesOf, newIssueLines, issuePhotoGate, issueLinesMissingCode,
   receivedAfterDamage, reopenDamagedLine, formatReportQty, type DeliveryIssueOutcome, type DamageDisposition,
 } from "@workspace/goods-in";
 import { ShelfLifeWarning, ShelfLifeRejectedNote, ShelfLifeRecordNote } from "@/components/deliveries/shelf-life-warning";
@@ -63,6 +63,8 @@ interface POLine {
   requiresUseByDate: boolean;
   /** Minimum shelf life on delivery, days (ingredient setting). */
   minDeliveryShelfLifeDays?: number | null;
+  /** The supplier's product code (quoted in the issue email). */
+  supplierPartNumber?: string | null;
   defaultStorageLocation: string | null;
   stockInPacks?: boolean;
   packWeight?: number | null;
@@ -510,6 +512,9 @@ function ReceivingDialog({
     };
   }));
   const newIssues = newIssueLines(issues);
+  // New issue lines whose ingredient has no supplier product code: a hint
+  // to add one — the email just leaves the code out (never blocks).
+  const issuesMissingCode = issueLinesMissingCode(newIssues, new Map(order.lines.map((l) => [l.id, { ingredientId: l.ingredientId ?? null, productCode: l.supplierPartNumber }])));
   const uploadedPhotoIds = issuePhotos.filter((p) => p.status === "done" && p.id != null).map((p) => p.id!);
   const photoGate = issuePhotoGate({ newIssueCount: newIssues.length, uploadedPhotoCount: uploadedPhotoIds.length, allItemsConfirmed: photosConfirmed });
   // A damage mark needs a quantity (no more than arrived) and keep/reject.
@@ -1259,6 +1264,28 @@ function ReceivingDialog({
               confirmed={photosConfirmed}
               onConfirmed={(v) => { setDirty(true); setPhotosConfirmed(v); }}
             />
+          )}
+
+          {issuesMissingCode.length > 0 && (
+            <div className="rounded-xl border border-border bg-secondary/40 p-3 text-sm space-y-1">
+              <p className="font-semibold">No supplier code on {issuesMissingCode.length === 1 ? "this item" : "these items"} — add it in Ingredients so the email can quote it:</p>
+              <ul className="flex flex-wrap gap-x-4 gap-y-1">
+                {issuesMissingCode.map((m) => (
+                  <li key={m.lineId}>
+                    {/* New tab: this goods-in stays open and unsaved work isn't lost. */}
+                    <a
+                      href={`${BASE}/inventory?tab=ingredients&edit=${m.ingredientId}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="font-semibold text-primary underline underline-offset-2"
+                    >
+                      {m.name}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+              <p className="text-xs text-muted-foreground">The report still goes without it.</p>
+            </div>
           )}
 
           </>

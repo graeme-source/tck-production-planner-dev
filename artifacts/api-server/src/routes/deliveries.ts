@@ -465,6 +465,9 @@ router.get("/:id", async (req, res) => {
       // Minimum shelf life on delivery — the receive dialog warns on a
       // use-by shorter than this (migration 0198).
       minDeliveryShelfLifeDays: ingredientsTable.minDeliveryShelfLifeDays,
+      // The supplier's product code — quoted in the issue email; the
+      // receive dialog hints when an issue line has none.
+      supplierPartNumber: ingredientsTable.supplierPartNumber,
       stockInPacks: ingredientsTable.stockInPacks,
       packWeight: ingredientsTable.packWeight,
       // Packs per pallet — lets the receive dialog read "1 pallet — 50 packs".

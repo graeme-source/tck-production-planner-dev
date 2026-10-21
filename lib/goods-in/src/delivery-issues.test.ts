@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_ISSUE_PHOTOS, damageReportFor, deliveryIssueReportEmail, issueEmailToldText, issueLinesOf,
-  issuePhotoGate, newIssueLines, photoConfirmationText, photoPromptText, photoSentenceFor,
+  issuePhotoGate, issueLinesMissingCode, newIssueLines, photoConfirmationText, photoPromptText, photoSentenceFor,
   receivedAfterDamage, reopenDamagedLine, issueEmailStatusText,
   type DeliveryEmailIssue, type DeliveryIssueOutcome, type IssueLine,
 } from "./delivery-issues";
@@ -222,6 +222,34 @@ describe("deliveryIssueReportEmail — one email per receive", () => {
   it("photo sentence counts the photos", () => {
     expect(photoSentenceFor([shortChicken], 3)).toBe("3 photos attached showing all 8 packs of Diced Chicken Breast and their use-by dates.");
     expect(photoSentenceFor([damagedFlour], 1)).toBe("Photo attached showing all 2 bags of Flour and the damage.");
+  });
+});
+
+describe("issueLinesMissingCode — the 'add a supplier code' hint", () => {
+  const issue = (lineId: number, kind: IssueLine["kind"], name: string): IssueLine =>
+    ({ lineId, kind, name, quantityText: "", alreadyReported: false });
+  const facts = new Map<number, { ingredientId: number | null; productCode: string | null | undefined }>([
+    [1, { ingredientId: 191, productCode: "70946" }],
+    [2, { ingredientId: 151, productCode: "" }],
+    [3, { ingredientId: 40, productCode: null }],
+    [4, { ingredientId: null, productCode: null }],
+    [5, { ingredientId: 12, productCode: " A 125111 " }],
+  ]);
+  it("lists only lines with an ingredient and a blank code, once each", () => {
+    expect(issueLinesMissingCode([
+      issue(1, "short_shelf_life", "Diced Chicken Breast"),
+      issue(2, "short_shelf_life", "Diced Chicken Thigh"),
+      issue(2, "damaged", "Diced Chicken Thigh"),
+      issue(3, "damaged", "Flour"),
+      issue(4, "damaged", "Misc"),
+      issue(5, "damaged", "Mozzarella"),
+    ], facts)).toEqual([
+      { lineId: 2, name: "Diced Chicken Thigh", ingredientId: 151 },
+      { lineId: 3, name: "Flour", ingredientId: 40 },
+    ]);
+  });
+  it("nothing to hint when every line has a code", () => {
+    expect(issueLinesMissingCode([issue(1, "short_shelf_life", "Diced Chicken Breast")], facts)).toEqual([]);
   });
 });
 

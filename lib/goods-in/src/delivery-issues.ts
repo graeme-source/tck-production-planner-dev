@@ -126,6 +126,27 @@ export function newIssueLines(issues: IssueLine[]): IssueLine[] {
   return issues.filter(i => !i.alreadyReported);
 }
 
+/** The issue lines whose ingredient has no supplier product code — the
+ *  receive dialog hints "add it in Ingredients" (never blocks the save);
+ *  the email then just leaves the code out. One entry per line, in order;
+ *  a line with no ingredient (a miscellaneous line) can't take a code. */
+export function issueLinesMissingCode(
+  issues: IssueLine[],
+  lineFacts: Map<number, { ingredientId: number | null; productCode: string | null | undefined }>,
+): Array<{ lineId: number; name: string; ingredientId: number }> {
+  const out: Array<{ lineId: number; name: string; ingredientId: number }> = [];
+  const seen = new Set<number>();
+  for (const i of issues) {
+    if (seen.has(i.lineId)) continue;
+    seen.add(i.lineId);
+    const f = lineFacts.get(i.lineId);
+    if (!f || f.ingredientId == null) continue;
+    if (cleanCode(f.productCode)) continue;
+    out.push({ lineId: i.lineId, name: i.name, ingredientId: f.ingredientId });
+  }
+  return out;
+}
+
 /** "8 packs of Diced Chicken"; without a quantity just the name. */
 function itemPhrase(i: Pick<IssueLine, "name" | "quantityText">): string {
   return i.quantityText ? `${i.quantityText} of ${i.name}` : i.name;
