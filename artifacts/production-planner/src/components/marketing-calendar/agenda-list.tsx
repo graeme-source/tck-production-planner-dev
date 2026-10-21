@@ -24,7 +24,7 @@ import {
 import { cn } from "@/lib/utils";
 import type { CalEmail, Phase } from "./api";
 import { ApproveButton } from "./email-panel";
-import { PHASE_CLS, phaseVars } from "./constants";
+import { PHASE_CLS, usePhaseVars } from "./constants";
 
 type Row = AgendaRow<Phase, CalEmail>;
 
@@ -134,6 +134,7 @@ export function AgendaList({
 
 /** One thin coloured column per lane, filled where that lane's phase covers the row. */
 function Stripes({ phases, laneCount }: { phases: PhaseOnRow<Phase>[]; laneCount: number }) {
+  const phaseVars = usePhaseVars();
   if (laneCount === 0) return null;
   const byLane = new Map(phases.map(p => [p.lane, p.phase]));
   return (
@@ -153,6 +154,7 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   row: Row; laneCount: number; canApprove: boolean;
   onOpenPhase: (p: Phase) => void; onOpenEmail: (m: CalEmail) => void;
 }) {
+  const phaseVars = usePhaseVars();
   if (r.kind === "week") {
     return (
       <div className={cn("px-3 py-2 border-b border-border flex items-center gap-2 backdrop-blur",
@@ -230,6 +232,7 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
 }
 
 function PhaseStart({ phase: p, onOpen }: { phase: Phase; onOpen: () => void }) {
+  const phaseVars = usePhaseVars();
   const group = customerGroupChip(p.customerGroup);
   return (
     <button type="button" onClick={onOpen} style={phaseVars(p.color)}

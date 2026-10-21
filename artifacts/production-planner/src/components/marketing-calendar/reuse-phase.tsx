@@ -13,7 +13,7 @@ import { customerGroupChip, daysBetween, formatRange, reusePhase, searchPhases }
 import { cn } from "@/lib/utils";
 import { useEscapeToClose } from "./use-escape";
 import { useAllPhases, useCreatePhase, type Phase } from "./api";
-import { PHASE_CLS, phaseVars } from "./constants";
+import { PHASE_CLS, usePhaseVars } from "./constants";
 
 export function ReusePhase({ defaultStart, onClose, onCreated }: {
   defaultStart: string;
@@ -101,6 +101,7 @@ export function ReusePhase({ defaultStart, onClose, onCreated }: {
 }
 
 function PhaseChoice({ phase: p, onPick }: { phase: Phase; onPick?: () => void }) {
+  const phaseVars = usePhaseVars();
   const group = customerGroupChip(p.customerGroup);
   const Inner = (
     <>

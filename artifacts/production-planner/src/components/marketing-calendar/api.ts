@@ -19,7 +19,7 @@ export interface Phase {
   endDate: string;
   offers: string[];
   customerGroup: string;
-  /** Palette key (@workspace/marketing-calendar phase-colours); null = the default, soft lavender. */
+  /** Palette key or "#rrggbb" (@workspace/marketing-calendar phase-colours); null = the calendar's default colour. */
   color: string | null;
   notes: string | null;
   source: string;
@@ -155,6 +155,33 @@ export function deletePhase(id: number) {
 }
 export function restorePhase(id: number) {
   return calApi<{ event: Phase }>(`/marketing-calendar/events/${id}/restore`, { method: "POST", body: "{}" });
+}
+
+// ── Calendar settings: the default phase colour (2026-10-21) ───────────────
+export interface CalendarSettings {
+  /** Palette key or "#rrggbb" — phases with no colour of their own use it. */
+  defaultPhaseColour: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
+const SETTINGS_KEY = [...CAL_KEY, "settings"] as const;
+
+export function useCalendarSettings() {
+  return useQuery({
+    queryKey: SETTINGS_KEY,
+    queryFn: () => calApi<CalendarSettings>("/marketing-calendar/settings"),
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
+  });
+}
+
+export function putCalendarSettings(body: { defaultPhaseColour: string | null }) {
+  return calApi<CalendarSettings>("/marketing-calendar/settings", { method: "PUT", body: JSON.stringify(body) });
+}
+
+export function setCachedSettings(qc: QueryClient, s: CalendarSettings) {
+  qc.setQueryData(SETTINGS_KEY, s);
 }
 
 // ── Offer library ──────────────────────────────────────────────────────────

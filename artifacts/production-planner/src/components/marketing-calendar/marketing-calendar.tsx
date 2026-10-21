@@ -35,7 +35,8 @@ import {
   calApi, useCalendarEmails, useCreatePhase, usePhases, useSetPhaseDates,
   type CalEmail, type Phase, type Suggestion,
 } from "./api";
-import { PHASE_CLS, phaseVars } from "./constants";
+import { PHASE_CLS, usePhaseVars } from "./constants";
+import { DefaultColourButton, DefaultColourPanel } from "./default-colour";
 import { MonthGrid } from "./month-grid";
 import { PhaseModal } from "./phase-modal";
 import { EmailPanel } from "./email-panel";
@@ -76,6 +77,8 @@ export function MarketingCalendar() {
   const [offersOpen, setOffersOpen] = useState(false);
   const [reuseOpen, setReuseOpen] = useState(false);
   const [dragError, setDragError] = useState<string | null>(null);
+  const [colourOpen, setColourOpen] = useState(false);
+  const phaseVars = usePhaseVars();
 
   const range = useMemo(() => {
     if (view === "list") return agendaRange(localToday, weeksBack, weeksAhead);
@@ -233,15 +236,17 @@ export function MarketingCalendar() {
         </>
       )}
 
-      {/* Legend */}
-      <div className="flex flex-wrap gap-x-4 gap-y-1.5 text-sm">
+      {/* Legend, with the default-colour setting tucked on the end of it. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-sm">
         <span className="inline-flex items-center gap-1.5"><span style={phaseVars(null)} className={cn("w-6 h-3 rounded-sm border", PHASE_CLS.fill)} />Phase{view === "month" ? " (drag to move, drag its end to stretch)" : " (tap to edit)"}</span>
         <span className="inline-flex items-center gap-1.5"><PencilLine className="w-4 h-4 text-teal-600" />Klaviyo draft</span>
         <span className="inline-flex items-center gap-1.5"><Mail className="w-4 h-4 text-teal-600" />Klaviyo scheduled</span>
         <span className="inline-flex items-center gap-1.5"><BadgeCheck className="w-4 h-4 text-emerald-600" />Approved</span>
         <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-400" />Needs approval</span>
         <span className="inline-flex items-center gap-1.5"><span className="w-4 h-3 rounded-sm bg-secondary border border-border" />Sent</span>
+        <span className="ml-auto"><DefaultColourButton open={colourOpen} onToggle={() => setColourOpen(o => !o)} /></span>
       </div>
+      {colourOpen && <DefaultColourPanel onClose={() => setColourOpen(false)} />}
 
       <Suggestions />
 
