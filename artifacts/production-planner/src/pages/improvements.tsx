@@ -587,8 +587,10 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
       {!isIdea(item) && premium.badgeText && (
         <div className="mb-2"><CreditBadge weight={item.creditWeight} /></div>
       )}
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xl font-bold leading-snug break-words flex-1">{item.title}</p>
+      {/* Wraps: on an iPad the chips used to squeeze a long title into a
+          one-word-per-line column; now they drop under it instead. */}
+      <div className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
+        <p className="text-xl font-bold leading-snug break-words flex-1 min-w-[16rem]">{item.title}</p>
         <span className="flex items-center gap-1.5 flex-shrink-0">
           {/* What this IS: an idea (not done yet) or an improvement (done).
               The two were indistinguishable at a glance (Graeme, 2026-09-10). */}
