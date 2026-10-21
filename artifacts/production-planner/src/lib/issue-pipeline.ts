@@ -81,7 +81,10 @@ export interface FixNoticeSummary {
 export interface ThreadEntry {
   at: string;
   who: "claude" | "you" | "reporter";
-  kind: "question" | "recommendation" | "reply" | "message" | "decision";
+  /** who "you": "reply" = to Claude (the reporter never sees it), "message"
+   *  = to the reporter. who "reporter": "reply" = their words, "read" = a
+   *  read receipt ("Got it"), not a reply. */
+  kind: "question" | "recommendation" | "reply" | "message" | "decision" | "read";
   text: string;
 }
 
@@ -93,6 +96,9 @@ export interface FixQueueItem {
   notices: FixNoticeSummary[];
   /** The back-and-forth on this card, oldest first. */
   thread?: ThreadEntry[];
+  /** The reporter's replies Graeme hasn't read yet (21 Oct 2026). */
+  unreadReplies?: number;
+  latestUnreadAt?: string | null;
   /** Approved with "Send and fix it this way" (2026-10-15): Claude builds it
    *  from Graeme's words on its next run, without asking again. */
   fixNow?: boolean;
@@ -120,6 +126,42 @@ export interface MyFixedNotice {
   createdAt: string;
   reportedAt: string;
   station: string;
+  /** Every comment on the report (Graeme's messages, their replies), oldest
+   *  first — the pop-up shows it as a chat (21 Oct 2026). */
+  conversation?: ReporterChatEntry[];
+}
+
+export interface ReporterChatEntry {
+  id: number;
+  at: string;
+  who: "me" | "them";
+  name: string;
+  text: string;
+}
+
+/**
+ * The reporter's pop-up as a chat (21 Oct 2026): everything said on the
+ * report BEFORE Graeme's newest message, then that message, highlighted.
+ * If two messages went before they looked, the pop-up only carries the
+ * newest — the earlier one is in `earlier`, so nothing is missed.
+ */
+export function noticeChat(conversation: ReporterChatEntry[] | undefined, whatChanged: string): { earlier: ReporterChatEntry[]; latest: string } {
+  const list = conversation ?? [];
+  let at = -1;
+  list.forEach((e, i) => { if (e.who === "them" && e.text.trim() === whatChanged.trim()) at = i; });
+  return { earlier: at === -1 ? list : list.slice(0, at), latest: whatChanged };
+}
+
+/** "Graeme Carter" → "Graeme" for chat headings; "You" stays "You". */
+export function chatFirstName(name: string): string {
+  return name.trim().split(/\s+/)[0] || name;
+}
+
+/** What the "Fix queue" nav count reads. */
+export interface FixQueueUnread {
+  cards: number;
+  replies: number;
+  items: Array<{ triageId: number; andonIssueId: number; count: number; reporterName: string | null }>;
 }
 
 export const LANE_LABELS: Record<TriageLane, string> = {
@@ -247,12 +289,55 @@ export function waitingForReporterLabel(t: Pick<Triage, "awaitingReporterSince">
   return `Waiting for ${firstName}'s reply · asked ${clockLabel(t.awaitingReporterSince, now)}`;
 }
 
-/** What the reporter has said since Graeme last wrote to them — the "New
- *  reply" box shows these (oldest first). */
+/** What the reporter has WRITTEN since Graeme last wrote to them (oldest
+ *  first). A "Got it" read receipt is not a reply (21 Oct 2026). */
 export function newReporterWords(thread: ThreadEntry[]): ThreadEntry[] {
   let lastMine = -1;
   thread.forEach((e, i) => { if (e.who === "you" && e.kind === "message") lastMine = i; });
-  return thread.slice(lastMine + 1).filter(e => e.who === "reporter");
+  return thread.slice(lastMine + 1).filter(e => e.who === "reporter" && e.kind === "reply");
+}
+
+export interface ChatLine {
+  /** right = Graeme; left = the reporter or Claude; centre = a small note
+   *  (a decision, a read receipt). */
+  side: "left" | "right" | "centre";
+  tone: "you" | "reporter" | "claude" | "note";
+  /** Who, as the bubble's heading: "Jane", "Claude", "You → Jane",
+   *  "You → Claude (Jane doesn't see this)". */
+  label: string;
+  text: string;
+}
+
+/**
+ * How one conversation entry reads on the Fix queue card (21 Oct 2026):
+ * one chat, oldest at the top. Graeme on the right; the reporter (by first
+ * name) and Claude on the left; decisions and read receipts as small
+ * centred notes. Graeme's replies to Claude are marked as private, so it's
+ * clear which of his words the reporter has seen.
+ */
+export function chatLine(e: ThreadEntry, firstName: string): ChatLine {
+  if (e.who === "reporter") {
+    return e.kind === "reply"
+      ? { side: "left", tone: "reporter", label: firstName, text: e.text }
+      : { side: "centre", tone: "note", label: firstName, text: `${firstName} — ${e.text.charAt(0).toLowerCase()}${e.text.slice(1)}` };
+  }
+  if (e.who === "claude") {
+    return { side: "left", tone: "claude", label: e.kind === "question" ? "Claude asks you" : "Claude", text: e.text };
+  }
+  if (e.kind === "message") return { side: "right", tone: "you", label: `You → ${firstName}`, text: e.text };
+  if (e.kind === "reply") return { side: "right", tone: "you", label: `You → Claude (${firstName} doesn't see this)`, text: e.text };
+  return { side: "centre", tone: "note", label: "You", text: e.text };
+}
+
+/** "Jane replied" / "Jane replied · 2 new" for the card strip and badge. */
+export function unreadLabel(firstName: string, unread: number): string {
+  return unread > 1 ? `${firstName} replied · ${unread} new` : `${firstName} replied`;
+}
+
+/** The card the moment Graeme opens (reads) its conversation: badge off,
+ *  card left exactly where it is. */
+export function withThreadRead(item: FixQueueItem): FixQueueItem {
+  return { ...item, unreadReplies: 0, latestUnreadAt: null };
 }
 
 /**
@@ -265,6 +350,8 @@ export function withMessageSent(item: FixQueueItem, message: string, close: bool
   const at = now.toISOString();
   return {
     ...item,
+    unreadReplies: 0,
+    latestUnreadAt: null,
     triage: {
       ...item.triage,
       reporterReplyAt: null,
