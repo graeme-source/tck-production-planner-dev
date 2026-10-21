@@ -32,7 +32,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { INITIAL_SIGN_IN, nextSignIn, promptHiddenOnPath, type SignInTracker } from "@/lib/emergency-contacts";
 import {
-  boardLine, checkinHoldsOthers, checkinMessage, creditsSummary, goalBarFill, scoreSum, shouldShowCheckin,
+  boardLine, checkinHoldsOthers, checkinMessage, goalBarFill, scoreSum, shouldShowCheckin,
   type CheckinCard, type CheckinStatus,
 } from "@/lib/daily-checkin";
 import { premiumStyle } from "@/lib/improvement-premium";
@@ -185,7 +185,8 @@ function CheckinCardView({ card, onAnswer, busy }: {
 
           {/* The numbers */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Tile label="Credits" value={card.credits30} />
+            {/* Without a score the big number above IS the credits. */}
+            {hasScore && <Tile label="Credits" value={card.credits30} />}
             <Tile label="Improvements" value={card.improvements30} />
             {card.great30 > 0 && (
               <Tile
@@ -222,7 +223,6 @@ function CheckinCardView({ card, onAnswer, busy }: {
               </div>
             )}
             <p className="text-xl font-semibold">{msg.line}</p>
-            <p className="text-sm text-muted-foreground">Last 30 days: {creditsSummary(card)}</p>
           </div>
 
           {/* The nudge */}

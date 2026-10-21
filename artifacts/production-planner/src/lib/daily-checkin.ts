@@ -134,11 +134,6 @@ export function checkinMessage(card: CheckinCard, londonHour: number): CheckinMe
   };
 }
 
-/** "8 credits · 6 improvements" with the ×2 / ×3 named when there are any. */
-export function creditsSummary(card: Pick<CheckinCard, "credits30" | "improvements30">): string {
-  return `${plural(card.credits30, "credit")} · ${plural(card.improvements30, "improvement")}`;
-}
-
 /** "Score = 8 credits ÷ 10 shifts" — so anyone can check the sum. */
 export function scoreSum(card: Pick<CheckinCard, "credits30" | "shifts30">): string | null {
   if (card.shifts30 == null || !(card.shifts30 > 0)) return null;

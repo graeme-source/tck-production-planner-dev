@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  boardLine, checkinHoldsOthers, checkinMessage, creditsSummary, goalBarFill, partOfDay, projectedPct,
+  boardLine, checkinHoldsOthers, checkinMessage, goalBarFill, partOfDay, projectedPct,
   scoreSum, shouldShowCheckin, type CheckinCard, type CheckinShowFacts,
 } from "./daily-checkin";
 
@@ -78,7 +78,6 @@ describe("numbers on the card", () => {
   });
 
   it("says the sum plainly", () => {
-    expect(creditsSummary({ credits30: 1, improvements30: 1 })).toBe("1 credit · 1 improvement");
     expect(scoreSum({ credits30: 4, shifts30: 10 })).toBe("4 credits ÷ 10 shifts worked");
     expect(scoreSum({ credits30: 4, shifts30: null })).toBeNull();
   });
