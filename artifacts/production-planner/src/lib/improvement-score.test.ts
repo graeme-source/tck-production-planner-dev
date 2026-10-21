@@ -1,5 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { LEANER_TARGETS, creditBadge, leanerStep, normaliseCreditWeight, scoreDetail, scoreText, stepBarFill } from "./improvement-score";
+import {
+  LEANER_TARGETS, SCORE_EXPLAINER, allTimeText, creditBadge, creditsText, improvementsText, leanerStep,
+  normaliseCreditWeight, scoreDetail, scoreText, stepBarFill,
+} from "./improvement-score";
+
+describe("Leaner-board leads with credits (2026-10-21)", () => {
+  it("says credits rank the board", () => {
+    expect(SCORE_EXPLAINER).toMatch(/most credits at the top/);
+  });
+
+  it("credits and improvements read naturally", () => {
+    expect(creditsText(7)).toBe("7 credits");
+    expect(creditsText(1)).toBe("1 credit");
+    expect(improvementsText(5)).toBe("5 improvements");
+  });
+
+  it("all-time names the credits only when a ×2 / ×3 changed the sum", () => {
+    expect(allTimeText({ count: 12, creditsAll: 15 })).toBe("All-time: 15 credits · 12 improvements");
+    expect(allTimeText({ count: 12, creditsAll: 12 })).toBe("All-time: 12 improvements");
+    expect(allTimeText({ count: 1 })).toBe("All-time: 1 improvement");
+  });
+});
 
 describe("improvement score on screen", () => {
   it("shows the real number, uncapped, and '—' with no score", () => {
