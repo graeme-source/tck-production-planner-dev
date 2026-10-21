@@ -86,6 +86,8 @@ export interface DefectInput {
   station: string | null;
   orderRefs: string | null;
   note: string | null;
+  /** What went wrong, typed — for a type that asks for it ("Something else…"). */
+  reasonOther?: string | null;
   // The item fields, sent together — or left out to keep the record's item as it is.
   itemKind?: WasteItemKind;
   itemId?: number;

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { barWidth, dayText, defectHeadline, gbpText, minutesText, orderRefList, parseAmount, pctText, quantityText, rangeText, recordItemName, stationText } from "./defects-view";
+import { barWidth, formTypeOrder, reasonDetailValid, reasonText, dayText, defectHeadline, gbpText, minutesText, orderRefList, parseAmount, pctText, quantityText, rangeText, recordItemName, stationText } from "./defects-view";
 
 describe("defectHeadline", () => {
   it("reads as defects · % of packs made", () => {
@@ -67,5 +67,37 @@ describe("parseAmount", () => {
     for (const t of ["", "0", "abc", "-1", "1e3", "2.3.4"]) expect(parseAmount(t)).toBeNull();
     expect(parseAmount("1.5", true)).toBeNull();
     expect(parseAmount("3", true)).toBe(3);
+  });
+});
+
+// Regression (Graeme, 2026-10-21): no reason fitted "wrong recipe made, extra
+// dough binned", and there was no way to type one.
+describe("reasons — new types and 'Something else…'", () => {
+  const types = [
+    { id: 1, name: "Mislabel", sortOrder: 10 },
+    { id: 9, name: "Something else", sortOrder: 80, asksForDetail: true },
+    { id: 6, name: "Made wrong / wrong recipe", sortOrder: 60 },
+    { id: 7, name: "Made too much / overproduced", sortOrder: 70 },
+    { id: 8, name: "Weighing mistake / inaccurate recipe", sortOrder: 75 },
+    { id: 10, name: "Added later by an admin", sortOrder: 90 },
+  ];
+  it("lists the new reasons by sort order and 'Something else' last, even after admin-added types", () => {
+    expect(formTypeOrder(types).map(t => t.name)).toEqual([
+      "Mislabel", "Made wrong / wrong recipe", "Made too much / overproduced",
+      "Weighing mistake / inaccurate recipe", "Added later by an admin", "Something else",
+    ]);
+  });
+  it("labels: an ordinary reason is its name; 'Something else' shows what was typed", () => {
+    expect(reasonText({ typeName: "Weighing mistake / inaccurate recipe", reasonOther: null })).toBe("Weighing mistake / inaccurate recipe");
+    expect(reasonText({ typeName: "Made too much / overproduced", reasonOther: null })).toBe("Made too much / overproduced");
+    expect(reasonText({ typeName: "Something else", reasonOther: "wrong recipe — extra dough made" }))
+      .toBe("Something else: wrong recipe — extra dough made");
+    expect(reasonText({ typeName: "Something else", reasonOther: "  " })).toBe("Something else");
+  });
+  it("typed reason needs 3–200 characters", () => {
+    expect(reasonDetailValid("ab")).toBe(false);
+    expect(reasonDetailValid("   ")).toBe(false);
+    expect(reasonDetailValid("extra dough")).toBe(true);
+    expect(reasonDetailValid("x".repeat(201))).toBe(false);
   });
 });
