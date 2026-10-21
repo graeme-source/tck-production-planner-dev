@@ -24,6 +24,7 @@ import { useLocation } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import { PartyPopper, X } from "lucide-react";
 import type { AppNotification } from "@/hooks/use-notifications";
+import { DAILY_CHECKIN_PROMPT_KEY, usePromptKeyShowing } from "@/lib/prompt-presence";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const CELEBRATED_KEY = "tck-celebrated-notification-ids";
@@ -63,7 +64,10 @@ export function ImprovementCelebration() {
     staleTime: 5_000,
   });
 
+  // Waits behind the daily improvement check-in, clock and all (2026-10-21).
+  const checkinShowing = usePromptKeyShowing(DAILY_CHECKIN_PROMPT_KEY);
   const current = useMemo(() => {
+    if (checkinShowing) return null;
     const now = Date.now();
     return list.find(n =>
       n.type === "improvement"
@@ -72,7 +76,7 @@ export function ImprovementCelebration() {
       && !celebrated.has(n.id)
       && now - new Date(n.createdAt).getTime() < MAX_AGE_MS,
     ) ?? null;
-  }, [list, celebrated]);
+  }, [list, celebrated, checkinShowing]);
 
   const dismiss = (id: number) => {
     setCelebrated(prev => {
