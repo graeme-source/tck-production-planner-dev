@@ -1,7 +1,7 @@
 /**
  * One phase, opened from the calendar (2026-10-20). Everything is edited
  * here and autosaves with a visible save state: name, dates (any length),
- * colour (a light pastel swatch, 2026-10-21),
+ * colour (a pastel quick pick or any colour from the picker, 2026-10-21),
  * offers (from the offer library or typed new), customer group and notes. A
  * new phase is created as soon as it has a name.
  *
@@ -19,8 +19,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import { AlertTriangle, Check, ExternalLink, History, Loader2, Package, Sparkles, Trash2, Users, X } from "lucide-react";
 import {
-  CUSTOMER_GROUPS, CUSTOMER_GROUP_LABELS, DEFAULT_PHASE_COLOUR, PHASE_COLOURS, PHASE_COLOUR_KEYS, formatRange, phaseColour,
+  CUSTOMER_GROUPS, CUSTOMER_GROUP_LABELS, formatRange,
 } from "@workspace/marketing-calendar";
+import { ColourPicker } from "./colour-picker";
 import { useAuth } from "@/contexts/auth-context";
 import { useAutosave, type AutosaveState } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
@@ -33,7 +34,7 @@ import {
   type Phase,
 } from "./api";
 import { OfferPicker } from "./offer-picker";
-import { PHASE_CLS, firstName, phaseVars } from "./constants";
+import { PHASE_CLS, firstName, phaseVars, useDefaultPhaseColour } from "./constants";
 
 interface Draft {
   title: string;
@@ -41,7 +42,7 @@ interface Draft {
   endDate: string;
   offers: string[];
   customerGroup: string;
-  /** Palette key; null = the default (soft lavender). */
+  /** Palette key or "#rrggbb"; null = the calendar's default colour. */
   color: string | null;
   notes: string;
 }
@@ -67,6 +68,7 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const qc = useQueryClient();
+  const calendarDefault = useDefaultPhaseColour();
 
   const [id, setId] = useState<number | null>(phaseId);
   const idRef = useRef<number | null>(phaseId);
@@ -237,7 +239,7 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-border">
-          <span style={phaseVars(draft.color)} className={cn("w-4 h-4 rounded-full flex-shrink-0 border-2", PHASE_CLS.fill)} />
+          <span style={phaseVars(draft.color, calendarDefault)} className={cn("w-4 h-4 rounded-full flex-shrink-0 border-2", PHASE_CLS.fill)} />
           <div className="flex-1 min-w-0">
             <h2 className="font-display font-bold text-lg leading-tight break-words">{draft.title || (id == null ? "New phase" : "Phase")}</h2>
             {draft.startDate && draft.endDate && !datesInvalid && (
@@ -336,33 +338,15 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
             </Field>
 
             <Field label="Colour" hint="how it shows on the calendar">
-              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Phase colour">
-                {PHASE_COLOUR_KEYS.map(k => {
-                  const chosen = phaseColour(draft.color).key === k;
-                  return (
-                    <button
-                      key={k}
-                      type="button"
-                      role="radio"
-                      aria-checked={chosen}
-                      // The default is stored as null, so a phase with no colour
-                      // keeps following the default.
-                      onClick={() => setNow("color", k === DEFAULT_PHASE_COLOUR ? null : k)}
-                      style={phaseVars(k)}
-                      className={cn(
-                        "min-h-11 pl-2 pr-3.5 py-1.5 rounded-full border-2 text-sm font-semibold flex items-center gap-2 transition-shadow",
-                        PHASE_CLS.fill,
-                        chosen ? "ring-2 ring-offset-2 ring-offset-card ring-foreground" : "hover:brightness-95",
-                      )}
-                    >
-                      <span className={cn("w-6 h-6 rounded-full flex items-center justify-center", PHASE_CLS.stripe)}>
-                        {chosen && <Check className={cn("w-4 h-4", PHASE_CLS.text)} strokeWidth={3} />}
-                      </span>
-                      {PHASE_COLOURS[k].label}{k === DEFAULT_PHASE_COLOUR ? " (default)" : ""}
-                    </button>
-                  );
-                })}
-              </div>
+              {/* null = follow the calendar's default colour (set under the calendar). */}
+              <ColourPicker
+                value={draft.color}
+                calendarDefault={calendarDefault}
+                allowDefault
+                disabled={deleted}
+                previewLabel={draft.title.trim() || "New phase"}
+                onPick={(v, now) => (now ? setNow("color", v) : setField("color", v))}
+              />
             </Field>
 
             <Field label="Notes" hint="optional">

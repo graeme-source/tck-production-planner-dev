@@ -13,6 +13,7 @@ import { cn } from "@/lib/utils";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { SalesDriversSection } from "@/components/sales-drivers/sales-drivers-section";
+import { ChangeLog } from "@/components/sales-drivers/change-log";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -142,6 +143,10 @@ export default function FounderSales() {
           <BundleCalculator />
         </section>
       )}
+
+      {/* The change log, collapsed to one button at the very bottom — rarely
+          needed (Graeme, 2026-10-21). Objective I. */}
+      <ChangeLog canEdit={canSales} />
     </div>
   );
 }

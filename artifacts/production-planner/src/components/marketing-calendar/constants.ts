@@ -4,20 +4,34 @@
  * 2026-10-21 — the old dark violet was distracting); Klaviyo emails are TEAL
  * chips — a draft dashed, a scheduled one solid, a sent one grey.
  */
-import type { CSSProperties } from "react";
+import { useCallback, type CSSProperties } from "react";
 import { phaseColour } from "@workspace/marketing-calendar";
+import { useCalendarSettings } from "./api";
 
 /**
  * A phase's colour as CSS variables, for the element that draws it (or any
- * parent). Pair with PHASE_CLS. The palette itself is data in
- * @workspace/marketing-calendar (phase-colours.ts); null = soft lavender.
+ * parent). Pair with PHASE_CLS. The palette and the maths for any picked
+ * hex are in @workspace/marketing-calendar (phase-colours.ts); null = the
+ * calendar's default colour (`calendarDefault`), else soft lavender.
+ * Components use usePhaseVars(), which fills in the default.
  */
-export function phaseVars(color: string | null | undefined): CSSProperties {
-  const c = phaseColour(color);
+export function phaseVars(color: string | null | undefined, calendarDefault?: string | null): CSSProperties {
+  const c = phaseColour(color, calendarDefault);
   return {
     "--ph-bg": c.light.bg, "--ph-border": c.light.border, "--ph-text": c.light.text, "--ph-stripe": c.light.stripe,
     "--ph-bg-d": c.dark.bg, "--ph-border-d": c.dark.border, "--ph-text-d": c.dark.text, "--ph-stripe-d": c.dark.stripe,
   } as CSSProperties;
+}
+
+/** The calendar's default phase colour (the setting), or null while it loads. */
+export function useDefaultPhaseColour(): string | null {
+  return useCalendarSettings().data?.defaultPhaseColour ?? null;
+}
+
+/** phaseVars with the calendar's default colour filled in. */
+export function usePhaseVars(): (color: string | null | undefined) => CSSProperties {
+  const def = useDefaultPhaseColour();
+  return useCallback((color: string | null | undefined) => phaseVars(color, def), [def]);
 }
 
 /** Classes that read phaseVars(): a filled bar / banner / chip, or a stripe / swatch. */

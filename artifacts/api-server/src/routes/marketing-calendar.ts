@@ -21,10 +21,10 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, testBoxDeliveriesTable, usersTable } from "@workspace/db";
+import { db, appSettingsTable, marketingEventsTable, marketingEventHistoryTable, testBoxesTable, testBoxDeliveriesTable, usersTable } from "@workspace/db";
 import { and, asc, desc, eq, gte, isNull, lte, ne, sql } from "drizzle-orm";
 import {
-  CUSTOMER_GROUPS, NOTE_EVENT_TYPE, PHASE_COLOUR_KEYS, addDays, dedupeOffers, describeDateChange, describeFieldChanges, diffFields, daysBetween, offersSummary,
+  CUSTOMER_GROUPS, DEFAULT_PHASE_COLOUR, HEX_COLOUR_RE, NOTE_EVENT_TYPE, PHASE_COLOUR_KEYS, addDays, normalisePhaseColour, dedupeOffers, describeDateChange, describeFieldChanges, diffFields, daysBetween, offersSummary,
   type FieldChange,
 } from "@workspace/marketing-calendar";
 import { syncTestBox } from "../lib/test-box-data";
@@ -41,6 +41,14 @@ router.use(requireFounderArea("founder.sales"));
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const IsoDate = z.string().regex(DATE_RE, "Use YYYY-MM-DD");
+/**
+ * A colour: a palette key (the quick picks) or ANY "#rrggbb" from the colour
+ * picker (Graeme, 2026-10-21), stored lower case.
+ */
+const ColourValue = z.union([
+  z.enum(PHASE_COLOUR_KEYS),
+  z.string().regex(HEX_COLOUR_RE, "Use a colour like #2E86C1").transform(s => s.toLowerCase()),
+]);
 
 type EventRow = typeof marketingEventsTable.$inferSelect;
 
@@ -62,7 +70,7 @@ function phaseJson(e: EventRow) {
     endDate: e.endDate,
     offers: e.offers ?? [],
     customerGroup: e.customerGroup,
-    /** Palette key (phase-colours.ts); null = the default, soft lavender. */
+    /** Palette key or "#rrggbb" (phase-colours.ts); null = the calendar's default colour. */
     color: e.color,
     notes: e.notes,
     source: e.source,
@@ -106,6 +114,52 @@ router.get("/phases/all", async (_req: Request, res: Response) => {
   res.json({ phases: rows.map(phaseJson) });
 });
 
+// ── Calendar settings: the default phase colour (Graeme, 2026-10-21) ───────
+// "I want to be able to change the DEFAULT colour of the phases." Phases with
+// no colour of their own are drawn in it. One app_settings row (JSON), so no
+// migration; it records who changed it last. Anyone with Sales & Marketing
+// may change it (the router's guard).
+const SETTINGS_KEY = "marketing_calendar_settings";
+
+interface CalendarSettings {
+  defaultPhaseColour: string;
+  updatedBy: string | null;
+  updatedAt: string | null;
+}
+
+async function readSettings(): Promise<CalendarSettings> {
+  const [row] = await db.select().from(appSettingsTable).where(eq(appSettingsTable.key, SETTINGS_KEY));
+  let parsed: { defaultPhaseColour?: unknown; updatedByName?: unknown } = {};
+  try { parsed = row ? JSON.parse(row.value) : {}; } catch { /* a bad row reads as the defaults */ }
+  return {
+    defaultPhaseColour: normalisePhaseColour(parsed.defaultPhaseColour) ?? DEFAULT_PHASE_COLOUR,
+    updatedBy: typeof parsed.updatedByName === "string" ? parsed.updatedByName : null,
+    updatedAt: row ? row.updatedAt.toISOString() : null,
+  };
+}
+
+router.get("/settings", async (_req: Request, res: Response) => {
+  res.json(await readSettings());
+});
+
+const SettingsBody = z.object({
+  /** null puts it back to soft lavender. */
+  defaultPhaseColour: ColourValue.nullable(),
+});
+
+router.put("/settings", validate(SettingsBody), async (req: Request, res: Response) => {
+  const b = req.body as z.infer<typeof SettingsBody>;
+  const user = await sessionUser(req);
+  const value = JSON.stringify({
+    defaultPhaseColour: b.defaultPhaseColour ?? DEFAULT_PHASE_COLOUR,
+    updatedById: user.id,
+    updatedByName: user.name,
+  });
+  await db.insert(appSettingsTable).values({ key: SETTINGS_KEY, value })
+    .onConflictDoUpdate({ target: appSettingsTable.key, set: { value, updatedAt: new Date() } });
+  res.json(await readSettings());
+});
+
 // ── Klaviyo emails in the range, each with its approval (read-only) ────────
 // Drafts, scheduled and sent one-off email campaigns on their send day, plus
 // drafts with no date yet. A Klaviyo hiccup never breaks the calendar — it
@@ -142,8 +196,8 @@ router.get("/events/:id", async (req: Request, res: Response) => {
 const Offers = z.array(z.string().trim().max(300)).max(20);
 const Notes = z.string().trim().max(10000).nullish();
 const Group = z.enum(CUSTOMER_GROUPS);
-/** A palette key, or null for the default colour (Graeme, 2026-10-21). */
-const Colour = z.enum(PHASE_COLOUR_KEYS).nullable();
+/** A phase's own colour, or null to follow the calendar's default colour. */
+const Colour = ColourValue.nullable();
 
 const CreateBody = z.object({
   title: z.string().trim().min(1, "Give it a name").max(160),

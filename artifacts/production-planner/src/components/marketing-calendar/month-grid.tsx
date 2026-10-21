@@ -20,7 +20,7 @@ import { BadgeCheck, Mail, PencilLine, Users } from "lucide-react";
 import { customerGroupChip, layoutWeek, monthGridWeeks, type DragMode } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEmail, Phase } from "./api";
-import { KLAVIYO_TONE, PHASE_CLS, phaseVars } from "./constants";
+import { KLAVIYO_TONE, PHASE_CLS, usePhaseVars } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -43,6 +43,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
   onAddOn: (date: string) => void;
   onDatesChange: (p: Phase, next: { startDate: string; endDate: string }, mode: DragMode) => void;
 }) {
+  const phaseVars = usePhaseVars();
   const weeks = useMemo(() => monthGridWeeks(month), [month]);
   const monthKey = month.slice(0, 7);
   const { start, spanOf, dragging, justDragged } = useSpanDrag<Phase>({
