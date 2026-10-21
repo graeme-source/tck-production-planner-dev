@@ -928,12 +928,13 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
     // Every credited person counts the improvement in full — something
     // Graeme did with Bodan is one on each of their tallies (migration
     // 0125). CREDIT_PAIRS is the credit rows plus the lead, de-duplicated.
-    const result = await db.execute<{ user_id: number | null; name: string | null; email: string | null; n: number; signed_off: number; last_at: Date | null }>(sql`
+    const result = await db.execute<{ user_id: number | null; name: string | null; email: string | null; n: number; credits_all: number; signed_off: number; last_at: Date | null }>(sql`
       WITH pairs AS (${CREDIT_PAIRS})
       SELECT p.user_id,
              COALESCE(u.name, 'Unknown') AS name,
              u.email,
              COUNT(*)::int AS n,
+             SUM(s.credit_weight)::int AS credits_all,
              COUNT(s.approved_at)::int AS signed_off,
              MAX(s.approved_at) AS last_at
         FROM pairs p
@@ -947,8 +948,9 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
     const board = leanerBoardRows(result.rows ?? []);
     // Both figures over the same rolling 30 London days (Graeme,
     // 2026-10-12: "I want the percentage, and I want the number of
-    // improvements as well"). Ranked by the number of improvements, the
-    // score breaking ties; the all-time count stays on each row.
+    // improvements as well"). Ranked by CREDITS since 2026-10-21 — a ×2 or
+    // ×3 now lifts you up the board — the score breaking ties; the plain
+    // counts and the all-time tallies stay on each row.
     const scores = await loadImprovementScores(board.map(r => Number(r.user_id)).filter(n => n > 0));
     res.json(rankLeanerBoard(board.map(r => {
       const sc = r.user_id != null ? scores.byUser.get(Number(r.user_id)) : undefined;
@@ -956,6 +958,7 @@ router.get("/scoreboard", async (_req: Request, res: Response) => {
         userId: r.user_id,
         name: r.name ?? "Unknown",
         count: Number(r.n),
+        creditsAll: Number(r.credits_all ?? r.n),
         signedOff: Number(r.signed_off),
         lastAt: r.last_at,
         credits30: sc?.credits ?? 0,

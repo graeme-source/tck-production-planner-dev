@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  buildScores, creditsByUser, improvementScorePct, normaliseCreditWeight, rankLeanerBoard,
+  buildScores, creditsByUser, improvementScorePct, improvementTotals, normaliseCreditWeight, rankLeanerBoard,
   scoreWindow, shiftsWorkedByEmployee, type CreditPair, type RotaShift,
 } from "./improvement-score";
 
@@ -180,32 +180,81 @@ describe("buildScores", () => {
   });
 });
 
-describe("Leaner-board order", () => {
-  it("ranks by improvements in the last 30 days first", () => {
+describe("Leaner-board order (credits first since 2026-10-21)", () => {
+  it("ranks by credits in the last 30 days first", () => {
     const rows = [
-      { name: "High score, few", improvements30: 2, count: 2, scorePct: 200 },
-      { name: "Most", improvements30: 9, count: 9, scorePct: 30 },
-      { name: "Middle", improvements30: 4, count: 50, scorePct: 8 },
+      { name: "High score, few", credits30: 2, count: 2, scorePct: 200 },
+      { name: "Most", credits30: 9, count: 9, scorePct: 30 },
+      { name: "Middle", credits30: 4, count: 50, scorePct: 8 },
     ];
     expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Most", "Middle", "High score, few"]);
   });
 
-  it("breaks a tie on the count with the score, '—' after any score", () => {
+  it("a ×3 is worth two more than a standard one: 3 improvements with a ×3 beat 4 plain ones", () => {
+    // Graeme, 2026-10-21: "an extra credit for ×2 and 2 extra credits for ×3".
+    const pairs: CreditPair[] = [
+      ...credits(1, 4, 1),                       // 4 standard = 4 credits
+      ...credits(2, 2, 1), ...credits(2, 1, 3, "2026-10-10", 9000), // 2 + 3 = 5 credits
+      ...credits(3, 1, 2, "2026-10-10", 9100), ...credits(3, 2, 1, "2026-10-10", 9200), // 2 + 2 = 4
+    ];
+    const by = creditsByUser(pairs, W);
+    expect(by.get(1)).toEqual({ credits: 4, improvements: 4 });
+    expect(by.get(2)).toEqual({ credits: 5, improvements: 3 });
+    expect(by.get(3)).toEqual({ credits: 4, improvements: 3 });
+    const rows = [1, 2, 3].map(id => ({
+      name: `P${id}`, credits30: by.get(id)!.credits, count: by.get(id)!.improvements, scorePct: 50,
+    }));
+    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["P2", "P1", "P3"]);
+  });
+
+  it("breaks a tie on credits with the score, '—' after any score", () => {
     const rows = [
-      { name: "No shifts", improvements30: 3, count: 3, scorePct: null },
-      { name: "Lower", improvements30: 3, count: 3, scorePct: 15 },
-      { name: "Higher", improvements30: 3, count: 3, scorePct: 25 },
+      { name: "No shifts", credits30: 3, count: 3, scorePct: null },
+      { name: "Lower", credits30: 3, count: 3, scorePct: 15 },
+      { name: "Higher", credits30: 3, count: 3, scorePct: 25 },
     ];
     expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Higher", "Lower", "No shifts"]);
   });
 
-  it("then the all-time count, then name", () => {
+  it("then all-time credits, then the all-time count, then name", () => {
     const rows = [
-      { name: "Bea", improvements30: 1, count: 5, scorePct: 10 },
-      { name: "Al", improvements30: 1, count: 5, scorePct: 10 },
-      { name: "Zed", improvements30: 1, count: 7, scorePct: 10 },
-      { name: "Quiet month", improvements30: 0, count: 40, scorePct: 0 },
+      { name: "Bea", credits30: 1, creditsAll: 6, count: 5, scorePct: 10 },
+      { name: "Al", credits30: 1, creditsAll: 6, count: 5, scorePct: 10 },
+      { name: "Cy", credits30: 1, creditsAll: 6, count: 4, scorePct: 10 },
+      { name: "Zed", credits30: 1, creditsAll: 9, count: 7, scorePct: 10 },
+      { name: "Quiet month", credits30: 0, creditsAll: 40, count: 40, scorePct: 0 },
     ];
-    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Zed", "Al", "Bea", "Quiet month"]);
+    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["Zed", "Al", "Bea", "Cy", "Quiet month"]);
+  });
+
+  it("falls back to the all-time count when all-time credits aren't given", () => {
+    const rows = [
+      { name: "Fewer", credits30: 1, count: 2, scorePct: 10 },
+      { name: "More", credits30: 1, count: 3, scorePct: 10 },
+    ];
+    expect(rankLeanerBoard(rows).map(r => r.name)).toEqual(["More", "Fewer"]);
+  });
+});
+
+describe("team totals", () => {
+  const rows = [
+    { id: 1, weight: 1, doneDate: "2026-10-10" },
+    { id: 2, weight: 2, doneDate: "2026-10-11" },
+    { id: 3, weight: 3, doneDate: "2026-10-12" },
+    { id: 3, weight: 3, doneDate: "2026-10-12" }, // shared — still one improvement
+    { id: 4, weight: 2, doneDate: "2026-08-01" }, // outside the 30 days
+    { id: 5, weight: null, doneDate: "2026-10-01" },
+  ];
+
+  it("counts improvements, credits, Great ones and Substantial in the window", () => {
+    expect(improvementTotals(rows, W)).toEqual({ improvements: 4, credits: 7, great: 1, substantial: 1 });
+  });
+
+  it("all-time when no window is given", () => {
+    expect(improvementTotals(rows)).toEqual({ improvements: 5, credits: 9, great: 2, substantial: 1 });
+  });
+
+  it("nothing is all zeros", () => {
+    expect(improvementTotals([], W)).toEqual({ improvements: 0, credits: 0, great: 0, substantial: 0 });
   });
 });
