@@ -106,7 +106,9 @@ export function describeFieldChanges(changes: Record<string, FieldChange>): stri
       const list = Array.isArray(to) ? to : [];
       parts.push(list.length ? `set the offers to ${list.map(o => `“${o}”`).join(", ")}` : "took the offers off");
     } else if (key === "color") {
-      parts.push(`changed the colour to ${phaseColourLabel(typeof to === "string" ? to : null).toLowerCase()}`);
+      const label = phaseColourLabel(typeof to === "string" ? to : null);
+      // Palette names read in lower case ("sky blue"); a hex stays "#2E86C1".
+      parts.push(`changed the colour to ${label.startsWith("#") ? label : label.toLowerCase()}`);
     } else if (key === "customerGroup") {
       parts.push(`set it for ${GROUP_WORDS[String(to ?? "all")] ?? humanise(String(to ?? ""))}`);
     } else if (to == null || to === "") parts.push(`cleared the ${FIELD_LABELS[key]}`);
