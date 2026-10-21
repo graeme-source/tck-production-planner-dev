@@ -13,6 +13,7 @@ import { customerGroupChip, daysBetween, formatRange, reusePhase, searchPhases }
 import { cn } from "@/lib/utils";
 import { useEscapeToClose } from "./use-escape";
 import { useAllPhases, useCreatePhase, type Phase } from "./api";
+import { PHASE_CLS, phaseVars } from "./constants";
 
 export function ReusePhase({ defaultStart, onClose, onCreated }: {
   defaultStart: string;
@@ -83,7 +84,7 @@ export function ReusePhase({ defaultStart, onClose, onCreated }: {
             </label>
             {copy && (
               <p className="text-base">
-                The copy runs <b>{formatRange(copy.startDate, copy.endDate)}</b> ({daysBetween(copy.startDate, copy.endDate) + 1} day{copy.startDate === copy.endDate ? "" : "s"}, same as before) with the same offers, customers and notes. You can change anything after.
+                The copy runs <b>{formatRange(copy.startDate, copy.endDate)}</b> ({daysBetween(copy.startDate, copy.endDate) + 1} day{copy.startDate === copy.endDate ? "" : "s"}, same as before) with the same offers, customers, notes and colour. You can change anything after.
               </p>
             )}
             {create.isError && <p className="text-sm text-destructive">{(create.error as Error).message}</p>}
@@ -103,14 +104,14 @@ function PhaseChoice({ phase: p, onPick }: { phase: Phase; onPick?: () => void }
   const group = customerGroupChip(p.customerGroup);
   const Inner = (
     <>
-      <span className="w-2 self-stretch rounded-full bg-violet-600 flex-shrink-0" />
+      <span style={phaseVars(p.color)} className={cn("w-2 self-stretch rounded-full flex-shrink-0", PHASE_CLS.stripe)} />
       <span className="flex-1 min-w-0 space-y-1">
         <span className="block text-base font-bold break-words">{p.title}</span>
         <span className="block text-sm text-muted-foreground">{formatRange(p.startDate, p.endDate)}</span>
         {(p.offers.length > 0 || group) && (
           <span className="flex flex-wrap gap-1.5">
             {p.offers.map(o => (
-              <span key={o} className="inline-flex items-center gap-1 rounded-full bg-violet-500/15 text-violet-800 dark:text-violet-200 px-2 py-0.5 text-sm font-semibold break-words">
+              <span key={o} style={phaseVars(p.color)} className={cn("inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-sm font-semibold break-words", PHASE_CLS.fill)}>
                 <Tag className="w-3.5 h-3.5 flex-shrink-0" />{o}
               </span>
             ))}

@@ -1,6 +1,7 @@
 /**
  * One phase, opened from the calendar (2026-10-20). Everything is edited
  * here and autosaves with a visible save state: name, dates (any length),
+ * colour (a light pastel swatch, 2026-10-21),
  * offers (from the offer library or typed new), customer group and notes. A
  * new phase is created as soon as it has a name.
  *
@@ -16,8 +17,10 @@ import { createPortal } from "react-dom";
 import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
-import { AlertTriangle, ExternalLink, History, Loader2, Package, Sparkles, Trash2, Users, X } from "lucide-react";
-import { CUSTOMER_GROUPS, CUSTOMER_GROUP_LABELS, formatRange } from "@workspace/marketing-calendar";
+import { AlertTriangle, Check, ExternalLink, History, Loader2, Package, Sparkles, Trash2, Users, X } from "lucide-react";
+import {
+  CUSTOMER_GROUPS, CUSTOMER_GROUP_LABELS, DEFAULT_PHASE_COLOUR, PHASE_COLOURS, PHASE_COLOUR_KEYS, formatRange, phaseColour,
+} from "@workspace/marketing-calendar";
 import { useAuth } from "@/contexts/auth-context";
 import { useAutosave, type AutosaveState } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
@@ -30,7 +33,7 @@ import {
   type Phase,
 } from "./api";
 import { OfferPicker } from "./offer-picker";
-import { firstName } from "./constants";
+import { PHASE_CLS, firstName, phaseVars } from "./constants";
 
 interface Draft {
   title: string;
@@ -38,14 +41,16 @@ interface Draft {
   endDate: string;
   offers: string[];
   customerGroup: string;
+  /** Palette key; null = the default (soft lavender). */
+  color: string | null;
   notes: string;
 }
 
-type FieldKey = "title" | "offers" | "customerGroup" | "notes";
-const FIELD_KEYS: FieldKey[] = ["title", "offers", "customerGroup", "notes"];
+type FieldKey = "title" | "offers" | "customerGroup" | "color" | "notes";
+const FIELD_KEYS: FieldKey[] = ["title", "offers", "customerGroup", "color", "notes"];
 
 function draftFrom(p: Phase): Draft {
-  return { title: p.title, startDate: p.startDate, endDate: p.endDate, offers: p.offers, customerGroup: p.customerGroup, notes: p.notes ?? "" };
+  return { title: p.title, startDate: p.startDate, endDate: p.endDate, offers: p.offers, customerGroup: p.customerGroup, color: p.color ?? null, notes: p.notes ?? "" };
 }
 
 function worst(a: AutosaveState, b: AutosaveState): AutosaveState {
@@ -69,7 +74,7 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
   const phase = data?.event;
 
   const [draft, setDraft] = useState<Draft>(() => ({
-    title: "", startDate: newOn ?? "", endDate: newOn ?? "", offers: [], customerGroup: "all", notes: "",
+    title: "", startDate: newOn ?? "", endDate: newOn ?? "", offers: [], customerGroup: "all", color: null, notes: "",
   }));
   const draftRef = useRef(draft);
   draftRef.current = draft;
@@ -98,10 +103,10 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
     if (creating.current) return { id: await creating.current, created: false };
     const d = draftRef.current;
     if (!d.title.trim()) return null;
-    const sent: Partial<Record<FieldKey, unknown>> = { title: d.title, offers: d.offers, customerGroup: d.customerGroup, notes: d.notes };
+    const sent: Partial<Record<FieldKey, unknown>> = { title: d.title, offers: d.offers, customerGroup: d.customerGroup, color: d.color, notes: d.notes };
     creating.current = createPhase({
       title: d.title.trim(), startDate: d.startDate, endDate: d.endDate,
-      offers: d.offers, customerGroup: d.customerGroup, notes: d.notes || null,
+      offers: d.offers, customerGroup: d.customerGroup, color: d.color, notes: d.notes || null,
     }).then(r => {
       idRef.current = r.event.id;
       lastSeen.current = r.event.updatedAt;
@@ -232,7 +237,7 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
       >
         {/* Header */}
         <div className="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-border">
-          <span className="w-3.5 h-3.5 rounded-full flex-shrink-0 bg-violet-600" />
+          <span style={phaseVars(draft.color)} className={cn("w-4 h-4 rounded-full flex-shrink-0 border-2", PHASE_CLS.fill)} />
           <div className="flex-1 min-w-0">
             <h2 className="font-display font-bold text-lg leading-tight break-words">{draft.title || (id == null ? "New phase" : "Phase")}</h2>
             {draft.startDate && draft.endDate && !datesInvalid && (
@@ -327,6 +332,36 @@ export function PhaseModal({ phaseId, newOn, onClose }: {
                     {CUSTOMER_GROUP_LABELS[g]}
                   </button>
                 ))}
+              </div>
+            </Field>
+
+            <Field label="Colour" hint="how it shows on the calendar">
+              <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Phase colour">
+                {PHASE_COLOUR_KEYS.map(k => {
+                  const chosen = phaseColour(draft.color).key === k;
+                  return (
+                    <button
+                      key={k}
+                      type="button"
+                      role="radio"
+                      aria-checked={chosen}
+                      // The default is stored as null, so a phase with no colour
+                      // keeps following the default.
+                      onClick={() => setNow("color", k === DEFAULT_PHASE_COLOUR ? null : k)}
+                      style={phaseVars(k)}
+                      className={cn(
+                        "min-h-11 pl-2 pr-3.5 py-1.5 rounded-full border-2 text-sm font-semibold flex items-center gap-2 transition-shadow",
+                        PHASE_CLS.fill,
+                        chosen ? "ring-2 ring-offset-2 ring-offset-card ring-foreground" : "hover:brightness-95",
+                      )}
+                    >
+                      <span className={cn("w-6 h-6 rounded-full flex items-center justify-center", PHASE_CLS.stripe)}>
+                        {chosen && <Check className={cn("w-4 h-4", PHASE_CLS.text)} strokeWidth={3} />}
+                      </span>
+                      {PHASE_COLOURS[k].label}{k === DEFAULT_PHASE_COLOUR ? " (default)" : ""}
+                    </button>
+                  );
+                })}
               </div>
             </Field>
 

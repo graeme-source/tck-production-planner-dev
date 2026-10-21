@@ -19,6 +19,8 @@ export interface Phase {
   endDate: string;
   offers: string[];
   customerGroup: string;
+  /** Palette key (@workspace/marketing-calendar phase-colours); null = the default, soft lavender. */
+  color: string | null;
   notes: string | null;
   source: string;
   /** Set on a test box's own phase: its dates follow the box. */
@@ -109,6 +111,7 @@ export interface NewPhase {
   endDate: string;
   offers?: string[];
   customerGroup?: string;
+  color?: string | null;
   notes?: string | null;
   source?: "manual" | "ai" | "reuse";
   copiedFromId?: number;

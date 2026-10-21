@@ -24,17 +24,13 @@ import {
 import { cn } from "@/lib/utils";
 import type { CalEmail, Phase } from "./api";
 import { ApproveButton } from "./email-panel";
+import { PHASE_CLS, phaseVars } from "./constants";
 
 type Row = AgendaRow<Phase, CalEmail>;
 
-/** Overlapping phases get different colours by lane, the same on every row. */
-const LANE_TONES = [
-  { stripe: "bg-violet-600", chip: "bg-violet-500/15 text-violet-900 dark:text-violet-100 border-violet-500/40" },
-  { stripe: "bg-fuchsia-600", chip: "bg-fuchsia-500/15 text-fuchsia-900 dark:text-fuchsia-100 border-fuchsia-500/40" },
-  { stripe: "bg-sky-600", chip: "bg-sky-500/15 text-sky-900 dark:text-sky-100 border-sky-500/40" },
-  { stripe: "bg-orange-500", chip: "bg-orange-500/15 text-orange-900 dark:text-orange-100 border-orange-500/40" },
-];
-const laneTone = (lane: number) => LANE_TONES[lane % LANE_TONES.length];
+// Every phase is drawn in its own colour (Graeme, 2026-10-21) — stripe,
+// start banner, running chip and end flag alike. Overlapping phases keep
+// separate lanes, so two in the same colour still show as two stripes.
 
 const day = (iso: string, f: string) => format(parseISO(iso), f);
 const ROW_SELECTOR = '[data-row-key]:not([data-row-key^="week-"])';
@@ -142,9 +138,13 @@ function Stripes({ phases, laneCount }: { phases: PhaseOnRow<Phase>[]; laneCount
   const byLane = new Map(phases.map(p => [p.lane, p.phase]));
   return (
     <div className="flex gap-0.5 self-stretch flex-shrink-0 pl-1" aria-hidden>
-      {Array.from({ length: laneCount }, (_, lane) => (
-        <span key={lane} className={cn("w-1.5 rounded-full", byLane.has(lane) ? laneTone(lane).stripe : "bg-transparent")} />
-      ))}
+      {Array.from({ length: laneCount }, (_, lane) => {
+        const p = byLane.get(lane);
+        return (
+          <span key={lane} className={cn("w-1.5 rounded-full", p ? PHASE_CLS.stripe : "bg-transparent")}
+            style={p ? phaseVars(p.color) : undefined} />
+        );
+      })}
     </div>
   );
 }
@@ -190,15 +190,12 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
           </div>
         )}
         <div className="flex-1 min-w-0 space-y-2">
-          {r.starts.map(p => {
-            const lane = r.phases.find(x => x.phase.id === p.id)?.lane ?? 0;
-            return <PhaseStart key={`s${p.id}`} phase={p} lane={lane} onOpen={() => onOpenPhase(p)} />;
-          })}
+          {r.starts.map(p => <PhaseStart key={`s${p.id}`} phase={p} onOpen={() => onOpenPhase(p)} />)}
           {runningOn.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
-              {runningOn.map(({ phase: p, lane }) => (
-                <button key={p.id} type="button" onClick={() => onOpenPhase(p)}
-                  className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold break-words text-left", laneTone(lane).chip)}>
+              {runningOn.map(({ phase: p }) => (
+                <button key={p.id} type="button" onClick={() => onOpenPhase(p)} style={phaseVars(p.color)}
+                  className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold break-words text-left", PHASE_CLS.fill)}>
                   {p.title}
                 </button>
               ))}
@@ -208,16 +205,13 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
             <p className="text-sm text-muted-foreground py-0.5">Nothing sending today.</p>
           )}
           {r.emails.map(m => <EmailRow key={m.id} email={m} canApprove={canApprove} onOpen={() => onOpenEmail(m)} />)}
-          {r.ends.map(p => {
-            const lane = r.phases.find(x => x.phase.id === p.id)?.lane ?? 0;
-            return (
-              <button key={`e${p.id}`} type="button" onClick={() => onOpenPhase(p)}
-                className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground text-left">
-                <Flag className={cn("w-4 h-4 flex-shrink-0 rounded-sm p-0.5 text-white", laneTone(lane).stripe)} />
-                <span className="break-words">{p.title} ends</span>
-              </button>
-            );
-          })}
+          {r.ends.map(p => (
+            <button key={`e${p.id}`} type="button" onClick={() => onOpenPhase(p)}
+              className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground text-left">
+              <Flag style={phaseVars(p.color)} className={cn("w-5 h-5 flex-shrink-0 rounded-md border p-0.5", PHASE_CLS.fill)} />
+              <span className="break-words">{p.title} ends</span>
+            </button>
+          ))}
         </div>
       </div>
     </div>
@@ -235,11 +229,11 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   );
 }
 
-function PhaseStart({ phase: p, lane, onOpen }: { phase: Phase; lane: number; onOpen: () => void }) {
+function PhaseStart({ phase: p, onOpen }: { phase: Phase; onOpen: () => void }) {
   const group = customerGroupChip(p.customerGroup);
   return (
-    <button type="button" onClick={onOpen}
-      className={cn("w-full text-left rounded-xl border-2 px-3 py-2 space-y-1 hover:brightness-95", laneTone(lane).chip)}>
+    <button type="button" onClick={onOpen} style={phaseVars(p.color)}
+      className={cn("w-full text-left rounded-xl border-2 px-3 py-2 space-y-1 hover:brightness-95", PHASE_CLS.fill)}>
       <span className="flex items-center gap-2 flex-wrap">
         <Play className="w-4 h-4 flex-shrink-0" />
         <span className="text-base font-bold break-words">{p.title} starts</span>

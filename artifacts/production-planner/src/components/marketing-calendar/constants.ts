@@ -1,15 +1,31 @@
 /**
  * Colours and small helpers for the marketing calendar (2026-10-20: phases +
- * Klaviyo emails). Phases are VIOLET bars; Klaviyo emails are TEAL chips —
- * a draft dashed, a scheduled one solid, a sent one grey.
+ * Klaviyo emails). Phases are drawn in their own LIGHT pastel (Graeme,
+ * 2026-10-21 — the old dark violet was distracting); Klaviyo emails are TEAL
+ * chips — a draft dashed, a scheduled one solid, a sent one grey.
  */
+import type { CSSProperties } from "react";
+import { phaseColour } from "@workspace/marketing-calendar";
 
-export const PHASE_TONE = {
-  bar: "bg-violet-600 text-white",
-  card: "border-violet-500/40",
-  edge: "bg-violet-600",
-  chip: "bg-violet-500/15 text-violet-800 dark:text-violet-200",
-};
+/**
+ * A phase's colour as CSS variables, for the element that draws it (or any
+ * parent). Pair with PHASE_CLS. The palette itself is data in
+ * @workspace/marketing-calendar (phase-colours.ts); null = soft lavender.
+ */
+export function phaseVars(color: string | null | undefined): CSSProperties {
+  const c = phaseColour(color);
+  return {
+    "--ph-bg": c.light.bg, "--ph-border": c.light.border, "--ph-text": c.light.text, "--ph-stripe": c.light.stripe,
+    "--ph-bg-d": c.dark.bg, "--ph-border-d": c.dark.border, "--ph-text-d": c.dark.text, "--ph-stripe-d": c.dark.stripe,
+  } as CSSProperties;
+}
+
+/** Classes that read phaseVars(): a filled bar / banner / chip, or a stripe / swatch. */
+export const PHASE_CLS = {
+  fill: "bg-[var(--ph-bg)] text-[var(--ph-text)] border-[var(--ph-border)] dark:bg-[var(--ph-bg-d)] dark:text-[var(--ph-text-d)] dark:border-[var(--ph-border-d)]",
+  stripe: "bg-[var(--ph-stripe)] dark:bg-[var(--ph-stripe-d)]",
+  text: "text-[var(--ph-text)] dark:text-[var(--ph-text-d)]",
+} as const;
 
 export const KLAVIYO_TONE = {
   solid: "bg-teal-600 text-white",

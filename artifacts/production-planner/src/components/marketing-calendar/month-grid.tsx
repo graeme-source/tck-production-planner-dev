@@ -1,6 +1,7 @@
 /**
- * Month view (2026-10-20): Monday-start weeks, PHASES as violet bars spanning
- * their days and wrapping onto the next week, KLAVIYO EMAILS as one-day teal
+ * Month view (2026-10-20): Monday-start weeks, PHASES as light bars in their
+ * own colour (2026-10-21) spanning their days and wrapping onto the next
+ * week, KLAVIYO EMAILS as one-day teal
  * chips on their send day. Drag a phase to move it, drag its end to stretch
  * or shrink it, tap it to edit; tap an email to see it (and approve it); tap
  * an empty day to add a phase starting there.
@@ -19,7 +20,7 @@ import { BadgeCheck, Mail, PencilLine, Users } from "lucide-react";
 import { customerGroupChip, layoutWeek, monthGridWeeks, type DragMode } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import type { CalEmail, Phase } from "./api";
-import { KLAVIYO_TONE, PHASE_TONE } from "./constants";
+import { KLAVIYO_TONE, PHASE_CLS, phaseVars } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -150,12 +151,12 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                       title={`${p.title}${p.offers.length ? ` — ${p.offers.join(" · ")}` : ""}${group ? ` · ${group}` : ""} — drag to move, drag the end to stretch`}
                       className={cn(
                         "relative self-start pointer-events-auto touch-none cursor-grab flex items-center gap-1.5 text-sm leading-tight font-semibold shadow-sm",
-                        PHASE_TONE.bar,
+                        "border", PHASE_CLS.fill,
                         seg.continuesBefore ? "rounded-l-none ml-0" : "rounded-l-lg ml-[3px]",
                         seg.continuesAfter ? "rounded-r-none mr-0" : "rounded-r-lg mr-[3px]",
                         p.endDate < today && "opacity-60",
                       )}
-                      style={place}
+                      style={{ ...place, ...phaseVars(p.color) }}
                     >
                       {!seg.continuesBefore && seg.endCol > seg.startCol && (
                         <span
@@ -169,7 +170,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                       <span className="flex-1 min-w-0 pl-2 py-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
                         <span className="break-words hyphens-auto" lang="en-GB">{seg.continuesBefore ? "… " : ""}{p.title}</span>
                         {group && (
-                          <span className="inline-flex items-center gap-0.5 rounded-full bg-white/25 px-1.5 text-[11px] font-bold">
+                          <span className="inline-flex items-center gap-0.5 rounded-full bg-white/70 dark:bg-black/25 px-1.5 text-[11px] font-bold">
                             <Users className="w-3 h-3" />{group}
                           </span>
                         )}
@@ -180,7 +181,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                           className="relative w-4 self-stretch cursor-ew-resize touch-none flex items-center justify-center flex-shrink-0"
                           aria-label="Drag to change the end date"
                         >
-                          <span className="w-1 h-4 rounded-full bg-white/70" />
+                          <span className="w-1 h-4 rounded-full bg-current opacity-40" />
                         </span>
                       )}
                     </div>
