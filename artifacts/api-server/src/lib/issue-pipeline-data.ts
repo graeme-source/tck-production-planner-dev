@@ -17,7 +17,7 @@ import {
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, reporterResponsePlan,
+  classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, reporterConversation, reporterResponsePlan,
   type IssueAreaClass, type NoticeAckAction, type TriageStatus,
 } from "./issue-pipeline-rules";
 import { pinLeadCredit } from "./improvement-credits-data";
@@ -145,8 +145,9 @@ export async function recordReporterResponse(
   response: { kind: string; action: NoticeAckAction | "comment"; reply?: string | null },
 ): Promise<{ triage: IssueTriage; flagged: boolean }> {
   const plan = reporterResponsePlan(triage, response);
-  // An answer to a message (typed, or "Got it" on it) ends the wait.
-  const answers = plan.event === "reporter_replied" || response.kind === "message";
+  // Only an answer in words ends the wait — "Got it" is a read receipt
+  // (21 Oct 2026), so the card still says Graeme is waiting for a reply.
+  const answers = plan.answers;
   let row = triage;
   if (plan.flagForGraeme || (answers && triage.awaitingReporterSince)) {
     const now = new Date();
@@ -374,6 +375,22 @@ export async function noticesByTriageId(triageIds: number[]) {
 }
 
 export async function pendingNoticesFor(userId: number) {
+  const notices = await pendingNoticeRows(userId);
+  // The whole conversation on each report (21 Oct 2026): every comment on
+  // it in the issue log — Graeme's messages and their own replies — so the
+  // pop-up reads like a chat they can answer again and again.
+  const ids = [...new Set(notices.map(n => n.andonIssueId))];
+  const comments = ids.length === 0 ? [] : await db.select({
+    id: andonCommentsTable.id, andonId: andonCommentsTable.andonId, userId: andonCommentsTable.userId,
+    userName: andonCommentsTable.userName, comment: andonCommentsTable.comment, createdAt: andonCommentsTable.createdAt,
+  }).from(andonCommentsTable).where(inArray(andonCommentsTable.andonId, ids));
+  return notices.map(n => ({
+    ...n,
+    conversation: reporterConversation(comments.filter(c => c.andonId === n.andonIssueId), userId),
+  }));
+}
+
+function pendingNoticeRows(userId: number) {
   return db.select({
     id: issueFixNoticesTable.id,
     andonIssueId: issueFixNoticesTable.andonIssueId,
