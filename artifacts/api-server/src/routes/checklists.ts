@@ -38,6 +38,10 @@ import {
 } from "../lib/checklist-readings";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
+type ItemReading = {
+  label: string; value: number; unit: string; inRange: boolean | null;
+  recordedByName: string; recordedAt: string;
+};
 
 const router: IRouter = Router();
 
@@ -309,6 +313,28 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
     ))
     .orderBy(asc(checklistOneoffItemsTable.category), asc(checklistOneoffItemsTable.orderPosition));
 
+  // Readings taken on this plan's checklist (migration 0227) — sent with
+  // each item, with what's still missing, so the screen never re-derives
+  // the rule.
+  const readingRows = await db.select().from(checklistReadingsTable)
+    .where(and(
+      eq(checklistReadingsTable.planId, planId),
+      eq(checklistReadingsTable.stationType, canonicalStation),
+    ));
+  const readingsByTemplate = new Map<number, ItemReading[]>();
+  for (const r of readingRows) {
+    const list = readingsByTemplate.get(r.templateId) ?? [];
+    list.push({
+      label: r.label,
+      value: Number(r.value),
+      unit: r.unit,
+      inRange: r.inRange,
+      recordedByName: r.recordedByName,
+      recordedAt: r.recordedAt.toISOString(),
+    });
+    readingsByTemplate.set(r.templateId, list);
+  }
+
   // Build completion map
   const completionMap = new Map<number, ChecklistCompletion>(completions.map((c: ChecklistCompletion) => [c.templateId, c]));
 
@@ -332,6 +358,8 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
     readingLabels: string[];
     readingMin: number | null;
     readingMax: number | null;
+    readings: ItemReading[];
+    readingsMissing: string[];
   }>> = {};
 
   for (const t of filtered) {
@@ -356,6 +384,10 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
       readingLabels: asksForReading(t.readingUnit) ? normaliseReadingLabels(t.readingLabels) : [],
       readingMin: t.readingMin == null ? null : Number(t.readingMin),
       readingMax: t.readingMax == null ? null : Number(t.readingMax),
+      readings: asksForReading(t.readingUnit) ? (readingsByTemplate.get(t.id) ?? []) : [],
+      readingsMissing: asksForReading(t.readingUnit)
+        ? missingReadings(normaliseReadingLabels(t.readingLabels), (readingsByTemplate.get(t.id) ?? []).map(r => r.label))
+        : [],
     });
   }
 
@@ -380,6 +412,8 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
       readingLabels: [],
       readingMin: null,
       readingMax: null,
+      readings: [],
+      readingsMissing: [],
     });
   }
 
