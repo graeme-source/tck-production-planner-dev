@@ -35,6 +35,8 @@ export type OrderLineForText = {
   orderInPallets?: boolean;
   palletSize?: number | null;
   palletSizeMissing?: boolean;
+  /** What one pack is called — "box", "roll" (#327). Null = pack / bottle. */
+  packName?: string | null;
 };
 
 /** Units whose stored quantity is already a count of packs. */
@@ -55,7 +57,7 @@ export function orderQtyDisplay(line: OrderLineForText): { primary: string; deta
   }
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
     return {
-      primary: `${formatCount(line.editedPacks)} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`,
+      primary: `${formatCount(line.editedPacks)} ${line.stockInPacks || line.packName ? packNoun(line.unit, line.editedPacks, line.packName) : line.unit}`,
       detail: null,
     };
   }
@@ -63,17 +65,23 @@ export function orderQtyDisplay(line: OrderLineForText): { primary: string; deta
     // Pallet item without a pallet size: order in packs, say how many.
     return {
       primary: `${formatCount(line.editedPacks * line.packWeight)} ${line.unit}`,
-      detail: `${formatCount(line.editedPacks)} ${packNoun(line.unit, line.editedPacks)}`,
+      detail: `${formatCount(line.editedPacks)} ${packNoun(line.unit, line.editedPacks, line.packName)}`,
     };
   }
-  return { primary: `${formatCount(line.editedPacks * line.packWeight)} ${line.unit}`, detail: null };
+  return {
+    primary: `${formatCount(line.editedPacks * line.packWeight)} ${line.unit}`,
+    // A named pack (#327) also says how many of them: "24 kg" / "2 boxes".
+    detail: line.packName && !line.isMisc && line.editedPacks > 0
+      ? `${formatCount(line.editedPacks)} ${packNoun(line.unit, line.editedPacks, line.packName)}`
+      : null,
+  };
 }
 
 /** The quantity as the supplier should read it in the order message. */
 export function lineOrderQty(line: OrderLineForText): string {
   if (readsInPallets(line)) return describePalletOrder(line.editedPacks, line)!.supplierText;
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
-    return `${line.editedPacks} ${line.stockInPacks ? packNoun(line.unit, line.editedPacks) : line.unit}`;
+    return `${line.editedPacks} ${line.stockInPacks || line.packName ? packNoun(line.unit, line.editedPacks, line.packName) : line.unit}`;
   }
   return `${(line.editedPacks * line.packWeight).toLocaleString("en-GB")} ${line.unit}`;
 }
@@ -111,11 +119,11 @@ export function packSizeLabel(line: OrderLineForText): string {
  * sites show. Count units read "£0.19 each"; pack-counted lines read per
  * pack/bottle. Null when there's no price or pack size.
  */
-export function costPerUnitLabel(line: { costPerPack: number; packWeight: number; unit: string; nativeUnit?: string | null }): string | null {
+export function costPerUnitLabel(line: { costPerPack: number; packWeight: number; unit: string; nativeUnit?: string | null; packName?: string | null }): string | null {
   if (!(line.costPerPack > 0) || !(line.packWeight > 0)) return null;
   const u = (line.unit || "").toLowerCase().trim();
   if (u === "packs" || u === "bottles" || u === "pallets") {
-    return `£${line.costPerPack.toFixed(2)}/${u === "bottles" ? "bottle" : "pack"}`;
+    return `£${line.costPerPack.toFixed(2)}/${line.packName ? packNoun(u, 1, line.packName) : u === "bottles" ? "bottle" : "pack"}`;
   }
   const per = line.costPerPack / line.packWeight;
   if (u === "g") return `£${(line.costPerPack / (line.packWeight / 1000)).toFixed(2)}/kg`;

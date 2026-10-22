@@ -60,7 +60,7 @@ export function OrderSplitDialog({
 }: {
   open: boolean;
   onClose: () => void;
-  line: { ingredientId: number; ingredientName: string; packs: number; unit: string };
+  line: { ingredientId: number; ingredientName: string; packs: number; unit: string; packName?: string | null };
   fromSupplier: { id: number; name: string };
   planId: number | null;
   suppliers: Array<{ id: number; name: string }>;
@@ -118,7 +118,7 @@ export function OrderSplitDialog({
       onSplit(split);
       toast({
         title: "Split saved",
-        description: `${split.packs} ${packNoun(line.unit, split.packs)} will be on ${split.targetSupplierName}'s order on ${splitDateLabel(split.targetOrderDate)}.`,
+        description: `${split.packs} ${packNoun(line.unit, split.packs, line.packName)} will be on ${split.targetSupplierName}'s order on ${splitDateLabel(split.targetOrderDate)}.`,
       });
       onClose();
     },
@@ -139,7 +139,7 @@ export function OrderSplitDialog({
         </DialogHeader>
 
         <p className="text-base">
-          <span className="font-semibold">{line.ingredientName}</span> — {line.packs} {packNoun(line.unit, line.packs)} on {fromSupplier.name}&apos;s order.
+          <span className="font-semibold">{line.ingredientName}</span> — {line.packs} {packNoun(line.unit, line.packs, line.packName)} on {fromSupplier.name}&apos;s order.
         </p>
 
         <label className="block">
@@ -170,7 +170,7 @@ export function OrderSplitDialog({
             className="mt-1 w-full h-14 rounded-xl border border-border bg-background px-3 text-2xl font-bold tabular-nums"
           />
           <span className="block text-sm text-muted-foreground mt-1">
-            {fromSupplier.name} keeps {keeps} {packNoun(line.unit, keeps)}.
+            {fromSupplier.name} keeps {keeps} {packNoun(line.unit, keeps, line.packName)}.
           </span>
         </label>
 

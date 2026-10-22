@@ -53,6 +53,10 @@ export const ingredientsTable = pgTable("ingredients", {
   // (the item's own count unit). NULL = the default rule. Read only through
   // resolveStockCheckUnit (@workspace/units). Migration 0204. Objective F.
   stockCheckUnit: text("stock_check_unit"),
+  // What the pack is called — 'box', 'roll', 'bag' … (PACK_NAMES in
+  // @workspace/units). NULL = "pack" / "bottle". Display only. Migration
+  // 0242, fix-queue #327.
+  packName: text("pack_name"),
   surplusPercent: numeric("surplus_percent", { precision: 8, scale: 2 }).notNull().default("10"),
   surplusMode: text("surplus_mode").notNull().default("percent"),
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),

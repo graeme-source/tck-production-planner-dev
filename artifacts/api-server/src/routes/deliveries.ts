@@ -184,6 +184,8 @@ router.get("/weekly", async (req, res) => {
         // stored as a pack count — in that case the display layer needs the
         // native unit to format pack-size descriptors like "(3 kg per pack)".
         nativeUnit: ingredientsTable.unit,
+        // What one pack is called — "box", "roll" (#327). Null = pack.
+        packName: ingredientsTable.packName,
         unitPrice: purchaseOrderLinesTable.unitPrice,
         checkedOff: purchaseOrderLinesTable.checkedOff,
         // Ticked as received at goods-in — the week view shows a green tick
@@ -480,6 +482,8 @@ router.get("/:id", async (req, res) => {
       // Native unit, as on /weekly — the receive dialog needs it to label
       // pack sizes on lines stored as a pack count ("packs").
       nativeUnit: ingredientsTable.unit,
+      // What one pack is called (#327).
+      packName: ingredientsTable.packName,
       unitPrice: purchaseOrderLinesTable.unitPrice,
       checkedOff: purchaseOrderLinesTable.checkedOff,
       goodsInChecked: purchaseOrderLinesTable.goodsInChecked,

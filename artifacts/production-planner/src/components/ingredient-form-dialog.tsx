@@ -19,6 +19,7 @@ import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loa
 import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
+import { PackNameField } from "@/components/pack-name-field";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import {
@@ -906,6 +907,12 @@ export function IngredientFormDialog({
               {errors.costPerPack && <span className="text-destructive text-xs">{errors.costPerPack.message}</span>}
             </div>
           </div>
+
+          {/* What the pack is called — box, roll, bag (#327). Autosaves on
+              its own endpoint, so it needs a saved ingredient. */}
+          {editingItem?.id
+            ? <PackNameField ingredientId={editingItem.id} />
+            : <p className="text-xs text-muted-foreground">Save the ingredient first to name its pack (box, roll, bag…).</p>}
 
           {liveCostPerUnit !== null && (
             <div className="rounded-lg bg-secondary/30 border border-border px-3.5 py-2.5 text-sm flex items-center justify-between">

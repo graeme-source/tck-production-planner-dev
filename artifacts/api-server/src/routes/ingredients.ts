@@ -382,6 +382,8 @@ router.get("/:id/kanban-card", async (req, res) => {
     supplierPartNumber: row.supplierPartNumber ?? null,
     location,
     qrCodeUrl: row.qrCodeUrl,
+    // What one pack is called — the card says "2 boxes" (#327).
+    packName: row.packName ?? null,
   });
 });
 

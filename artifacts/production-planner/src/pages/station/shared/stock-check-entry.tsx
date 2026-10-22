@@ -9,8 +9,12 @@
  * Two steps, so it's "almost impossible to get wrong" (Graeme, 19 Oct 2026 —
  * replacing the 15 Oct full-packs + opened-fraction entry, which was
  * "confusing"):
- *   1. One sentence, one button: "This stock check must be recorded in
- *      KILOGRAMS" → "I understand — record in kilograms".
+ *   1. One instruction, one button: "Weigh in KILOGRAMS" or "Count BOXES
+ *      (1 box = 12 kg)" — the pack's own name since #327, 22 Oct 2026 —
+ *      → "I understand — weigh in kilograms".
+ *   A count far off what the app expected (last count + deliveries −
+ *   usage), or zero straight after a positive count, asks "Are you sure?
+ *   We expected about 2 kg" and needs a second tap (#327).
  *   2. One big number field with the unit huge and bold right after it, a
  *      Dictate button (spoken numbers: "five hundred and fifty"), and one
  *      big "Enter stock" button. A plain-words read-back says what will be
@@ -31,7 +35,7 @@ import {
   formatStockCount,
   nativeToStockCount,
   resolveStockCheckUnit,
-  stockCheckPackLabel,
+  stockCheckInstruction,
   stockCheckUnitName,
   stockCheckUnitSymbol,
   stockCountToNative,
@@ -44,7 +48,7 @@ import { guardedFetch } from "@/hooks/use-guarded-action";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { DictateNumberButton } from "@/components/dictate-number-button";
 import { toastDraftBlocked } from "./prep-helpers";
-import { parseStockAmount, sanityMessage, stockCountSanity } from "./stock-count-units";
+import { expectedCountSanity, expectedSanityMessage, parseStockAmount, sanityMessage, stockCountSanity } from "./stock-count-units";
 
 export interface StockCheckEntryIngredient {
   id: number;
@@ -53,6 +57,8 @@ export interface StockCheckEntryIngredient {
   packWeight?: number | string | null;
   stockInPacks?: boolean | null;
   stockCheckUnit?: string | null;
+  /** What the pack is called (#327) — merged in from /api/stock-check-units. */
+  packName?: string | null;
 }
 
 interface CommonProps {
@@ -87,6 +93,20 @@ export function useStockCheckHistory(checkDate: string) {
   });
 }
 
+/** What the app expects this count to be (#327) — only ever shown in the
+ *  "Are you sure? We expected about 2 kg" question after a far-off count. */
+export function useStockCheckExpected(ingredientId: number) {
+  return useQuery<{ expectedNative: number | null; lastCountNative: number | null; coverage: string }>({
+    queryKey: ["stock-check-expected", ingredientId],
+    staleTime: 60_000,
+    queryFn: async () => {
+      const r = await fetch(`/api/stock-check-expected?ingredientId=${ingredientId}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`Expected stock failed to load (${r.status})`);
+      return r.json();
+    },
+  });
+}
+
 type StockCheckUnitRow = StockCheckUnitItem & { resolved: StockCheckUnit; options: StockCheckUnit[] };
 export const stockCheckUnitsQueryKey = ["stock-check-units"] as const;
 
@@ -108,7 +128,7 @@ export function useStockCheckUnits() {
 function withSetting(ing: StockCheckEntryIngredient, units: Record<string, StockCheckUnitRow> | undefined): StockCheckEntryIngredient {
   const row = units?.[String(ing.id)];
   if (!row) return ing;
-  return { ...ing, unit: row.unit ?? ing.unit, packWeight: row.packWeight ?? ing.packWeight, stockInPacks: row.stockInPacks, stockCheckUnit: row.stockCheckUnit };
+  return { ...ing, unit: row.unit ?? ing.unit, packWeight: row.packWeight ?? ing.packWeight, stockInPacks: row.stockInPacks, stockCheckUnit: row.stockCheckUnit, packName: row.packName ?? null };
 }
 
 /** "550 g", "12.4 kg" — a recorded (native) count, in the unit it's counted in. */
@@ -149,7 +169,8 @@ export function StockCheckEntryForm({
   const ingredient = withSetting(ingredientProp, unitsQ.data);
   const unit = resolveStockCheckUnit(ingredient);
   const unitName = stockCheckUnitName(unit, ingredient);
-  const packLabel = stockCheckPackLabel(unit, ingredient);
+  // "Count BOXES (1 box = 12 kg)" / "Weigh in KILOGRAMS" (#327).
+  const instruction = stockCheckInstruction(unit, ingredient);
 
   const [step, setStep] = useState<"unit" | "amount">("unit");
   const [raw, setRaw] = useState("");
@@ -157,6 +178,7 @@ export function StockCheckEntryForm({
   const [saving, setSaving] = useState(false);
   const amountRef = useNoScrollAutoFocus<HTMLInputElement>(step === "amount");
   const { data: history } = useStockCheckHistory(checkDate);
+  const { data: expected } = useStockCheckExpected(ingredientProp.id);
 
   // A different ingredient (the forced pop-up moving on) starts again at step 1.
   useEffect(() => { setStep("unit"); setRaw(""); setArmed(false); }, [ingredientProp.id]);
@@ -170,7 +192,20 @@ export function StockCheckEntryForm({
   const sanity = nativeQty != null
     ? stockCountSanity({ nativeQty, recentNative: history?.[String(ingredient.id)], planNeedNative })
     : { level: "ok" as const };
-  const warning = value != null ? sanityMessage(sanity, { value, unit, item: ingredient }) : null;
+  // First: far off what the app expected, or zero straight after a positive
+  // count (#327). Otherwise the older "way out against recent counts" check.
+  const expectedSanity = nativeQty != null
+    ? expectedCountSanity({
+        nativeQty,
+        expectedNative: expected?.expectedNative,
+        lastCountNative: expected?.lastCountNative,
+        usageTracked: expected != null && expected.coverage !== "untracked",
+        packWeight: Number(ingredient.packWeight) || null,
+      })
+    : { level: "ok" as const };
+  const warning = value != null
+    ? expectedSanityMessage(expectedSanity, { value, unit, item: ingredient }) ?? sanityMessage(sanity, { value, unit, item: ingredient })
+    : null;
   const invalid = raw.trim() !== "" && value == null;
   const canSave = nativeQty != null && !saving;
   const readBack = described ? [described.entered, ...described.extras].join(" = ") : null;
@@ -211,9 +246,9 @@ export function StockCheckEntryForm({
       <div className="space-y-6 text-center">
         <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Step 1 of 2</p>
         <div className="space-y-2">
-          <p className="text-2xl font-bold leading-snug">This stock check must be recorded in</p>
-          <p className="text-5xl sm:text-6xl font-black uppercase tracking-tight text-blue-700 dark:text-blue-300 break-words">{unitName}</p>
-          {packLabel && <p className="text-lg font-semibold text-muted-foreground">{packLabel}</p>}
+          <p className="text-2xl font-bold leading-snug">{instruction.verb}</p>
+          <p className="text-5xl sm:text-6xl font-black uppercase tracking-tight text-blue-700 dark:text-blue-300 break-words">{instruction.what}</p>
+          {instruction.detail && <p className="text-2xl font-bold text-foreground">({instruction.detail})</p>}
         </div>
         {currentNative != null && (
           <p className="text-sm text-muted-foreground">
@@ -225,7 +260,7 @@ export function StockCheckEntryForm({
           onClick={() => setStep("amount")}
           className="w-full min-h-[72px] rounded-2xl bg-blue-600 text-white text-xl font-bold hover:bg-blue-700 active:scale-[0.98] shadow-md px-4"
         >
-          I understand — record in {unitName}
+          I understand — {instruction.verb === "Count" ? "count" : "weigh"} in {unitName}
         </button>
         {onCancel && (
           <button type="button" onClick={onCancel} className="text-base text-muted-foreground underline underline-offset-2 py-2">
@@ -252,7 +287,7 @@ export function StockCheckEntryForm({
       </div>
 
       <label htmlFor={`sc-amount-${ingredient.id}`} className="block text-xl font-bold">
-        How much is there, in {unitName}?
+        {instruction.verb === "Count" ? `How many ${unitName} are there?` : `How much is there, in ${unitName}?`}
       </label>
       <div className="flex items-center gap-3">
         <input

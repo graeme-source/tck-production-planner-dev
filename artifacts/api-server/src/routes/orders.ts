@@ -176,6 +176,7 @@ router.get("/calculate", async (req, res) => {
       stockInPacks: ingredientsTable.stockInPacks,
       caseSizePacks: ingredientsTable.caseSizePacks,
       palletSize: ingredientsTable.palletSize,
+      packName: ingredientsTable.packName,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -458,6 +459,8 @@ router.get("/calculate", async (req, res) => {
       // stock-edit recompute re-applies both (packsAfterSplits).
       splitAwayPacks?: number;
       splitInPacks?: number;
+      /** What one pack is called — "box", "roll" (#327). Null = pack. */
+      packName?: string | null;
       splitsAway?: SplitView[];
       splitsIn?: SplitView[];
     }>;
@@ -630,6 +633,7 @@ router.get("/calculate", async (req, res) => {
       palletSize: positivePalletSize(detail.palletSize),
       orderInPallets,
       palletSizeMissing,
+      packName: detail.packName ?? null,
     });
   }
 
@@ -656,6 +660,7 @@ router.get("/calculate", async (req, res) => {
           stockInPacks: ingredientsTable.stockInPacks,
           palletSize: ingredientsTable.palletSize,
           stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+          packName: ingredientsTable.packName,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -742,6 +747,7 @@ router.get("/calculate", async (req, res) => {
         palletSize: positivePalletSize(d.palletSize),
         orderInPallets: kanbanUnitVal === "pallet",
         palletSizeMissing: kanbanPacks.warning === "pallet-size-missing",
+        packName: d.packName ?? null,
       });
     }
   }
@@ -920,6 +926,7 @@ router.get("/calculate", async (req, res) => {
       palletSizeMissing: false,
       splitInPacks: sp.packs,
       splitsIn: [sp],
+      packName: d.packName ?? null,
     });
   }
 

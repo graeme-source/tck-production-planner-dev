@@ -168,6 +168,8 @@ type OrderLine = SurplusLineFields & {
   // splitAwayPacks / splitInPacks (SurplusLineFields), for the line's notes.
   splitsAway?: OrderSplit[];
   splitsIn?: OrderSplit[];
+  /** What one pack is called — "box", "roll" (#327). Null = pack. */
+  packName?: string | null;
 };
 
 type SupplierOrder = {
@@ -2437,13 +2439,13 @@ export default function Orders() {
                             {(line.splitsIn ?? []).map(sp => (
                               <span key={`in-${sp.id}`} className="flex flex-wrap items-center gap-1.5 mt-1">
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-300">
-                                  <Scissors className="w-3 h-3" /> {sp.label} — {sp.packs} {packNoun(line.unit, sp.packs)}
+                                  <Scissors className="w-3 h-3" /> {sp.label} — {sp.packs} {packNoun(line.unit, sp.packs, line.packName)}
                                 </span>
                                 <button
                                   type="button"
                                   disabled={cancelSplit.isPending}
                                   onClick={() => {
-                                    if (window.confirm(`Cancel this split? ${sp.packs} ${packNoun(line.unit, sp.packs)} of ${line.ingredientName} won't be ordered from ${so.supplier.name}.`)) cancelSplit.mutate(sp.id);
+                                    if (window.confirm(`Cancel this split? ${sp.packs} ${packNoun(line.unit, sp.packs, line.packName)} of ${line.ingredientName} won't be ordered from ${so.supplier.name}.`)) cancelSplit.mutate(sp.id);
                                   }}
                                   className="text-xs font-medium underline underline-offset-2 text-muted-foreground hover:text-destructive"
                                 >
@@ -2454,7 +2456,7 @@ export default function Orders() {
                             {(line.splitsAway ?? []).map(sp => (
                               <span key={`away-${sp.id}`} className="flex items-center gap-1 mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">
                                 <Scissors className="w-3 h-3" />
-                                {sp.packs} {packNoun(line.unit, sp.packs)} split to {sp.targetSupplierName}, {splitDateLabel(sp.targetOrderDate)}
+                                {sp.packs} {packNoun(line.unit, sp.packs, line.packName)} split to {sp.targetSupplierName}, {splitDateLabel(sp.targetOrderDate)}
                                 {sp.status === "placed" ? " (ordered)" : ""}
                               </span>
                             ))}
@@ -2611,7 +2613,7 @@ export default function Orders() {
                           >
                             {line.isMisc ? "—"
                               : line.stockInPacks && line.packWeight > 0
-                              ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight))}`
+                              ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight), line.packName)}`
                               : `${line.surplusTarget.toLocaleString()} ${line.unit}`}
                             {/* Which surplus applied and why — always shown
                                 when the delivery day chose it. */}
@@ -2624,7 +2626,7 @@ export default function Orders() {
                           <td className="p-3 text-right tabular-nums">
                             {line.isMisc ? "—"
                               : line.stockInPacks && line.packWeight > 0
-                              ? `${Math.ceil(line.totalRequired / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.totalRequired / line.packWeight))}`
+                              ? `${Math.ceil(line.totalRequired / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.totalRequired / line.packWeight), line.packName)}`
                               : `${line.totalRequired.toLocaleString()} ${line.unit}`}
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
@@ -3297,6 +3299,7 @@ export default function Orders() {
               ingredientName: splitDialog.line.ingredientName,
               packs: splitDialog.line.editedPacks,
               unit: splitDialog.line.unit,
+              packName: splitDialog.line.packName ?? null,
             }}
             fromSupplier={{ id: splitDialog.supplierId, name: splitDialog.supplierName }}
             planId={selectedPlanId}
