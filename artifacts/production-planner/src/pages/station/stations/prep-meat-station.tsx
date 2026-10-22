@@ -14,9 +14,9 @@ import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, toKg, toastDraftBlocked } from "../shared/prep-helpers";
-import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { prepTargetOf } from "../shared/stock-check-alarm";
-import { PrepSubNav, usePrepByRecipe } from "./prep-hub";
+import { usePrepByRecipe } from "./prep-hub";
+import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
@@ -75,6 +75,8 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [replenishTarget, setReplenishTarget] = useState<ReplenishTarget | null>(null);
   const search = useSearch();
   const isDirect = new URLSearchParams(search).get("direct") === "1";
+  // Stock Check is the fourth prep tab (?tab=stock-check) — Graeme, 22 Oct.
+  const stockTabOpen = usePrepStockTabOpen();
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
@@ -170,6 +172,17 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   // Prepping For hub use, fed the same responses (13 Oct).
   const progress = rawMeatProgress({ recipes, completions });
   const overallPct = progressPct(progress);
+  const prepTarget = prepTargetOf(nextPlan, plan);
+  const tabs = (
+    <PrepSectionTabs
+      planId={plan.id}
+      current="prep_meat"
+      progressPlanId={targetPlanId ?? plan.id}
+      currentProgress={noFuturePlan ? null : progress}
+      checkDate={checkDate}
+      prepTarget={prepTarget}
+    />
+  );
 
   // Auto-select first recipe
   useEffect(() => {
@@ -216,7 +229,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   if (noFuturePlan) {
     return (
       <div className="space-y-4">
-        <PrepSubNav planId={plan.id} current="prep_meat" />
+        {tabs}
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <Beef className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
           <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
@@ -229,10 +242,19 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     );
   }
 
+  if (stockTabOpen) {
+    return (
+      <div className="space-y-4">
+        {tabs}
+        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />
+      </div>
+    );
+  }
+
   if (recipes.length === 0) {
     return (
       <div className="space-y-4">
-        <StockCheckStatusPanel checkDate={checkDate} prepTarget={prepTargetOf(nextPlan, plan)} />
+        {tabs}
         <div className="bg-card border border-border rounded-xl p-8 text-center text-muted-foreground">
           <p className="font-medium">No raw meat ingredients to prep</p>
           <p className="text-sm mt-1">Set ingredient category to "raw_meat" in the ingredients library</p>
@@ -269,9 +291,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
-      {/* Stock check records for today — top of every prep screen; flashes
-          red from 14:45 on a prep day until they're all in. */}
-      <StockCheckStatusPanel checkDate={checkDate} prepTarget={prepTargetOf(nextPlan, plan)} />
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
@@ -281,7 +300,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
       )}
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <PrepSubNav planId={plan.id} current="prep_meat" />
+      {tabs}
       {sopViewer.dialog}
       {replenishTarget && (
         <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />

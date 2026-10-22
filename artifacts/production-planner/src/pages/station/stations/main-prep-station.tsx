@@ -20,11 +20,10 @@ import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked } from "../shared/prep-helpers";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { MixExtraNote } from "../shared/mix-extra-note";
-import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { StockCheckButton, StockCheckEntryForm } from "../shared/stock-check-entry";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
-import { PrepSubNav } from "./prep-hub";
+import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { mainPrepProgress, progressPct, tasksLine } from "@/lib/prep-progress";
@@ -219,6 +218,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   // the user's intended plan into an unrelated future one.
   const search = useSearch();
   const isDirect = new URLSearchParams(search).get("direct") === "1";
+  // Stock Check is the fourth prep tab (?tab=stock-check) — Graeme, 22 Oct.
+  const stockTabOpen = usePrepStockTabOpen();
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(isDirect ? undefined : plan.planDate, "prep");
   const nextPlan = isDirect ? null : (nextPlanData as NextActivePlan | null);
   const noFuturePlan = !isDirect && !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
@@ -669,6 +670,17 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const progress = mainPrepProgress({ ingredients, completions, deferrals, linkedItems, linkedDone });
   const overallPct = progressPct(progress);
   const deferredTinsTotal = progress.deferredUnits ?? 0;
+  const prepTarget = prepTargetOf(nextPlan, plan);
+  const tabs = (
+    <PrepSectionTabs
+      planId={plan.id}
+      current="main_prep"
+      progressPlanId={targetPlanId}
+      currentProgress={noFuturePlan ? null : progress}
+      checkDate={checkDate}
+      prepTarget={prepTarget}
+    />
+  );
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -677,7 +689,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   if (noFuturePlan) {
     return (
       <div className="space-y-4">
-        <PrepSubNav planId={plan.id} current="main_prep" />
+        {tabs}
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <Salad className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
           <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
@@ -708,7 +720,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   // forced modal (below) only appears to the user who finished prepping the
   // ingredient — other users on the same station keep working uninterrupted.
   // Every pending check is still visible (and actionable) in the non-blocking
-  // StockCheckStatusPanel above, so nothing gets missed.
+  // Stock Check tab, so nothing gets missed.
   const allPendingStockChecks = ingredients.filter(ing => {
     const s = ingredientDoneStatus(ing);
     if (!(stockCheckActiveToday(ing) && s.allTinsDone && !s.stockSaved)) return false;
@@ -724,11 +736,17 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     : allPendingStockChecks.filter(ing => lastCompletedByUserId(ing) === currentUserId);
   const activeStockCheckModalIng = pendingStockChecks[0] ?? null;
 
+  if (stockTabOpen) {
+    return (
+      <div className="space-y-4">
+        {tabs}
+        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {/* Stock check records for today — top of every prep screen; flashes
-          red from 14:45 on a prep day until they're all in. */}
-      <StockCheckStatusPanel checkDate={checkDate} prepTarget={prepTargetOf(nextPlan, plan)} />
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
@@ -743,7 +761,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
         isLoading={false}
       />
 
-      <PrepSubNav planId={plan.id} current="main_prep" />
+      {tabs}
 
       {replenishTarget && (
         <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
@@ -768,7 +786,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
               next.add(id);
               return next;
             });
-            toast({ title: "Stock check skipped", description: "You can still log it from the Stock Check Status panel." });
+            toast({ title: "Stock check skipped", description: "You can still log it from the Stock Check tab." });
           }}
           remainingCount={pendingStockChecks.length}
         />
@@ -1573,7 +1591,7 @@ function ForceStockCheckModal({
             type="button"
             onClick={onSkip}
             aria-label="Skip for now"
-            title="Skip this stock check for now — you can still log it from the Stock Check Status panel"
+            title="Skip this stock check for now — you can still log it from the Stock Check tab"
             className="w-11 h-11 -mr-2 -mt-1 rounded-full flex items-center justify-center text-muted-foreground hover:bg-secondary"
           >
             <XIcon className="w-6 h-6" />

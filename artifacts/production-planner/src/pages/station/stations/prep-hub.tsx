@@ -18,43 +18,6 @@ import { SubRecipeMakeFlow } from "./prep-bases-station";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { progressPct, tasksLine } from "@/lib/prep-progress";
 
-const PREP_SUB_STATIONS = [
-  { key: "main_prep",  label: "Main Prep",      short: "Main",   icon: ClipboardList, activeClass: "bg-emerald-500 dark:bg-emerald-600 text-white", inactiveClass: "text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/40" },
-  { key: "prep_bases", label: "Bases & Sauces",  short: "Bases",  icon: Layers,        activeClass: "bg-yellow-500 dark:bg-yellow-600 text-white",  inactiveClass: "text-yellow-700 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-950/40" },
-  { key: "prep_meat",  label: "Raw Meat",        short: "Meat",   icon: Beef,          activeClass: "bg-rose-500 dark:bg-rose-600 text-white",      inactiveClass: "text-rose-700 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40" },
-] as const;
-
-export function PrepSubNav({ planId, current }: { planId: number; current: string }) {
-  const [, navigate] = useLocation();
-  const search = useSearch();
-  // Preserve ?direct=1 across sub-station switches so the calendar-card flow
-  // stays anchored to the URL plan id instead of falling back to the
-  // auto-route to "next active plan".
-  const qs = search ? `?${search.replace(/^\?/, "")}` : "";
-  return (
-    <div className="flex items-center gap-1 bg-card border border-border rounded-xl p-1.5">
-      {PREP_SUB_STATIONS.map(s => {
-        const Icon = s.icon;
-        const isActive = s.key === current;
-        return (
-          <button
-            key={s.key}
-            onClick={() => navigate(`/plans/${planId}/station/${s.key}${qs}`)}
-            className={cn(
-              "flex flex-1 items-center justify-center gap-2 px-3 py-2 rounded-lg text-base font-medium transition-all",
-              isActive ? s.activeClass : s.inactiveClass
-            )}
-          >
-            <Icon className="w-4 h-4 flex-shrink-0" />
-            <span className="hidden lg:inline truncate">{s.label}</span>
-            <span className="hidden sm:inline lg:hidden truncate">{s.short}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
 interface PrepFullScreenItem {
   id: string;
   name: string;
