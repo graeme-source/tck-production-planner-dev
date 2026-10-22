@@ -1,25 +1,35 @@
 /**
- * What the website should say about each product's UPF % — pure decisions,
- * no I/O. The runner (upf-shopify-sync.ts) feeds it the live recipe rollups,
- * the recipe → Shopify product links and what we last wrote, and applies the
- * writes it returns. Objective B.
+ * What the website should say about each product — UPF %, calories and
+ * protein per portion — as pure decisions, no I/O. The runner
+ * (upf-shopify-sync.ts) feeds it the live recipe facts, the recipe →
+ * Shopify product links and what we last wrote, and applies the writes it
+ * returns. Objective B.
  *
  * Rules (Graeme, 2026-10-22):
- *  - The planner is the source of truth: a product shows its recipe's UPF %
- *    by weight, exactly as the Recipes page computes it.
- *  - Never publish a number the planner itself doubts: any unclassified
- *    ingredient (the "?" on the pill) holds the product back — the website
- *    then shows nothing rather than a wrong figure.
- *  - A product linked to more than one recipe has no single answer, so it
- *    is held back too.
- *  - A product that's no longer linked to any recipe loses its number.
+ *  - The planner is the source of truth: each figure is exactly what the
+ *    Recipes page computes (UPF rollup; nutrition panel per portion).
+ *  - Never publish a figure the planner itself doubts. Any unclassified
+ *    ingredient holds back the UPF %; an ingredient missing its kcal (or
+ *    protein) holds back that figure. The website then shows nothing for
+ *    it rather than a wrong number. Each figure is held back on its own.
+ *  - A product linked to more than one recipe has no single answer, so all
+ *    its figures are held back.
+ *  - A product that's no longer linked to any recipe loses its figures.
  */
 
-export interface RecipeUpfInput {
+export const WEBSITE_METRICS = ["upf", "kcal", "protein"] as const;
+export type WebsiteMetric = (typeof WEBSITE_METRICS)[number];
+
+export interface RecipeFacts {
   recipeId: number;
   name: string;
   upfPercent: number | null;
   unclassifiedIngredients: string[];
+  kcalPerPortion: number | null;
+  proteinPerPortion: number | null;
+  /** Ingredients with no kcal / no protein figure. */
+  missingKcal: string[];
+  missingProtein: string[];
 }
 
 export interface ProductLink {
@@ -28,30 +38,30 @@ export interface ProductLink {
   recipeId: number;
 }
 
-/** What we last wrote for a product (NULL percent = removed / not there). */
+/** What we last wrote for a product (null = removed / not there). */
 export interface LedgerEntry {
   productGid: string;
   productTitle: string | null;
-  publishedPercent: number | null;
+  published: Record<WebsiteMetric, number | null>;
 }
 
-export type UpfSyncStatus =
-  | "published"
-  | "held_unclassified"
-  | "held_no_data"
-  | "held_several_recipes"
-  | "unlinked";
+export type ProductStatus = "linked" | "several_recipes" | "unlinked";
 
-export interface UpfDecision {
+export interface MetricDecision {
+  /** The figure the website should show; null = show nothing. */
+  value: number | null;
+  /** Why it's held back (plain English), when value is null. */
+  heldBecause: string | null;
+  /** True when Shopify needs a write (set or remove) to match. */
+  needsWrite: boolean;
+}
+
+export interface ProductDecision {
   productGid: string;
   productTitle: string | null;
   recipeNames: string[];
-  status: UpfSyncStatus;
-  /** The number the website should show; null = show nothing. */
-  percent: number | null;
-  unclassified: string[];
-  /** True when Shopify needs a write (set or remove) to match. */
-  needsWrite: boolean;
+  status: ProductStatus;
+  metrics: Record<WebsiteMetric, MetricDecision>;
 }
 
 /**
@@ -64,11 +74,34 @@ export function websiteUpfPercent(percent: number): number {
   return rounded === 0 ? 0.1 : Math.min(rounded, 100);
 }
 
-export function planUpfSync(
-  recipes: RecipeUpfInput[],
+const list = (names: string[]) => [...names].sort().join(", ");
+
+/** Each figure for one recipe: the value, or why it's held back. */
+export function recipeFigures(r: RecipeFacts): Record<WebsiteMetric, { value: number | null; heldBecause: string | null }> {
+  const held = (why: string) => ({ value: null, heldBecause: why });
+  const upf = r.upfPercent == null
+    ? held("the recipe has no weighable ingredients")
+    : r.unclassifiedIngredients.length > 0
+      ? held(`not yet classified: ${list(r.unclassifiedIngredients)}`)
+      : { value: websiteUpfPercent(r.upfPercent), heldBecause: null };
+  const kcal = r.missingKcal.length > 0
+    ? held(`no calories on: ${list(r.missingKcal)}`)
+    : r.kcalPerPortion == null || r.kcalPerPortion <= 0
+      ? held("no portion weight / nutrition yet")
+      : { value: Math.round(r.kcalPerPortion), heldBecause: null };
+  const protein = r.missingProtein.length > 0
+    ? held(`no protein on: ${list(r.missingProtein)}`)
+    : r.proteinPerPortion == null || r.proteinPerPortion < 0 || r.kcalPerPortion == null || r.kcalPerPortion <= 0
+      ? held("no portion weight / nutrition yet")
+      : { value: Math.round(r.proteinPerPortion * 10) / 10, heldBecause: null };
+  return { upf, kcal, protein };
+}
+
+export function planWebsiteSync(
+  recipes: RecipeFacts[],
   links: ProductLink[],
   ledger: LedgerEntry[],
-): UpfDecision[] {
+): ProductDecision[] {
   const recipeById = new Map(recipes.map(r => [r.recipeId, r]));
   const ledgerByGid = new Map(ledger.map(l => [l.productGid, l]));
 
@@ -79,41 +112,39 @@ export function planUpfSync(
     byProduct.set(link.productGid, p);
   }
 
-  const decide = (productGid: string, productTitle: string | null, recipeNames: string[], status: UpfSyncStatus, percent: number | null, unclassified: string[] = []): UpfDecision => {
-    const last = ledgerByGid.get(productGid);
-    // No ledger row = we don't know what Shopify holds, so write to be sure.
-    const needsWrite = !last || last.publishedPercent !== percent;
-    return { productGid, productTitle, recipeNames, status, percent, unclassified, needsWrite };
+  const metricsFor = (gid: string, figures: Record<WebsiteMetric, { value: number | null; heldBecause: string | null }>): Record<WebsiteMetric, MetricDecision> => {
+    const last = ledgerByGid.get(gid);
+    const out = {} as Record<WebsiteMetric, MetricDecision>;
+    for (const m of WEBSITE_METRICS) {
+      // No ledger row = we don't know what Shopify holds, so write to be sure.
+      out[m] = { ...figures[m], needsWrite: !last || last.published[m] !== figures[m].value };
+    }
+    return out;
   };
+  const allHeld = (why: string) =>
+    Object.fromEntries(WEBSITE_METRICS.map(m => [m, { value: null, heldBecause: why }])) as Record<WebsiteMetric, { value: null; heldBecause: string }>;
 
-  const decisions: UpfDecision[] = [];
+  const decisions: ProductDecision[] = [];
   for (const [gid, p] of byProduct) {
-    const linked = [...p.recipeIds].map(id => recipeById.get(id)).filter((r): r is RecipeUpfInput => !!r);
-    const names = linked.map(r => r.name).sort();
+    const linked = [...p.recipeIds].map(id => recipeById.get(id)).filter((r): r is RecipeFacts => !!r);
+    const recipeNames = linked.map(r => r.name).sort();
     if (linked.length === 0) {
-      decisions.push(decide(gid, p.title, [], "unlinked", null));
+      decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "unlinked", metrics: metricsFor(gid, allHeld("not linked to a recipe")) });
     } else if (linked.length > 1) {
-      decisions.push(decide(gid, p.title, names, "held_several_recipes", null));
+      decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "several_recipes", metrics: metricsFor(gid, allHeld(`linked to more than one recipe (${recipeNames.join(", ")})`)) });
     } else {
-      const r = linked[0];
-      if (r.upfPercent == null) decisions.push(decide(gid, p.title, names, "held_no_data", null));
-      else if (r.unclassifiedIngredients.length > 0) decisions.push(decide(gid, p.title, names, "held_unclassified", null, [...r.unclassifiedIngredients].sort()));
-      else decisions.push(decide(gid, p.title, names, "published", websiteUpfPercent(r.upfPercent)));
+      decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "linked", metrics: metricsFor(gid, recipeFigures(linked[0])) });
     }
   }
 
   // Products we wrote before that no longer link to any recipe.
   for (const l of ledger) {
     if (byProduct.has(l.productGid)) continue;
-    decisions.push({
-      productGid: l.productGid,
-      productTitle: l.productTitle,
-      recipeNames: [],
-      status: "unlinked",
-      percent: null,
-      unclassified: [],
-      needsWrite: l.publishedPercent !== null,
-    });
+    const metrics = {} as Record<WebsiteMetric, MetricDecision>;
+    for (const m of WEBSITE_METRICS) {
+      metrics[m] = { value: null, heldBecause: "not linked to a recipe", needsWrite: l.published[m] !== null };
+    }
+    decisions.push({ productGid: l.productGid, productTitle: l.productTitle, recipeNames: [], status: "unlinked", metrics });
   }
 
   return decisions.sort((a, b) => (a.productTitle ?? "").localeCompare(b.productTitle ?? ""));

@@ -1,7 +1,7 @@
 /**
- * "UPF on the website" — what each Shopify product's UPF row says, pushed
- * automatically from these recipes every 10 minutes (api-server
- * lib/upf-shopify-sync.ts). Shown on the Recipes page so a change to a
+ * "On the website" — what each Shopify product's menu card shows (UPF %,
+ * calories and protein per portion), pushed automatically from these
+ * recipes every 10 minutes (api-server lib/upf-shopify-sync.ts). Shown on the Recipes page so a change to a
  * recipe can be followed through to the website. Objective B.
  */
 import { useState } from "react";
@@ -13,14 +13,20 @@ import { cn } from "@/lib/utils";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const KEY = ["upf", "shopify-sync"];
 
+interface Figure {
+  value: number | null;
+  published: number | null;
+  heldBecause: string | null;
+}
+
 interface SyncProduct {
   productId: string;
   productTitle: string | null;
   recipeNames: string | null;
-  status: "published" | "held_unclassified" | "held_no_data" | "held_several_recipes";
-  upfPercent: number | null;
-  publishedPercent: number | null;
-  unclassified: string[];
+  status: "linked" | "several_recipes";
+  upf: Figure;
+  kcal: Figure;
+  protein: Figure;
   lastError: string | null;
   checkedAt: string;
   writtenAt: string | null;
@@ -46,24 +52,18 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /** Same wording the website uses, so what you read here is what customers see. */
-function websiteLabel(p: number): string {
+function upfLabel(p: number): string {
   if (p <= 0) return "UPF free";
   if (p < 1) return "<1% UPF";
   if (p < 10) return `${p.toFixed(1)}% UPF`;
   return `${Math.round(p)}% UPF`;
 }
 
-function whyHeld(p: SyncProduct): string {
-  switch (p.status) {
-    case "held_unclassified":
-      return `Not shown — not yet classified: ${p.unclassified.join(", ")}`;
-    case "held_several_recipes":
-      return `Not shown — this product is linked to more than one recipe (${p.recipeNames})`;
-    case "held_no_data":
-      return "Not shown — the recipe has no weighable ingredients";
-    default:
-      return "";
+function FigureCell({ figure, label }: { figure: Figure; label: (v: number) => string }) {
+  if (figure.value == null) {
+    return <span className="text-xs text-muted-foreground">Not shown — {figure.heldBecause}</span>;
   }
+  return <span className="font-medium">{label(figure.value)}</span>;
 }
 
 function ago(iso: string | null | undefined): string {
@@ -89,8 +89,8 @@ export function UpfWebsiteSync() {
 
   if (q.isLoading || q.error || !q.data) return null;
   const { products, writesBlocked } = q.data;
-  const shown = products.filter(p => p.status === "published");
-  const held = products.filter(p => p.status !== "published");
+  const complete = products.filter(p => p.upf.value != null && p.kcal.value != null && p.protein.value != null);
+  const incomplete = products.length - complete.length;
   const failing = products.filter(p => p.lastError);
   const lastCheck = products.reduce<string | null>((a, p) => (!a || p.checkedAt > a ? p.checkedAt : a), null);
 
@@ -99,10 +99,10 @@ export function UpfWebsiteSync() {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-2 font-semibold text-sm min-h-11" aria-expanded={open}>
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          <Globe className="w-4 h-4 text-primary" /> UPF on the website
+          <Globe className="w-4 h-4 text-primary" /> UPF, calories &amp; protein on the website
         </button>
         <span className="text-sm text-muted-foreground">
-          {shown.length} showing · {held.length} held back · updates every 10 min · last check {ago(lastCheck)}
+          {complete.length} complete · {incomplete} with a figure held back · updates every 10 min · last check {ago(lastCheck)}
         </span>
         {writesBlocked && <span className="text-xs text-amber-700">Shopify writes are off on this server — nothing is sent.</span>}
         {failing.length > 0 && <span className="text-xs text-red-700">{failing.length} product{failing.length === 1 ? "" : "s"} failed to update</span>}
@@ -130,7 +130,9 @@ export function UpfWebsiteSync() {
                 <tr className="text-left">
                   <th className="px-4 py-2 font-medium">Shopify product</th>
                   <th className="px-4 py-2 font-medium">Recipe</th>
-                  <th className="px-4 py-2 font-medium">Website shows</th>
+                  <th className="px-4 py-2 font-medium">UPF</th>
+                  <th className="px-4 py-2 font-medium">Calories / portion</th>
+                  <th className="px-4 py-2 font-medium">Protein / portion</th>
                   <th className="px-4 py-2 font-medium">Last sent</th>
                 </tr>
               </thead>
@@ -140,13 +142,17 @@ export function UpfWebsiteSync() {
                     <td className="px-4 py-2">{p.productTitle}</td>
                     <td className="px-4 py-2 text-muted-foreground">{p.recipeNames}</td>
                     <td className="px-4 py-2">
-                      {p.status === "published" && p.upfPercent != null ? (
-                        <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-bold uppercase", p.upfPercent <= 0 ? "bg-green-100 text-green-700" : "bg-stone-100 text-stone-700")}>
-                          {websiteLabel(p.upfPercent)}
+                      {p.upf.value != null ? (
+                        <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-bold uppercase", p.upf.value <= 0 ? "bg-green-100 text-green-700" : "bg-stone-100 text-stone-700")}>
+                          {upfLabel(p.upf.value)}
                         </span>
                       ) : (
-                        <span className="text-xs text-muted-foreground">{whyHeld(p)}</span>
+                        <FigureCell figure={p.upf} label={upfLabel} />
                       )}
+                    </td>
+                    <td className="px-4 py-2"><FigureCell figure={p.kcal} label={v => `${Math.round(v)} kcal`} /></td>
+                    <td className="px-4 py-2">
+                      <FigureCell figure={p.protein} label={v => `${Math.round(v)} g`} />
                       {p.lastError && <p className="text-xs text-red-700 mt-1">Shopify: {p.lastError}</p>}
                     </td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{ago(p.writtenAt)}</td>

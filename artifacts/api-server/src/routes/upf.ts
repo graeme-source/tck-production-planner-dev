@@ -6,8 +6,9 @@
  *                            total ingredient weight, resolved through
  *                            nested sub-recipes), plus which ingredients
  *                            still need classification.
- *   GET  /api/upf/shopify-sync      — what the website shows per Shopify
- *                                    product (custom.upf_percent) and why
+ *   GET  /api/upf/shopify-sync      — what the menu card shows per Shopify
+ *                                    product (UPF %, kcal and protein per
+ *                                    portion) and why any figure is held back
  *   POST /api/upf/shopify-sync/run  — push to Shopify now (manager/admin);
  *                                    otherwise it runs every 10 minutes
  *   POST /api/upf/analyze  — classify ingredients on the NOVA scale with
@@ -275,18 +276,25 @@ router.post("/analyze", requireAdminOrManager, async (req: Request, res: Respons
   }
 });
 
-// UPF % on the website (lib/upf-shopify-sync.ts, migration 0214).
+// UPF %, calories and protein on the website (lib/upf-shopify-sync.ts,
+// migration 0214).
 router.get("/shopify-sync", async (_req: Request, res: Response) => {
   try {
     const r = await db.execute<{
       product_gid: string; product_title: string | null; recipe_names: string | null; status: string;
-      upf_percent: string | null; published_percent: string | null; unclassified: string | null;
+      upf_percent: string | null; upf_published: string | null; upf_held: string | null;
+      kcal_per_portion: number | null; kcal_published: number | null; kcal_held: string | null;
+      protein_per_portion: string | null; protein_published: string | null; protein_held: string | null;
       last_error: string | null; checked_at: string; written_at: string | null;
     }>(sql`
-      SELECT product_gid, product_title, recipe_names, status, upf_percent::text, published_percent::text,
-             unclassified, last_error, checked_at, written_at
+      SELECT product_gid, product_title, recipe_names, status,
+             upf_percent::text, upf_published::text, upf_held,
+             kcal_per_portion, kcal_published, kcal_held,
+             protein_per_portion::text, protein_published::text, protein_held,
+             last_error, checked_at, written_at
         FROM upf_shopify_sync WHERE status <> 'unlinked' ORDER BY product_title
     `);
+    const num = (v: string | number | null) => (v == null ? null : Number(v));
     res.json({
       writesBlocked: shopifyWritesBlocked(),
       lastRun: lastUpfSyncRun(),
@@ -295,9 +303,9 @@ router.get("/shopify-sync", async (_req: Request, res: Response) => {
         productTitle: x.product_title,
         recipeNames: x.recipe_names,
         status: x.status,
-        upfPercent: x.upf_percent == null ? null : Number(x.upf_percent),
-        publishedPercent: x.published_percent == null ? null : Number(x.published_percent),
-        unclassified: x.unclassified ? x.unclassified.split(", ") : [],
+        upf: { value: num(x.upf_percent), published: num(x.upf_published), heldBecause: x.upf_held },
+        kcal: { value: num(x.kcal_per_portion), published: num(x.kcal_published), heldBecause: x.kcal_held },
+        protein: { value: num(x.protein_per_portion), published: num(x.protein_published), heldBecause: x.protein_held },
         lastError: x.last_error,
         checkedAt: x.checked_at,
         writtenAt: x.written_at,
@@ -305,7 +313,7 @@ router.get("/shopify-sync", async (_req: Request, res: Response) => {
     });
   } catch (err) {
     console.error("[upf] shopify-sync status failed:", err);
-    res.status(500).json({ error: "Couldn't load the website UPF status" });
+    res.status(500).json({ error: "Couldn't load what the website shows" });
   }
 });
 

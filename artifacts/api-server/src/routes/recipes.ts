@@ -1219,72 +1219,79 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   };
 }
 
+/** A recipe's nutrition panel (per 100 g and per portion) — the body of
+ *  GET /:id/nutritionals, also used by the website sync
+ *  (lib/upf-shopify-sync.ts) so both always agree. */
+export async function computeRecipeNutritionals(recipeId: number) {
+  const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
+    await gatherRecipeIngredients(recipeId);
+
+  const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
+  // Ingredient quantities sum to the recipe-size weight (servings portions),
+  // not a per-batch weight, so divide by servings — not portionsPerBatch.
+  const portionDivisor = servings > 0 ? servings : 1;
+  const portionWeightG = Math.round(cookedWeightG / portionDivisor);
+  const declaredPackWeightG = Math.round(portionWeightG * packSize);
+
+  const per100g: Record<NutrientKey, number | null> = {
+    energyKj: null, energyKcal: null, fat: null, saturates: null,
+    carbohydrate: null, sugars: null, fibre: null, protein: null, salt: null,
+  };
+
+  if (totalWeightG > 0) {
+    for (const key of NUTRIENT_KEYS) {
+      let total = 0;
+      let allNull = true;
+      for (const item of items) {
+        const val = item.nutrients[key];
+        if (val !== null) {
+          allNull = false;
+          total += (val / 100) * item.quantityG;
+        }
+      }
+      if (!allNull) {
+        per100g[key] = Math.round((total / totalWeightG) * 100 * 100) / 100;
+      }
+    }
+  }
+
+  const perPortion: Record<NutrientKey, number | null> = { ...per100g };
+  if (portionWeightG > 0) {
+    for (const key of NUTRIENT_KEYS) {
+      if (per100g[key] !== null) {
+        perPortion[key] = Math.round((per100g[key]! / 100) * portionWeightG * 100) / 100;
+      }
+    }
+  }
+
+  return {
+    totalRawWeightG: Math.round(totalWeightG),
+    cookingLossPercent,
+    cookedWeightG: Math.round(cookedWeightG),
+    portionsPerBatch,
+    servings,
+    portionWeightG,
+    packSize,
+    declaredPackWeightG,
+    per100g,
+    perPortion,
+    completeness: {
+      totalIngredients: items.length,
+      missingNutritionals,
+      missingNutritionalDetail,
+      missingDeclarations,
+      missingDeclarationDetail,
+      isComplete: missingNutritionals.length === 0 && missingDeclarations.length === 0,
+    },
+  };
+}
+
 router.get("/:id/nutritionals", async (req, res) => {
   const parsed = RecipeIdParams.safeParse({ id: req.params.id });
   if (!parsed.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
 
   try {
-    const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
-      await gatherRecipeIngredients(parsed.data.id);
-
-    const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
-    // Ingredient quantities sum to the recipe-size weight (servings portions),
-    // not a per-batch weight, so divide by servings — not portionsPerBatch.
-    const portionDivisor = servings > 0 ? servings : 1;
-    const portionWeightG = Math.round(cookedWeightG / portionDivisor);
-    const declaredPackWeightG = Math.round(portionWeightG * packSize);
-
-    const per100g: Record<NutrientKey, number | null> = {
-      energyKj: null, energyKcal: null, fat: null, saturates: null,
-      carbohydrate: null, sugars: null, fibre: null, protein: null, salt: null,
-    };
-
-    if (totalWeightG > 0) {
-      for (const key of NUTRIENT_KEYS) {
-        let total = 0;
-        let allNull = true;
-        for (const item of items) {
-          const val = item.nutrients[key];
-          if (val !== null) {
-            allNull = false;
-            total += (val / 100) * item.quantityG;
-          }
-        }
-        if (!allNull) {
-          per100g[key] = Math.round((total / totalWeightG) * 100 * 100) / 100;
-        }
-      }
-    }
-
-    const perPortion: Record<NutrientKey, number | null> = { ...per100g };
-    if (portionWeightG > 0) {
-      for (const key of NUTRIENT_KEYS) {
-        if (per100g[key] !== null) {
-          perPortion[key] = Math.round((per100g[key]! / 100) * portionWeightG * 100) / 100;
-        }
-      }
-    }
-
-    res.json({
-      totalRawWeightG: Math.round(totalWeightG),
-      cookingLossPercent,
-      cookedWeightG: Math.round(cookedWeightG),
-      portionsPerBatch,
-      servings,
-      portionWeightG,
-      packSize,
-      declaredPackWeightG,
-      per100g,
-      perPortion,
-      completeness: {
-        totalIngredients: items.length,
-        missingNutritionals,
-        missingNutritionalDetail,
-        missingDeclarations,
-        missingDeclarationDetail,
-        isComplete: missingNutritionals.length === 0 && missingDeclarations.length === 0,
-      },
-    });
+    res.json(await computeRecipeNutritionals(parsed.data.id));
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     if (msg === "Recipe not found") { res.status(404).json({ error: msg }); return; }
