@@ -3443,6 +3443,12 @@ async function startup() {
     const { startSalesDriverJobs } = await import("./lib/sales-drivers/collect");
     startSalesDriverJobs();
 
+    // UPF % → Shopify product metafield custom.upf_percent every 10 minutes,
+    // so the website's UPF row follows the recipes. Writes only changed
+    // products; blocked on staging / BLOCK_SHOPIFY_WRITES.
+    const { startUpfShopifySync } = await import("./lib/upf-shopify-sync");
+    startUpfShopifySync();
+
     // Probation reminders — a to-do for the scheduling manager three weeks
     // before someone's probation review falls due, from their Planday start
     // date. Self-gates: does nothing until probation_scheduler_user_id is

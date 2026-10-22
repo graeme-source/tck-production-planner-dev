@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { SortableTh } from "@/components/sortable-th";
 import { TimingHealthCard } from "@/components/timing-health-card";
+import { UpfWebsiteSync } from "@/components/upf-website-sync";
 import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import * as z from "zod";
@@ -2181,6 +2182,8 @@ export default function Recipes() {
       />
 
       <TimingHealthCard onEditRecipe={setEditingId} />
+
+      <UpfWebsiteSync />
 
       {/* Drafts · On the menu · Archived (migrations 0141, 0142). Nothing is
           deleted in any move; drafts and archived recipes are kept in full. */}

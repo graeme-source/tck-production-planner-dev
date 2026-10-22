@@ -6,6 +6,10 @@
  *                            total ingredient weight, resolved through
  *                            nested sub-recipes), plus which ingredients
  *                            still need classification.
+ *   GET  /api/upf/shopify-sync      — what the website shows per Shopify
+ *                                    product (custom.upf_percent) and why
+ *   POST /api/upf/shopify-sync/run  — push to Shopify now (manager/admin);
+ *                                    otherwise it runs every 10 minutes
  *   POST /api/upf/analyze  — classify ingredients on the NOVA scale with
  *                            Claude (admin/manager only — spends API
  *                            credit). Body: { ingredientIds?: number[],
@@ -21,9 +25,13 @@
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, ingredientsTable, recipeIngredientsTable, subRecipeIngredientsTable, usersTable } from "@workspace/db";
-import { eq, inArray, and, isNull } from "drizzle-orm";
+import { eq, inArray, and, isNull, sql } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { computeUpfSummary } from "../lib/upf";
+import { z } from "zod";
+import { validate } from "../middleware/validate";
+import { runUpfShopifySync, lastUpfSyncRun } from "../lib/upf-shopify-sync";
+import { shopifyWritesBlocked } from "../services/shopify";
 
 const router: IRouter = Router();
 
@@ -264,6 +272,49 @@ router.post("/analyze", requireAdminOrManager, async (req: Request, res: Respons
     console.error("[upf] analyze failed:", err);
     const msg = err instanceof Error ? err.message : String(err);
     res.status(502).json({ error: `UPF analysis failed: ${msg}` });
+  }
+});
+
+// UPF % on the website (lib/upf-shopify-sync.ts, migration 0214).
+router.get("/shopify-sync", async (_req: Request, res: Response) => {
+  try {
+    const r = await db.execute<{
+      product_gid: string; product_title: string | null; recipe_names: string | null; status: string;
+      upf_percent: string | null; published_percent: string | null; unclassified: string | null;
+      last_error: string | null; checked_at: string; written_at: string | null;
+    }>(sql`
+      SELECT product_gid, product_title, recipe_names, status, upf_percent::text, published_percent::text,
+             unclassified, last_error, checked_at, written_at
+        FROM upf_shopify_sync WHERE status <> 'unlinked' ORDER BY product_title
+    `);
+    res.json({
+      writesBlocked: shopifyWritesBlocked(),
+      lastRun: lastUpfSyncRun(),
+      products: r.rows.map(x => ({
+        productId: x.product_gid.split("/").pop(),
+        productTitle: x.product_title,
+        recipeNames: x.recipe_names,
+        status: x.status,
+        upfPercent: x.upf_percent == null ? null : Number(x.upf_percent),
+        publishedPercent: x.published_percent == null ? null : Number(x.published_percent),
+        unclassified: x.unclassified ? x.unclassified.split(", ") : [],
+        lastError: x.last_error,
+        checkedAt: x.checked_at,
+        writtenAt: x.written_at,
+      })),
+    });
+  } catch (err) {
+    console.error("[upf] shopify-sync status failed:", err);
+    res.status(500).json({ error: "Couldn't load the website UPF status" });
+  }
+});
+
+router.post("/shopify-sync/run", requireAdminOrManager, validate(z.object({})), async (_req: Request, res: Response) => {
+  try {
+    res.json(await runUpfShopifySync());
+  } catch (err) {
+    console.error("[upf] shopify-sync run failed:", err);
+    res.status(502).json({ error: err instanceof Error ? err.message : "Sync failed" });
   }
 });
 

@@ -1,0 +1,162 @@
+/**
+ * "UPF on the website" — what each Shopify product's UPF row says, pushed
+ * automatically from these recipes every 10 minutes (api-server
+ * lib/upf-shopify-sync.ts). Shown on the Recipes page so a change to a
+ * recipe can be followed through to the website. Objective B.
+ */
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, Globe, Loader2, RefreshCw } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
+import { cn } from "@/lib/utils";
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+const KEY = ["upf", "shopify-sync"];
+
+interface SyncProduct {
+  productId: string;
+  productTitle: string | null;
+  recipeNames: string | null;
+  status: "published" | "held_unclassified" | "held_no_data" | "held_several_recipes";
+  upfPercent: number | null;
+  publishedPercent: number | null;
+  unclassified: string[];
+  lastError: string | null;
+  checkedAt: string;
+  writtenAt: string | null;
+}
+
+interface SyncStatus {
+  writesBlocked: boolean;
+  lastRun: { ranAt: string; written: number; errors: string[]; blocked: boolean } | null;
+  products: SyncProduct[];
+}
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${BASE}/api/upf${path}`, {
+    credentials: "include",
+    headers: init?.body ? { "Content-Type": "application/json" } : undefined,
+    ...init,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error((err as { error?: string }).error ?? `HTTP ${res.status}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+/** Same wording the website uses, so what you read here is what customers see. */
+function websiteLabel(p: number): string {
+  if (p <= 0) return "UPF free";
+  if (p < 1) return "<1% UPF";
+  if (p < 10) return `${p.toFixed(1)}% UPF`;
+  return `${Math.round(p)}% UPF`;
+}
+
+function whyHeld(p: SyncProduct): string {
+  switch (p.status) {
+    case "held_unclassified":
+      return `Not shown — not yet classified: ${p.unclassified.join(", ")}`;
+    case "held_several_recipes":
+      return `Not shown — this product is linked to more than one recipe (${p.recipeNames})`;
+    case "held_no_data":
+      return "Not shown — the recipe has no weighable ingredients";
+    default:
+      return "";
+  }
+}
+
+function ago(iso: string | null | undefined): string {
+  if (!iso) return "never";
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins} min ago`;
+  const hours = Math.round(mins / 60);
+  return hours < 24 ? `${hours} h ago` : new Date(iso).toLocaleDateString("en-GB");
+}
+
+export function UpfWebsiteSync() {
+  const [open, setOpen] = useState(false);
+  const qc = useQueryClient();
+  const { state } = useAuth();
+  const canRun = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
+
+  const q = useQuery<SyncStatus>({ queryKey: KEY, queryFn: () => api("/shopify-sync"), staleTime: 60_000 });
+  const run = useMutation({
+    mutationFn: () => api<{ written: number }>("/shopify-sync/run", { method: "POST", body: "{}" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+  });
+
+  if (q.isLoading || q.error || !q.data) return null;
+  const { products, writesBlocked } = q.data;
+  const shown = products.filter(p => p.status === "published");
+  const held = products.filter(p => p.status !== "published");
+  const failing = products.filter(p => p.lastError);
+  const lastCheck = products.reduce<string | null>((a, p) => (!a || p.checkedAt > a ? p.checkedAt : a), null);
+
+  return (
+    <div className="rounded-2xl border border-border bg-card">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+        <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-2 font-semibold text-sm min-h-11" aria-expanded={open}>
+          {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+          <Globe className="w-4 h-4 text-primary" /> UPF on the website
+        </button>
+        <span className="text-sm text-muted-foreground">
+          {shown.length} showing · {held.length} held back · updates every 10 min · last check {ago(lastCheck)}
+        </span>
+        {writesBlocked && <span className="text-xs text-amber-700">Shopify writes are off on this server — nothing is sent.</span>}
+        {failing.length > 0 && <span className="text-xs text-red-700">{failing.length} product{failing.length === 1 ? "" : "s"} failed to update</span>}
+        {canRun && (
+          <button
+            type="button"
+            onClick={() => run.mutate()}
+            disabled={run.isPending}
+            className="ml-auto inline-flex items-center gap-2 px-3 min-h-11 rounded-xl border border-border text-sm hover:bg-muted disabled:opacity-60"
+          >
+            {run.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Update website now
+          </button>
+        )}
+      </div>
+      {run.error && <p className="px-4 pb-2 text-sm text-red-700">{(run.error as Error).message}</p>}
+      {run.isSuccess && <p className="px-4 pb-2 text-sm text-muted-foreground">Done — {run.data.written} product{run.data.written === 1 ? "" : "s"} updated.</p>}
+
+      {open && (
+        <div className="border-t border-border overflow-x-auto">
+          {products.length === 0 ? (
+            <p className="px-4 py-3 text-sm text-muted-foreground">No recipes are linked to Shopify products yet — link them in each recipe's Shopify mapping.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground">
+                <tr className="text-left">
+                  <th className="px-4 py-2 font-medium">Shopify product</th>
+                  <th className="px-4 py-2 font-medium">Recipe</th>
+                  <th className="px-4 py-2 font-medium">Website shows</th>
+                  <th className="px-4 py-2 font-medium">Last sent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map(p => (
+                  <tr key={p.productId} className="border-t border-border/60 align-top">
+                    <td className="px-4 py-2">{p.productTitle}</td>
+                    <td className="px-4 py-2 text-muted-foreground">{p.recipeNames}</td>
+                    <td className="px-4 py-2">
+                      {p.status === "published" && p.upfPercent != null ? (
+                        <span className={cn("inline-flex px-2 py-0.5 rounded-full text-xs font-bold uppercase", p.upfPercent <= 0 ? "bg-green-100 text-green-700" : "bg-stone-100 text-stone-700")}>
+                          {websiteLabel(p.upfPercent)}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">{whyHeld(p)}</span>
+                      )}
+                      {p.lastError && <p className="text-xs text-red-700 mt-1">Shopify: {p.lastError}</p>}
+                    </td>
+                    <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{ago(p.writtenAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
