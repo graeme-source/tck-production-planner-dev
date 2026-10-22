@@ -4,7 +4,7 @@ import {
   getGetProductionPlanQueryKey,
 } from "@workspace/api-client-react";
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import {
   Loader2, CheckCircle2, Flame, RefreshCw, AlertCircle, BarChart2,
@@ -25,6 +25,7 @@ import { packsFromBatches } from "@workspace/production-schedule";
 import { RECIPE_RACK_COLOURS } from "./dough-sheeting-station";
 import { ovenChangeReminder } from "../shared/oven-reminder";
 import { OvenChangeBanner } from "../shared/oven-change-banner";
+import { BLAST_TRAY_SIZE, allPacksIn, blastTrayLabel, chillNotStartedHint, type BlastTrayState } from "../shared/ovens-blast-tray";
 import { QualityRejectSteppers, RejectStepper, rejectCount, useQualityRejects } from "../shared/quality-rejects-control";
 import { useOvenStandards, useRecipeOvenInputs } from "@/hooks/use-oven-settings";
 import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
@@ -101,9 +102,6 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   useModalScrollKeeper(weighingItem != null);
   const weightInputRef = useNoScrollAutoFocus<HTMLInputElement>(weighingItem != null);
   const [chillingRecipeId, setChillingRecipeId] = useState<number | null>(null);
-  // Earliest post-cheese sauce temperature on this plan — the chill-start
-  // anchor for mac cheese recipes, which skip the oven weight-log flow.
-  const [macChillAnchor, setMacChillAnchor] = useState<string | null>(null);
 
   const refetchWeightData = useCallback(async () => {
     try {
@@ -116,22 +114,28 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
     }
   }, [plan.id]);
 
-  const refetchMacChillAnchor = useCallback(async () => {
-    try {
+  // Earliest post-cheese sauce temperature on this plan — the chill-start
+  // anchor for mac cheese recipes, which skip the oven weight-log flow.
+  // React Query, re-checked on the plan's own 5-second cadence until it's
+  // found, so Mark as Chilled wakes up without a reload once Check 2 is
+  // logged on the Macaroni Cheese station (#321).
+  const hasMacItem = plan.items.some(it => isMacCheese(it as any));
+  const { data: macChillAnchor = null } = useQuery<string | null>({
+    queryKey: ["ovens-mac-chill-anchor", plan.id],
+    queryFn: async () => {
       const res = await fetch(`/api/temperature-records?planId=${plan.id}`, { credentials: "include" });
-      if (!res.ok) return;
+      if (!res.ok) throw new Error(`Temperature records failed (${res.status})`);
       const records = (await res.json()) as Array<{ recordType: string; recordedAt: string }>;
       const postCheese = (records ?? [])
         .filter(r => r.recordType === "mac_sauce_post_cheese")
         .sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))[0];
-      setMacChillAnchor(postCheese?.recordedAt ?? null);
-    } catch (err) {
-      console.warn("[OvensStation] mac chill anchor fetch failed:", err);
-    }
-  }, [plan.id]);
+      return postCheese?.recordedAt ?? null;
+    },
+    enabled: hasMacItem,
+    refetchInterval: (query) => (query.state.data ? false : 5_000),
+  });
 
   useEffect(() => { refetchWeightData(); }, [refetchWeightData]);
-  useEffect(() => { refetchMacChillAnchor(); }, [refetchMacChillAnchor]);
 
   const targetFor = (recipeId: number | null | undefined): WeightTargetEntry | null => {
     if (!recipeId || !weightData) return null;
@@ -332,13 +336,19 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
   // remainder in one tap (same pattern the wrapping station uses for its
   // partial last stack). Disabled when the prior station hasn't sent enough
   // packs through yet.
-  const BLAST_TRAY_SIZE = 10;
   const blastAddCount = (item: ProductionPlanItem): number => {
     const avail = getAvailableFromPrev(item, "ovens");
     const remaining = Math.max(0, effTarget(item) - getStationCount(item, "ovens"));
     const cap = isAdmin ? avail : Math.min(avail, remaining);
     return Math.min(BLAST_TRAY_SIZE, cap);
   };
+  const blastTrayState = (item: ProductionPlanItem): BlastTrayState => ({
+    addCount: blastAddCount(item),
+    ovensCount: getStationCount(item, "ovens"),
+    builtCount: combinedBuildingCount(item),
+    target: effTarget(item),
+    buildingFinished: !!item.builderMarkedCompleteAt,
+  });
   const blastUndoCount = (item: ProductionPlanItem): number =>
     Math.min(BLAST_TRAY_SIZE, getStationCount(item, "ovens"));
   const addBlastChillerTray = async (item: ProductionPlanItem) => {
@@ -710,7 +720,8 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
             })()}
             <div className="px-4 py-3 space-y-3">
                     {/* Waiting for building alert */}
-                    {isCurrent && getAvailableFromPrev(item, "ovens") <= 0 && (
+                    {isCurrent && getAvailableFromPrev(item, "ovens") <= 0
+                      && !(isMacCheese(item as any) && allPacksIn(blastTrayState(item))) && (
                       <div className="flex items-center gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
                         <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400 flex-shrink-0" />
                         <p className="text-base text-amber-700 dark:text-amber-300">Waiting for Building to complete more batches</p>
@@ -726,11 +737,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                       const blastUndo = itemIsMac ? blastUndoCount(item) : 0;
                       const canBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !submittingWeight && blastAdd > 0;
                       const canUndoBlast = itemIsMac && !isOnBreak && !bulkBatchPending && !submittingWeight && blastUndo > 0;
-                      const addLabel = blastAdd >= BLAST_TRAY_SIZE
-                        ? "Blast Chiller Tray (+10 packs)"
-                        : blastAdd > 0
-                          ? `Add Final ${blastAdd} Pack${blastAdd === 1 ? "" : "s"}`
-                          : "Waiting for building";
+                      const addLabel = blastTrayLabel(blastTrayState(item));
                       const undoLabel = blastUndo >= BLAST_TRAY_SIZE ? "−10" : blastUndo > 0 ? `−${blastUndo}` : "−10";
                       return (
                         <div className="rounded-xl border border-border bg-secondary/20 p-3">
@@ -1049,7 +1056,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
                                     ? alreadyChilled
                                       ? `Chilled ${new Date(last.chillEndAt!).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · ${last.chilledVia?.replace(/_/g, " ") ?? "logged"}`
                                       : `Started ${new Date(last.recordedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} — waiting to chill to ${weightData?.settings.chillTargetTempC ?? 4}°C`
-                                    : "Starts when the final batch for this recipe is logged"}
+                                    : chillNotStartedHint(isMacCheese(item as any))}
                                 </p>
                               </div>
                               <button
