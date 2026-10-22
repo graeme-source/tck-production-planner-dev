@@ -5,7 +5,7 @@ import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-cl
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Loader2, Lock, LockOpen, Plus, Thermometer, Clock,
-  UtensilsCrossed, X,
+  UtensilsCrossed, X, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -16,6 +16,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { stockCellEdited, planStockWrite } from "@/lib/stock-override-guard";
 import { FSA_COOK_BANDS, defaultHoldSeconds, meetsCookStandard, formatHold } from "@/lib/cook-standards";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
+import { latestTempRecord } from "../shared/latest-temp-record";
 import type { PlanStartStock } from "@workspace/stock-prediction";
 import { MacStockWorking, macStockWorking, withLiveStock } from "@/components/mac-cheese-stock-working";
 import { RecipeSwatch } from "@/components/recipe-swatch";
@@ -794,7 +795,12 @@ function TempHoldCheckRow({ label, recordType, records, entry, onEntryChange, on
   saving: boolean;
 }) {
   const hasRecord = records.length > 0;
-  const lastRecord = records[records.length - 1];
+  // Latest by time — a re-record saves a new reading beside the old (#81).
+  const lastRecord = latestTempRecord(records);
+  // "Re-record" reopens the slider; a successful save adds a record, which
+  // closes it again.
+  const [reRecording, setReRecording] = useState(false);
+  useEffect(() => { setReRecording(false); }, [records.length]);
   const lastTemp = lastRecord ? Number(lastRecord.temperatureC) : null;
   const lastHold = lastRecord?.heldForSeconds ?? null;
   // Older records carry no hold time; judge those against the 75°C-instant
@@ -831,13 +837,24 @@ function TempHoldCheckRow({ label, recordType, records, entry, onEntryChange, on
           </span>
         )}
       </div>
-      {hasRecord ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+      {hasRecord && lastRecord && (
+        <div className={cn("flex items-center gap-2 flex-wrap text-sm text-muted-foreground", reRecording && "mb-3")}>
           <Clock className="w-4 h-4" />
           Recorded at {new Date(lastRecord.recordedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
           {lastRecord.userName && <span>by {lastRecord.userName}</span>}
+          {records.length > 1 && (
+            <span>· latest of {records.length} readings (earlier ones stay in the log)</span>
+          )}
+          <button
+            type="button"
+            onClick={() => setReRecording(v => !v)}
+            className="ml-auto px-4 py-2 rounded-lg border-2 border-border text-base font-semibold text-foreground hover:bg-secondary/60 flex items-center gap-1.5"
+          >
+            {reRecording ? <><X className="w-4 h-4" /> Cancel</> : <><RotateCcw className="w-4 h-4" /> Re-record</>}
+          </button>
         </div>
-      ) : (
+      )}
+      {(!hasRecord || reRecording) && (
         <div className="space-y-3">
           <div className="flex items-center gap-4">
             <span className={cn("text-3xl font-bold tabular-nums w-28 flex-shrink-0", belowTable ? "text-red-600" : "text-foreground")}>
@@ -892,7 +909,7 @@ function TempHoldCheckRow({ label, recordType, records, entry, onEntryChange, on
               className="ml-auto px-4 py-2 bg-red-500 text-white rounded text-base font-semibold hover:bg-red-600 disabled:opacity-50 flex items-center gap-1.5"
             >
               {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Thermometer className="w-4 h-4" />}
-              Record
+              {reRecording ? "Save new reading" : "Record"}
             </button>
           </div>
         </div>
