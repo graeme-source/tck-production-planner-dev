@@ -44,6 +44,7 @@ const schema = z.object({
   isBase: z.boolean().optional(),
   expandInPrep: z.boolean().optional(),
   madeOnProductionDay: z.boolean().optional(),
+  prepOneTinPerRecipe: z.boolean().optional(),
   labelDeclaration: z.string().optional(),
   ingredients: z.array(z.object({
     ingredientId: z.coerce.number().min(1, "Select an ingredient"),
@@ -554,6 +555,19 @@ function SubRecipeForm({
         <div className="flex items-center gap-3 py-1">
           <input
             type="checkbox"
+            id="prepOneTinPerRecipe"
+            {...register("prepOneTinPerRecipe")}
+            className="w-4 h-4 rounded border-border accent-primary"
+          />
+          <div>
+            <label htmlFor="prepOneTinPerRecipe" className="text-sm font-medium cursor-pointer">One tin per recipe in Main Prep</label>
+            <p className="text-xs text-muted-foreground">Main Prep weighs this as a single tin for each recipe, however many batches (e.g. Garlic Butter). The Orders page counts the same tins.</p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3 py-1">
+          <input
+            type="checkbox"
             id="madeOnProductionDay"
             {...register("madeOnProductionDay")}
             className="w-4 h-4 rounded border-border accent-primary"
@@ -657,6 +671,7 @@ function SubRecipeForm({
 // in the generated SubRecipeDetail type — the OpenAPI spec lags the server.
 type SubRecipeDetailApi = SubRecipeDetail & {
   madeOnProductionDay?: boolean;
+  prepOneTinPerRecipe?: boolean;
   labelDeclaration?: string | null;
   // Returned by GET /api/sub-recipes/:id (routes/sub-recipes.ts serialises
   // yield_percent as number | null); generated type lags the API.
@@ -696,6 +711,7 @@ function EditSubRecipeDialog({
         isBase: detail.isBase ?? false,
         expandInPrep: detail.expandInPrep ?? false,
         madeOnProductionDay: (detail as SubRecipeDetailApi).madeOnProductionDay ?? false,
+        prepOneTinPerRecipe: (detail as SubRecipeDetailApi).prepOneTinPerRecipe ?? false,
         labelDeclaration: (detail as SubRecipeDetailApi).labelDeclaration ?? "",
         ingredients: (detail.ingredients ?? []).map(i => ({
           ingredientId: i.ingredientId,
@@ -711,7 +727,7 @@ function EditSubRecipeDialog({
           marinadeAddAtCooking: (c as { marinadeAddAtCooking?: boolean }).marinadeAddAtCooking === true,
         })),
       }
-    : { name: "", description: "", yield: 1, yieldPercent: "", yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
+    : { name: "", description: "", yield: 1, yieldPercent: "", yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, prepOneTinPerRecipe: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
     <EditorDialog
@@ -1115,7 +1131,7 @@ export default function SubRecipes() {
   }));
 
   const addDefaults: FormValues = {
-    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, labelDeclaration: "",
+    name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, prepOneTinPerRecipe: false, labelDeclaration: "",
     ingredients: [],
     subRecipeComponents: [],
   };

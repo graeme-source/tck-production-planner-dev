@@ -13,6 +13,9 @@ export const subRecipesTable = pgTable("sub_recipes", {
   shelfLifeDays: integer("shelf_life_days"),
   isBase: boolean("is_base").notNull().default(false),
   expandInPrep: boolean("expand_in_prep").notNull().default(false),
+  // Main Prep weighs this sub-recipe as ONE tin per recipe (Garlic Butter).
+  // Migration 0240 — replaced a hard-coded name list.
+  prepOneTinPerRecipe: boolean("prep_one_tin_per_recipe").notNull().default(false),
   // Dough that is mixed on the production day itself (cinnamon bun dough)
   // rather than the day before like calzone dough. The dough station shows
   // these on the plan's own day and keeps them out of the day-before view.

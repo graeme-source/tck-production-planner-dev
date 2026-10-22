@@ -31,8 +31,17 @@ const minDeliveryShelfLifeDaysField = z
     return n;
   })
   .nullish();
-const CreateIngredientBodyWithSecondaryPrice = CreateIngredientBody.extend({ secondaryCostPerPack: secondaryCostPerPackField, minDeliveryShelfLifeDays: minDeliveryShelfLifeDaysField });
-const UpdateIngredientBodyWithSecondaryPrice = UpdateIngredientBody.extend({ secondaryCostPerPack: secondaryCostPerPackField, minDeliveryShelfLifeDays: minDeliveryShelfLifeDaysField });
+// Main Prep weighs it as one tin per recipe (migration 0240, #325).
+// undefined = leave the stored value alone.
+const prepOneTinPerRecipeField = z.boolean().optional();
+const extraFields = {
+  secondaryCostPerPack: secondaryCostPerPackField,
+  minDeliveryShelfLifeDays: minDeliveryShelfLifeDaysField,
+  prepOneTinPerRecipe: prepOneTinPerRecipeField,
+};
+const CreateIngredientBodyWithSecondaryPrice = CreateIngredientBody.extend(extraFields);
+const UpdateIngredientBodyWithSecondaryPrice = UpdateIngredientBody.extend(extraFields);
+type ExtraFields = { prepOneTinPerRecipe?: boolean };
 
 /** The secondary price only means something while there IS a secondary
  *  supplier — clearing the supplier clears the price. undefined = leave the
@@ -193,6 +202,7 @@ router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, r
     shelfLifeDays: shelfLifeDays != null ? Number(shelfLifeDays) : null,
     requiresUseByDate: requiresUseByDate ?? false,
     minDeliveryShelfLifeDays: (req.body as { minDeliveryShelfLifeDays?: number | null }).minDeliveryShelfLifeDays ?? null,
+    prepOneTinPerRecipe: (req.body as ExtraFields).prepOneTinPerRecipe ?? false,
     openedLifeDays: openedLifeDays != null ? Number(openedLifeDays) : null,
     defrostLifeDays: defrostLifeDays != null ? Number(defrostLifeDays) : null,
     kanbanEnabled: kanbanEnabled ?? false,
@@ -516,6 +526,9 @@ router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req,
     ...(requiresUseByDate !== undefined ? { requiresUseByDate: !!requiresUseByDate } : {}),
     ...((req.body as { minDeliveryShelfLifeDays?: number | null }).minDeliveryShelfLifeDays !== undefined
       ? { minDeliveryShelfLifeDays: (req.body as { minDeliveryShelfLifeDays?: number | null }).minDeliveryShelfLifeDays ?? null }
+      : {}),
+    ...((req.body as ExtraFields).prepOneTinPerRecipe !== undefined
+      ? { prepOneTinPerRecipe: !!(req.body as ExtraFields).prepOneTinPerRecipe }
       : {}),
     ...(kanbanEnabled !== undefined ? { kanbanEnabled } : {}),
     ...(kanbanQuantity !== undefined ? { kanbanQuantity: kanbanQuantity != null ? String(kanbanQuantity) : "0" } : {}),

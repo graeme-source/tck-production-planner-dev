@@ -1030,6 +1030,17 @@ export function IngredientFormDialog({
                 {errors.stockInPacks && <span className="text-destructive text-xs ml-6 block mt-1">{String(errors.stockInPacks.message)}</span>}
               </div>
 
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" {...register("prepOneTinPerRecipe")} className="w-4 h-4 rounded border-border" />
+                  <span className="text-sm font-medium">One tin per recipe in Main Prep</span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-1 ml-6">
+                  Main Prep weighs this as a single tin for each recipe, however many batches (e.g. Fresh Basil, Rosemary).
+                  The Orders page&apos;s &ldquo;still to prep&rdquo; counts the same tins.
+                </p>
+              </div>
+
               <div className="bg-secondary/30 rounded-lg px-4 py-3">
                 <label className="text-sm font-medium mb-1 block">
                   Prep count per portion

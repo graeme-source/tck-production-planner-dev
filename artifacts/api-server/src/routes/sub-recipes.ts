@@ -7,8 +7,19 @@ import { reconcileRecipesUsing } from "../lib/quid-store";
 import { computeSubRecipeCosts, getCyclicIds, wouldCreateCycle } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { kgOrNull } from "@workspace/units";
+import * as z from "zod";
 
 const router: IRouter = Router();
+
+// "One tin per recipe" in Main Prep (migration 0240, #325). undefined =
+// leave the stored value alone.
+const subRecipeExtraFields = { prepOneTinPerRecipe: z.boolean().optional() };
+const CreateSubRecipeBodyExt = CreateSubRecipeBody.extend(subRecipeExtraFields);
+const UpdateSubRecipeBodyExt = UpdateSubRecipeBody.extend(subRecipeExtraFields);
+const oneTinFrom = (body: unknown): { prepOneTinPerRecipe?: boolean } => {
+  const v = (body as { prepOneTinPerRecipe?: boolean }).prepOneTinPerRecipe;
+  return v !== undefined ? { prepOneTinPerRecipe: !!v } : {};
+};
 
 /** Sanitise a yieldPercent from the request body: a number in (0, 100]
  *  or null (= automatic, yield tracks 100% of component weight). */
@@ -74,7 +85,7 @@ router.get("/", async (_req, res) => {
   })));
 });
 
-router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
+router.post("/", validate(CreateSubRecipeBodyExt), async (req, res) => {
   const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, isBase, expandInPrep, madeOnProductionDay, labelDeclaration, ingredients, subRecipeComponents } = req.body;
   // The component arrays come from the RAW body: the generated zod's nested
   // item schemas lag the marinade columns and validation strips them (the
@@ -96,7 +107,7 @@ router.post("/", validate(CreateSubRecipeBody), async (req, res) => {
   const yieldPercent = parseYieldPercent((req.body as Record<string, unknown>).yieldPercent);
   const [subRecipe] = await db
     .insert(subRecipesTable)
-    .values({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false, expandInPrep: expandInPrep ?? false, madeOnProductionDay: madeOnProductionDay ?? false, yieldPercent: yieldPercent != null ? String(yieldPercent) : null, labelDeclaration: labelDeclaration || null })
+    .values({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false, expandInPrep: expandInPrep ?? false, madeOnProductionDay: madeOnProductionDay ?? false, yieldPercent: yieldPercent != null ? String(yieldPercent) : null, labelDeclaration: labelDeclaration || null, ...oneTinFrom(req.body) })
     .returning();
 
   if (rawIngredients?.length) {
@@ -222,7 +233,7 @@ router.get("/:id", async (req, res) => {
   });
 });
 
-router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
+router.put("/:id", validate(UpdateSubRecipeBodyExt), async (req, res) => {
   const id = Number(req.params.id);
   const { name, description, yield: yieldAmt, yieldUnit, notes, shelfLifeDays, isBase, expandInPrep, madeOnProductionDay, labelDeclaration, ingredients, subRecipeComponents } = req.body;
   // The component arrays come from the RAW body: the generated zod's nested
@@ -244,7 +255,7 @@ router.put("/:id", validate(UpdateSubRecipeBody), async (req, res) => {
   const yieldPercent = parseYieldPercent((req.body as Record<string, unknown>).yieldPercent);
   const [updated] = await db
     .update(subRecipesTable)
-    .set({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false, expandInPrep: expandInPrep ?? false, madeOnProductionDay: madeOnProductionDay ?? false, yieldPercent: yieldPercent != null ? String(yieldPercent) : null, labelDeclaration: labelDeclaration || null })
+    .set({ name, description, yield: String(yieldAmt), yieldUnit, notes, shelfLifeDays: shelfLifeDays ?? null, isBase: isBase ?? false, expandInPrep: expandInPrep ?? false, madeOnProductionDay: madeOnProductionDay ?? false, yieldPercent: yieldPercent != null ? String(yieldPercent) : null, labelDeclaration: labelDeclaration || null, ...oneTinFrom(req.body) })
     .where(eq(subRecipesTable.id, id))
     .returning();
 
