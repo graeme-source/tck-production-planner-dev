@@ -338,6 +338,7 @@ export default function LabelPrinterPage() {
               {job.status === "printed" && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
               {job.status === "queued" && <Loader2 className="w-4 h-4 text-muted-foreground animate-spin flex-shrink-0" />}
               {job.status === "failed" && <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />}
+              {job.status === "expired" && <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />}
               <span className="flex-1 min-w-0 truncate font-medium">{payloadSummary(job)}</span>
               {job.error && <span className="text-xs text-destructive truncate max-w-[14rem]" title={job.error}>{job.error}</span>}
               <span className="text-xs text-muted-foreground flex-shrink-0">{job.user_name ?? ""}</span>

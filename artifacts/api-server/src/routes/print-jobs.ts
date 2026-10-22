@@ -33,6 +33,7 @@ import {
   addDaysIso,
   LABEL_RULE_SETTINGS_KEY,
 } from "../lib/label-rules";
+import { PRINT_JOB_MAX_AGE_MINUTES } from "../lib/print-bridge-paths";
 
 const router: IRouter = Router();
 
@@ -224,6 +225,16 @@ router.get("/pending", requireBridgeToken, async (req, res) => {
   const station = String(req.query.station ?? "prep");
   const waitS = Math.min(25, Math.max(0, Number(req.query.wait ?? 0) || 0));
   const deadline = Date.now() + waitS * 1000;
+
+  // Stale requests never print — their dates would be wrong by now. Same
+  // rule as isPrintJobStale(), done in SQL so it covers every queued row.
+  await db.execute(sql`
+    UPDATE print_jobs
+    SET status = 'expired',
+        error = ${`Not printed: still waiting after ${PRINT_JOB_MAX_AGE_MINUTES} min, so its dates could be wrong. Tap Print again.`}
+    WHERE station = ${station} AND status = 'queued'
+      AND created_at < NOW() - make_interval(mins => ${PRINT_JOB_MAX_AGE_MINUTES})
+  `);
 
   for (;;) {
     lastBridgePollAt = Date.now();
