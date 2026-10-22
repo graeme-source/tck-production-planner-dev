@@ -739,6 +739,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   if (stockTabOpen) {
     return (
       <div className="space-y-4">
+        <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
         {tabs}
         <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />
       </div>
