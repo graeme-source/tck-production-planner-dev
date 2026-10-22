@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isBagLine, isEightPackLine, lineBagQuantity, planBagDecrement, resolveBagLines, type BagLineContext } from "./eight-pack-bags";
+import { bagPoolFromEntries, isBagLine, isEightPackLine, lineBagQuantity, planBagDecrement, resolveBagLines, type BagLineContext } from "./eight-pack-bags";
 
 const ctx: BagLineContext = {
   eightPackVariantToRecipe: new Map([["900", 11]]),
@@ -61,5 +61,41 @@ describe("planBagDecrement — never below zero", () => {
   });
   it("treats a negative on-hand record as zero", () => {
     expect(planBagDecrement(-4, 1)).toEqual({ delta: 0, resultingQty: 0, shortfall: 1 });
+  });
+});
+
+// Issues #306 / #314: the packing fridge gate reads the 8-pack level like
+// 2-packs — bags wrapped on an earlier day still count, and a despatch
+// takes the bag off again so the level never only goes up.
+describe("bagPoolFromEntries — the fridge gate's bag pool (#306)", () => {
+  it("a bag wrapped 3 days ago still counts (no today-only rule)", () => {
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60_000);
+    expect(bagPoolFromEntries([{ recipe_id: 2, quantity: "1.0000", checked_at: threeDaysAgo }]))
+      .toEqual([{ recipeId: 2, bags: 1 }]);
+  });
+  it("reads each recipe's LATEST level, never sums history", () => {
+    expect(bagPoolFromEntries([
+      { recipe_id: 2, quantity: "64", checked_at: "2026-10-07T12:00:00" },
+      { recipe_id: 2, quantity: "1", checked_at: "2026-10-20T09:00:00" },
+      { recipe_id: 5, quantity: "3", checked_at: "2026-10-21T09:00:00" },
+    ])).toEqual([{ recipeId: 2, bags: 1 }, { recipeId: 5, bags: 3 }]);
+  });
+  it("no bags in the fridge → 0, and junk/negative levels floor at 0", () => {
+    expect(bagPoolFromEntries([
+      { recipe_id: 1, quantity: "0.0000", checked_at: "2026-10-21T09:00:00" },
+      { recipe_id: 3, quantity: "-2", checked_at: "2026-10-21T09:00:00" },
+      { recipe_id: 4, quantity: null, checked_at: null },
+    ])).toEqual([{ recipeId: 1, bags: 0 }, { recipeId: 3, bags: 0 }, { recipeId: 4, bags: 0 }]);
+  });
+  it("an order going out takes its bag off the level the gate reads", () => {
+    const lines = [
+      { variant_id: 1, title: "Margherita Calzone", variant_title: "8 Pack Bag", quantity: 1 },
+      { variant_id: 2, title: "Margherita Calzone", variant_title: "2 Pack", quantity: 3 },
+    ];
+    const bags = resolveBagLines(lines, ctx).bagsByRecipe.get(7) ?? 0;
+    const plan = planBagDecrement(1, bags);
+    expect(plan).toEqual({ delta: -1, resultingQty: 0, shortfall: 0 });
+    expect(bagPoolFromEntries([{ recipe_id: 7, quantity: plan.resultingQty, checked_at: new Date() }]))
+      .toEqual([{ recipeId: 7, bags: 0 }]);
   });
 });

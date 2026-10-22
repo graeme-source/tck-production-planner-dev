@@ -109,3 +109,30 @@ export function planBagDecrement(onHand: number, bagsOut: number): BagDecrementP
   const take = Math.min(have, out);
   return { delta: take === 0 ? 0 : -take, resultingQty: have - take, shortfall: out - take };
 }
+
+/** A production-fridge 8-pack stock_entries row (raw from SQL). */
+export type BagEntryRow = {
+  recipe_id: number;
+  quantity: string | number | null;
+  checked_at: Date | string | null;
+};
+
+/**
+ * The bag pool the packing fridge gate reads (issues #306 / #314): each
+ * recipe's LATEST 8-pack level, however long ago the bags were wrapped —
+ * exactly like 2-packs. The old "bags wrapped TODAY only" rule existed
+ * because despatch never took bags off; it does now (planBagDecrement via
+ * inventory-sync), so the level is real and yesterday's bags release
+ * today's orders. Never negative, whole bags only.
+ */
+export function bagPoolFromEntries(rows: BagEntryRow[]): Array<{ recipeId: number; bags: number }> {
+  const latest = new Map<number, { at: number; bags: number }>();
+  for (const r of rows) {
+    if (r.recipe_id == null) continue;
+    const at = r.checked_at == null ? 0 : new Date(r.checked_at).getTime() || 0;
+    const prev = latest.get(r.recipe_id);
+    if (prev && prev.at >= at) continue;
+    latest.set(r.recipe_id, { at, bags: Math.max(0, Math.floor(Number(r.quantity) || 0)) });
+  }
+  return [...latest].map(([recipeId, v]) => ({ recipeId, bags: v.bags }));
+}

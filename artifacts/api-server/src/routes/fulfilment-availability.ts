@@ -1,7 +1,7 @@
 import { Router, type IRouter } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { londonDateString } from "../lib/london-time";
+import { bagPoolFromEntries, type BagEntryRow } from "../lib/eight-pack-bags";
 import { getProducts } from "../services/shopify";
 import { trackedVariantMap, bagRecipeByTitle } from "../lib/shopify-stock-check";
 
@@ -89,29 +89,26 @@ router.get("/fridge-availability", async (_req, res) => {
 
     const shopifyTracked = await shopifyTrackedVariants();
 
-    // 8-pack bag pool: bags wrapped TODAY only (entries since London
-    // midnight). Wrapping reliably writes the 8-pack fridge count, but
-    // packing never decrements it — so yesterday's level would let bag
-    // orders through before anything was wrapped. Counting only today's
-    // entries implements the floor rule exactly: a bag order stays held
-    // until its bags are wrapped that day (Graeme, 2026-08-26).
-    const todayLondon = londonDateString();
-    const bagRes = await db.execute<{ recipe_id: number; bags: string }>(sql`
-      SELECT DISTINCT ON (se.recipe_id) se.recipe_id, se.quantity AS bags
+    // 8-pack bag pool: each recipe's LATEST 8-pack fridge level, whenever
+    // the bags were wrapped — exactly like 2-packs (issues #306 / #314).
+    // The old today-only rule (2026-08-26) was there because despatch never
+    // took bags off; since 2026-10-07 every despatch path does
+    // (inventory-sync → adjustFridgeStock, pack size 8), so the level is
+    // real stock and yesterday's bags release today's orders.
+    const bagRows = await db.execute<BagEntryRow>(sql`
+      SELECT se.recipe_id, se.quantity, se.checked_at
       FROM stock_entries se
       JOIN recipes r ON r.id = se.recipe_id
       WHERE se.recipe_id IS NOT NULL
         AND se.location = 'production_fridge'
         AND se.pack_size = 8
-        AND se.checked_at >= ${`${todayLondon}T00:00:00`}::timestamp
         AND (r.is_core_menu = TRUE OR r.is_fridge_product = TRUE)
-      ORDER BY se.recipe_id, se.checked_at DESC
     `);
 
     // variantId -> { recipeId, packsPerUnit, pool }
     //
     // Two separate pools: 2-packs gate against the fridge's 2-pack level;
-    // 8-pack bag variants gate against TODAY's wrapped bags (see bagRes) —
+    // 8-pack bag variants gate against the 8-pack bag level (see bagRows) —
     // never against the 2-pack pool (charging bags 4 two-packs each starved
     // whole waves, 2026-08-25).
     const variants: Record<string, { recipeId: number; packsPerUnit: number; pool: "packs" | "bags" }> = {};
@@ -152,10 +149,7 @@ router.get("/fridge-availability", async (_req, res) => {
       recipeNames,
       shopifyTracked,
       bagRecipeByTitle: bagTitles,
-      bagStock: bagRes.rows.map(r => ({
-        recipeId: r.recipe_id,
-        bags: Math.max(0, Math.floor(Number(r.bags) || 0)),
-      })),
+      bagStock: bagPoolFromEntries(bagRows.rows),
       specialRecipeId: specialRes.rows[0]?.id ?? null,
     });
   } catch (err) {
