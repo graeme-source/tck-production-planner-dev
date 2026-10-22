@@ -291,6 +291,9 @@ export const dailyStockChecksTable = pgTable("daily_stock_checks", {
   quantity: numeric("quantity", { precision: 10, scale: 4 }),
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
   checkedAt: timestamp("checked_at").notNull().defaultNow(),
+  // Optional use-by of what was counted, for "Require use-by date" items
+  // (migration 0243, fix-queue #165). Warned on when today or past.
+  useByDate: date("use_by_date"),
 }, (table) => [
   unique("uq_stock_check_ingredient_date").on(table.ingredientId, table.checkDate),
 ]);

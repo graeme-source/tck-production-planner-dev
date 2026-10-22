@@ -42,9 +42,10 @@ const cols = {
   stockInPacks: ingredientsTable.stockInPacks,
   stockCheckUnit: ingredientsTable.stockCheckUnit,
   packName: ingredientsTable.packName,
+  requiresUseByDate: ingredientsTable.requiresUseByDate,
 };
 
-type Row = { id: number; unit: string; packWeight: string | null; stockInPacks: boolean; stockCheckUnit: string | null; packName: string | null };
+type Row = { id: number; unit: string; packWeight: string | null; stockInPacks: boolean; stockCheckUnit: string | null; packName: string | null; requiresUseByDate: boolean };
 
 function shape(r: Row) {
   const item = {
@@ -54,7 +55,8 @@ function shape(r: Row) {
     stockCheckUnit: r.stockCheckUnit,
     packName: isPackName(r.packName) ? r.packName : null,
   };
-  return { ...item, resolved: resolveStockCheckUnit(item), options: stockCheckUnitOptions(item) };
+  // requiresUseByDate: the stock check offers an optional use-by (#165).
+  return { ...item, requiresUseByDate: r.requiresUseByDate, resolved: resolveStockCheckUnit(item), options: stockCheckUnitOptions(item) };
 }
 
 router.get("/", async (_req, res) => {

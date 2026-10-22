@@ -48,7 +48,8 @@ import { guardedFetch } from "@/hooks/use-guarded-action";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { DictateNumberButton } from "@/components/dictate-number-button";
 import { toastDraftBlocked } from "./prep-helpers";
-import { expectedCountSanity, expectedSanityMessage, parseStockAmount, sanityMessage, stockCountSanity } from "./stock-count-units";
+import { londonToday } from "@/lib/station-training";
+import { expectedCountSanity, expectedSanityMessage, parseStockAmount, sanityMessage, stockCountSanity, useByWarning } from "./stock-count-units";
 
 export interface StockCheckEntryIngredient {
   id: number;
@@ -59,6 +60,8 @@ export interface StockCheckEntryIngredient {
   stockCheckUnit?: string | null;
   /** What the pack is called (#327) — merged in from /api/stock-check-units. */
   packName?: string | null;
+  /** "Require use-by date" ticked: the count offers an optional use-by (#165). */
+  requiresUseByDate?: boolean;
 }
 
 interface CommonProps {
@@ -107,7 +110,7 @@ export function useStockCheckExpected(ingredientId: number) {
   });
 }
 
-type StockCheckUnitRow = StockCheckUnitItem & { resolved: StockCheckUnit; options: StockCheckUnit[] };
+type StockCheckUnitRow = StockCheckUnitItem & { resolved: StockCheckUnit; options: StockCheckUnit[]; requiresUseByDate?: boolean };
 export const stockCheckUnitsQueryKey = ["stock-check-units"] as const;
 
 /** Every ingredient's stock-check unit setting (GET /api/stock-check-units). */
@@ -128,7 +131,7 @@ export function useStockCheckUnits() {
 function withSetting(ing: StockCheckEntryIngredient, units: Record<string, StockCheckUnitRow> | undefined): StockCheckEntryIngredient {
   const row = units?.[String(ing.id)];
   if (!row) return ing;
-  return { ...ing, unit: row.unit ?? ing.unit, packWeight: row.packWeight ?? ing.packWeight, stockInPacks: row.stockInPacks, stockCheckUnit: row.stockCheckUnit, packName: row.packName ?? null };
+  return { ...ing, unit: row.unit ?? ing.unit, packWeight: row.packWeight ?? ing.packWeight, stockInPacks: row.stockInPacks, stockCheckUnit: row.stockCheckUnit, packName: row.packName ?? null, requiresUseByDate: row.requiresUseByDate ?? false };
 }
 
 /** "550 g", "12.4 kg" — a recorded (native) count, in the unit it's counted in. */
@@ -145,6 +148,20 @@ export function useRecordedStockLabel() {
     (nativeQty: number, ing: StockCheckEntryIngredient) => recordedStockLabel(nativeQty, withSetting(ing, units)),
     [units],
   );
+}
+
+/** Add the use-by to the count just saved (#165). */
+async function putStockCheckUseBy(ingredientId: number, checkDate: string, useByDate: string) {
+  const r = await fetch(`/api/stock-check-use-by`, {
+    method: "PUT",
+    credentials: "include",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ingredientId, checkDate, useByDate }),
+  });
+  if (!r.ok) {
+    const body = (await r.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `Use-by not saved (${r.status})`);
+  }
 }
 
 async function postPrepStockCheck(ingredientId: number, checkDate: string, quantity: number) {
@@ -174,6 +191,7 @@ export function StockCheckEntryForm({
 
   const [step, setStep] = useState<"unit" | "amount">("unit");
   const [raw, setRaw] = useState("");
+  const [useBy, setUseBy] = useState("");
   const [armed, setArmed] = useState(false);
   const [saving, setSaving] = useState(false);
   const amountRef = useNoScrollAutoFocus<HTMLInputElement>(step === "amount");
@@ -181,7 +199,7 @@ export function StockCheckEntryForm({
   const { data: expected } = useStockCheckExpected(ingredientProp.id);
 
   // A different ingredient (the forced pop-up moving on) starts again at step 1.
-  useEffect(() => { setStep("unit"); setRaw(""); setArmed(false); }, [ingredientProp.id]);
+  useEffect(() => { setStep("unit"); setRaw(""); setUseBy(""); setArmed(false); }, [ingredientProp.id]);
 
   const setValue = (v: string) => { setRaw(v); setArmed(false); };
   const onDictated = useCallback((n: number) => { setRaw(String(n)); setArmed(false); }, []);
@@ -209,6 +227,9 @@ export function StockCheckEntryForm({
   const invalid = raw.trim() !== "" && value == null;
   const canSave = nativeQty != null && !saving;
   const readBack = described ? [described.entered, ...described.extras].join(" = ") : null;
+  // Optional use-by for "Require use-by date" items (#165): warned on when
+  // it's today or already past — the count still saves.
+  const useByNote = ingredient.requiresUseByDate && useBy ? useByWarning(useBy, londonToday()) : null;
 
   const save = async () => {
     if (nativeQty == null || saving) return;
@@ -218,12 +239,22 @@ export function StockCheckEntryForm({
     try {
       if (saveNative) await saveNative(nativeQty);
       else await postPrepStockCheck(ingredient.id, checkDate, nativeQty);
-      toast({ title: "Stock check saved", description: `${ingredient.name}: ${readBack}` });
+      let useBySaved = "";
+      if (ingredient.requiresUseByDate && useBy) {
+        try {
+          await putStockCheckUseBy(ingredient.id, checkDate, useBy);
+          useBySaved = `, use by ${new Date(useBy + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}`;
+        } catch (e) {
+          toast({ title: "Count saved — use-by NOT saved", description: e instanceof Error ? e.message : "Try entering the use-by again.", variant: "destructive" });
+        }
+      }
+      void queryClient.invalidateQueries({ queryKey: ["stock-check-use-by"] });
+      toast({ title: "Stock check saved", description: `${ingredient.name}: ${readBack}${useBySaved}` });
       void queryClient.invalidateQueries({ queryKey: ["prep-stock-checks"] });
       void queryClient.invalidateQueries({ queryKey: ["station-stock-checks"] });
       void queryClient.invalidateQueries({ queryKey: ["reminder-stock-checks"] });
       const saved = nativeQty;
-      setStep("unit"); setRaw(""); setArmed(false);
+      setStep("unit"); setRaw(""); setUseBy(""); setArmed(false);
       onSaved?.(saved);
     } catch (err) {
       toast({ title: "Not saved", description: err instanceof Error ? err.message : "Stock check failed to save — please try again", variant: "destructive" });
@@ -313,6 +344,27 @@ export function StockCheckEntryForm({
       {!invalid && raw === "" && <p className="text-sm text-muted-foreground">Type 0 if there&rsquo;s none left.</p>}
 
       <DictateNumberButton onNumber={onDictated} />
+
+      {ingredient.requiresUseByDate && (
+        <div className="space-y-1.5">
+          <label htmlFor={`sc-useby-${ingredient.id}`} className="block text-lg font-bold">
+            Use-by date <span className="text-sm font-normal text-muted-foreground">(optional — the soonest one on the shelf)</span>
+          </label>
+          <input
+            id={`sc-useby-${ingredient.id}`}
+            type="date"
+            value={useBy}
+            onChange={e => setUseBy(e.target.value)}
+            className="w-full h-14 px-4 text-xl font-semibold bg-background border-2 border-border rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-300"
+          />
+          {useByNote && (
+            <div className="rounded-xl bg-red-50 dark:bg-red-950/40 border-2 border-red-500 px-4 py-3 flex gap-2" role="alert">
+              <AlertTriangle className="w-6 h-6 text-red-600 flex-shrink-0 mt-0.5" />
+              <p className="text-lg font-bold text-red-800 dark:text-red-200">{useByNote}</p>
+            </div>
+          )}
+        </div>
+      )}
 
       {readBack && (
         <div className="rounded-xl bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-800 px-4 py-3">

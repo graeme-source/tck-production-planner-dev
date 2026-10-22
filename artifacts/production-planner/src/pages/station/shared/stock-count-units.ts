@@ -152,3 +152,15 @@ export function expectedSanityMessage(
   const rounded = entered.unit === "g" ? Math.round(exp) : Math.round(exp * 10) / 10;
   return `${ask} We expected about ${formatStockCount(rounded, entered.unit, entered.item)}.`;
 }
+
+// ── Use-by on a stock check (#165, Graeme approved 22 Oct 2026) ───────────
+
+/** Warning for a use-by entered on a count: today or already past. Null when
+ *  it's later (or not a date). Compared as calendar days (YYYY-MM-DD). */
+export function useByWarning(useByIso: string, todayIso: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(useByIso) || !/^\d{4}-\d{2}-\d{2}/.test(todayIso)) return null;
+  const today = todayIso.slice(0, 10);
+  if (useByIso === today) return "Use-by is TODAY — use it today or throw it away.";
+  if (useByIso < today) return "Use-by has PASSED — don't use it. Throw it away and record it as waste.";
+  return null;
+}

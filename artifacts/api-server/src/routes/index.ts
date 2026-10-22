@@ -27,6 +27,7 @@ import timingHealthRouter from "./timing-health";
 import stockCheckHistoryRouter from "./stock-check-history";
 import stockCheckUnitsRouter from "./stock-check-units";
 import stockCheckExpectedRouter from "./stock-check-expected";
+import stockCheckUseByRouter from "./stock-check-use-by";
 import stockAccuracyRouter from "./stock-accuracy";
 import teamEfficiencyRouter from "./team-efficiency";
 import dptCalculatorRouter from "./dpt-calculator";
@@ -308,6 +309,8 @@ router.use("/stock-check-history", stockCheckHistoryRouter);
 router.use("/stock-check-units", stockCheckUnitsRouter);
 // Expected count for the stock-check "Are you sure?" (#327).
 router.use("/stock-check-expected", stockCheckExpectedRouter);
+// Use-by date on a stock check (#165).
+router.use("/stock-check-use-by", stockCheckUseByRouter);
 // Running ("expected") stock vs real counts — managers only, never shown at
 // stations or on count screens (docs/RUNNING_STOCK.md).
 router.use("/stock-accuracy", stockAccuracyRouter);
