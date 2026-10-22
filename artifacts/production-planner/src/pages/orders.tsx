@@ -32,7 +32,10 @@ import {
   GripVertical,
   ScanLine,
   Copy,
+  Scissors,
 } from "lucide-react";
+import { OrderSplitDialog, OrderSplitsWaiting, useCancelOrderSplit, type OrderSplit } from "@/components/order-split-dialog";
+import { splitDateLabel } from "@workspace/business-days";
 import { QrScanner } from "@/components/qr-scanner";
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
@@ -161,6 +164,10 @@ type OrderLine = SurplusLineFields & {
   palletSize?: number | null;
   orderInPallets?: boolean;
   palletSizeMissing?: boolean;
+  // "Split with another supplier" (#248 + #328) — the splits behind
+  // splitAwayPacks / splitInPacks (SurplusLineFields), for the line's notes.
+  splitsAway?: OrderSplit[];
+  splitsIn?: OrderSplit[];
 };
 
 type SupplierOrder = {
@@ -499,6 +506,31 @@ export default function Orders() {
   // ingredient assigned to that supplier so operators can add one-off
   // manual lines without waiting for an auto-calc.
   const [addItemDialog, setAddItemDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
+
+  // "Split with another supplier" (#248 + #328): the line being split.
+  const [splitDialog, setSplitDialog] = useState<{ supplierId: number; supplierName: string; line: EditableLine } | null>(null);
+  const refreshCalc = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
+  }, [queryClient]);
+  const cancelSplit = useCancelOrderSplit(refreshCalc);
+  // Today's supplier keeps the rest straight away — also when the person has
+  // typed a stock figure, which a refetch deliberately doesn't overwrite.
+  const applySplitLocally = useCallback((supplierId: number, split: OrderSplit) => {
+    setEditableLines(prev => {
+      const lines = prev[supplierId];
+      if (!lines) return prev;
+      return {
+        ...prev,
+        [supplierId]: lines.map(l => l.ingredientId !== split.ingredientId ? l : {
+          ...l,
+          editedPacks: Math.max(0, l.editedPacks - split.packs),
+          splitAwayPacks: (l.splitAwayPacks ?? 0) + split.packs,
+          splitsAway: [...(l.splitsAway ?? []), split],
+        }),
+      };
+    });
+    refreshCalc();
+  }, [refreshCalc]);
 
   // Operator-dismissed supplier cards for the current plan. Persisted in
   // sessionStorage so a refresh doesn't re-surface them; cleared when the
@@ -2156,6 +2188,10 @@ export default function Orders() {
         </div>
       )}
 
+      {/* Splits saved for another supplier's order day (#248 + #328) —
+          cancellable here until that order is placed. */}
+      {viewFilter === "pending" && <OrderSplitsWaiting onChanged={refreshCalc} />}
+
       {viewFilter === "pending" && !calcLoading && pendingSuppliers.length === 0 && selectedPlanId && (
         <div className="text-center py-12 text-muted-foreground">
           No pending orders. All supplier orders have been placed or no ingredients need ordering.
@@ -2398,6 +2434,30 @@ export default function Orders() {
                                 Kanban
                               </span>
                             )}
+                            {(line.splitsIn ?? []).map(sp => (
+                              <span key={`in-${sp.id}`} className="flex flex-wrap items-center gap-1.5 mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                                  <Scissors className="w-3 h-3" /> {sp.label} — {sp.packs} {packNoun(line.unit, sp.packs)}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={cancelSplit.isPending}
+                                  onClick={() => {
+                                    if (window.confirm(`Cancel this split? ${sp.packs} ${packNoun(line.unit, sp.packs)} of ${line.ingredientName} won't be ordered from ${so.supplier.name}.`)) cancelSplit.mutate(sp.id);
+                                  }}
+                                  className="text-xs font-medium underline underline-offset-2 text-muted-foreground hover:text-destructive"
+                                >
+                                  Cancel split
+                                </button>
+                              </span>
+                            ))}
+                            {(line.splitsAway ?? []).map(sp => (
+                              <span key={`away-${sp.id}`} className="flex items-center gap-1 mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">
+                                <Scissors className="w-3 h-3" />
+                                {sp.packs} {packNoun(line.unit, sp.packs)} split to {sp.targetSupplierName}, {splitDateLabel(sp.targetOrderDate)}
+                                {sp.status === "placed" ? " (ordered)" : ""}
+                              </span>
+                            ))}
                             {unconfirmedPriceIds.has(line.ingredientId) && (
                               <span
                                 className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 mt-0.5 ml-1"
@@ -2581,7 +2641,18 @@ export default function Orders() {
                               )}
                             </td>
                           )}
-                          <td className="p-3 text-right">
+                          <td className="p-3 text-right whitespace-nowrap">
+                            {!line.isMisc && line.ingredientId > 0 && !isNonOrderable && line.editedPacks > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSplitDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name, line })}
+                                className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                title={`Split ${line.ingredientName} with another supplier`}
+                                aria-label={`Split ${line.ingredientName} with another supplier`}
+                              >
+                                <Scissors className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => removeLine(so.supplier.id, line.ingredientId)}
@@ -3208,6 +3279,33 @@ export default function Orders() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* "Split with another supplier" (#248 + #328) */}
+      {splitDialog && (() => {
+        const pricing = pricingById.get(splitDialog.line.ingredientId);
+        // The ingredient's other supplier: its secondary when this card is
+        // its usual supplier, otherwise its usual supplier.
+        const other = pricing
+          ? (pricing.supplierId === splitDialog.supplierId ? pricing.secondarySupplierId : pricing.supplierId)
+          : null;
+        return (
+          <OrderSplitDialog
+            open
+            onClose={() => setSplitDialog(null)}
+            line={{
+              ingredientId: splitDialog.line.ingredientId,
+              ingredientName: splitDialog.line.ingredientName,
+              packs: splitDialog.line.editedPacks,
+              unit: splitDialog.line.unit,
+            }}
+            fromSupplier={{ id: splitDialog.supplierId, name: splitDialog.supplierName }}
+            planId={selectedPlanId}
+            suppliers={allSuppliers}
+            secondarySupplierId={other ?? null}
+            onSplit={split => applySplitLocally(splitDialog.supplierId, split)}
+          />
+        );
+      })()}
 
       {/* Issue 4: per-supplier Add Item picker */}
       <Dialog

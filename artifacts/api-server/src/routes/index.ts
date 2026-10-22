@@ -57,6 +57,7 @@ import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
 import supplierPricingRouter from "./supplier-pricing";
+import orderSplitsRouter from "./order-splits";
 import deliveriesRouter from "./deliveries";
 import unexpectedDeliveriesRouter from "./unexpected-deliveries";
 import shortDeliveryReportsRouter from "./short-delivery-reports";
@@ -338,6 +339,8 @@ router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
 // Primary + secondary supplier pack prices — minimum-order top-ups on Orders.
 router.use("/supplier-pricing", supplierPricingRouter);
+// "Split with another supplier" on an Orders line (#248 + #328).
+router.use("/order-splits", orderSplitsRouter);
 // Unexpected deliveries first: the deliveries router's GET /:id would
 // otherwise read "unexpected" as a purchase-order id.
 router.use("/deliveries/unexpected", unexpectedDeliveriesRouter);

@@ -12,7 +12,7 @@
  * day's surplus (Graeme, 14 Oct 2026). Lines without the setting, or
  * without the inputs (kanban-only / manual / misc lines), come back as-is.
  */
-import { surplusFor, surplusLabel, toISODate, type SurplusByDeliveryWeekday } from "@workspace/business-days";
+import { packsAfterSplits, surplusFor, surplusLabel, toISODate, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 
 export type SurplusLineFields = {
   totalRequired: number;
@@ -32,6 +32,10 @@ export type SurplusLineFields = {
   surplusBasePercent?: number;
   surplusAbsoluteQty?: number | null;
   surplusByDeliveryWeekday?: SurplusByDeliveryWeekday | null;
+  /** "Split with another supplier" (#248 + #328): packs moved to another
+   *  supplier's order (taken off) and fixed packs moved in (added on). */
+  splitAwayPacks?: number;
+  splitInPacks?: number;
 };
 
 export function suggestedPacks(line: SurplusLineFields, stock: number): number {
@@ -40,7 +44,8 @@ export function suggestedPacks(line: SurplusLineFields, stock: number): number {
   if (line.isKanban && (line.kanbanFloorPacks ?? 0) > 0) packs = Math.max(packs, line.kanbanFloorPacks ?? 0);
   const caseSizePacks = line.caseSizePacks ?? 0;
   if (caseSizePacks > 0 && packs > 0) packs = Math.ceil(packs / caseSizePacks) * caseSizePacks;
-  return packs;
+  // Splits apply last, exactly as /orders/calculate applies them.
+  return packsAfterSplits(packs, line.splitAwayPacks, line.splitInPacks);
 }
 
 /** True when moving the delivery date can change this line's surplus. */
