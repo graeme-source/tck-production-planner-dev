@@ -63,6 +63,9 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: /^\/temperature-records\/?$/, what: "temperature record" },
   // A checklist reading (scale calibration…) is filed under who took it.
   { method: "PUT", pattern: /^\/checklist-readings\/?$/, what: "checklist reading" },
+  // Cook-and-chill (#244): cook temp, into the chiller, chilling finished.
+  { method: "POST", pattern: /^\/cook-chill\/records\/?$/, what: "cook temperature" },
+  { method: "POST", pattern: new RegExp(`^/cook-chill/records/${ID}/(chill-start|chill-end)/?$`), what: "cook and chill record" },
   { method: "POST", pattern: /^\/oven-events\/oven-in\/?$/, what: "oven in" },
   { method: "POST", pattern: new RegExp(`^/prep-linked-completions/${ID}/?$`), what: "prep tick" },
   { method: "POST", pattern: new RegExp(`^/fried-chicken/plans/${ID}/(count|prep-tick)/?$`), what: "fried chicken record" },

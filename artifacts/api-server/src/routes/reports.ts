@@ -16,6 +16,7 @@ import { getOrdersByTag } from "../services/shopify";
 import { londonDateString, londonEndOfDay } from "../lib/london-time";
 import { getStandardBreakConfig, computeBatchesPerHour, aggregateBph } from "../lib/batches-per-hour";
 import { paceFromSubs } from "../services/wrapping-pace";
+import { coolingMinutes } from "../lib/cooling-cycles";
 
 // Recipe category name for macaroni cheese products. Mac cheese is a separate
 // product line and is excluded from the batches-per-hour KPI entirely.
@@ -779,9 +780,9 @@ router.get("/batch-weights", async (req, res) => {
   const cooling: CoolingRow[] = [];
   for (const r of records) {
     if (!r.isLastBatchOfRecipe || !r.chillEndAt) continue;
-    const start = new Date(r.recordedAt).getTime();
-    const end = new Date(r.chillEndAt).getTime();
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) continue;
+    // One duration rule for every cooling record (lib/cooling-cycles.ts).
+    const durationMinutes = coolingMinutes(r.recordedAt, r.chillEndAt);
+    if (durationMinutes == null) continue;
     cooling.push({
       planId: r.planId,
       planDate: r.planDate,
@@ -793,7 +794,7 @@ router.get("/batch-weights", async (req, res) => {
       chillEndAt: r.chillEndAt,
       chilledVia: r.chilledVia,
       chilledByName: r.chilledByName,
-      durationMinutes: Math.round((end - start) / 60000),
+      durationMinutes,
     });
   }
 
