@@ -16,6 +16,24 @@ export interface ChecklistItem {
   completionId: number | null;
   notes: string | null;
   skippedReason: string | null;
+  // "Record a reading" items (issue #87). Optional so an older server's
+  // response still types: null/absent unit = a plain tick.
+  readingUnit?: string | null;
+  readingLabels?: string[];
+  readingMin?: number | null;
+  readingMax?: number | null;
+  readings?: ChecklistItemReading[];
+  /** Labels still waiting for a reading — worked out by the server. */
+  readingsMissing?: string[];
+}
+
+export interface ChecklistItemReading {
+  label: string;
+  value: number;
+  unit: string;
+  inRange: boolean | null;
+  recordedByName: string;
+  recordedAt: string;
 }
 
 export interface ChecklistData {

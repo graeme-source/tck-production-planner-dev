@@ -18,6 +18,7 @@ import { useStationChecklist, useDynamicData, type ChecklistItem } from "./use-s
 import { batchDispatchVerdict } from "@/lib/julian-batch";
 import { sortByPickOrder, earliestBin, FALLBACK_ZONE_ORDER, type PickBin } from "@/lib/pick-order";
 import { ChecklistAdminPanel, DispatchShelfRulesCard } from "./checklist-admin-panel";
+import { ChecklistReadingFields } from "./checklist-reading-fields";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -649,6 +650,19 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                   />
                 )}
 
+                {/* "Record a reading" items (issue #87) — e.g. what each
+                    scale read on the Monday calibration. Autosaved; the
+                    tick below waits until every reading is in. */}
+                {selectedItem.type === "template" && selectedItem.readingUnit && !selectedItem.skippedReason && (
+                  <ChecklistReadingFields
+                    item={selectedItem}
+                    planId={planId}
+                    stationType={stationType}
+                    onSaved={refetch}
+                    readOnly={selectedItem.completed}
+                  />
+                )}
+
                 {/* Completion info or action */}
                 {selectedItem.completed ? (
                   <div className="mt-4 space-y-3">
@@ -715,7 +729,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                         />
                         <button
                           onClick={() => handleComplete(selectedItem)}
-                          disabled={completeBusy}
+                          disabled={completeBusy || (selectedItem.readingsMissing?.length ?? 0) > 0}
                           className="w-full flex items-center justify-center gap-3 px-6 py-5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-lg font-semibold transition-colors disabled:opacity-50 shadow-sm"
                         >
                           {completeBusy ? (

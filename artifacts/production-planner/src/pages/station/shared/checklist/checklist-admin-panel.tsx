@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
+import { parseReadingText, cleanReadingTyping, labelsFromText } from "@/lib/checklist-reading-input";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -31,6 +32,11 @@ interface Template {
   orderPosition: number;
   dynamicDataType: string | null;
   isActive: boolean;
+  // "Record a reading" (issue #87): null unit = a plain tick.
+  readingUnit?: string | null;
+  readingLabels?: string[] | null;
+  readingMin?: string | number | null;
+  readingMax?: string | number | null;
 }
 
 const CATEGORY_META: Record<Category, { label: string; icon: typeof Sun; color: string }> = {
@@ -69,6 +75,13 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
   const [formAnchorDate, setFormAnchorDate] = useState<string>("");
   const [formDays, setFormDays] = useState<string[]>(WEEKDAYS);
   const [formDynamic, setFormDynamic] = useState<string>("");
+  // "Record a reading" (issue #87): e.g. the Monday scale calibration —
+  // unit g, one reading per scale, pass 999 to 1001 with a 1 kg weight.
+  const [formReading, setFormReading] = useState(false);
+  const [formReadingUnit, setFormReadingUnit] = useState("");
+  const [formReadingLabels, setFormReadingLabels] = useState("");
+  const [formReadingMin, setFormReadingMin] = useState("");
+  const [formReadingMax, setFormReadingMax] = useState("");
 
   const [runSave, saveBusy] = useGuardedAction();
   const [runDelete, deleteBusy] = useGuardedAction();
@@ -101,6 +114,11 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
     setFormDays(WEEKDAYS);
     setFormAnchorDate(new Date().toISOString().slice(0, 10));
     setFormDynamic("");
+    setFormReading(false);
+    setFormReadingUnit("");
+    setFormReadingLabels("");
+    setFormReadingMin("");
+    setFormReadingMax("");
     setEditingId(null);
     setAdding(false);
   };
@@ -112,6 +130,11 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
     setFormDays(t.scheduleDays ? JSON.parse(t.scheduleDays) : ["monday"]);
     setFormAnchorDate(t.scheduleAnchorDate ?? new Date().toISOString().slice(0, 10));
     setFormDynamic(t.dynamicDataType ?? "");
+    setFormReading(!!t.readingUnit);
+    setFormReadingUnit(t.readingUnit ?? "");
+    setFormReadingLabels((t.readingLabels ?? []).join("\n"));
+    setFormReadingMin(t.readingMin != null ? String(Number(t.readingMin)) : "");
+    setFormReadingMax(t.readingMax != null ? String(Number(t.readingMax)) : "");
     setEditingId(t.id);
     setAdding(false);
   };
@@ -121,8 +144,16 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
     setAdding(true);
   };
 
+  const readingMinNum = parseReadingText(formReadingMin);
+  const readingMaxNum = parseReadingText(formReadingMax);
+  const readingFormProblem = !formReading ? null
+    : !formReadingUnit.trim() ? "Give the reading a unit, e.g. g or °C"
+    : readingMinNum === undefined || readingMaxNum === undefined ? "Pass values must be numbers"
+    : readingMinNum != null && readingMaxNum != null && readingMinNum > readingMaxNum ? "The lowest pass value is above the highest"
+    : null;
+
   const handleSave = () => {
-    if (!formTitle.trim()) return;
+    if (!formTitle.trim() || readingFormProblem) return;
     runSave(async (signal) => {
       const body: Record<string, unknown> = {
         title: formTitle.trim(),
@@ -131,6 +162,10 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
         scheduleDays: formSchedule !== "daily" ? formDays : null,
         scheduleAnchorDate: formSchedule === "periodic" ? (formAnchorDate || null) : null,
         dynamicDataType: formDynamic || null,
+        readingUnit: formReading ? formReadingUnit.trim() : null,
+        readingLabels: formReading ? labelsFromText(formReadingLabels) : null,
+        readingMin: formReading ? (readingMinNum ?? null) : null,
+        readingMax: formReading ? (readingMaxNum ?? null) : null,
       };
 
       if (adding) {
@@ -402,6 +437,67 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
               </div>
             </div>
 
+            <div className="rounded-xl border border-border p-3 space-y-3">
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={formReading}
+                  onChange={e => setFormReading(e.target.checked)}
+                  className="w-5 h-5 accent-primary"
+                />
+                <span>
+                  <span className="text-sm font-semibold block">Record a reading</span>
+                  <span className="text-xs text-muted-foreground">The team types a number (e.g. what a scale reads with the test weight) before ticking it off. Saved with who and when, and shown in Analytics → HACCP.</span>
+                </span>
+              </label>
+              {formReading && (
+                <div className="space-y-3">
+                  <div className="grid grid-cols-3 gap-3">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1 block">Unit</label>
+                      <input
+                        value={formReadingUnit}
+                        onChange={e => setFormReadingUnit(e.target.value.slice(0, 12))}
+                        placeholder="g"
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1 block">Pass from (optional)</label>
+                      <input
+                        inputMode="decimal"
+                        value={formReadingMin}
+                        onChange={e => setFormReadingMin(cleanReadingTyping(e.target.value))}
+                        placeholder="999"
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1 block">Pass to (optional)</label>
+                      <input
+                        inputMode="decimal"
+                        value={formReadingMax}
+                        onChange={e => setFormReadingMax(cleanReadingTyping(e.target.value))}
+                        placeholder="1001"
+                        className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1 block">One reading per line (optional — leave empty for a single reading)</label>
+                    <textarea
+                      value={formReadingLabels}
+                      onChange={e => setFormReadingLabels(e.target.value)}
+                      rows={3}
+                      placeholder={"Scale 1\nScale 2"}
+                      className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background resize-none"
+                    />
+                  </div>
+                  {readingFormProblem && <p className="text-sm text-destructive">{readingFormProblem}</p>}
+                </div>
+              )}
+            </div>
+
             {formSchedule !== "daily" && (
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Days</label>
@@ -463,7 +559,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
             <div className="flex items-center gap-2 pt-1">
               <button
                 onClick={handleSave}
-                disabled={saveBusy || !formTitle.trim()}
+                disabled={saveBusy || !formTitle.trim() || !!readingFormProblem}
                 className="flex items-center gap-2 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
               >
                 {saveBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
@@ -528,6 +624,7 @@ function SortableTemplateRow({
             template.schedule === "weekly" ? "Weekly" :
             template.schedule === "periodic" ? "Every 4 weeks" : "Specific days"}
           {template.dynamicDataType && ` · ${template.dynamicDataType.replace(/_/g, " ")}`}
+          {template.readingUnit && ` · records a reading (${template.readingUnit})`}
         </p>
       </div>
       <button
