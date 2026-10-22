@@ -191,3 +191,33 @@ export const SHOW_DONE_KEY = "team-lists:show-completed";
 export function comingUpOpen(stored: string | null): boolean {
   return stored !== "0";
 }
+
+/** The Compact switch (#330, Jane Miles): one-line rows for desk users,
+ *  remembered per person — keyed by user so two people sharing a desk PC
+ *  each keep their own choice. Off unless they turned it on. */
+export function compactRowsKey(userId: number | null | undefined): string {
+  return `team-lists:compact:${userId ?? "anon"}`;
+}
+export function compactRowsOn(stored: string | null): boolean {
+  return stored === "1";
+}
+
+/** The slim header line: "Today · Thu 15 Oct · 3 of 10 done" (#330).
+ *  `progressText` is the existing done/overdue wording. */
+export function todayHeaderLine(today: string, progressText: string): string {
+  const d = new Date(`${today}T12:00:00Z`);
+  const day = d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })
+    .replace(/,/g, "");
+  return `Today · ${day} · ${progressText}`;
+}
+
+/** Priority as a coloured left edge on the row, not a chip (#330). P4 (no
+ *  priority) gets no colour. */
+export function priorityEdgeClass(priority: number): string {
+  switch (priority) {
+    case 1: return "border-l-red-500";
+    case 2: return "border-l-orange-500";
+    case 3: return "border-l-blue-500";
+    default: return "";
+  }
+}
