@@ -1461,7 +1461,7 @@ function DptSettingsSection() {
               className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm text-right focus-ring font-mono"
             />
             <p className="text-xs text-muted-foreground flex-1">
-              The total batch budget for each production day. Distributed across recipes based on their sales %.
+              The total batch budget for each production day. Distributed across recipes based on their sales %. Also the full-team batch ceiling (Dough Prep on the rota) on Create Plan and Case Orders.
             </p>
           </div>
 
