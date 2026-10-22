@@ -17,12 +17,17 @@ import {
 } from "./stock-check-alarm";
 
 // ─────────────────────────────────────────────────────────────────────────
-// StockCheckStatusPanel — "Stock check records for today", at the top of
-// every prep screen (Prep hub, Main Prep, Bases & Sauces, Raw Meat). Lists
-// every stock-check-enabled ingredient due today and highlights which
-// haven't been recorded yet. Outstanding items are shown by default so the
-// operator's eye goes straight to what still needs doing; "Show completed"
-// reveals the recorded ones so a reading can be overwritten.
+// Today's prep stock checks. Three pieces, one source:
+//
+//   • usePrepStockChecks — the data + alarm state (stock-check-alarm.ts).
+//   • StockCheckList     — every stock-check-enabled ingredient due today,
+//                          outstanding first; "Show completed" reveals the
+//                          recorded ones so a reading can be overwritten.
+//   • StockCheckStatusPanel — the collapsible bar on the Prepping For hub.
+//
+// On the prep sections (Main Prep, Bases & Sauces, Raw Meat) the bar became
+// the fourth tab, Stock Check (prep-section-tabs.tsx, Graeme 22 Oct 2026):
+// the tab carries the colour + count and its body is StockCheckList.
 //
 // On a prep day it is also the 3pm alarm (Graeme, 13 Oct 2026): from the
 // warning time it flashes red with the minutes left and the outstanding
@@ -72,20 +77,11 @@ function useLondonClock(intervalMs = 5_000) {
   return clock;
 }
 
-export function StockCheckStatusPanel({ checkDate, prepTarget }: {
-  /** The day the readings are recorded against (the plan being prepped for). */
-  checkDate: string;
-  /** The plan being prepped for — the alarm only fires when its prep is today. */
-  prepTarget: PrepTarget | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(false);
-  // The item whose stock-check dialog is open (row button or red chip).
-  const [activeId, setActiveId] = useState<number | null>(null);
-  const reducedMotion = usePrefersReducedMotion();
+/** Today's stock checks for the prep screens — the one source for the hub
+ *  panel and the Stock Check tab, so they can't disagree. */
+export function usePrepStockChecks(checkDate: string, prepTarget: PrepTarget | null) {
   const clock = useLondonClock();
   const reminders = useTimedReminders();
-  const recordedStockLabel = useRecordedStockLabel();
 
   const { data, isLoading } = useQuery({
     queryKey: stockChecksQueryKey(checkDate),
@@ -121,11 +117,102 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   };
   const state = stockCheckAlarmState(alarm);
   const headline = stockCheckAlarmHeadline({ ...alarm, state });
+  return { isLoading, items, checkByIngredient, outstanding, completed, alarm, state, headline };
+}
+
+export type PrepStockChecks = ReturnType<typeof usePrepStockChecks>;
+
+/** The list of today's stock checks, each row opening the shared entry
+ *  dialog. The body of the hub panel (when shown) and of the Stock Check tab. */
+export function StockCheckList({ checkDate, checks, activeId, setActiveId }: {
+  checkDate: string;
+  checks: PrepStockChecks;
+  /** The item whose entry dialog is open — lifted so the hub panel's red
+   *  chips can open one too. */
+  activeId: number | null;
+  setActiveId: (id: number | null) => void;
+}) {
+  const [showCompleted, setShowCompleted] = useState(false);
+  const recordedStockLabel = useRecordedStockLabel();
+  const { items, checkByIngredient, outstanding, completed, state } = checks;
   const red = state === "warning" || state === "overdue";
-
   const visibleItems = showCompleted ? [...outstanding, ...completed] : outstanding;
-
   const activeItem = activeId != null ? items.find(it => it.id === activeId) ?? null : null;
+
+  return (
+    <>
+      {completed.length > 0 && (
+        <div className="px-4 py-2 flex items-center justify-between text-sm border-b border-border/60">
+          <span className="text-muted-foreground">
+            {outstanding.length === 0
+              ? "Everything for today is in."
+              : `${completed.length} already recorded`}
+          </span>
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none min-h-11">
+            <input
+              type="checkbox"
+              checked={showCompleted}
+              onChange={e => setShowCompleted(e.target.checked)}
+              className="w-5 h-5 rounded border-border"
+            />
+            <span>Show completed</span>
+          </label>
+        </div>
+      )}
+      <div className="divide-y divide-border/60">
+        {visibleItems.length === 0 && (
+          <div className="px-4 py-3 text-sm text-muted-foreground">
+            {completed.length === 0
+              ? "No stock checks are due today."
+              : <>Nothing outstanding — tick &ldquo;Show completed&rdquo; to review today&rsquo;s records.</>}
+          </div>
+        )}
+        {visibleItems.map(it => {
+          const record = checkByIngredient.get(it.id);
+          const recordNative = record ? Number(record.quantity) : null;
+          const timeLabel = record
+            ? new Date(record.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })
+            : null;
+          return (
+            <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm flex-wrap">
+              {record
+                ? <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
+              <span className="font-semibold text-base flex-1 min-w-[8rem]">{it.name}</span>
+              {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
+              <StockCheckTrigger
+                recordedLabel={record && recordNative != null ? recordedStockLabel(recordNative, it) : null}
+                onClick={() => setActiveId(it.id)}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {activeItem && (
+        <StockCheckDialog
+          ingredient={activeItem}
+          checkDate={checkDate}
+          currentNative={checkByIngredient.has(activeItem.id) ? Number(checkByIngredient.get(activeItem.id)!.quantity) : null}
+          onClose={() => setActiveId(null)}
+        />
+      )}
+    </>
+  );
+}
+
+export function StockCheckStatusPanel({ checkDate, prepTarget }: {
+  /** The day the readings are recorded against (the plan being prepped for). */
+  checkDate: string;
+  /** The plan being prepped for — the alarm only fires when its prep is today. */
+  prepTarget: PrepTarget | null;
+}) {
+  const [open, setOpen] = useState(false);
+  // The item whose stock-check dialog is open (row button or red chip).
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
+  const checks = usePrepStockChecks(checkDate, prepTarget);
+  const { isLoading, outstanding, state, headline } = checks;
+  const red = state === "warning" || state === "overdue";
 
   if (isLoading || state === "none") return null;
 
@@ -179,60 +266,8 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
 
       {open && (
         <div className="border-t border-border/60 bg-card text-foreground">
-          {completed.length > 0 && (
-            <div className="px-4 py-2 flex items-center justify-between text-sm border-b border-border/60">
-              <span className="text-muted-foreground">
-                {outstanding.length === 0
-                  ? "Everything for today is in."
-                  : `${completed.length} already recorded`}
-              </span>
-              <label className="inline-flex items-center gap-2 cursor-pointer select-none min-h-11">
-                <input
-                  type="checkbox"
-                  checked={showCompleted}
-                  onChange={e => setShowCompleted(e.target.checked)}
-                  className="w-5 h-5 rounded border-border"
-                />
-                <span>Show completed</span>
-              </label>
-            </div>
-          )}
-          <div className="divide-y divide-border/60">
-            {visibleItems.length === 0 && (
-              <div className="px-4 py-3 text-sm text-muted-foreground">
-                Nothing outstanding — tick &ldquo;Show completed&rdquo; to review today&rsquo;s records.
-              </div>
-            )}
-            {visibleItems.map(it => {
-              const record = checkByIngredient.get(it.id);
-              const recordNative = record ? Number(record.quantity) : null;
-              const timeLabel = record
-                ? new Date(record.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })
-                : null;
-              return (
-                <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm flex-wrap">
-                  {record
-                    ? <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                    : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
-                  <span className="font-semibold text-base flex-1 min-w-[8rem] truncate">{it.name}</span>
-                  {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
-                  <StockCheckTrigger
-                    recordedLabel={record && recordNative != null ? recordedStockLabel(recordNative, it) : null}
-                    onClick={() => setActiveId(it.id)}
-                  />
-                </div>
-              );
-            })}
-          </div>
+          <StockCheckList checkDate={checkDate} checks={checks} activeId={activeId} setActiveId={setActiveId} />
         </div>
-      )}
-      {activeItem && (
-        <StockCheckDialog
-          ingredient={activeItem}
-          checkDate={checkDate}
-          currentNative={checkByIngredient.has(activeItem.id) ? Number(checkByIngredient.get(activeItem.id)!.quantity) : null}
-          onClose={() => setActiveId(null)}
-        />
       )}
     </div>
   );
