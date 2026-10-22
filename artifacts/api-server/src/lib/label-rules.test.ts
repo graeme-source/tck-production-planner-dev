@@ -3,7 +3,6 @@ import {
   resolveOpenedLife,
   parseCategoryDefaults,
   addDaysIso,
-  GLOBAL_DEFAULT_OPENED_LIFE_DAYS,
 } from "./label-rules";
 
 describe("resolveOpenedLife", () => {
@@ -19,20 +18,17 @@ describe("resolveOpenedLife", () => {
       .toEqual({ days: 3, source: "category" });
   });
 
-  it("unknown category falls to the conservative global default", () => {
-    expect(resolveOpenedLife({ openedLifeDays: null, category: "vegetable" }, defaults))
-      .toEqual({ days: GLOBAL_DEFAULT_OPENED_LIFE_DAYS, source: "default" });
-    expect(resolveOpenedLife({ openedLifeDays: null, category: null }, defaults).source).toBe("default");
+  it("no rule means no label — there is no fallback date", () => {
+    expect(resolveOpenedLife({ openedLifeDays: null, category: "vegetable" }, defaults)).toBeNull();
+    expect(resolveOpenedLife({ openedLifeDays: null, category: null }, defaults)).toBeNull();
+    expect(resolveOpenedLife({ openedLifeDays: 0, category: "vegetable" }, defaults)).toBeNull();
   });
 
   it("zero or negative overrides are ignored, not printed", () => {
-    expect(resolveOpenedLife({ openedLifeDays: 0, category: "cheese" }, defaults).days).toBe(3);
-    expect(resolveOpenedLife({ openedLifeDays: -1, category: "cheese" }, defaults).days).toBe(3);
+    expect(resolveOpenedLife({ openedLifeDays: 0, category: "cheese" }, defaults)?.days).toBe(3);
+    expect(resolveOpenedLife({ openedLifeDays: -1, category: "cheese" }, defaults)?.days).toBe(3);
   });
 
-  it("the global default is deliberately short — a config gap must never print a generous date", () => {
-    expect(GLOBAL_DEFAULT_OPENED_LIFE_DAYS).toBeLessThanOrEqual(2);
-  });
 });
 
 describe("parseCategoryDefaults", () => {

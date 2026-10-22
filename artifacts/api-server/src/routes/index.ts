@@ -111,6 +111,7 @@ import formsRouter from "./forms";
 import systemUpdatesRouter from "./system-updates";
 import labelStockRouter from "./label-stock";
 import printJobsRouter from "./print-jobs";
+import { isPrintBridgePath } from "../lib/print-bridge-paths";
 import prepLinkedCompletionsRouter from "./prep-linked-completions";
 import planMoveRouter from "./plan-move";
 import dictationRouter from "./dictation";
@@ -179,6 +180,12 @@ router.use("/issue-pipeline/machine", issuePipelineMachineRouter);
 // public: the router demands the founder-made key (sha256-checked against
 // ad_spend_ingest_links) on every request, and rate-limits itself.
 router.use("/ad-spend/google-ads", googleAdsIngestRouter);
+// Print bridge (headless script on the printer's computer, no cookie): only
+// its poll + ack paths mount here; NOT public — those routes demand the
+// PRINT_BRIDGE_TOKEN bearer (503 when unset). Operator routes under
+// /print-jobs fall through to the guarded mount further down.
+router.use("/print-jobs", (req: Request, res: Response, next: NextFunction) =>
+  isPrintBridgePath(req.path) ? printJobsRouter(req, res, next) : next());
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
