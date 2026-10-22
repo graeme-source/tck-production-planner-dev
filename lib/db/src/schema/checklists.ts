@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, boolean, unique, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, boolean, unique, date, numeric, index } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { productionPlansTable } from "./production_plans";
 import { usersTable } from "./users";
@@ -18,6 +18,13 @@ export const checklistTemplatesTable = pgTable("checklist_templates", {
   scheduleAnchorDate: date("schedule_anchor_date"),
   orderPosition: integer("order_position").notNull().default(0),
   dynamicDataType: text("dynamic_data_type"), // null | "temperature_records" | "oven_events"
+  // "Record a reading" (migration 0227, issues #87/#169). NULL unit = a plain
+  // tick. Labels = one reading each (e.g. Scale 1, Scale 2); empty = one.
+  // Min/max = optional pass range, NULL = no limit that side.
+  readingUnit: text("reading_unit"),
+  readingLabels: text("reading_labels").array(),
+  readingMin: numeric("reading_min", { precision: 10, scale: 2 }),
+  readingMax: numeric("reading_max", { precision: 10, scale: 2 }),
   isActive: boolean("is_active").notNull().default(true),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -50,6 +57,27 @@ export const checklistOneoffItemsTable = pgTable("checklist_oneoff_items", {
   completedAt: timestamp("completed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+// One reading per (item, plan, label) — migration 0227. The pass range in
+// force is copied on so later edits to the item never rewrite a verdict.
+export const checklistReadingsTable = pgTable("checklist_readings", {
+  id: serial("id").primaryKey(),
+  templateId: integer("template_id").notNull().references(() => checklistTemplatesTable.id, { onDelete: "cascade" }),
+  planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
+  stationType: text("station_type").notNull(),
+  label: text("label").notNull().default(""),
+  value: numeric("value", { precision: 10, scale: 2 }).notNull(),
+  unit: text("unit").notNull(),
+  expectedMin: numeric("expected_min", { precision: 10, scale: 2 }),
+  expectedMax: numeric("expected_max", { precision: 10, scale: 2 }),
+  inRange: boolean("in_range"),
+  recordedBy: integer("recorded_by").references(() => usersTable.id, { onDelete: "set null" }),
+  recordedByName: text("recorded_by_name").notNull(),
+  recordedAt: timestamp("recorded_at").notNull().defaultNow(),
+}, (t) => [
+  unique("uq_checklist_reading").on(t.templateId, t.planId, t.label),
+  index("checklist_readings_recorded_at_idx").on(t.recordedAt),
+]);
 
 export const insertChecklistTemplateSchema = createInsertSchema(checklistTemplatesTable);
 export const insertChecklistCompletionSchema = createInsertSchema(checklistCompletionsTable);
