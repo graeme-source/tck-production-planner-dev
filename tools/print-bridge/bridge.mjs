@@ -12,14 +12,19 @@
  *   PRINTER_MODE=share  — USB printer shared from THIS Windows PC: the TSPL
  *                         is written to a temp file and raw-copied to the
  *                         share (share the printer as e.g. "TSC" first).
+ *   PRINTER_MODE=mac    — USB printer plugged into THIS Mac: the TSPL is sent
+ *                         raw to the printer's macOS print queue with `lp`
+ *                         (add the printer in System Settings first; the
+ *                         queue name is shown by `lpstat -p`).
  *
  * Configuration (environment variables, or a .env file next to this script):
  *   APP_URL             e.g. https://<the live app>            (required)
  *   PRINT_BRIDGE_TOKEN  must match the server's                (required)
- *   PRINTER_MODE        tcp | share                            (default tcp)
+ *   PRINTER_MODE        tcp | share | mac                      (default tcp)
  *   PRINTER_HOST        printer IP for tcp mode
  *   PRINTER_PORT        default 9100
  *   PRINTER_SHARE       Windows share name for share mode, e.g. TSC
+ *   PRINTER_QUEUE       macOS print queue name for mac mode, e.g. TSC_DA210
  *   STATION             default prep
  *
  * Run it with:  node bridge.mjs
@@ -48,6 +53,7 @@ const MODE = process.env.PRINTER_MODE ?? "tcp";
 const HOST = process.env.PRINTER_HOST ?? "";
 const PORT = Number(process.env.PRINTER_PORT ?? 9100);
 const SHARE = process.env.PRINTER_SHARE ?? "";
+const QUEUE = process.env.PRINTER_QUEUE ?? "";
 const STATION = process.env.STATION ?? "prep";
 
 if (!APP_URL || !TOKEN) {
@@ -60,6 +66,15 @@ if (MODE === "tcp" && !HOST) {
 }
 if (MODE === "share" && !SHARE) {
   console.error("PRINTER_MODE=share needs PRINTER_SHARE (the Windows printer share name).");
+  process.exit(1);
+}
+
+if (MODE === "mac" && !QUEUE) {
+  console.error("PRINTER_MODE=mac needs PRINTER_QUEUE (the Mac's print queue name — run `lpstat -p` to see it).");
+  process.exit(1);
+}
+if (!["tcp", "share", "mac"].includes(MODE)) {
+  console.error(`Unknown PRINTER_MODE "${MODE}" — use tcp, share or mac.`);
   process.exit(1);
 }
 
@@ -88,7 +103,23 @@ async function printShare(tspl) {
   }
 }
 
-const printJob = MODE === "tcp" ? printTcp : printShare;
+// `-o raw` hands the TSPL to the printer untouched — the macOS driver must
+// not rasterise it, or the printer gets a picture of the commands instead.
+async function printMac(tspl) {
+  const file = join(tmpdir(), `tck-label-${Date.now()}.prn`);
+  await writeFile(file, tspl, "latin1");
+  try {
+    await new Promise((resolve, reject) => {
+      execFile("lp", ["-d", QUEUE, "-o", "raw", file], (err, _out, stderr) =>
+        err ? reject(new Error(stderr || err.message)) : resolve());
+    });
+  } finally {
+    await unlink(file).catch(() => {});
+  }
+}
+
+const printJob = { tcp: printTcp, share: printShare, mac: printMac }[MODE];
+const target = { tcp: `${HOST}:${PORT}`, share: `\\\\localhost\\${SHARE}`, mac: `queue ${QUEUE}` }[MODE];
 
 async function api(path, opts = {}) {
   const res = await fetch(`${APP_URL}/api/print-jobs${path}`, {
@@ -99,7 +130,7 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-log(`TCK print bridge starting — station=${STATION}, mode=${MODE}, target=${MODE === "tcp" ? `${HOST}:${PORT}` : `\\\\localhost\\${SHARE}`}`);
+log(`TCK print bridge starting — station=${STATION}, mode=${MODE}, target=${target}`);
 
 for (;;) {
   try {

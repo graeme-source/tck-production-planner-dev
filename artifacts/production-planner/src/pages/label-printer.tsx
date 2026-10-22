@@ -226,7 +226,7 @@ export default function LabelPrinterPage() {
       <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
         <h2 className="font-semibold text-lg flex items-center gap-2"><Printer className="w-5 h-5 text-primary" /> Print a test label</h2>
         <p className="text-sm text-muted-foreground">
-          Proves the whole pipe — this iPad → app → bridge → printer — and shows the layout on the real 100×25&nbsp;mm stock.
+          Proves the whole pipe — this iPad → app → bridge → printer — and shows the layout on the real 102×25&nbsp;mm stock.
         </p>
         <div className="flex items-center gap-3">
           <label className="text-sm text-muted-foreground">Copies</label>

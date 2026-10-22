@@ -35,9 +35,9 @@ describe("tsplSanitize", () => {
 describe("renderIngredientLabel", () => {
   const fields = { itemName: "Chicken Thighs", useBy: "2026-09-10", openedOn: "2026-09-08", initials: "gc" };
 
-  it("declares the 100x25mm geometry and prints one copy by default", () => {
+  it("declares the 102x25mm geometry and prints one copy by default", () => {
     const tspl = renderIngredientLabel(fields);
-    expect(tspl).toContain("SIZE 100 mm,25 mm");
+    expect(tspl).toContain("SIZE 102 mm,25 mm");
     expect(tspl).toContain("GAP 3 mm,0 mm");
     expect(tspl).toContain("PRINT 1,1");
     expect(tspl.endsWith("\r\n")).toBe(true);

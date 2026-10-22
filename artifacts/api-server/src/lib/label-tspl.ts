@@ -6,8 +6,8 @@
  * no driver, no design app. Everything here is a pure string builder so the
  * layouts are unit-testable without a printer within reach.
  *
- * Geometry: 4" x ~25mm direct-thermal stock on a 203dpi printer → 8 dots/mm,
- * a printable canvas of roughly 800 x 200 dots. The layouts lean on that
+ * Geometry: 102 x 25mm direct-thermal stock (Graeme, 2026-10-22) on a 203dpi
+ * printer → 8 dots/mm, a printable canvas of roughly 816 x 200 dots. The layouts lean on that
  * width: item name big on the left, the USE BY date boxed and huge on the
  * right, because the use-by is the thing a fridge check reads from a metre
  * away.
@@ -26,7 +26,7 @@ export interface LabelGeometry {
   gapMm?: number;
 }
 
-const DEFAULTS: Required<LabelGeometry> = { dotsPerMm: 8, widthMm: 100, heightMm: 25, gapMm: 3 };
+const DEFAULTS: Required<LabelGeometry> = { dotsPerMm: 8, widthMm: 102, heightMm: 25, gapMm: 3 };
 
 /** TSPL TEXT content sits in double quotes; the language has no escape for
  *  a literal double quote, so they become singles. Thermal bitmap fonts are
