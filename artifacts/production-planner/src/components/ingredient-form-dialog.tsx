@@ -20,7 +20,8 @@ import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
 import type { Ingredient } from "@workspace/api-client-react";
-import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
+import { getGetUpfSummaryQueryKey, useListIngredients } from "@workspace/api-client-react";
+import { findLikelyDuplicates, duplicateWarning } from "@/lib/ingredient-duplicates";
 import {
   ingredientFormSchema,
   emptyIngredientFormDefaults,
@@ -147,6 +148,17 @@ export function IngredientFormDialog({
   // text — unticking a false positive sticks until the text itself changes.
   const watchedDeclaration = watch("labelDeclaration") ?? "";
   const watchedName = watch("name") ?? "";
+  // "Mixed Herbs already exists, did you mean that one?" (#326): a warning
+  // when adding, never a block. Reuses the cached ingredient list.
+  const { data: allIngredients } = useListIngredients();
+  const watchedPartNumber = watch("supplierPartNumber") ?? "";
+  const duplicateNote = useMemo(() => {
+    if (editingItem || !allIngredients) return null;
+    return duplicateWarning(findLikelyDuplicates(
+      { name: watchedName, supplierPartNumber: watchedPartNumber },
+      allIngredients.map(i => ({ id: i.id, name: i.name, supplierPartNumber: i.supplierPartNumber ?? null })),
+    ));
+  }, [editingItem, allIngredients, watchedName, watchedPartNumber]);
   const detectedCodes = useMemo(() => detectAllergens(watchedDeclaration), [watchedDeclaration]);
 
   // Opened from a label check's "fix it" button: show the declaration
@@ -856,6 +868,11 @@ export function IngredientFormDialog({
               <label className="text-sm font-medium mb-1 block">Name *</label>
               <input {...register("name")} className={inputClass} placeholder={formMode === "ingredient" ? "e.g. Organic Plain Flour" : "e.g. Courier Box (Large)"} />
               {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
+              {duplicateNote && (
+                <p className="mt-1 text-sm font-semibold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg px-2 py-1" role="status">
+                  {duplicateNote}
+                </p>
+              )}
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Unit *</label>
