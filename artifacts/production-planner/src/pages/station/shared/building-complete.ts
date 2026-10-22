@@ -56,3 +56,17 @@ export function buildProgressPercent(items: BuildProgressItem[]): number {
   }
   return target > 0 ? Math.round((done / target) * 100) : 0;
 }
+
+/**
+ * The line each Mixing queue row shows about the builders (Fix queue #160),
+ * so mixers can see how far the builders are on each flavour without asking.
+ * Display only: it reads the same per-item counts and finished flag the
+ * Building station uses and never changes a target.
+ */
+export function builderProgressLine(item: BuildProgressItem): string {
+  const target = Math.max(0, item.target);
+  const built = Math.max(0, item.built);
+  if (item.markedComplete) return `Builders: finished · ${built} built`;
+  if (target > 0 && built >= target) return `Builders: all ${target} built`;
+  return `Builders: ${built} of ${target} built · ${target - built} left`;
+}

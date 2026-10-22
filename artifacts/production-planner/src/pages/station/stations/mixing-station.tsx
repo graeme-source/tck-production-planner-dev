@@ -71,6 +71,7 @@ import { createPortal } from "react-dom";
 import { getStationCount, isMacCheese, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { tinsCompleteFrom } from "../shared/tin-math";
 import { useMixingCookingRecipes } from "../shared/mixing-cooking-recipes";
+import { builderProgressLine } from "../shared/building-complete";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
 // Weight the cooked meat filling should come to once every tray is out of the
@@ -1786,6 +1787,16 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
 
               <span>{mixingCount} / {target} batches total</span>
             </div>
+
+            {/* How far the builders are on this flavour — display only
+                (#160), from the same counts the Building station uses. */}
+            <p className="mt-1 text-sm font-medium text-amber-700 dark:text-amber-400">
+              {builderProgressLine({
+                target: item.batchesTarget ?? 0,
+                built: getStationCount(item, "building_1") + getStationCount(item, "building_2"),
+                markedComplete: !!item.builderMarkedCompleteAt,
+              })}
+            </p>
 
             {sched && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
               <div className="mt-1.5 space-y-0.5">
