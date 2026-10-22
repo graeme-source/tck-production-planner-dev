@@ -130,7 +130,8 @@ const RULE_CATEGORIES = INGREDIENT_CATEGORIES.filter(c => c.value && c.value !==
 /** Category → opened-life-days defaults. Autosaves ~1s after the last
  *  change, with the save state visible (charter rule for data entry).
  *  Ingredient-level overrides in the inventory form beat these; anything
- *  with neither falls to a deliberately short global default of 2 days. */
+ *  with neither has NO Print label button and can't print — staff write
+ *  that label by hand (Graeme, 2026-10-22). */
 function CategoryDefaultsEditor() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
@@ -199,8 +200,9 @@ function CategoryDefaultsEditor() {
       </div>
       <p className="text-sm text-muted-foreground">
         Days an opened ingredient stays food-safe — this drives the use-by on one-tap prep labels.
-        A number set on the ingredient itself (inventory form) beats these; anything with neither
-        prints a cautious <span className="font-semibold text-foreground">2 days</span>.
+        A number set on the ingredient itself (inventory form) beats these. Anything with neither
+        gets <span className="font-semibold text-foreground">no Print label button</span> and can't
+        print — the team writes that label by hand.
       </p>
       {!loaded ? (
         <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
@@ -217,7 +219,7 @@ function CategoryDefaultsEditor() {
                   inputMode="numeric"
                   value={values[cat.value] ?? ""}
                   onChange={e => onChange(cat.value, e.target.value)}
-                  placeholder="2"
+                  placeholder="—"
                   className="w-full px-3 py-2 pr-12 border border-border rounded-lg text-sm bg-background"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs pointer-events-none">days</span>
