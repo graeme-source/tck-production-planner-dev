@@ -34,6 +34,7 @@ import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
 import { useLiveLabelRecipeIds, wrappingLabelAction } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
+import { CookChillCard } from "@/components/cook-chill/cook-chill-card";
 
 // Everyone can make back labels at the bench (Graeme, 12 Oct 2026); only the
 // approved live label prints. Test prints stay on the label page, gated.
@@ -655,6 +656,10 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           where the wrappers stand — with the obvious route to the full
           pack report alongside. */}
       <LeftToWrapBanner />
+
+      {/* Cook and chill (issue #244): tick "Chilling finished" for cooked
+          sub-recipes in the blast chiller. Hidden when nothing is chilling. */}
+      <CookChillCard station="wrapping" planId={plan.id} />
 
       {backLabelsFor && (
         <BackLabelsDialog
