@@ -5,7 +5,7 @@
  * slide's data in a single round-trip so the slideshow can start
  * instantly without 10 parallel fetches:
  *   - today's special, plan, deliveries, open struggles + safety items
- *   - yesterday's wonkies, builder rate, packing rate (KPI slide)
+ *   - the last production day's KPIs + 7-production-day trend (KPI slide)
  *   - recent SOP updates
  *   - this week's lean lesson (rolls through the 12-week curriculum
  *     automatically, admin-overridable per week)
@@ -42,16 +42,11 @@ import { and, eq, gte, lte, desc, asc, sql, isNull, notInArray, inArray } from "
 import { londonDateString } from "../lib/london-time";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
-import {
-  computeBuilderBatchesPerHourForDay,
-  computePackingOrdersPerHourForDay,
-  countImprovementsCompletedForDay,
-} from "../lib/yesterday-kpis";
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
-import { loadDefectSummary } from "../services/defects-summary";
+import { loadLastProductionKpis } from "../services/last-production-kpis";
 import { separateKitchenPositions } from "@workspace/production-schedule";
 import { parseSettings as parseTeamEfficiencySettings } from "../lib/team-efficiency-settings";
 import { isSeparateKitchenPosition, meetingRotaStations, testProductPrepItems } from "../lib/meeting-scope";
@@ -391,9 +386,9 @@ router.get("/station-assignments", async (req: Request, res: Response) => {
 router.get("/dashboard", async (_req: Request, res: Response) => {
   try {
     const today = londonDateString();
-    // "Yesterday's numbers" should mean the previous PRODUCTION day, not the
-    // previous calendar day — so on Monday we show Friday, on Friday Thursday,
-    // and bank holidays are skipped (Mon-Fri minus non-dispatch dates).
+    // The previous DISPATCH day by weekday rule (Mon–Fri minus non-dispatch
+    // dates). Still returned as `yesterday` for older clients; the numbers
+    // slide now uses `lastProductionDay` below, which is found from the data.
     const yesterday = await getPreviousDispatchDayAsync(today);
     // "Tomorrow" means the next PACK day, not the next calendar day: the
     // Friday-afternoon pack report sizes Monday's pack, and calendar-tomorrow
@@ -468,80 +463,28 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
       ordersToPack,
     };
 
-    // ── Yesterday's KPIs (wonky / builder rate / packing rate) ──────
-    const [yesterdayPlan] = await db
-      .select({ id: productionPlansTable.id })
-      .from(productionPlansTable)
-      .where(eq(productionPlansTable.planDate, yesterday))
-      .limit(1);
-
-    let wonkyCount = 0;
-    let dogBinCount = 0;
-    let shortCount = 0;
-    let leftoverFillingGrams = 0;
-    let builderBatchesPerHour: number | null = null;
-    let packingBatchesPerHour: number | null = null;
-    let yesterdayBatchesTotal = 0;
-
-    if (yesterdayPlan) {
-      const items = await db
-        .select({
-          id: productionPlanItemsTable.id,
-          wonlyTotal: productionPlanItemsTable.wonlyTotal,
-          dogBinCount: productionPlanItemsTable.dogBinCount,
-          shortCount: productionPlanItemsTable.shortCount,
-          leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
-          batchesTarget: productionPlanItemsTable.batchesTarget,
-          recipeCategory: recipesTable.category,
-          excludeFromKpis: recipesTable.excludeFromKpis,
-        })
-        .from(productionPlanItemsTable)
-        .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
-        .where(eq(productionPlanItemsTable.planId, yesterdayPlan.id));
-
-      // Main kitchen only — fried chicken is made in a separate facility.
-      const day = meetingDayTotals(items);
-      wonkyCount = day.wonky;
-      dogBinCount = day.dogBin;
-      shortCount = day.shortCount;
-      leftoverFillingGrams = day.leftoverFillingGrams;
-      yesterdayBatchesTotal = day.batchesTarget;
-    }
-
-    // Yesterday's builder + packing rates come from the same helpers
-    // /api/reports/production-kpis and /api/reports/packing-speed use,
-    // so the meeting reports the same numbers operators see on the
-    // Analytics page. Previously the meeting did simpler raw-wallclock
-    // maths (no break subtraction) for building, and read local
-    // batch_completions for packing — which is empty because packing
-    // is logged via Shopify fulfilment timestamps, not locally.
-    // The fourth KPI (Graeme, 2026-09-18): improvements COMPLETED on the
-    // last production day — done work bucketed by done_at, never ideas,
-    // never the later approval. Same shared helper the end-of-day page
-    // uses, so the two meetings can't disagree. Zero is a real zero;
-    // null only means the lookup itself failed.
-    const [builderKpi, packingKpi, improvementsCompleted, defectSummary] = await Promise.all([
-      computeBuilderBatchesPerHourForDay(yesterday).catch(err => {
-        console.warn("[morning-meeting] builder BPH calc failed:", err);
-        return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
-      }),
-      computePackingOrdersPerHourForDay(yesterday).catch(err => {
-        console.warn("[morning-meeting] packing orders/hr calc failed:", err);
-        return { totalOrders: 0, activeMinutes: 0, ordersPerHour: null };
-      }),
-      countImprovementsCompletedForDay(yesterday).catch(err => {
-        console.warn("[morning-meeting] improvements completed calc failed:", err);
-        return null;
-      }),
-      // Defects KPI (2026-10-01) — same loader as the Defects page and the
-      // end-of-day meeting. null only when the lookup failed.
-      loadDefectSummary(yesterday, yesterday).catch(err => {
-        console.warn("[morning-meeting] defects calc failed:", err);
-        return null;
-      }),
-    ]);
-    builderBatchesPerHour = builderKpi.batchesPerHour;
-    packingBatchesPerHour = packingKpi.ordersPerHour;
+    // ── Last production day's KPIs + 7-production-day trend ─────────
+    // "Last production" (Graeme, 2026-10-22), found from the data: the most
+    // recent day before today the main kitchen actually made anything, so
+    // weekends, days off and bank holidays drop out on their own. The
+    // headline tiles are simply the last day of the trend series — one
+    // calculation, so the big number and the sparkline can't disagree.
+    // (The end-of-day meeting still means TODAY and is unchanged.)
+    const lastProduction = await loadLastProductionKpis(today).catch(err => {
+      console.warn("[morning-meeting] last production KPIs failed:", err);
+      return null;
+    });
+    const lastProductionDay = lastProduction?.lastProductionDay ?? null;
+    const lastDay = lastProductionDay ? lastProduction!.byDay.get(lastProductionDay) : undefined;
+    const wonkyCount = lastDay?.wonkyCount ?? 0;
+    const dogBinCount = lastDay?.dogBinCount ?? 0;
+    const shortCount = lastDay?.shortCount ?? 0;
+    const leftoverFillingGrams = lastDay?.leftoverFillingGrams ?? 0;
+    const builderBatchesPerHour = lastDay?.builderBatchesPerHour ?? null;
+    const packingBatchesPerHour = lastDay?.packingBatchesPerHour ?? null;
+    const improvementsCompleted = lastDay ? lastDay.improvementsCompleted : null;
+    const yesterdayBatchesTotal = lastDay?.batchesTarget ?? 0;
+    const lastDefects = lastDay ? lastDay.defects : null;
 
     // ── Tomorrow's non-core production (Test Product Prep slide) ────
     // Anything on tomorrow's plan that isn't a core menu item needs
@@ -785,8 +728,13 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         improvementsCompleted,
         batchesTarget: yesterdayBatchesTotal,
         // Wonkies + dog bins + recorded defects, as a % of packs made.
-        defects: defectSummary ? { count: defectSummary.defects, pct: defectSummary.pct, packsMade: defectSummary.packsMade } : null,
+        defects: lastDefects,
       },
+      // The day those numbers are for — null when there's no production
+      // history yet (the slide shows an empty state) — and each KPI over the
+      // last 7 production days, oldest first, ending on that day.
+      lastProductionDay,
+      kpiTrend: lastProduction ? { days: lastProduction.days, series: lastProduction.series } : null,
       dayNumbers,
       tomorrow,
       tomorrowNonCoreItems,
