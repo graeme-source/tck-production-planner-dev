@@ -48,6 +48,7 @@ describe("matchAttributingWrite", () => {
     ["POST", "/checklists/completions"],
     ["POST", "/checklists/packing-batch-record"],
     ["POST", "/temperature-records"],
+    ["PUT", "/checklist-readings"], // a calibration reading is filed under who took it
     ["POST", "/oven-events/oven-in"],
     ["PATCH", "/production-plans/180/items/9/wrapping-complete"],
     ["POST", "/fulfilment/verify-label-scan"],

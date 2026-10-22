@@ -70,6 +70,7 @@ import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
 import checklistsRouter from "./checklists";
+import checklistReadingsRouter from "./checklist-readings";
 import curiosityRouter from "./curiosity";
 import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
@@ -418,6 +419,8 @@ router.use("/issue-pipeline", issuePipelineRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
 router.use("/checklists", checklistsRouter);
+// Readings on checklist items (scale calibration etc., issues #87/#169).
+router.use("/checklist-readings", checklistReadingsRouter);
 // Curiosity Time waste-spotting walks — every team member does these from
 // the station checklist; the route file guards its own settings endpoints.
 router.use("/curiosity", curiosityRouter);
