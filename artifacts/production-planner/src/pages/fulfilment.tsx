@@ -39,6 +39,7 @@ import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { StationMessagesBanner } from "@/components/station-messages";
+import { ApcTrackingSlowBanner } from "@/components/apc-tracking-slow-banner";
 import { StationReminderBanner } from "@/pages/station/shared/timed-reminders";
 import { barcodeFor, canTickByHand, decideScan, scanMessage, shouldRefreshOnMiss, type ScanDecision, type ScanLine } from "@workspace/barcodes";
 import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
@@ -267,6 +268,9 @@ interface ShipmentResult {
   orderId: number;
   orderName: string;
   warnings?: string[];
+  /** APC tracking couldn't be asked, so the reuse was checked by date only —
+   *  a quiet grey line, not an amber warning (#339). */
+  apcNotice?: string;
   /** True when the server returned a consignment that already existed for
    *  this order rather than booking a second one. */
   reused?: boolean;
@@ -3426,6 +3430,9 @@ export default function Fulfilment() {
             <span className="text-xs text-muted-foreground ml-auto">Service: {shipment.serviceCode}</span>
           </div>
         )}
+        {shipment?.apcNotice && (
+          <p className="text-xs text-muted-foreground px-3 -mt-2">{shipment.apcNotice}</p>
+        )}
 
         {shipment?.warnings && shipment.warnings.length > 0 && (
           <div className="p-3 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-xl text-sm flex items-start gap-2">
@@ -4268,6 +4275,8 @@ export default function Fulfilment() {
       {/* Messages sent to the packing station — this screen is where the
           packers actually live, so 'packing' notes land here too. */}
       <StationMessagesBanner stationType="packing" />
+      {/* APC tracking slow several times in a row: one banner, not a warning per order (#339). */}
+      <ApcTrackingSlowBanner />
       {/* Timed reminders for packing — the 3pm Factory Number count alarm
           pins itself to the top of the screen so it can't be scrolled past
           (Graeme, 2026-10-15). */}

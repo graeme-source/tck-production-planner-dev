@@ -22,7 +22,8 @@ import { settledOrders } from "../lib/order-age";
 import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
-import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
+import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments, refreshTodaysTrackingInBackground } from "../lib/apc-consignment-ledger";
+import { trackingFallbackNotice } from "../lib/apc-tracking-cache";
 import { waybillSendDate, friendlyIsoDate } from "../lib/apc-consignment-reuse";
 import { londonDateString } from "../lib/london-time";
 import { DISPATCH_PATHS, DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback, type DispatchPath, type DispatchRefusalCode } from "../lib/order-disputes";
@@ -845,7 +846,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     // collection, cancelled in APC, replaced by a reschedule) — told to the
     // packer so a stale label already on the bench gets binned.
     let replacedOldBooking: { waybill: string; message: string } | null = null;
-    let reuseWarning: string | null = null;
+    // APC tracking couldn't be asked — a quiet grey line, not a warning (#339).
+    let apcNotice: string | null = null;
 
     // Reuse ONLY today's live booking for the order's current date
     // (incident #136845 — lib/apc-consignment-ledger.ts). Asks APC's
@@ -856,7 +858,7 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     if (prior.decision.action === "reuse") {
       reusedWaybill = prior.decision.waybill;
       reusedTrackingUrl = prior.trackingUrl;
-      reuseWarning = prior.decision.warning ?? null;
+      apcNotice = prior.decision.notice ?? null;
       console.log(`[Fulfilment] ${order.name} already has today's consignment ${reusedWaybill} — reusing, not re-booking`);
     } else {
       if (prior.decision.waybill) replacedOldBooking = { waybill: prior.decision.waybill, message: prior.decision.message };
@@ -880,7 +882,7 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
             console.log(`[Fulfilment] APC holds ${live.waybill} for ${order.name} but it is dead — booking new`);
           } else {
             reusedWaybill = live.waybill;
-            if (status.kind === "unreachable") reuseWarning = `Couldn't check APC's tracking for ${live.waybill} (${status.error}) — reused on the date rule alone.`;
+            if (status.kind === "unreachable") apcNotice = trackingFallbackNotice(status.error);
             console.log(`[Fulfilment] APC already holds today's ${live.waybill} for ${order.name} — reusing`);
           }
         }
@@ -920,7 +922,8 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
         orderId,
         orderName: order.name,
         reused: true,
-        ...(reuseWarning || replacedOldBooking ? { warnings: [reuseWarning, oldBookingWarning(replacedOldBooking)].filter((w): w is string => !!w) } : {}),
+        ...(replacedOldBooking ? { warnings: [oldBookingWarning(replacedOldBooking)].filter((w): w is string => !!w) } : {}),
+        ...(apcNotice ? { apcNotice } : {}),
         ...(replacedOldBooking ? { replacedOldBooking } : {}),
       });
       return;
@@ -2502,6 +2505,10 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
       issuesSaved = false;
       console.error("[Fulfilment] could not save the booking issues report:", saveErr instanceof Error ? saveErr.message : saveErr);
     }
+
+    // Read the new consignments' APC tracking in the background so opening
+    // an order uses the cached answer instead of waiting on APC (#339).
+    refreshTodaysTrackingInBackground(apiBase);
 
     res.json({
       tag,
