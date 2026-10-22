@@ -32,6 +32,7 @@ import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 import { getOutstandingDispatch, OUTSTANDING_DISPATCH_TYPE, showOutstandingCheck } from "../lib/outstanding-dispatch";
 import { resolveRecipeBins, type RecipeBin } from "../lib/recipe-bins";
+import { resolveChecklistStation } from "../lib/checklist-stations";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 
@@ -54,31 +55,10 @@ async function adminOnly(req: Request, res: Response, next: NextFunction) {
 }
 
 
-// Shared checklists: stations on the left share a single checklist stored
-// under the canonical station on the right. Editing or viewing the alias
-// transparently routes to the canonical record so a "weekly Monday" item
-// added to either station shows up on both for every user.
-const SHARED_CHECKLIST_STATIONS: Record<string, string> = {
-  building_2: "building_1",
-  dough_prep: "dough_sheeting",
-  // The prep area is ONE physical station with one checklist, whichever
-  // section (hub, main, bases, raw meat) it's opened from. Before 2026-07-30
-  // each section had its own cloned copy, so a tick in one section didn't
-  // show in the others and the team thought the checklist was undoing
-  // itself. Existing templates/history were merged into 'prep' by the
-  // prep_checklist_merge_v1 startup migration.
-  main_prep: "prep",
-  prep_bases: "prep",
-  prep_meat: "prep",
-};
-
-/** Resolve to the canonical station type for checklist storage.
- *  Exported for routes that store per-station-per-plan records alongside the
- *  checklist (curiosity walks) — they must share this aliasing or building_2
- *  and the prep sections would each get their own copy. */
-export function resolveChecklistStation(stationType: string): string {
-  return SHARED_CHECKLIST_STATIONS[stationType] ?? stationType;
-}
+// Shared-checklist aliasing (building_2 → building_1, prep sections → prep)
+// lives in lib/checklist-stations.ts so the rule is unit-tested. Re-exported
+// for routes that already import it from here (curiosity walks).
+export { resolveChecklistStation };
 
 // Which days a template is due: lib/checklist-schedule.ts (the shared
 // recurrence engine, lib/recurrence — one copy of the day rules).
