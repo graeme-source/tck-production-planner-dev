@@ -27,6 +27,14 @@ import {
   ingredientToFormValues,
   type IngredientFormValues,
 } from "@/lib/ingredient-form";
+import {
+  NUTRITION_FIELDS,
+  blankNutritionFields,
+  fillBlankNutritionWithZero,
+  isNutritionBlank,
+  shouldOfferFillBlanks,
+  type NutritionField,
+} from "@/lib/nutrition-entry";
 
 export type IngredientFormMode = "ingredient" | "supply";
 
@@ -535,6 +543,18 @@ export function IngredientFormDialog({
   // keep the ✨ "needs verifying" chip. Allergens follow the same rule.
   const clearAiEstimatedFlag = () => {
     if (watch("nutritionalsAiEstimated")) setValue("nutritionalsAiEstimated", false);
+  };
+
+  // Blank vs zero (22 Oct 2026): blank boxes are "not set" and stay null; zeros
+  // are only filled in by the explicit "Set the blank ones to 0" tap, and only
+  // into boxes that are empty.
+  const nutritionWatch = watch(NUTRITION_FIELDS.map(f => f.field));
+  const nutritionValues = Object.fromEntries(NUTRITION_FIELDS.map((f, i) => [f.field, nutritionWatch[i]])) as Record<NutritionField, unknown>;
+  const blankNutrition = blankNutritionFields(nutritionValues);
+  const setBlankNutritionToZero = () => {
+    for (const [field, zero] of Object.entries(fillBlankNutritionWithZero(nutritionValues))) {
+      setValue(field as NutritionField, zero, { shouldDirty: true });
+    }
   };
 
   const applyScraped = () => {
@@ -1357,31 +1377,44 @@ export function IngredientFormDialog({
                     )}
                   </div>
                   <p className="text-xs text-muted-foreground">All values per 100 g as supplied.</p>
-                  <div className="grid grid-cols-4 gap-3">
-                    {([
-                      { field: "energyKj", label: "Energy (kJ)" },
-                      { field: "energyKcal", label: "Energy (kcal)" },
-                      { field: "fat", label: "Fat (g)" },
-                      { field: "saturates", label: "Saturates (g)" },
-                      { field: "carbohydrate", label: "Carbs (g)" },
-                      { field: "sugars", label: "Sugars (g)" },
-                      { field: "protein", label: "Protein (g)" },
-                      { field: "fibre", label: "Fibre (g)" },
-                      { field: "salt", label: "Salt (g)" },
-                    ] as const).map(({ field, label }) => (
-                      <div key={field}>
-                        <label className="text-xs font-medium mb-1 block">{label}</label>
-                        <input
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          {...register(field, { onChange: clearAiEstimatedFlag })}
-                          className={numInputClass}
-                          placeholder="0.00"
-                        />
-                      </div>
-                    ))}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                    {NUTRITION_FIELDS.map(({ field, label }) => {
+                      // Blank = not entered (saved as null); a typed 0 is a real value.
+                      const blank = isNutritionBlank(nutritionValues[field]);
+                      return (
+                        <div key={field}>
+                          <label className="text-xs font-medium mb-1 flex items-center justify-between gap-1">
+                            <span>{label}</span>
+                            {blank && <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400">Not set</span>}
+                          </label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            {...register(field, { onChange: clearAiEstimatedFlag })}
+                            className={cn(numInputClass, blank && "border-amber-400 dark:border-amber-600 placeholder:text-amber-600/70 placeholder:italic")}
+                            placeholder="not set"
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
+                  {blankNutrition.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-amber-700 dark:text-amber-300">
+                      <span>
+                        {blankNutrition.length} of {NUTRITION_FIELDS.length} not set — blank means not entered. If the label says 0, enter 0.
+                      </span>
+                      {shouldOfferFillBlanks(nutritionValues) && (
+                        <button
+                          type="button"
+                          onClick={setBlankNutritionToZero}
+                          className="px-3 py-1.5 rounded-lg border border-amber-400 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-200 font-semibold hover:bg-amber-100 dark:hover:bg-amber-900/40"
+                        >
+                          Set the blank ones to 0
+                        </button>
+                      )}
+                    </div>
+                  )}
                   <div>
                     <label className="text-sm font-medium mb-1 block">Label Declaration</label>
                     <textarea
