@@ -24,6 +24,8 @@ import {
   renderIngredientLabel,
   renderTinLabel,
   renderTestLabel,
+  labelGeometryFor,
+  LABEL_PRINTER_SETTINGS_KEY,
 } from "../lib/label-tspl";
 import {
   resolveOpenedLife,
@@ -31,6 +33,7 @@ import {
   addDaysIso,
   LABEL_RULE_SETTINGS_KEY,
 } from "../lib/label-rules";
+import { PRINT_JOB_MAX_AGE_MINUTES } from "../lib/print-bridge-paths";
 
 const router: IRouter = Router();
 
@@ -81,32 +84,25 @@ let lastBridgePollAt: number | null = null;
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "yyyy-mm-dd expected");
 
-// Two ways to describe an ingredient label: the one-tap path sends just an
-// ingredientId and the server resolves everything from the label rules; the
-// explicit path (options sheet, ad-hoc) sends the fields it wants. Explicit
-// fields always win over resolved ones.
+// An ingredient label is always resolved from that ingredient's published
+// label rule — the use-by is never typed in by hand, and an ingredient with
+// no rule can't print at all (Graeme, 2026-10-22).
 const ingredientFieldsSchema = z.object({
-  ingredientId: z.number().int().positive().optional(),
-  itemName: z.string().min(1).max(80).optional(),
-  useBy: isoDate.optional(),
+  ingredientId: z.number().int().positive(),
   openedOn: isoDate.optional(),
   storageNote: z.string().max(30).nullable().optional(),
-  rawMarker: z.boolean().optional(),
-}).refine(
-  d => d.ingredientId != null || (d.itemName != null && d.useBy != null),
-  "Send ingredientId, or itemName + useBy",
-);
+});
 
 /** Resolve the one-tap fields from the ingredient's label rules. */
 async function resolveIngredientFields(f: z.infer<typeof ingredientFieldsSchema>, today: string): Promise<
   | { ok: true; itemName: string; useBy: string; rawMarker: boolean; ruleDays: number; ruleSource: string }
-  | { ok: false; error: string }
+  | { ok: false; status: number; code: string; error: string }
 > {
   const rows = await db.execute<{ name: string; category: string | null; opened_life_days: number | null }>(sql`
     SELECT name, category, opened_life_days FROM ingredients WHERE id = ${f.ingredientId}
   `);
   const ing = rows.rows[0];
-  if (!ing) return { ok: false, error: "Ingredient not found" };
+  if (!ing) return { ok: false, status: 404, code: "NOT_FOUND", error: "Ingredient not found" };
   const settingRows = await db.execute<{ value: string }>(sql`
     SELECT value FROM app_settings WHERE key = ${LABEL_RULE_SETTINGS_KEY}
   `);
@@ -114,11 +110,19 @@ async function resolveIngredientFields(f: z.infer<typeof ingredientFieldsSchema>
     { openedLifeDays: ing.opened_life_days, category: ing.category },
     parseCategoryDefaults(settingRows.rows[0]?.value),
   );
+  if (!rule) {
+    return {
+      ok: false,
+      status: 409,
+      code: "NO_LABEL_RULE",
+      error: `No label rule is set for ${ing.name}, so it can't print. Use a handwritten label.`,
+    };
+  }
   return {
     ok: true,
-    itemName: f.itemName ?? ing.name,
-    useBy: f.useBy ?? addDaysIso(today, rule.days),
-    rawMarker: f.rawMarker ?? ing.category === "raw_meat",
+    itemName: ing.name,
+    useBy: addDaysIso(today, rule.days),
+    rawMarker: ing.category === "raw_meat",
     ruleDays: rule.days,
     ruleSource: rule.source,
   };
@@ -142,12 +146,18 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
   const { kind, copies = 1 } = req.body as z.infer<typeof createJobSchema>;
   const initials = await userInitials(req.session.userId!);
   const today = londonDateString();
-
+  // Which printer is fitted decides the language the job is written in —
+  // TSPL for TSC, ZPL for Zebra (Graeme, 2026-10-22). The column is still
+  // called `tspl`; it holds whichever language the printer speaks.
+  const printerRows = await db.execute<{ value: string }>(sql`
+    SELECT value FROM app_settings WHERE key = ${LABEL_PRINTER_SETTINGS_KEY}
+  `);
+  const geo = labelGeometryFor(printerRows.rows[0]?.value);
   let tspl: string;
   let payload: Record<string, unknown>;
 
   if (kind === "test") {
-    tspl = renderTestLabel(initials, today, copies);
+    tspl = renderTestLabel(initials, today, copies, geo);
     payload = { initials, date: today };
   } else if (kind === "ingredient") {
     const parsed = ingredientFieldsSchema.safeParse(req.body.fields);
@@ -155,35 +165,23 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
       res.status(400).json({ error: "Validation failed", details: parsed.error.flatten() });
       return;
     }
-    let f: Parameters<typeof renderIngredientLabel>[0] & Record<string, unknown>;
-    if (parsed.data.ingredientId != null) {
-      const resolved = await resolveIngredientFields(parsed.data, today);
-      if (!resolved.ok) { res.status(404).json({ error: resolved.error }); return; }
-      f = {
-        itemName: resolved.itemName,
-        useBy: resolved.useBy,
-        openedOn: parsed.data.openedOn ?? today,
-        storageNote: parsed.data.storageNote ?? null,
-        rawMarker: resolved.rawMarker,
-        initials,
-        ingredientId: parsed.data.ingredientId,
-        // Ride the resolution into the audit trail: WHERE the date came
-        // from (own rule / category default / global fallback) matters when
-        // a printed use-by is ever questioned.
-        ruleDays: resolved.ruleDays,
-        ruleSource: resolved.ruleSource,
-      };
-    } else {
-      f = {
-        itemName: parsed.data.itemName!,
-        useBy: parsed.data.useBy!,
-        openedOn: parsed.data.openedOn ?? today,
-        storageNote: parsed.data.storageNote ?? null,
-        rawMarker: parsed.data.rawMarker ?? false,
-        initials,
-      };
-    }
-    tspl = renderIngredientLabel(f, copies);
+    const resolved = await resolveIngredientFields(parsed.data, today);
+    if (!resolved.ok) { res.status(resolved.status).json({ error: resolved.error, code: resolved.code }); return; }
+    const f = {
+      itemName: resolved.itemName,
+      useBy: resolved.useBy,
+      openedOn: parsed.data.openedOn ?? today,
+      storageNote: parsed.data.storageNote ?? null,
+      rawMarker: resolved.rawMarker,
+      initials,
+      ingredientId: parsed.data.ingredientId,
+      // Ride the resolution into the audit trail: WHERE the date came
+      // from (the ingredient's own rule or its category default) matters
+      // when a printed use-by is ever questioned.
+      ruleDays: resolved.ruleDays,
+      ruleSource: resolved.ruleSource,
+    };
+    tspl = renderIngredientLabel(f, copies, geo);
     payload = f;
   } else {
     const parsed = tinFieldsSchema.safeParse(req.body.fields);
@@ -192,7 +190,7 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
       return;
     }
     const f = { ...parsed.data, initials };
-    tspl = renderTinLabel(f, copies);
+    tspl = renderTinLabel(f, copies, geo);
     payload = f;
   }
 
@@ -216,6 +214,16 @@ router.get("/pending", requireBridgeToken, async (req, res) => {
   const station = String(req.query.station ?? "prep");
   const waitS = Math.min(25, Math.max(0, Number(req.query.wait ?? 0) || 0));
   const deadline = Date.now() + waitS * 1000;
+
+  // Stale requests never print — their dates would be wrong by now. Same
+  // rule as isPrintJobStale(), done in SQL so it covers every queued row.
+  await db.execute(sql`
+    UPDATE print_jobs
+    SET status = 'expired',
+        error = ${`Not printed: still waiting after ${PRINT_JOB_MAX_AGE_MINUTES} min, so its dates could be wrong. Tap Print again.`}
+    WHERE station = ${station} AND status = 'queued'
+      AND created_at < NOW() - make_interval(mins => ${PRINT_JOB_MAX_AGE_MINUTES})
+  `);
 
   for (;;) {
     lastBridgePollAt = Date.now();
@@ -247,6 +255,25 @@ router.post("/:id/complete", requireBridgeToken, validate(completeSchema), async
     WHERE id = ${id} AND status = 'queued'
   `);
   res.json({ ok: true });
+});
+
+// ── GET /printable — which ingredients may show a Print label button ───────
+// Only ingredients with a published rule (their own days, or a category
+// default), and only while a printer bridge is connected. No button = no
+// rule or no printer = handwritten label (Graeme, 2026-10-22).
+router.get("/printable", requireAuth, async (_req, res) => {
+  const bridgeOnline = lastBridgePollAt != null && Date.now() - lastBridgePollAt < 60_000;
+  const settingRows = await db.execute<{ value: string }>(sql`
+    SELECT value FROM app_settings WHERE key = ${LABEL_RULE_SETTINGS_KEY}
+  `);
+  const defaults = parseCategoryDefaults(settingRows.rows[0]?.value);
+  const rows = await db.execute<{ id: number; category: string | null; opened_life_days: number | null }>(sql`
+    SELECT id, category, opened_life_days FROM ingredients
+  `);
+  const ingredientIds = rows.rows
+    .filter(r => resolveOpenedLife({ openedLifeDays: r.opened_life_days, category: r.category }, defaults) != null)
+    .map(r => r.id);
+  res.json({ bridgeOnline, ingredientIds });
 });
 
 // ── GET /status — operator view: is the printer path alive? ─────────────────

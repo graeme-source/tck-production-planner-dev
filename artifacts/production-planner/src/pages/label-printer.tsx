@@ -1,5 +1,6 @@
 /**
- * Label printer — setup, test and audit page for the prep-room TSC printer
+ * Label printer — setup, test and audit page for the prep-room label printer
+ * (TSC or Zebra — picked on the page)
  * (Stage 1 of the raw-ingredient labels build, Graeme 2026-09-08).
  *
  * Shows whether the print bridge on the factory PC is checking in, fires a
@@ -46,6 +47,81 @@ function payloadSummary(job: PrintJobRow): string {
   return job.kind;
 }
 
+const PRINTER_KEY = "label_printer_model";
+// Mirrors LABEL_PRINTER_MODELS in api-server lib/label-tspl.ts.
+const PRINTER_MODELS = [
+  { value: "tsc-203", label: "TSC (203 dpi)" },
+  { value: "zebra-203", label: "Zebra ZD421 (203 dpi)" },
+  { value: "zebra-300", label: "Zebra ZD421 (300 dpi)" },
+];
+
+/** Which printer is fitted — TSC and Zebra speak different languages, so
+ *  labels printed for one come out blank or as gibberish on the other.
+ *  Saves on change, with the state shown. */
+function PrinterModelPicker() {
+  const [model, setModel] = useState<string>("tsc-203");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/${PRINTER_KEY}`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.value) setModel(d.value); })
+      .catch(() => {});
+  }, []);
+
+  const onChange = (next: string) => {
+    setModel(next);
+    setSaveState("saving");
+    fetch(`${BASE}/api/app-settings/${PRINTER_KEY}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: next }),
+    })
+      .then(r => { if (!r.ok) throw new Error(); setSaveState("saved"); })
+      .catch(() => {
+        setSaveState("error");
+        toast({ title: "Couldn't save the printer", description: "Changing this needs admin access.", variant: "destructive" });
+      });
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-lg flex items-center gap-2"><Printer className="w-5 h-5 text-primary" /> Which printer is fitted</h2>
+        <span className={cn(
+          "text-sm font-medium",
+          saveState === "saved" && "text-emerald-600",
+          saveState === "saving" && "text-muted-foreground",
+          saveState === "error" && "text-destructive",
+        )}>
+          {saveState === "saving" && "Saving…"}
+          {saveState === "saved" && "Saved ✓"}
+          {saveState === "error" && "Not saved"}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        TSC and Zebra printers speak different languages. Pick the one that's plugged in; the dpi is on the
+        sticker under the printer (203 or 300).
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {PRINTER_MODELS.map(m => (
+          <button
+            key={m.value}
+            onClick={() => onChange(m.value)}
+            className={cn(
+              "px-4 py-3 rounded-xl border-2 text-left font-semibold",
+              model === m.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50",
+            )}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const RULES_KEY = "label_opened_life_defaults";
 // Categories that can sensibly carry an opened-life default — packaging
 // never gets a use-by label.
@@ -54,7 +130,8 @@ const RULE_CATEGORIES = INGREDIENT_CATEGORIES.filter(c => c.value && c.value !==
 /** Category → opened-life-days defaults. Autosaves ~1s after the last
  *  change, with the save state visible (charter rule for data entry).
  *  Ingredient-level overrides in the inventory form beat these; anything
- *  with neither falls to a deliberately short global default of 2 days. */
+ *  with neither has NO Print label button and can't print — staff write
+ *  that label by hand (Graeme, 2026-10-22). */
 function CategoryDefaultsEditor() {
   const [values, setValues] = useState<Record<string, string>>({});
   const [loaded, setLoaded] = useState(false);
@@ -123,8 +200,9 @@ function CategoryDefaultsEditor() {
       </div>
       <p className="text-sm text-muted-foreground">
         Days an opened ingredient stays food-safe — this drives the use-by on one-tap prep labels.
-        A number set on the ingredient itself (inventory form) beats these; anything with neither
-        prints a cautious <span className="font-semibold text-foreground">2 days</span>.
+        A number set on the ingredient itself (inventory form) beats these. Anything with neither
+        gets <span className="font-semibold text-foreground">no Print label button</span> and can't
+        print — the team writes that label by hand.
       </p>
       {!loaded ? (
         <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>
@@ -141,7 +219,7 @@ function CategoryDefaultsEditor() {
                   inputMode="numeric"
                   value={values[cat.value] ?? ""}
                   onChange={e => onChange(cat.value, e.target.value)}
-                  placeholder="2"
+                  placeholder="—"
                   className="w-full px-3 py-2 pr-12 border border-border rounded-lg text-sm bg-background"
                 />
                 <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-xs pointer-events-none">days</span>
@@ -226,7 +304,7 @@ export default function LabelPrinterPage() {
       <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
         <h2 className="font-semibold text-lg flex items-center gap-2"><Printer className="w-5 h-5 text-primary" /> Print a test label</h2>
         <p className="text-sm text-muted-foreground">
-          Proves the whole pipe — this iPad → app → bridge → printer — and shows the layout on the real 100×25&nbsp;mm stock.
+          Proves the whole pipe — this iPad → app → bridge → printer — and shows the layout on the real 102×25&nbsp;mm stock.
         </p>
         <div className="flex items-center gap-3">
           <label className="text-sm text-muted-foreground">Copies</label>
@@ -248,6 +326,8 @@ export default function LabelPrinterPage() {
         </div>
       </div>
 
+      <PrinterModelPicker />
+
       <CategoryDefaultsEditor />
 
       {/* Recent jobs — the start of the label audit trail */}
@@ -260,6 +340,7 @@ export default function LabelPrinterPage() {
               {job.status === "printed" && <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />}
               {job.status === "queued" && <Loader2 className="w-4 h-4 text-muted-foreground animate-spin flex-shrink-0" />}
               {job.status === "failed" && <AlertTriangle className="w-4 h-4 text-destructive flex-shrink-0" />}
+              {job.status === "expired" && <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />}
               <span className="flex-1 min-w-0 truncate font-medium">{payloadSummary(job)}</span>
               {job.error && <span className="text-xs text-destructive truncate max-w-[14rem]" title={job.error}>{job.error}</span>}
               <span className="text-xs text-muted-foreground flex-shrink-0">{job.user_name ?? ""}</span>

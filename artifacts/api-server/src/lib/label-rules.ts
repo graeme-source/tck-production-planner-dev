@@ -1,16 +1,18 @@
 /**
  * Opened-life rules for prep-room ingredient labels (Stage 2).
  *
- * The use-by printed on an opened-ingredient label comes from a three-step
- * fallback, most specific first:
+ * The use-by printed on an opened-ingredient label comes from the most
+ * specific rule set:
  *
  *   1. The ingredient's own opened_life_days (set in the inventory form).
  *   2. The category default from app_settings 'label_opened_life_defaults'
  *      (JSON: {"raw_meat": 2, "cheese": 3, ...}) — set once per material
  *      type, so most ingredients never need their own number.
- *   3. A conservative global default. Deliberately SHORT: an unconfigured
- *      ingredient printing a generous use-by is a food-safety hole; one
- *      printing a short use-by gets its rule set the same day.
+ *   No rule at all → NO label. There is no fallback date (Graeme,
+ *   2026-10-22: "it's not possible to print a label that doesn't have
+ *   published rules… if they don't have a Print Label button, no rules have
+ *   been set and they use the old writing method"). The button is hidden and
+ *   the server refuses.
  *
  * The resolution names its source, and the source rides into the printed
  * job's payload — so the audit trail shows whether a date came from a rule
@@ -18,17 +20,15 @@
  */
 
 export const LABEL_RULE_SETTINGS_KEY = "label_opened_life_defaults";
-export const GLOBAL_DEFAULT_OPENED_LIFE_DAYS = 2;
-
 export interface OpenedLifeResolution {
   days: number;
-  source: "ingredient" | "category" | "default";
+  source: "ingredient" | "category";
 }
 
 export function resolveOpenedLife(
   ing: { openedLifeDays?: number | null; category?: string | null },
   categoryDefaults: Record<string, number>,
-): OpenedLifeResolution {
+): OpenedLifeResolution | null {
   if (ing.openedLifeDays != null && ing.openedLifeDays > 0) {
     return { days: ing.openedLifeDays, source: "ingredient" };
   }
@@ -37,7 +37,7 @@ export function resolveOpenedLife(
   if (typeof catDays === "number" && catDays > 0) {
     return { days: catDays, source: "category" };
   }
-  return { days: GLOBAL_DEFAULT_OPENED_LIFE_DAYS, source: "default" };
+  return null;
 }
 
 /** Parse the app_settings JSON — bad JSON or wrong shapes degrade to "no
