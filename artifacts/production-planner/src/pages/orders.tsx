@@ -195,6 +195,8 @@ type PurchaseOrder = {
   status: string;
   createdAt: string;
   placedAt: string | null;
+  /** YYYY-MM-DD; null on a draft that was never placed. */
+  expectedDeliveryDate: string | null;
   notes: string | null;
   lines: Array<{
     id: number;
@@ -223,6 +225,11 @@ type Plan = {
   planDate: string;
   status: string;
 };
+
+/** A placed order reopened into the To Order view for editing. Its delivery
+ *  date is kept so the card starts at the order's own date, not today + lead
+ *  time (fix-queue #194). */
+type ReopenedOrder = { id: number; expectedDeliveryDate: string | null };
 
 type EditableLine = OrderLine & {
   checked: boolean;
@@ -430,7 +437,7 @@ export default function Orders() {
   // was already placed today, we "reopen" that PO into the pending view so
   // they can edit + resubmit. Maps supplierId → existing PO id so the place
   // mutation can route to the resubmit endpoint instead of creating a new PO.
-  const [reopenedPlacedOrders, setReopenedPlacedOrders] = useState<Record<number, number>>({});
+  const [reopenedPlacedOrders, setReopenedPlacedOrders] = useState<Record<number, ReopenedOrder>>({});
 
   // Issue 5: global toggle to show items that are daily stock-checked but
   // aren't required because we have enough stock. Default hidden.
@@ -935,7 +942,19 @@ export default function Orders() {
       }));
     }
 
-    setReopenedPlacedOrders(prev => ({ ...prev, [supplierId]: placedPO.id }));
+    setReopenedPlacedOrders(prev => ({
+      ...prev,
+      [supplierId]: { id: placedPO.id, expectedDeliveryDate: placedPO.expectedDeliveryDate ?? null },
+    }));
+    // The card starts at the order's OWN delivery date (fix-queue #194). A
+    // date moved earlier in this session belonged to a different order for
+    // this supplier — drop it, or it would silently move this one.
+    setDeliveryDates(prev => {
+      if (!(supplierId in prev)) return prev;
+      const next = { ...prev };
+      delete next[supplierId];
+      return next;
+    });
     setExpandedSuppliers(prev => new Set([...prev, supplierId]));
   }, [reopenedPlacedOrders, calculated?.suppliers]);
 
@@ -1333,7 +1352,7 @@ export default function Orders() {
 
       // Reopened placed order → hit the resubmit endpoint instead of create+place.
       // This REPLACES the old lines with the new full set and bumps placedAt.
-      const reopenedPOId = reopenedPlacedOrders[supplierId];
+      const reopenedPOId = reopenedPlacedOrders[supplierId]?.id;
       if (reopenedPOId) {
         const resubmitRes = await fetch(`${BASE}/api/orders/purchase-orders/${reopenedPOId}/resubmit`, {
           method: "PATCH",
@@ -1406,6 +1425,15 @@ export default function Orders() {
         // so the card moves back to the Placed tab on the next render.
         setReopenedPlacedOrders(prev => {
           if (!prev[placedSupplierId]) return prev;
+          const next = { ...prev };
+          delete next[placedSupplierId];
+          return next;
+        });
+        // The date moved for THIS order is now saved on it. Left behind, it
+        // would become the starting date of the next order or edit for the
+        // same supplier and quietly override that order's own date (#194).
+        setDeliveryDates(prev => {
+          if (!(placedSupplierId in prev)) return prev;
           const next = { ...prev };
           delete next[placedSupplierId];
           return next;
@@ -1528,7 +1556,10 @@ export default function Orders() {
   // supplier directory. Everything on screen and the date actually sent on
   // placing come from here, so they can't disagree.
   const getDeliveryDateForSupplier = (supplierId: number): Date =>
-    resolveDeliveryDate(supplierId, allPendingSuppliers, supplierDirectory, deliveryDates);
+    resolveDeliveryDate(
+      supplierId, allPendingSuppliers, supplierDirectory, deliveryDates,
+      reopenedPlacedOrders[supplierId]?.expectedDeliveryDate,
+    );
 
   // Moving a supplier's delivery date re-works the surplus of any line with
   // a surplus-by-delivery-day setting (same surplusFor the server used) and
@@ -2006,7 +2037,7 @@ export default function Orders() {
         const nonRequiredCount = allLines.length - orderableLines.length;
         const expanded = expandedSuppliers.has(so.supplier.id);
         const cost = estimatedCost(orderableLines);
-        const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
+        const reopenedPOId = reopenedPlacedOrders[so.supplier.id]?.id;
         const isReopened = !!reopenedPOId;
 
         // Minimum order value (Graeme, 2026-10-01). Below it → amber notice
