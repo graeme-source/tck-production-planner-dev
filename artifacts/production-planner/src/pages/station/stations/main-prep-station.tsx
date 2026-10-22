@@ -24,6 +24,7 @@ import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { StockCheckButton, StockCheckEntryForm } from "../shared/stock-check-entry";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
+import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep-presence";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
@@ -105,7 +106,6 @@ interface PrepTinDeferral {
   userName: string | null;
 }
 
-type PrepPresenceData = Record<number, { userId: number; userName: string }[]>;
 
 /** Ticks for linked rows (pasta water/salt) — their own tiny endpoint, so
  *  water and salt can be struck off like any other prep task even though
@@ -236,8 +236,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [dismissedStockCheckIds, setDismissedStockCheckIds] = useState<Set<number>>(new Set());
   const dirtyStockIds = useRef<Set<number>>(new Set());
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
-  const [presenceData, setPresenceData] = useState<PrepPresenceData>({});
-  const activeIngIdRef = useRef<number | null>(null);
+  // "Also viewing" presence — shared with Bases & Sauces (#64).
+  const { presenceData, setViewing } = usePrepPresence(targetPlanId);
   const stockCheckRef = useRef<HTMLDivElement>(null);
   const prevNeedsStockCheckRef = useRef(false);
 
@@ -309,33 +309,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     const interval = setInterval(fetchStockChecks, 5000);
     return () => clearInterval(interval);
   }, [fetchStockChecks]);
-
-  const postPresence = useCallback((ingredientId: number | null) => {
-    fetch(`/api/production-plans/${targetPlanId}/prep-presence`, {
-      method: "POST", credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ingredientId }),
-    }).catch((err) => { console.warn("[MainPrep] Presence post failed:", err); });
-  }, [targetPlanId]);
-
-  // Poll presence every 10s
-  useEffect(() => {
-    const poll = () => {
-      fetch(`/api/production-plans/${targetPlanId}/prep-presence`, { credentials: "include" })
-        .then(r => r.ok ? r.json() : null)
-        .then(d => { if (d) setPresenceData(d); })
-        .catch((err) => { console.warn("[MainPrep] Presence poll failed:", err); });
-    };
-    poll();
-    const interval = setInterval(poll, 10_000);
-    return () => clearInterval(interval);
-  }, [targetPlanId]);
-
-  // Heartbeat presence every 15s
-  useEffect(() => {
-    const hb = setInterval(() => postPresence(activeIngIdRef.current), 15_000);
-    return () => { clearInterval(hb); postPresence(null); };
-  }, [postPresence]);
 
   const ingredients = data?.ingredients ?? [];
   const completions = data?.completions ?? [];
@@ -584,8 +557,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
-    activeIngIdRef.current = ingredientId;
-    postPresence(ingredientId);
+    setViewing(ingredientId);
     const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId);
     await runTinAction(async (signal) => {
       if (existing) {
@@ -846,15 +818,14 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                       const ingStatus = ingredientDoneStatus(ing);
                       const ik = itemKey(ing);
                       const isSelected = ik === selectedItemKey;
-                      const presence = presenceData[ing.ingredientId] ?? [];
+                      const presence = othersViewing(presenceData, ing.ingredientId);
                       const ingLinkedItems = linkedItems[ing.ingredientId] ?? [];
                       return (
                         <React.Fragment key={`${group.recipeId}-${ik}`}>
                         <button
                           onClick={() => {
                             setSelectedItemKey(ik);
-                            activeIngIdRef.current = ing.ingredientId;
-                            postPresence(ing.ingredientId);
+                            setViewing(ing.ingredientId);
                           }}
                           className={cn(
                             "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
@@ -1008,7 +979,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             {selectedIngredient ? (() => {
               const ing = selectedIngredient;
               const status = ingredientDoneStatus(ing);
-              const presence = presenceData[ing.ingredientId] ?? [];
+              const alsoViewing = alsoViewingNames(presenceData, ing.ingredientId);
               const isShared = ing.recipes.length > 1;
               return (
               <div
@@ -1068,9 +1039,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               {" in: "}{[...new Set(ing.recipes.map(r => r.subRecipeOriginName ?? r.recipeName))].join(", ")}
                             </p>
                           )}
-                          {presence.length > 0 && (
+                          {alsoViewing && (
                             <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
-                              👁 <span className="font-medium">{presence.map(p => p.userName).join(", ")}</span> also viewing this
+                              👁 <span className="font-medium">{alsoViewing}</span> also viewing this
                             </p>
                           )}
                           {/* Linked SOPs — the how-to travels with the prep

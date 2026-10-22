@@ -23,6 +23,7 @@ import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { MixExtraNote } from "../shared/mix-extra-note";
+import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep-presence";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
@@ -781,6 +782,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     ? plan.id
     : (noFuturePlan ? plan.id : (nextPlan?.planId ?? plan.id));
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
+  // "Also viewing" presence — the same heartbeat and marker as Main Prep (#64).
+  const { presenceData, setViewing } = usePrepPresence(targetPlanId);
+  useEffect(() => {
+    setViewing(typeof selectedItem === "number" ? selectedItem : null);
+  }, [selectedItem, setViewing]);
   const { data: allSubRecipesData } = useListSubRecipes();
   const allSubRecipes = (allSubRecipesData ?? []) as SubRecipe[];
   const { completions: subRecipeCompletions, refetch: refetchSubRecipeCompletions } = useSubRecipeCompletions(targetPlanId);
@@ -1139,6 +1145,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                   {visibleItems.map(({ ing }) => {
                     const rStatus = recipeIngredientStatus(ing, group.recipeId);
                     const isSelected = selectedItem === ing.ingredientId;
+                    const othersHere = othersViewing(presenceData, ing.ingredientId).length > 0;
                     const ingLinkedItems = linkedItems[ing.ingredientId] ?? [];
                     return (
                       <React.Fragment key={`${group.recipeId}-${ing.ingredientId}`}>
@@ -1181,6 +1188,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                             {(sopLinksByIngredient?.[ing.ingredientId] ?? []).some(l => l.scope === "ingredient" || l.recipeId === group.recipeId) && (
                               <BookOpen className="w-4 h-4 inline ml-1.5 mb-0.5 text-primary" aria-label="Has SOP" />
                             )}
+                            {othersHere && <span className="ml-1 text-sm text-blue-500" aria-label="Someone else is viewing this">👁</span>}
                           </p>
                           {ing.recipes.length > 1 && (
                             <p className="text-sm text-amber-500">shared</p>
@@ -1294,6 +1302,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
             const ing = selectedIngredient;
             const status = ingredientDoneStatus(ing);
             const isShared = ing.recipes.length > 1;
+            const alsoViewing = alsoViewingNames(presenceData, ing.ingredientId);
             return (
               <div
                 className={cn(
@@ -1323,6 +1332,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                       <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
                         <span className="font-medium">Shared —</span>
                         {" in: "}{ing.recipes.map(r => r.recipeName).join(", ")}
+                      </p>
+                    )}
+                    {alsoViewing && (
+                      <p className="text-sm text-blue-600 dark:text-blue-400 mt-1">
+                        👁 <span className="font-medium">{alsoViewing}</span> also viewing this
                       </p>
                     )}
                     <div className="mt-2 flex items-start justify-between gap-2">
