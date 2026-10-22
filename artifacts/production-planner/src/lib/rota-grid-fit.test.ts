@@ -29,8 +29,18 @@ describe("chooseRotaGridLayout", () => {
       .toEqual({ columns: 3, density: "roomy", fits: true });
   });
   it("drops to compact cards when three roomy columns still don't fit (iPad 1024×768, 12 people)", () => {
-    expect(chooseRotaGridLayout({ peoplePerCard: ones(12), availableWidth: 990, availableHeight: 360 }))
+    expect(chooseRotaGridLayout({ peoplePerCard: ones(12), availableWidth: 990, availableHeight: 380 }))
       .toEqual({ columns: 3, density: "compact", fits: true });
+  });
+  it("tries a 4th column of compact cards before shrinking to tight ones (1440×900, 16 people)", () => {
+    const people = [2, ...ones(15)];
+    expect(chooseRotaGridLayout({ peoplePerCard: people, availableWidth: 1390, availableHeight: 536 }))
+      .toEqual({ columns: 4, density: "compact", fits: true });
+  });
+  it("never puts big roomy cards in more than three columns", () => {
+    const l = chooseRotaGridLayout({ peoplePerCard: ones(12), availableWidth: 1900, availableHeight: 340 });
+    expect(l.density === "roomy" ? l.columns <= 3 : true).toBe(true);
+    expect(l).toEqual({ columns: 4, density: "compact", fits: true });
   });
   it("uses a single column for a tiny team", () => {
     expect(chooseRotaGridLayout({ peoplePerCard: ones(3), availableWidth: 1200, availableHeight: 600 }).columns).toBe(1);

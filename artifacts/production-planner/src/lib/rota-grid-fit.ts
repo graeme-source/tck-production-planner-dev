@@ -5,7 +5,7 @@
  * Pure layout maths: given how many people each card holds and the space
  * left for the grid, pick the roomiest density and the fewest columns that
  * show every card without scrolling. The card heights below are upper
- * bounds for the matching CSS in the slide (meeting.tsx); if a long name
+ * bounds for the matching CSS in components/whos-on-today-board.tsx; if a long name
  * wraps and the real grid still overflows, the slide passes `squeeze` to
  * step one option further down the list.
  */
@@ -22,15 +22,18 @@ interface DensitySpec {
 }
 
 export const ROTA_DENSITIES: Record<RotaDensity, DensitySpec> = {
-  roomy:   { base: 100, perPerson: 66, minColWidth: 260 },
-  compact: { base: 82,  perPerson: 54, minColWidth: 220 },
-  tight:   { base: 52,  perPerson: 28, minColWidth: 170 },
+  // Measured in the browser 2026-10-22 (1180–1920 px wide, borders
+  // included), rounded up a few px.
+  roomy:   { base: 104, perPerson: 70, minColWidth: 260 },
+  compact: { base: 88,  perPerson: 60, minColWidth: 220 },
+  tight:   { base: 52,  perPerson: 32, minColWidth: 170 },
 };
 
 export const ROTA_GRID_GAP = 8;
 const DENSITY_ORDER: RotaDensity[] = ["roomy", "compact", "tight"];
-/** Normal maximum; 4+ only as the "far too many people" fallback. */
-const NORMAL_MAX_COLS = 3;
+/** Big cards stop at 3 columns; smaller cards may use a 4th before the
+ *  type shrinks again. Beyond 4 only as the "far too many people" fallback. */
+const MAX_COLS: Record<RotaDensity, number> = { roomy: 3, compact: 4, tight: 4 };
 const FALLBACK_MIN_COLS = 4;
 
 export interface RotaGridInput {
@@ -79,7 +82,7 @@ export function chooseRotaGridLayout(input: RotaGridInput): RotaGridLayout {
   const minCols = n >= 5 ? 2 : 1;
 
   for (const d of DENSITY_ORDER) {
-    const maxCols = Math.min(NORMAL_MAX_COLS, n, maxColsForWidth(availableWidth, d));
+    const maxCols = Math.min(MAX_COLS[d], n, maxColsForWidth(availableWidth, d));
     for (let cols = Math.min(minCols, maxCols); cols <= maxCols; cols++) {
       if (rotaGridHeight(peoplePerCard, cols, d) <= availableHeight) {
         if (skip === 0) return { columns: cols, density: d, fits: true };
@@ -91,7 +94,7 @@ export function chooseRotaGridLayout(input: RotaGridInput): RotaGridLayout {
   // Genuinely too many people (20+): tight cards, four columns or more —
   // as many as the width allows — rather than ever scrolling.
   const widest = Math.max(FALLBACK_MIN_COLS, maxColsForWidth(availableWidth, "tight"));
-  for (let cols = FALLBACK_MIN_COLS; cols <= Math.min(widest, n); cols++) {
+  for (let cols = FALLBACK_MIN_COLS + 1; cols <= Math.min(widest, n); cols++) {
     if (rotaGridHeight(peoplePerCard, cols, "tight") <= availableHeight) {
       if (skip === 0) return { columns: cols, density: "tight", fits: true };
       skip--;
