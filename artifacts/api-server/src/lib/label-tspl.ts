@@ -12,6 +12,11 @@
  * right, because the use-by is the thing a fridge check reads from a metre
  * away.
  *
+ * Two printer languages from the same layouts (Graeme, 2026-10-22: the
+ * printer on hand for testing is a Zebra ZD421, which speaks ZPL, not TSPL).
+ * Each layout is a list of text/box shapes in dots; buildLabel() writes them
+ * out as TSPL (TSC) or ZPL (Zebra) according to `language`.
+ *
  * Fonts are the TSC built-in bitmaps ("2" = 12x20, "3" = 16x24, "4" = 24x32
  * dots per char before multipliers) — available on every TSPL printer, so
  * this works whichever TSC model the courier handed over.
@@ -24,9 +29,26 @@ export interface LabelGeometry {
   heightMm?: number;
   /** Gap between labels on the roll. */
   gapMm?: number;
+  /** TSPL for TSC printers, ZPL for Zebra. */
+  language?: "tspl" | "zpl";
 }
 
-const DEFAULTS: Required<LabelGeometry> = { dotsPerMm: 8, widthMm: 102, heightMm: 25, gapMm: 3 };
+const DEFAULTS: Required<LabelGeometry> = { dotsPerMm: 8, widthMm: 102, heightMm: 25, gapMm: 3, language: "tspl" };
+
+/** The printers we can drive, stored in app_settings under
+ *  LABEL_PRINTER_SETTINGS_KEY. Unknown/missing = the original TSC setup. */
+export const LABEL_PRINTER_SETTINGS_KEY = "label_printer_model";
+export const LABEL_PRINTER_MODELS = {
+  "tsc-203": { label: "TSC (203 dpi)", dotsPerMm: 8, language: "tspl" },
+  "zebra-203": { label: "Zebra ZD421 (203 dpi)", dotsPerMm: 8, language: "zpl" },
+  "zebra-300": { label: "Zebra ZD421 (300 dpi)", dotsPerMm: 12, language: "zpl" },
+} as const satisfies Record<string, { label: string; dotsPerMm: number; language: "tspl" | "zpl" }>;
+export type LabelPrinterModel = keyof typeof LABEL_PRINTER_MODELS;
+
+export function labelGeometryFor(model: string | null | undefined): LabelGeometry {
+  const m = LABEL_PRINTER_MODELS[(model ?? "") as LabelPrinterModel] ?? LABEL_PRINTER_MODELS["tsc-203"];
+  return { dotsPerMm: m.dotsPerMm, language: m.language };
+}
 
 /** TSPL TEXT content sits in double quotes; the language has no escape for
  *  a literal double quote, so they become singles. Thermal bitmap fonts are
@@ -36,6 +58,7 @@ export function tsplSanitize(s: string): string {
     .normalize("NFKD")
     .replace(/[̀-ͯ]/g, "") // strip accents left by NFKD
     .replace(/"/g, "'")
+    .replace(/[\^~]/g, "-") // ZPL command prefixes — would end the field mid-text
     .replace(/[^\x20-\x7E]/g, "?")
     .trim();
 }
@@ -51,11 +74,27 @@ export function fmtLabelDate(iso: string): string {
 }
 
 interface TextCmd { x: number; y: number; font: string; xMul: number; yMul: number; text: string }
+type Shape = ({ kind: "text" } & TextCmd) | { kind: "box"; x1: number; y1: number; x2: number; y2: number; thickness: number };
 
-function buildLabel(geo: LabelGeometry | undefined, body: (w: number, h: number) => string[], copies: number): string {
+// TSC bitmap font cell sizes in dots — the ZPL output scales its built-in
+// font to the same cell so a layout looks the same on either printer.
+const FONT_CELL: Record<string, { w: number; h: number }> = { "2": { w: 12, h: 20 }, "3": { w: 16, h: 24 }, "4": { w: 24, h: 32 } };
+
+/** Layouts are drawn on an 8-dots/mm canvas; a 300dpi Zebra scales them up. */
+const LAYOUT_DOTS_PER_MM = 8;
+
+function buildLabel(geo: LabelGeometry | undefined, body: (w: number, h: number) => Shape[], copies: number): string {
   const g = { ...DEFAULTS, ...geo };
-  const w = g.widthMm * g.dotsPerMm;
-  const h = g.heightMm * g.dotsPerMm;
+  const w = g.widthMm * LAYOUT_DOTS_PER_MM;
+  const h = g.heightMm * LAYOUT_DOTS_PER_MM;
+  const shapes = body(w, h);
+  const n = Math.max(1, Math.floor(copies));
+  return g.language === "zpl" ? toZpl(g, shapes, n) : toTspl(g, shapes, n);
+}
+
+function toTspl(g: Required<LabelGeometry>, shapes: Shape[], copies: number): string {
+  const k = g.dotsPerMm / LAYOUT_DOTS_PER_MM;
+  const d = (v: number) => Math.round(v * k);
   const lines = [
     `SIZE ${g.widthMm} mm,${g.heightMm} mm`,
     `GAP ${g.gapMm} mm,0 mm`,
@@ -64,14 +103,41 @@ function buildLabel(geo: LabelGeometry | undefined, body: (w: number, h: number)
     "DIRECTION 1",
     "REFERENCE 0,0",
     "CLS",
-    ...body(w, h),
-    `PRINT ${Math.max(1, Math.floor(copies))},1`,
+    ...shapes.map(s => s.kind === "text"
+      ? `TEXT ${d(s.x)},${d(s.y)},"${s.font}",0,${s.xMul},${s.yMul},"${tsplSanitize(s.text)}"`
+      : `BOX ${d(s.x1)},${d(s.y1)},${d(s.x2)},${d(s.y2)},${d(s.thickness)}`),
+    `PRINT ${copies},1`,
   ];
   return lines.join("\r\n") + "\r\n";
 }
 
-const text = (c: TextCmd) => `TEXT ${c.x},${c.y},"${c.font}",0,${c.xMul},${c.yMul},"${tsplSanitize(c.text)}"`;
-const box = (x1: number, y1: number, x2: number, y2: number, thickness = 3) => `BOX ${x1},${y1},${x2},${y2},${thickness}`;
+/** ZPL for Zebra printers: ^PW/^LL set the label size in dots, ^A0 is the
+ *  built-in scalable font sized to the TSC cell, ^GB draws the box outline,
+ *  ^PQ the copies. Media type and darkness stay as set on the printer. */
+function toZpl(g: Required<LabelGeometry>, shapes: Shape[], copies: number): string {
+  const k = g.dotsPerMm / LAYOUT_DOTS_PER_MM;
+  const d = (v: number) => Math.round(v * k);
+  const lines = [
+    "^XA",
+    "^CI0",
+    `^PW${g.widthMm * g.dotsPerMm}`,
+    `^LL${g.heightMm * g.dotsPerMm}`,
+    "^LH0,0",
+    ...shapes.map(s => {
+      if (s.kind === "box") {
+        return `^FO${d(s.x1)},${d(s.y1)}^GB${d(s.x2 - s.x1)},${d(s.y2 - s.y1)},${d(s.thickness)}^FS`;
+      }
+      const cell = FONT_CELL[s.font] ?? FONT_CELL["3"];
+      return `^FO${d(s.x)},${d(s.y)}^A0N,${d(cell.h * s.yMul)},${d(cell.w * s.xMul)}^FD${tsplSanitize(s.text)}^FS`;
+    }),
+    `^PQ${copies}`,
+    "^XZ",
+  ];
+  return lines.join("\n") + "\n";
+}
+
+const text = (c: TextCmd): Shape => ({ kind: "text", ...c });
+const box = (x1: number, y1: number, x2: number, y2: number, thickness = 3): Shape => ({ kind: "box", x1, y1, x2, y2, thickness });
 
 /** Pick the biggest rendering of `s` that fits `maxDots` wide, from widest
  *  to narrowest. Bitmap font widths: font 4 = 24, font 3 = 16, font 2 = 12

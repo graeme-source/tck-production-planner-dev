@@ -24,6 +24,8 @@ import {
   renderIngredientLabel,
   renderTinLabel,
   renderTestLabel,
+  labelGeometryFor,
+  LABEL_PRINTER_SETTINGS_KEY,
 } from "../lib/label-tspl";
 import {
   resolveOpenedLife,
@@ -142,12 +144,18 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
   const { kind, copies = 1 } = req.body as z.infer<typeof createJobSchema>;
   const initials = await userInitials(req.session.userId!);
   const today = londonDateString();
-
+  // Which printer is fitted decides the language the job is written in —
+  // TSPL for TSC, ZPL for Zebra (Graeme, 2026-10-22). The column is still
+  // called `tspl`; it holds whichever language the printer speaks.
+  const printerRows = await db.execute<{ value: string }>(sql`
+    SELECT value FROM app_settings WHERE key = ${LABEL_PRINTER_SETTINGS_KEY}
+  `);
+  const geo = labelGeometryFor(printerRows.rows[0]?.value);
   let tspl: string;
   let payload: Record<string, unknown>;
 
   if (kind === "test") {
-    tspl = renderTestLabel(initials, today, copies);
+    tspl = renderTestLabel(initials, today, copies, geo);
     payload = { initials, date: today };
   } else if (kind === "ingredient") {
     const parsed = ingredientFieldsSchema.safeParse(req.body.fields);
@@ -183,7 +191,7 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
         initials,
       };
     }
-    tspl = renderIngredientLabel(f, copies);
+    tspl = renderIngredientLabel(f, copies, geo);
     payload = f;
   } else {
     const parsed = tinFieldsSchema.safeParse(req.body.fields);
@@ -192,7 +200,7 @@ router.post("/", requireAuth, validate(createJobSchema), async (req, res) => {
       return;
     }
     const f = { ...parsed.data, initials };
-    tspl = renderTinLabel(f, copies);
+    tspl = renderTinLabel(f, copies, geo);
     payload = f;
   }
 

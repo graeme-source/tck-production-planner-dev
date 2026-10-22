@@ -1,5 +1,6 @@
 /**
- * Label printer — setup, test and audit page for the prep-room TSC printer
+ * Label printer — setup, test and audit page for the prep-room label printer
+ * (TSC or Zebra — picked on the page)
  * (Stage 1 of the raw-ingredient labels build, Graeme 2026-09-08).
  *
  * Shows whether the print bridge on the factory PC is checking in, fires a
@@ -44,6 +45,81 @@ function payloadSummary(job: PrintJobRow): string {
   if (job.kind === "ingredient") return `${p.itemName ?? "?"} · use by ${p.useBy ?? "?"}`;
   if (job.kind === "tin") return `${p.recipeName ?? "?"} · use ${p.intendedUse ?? "?"} · use by ${p.useBy ?? "?"}`;
   return job.kind;
+}
+
+const PRINTER_KEY = "label_printer_model";
+// Mirrors LABEL_PRINTER_MODELS in api-server lib/label-tspl.ts.
+const PRINTER_MODELS = [
+  { value: "tsc-203", label: "TSC (203 dpi)" },
+  { value: "zebra-203", label: "Zebra ZD421 (203 dpi)" },
+  { value: "zebra-300", label: "Zebra ZD421 (300 dpi)" },
+];
+
+/** Which printer is fitted — TSC and Zebra speak different languages, so
+ *  labels printed for one come out blank or as gibberish on the other.
+ *  Saves on change, with the state shown. */
+function PrinterModelPicker() {
+  const [model, setModel] = useState<string>("tsc-203");
+  const [saveState, setSaveState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+
+  useEffect(() => {
+    fetch(`${BASE}/api/app-settings/${PRINTER_KEY}`, { credentials: "include" })
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.value) setModel(d.value); })
+      .catch(() => {});
+  }, []);
+
+  const onChange = (next: string) => {
+    setModel(next);
+    setSaveState("saving");
+    fetch(`${BASE}/api/app-settings/${PRINTER_KEY}`, {
+      method: "PUT",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: next }),
+    })
+      .then(r => { if (!r.ok) throw new Error(); setSaveState("saved"); })
+      .catch(() => {
+        setSaveState("error");
+        toast({ title: "Couldn't save the printer", description: "Changing this needs admin access.", variant: "destructive" });
+      });
+  };
+
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-3">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-semibold text-lg flex items-center gap-2"><Printer className="w-5 h-5 text-primary" /> Which printer is fitted</h2>
+        <span className={cn(
+          "text-sm font-medium",
+          saveState === "saved" && "text-emerald-600",
+          saveState === "saving" && "text-muted-foreground",
+          saveState === "error" && "text-destructive",
+        )}>
+          {saveState === "saving" && "Saving…"}
+          {saveState === "saved" && "Saved ✓"}
+          {saveState === "error" && "Not saved"}
+        </span>
+      </div>
+      <p className="text-sm text-muted-foreground">
+        TSC and Zebra printers speak different languages. Pick the one that's plugged in; the dpi is on the
+        sticker under the printer (203 or 300).
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        {PRINTER_MODELS.map(m => (
+          <button
+            key={m.value}
+            onClick={() => onChange(m.value)}
+            className={cn(
+              "px-4 py-3 rounded-xl border-2 text-left font-semibold",
+              model === m.value ? "border-primary bg-primary/10" : "border-border hover:border-primary/50",
+            )}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 const RULES_KEY = "label_opened_life_defaults";
@@ -247,6 +323,8 @@ export default function LabelPrinterPage() {
           </button>
         </div>
       </div>
+
+      <PrinterModelPicker />
 
       <CategoryDefaultsEditor />
 

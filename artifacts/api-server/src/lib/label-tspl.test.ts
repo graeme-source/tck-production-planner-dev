@@ -5,6 +5,7 @@ import {
   renderTestLabel,
   fmtLabelDate,
   tsplSanitize,
+  labelGeometryFor,
 } from "./label-tspl";
 
 describe("fmtLabelDate", () => {
@@ -95,5 +96,41 @@ describe("renderTestLabel", () => {
     expect(tspl).toContain("TCK LABEL TEST");
     expect(tspl).toContain("TUE 8 SEP");
     expect(tspl).toContain("IF YOU CAN READ THIS, IT WORKS");
+  });
+});
+
+describe("Zebra (ZPL) output", () => {
+  const fields = { itemName: "Chicken Thighs", useBy: "2026-09-10", openedOn: "2026-09-08", initials: "gc" };
+
+  it("a 203dpi Zebra gets a ZPL label 816 x 200 dots with the same content", () => {
+    const zpl = renderIngredientLabel(fields, 1, labelGeometryFor("zebra-203"));
+    expect(zpl.startsWith("^XA")).toBe(true);
+    expect(zpl.trimEnd().endsWith("^XZ")).toBe(true);
+    expect(zpl).toContain("^PW816");
+    expect(zpl).toContain("^LL200");
+    expect(zpl).toContain("^FDCHICKEN THIGHS^FS");
+    expect(zpl).toContain("^FDTHU 10 SEP^FS");
+    expect(zpl).toMatch(/\^GB\d+,\d+,\d+\^FS/);
+    expect(zpl).not.toContain("SIZE ");
+  });
+
+  it("a 300dpi Zebra scales the layout up by half", () => {
+    const zpl = renderTestLabel("gc", "2026-09-10", 2, labelGeometryFor("zebra-300"));
+    expect(zpl).toContain("^PW1224");
+    expect(zpl).toContain("^LL300");
+    expect(zpl).toContain("^PQ2");
+    // test label's first text sits at 12,18 on the 8 dots/mm canvas
+    expect(zpl).toContain("^FO18,27");
+  });
+
+  it("ZPL control characters in a name can't end the field early", () => {
+    const zpl = renderTestLabel("g^c~", "2026-09-10", 1, labelGeometryFor("zebra-203"));
+    expect(zpl).not.toMatch(/\^FD[^\n]*G\^C/);
+    expect(zpl).toContain("G-C-");
+  });
+
+  it("an unknown or missing printer setting keeps the original TSC output", () => {
+    expect(renderTestLabel("gc", "2026-09-10", 1, labelGeometryFor(undefined))).toContain("SIZE 102 mm,25 mm");
+    expect(renderTestLabel("gc", "2026-09-10", 1, labelGeometryFor("nonsense"))).toContain("SIZE 102 mm,25 mm");
   });
 });
