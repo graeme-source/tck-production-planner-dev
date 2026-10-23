@@ -74,7 +74,38 @@ describe("computeFridgeAllocation", () => {
     expect(r.deficits).toEqual([{ recipeName: "Margherita", packs: 2 }]);
   });
 
-  it("gates 8-pack bag lines on TODAY's wrapped bags via title lookup", () => {
+  // Issues #306 / #314: bags already in the fridge (wrapped on an earlier
+  // day) release today's bag order — the pool is the bag level, not
+  // "wrapped today". The 2-pack pool is untouched by bag lines.
+  it("#306: a bag already in the fridge releases the bag order, without touching 2-packs", () => {
+    const av = availability({
+      bagStock: [{ recipeId: 1, bags: 1 }],
+      bagRecipeByTitle: { "margherita": 1 },
+    });
+    const r = computeFridgeAllocation(
+      [order(1, [[999, 1, "Margherita", "8 Pack Bag"]]), order(2, [[101, 10]])],
+      av,
+    );
+    expect(r.pickable.map(o => o.id)).toEqual([1, 2]);
+    expect(r.held).toEqual([]);
+    expect(r.deficits).toEqual([]);
+  });
+
+  it("#306: one bag in the fridge releases one bag order — the second is held, naming the fridge level", () => {
+    const av = availability({
+      bagStock: [{ recipeId: 1, bags: 1 }],
+      bagRecipeByTitle: { "margherita": 1 },
+    });
+    const r = computeFridgeAllocation(
+      [order(1, [[999, 1, "Margherita", "8 Pack Bag"]]), order(2, [[999, 1, "Margherita", "8 Pack Bag"]])],
+      av,
+    );
+    expect(r.pickable.map(o => o.id)).toEqual([1]);
+    expect(r.held.map(o => o.id)).toEqual([2]);
+    expect(r.shortFor.get(2)).toEqual(["Margherita (8-pack bags) (need 1, fridge has 0)"]);
+  });
+
+  it("holds a bag order when the fridge has no bags", () => {
     const av = availability({
       bagStock: [{ recipeId: 1, bags: 0 }],
       bagRecipeByTitle: { "margherita": 1 },

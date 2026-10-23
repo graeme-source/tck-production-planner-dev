@@ -49,6 +49,7 @@ import cancelledOrderLabelsRouter from "./cancelled-order-labels";
 import fulfilmentAvailabilityRouter from "./fulfilment-availability";
 import apcBookingIssuesRouter from "./apc-booking-issues";
 import apcConsignmentCheckRouter from "./apc-consignment-check";
+import apcTrackingHealthRouter from "./apc-tracking-health";
 import dptSuggestionsRouter from "./dpt-suggestions";
 import temperatureRecordsRouter from "./temperature-records";
 import ovenEventsRouter from "./oven-events";
@@ -337,6 +338,7 @@ router.use("/fulfilment", fulfilmentRouter);
 router.use("/fulfilment", fulfilmentAvailabilityRouter);
 router.use("/fulfilment", apcBookingIssuesRouter);
 router.use("/fulfilment", apcConsignmentCheckRouter);
+router.use("/fulfilment", apcTrackingHealthRouter);
 router.use("/fulfilment", chargebackHoldsRouter);
 router.use("/fulfilment", cancelledOrderLabelsRouter);
 // Barcodes: set in the app, our table is the source of truth for scanning

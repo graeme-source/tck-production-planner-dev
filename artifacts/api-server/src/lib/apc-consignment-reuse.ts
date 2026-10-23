@@ -19,6 +19,7 @@
  * booking path.
  */
 import { londonDateString } from "./london-time";
+import { trackingFallbackNotice } from "./apc-tracking-cache";
 
 /** YYYY-MM-DD */
 export type IsoDate = string;
@@ -106,8 +107,10 @@ export type ReuseDecision =
       action: "reuse";
       waybill: string;
       collectionDate: IsoDate;
-      /** Set when APC couldn't be asked and only the date rule was applied. */
-      warning?: string;
+      /** Set when APC couldn't be asked and only the date rule was applied —
+       *  a quiet grey line on the packing screen, not an amber warning
+       *  (issue #339). */
+      notice?: string;
     }
   | {
       action: "book-new";
@@ -310,7 +313,7 @@ function describeEvent(e: TrackingEvent | null): string {
 export function applyLiveStatus(decision: ReuseDecision, status: LiveStatus, ctx: ReuseContext): ReuseDecision {
   if (decision.action !== "reuse") return decision;
   if (status.kind === "unreachable") {
-    return { ...decision, warning: `Couldn't check APC's tracking for ${decision.waybill} (${status.error}) — reused on the date rule alone.` };
+    return { ...decision, notice: trackingFallbackNotice(status.error) };
   }
   if (status.kind === "not-found") {
     // A consignment booked minutes ago can have no tracking yet.

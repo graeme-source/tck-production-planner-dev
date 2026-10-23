@@ -31,7 +31,9 @@ export interface FridgeAvailability {
    *  for them. Distinguishing these from truly unmapped lines is the
    *  difference between "map the variant" and "tick Core menu". */
   outOfScopeVariants?: Record<string, string>;
-  /** 8-pack bags wrapped TODAY per recipe — the pool bag orders gate on. */
+  /** 8-pack bags in the production fridge per recipe (latest level, however
+   *  long ago they were wrapped — like 2-packs; #306/#314). The pool bag
+   *  orders gate on. */
   bagStock?: Array<{ recipeId: number; bags: number }>;
   /** variantId → Shopify inventory level, for variants Shopify itself
    *  tracks (oversell denied). An accepted order line on one of these is
@@ -93,9 +95,9 @@ export function computeFridgeAllocation<T extends GateOrder>(
     };
   }
   // Two pools per recipe, keyed "packs:<id>" and "bags:<id>". 2-pack lines
-  // draw on the fridge's 2-pack level; 8-pack bag lines draw on bags
-  // wrapped TODAY (backend sends only today's entries) — so a bag order
-  // stays held until its bags are wrapped that day.
+  // draw on the fridge's 2-pack level; 8-pack bag lines draw on the
+  // fridge's 8-pack bag level — whenever the bags were wrapped, since
+  // despatch takes bags off again (#306/#314).
   const remaining = new Map<string, number>();
   const names = new Map<number, string>();
   for (const [rid, name] of Object.entries(fridgeAvailability.recipeNames ?? {})) {
@@ -131,7 +133,7 @@ export function computeFridgeAllocation<T extends GateOrder>(
       // 8-pack bag lines resolve by PRODUCT TITLE — the bag is a variant
       // of the same Shopify product as the mapped 2-pack, and
       // eight_pack_variant_id was never populated (same convention as the
-      // wholesale-bags queue). These gate on TODAY's wrapped bags.
+      // wholesale-bags queue). These gate on the 8-pack bag level.
       if (recipeId == null
           && (li.variant_title ?? "").toLowerCase().includes("8 pack bag")) {
         const bagRecipe = fridgeAvailability.bagRecipeByTitle?.[li.title.trim().toLowerCase()];
@@ -190,7 +192,7 @@ export function computeFridgeAllocation<T extends GateOrder>(
       for (const [key, qty] of needs) {
         heldDemand.set(key, (heldDemand.get(key) ?? 0) + qty);
         const have = remaining.get(key) ?? 0;
-        if (have < qty) shorts.push(`${poolLabel(key)} (need ${qty}, ${key.startsWith("bags") ? "wrapped today" : "fridge has"} ${have})`);
+        if (have < qty) shorts.push(`${poolLabel(key)} (need ${qty}, fridge has ${have})`);
       }
       shortFor.set(o.id, shorts);
     }

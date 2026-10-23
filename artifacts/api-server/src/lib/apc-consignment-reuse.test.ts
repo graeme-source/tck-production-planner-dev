@@ -176,10 +176,16 @@ describe("applyLiveStatus", () => {
     expect(d.action === "book-new" && d.message).toContain("CANCELLED");
   });
 
-  it("APC down → still reused on the date rule, with a warning (never blocks packing)", () => {
-    const d = applyLiveStatus(reuse, { kind: "unreachable", error: "timeout" }, PACK_DAY);
+  it("APC slow → still reused on the date rule, with one quiet grey line, not an amber warning (#339)", () => {
+    const d = applyLiveStatus(reuse, { kind: "unreachable", error: "no answer in 4s" }, PACK_DAY);
     expect(d.action).toBe("reuse");
-    expect(d.action === "reuse" && d.warning).toContain("timeout");
+    expect(d.action === "reuse" && d.notice).toBe("APC tracking slow — checked by date only");
+    expect(d).not.toHaveProperty("warning");
+  });
+
+  it("APC erroring (not slow) → reused, notice says unavailable", () => {
+    const d = applyLiveStatus(reuse, { kind: "unreachable", error: "HTTP 500" }, PACK_DAY);
+    expect(d.action === "reuse" && d.notice).toBe("APC tracking unavailable — checked by date only");
   });
 
   it("no tracking yet → reused", () => {
