@@ -783,8 +783,10 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 /** Temperature + hold-time check against the FSA time/temperature table.
  *  Default 70°C for 2 minutes; sliding the temperature snaps the hold time
  *  to that temperature's table default (75°C → 30 sec, 65°C → 10 min…) and
- *  both stay editable. What gets recorded is what actually happened. */
-function TempHoldCheckRow({ label, recordType, records, entry, onEntryChange, onRecord, saving }: {
+ *  both stay editable. What gets recorded is what actually happened.
+ *  Also used for the cook-out temperature of cook-and-chill sub-recipes
+ *  (components/cook-chill/cook-chill-card.tsx, issue #244) — one slider row. */
+export function TempHoldCheckRow({ label, recordType, records, entry, onEntryChange, onRecord, saving }: {
   label: string;
   recordType: string;
   records: TempRecord[];

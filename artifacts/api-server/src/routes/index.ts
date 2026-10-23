@@ -74,6 +74,8 @@ import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
 import checklistsRouter from "./checklists";
+import checklistReadingsRouter from "./checklist-readings";
+import cookChillRouter from "./cook-chill";
 import curiosityRouter from "./curiosity";
 import notificationsRouter from "./notifications";
 import employeesRouter from "./employees";
@@ -436,6 +438,10 @@ router.use("/issue-pipeline", issuePipelineRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
 router.use("/checklists", checklistsRouter);
+// Readings on checklist items (scale calibration etc., issues #87/#169).
+router.use("/checklist-readings", checklistReadingsRouter);
+// Cook-and-chill records for cooked sub-recipes (issue #244).
+router.use("/cook-chill", cookChillRouter);
 // Curiosity Time waste-spotting walks — every team member does these from
 // the station checklist; the route file guards its own settings endpoints.
 router.use("/curiosity", curiosityRouter);

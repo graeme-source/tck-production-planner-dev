@@ -31,6 +31,10 @@ export const subRecipesTable = pgTable("sub_recipes", {
   // Minutes to make ONE batch (the yield). Only pre-fills "How long to make
   // it again?" when it's wasted (migration 0153). NULL = not known.
   standardPrepMinutes: integer("standard_prep_minutes"),
+  // Cooked and must be cooled: Prep records the cook-out core temperature
+  // and "into blast chiller"; Wrapping ticks "chilling finished" (migration
+  // 0228, issue #244). The tick box on the sub-recipe — never a name match.
+  cookChillRequired: boolean("cook_chill_required").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

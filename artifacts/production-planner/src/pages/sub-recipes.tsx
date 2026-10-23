@@ -18,6 +18,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { NumberInput } from "@/components/ui/number-input";
 import { SubRecipePrepTimeField } from "@/components/sub-recipe-prep-time-field";
+import { SubRecipeCookChillToggle } from "@/components/cook-chill/sub-recipe-cook-chill-toggle";
 import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
 import { EditorForm } from "@/components/recipe-editor/editor-form";
 import { LineRows } from "@/components/recipe-editor/line-rows";
@@ -748,6 +749,7 @@ function EditSubRecipeDialog({
               {detail && (
                 <SubRecipePrepTimeField subRecipeId={id} yieldText={`${Number(detail.yield)} ${detail.yieldUnit}`} />
               )}
+              {detail && <SubRecipeCookChillToggle subRecipeId={id} />}
               <SubRecipeForm
                 key={id}
                 subRecipeId={id}

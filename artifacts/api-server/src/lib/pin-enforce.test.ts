@@ -48,6 +48,10 @@ describe("matchAttributingWrite", () => {
     ["POST", "/checklists/completions"],
     ["POST", "/checklists/packing-batch-record"],
     ["POST", "/temperature-records"],
+    ["PUT", "/checklist-readings"], // a calibration reading is filed under who took it
+    ["POST", "/cook-chill/records"], // cook-out core temperature
+    ["POST", "/cook-chill/records/12/chill-start"], // into the blast chiller
+    ["POST", "/cook-chill/records/12/chill-end"], // chilling finished
     ["POST", "/oven-events/oven-in"],
     ["PATCH", "/production-plans/180/items/9/wrapping-complete"],
     ["POST", "/fulfilment/verify-label-scan"],

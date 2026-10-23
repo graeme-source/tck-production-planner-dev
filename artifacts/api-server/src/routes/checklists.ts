@@ -4,6 +4,7 @@ import {
   checklistTemplatesTable,
   checklistCompletionsTable,
   checklistOneoffItemsTable,
+  checklistReadingsTable,
   productionPlansTable,
   productionPlanItemsTable,
   recipesTable,
@@ -32,8 +33,15 @@ import { adjustFridgeStock, addRecipeFreezerStock } from "../lib/fridge-stock";
 import { resolveRecipeIngredients } from "../lib/ingredient-resolver";
 import { getOutstandingDispatch, OUTSTANDING_DISPATCH_TYPE, showOutstandingCheck } from "../lib/outstanding-dispatch";
 import { resolveRecipeBins, type RecipeBin } from "../lib/recipe-bins";
+import {
+  asksForReading, normaliseReadingLabels, readingConfigProblem, missingReadings, UNLABELLED,
+} from "../lib/checklist-readings";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
+type ItemReading = {
+  label: string; value: number; unit: string; inRange: boolean | null;
+  recordedByName: string; recordedAt: string;
+};
 
 const router: IRouter = Router();
 
@@ -85,6 +93,41 @@ export function resolveChecklistStation(stationType: string): string {
 
 // ─── Template CRUD (admin-only) ──────────────────────────────────────
 
+// "Record a reading" setup on an item (migration 0227, issues #87/#169).
+const ReadingFields = {
+  readingUnit: z.string().trim().max(12).nullish(),
+  readingLabels: z.array(z.string().max(80)).max(40).nullish(),
+  readingMin: z.number().finite().nullish(),
+  readingMax: z.number().finite().nullish(),
+};
+
+/** The reading columns to store, or a problem to send back. Merges what was
+ *  sent over what the item already has so a partial update is judged whole. */
+function readingColumns(
+  sent: { readingUnit?: string | null; readingLabels?: string[] | null; readingMin?: number | null; readingMax?: number | null },
+  existing?: { readingUnit: string | null; readingLabels: string[] | null; readingMin: string | null; readingMax: string | null },
+): { problem: string } | { columns: Record<string, unknown> } {
+  const touched = sent.readingUnit !== undefined || sent.readingLabels !== undefined
+    || sent.readingMin !== undefined || sent.readingMax !== undefined;
+  if (!touched) return { columns: {} };
+  const unit = sent.readingUnit !== undefined ? sent.readingUnit : existing?.readingUnit ?? null;
+  const labels = sent.readingLabels !== undefined ? sent.readingLabels : existing?.readingLabels ?? null;
+  const min = sent.readingMin !== undefined ? sent.readingMin : existing?.readingMin != null ? Number(existing.readingMin) : null;
+  const max = sent.readingMax !== undefined ? sent.readingMax : existing?.readingMax != null ? Number(existing.readingMax) : null;
+  const problem = readingConfigProblem({ unit, labels, min: min ?? null, max: max ?? null });
+  if (problem) return { problem };
+  if (!asksForReading(unit)) {
+    return { columns: { readingUnit: null, readingLabels: null, readingMin: null, readingMax: null } };
+  }
+  const norm = normaliseReadingLabels(labels);
+  return { columns: {
+    readingUnit: unit!.trim(),
+    readingLabels: norm.length === 1 && norm[0] === UNLABELLED ? null : norm,
+    readingMin: min == null ? null : String(min),
+    readingMax: max == null ? null : String(max),
+  } };
+}
+
 const CreateTemplateBody = z.object({
   stationType: z.string().min(1),
   category: z.enum(["opening", "cleaning", "closing"]),
@@ -95,6 +138,7 @@ const CreateTemplateBody = z.object({
   scheduleAnchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
   orderPosition: z.number().int().optional(),
   dynamicDataType: z.string().nullish(),
+  ...ReadingFields,
 });
 
 router.get("/templates", async (req: Request, res: Response) => {
@@ -113,12 +157,15 @@ router.get("/templates", async (req: Request, res: Response) => {
 router.post("/templates", async (req: Request, res: Response) => {
   const parsed = CreateTemplateBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-  const { scheduleDays, stationType, ...rest } = parsed.data;
+  const { scheduleDays, stationType, readingUnit, readingLabels, readingMin, readingMax, ...rest } = parsed.data;
+  const reading = readingColumns({ readingUnit, readingLabels, readingMin, readingMax });
+  if ("problem" in reading) { res.status(400).json({ error: reading.problem }); return; }
   // Force aliased stations onto the canonical row so reads/writes can't
   // diverge. A row created from building_2 becomes a building_1 template.
   const canonicalStation = resolveChecklistStation(stationType);
   const [row] = await db.insert(checklistTemplatesTable).values({
     ...rest,
+    ...reading.columns,
     stationType: canonicalStation,
     scheduleDays: scheduleDays ? JSON.stringify(scheduleDays) : null,
   }).returning();
@@ -135,14 +182,23 @@ const UpdateTemplateBody = z.object({
   orderPosition: z.number().int().optional(),
   dynamicDataType: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
+  ...ReadingFields,
 });
 
 router.put("/templates/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   const parsed = UpdateTemplateBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.flatten() }); return; }
-  const { scheduleDays, ...rest } = parsed.data;
+  const { scheduleDays, readingUnit, readingLabels, readingMin, readingMax, ...rest } = parsed.data;
   const updates: Record<string, unknown> = { ...rest };
+  const sentReading = { readingUnit, readingLabels, readingMin, readingMax };
+  if (Object.values(sentReading).some(v => v !== undefined)) {
+    const [existing] = await db.select().from(checklistTemplatesTable).where(eq(checklistTemplatesTable.id, id));
+    if (!existing) { res.status(404).json({ error: "Template not found" }); return; }
+    const reading = readingColumns(sentReading, existing);
+    if ("problem" in reading) { res.status(400).json({ error: reading.problem }); return; }
+    Object.assign(updates, reading.columns);
+  }
   if (scheduleDays !== undefined) {
     updates.scheduleDays = scheduleDays ? JSON.stringify(scheduleDays) : null;
   }
@@ -257,6 +313,28 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
     ))
     .orderBy(asc(checklistOneoffItemsTable.category), asc(checklistOneoffItemsTable.orderPosition));
 
+  // Readings taken on this plan's checklist (migration 0227) — sent with
+  // each item, with what's still missing, so the screen never re-derives
+  // the rule.
+  const readingRows = await db.select().from(checklistReadingsTable)
+    .where(and(
+      eq(checklistReadingsTable.planId, planId),
+      eq(checklistReadingsTable.stationType, canonicalStation),
+    ));
+  const readingsByTemplate = new Map<number, ItemReading[]>();
+  for (const r of readingRows) {
+    const list = readingsByTemplate.get(r.templateId) ?? [];
+    list.push({
+      label: r.label,
+      value: Number(r.value),
+      unit: r.unit,
+      inRange: r.inRange,
+      recordedByName: r.recordedByName,
+      recordedAt: r.recordedAt.toISOString(),
+    });
+    readingsByTemplate.set(r.templateId, list);
+  }
+
   // Build completion map
   const completionMap = new Map<number, ChecklistCompletion>(completions.map((c: ChecklistCompletion) => [c.templateId, c]));
 
@@ -275,6 +353,13 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
     completionId: number | null;
     notes: string | null;
     skippedReason: string | null;
+    // "Record a reading" items (migration 0227): null unit = plain tick.
+    readingUnit: string | null;
+    readingLabels: string[];
+    readingMin: number | null;
+    readingMax: number | null;
+    readings: ItemReading[];
+    readingsMissing: string[];
   }>> = {};
 
   for (const t of filtered) {
@@ -295,6 +380,14 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
       completionId: completion?.id ?? null,
       notes: completion?.notes ?? null,
       skippedReason: completion?.skippedReason ?? null,
+      readingUnit: asksForReading(t.readingUnit) ? t.readingUnit!.trim() : null,
+      readingLabels: asksForReading(t.readingUnit) ? normaliseReadingLabels(t.readingLabels) : [],
+      readingMin: t.readingMin == null ? null : Number(t.readingMin),
+      readingMax: t.readingMax == null ? null : Number(t.readingMax),
+      readings: asksForReading(t.readingUnit) ? (readingsByTemplate.get(t.id) ?? []) : [],
+      readingsMissing: asksForReading(t.readingUnit)
+        ? missingReadings(normaliseReadingLabels(t.readingLabels), (readingsByTemplate.get(t.id) ?? []).map(r => r.label))
+        : [],
     });
   }
 
@@ -315,6 +408,12 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
       completionId: null,
       notes: null,
       skippedReason: o.skippedReason ?? null,
+      readingUnit: null,
+      readingLabels: [],
+      readingMin: null,
+      readingMax: null,
+      readings: [],
+      readingsMissing: [],
     });
   }
 
@@ -351,8 +450,29 @@ router.post("/completions", async (req: Request, res: Response) => {
     if (user) userName = user.name;
   }
 
+  const canonicalStation = resolveChecklistStation(parsed.data.stationType);
+
+  // An item that takes a reading can't be ticked done without every one of
+  // its readings (issue #87) — "Mark incomplete" with a reason still can.
+  if (!parsed.data.skippedReason) {
+    const [t] = await db.select({ readingUnit: checklistTemplatesTable.readingUnit, readingLabels: checklistTemplatesTable.readingLabels })
+      .from(checklistTemplatesTable).where(eq(checklistTemplatesTable.id, parsed.data.templateId));
+    if (t && asksForReading(t.readingUnit)) {
+      const recorded = await db.select({ label: checklistReadingsTable.label }).from(checklistReadingsTable)
+        .where(and(
+          eq(checklistReadingsTable.templateId, parsed.data.templateId),
+          eq(checklistReadingsTable.planId, parsed.data.planId),
+        ));
+      const missing = missingReadings(normaliseReadingLabels(t.readingLabels), recorded.map(r => r.label));
+      if (missing.length) {
+        const named = missing.filter(l => l !== UNLABELLED);
+        res.status(400).json({ error: named.length ? `Enter the reading for ${named.join(", ")} first` : "Enter the reading first" });
+        return;
+      }
+    }
+  }
+
   try {
-    const canonicalStation = resolveChecklistStation(parsed.data.stationType);
     const [row] = await db.insert(checklistCompletionsTable).values({
       templateId: parsed.data.templateId,
       planId: parsed.data.planId,

@@ -24,6 +24,7 @@ import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { StockCheckButton, StockCheckEntryForm } from "../shared/stock-check-entry";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import { DeferredPrepBanner } from "../shared/deferred-prep-banner";
+import { CookChillCard } from "@/components/cook-chill/cook-chill-card";
 import { PrepSubNav } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
@@ -754,6 +755,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           a refetch of this station's data picks up the new completion on
           the next 5s poll (clearing the "deferred" badge from the tile). */}
       <DeferredPrepBanner onResolved={refetch} />
+
+      {/* Cook and chill (issue #244): cook-out core temp + into the blast
+          chiller for sub-recipes ticked "Cook and chill". Hidden when none. */}
+      <CookChillCard station="prep" planId={targetPlanId} />
 
       {activeStockCheckModalIng && (
         <ForceStockCheckModal

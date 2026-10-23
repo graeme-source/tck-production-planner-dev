@@ -10,7 +10,7 @@ import {
   ArrowUp, ArrowDown, Minus as MinusIcon,
   TrendingUp, TrendingDown, Activity, Layers, Target, Timer,
   ChevronDown, ChevronUp, ChevronLeft, ChevronRight, Thermometer, ShieldCheck,
-  Package, Zap, Calendar as CalendarIcon, CalendarDays, Trophy, Snail, Hourglass,
+  Package, Zap, Calendar as CalendarIcon, CalendarDays, Trophy, Snail, Hourglass, Gauge,
   Lightbulb, AlertTriangle, CheckCircle, Filter, Play, Square,
   MessageSquare, Send, ClipboardCheck, FileText, Eye, EyeOff,
   Droplets, UserCog, ClipboardList, Flame, HardHat, Printer, Check, Pencil, Plus,
@@ -23,6 +23,7 @@ import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { IncidentDiaryTab } from "@/components/incident-diary";
+import { HaccpRecordsTab } from "@/components/haccp-records-tab";
 import { AttendanceFreshness } from "@/components/attendance-freshness";
 import { AttendanceAdminNotices } from "@/components/attendance-admin-notices";
 import { SickLeaveModal } from "@/components/sick-leave-modal";
@@ -177,7 +178,7 @@ type TabId = "kpis" | "breaks" | "haccp" | "risk-assessments" | "improvements" |
 // HACCP is being built out into a full food-safety system, so it gets its
 // own sub-navigation. Temperature Log lives here too — fridge, freezer, and
 // cooked-core readings are all food-safety evidence.
-type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "sensors" | "visitors" | "incidents";
+type HaccpSubTabId = "evidence" | "temperatures" | "cooling-weights" | "readings" | "sensors" | "visitors" | "incidents";
 
 interface ImprovementRecord {
   id: number;
@@ -272,7 +273,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
 }
 
 const VALID_TABS: TabId[] = ["kpis", "breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
-const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "sensors", "visitors", "incidents"];
+const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "readings", "sensors", "visitors", "incidents"];
 
 interface ReportsNavItem {
   id: TabId;
@@ -302,6 +303,7 @@ const HACCP_SUB_NAV_ITEMS: HaccpSubNavItem[] = [
   { id: "evidence", label: "Evidence Log", icon: ShieldCheck },
   { id: "temperatures", label: "Temperature Log", icon: Thermometer },
   { id: "cooling-weights", label: "Cooling & Weights", icon: Hourglass },
+  { id: "readings", label: "Readings & Cook-Chill", icon: Gauge },
   { id: "sensors", label: "Sensor History", icon: Activity },
   { id: "visitors", label: "Visitor Book", icon: UserPlus },
   { id: "incidents", label: "Accidents & Incidents", icon: AlertTriangle },
@@ -552,6 +554,7 @@ export default function Reports() {
               {haccpSubTab === "evidence" && <HaccpTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "temperatures" && <TemperatureRecordsTab />}
               {haccpSubTab === "cooling-weights" && <BatchWeightsTab fromDate={fromDate} toDate={toDate} />}
+              {haccpSubTab === "readings" && <HaccpRecordsTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "sensors" && <GoveeSensorHistoryTab initialDevice={deviceParam} />}
               {haccpSubTab === "visitors" && <VisitorBookTab fromDate={fromDate} toDate={toDate} />}
               {haccpSubTab === "incidents" && <IncidentDiaryTab />}
