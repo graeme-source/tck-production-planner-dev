@@ -69,10 +69,12 @@ export function useTaskSort(listKey: string, fallback: SortSpec): [SortSpec, (s:
  * "Sort: Time ▸ then Priority". Tap to open two rows of big chips:
  * First (Time / Priority / List order) and Then (the others, or None).
  */
-export function TaskSortControl({ spec, onChange, className, manualLabel }: {
+export function TaskSortControl({ spec, onChange, className, manualLabel, chip = false }: {
   spec: SortSpec;
   onChange: (s: SortSpec) => void;
   className?: string;
+  /** A small chip for a slim header line (team lists, #330). */
+  chip?: boolean;
   /** What "List order" means on this list, e.g. "Order added". */
   manualLabel?: string;
 }) {
@@ -92,9 +94,11 @@ export function TaskSortControl({ spec, onChange, className, manualLabel }: {
         type="button"
         onClick={() => setOpen(o => !o)}
         aria-expanded={open}
-        className="min-h-[48px] px-4 rounded-xl border-2 border-border bg-card font-semibold inline-flex items-center gap-2 hover:bg-secondary/60"
+        className={chip
+          ? "min-h-[40px] px-3 rounded-full border-2 border-border bg-card text-sm font-semibold inline-flex items-center gap-1.5 hover:bg-secondary/60"
+          : "min-h-[48px] px-4 rounded-xl border-2 border-border bg-card font-semibold inline-flex items-center gap-2 hover:bg-secondary/60"}
       >
-        <ArrowDownUp className="w-5 h-5 text-muted-foreground" />
+        <ArrowDownUp className={chip ? "w-4 h-4 text-muted-foreground" : "w-5 h-5 text-muted-foreground"} />
         <span className="text-muted-foreground">Sort:</span>
         <span>{label(spec.primary)}</span>
         {spec.secondary !== "none" && (

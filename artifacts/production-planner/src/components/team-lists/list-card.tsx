@@ -7,11 +7,11 @@ import { Check } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { progressText, type Progress, type TeamListSummary } from "./team-lists-api";
 
-export function ProgressBar({ progress, color }: { progress: Progress; color?: string | null }) {
+export function ProgressBar({ progress, color, thin = false }: { progress: Progress; color?: string | null; thin?: boolean }) {
   const pct = progress.total ? Math.round((progress.done / progress.total) * 100) : 0;
   const complete = progress.total > 0 && progress.done === progress.total;
   return (
-    <div className="h-3 rounded-full bg-muted overflow-hidden" role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
+    <div className={cn(thin ? "h-1.5" : "h-3", "rounded-full bg-muted overflow-hidden")} role="progressbar" aria-valuenow={pct} aria-valuemin={0} aria-valuemax={100}>
       <div className={cn("h-full rounded-full transition-all", complete && "bg-emerald-500")}
         style={{ width: `${pct}%`, backgroundColor: complete ? undefined : color ?? "hsl(var(--primary))" }} />
     </div>

@@ -31,6 +31,7 @@ import { getStandardBreakConfig, computeBatchesPerHour } from "../lib/batches-pe
 import { buildPlanSchedule } from "../lib/day-schedule";
 import { recomputeItemFromProgress } from "../lib/building-progress";
 import { findRecentDuplicatePlan } from "../lib/plan-duplicate";
+import { loadBatchCeilings } from "../lib/batch-ceiling-settings";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
 // is loaded lazily inside the /lock-pdf endpoint via dynamic import,
@@ -1832,7 +1833,7 @@ router.post("/chilled-exclusions", async (req, res) => {
 // ── Schedule capacity — the plan date's rota + suggested batch ceiling ─────
 // Imports the Planday schedule for the production day (same source as the
 // morning meeting's Who's On Today) and derives the calzone batch capacity:
-// a Dough Prep person on shift unlocks the full ceiling (default 110), no
+// a Dough Prep person on shift unlocks the full ceiling (the DPT daily batches, #305), no
 // Dough Prep caps the day (default 80). The fried-chicken line (Frying /
 // Breading positions) is irrelevant to calzone production, so those shifts
 // are listed separately and never counted. Absence-type shifts (sick,
@@ -1883,14 +1884,7 @@ router.get("/schedule-capacity", async (req, res) => {
     people.sort((a, b) => (a.start ?? "").localeCompare(b.start ?? "") || a.name.localeCompare(b.name));
 
     const hasDoughPrep = people.some(p => DOUGH_PREP_RE.test(p.position));
-    const settingNum = async (key: string, fallback: number) => {
-      const [row] = await db.select({ value: appSettingsTable.value })
-        .from(appSettingsTable).where(eq(appSettingsTable.key, key));
-      const n = Number(row?.value);
-      return Number.isFinite(n) && n > 0 ? n : fallback;
-    };
-    const capacityWithDoughPrep = await settingNum("plan_capacity_with_dough_prep", 110);
-    const capacityWithoutDoughPrep = await settingNum("plan_capacity_without_dough_prep", 80);
+    const { withDoughPrep: capacityWithDoughPrep, withoutDoughPrep: capacityWithoutDoughPrep } = await loadBatchCeilings();
     const capacityBatches = hasDoughPrep ? capacityWithDoughPrep : capacityWithoutDoughPrep;
 
     res.json({

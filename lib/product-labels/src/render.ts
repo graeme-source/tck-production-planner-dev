@@ -13,6 +13,7 @@ import { encodeEan13, isGuardModule } from "./ean13";
 import { LabelFontSet } from "./fonts";
 import { layoutLabel, type LabelLayout, type PlacedRun } from "./layout";
 import { pngDataUrl } from "./png";
+import { layoutFrontLabel, type FrontLabelInput, type FrontLabelLayout } from "./front-label";
 import { Bitmap, fillCircle, fillContours, fillRect, flattenPath, type PathCmd } from "./raster";
 import type { LabelSnapshot } from "./snapshot";
 import { snowflakeContours } from "./snowflake";
@@ -142,4 +143,13 @@ export function proofLabel(snapshot: LabelSnapshot, when: { printDate: string; p
   const bitmap = renderLabel(checked.layout, fonts);
   const overflow = inkHeight(checked.layout, fonts) > checked.layout.heightDots ? renderLabel(checked.layout, fonts, true) : null;
   return { ...checked, bitmap, png: pngDataUrl(bitmap), overflowPng: overflow ? pngDataUrl(overflow) : null };
+}
+
+/** The front name label (#331) at printer resolution, plus its PNG proof.
+ *  Same fonts and rasteriser as the back label; prints through labelsPdf. */
+export function renderFrontLabel(input: FrontLabelInput, fonts: LabelFontSet): { bitmap: Bitmap; png: string; layout: FrontLabelLayout } {
+  const layout = layoutFrontLabel(fonts, input);
+  const bitmap = new Bitmap(layout.widthDots, layout.heightDots);
+  for (const run of layout.runs) drawRun(bitmap, fonts, run);
+  return { bitmap, png: pngDataUrl(bitmap), layout };
 }

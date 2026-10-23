@@ -9,6 +9,7 @@ import { declarationToStore } from "../lib/ingredient-declaration";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
 import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
+import { pgErrorCode, FOREIGN_KEY_VIOLATION, ingredientInUseMessage } from "../lib/ingredient-in-use";
 import * as z from "zod";
 
 const router: IRouter = Router();
@@ -622,10 +623,7 @@ router.delete("/:id", requireManagerOrAdmin, async (req, res) => {
     await db.delete(ingredientsTable).where(eq(ingredientsTable.id, id));
     res.status(204).send();
   } catch (err) {
-    const pgCode =
-      (err as { cause?: { code?: string } }).cause?.code ??
-      (err as { code?: string }).code;
-    if (pgCode !== "23503") {
+    if (pgErrorCode(err) !== FOREIGN_KEY_VIOLATION) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("[ingredients] delete error:", msg);
       res.status(500).json({ error: msg });
@@ -664,22 +662,17 @@ router.delete("/:id", requireManagerOrAdmin, async (req, res) => {
     ]);
 
     const h = historyCounts.rows[0];
-    const parts: string[] = [];
     const recipeNames = recipes.rows.map(r => r.name);
     const subNames = subRecipes.rows.map(r => r.name);
-    if (recipeNames.length) parts.push(`recipes: ${recipeNames.slice(0, 5).join(", ")}${recipeNames.length > 5 ? ` (+${recipeNames.length - 5} more)` : ""}`);
-    if (subNames.length) parts.push(`sub-recipes: ${subNames.slice(0, 5).join(", ")}${subNames.length > 5 ? ` (+${subNames.length - 5} more)` : ""}`);
-    if (h && h.purchase_orders > 0) parts.push(`${h.purchase_orders} purchase-order line${h.purchase_orders === 1 ? "" : "s"}`);
-    if (h && h.stock_rows > 0) parts.push(`${h.stock_rows} stock record${h.stock_rows === 1 ? "" : "s"}`);
-    if (h && h.prep_rows > 0) parts.push(`${h.prep_rows} prep record${h.prep_rows === 1 ? "" : "s"}`);
-    if (h && h.kanbans > 0) parts.push(`${h.kanbans} kanban item${h.kanbans === 1 ? "" : "s"}`);
-
-    const usage = parts.length ? parts.join(" · ") : "other records";
-    const hasHistory = !!h && (h.purchase_orders > 0 || h.stock_rows > 0 || h.prep_rows > 0);
     res.status(409).json({
-      error: `Can't delete "${name}" — still referenced by ${usage}.` +
-        (recipeNames.length || subNames.length ? " Remove it from those recipes first." : "") +
-        (hasHistory ? " Order/stock history can't be detached — mark the ingredient inactive instead of deleting it." : ""),
+      error: ingredientInUseMessage(name, {
+        recipeNames,
+        subRecipeNames: subNames,
+        purchaseOrderLines: h?.purchase_orders ?? 0,
+        stockRecords: h?.stock_rows ?? 0,
+        prepRecords: h?.prep_rows ?? 0,
+        kanbanItems: h?.kanbans ?? 0,
+      }),
       usedBy: {
         recipes: recipeNames,
         subRecipes: subNames,

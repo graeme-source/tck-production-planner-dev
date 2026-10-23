@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
+import { SupplierCallStrip } from "@/components/supplier-call-strip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
@@ -1527,7 +1528,9 @@ export default function Deliveries() {
     );
   }, [weekCollections, ordersByDay, selectedDateStr]);
 
-  const { data: suppliersList } = useQuery<Array<{ id: number; name: string }>>({
+  // Full supplier rows: the name for collections, and the phone + account
+  // number for each delivery card's call strip (#332).
+  const { data: suppliersList } = useQuery<Array<{ id: number; name: string; phone?: string | null; orderingPhone?: string | null; accountNumber?: string | null }>>({
     queryKey: ["suppliers-for-collections"],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
@@ -1929,6 +1932,10 @@ export default function Deliveries() {
                       )}
                     </div>
                   </div>
+
+                  {/* Who to ring about this delivery, and the account number
+                      they'll ask for (#332). Hidden when neither is on file. */}
+                  <SupplierCallStrip supplier={suppliersList?.find(sp => sp.id === order.supplierId)} />
 
                   <div
                     className="border-t border-border/50 px-4 py-2.5 bg-secondary/10 flex items-center gap-2 flex-wrap"

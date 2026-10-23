@@ -8,8 +8,8 @@
 // starving the online 2-pack demand.
 //
 // Capacity model (confirmed 2026-07-28):
-//   - 110 batches/day with a "Dough Prep" person on the Planday rota, 80
-//     without. Read live from Planday positions when configured; when Planday
+//   - the DPT daily batches with a "Dough Prep" person on the Planday rota
+//     (was a fixed 110 until #305), 80 without — lib/batch-ceiling.ts. Read live from Planday positions when configured; when Planday
 //     is unreachable or the position is unknown the day falls back to the
 //     SAFE ceiling (80) — under-promising beats scheduling production that
 //     can't happen.
@@ -39,6 +39,7 @@ import { eq, and, inArray, asc, desc, sql } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
 import { earliestProductionDay } from "../lib/production-cutoff";
+import { loadBatchCeilings } from "../lib/batch-ceiling-settings";
 import { mainKitchenBatches } from "@workspace/production-schedule";
 import { datesWithPosition } from "../services/planday";
 
@@ -318,8 +319,9 @@ async function resolveCapacity(from: string, to: string): Promise<{
   withoutDough: number;
   doughDates: Set<string> | null;
 }> {
-  const withDough = Number(await getSetting("capacity_batches_with_dough_prep")) || 110;
-  const withoutDough = Number(await getSetting("capacity_batches_without_dough_prep")) || 80;
+  // Same rule as Create Plan's schedule-capacity (#305): full team = DPT
+  // daily batches, no Dough Prep = the 80 setting (or DPT if lower).
+  const { withDoughPrep: withDough, withoutDoughPrep: withoutDough } = await loadBatchCeilings();
   const positionName = (await getSetting("capacity_dough_prep_position_name")) || "Dough Prep";
   let doughDates: Set<string> | null = null;
   try {

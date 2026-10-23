@@ -18,6 +18,7 @@ import { ProofImage, type Area } from "@/components/product-labels/proof-image";
 import { PublishDialog, ChangeRow } from "@/components/product-labels/publish-dialog";
 import { RecipeLabelSettings } from "@/components/product-labels/recipe-label-settings";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { FrontLabelPreview, FrontLabelsDialog } from "@/components/product-labels/front-labels-dialog";
 import { DeclarationFixButtons } from "@/components/declaration-fix";
 import { otherBlockers } from "@/lib/declaration-fix";
 import { HubTabs, useCanSeeProductData, useTabParam, type HubTab } from "@/components/product-labels/hub-tabs";
@@ -46,6 +47,8 @@ export default function ProductLabelRecipePage() {
   const [testPrinting, setTestPrinting] = useState(false);
   // Real labels dated today for a product not on today's plan (2026-10-15).
   const [printingToday, setPrintingToday] = useState(false);
+  // Front name labels, 102 x 25 mm (#331): anyone, like the back labels.
+  const [printingFront, setPrintingFront] = useState(false);
   // Deck and nutrition keep the old Product Hub's access level.
   const canSeeData = useCanSeeProductData();
   const tabs = canSeeData ? ALL_TABS : ALL_TABS.filter(t => t.key === "label" || t.key === "history");
@@ -72,6 +75,13 @@ export default function ProductLabelRecipePage() {
             className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
           >
             <Printer className="w-5 h-5" /> Print labels — today
+          </button>
+          <button
+            type="button"
+            onClick={() => setPrintingFront(true)}
+            className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
+          >
+            <Printer className="w-5 h-5" /> Print front labels
           </button>
           <button
             type="button"
@@ -155,12 +165,17 @@ export default function ProductLabelRecipePage() {
         </div>
       </div>
 
+      <FrontLabelPreview recipeId={data.recipe.id} onPrint={() => setPrintingFront(true)} />
+
       <RecipeLabelSettings key={data.recipe.id} data={data} canEdit={canEdit} />
       </>)}
 
       {publishing && <PublishDialog data={data} onClose={() => setPublishing(false)} />}
       {printingToday && (
         <BackLabelsDialog mode="today" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setPrintingToday(false)} />
+      )}
+      {printingFront && (
+        <FrontLabelsDialog recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setPrintingFront(false)} />
       )}
       {testPrinting && (
         <BackLabelsDialog mode="test" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setTestPrinting(false)} />

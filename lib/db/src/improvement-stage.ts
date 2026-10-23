@@ -116,3 +116,36 @@ export function canReview(status: string): boolean {
 export function countsForCredit(status: string): boolean {
   return stageOf(status) === "approved";
 }
+
+/**
+ * Who may change an improvement's own content: its title, description,
+ * notes, and its photos and videos (#309, Graeme 2026-10-22).
+ *
+ * A manager or admin, or the person who logged it. Kerri-Leigh uploaded her
+ * before photo into the after slot and couldn't remove it: only managers
+ * could, and the bin did nothing. The author owns their own content; they
+ * don't own anyone else's.
+ */
+export function canEditImprovement(
+  viewer: { role?: string | null; userId?: number | null },
+  submittedBy: number | null | undefined,
+): boolean {
+  if (viewer.role === "admin" || viewer.role === "manager") return true;
+  return viewer.userId != null && submittedBy != null && viewer.userId === submittedBy;
+}
+
+/** What a refused edit says: the same words wherever it is refused. */
+export const IMPROVEMENT_EDIT_REFUSED =
+  "Only the person who logged this improvement, or a manager, can change it.";
+
+/**
+ * Fields on PATCH /improvements/:id that are management decisions, not the
+ * author's content. They stay manager/admin only (#309 approved fix).
+ */
+export const IMPROVEMENT_MANAGER_ONLY_FIELDS = ["approvalTier", "progressStatus", "assignedTo"] as const;
+
+/** Which manager-only fields does this request body try to set? */
+export function managerOnlyFieldsIn(body: Record<string, unknown> | null | undefined): string[] {
+  if (!body) return [];
+  return IMPROVEMENT_MANAGER_ONLY_FIELDS.filter(f => body[f] !== undefined);
+}

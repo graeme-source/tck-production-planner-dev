@@ -4,6 +4,7 @@ import {
   notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, shouldAutoSubmit,
   formatCreditNames, isCredited, withLead, MAX_CREDITED_PEOPLE, type CreditPerson,
+  canEditImprovement, IMPROVEMENT_EDIT_REFUSED, managerOnlyFieldsIn,
 } from "@workspace/db";
 import { eq, desc, asc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -82,6 +83,11 @@ function decorate(
     canMarkDone: canMarkDone(row.progressStatus, mediaCount),
     markDoneBlocker: markDoneBlocker(row.progressStatus, mediaCount),
     canReview: viewer.isManager && canReview(row.progressStatus),
+    // The author or a manager may fix the title, text and photos (#309).
+    canEdit: canEditImprovement(
+      { role: viewer.isManager ? "manager" : "viewer", userId: viewer.id ?? null },
+      row.submittedBy,
+    ),
   };
 }
 
@@ -1002,17 +1008,40 @@ router.post("/", validate(createSchema), async (req: Request, res: Response) => 
   }
 });
 
-router.patch("/:id", async (req: Request, res: Response) => {
-  const role = req.session.userRole;
-  if (role !== "admin" && role !== "manager") {
-    res.status(403).json({ error: "Manager or admin access required" });
-    return;
-  }
+// The author edits their own content (title, description, notes); approval
+// tier, status and assignee stay management decisions (#309).
+const patchSchema = z.object({
+  approvalTier: z.string().nullable().optional(),
+  progressStatus: z.string().optional(),
+  notes: z.string().nullable().optional(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  assignedTo: z.union([z.number(), z.string(), z.null()]).optional(),
+});
+
+router.patch("/:id", validate(patchSchema), async (req: Request, res: Response) => {
+  const viewer = await viewerOf(req);
+  const role = viewer.isAdmin ? "admin" : viewer.isManager ? "manager" : "viewer";
 
   try {
     const id = parseInt(String(req.params.id), 10);
     if (isNaN(id)) {
       res.status(400).json({ error: "Invalid id" });
+      return;
+    }
+
+    const [existing] = await db
+      .select({ submittedBy: improvementSubmissionsTable.submittedBy })
+      .from(improvementSubmissionsTable)
+      .where(eq(improvementSubmissionsTable.id, id));
+    if (!existing) { res.status(404).json({ error: "Not found" }); return; }
+    if (!canEditImprovement({ role, userId: viewer.id }, existing.submittedBy)) {
+      res.status(403).json({ error: IMPROVEMENT_EDIT_REFUSED });
+      return;
+    }
+    const managerOnly = managerOnlyFieldsIn(req.body);
+    if (!viewer.isManager && managerOnly.length > 0) {
+      res.status(403).json({ error: "Only a manager can change who it's assigned to, its status or its approval tier." });
       return;
     }
 
@@ -1274,12 +1303,24 @@ router.get("/attachments/:attId", async (req: Request, res: Response) => {
   res.send(row.data);
 });
 
-// Delete an attachment (manager/admin).
+// Delete an attachment — a manager/admin, or whoever logged the improvement
+// (#309: an author must be able to fix a before/after mix-up themselves).
 router.delete("/attachments/:attId", async (req: Request, res: Response) => {
-  const role = req.session.userRole;
-  if (role !== "admin" && role !== "manager") { res.status(403).json({ error: "Manager or admin access required" }); return; }
   const attId = parseInt(String(req.params.attId), 10);
   if (isNaN(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const viewer = await viewerOf(req);
+  const owner = toRows<{ submitted_by: number | null }>(await db.execute(sql`
+    SELECT i.submitted_by
+      FROM improvement_attachments a
+      JOIN improvement_submissions i ON i.id = a.improvement_id
+     WHERE a.id = ${attId}
+  `))[0];
+  if (!owner) { res.status(404).json({ error: "That photo or video has already gone." }); return; }
+  const role = viewer.isAdmin ? "admin" : viewer.isManager ? "manager" : "viewer";
+  if (!canEditImprovement({ role, userId: viewer.id }, owner.submitted_by)) {
+    res.status(403).json({ error: IMPROVEMENT_EDIT_REFUSED });
+    return;
+  }
   const deleted = toRows<{ improvement_id: number; phase: string | null }>(await db.execute(sql`
     DELETE FROM improvement_attachments WHERE id = ${attId}
     RETURNING improvement_id, phase

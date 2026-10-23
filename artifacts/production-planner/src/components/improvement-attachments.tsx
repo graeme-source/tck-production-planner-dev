@@ -7,6 +7,7 @@ import { Loader2, Camera, Upload, Trash2, X, Play, AlertTriangle, Download, Rota
 import { stashCapture, readStash, clearStash, saveFileToDevice, type StashedCapture } from "@/lib/capture-safety";
 import { BeforeAfterFade } from "@/components/before-after-fade";
 import { pickFadePair } from "@/lib/before-after-fade";
+import { toast } from "@/hooks/use-toast";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -28,9 +29,13 @@ export function ImprovementAttachments({
   fullWidth = false,
   phase,
   onChanged,
+  canRemove,
 }: {
   improvementId: number;
   editable?: boolean;
+  /** Show the bin on each photo. Defaults to `editable`; the improvement's
+   *  own page passes the server's canEdit (author or manager, #309). */
+  canRemove?: boolean;
   thumbSize?: string;
   /** Each photo/video the full width of its container, stacked, videos
    *  playing in place — for the improvement's own page. */
@@ -107,9 +112,23 @@ export function ImprovementAttachments({
     }
   };
 
+  const showBins = canRemove ?? editable;
+
+  // A refused or failed delete says why: it used to do nothing at all, so
+  // Kerri-Leigh tapped the bin and the photo just stayed (#309).
   const remove = async (id: number) => {
     if (!confirm("Remove this attachment?")) return;
-    await fetch(`${BASE}/api/improvements/attachments/${id}`, { method: "DELETE", credentials: "include" });
+    try {
+      const r = await fetch(`${BASE}/api/improvements/attachments/${id}`, { method: "DELETE", credentials: "include" });
+      if (!r.ok) {
+        const d = await r.json().catch(() => ({}));
+        toast({ title: "Couldn't remove it", description: d.error ?? `The server said no (HTTP ${r.status}).`, variant: "destructive" });
+        return;
+      }
+    } catch {
+      toast({ title: "Couldn't remove it", description: "The request didn't reach the server — check the Wi-Fi and try again.", variant: "destructive" });
+      return;
+    }
     await load();
     onChanged?.();
   };
@@ -265,7 +284,7 @@ export function ImprovementAttachments({
               {/* Always visible — it was hover-only, which on an iPad means
                   it doesn't exist (Graeme, 2026-09-02: couldn't remove a
                   photo at all). */}
-              {editable && (
+              {showBins && (
                 <button
                   onClick={() => remove(a.id)}
                   className={fullWidth

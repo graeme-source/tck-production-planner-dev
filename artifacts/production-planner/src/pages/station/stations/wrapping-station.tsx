@@ -32,6 +32,7 @@ import { decidePostOvenReminder } from "@/lib/post-oven-reminder";
 import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type TakeBackOutWhere, type UndoReason } from "@/lib/wrapping-undo";
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { FrontLabelsDialog } from "@/components/product-labels/front-labels-dialog";
 import { useLiveLabelRecipeIds, wrappingLabelAction } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 import { CookChillCard } from "@/components/cook-chill/cook-chill-card";
@@ -179,6 +180,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   // Only recipes with a published label get the button (2026-10-19).
   const liveLabelRecipeIds = useLiveLabelRecipeIds(canPrintBackLabels);
   const [backLabelsFor, setBackLabelsFor] = useState<{ recipeId: number; recipeName: string; planItemId: number; net: number } | null>(null);
+  const [frontLabelsFor, setFrontLabelsFor] = useState<{ recipeId: number; recipeName: string; net: number } | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   // The toggle-row slot exists only after the parent's first commit, so
   // look it up in an effect rather than during render.
@@ -660,6 +662,14 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
       {/* Cook and chill (issue #244): tick "Chilling finished" for cooked
           sub-recipes in the blast chiller. Hidden when nothing is chilling. */}
       <CookChillCard station="wrapping" planId={plan.id} />
+      {frontLabelsFor && (
+        <FrontLabelsDialog
+          recipeId={frontLabelsFor.recipeId}
+          recipeName={frontLabelsFor.recipeName}
+          netPacks={frontLabelsFor.net}
+          onClose={() => setFrontLabelsFor(null)}
+        />
+      )}
 
       {backLabelsFor && (
         <BackLabelsDialog
@@ -925,6 +935,17 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       className="ml-auto h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/90 active:scale-[0.98]"
                     >
                       <Printer className="w-4 h-4" /> Print back labels
+                    </button>
+                  )}
+                  {/* Front name label beside it (#331): needs only the
+                      recipe's name, so test flavours get one too. */}
+                  {canPrintBackLabels && (
+                    <button
+                      type="button"
+                      onClick={() => setFrontLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, net })}
+                      className={cn(wrappingLabelAction(liveLabelRecipeIds, item.recipeId) ? "" : "ml-auto","h-11 px-4 rounded-xl border-2 border-primary text-primary text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/10 active:scale-[0.98]")}
+                    >
+                      <Printer className="w-4 h-4" /> Print front labels
                     </button>
                   )}
                 </div>

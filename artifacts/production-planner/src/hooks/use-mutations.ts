@@ -90,7 +90,13 @@ export function useAppMutations() {
     // Ingredients
     createIngredient: useCreateIngredient({ mutation: { onSuccess: () => handleSuccess(getListIngredientsQueryKey(), "Ingredient created"), onError: handleError } }),
     updateIngredient: useUpdateIngredient({ mutation: { onSuccess: () => handleSuccess(getListIngredientsQueryKey(), "Ingredient updated"), onError: handleError } }),
-    deleteIngredient: useDeleteIngredient({ mutation: { onSuccess: () => handleSuccess(getListIngredientsQueryKey(), "Ingredient deleted"), onError: handleError } }),
+    // A blocked delete is an explanation, not a crash: show the server's
+    // plain-English "still in use" reason without the HTTP prefix (#326).
+    deleteIngredient: useDeleteIngredient({ mutation: { onSuccess: () => handleSuccess(getListIngredientsQueryKey(), "Ingredient deleted"), onError: (error: any) => {
+      const reason = error?.status === 409 ? error?.data?.error : null;
+      if (typeof reason === "string" && reason) toast({ title: "Not deleted: still in use", description: reason });
+      else handleError(error);
+    } } }),
 
     // SubRecipes
     createSubRecipe: useCreateSubRecipe({ mutation: { onSuccess: () => handleSuccess(getListSubRecipesQueryKey(), "Sub-recipe created"), onError: handleError } }),

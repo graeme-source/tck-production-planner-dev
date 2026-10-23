@@ -27,6 +27,7 @@ import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { ImprovementsTab } from "@/pages/reports";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
+import { ImprovementEditText } from "@/components/improvement-edit-text";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia, improvementMediaUrl } from "@/components/improvement-feed-media";
@@ -74,6 +75,8 @@ type Improvement = {
   canMarkDone: boolean;
   markDoneBlocker: string | null;
   canReview: boolean;
+  /** The author or a manager may edit the text and remove photos (#309). */
+  canEdit?: boolean;
   submittedBy: number | null;
   submittedByName: string | null;
   /** Whose list it is on. Null means nobody's — it sits in "Up for grabs"
@@ -945,6 +948,10 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         </p>
       </div>
 
+      {item.canEdit && (
+        <ImprovementEditText id={item.id} title={item.title} description={item.description ?? ""} />
+      )}
+
       {isFounder && !isIdea(item) && (
         <CreditWeightControl improvementId={item.id} weight={item.creditWeight} size="detail" />
       )}
@@ -1045,11 +1052,11 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
         <div className="space-y-6">
           <div>
             <p className="text-base font-bold mb-2">Before</p>
-            <ImprovementAttachments improvementId={id} editable phase="before" fullWidth onChanged={refresh} />
+            <ImprovementAttachments improvementId={id} editable canRemove={!!item.canEdit} phase="before" fullWidth onChanged={refresh} />
           </div>
           <div>
             <p className="text-base font-bold mb-2">After</p>
-            <ImprovementAttachments improvementId={id} editable phase="after" fullWidth onChanged={refresh} />
+            <ImprovementAttachments improvementId={id} editable canRemove={!!item.canEdit} phase="after" fullWidth onChanged={refresh} />
           </div>
         </div>
 
