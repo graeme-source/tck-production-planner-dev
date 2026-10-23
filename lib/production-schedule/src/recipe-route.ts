@@ -137,7 +137,7 @@ export function batchesForPacks(packs: number, portionsPerBatch: number | string
  * The kitchen line a recipe counts under for KPIs: a recipe flagged
  * excludeFromKpis is "separate" (outside every production KPI) even though
  * it is made on the main-kitchen stations. Use this — not kitchenLine — for
- * pace, team efficiency, defects and calzone batch counts.
+ * pace, defects and calzone batch counts (team efficiency still counts it).
  */
 export function kpiKitchenLine(category: string | null | undefined, excludeFromKpis: boolean | null | undefined): KitchenLine {
   return excludeFromKpis ? "separate" : kitchenLine(category);

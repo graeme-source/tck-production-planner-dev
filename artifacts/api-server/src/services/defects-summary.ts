@@ -19,6 +19,7 @@ import { and, gte, isNull, lte, sql } from "drizzle-orm";
 import { isMainKitchen } from "@workspace/production-schedule";
 import { sumQualityRejects } from "../lib/quality-rejects";
 import { madeByLine, totalPacksMade } from "../lib/team-efficiency-day";
+import { kpiPackRows } from "../lib/defects-kpi";
 import { summariseDefects, type DefectDayInput, type DefectSummary, type RejectStationInput } from "../lib/defects-kpi";
 import { planItems } from "./team-efficiency-job";
 
@@ -65,7 +66,9 @@ export async function loadDefectSummary(from: string, to: string): Promise<Defec
     const q = sumQualityRejects(rejectsByDate.get(date) ?? []);
     // Main kitchen only — Team efficiency's made figure keeps fried chicken
     // (it shares the day's labour), the defect rate doesn't (2026-10-05).
-    const mainKitchenMade = (made.get(date) ?? []).filter(r => isMainKitchen(r.category));
+    // Recipes flagged exclude_from_kpis stay out too (planItems keeps them
+    // for Team efficiency).
+    const mainKitchenMade = kpiPackRows(made.get(date) ?? []);
     return { date, packsMade: totalPacksMade(madeByLine(mainKitchenMade)), wonky: q.wonky, dogBin: q.dogBin };
   });
   const rejectStations: RejectStationInput[] = rejectEvents.rows.filter(r => isMainKitchen(r.category)).map(r => ({

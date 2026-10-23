@@ -169,3 +169,71 @@ describe("deriveDay", () => {
     for (const f of d.flags) expect(f.message).not.toMatch(/£|\d+\.\d{2}/);
   });
 });
+
+// Regression (Graeme, 23 Oct 2026): on Tue 20 Oct 18 batches of a
+// freezer-stored, skip-ovens product (48 portions a batch, packs of 6,
+// RRP £11.95) were wrapped straight into the freezer — freezer_qty 144,
+// fridge_qty 0, batches_complete 0. madeByLine read only fridge counts, so
+// the line made nothing while its labour was counted: the day showed 53%.
+// Freezer-stored products now count their freezer packs; a fridge-stored
+// product's freezer_qty (wonkies) is still ignored.
+describe("freezer-stored products (20 Oct 2026 regression)", () => {
+  const FRIDGE_LINE = "Fridge line (2-packs)";
+  const SMALL_LINE = "Second fridge line";
+  const FREEZER_LINE = "Freezer line (packs of 6)";
+  // Tuesday's real settings and stored components.
+  const tue: TeSettings = {
+    ...FALLBACK_SETTINGS,
+    standardRatio: 4.78,
+    despatchShare: 0.11,
+    discountRates: { [FRIDGE_LINE]: 0.22, [FREEZER_LINE]: 0.023, [SMALL_LINE]: 0.039 },
+    linePositions: {},
+  };
+  const fridgeRows: PlanItemInput[] = [
+    // The fridge line's day as one row: 239 packs, £3,604.55 at RRP, plus
+    // 30 freezer wonkies that must NOT count.
+    item({ category: FRIDGE_LINE, fridgeQty: 239, freezerQty: 30, freezerStored: false, batchesTarget: 50, rrp: 3604.55 / 239 }),
+    item({ category: SMALL_LINE, fridgeQty: 32, batchesTarget: 30, portionsPerBatch: 2, packSize: 2, rrp: 410.4 / 32 }),
+  ];
+  const freezerItem = item({
+    category: FREEZER_LINE, fridgeQty: 0, freezerQty: 144, freezerStored: true,
+    batchesTarget: 18, batchesComplete: 0, portionsPerBatch: 48, packSize: 6, rrp: 11.95,
+  });
+  // Tuesday's stored despatch: £4,419.94 net, valued here on the fridge line.
+  const tuesday = (made: ReturnType<typeof madeByLine>) => deriveDay(comps({
+    date: "2026-10-20", made, labourCostTotal: 1327.5,
+    despatched: { [FRIDGE_LINE]: { packs: 358, gross: 4419.94 / (1 - 0.22), bagPacks: 0, bagGross: 0 } },
+  }), tue);
+
+  it("counts a freezer-stored product's freezer packs as packs made", () => {
+    const m = madeByLine([freezerItem]);
+    expect(m[FREEZER_LINE].packs).toBe(144);
+    expect(m[FREEZER_LINE].gross).toBeCloseTo(144 * 11.95, 6);
+    expect(m[FREEZER_LINE].plannedPacks).toBe(144); // 18 × 48 ÷ 6
+    expect(m[FREEZER_LINE].fromBatches).toBe(false);
+  });
+
+  it("still ignores a fridge-stored product's freezer wonkies", () => {
+    const m = madeByLine(fridgeRows);
+    expect(m[FRIDGE_LINE].packs).toBe(239);
+    expect(m[FRIDGE_LINE].gross).toBeCloseTo(3604.55, 6);
+  });
+
+  it("Tuesday: the 144 freezer packs lift the day from 53% to 76%", () => {
+    const before = tuesday(madeByLine(fridgeRows));
+    expect(before.valueMadeNet).toBeCloseTo(3205.94, 1);
+    expect(before.efficiencyPct!).toBeCloseTo(52.63, 1);
+    expect(before.packsByLine[FREEZER_LINE]).toBeUndefined();
+
+    const after = tuesday(madeByLine([...fridgeRows, freezerItem]));
+    expect(after.status).toBe("ok");
+    expect(after.packsByLine[FREEZER_LINE]).toBe(144);
+    expect(after.valueMadeNet).toBeCloseTo(3205.94 + 144 * 11.95 * (1 - 0.023), 1);
+    expect(after.efficiencyPct!).toBeCloseTo(76.21, 1);
+  });
+
+  it("a freezer-stored product with nothing wrapped is still flagged as uncounted", () => {
+    const d = tuesday(madeByLine([...fridgeRows, { ...freezerItem, freezerQty: 0 }]));
+    expect(d.flags.some(f => f.code === "uncounted_output" && f.line === FREEZER_LINE)).toBe(true);
+  });
+});

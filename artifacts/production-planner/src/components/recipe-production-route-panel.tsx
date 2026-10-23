@@ -125,7 +125,7 @@ export function RecipeProductionRoutePanel({ recipeId, portionsPerBatch, packSiz
         <Toggle label="No ovens step — wrap straight after building" hint="Leaves the ovens station; wrapping works to the builders' confirmed batches." value={route.skipOvens} onChange={v => save.mutate({ skipOvens: v })} />
         <Toggle label="Wrap into the freezer" hint="The wrapping station sends packs to the Product Freezer unless the wrapper flips it." value={route.defaultStorage === "freezer"} onChange={v => save.mutate({ defaultStorage: v ? "freezer" : "fridge" })} />
         <Toggle label="Send to Shopify on every wrap" hint="Each freezer add adds the packs to the linked Shopify variant; taking packs back out takes them off." value={route.shopifyPushOnWrap} onChange={v => save.mutate({ shopifyPushOnWrap: v })} />
-        <Toggle label="Leave out of the calzone KPIs" hint="Not in batches per hour, team efficiency, defects or calzone batch counts. Still on every station." value={route.excludeFromKpis} onChange={v => save.mutate({ excludeFromKpis: v })} />
+        <Toggle label="Leave out of the calzone KPIs" hint="Not in batches per hour, defects or calzone batch counts. Still on every station, and still counted in team efficiency (its labour is in the day)." value={route.excludeFromKpis} onChange={v => save.mutate({ excludeFromKpis: v })} />
       </div>
       <div className="rounded-lg border border-border px-3 py-2.5 flex flex-wrap items-center gap-2 text-sm">
         <span>One batch uses</span>

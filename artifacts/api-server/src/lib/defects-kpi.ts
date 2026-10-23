@@ -22,6 +22,8 @@
  */
 import { addDaysIso, weekStart } from "./team-efficiency-labour";
 import { REJECT_LABELS } from "./quality-rejects";
+import { isMainKitchen } from "@workspace/production-schedule";
+import type { PlanItemInput } from "./team-efficiency-day";
 
 export interface DefectDayInput {
   date: string;
@@ -105,6 +107,13 @@ export interface DefectSummary {
 
 /** Percentage to one decimal; null when there's no denominator (a zero
  *  would read as "perfect" on a day nothing was made). */
+/** The plan rows whose packs count towards the defect rate: main kitchen
+ *  only (fried chicken is a separate facility), and never a recipe flagged
+ *  exclude_from_kpis. Team efficiency counts both — they share its labour. */
+export function kpiPackRows<T extends Pick<PlanItemInput, "category" | "excludeFromKpis">>(rows: T[]): T[] {
+  return rows.filter(r => isMainKitchen(r.category) && !r.excludeFromKpis);
+}
+
 export function defectPct(defects: number, packsMade: number): number | null {
   if (!(packsMade > 0)) return null;
   return Math.round((defects / packsMade) * 1000) / 10;

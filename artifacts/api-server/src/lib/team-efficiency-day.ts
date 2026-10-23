@@ -56,6 +56,17 @@ export interface PlanItemInput {
   fridgeQty: number;
   /** 8-pack bags (fridge + freezer). */
   eightPackBags: number;
+  /** Packs wrapped into the freezer (production_plan_items.freezer_qty).
+   *  For a fridge-stored product these are wonkies and never count; for a
+   *  freezer-stored product they ARE its good packs (see freezerStored). */
+  freezerQty?: number;
+  /** recipes.default_storage = 'freezer': the product's good packs go to
+   *  the freezer at wrapping, so freezerQty counts as packs made. */
+  freezerStored?: boolean;
+  /** recipes.exclude_from_kpis — left out of the calzone KPIs (defects,
+   *  building pace). Team efficiency still counts it: its labour is in the
+   *  day, so its output must be too. Callers that honour the flag filter. */
+  excludeFromKpis?: boolean;
   batchesTarget: number;
   batchesComplete: number;
   portionsPerBatch: number;
@@ -87,12 +98,22 @@ export function bagPacks(packSize: number): number {
   return packSize > 0 ? 8 / packSize : 0;
 }
 
+/** Good packs an item counted at wrapping: fridge 2-packs, plus — for a
+ *  freezer-stored product only — its freezer packs. A fridge-stored
+ *  product's freezer_qty is wonkies and never counts. */
+export function countedGoodPacks(i: PlanItemInput): number {
+  return i.fridgeQty + (i.freezerStored ? Math.max(0, i.freezerQty ?? 0) : 0);
+}
+
 /**
- * What each line made. A line counted at the fridge (any fridge 2-pack or
- * 8-pack count that day) uses those counts only — freezer_qty is mostly
- * wonkies and never counts. A line with NO fridge count at all is counted
- * at its own station, so its completed batches become packs
- * (batches × portions ÷ pack size).
+ * What each line made. A line counted at wrapping (any good-pack or 8-pack
+ * count that day — see countedGoodPacks) uses those counts only. A line with
+ * NO count at all is counted at its own station, so its completed batches
+ * become packs (batches × portions ÷ pack size).
+ *
+ * Freezer-stored products (recipes.default_storage = 'freezer') are wrapped
+ * straight into the freezer, so their freezer_qty is their output; for every
+ * other product freezer_qty is mostly wonkies and never counts.
  */
 export function madeByLine(items: PlanItemInput[]): Record<string, LineMade> {
   const byCat = new Map<string, PlanItemInput[]>();
@@ -104,14 +125,15 @@ export function madeByLine(items: PlanItemInput[]): Record<string, LineMade> {
   }
   const out: Record<string, LineMade> = {};
   for (const [cat, list] of byCat) {
-    const fridgeCounted = list.some(i => i.fridgeQty > 0 || i.eightPackBags > 0);
-    const line: LineMade = { packs: 0, gross: 0, bags: 0, bagPacks: 0, bagGross: 0, plannedBatches: 0, plannedPacks: 0, fromBatches: !fridgeCounted };
+    const counted = list.some(i => countedGoodPacks(i) > 0 || i.eightPackBags > 0);
+    const line: LineMade = { packs: 0, gross: 0, bags: 0, bagPacks: 0, bagGross: 0, plannedBatches: 0, plannedPacks: 0, fromBatches: !counted };
     for (const i of list) {
       line.plannedBatches += i.batchesTarget;
       if (i.packSize > 0) line.plannedPacks! += (i.batchesTarget * i.portionsPerBatch) / i.packSize;
-      if (fridgeCounted) {
-        line.packs += i.fridgeQty;
-        line.gross += i.fridgeQty * i.rrp;
+      if (counted) {
+        const good = countedGoodPacks(i);
+        line.packs += good;
+        line.gross += good * i.rrp;
         line.bags += i.eightPackBags;
         line.bagPacks! += i.eightPackBags * bagPacks(i.packSize);
         line.bagGross += i.eightPackBags * bagPacks(i.packSize) * i.rrp;
@@ -121,7 +143,7 @@ export function madeByLine(items: PlanItemInput[]): Record<string, LineMade> {
         line.gross += packs * i.rrp;
       }
     }
-    if (!fridgeCounted && line.packs === 0) line.fromBatches = false;
+    if (!counted && line.packs === 0) line.fromBatches = false;
     out[cat] = line;
   }
   return out;
