@@ -28,7 +28,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { db, ingredientsTable, recipeIngredientsTable, subRecipeIngredientsTable, usersTable } from "@workspace/db";
 import { eq, inArray, and, isNull, sql } from "drizzle-orm";
 import { isClaudeConfigured } from "../lib/ai/claude";
-import { classifyBatch, type Classification, type IngredientRow } from "../lib/upf-classify";
+import { classifyBatch, classifyDeclaration, type Classification, type IngredientRow } from "../lib/upf-classify";
 import { computeUpfSummary } from "../lib/upf";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
@@ -61,6 +61,34 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
 }
 
 const BATCH_SIZE = 12;
+
+// Live NOVA preview for the ingredient form (Graeme, 23 Oct 2026 — objective
+// G): classifies the declaration being typed, stores NOTHING. The save runs
+// the same classification server-side and stores it (cached, so the preview
+// and the save are one AI call). Falls back to the UPF marker scan when the
+// AI isn't available; null = couldn't decide.
+export const upfPreviewBodySchema = z.object({
+  labelDeclaration: z.string().trim().min(1, "Declaration is empty").max(5000),
+  name: z.string().max(300).nullish(),
+  brand: z.string().max(200).nullish(),
+  category: z.string().max(100).nullish(),
+});
+
+router.post("/preview", validate(upfPreviewBodySchema), async (req: Request, res: Response) => {
+  const body = req.body as z.infer<typeof upfPreviewBodySchema>;
+  try {
+    const result = await classifyDeclaration({
+      name: body.name ?? "",
+      brand: body.brand ?? null,
+      category: body.category ?? null,
+      labelDeclaration: body.labelDeclaration,
+    });
+    res.json({ result });
+  } catch (err) {
+    console.error("[upf] preview failed:", err);
+    res.status(502).json({ error: "Couldn't work out the UPF class just now" });
+  }
+});
 
 router.post("/analyze", requireAdminOrManager, async (req: Request, res: Response) => {
   if (!isClaudeConfigured()) {

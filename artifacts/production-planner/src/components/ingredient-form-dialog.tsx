@@ -13,7 +13,8 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { detectAllergens, ALLERGEN_DISPLAY, declarationNeedsWrapper, labelNameFor, wrapDeclaration } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,13 @@ import {
   type NutritionField,
 } from "@/lib/nutrition-entry";
 import { summariseScrape, SCRAPE_FIELD_LABELS, type FieldSource, type ScrapeUpf } from "@/lib/scrape-summary";
+import {
+  UPF_PREVIEW_DEBOUNCE_MS,
+  displayedNovaClass,
+  previewLabel,
+  previewableDeclaration,
+  type UpfPreviewResult,
+} from "@/lib/upf-preview";
 
 export type IngredientFormMode = "ingredient" | "supply";
 
@@ -210,6 +218,36 @@ export function IngredientFormDialog({
   const [freshNova, setFreshNova] = useState<{ reasoning: string; markers: string[]; confidence: string; source: string } | null>(null);
   if (!open && freshNova) setFreshNova(null);
   const watchedNovaClass = watch("novaClass") ?? null;
+  // Live NOVA preview (23 Oct 2026): classify the declaration a moment after
+  // the person stops typing — typed, pasted, scraped or AI-filled alike.
+  // Nothing is stored; the save classifies server-side (cached, same answer).
+  // A chip the person taps (novaTouched) stays their manual override.
+  const [novaTouched, setNovaTouched] = useState(false);
+  if (!open && novaTouched) setNovaTouched(false);
+  const previewDecl = useDebouncedValue(open ? previewableDeclaration(watch("labelDeclaration")) : null, UPF_PREVIEW_DEBOUNCE_MS);
+  const upfPreview = useQuery({
+    queryKey: ["/api/upf/preview", previewDecl],
+    enabled: open && previewDecl != null,
+    staleTime: Infinity,
+    retry: false,
+    queryFn: async (): Promise<UpfPreviewResult | null> => {
+      const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/upf/preview`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ labelDeclaration: previewDecl, name: watch("name") ?? "", brand: watch("brand") ?? null, category: watch("category") ?? null }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
+      return (data as { result: UpfPreviewResult | null }).result;
+    },
+  });
+  const novaShown = displayedNovaClass({
+    touched: novaTouched,
+    formValue: watchedNovaClass,
+    storedSource: (editingItem as { novaSource?: string | null } | null)?.novaSource,
+    preview: upfPreview.data,
+  });
   const item = editingItem as (Ingredient & { novaReasoning?: string | null; novaMarkers?: string[]; novaConfidence?: string | null; novaSource?: string | null }) | null;
   const novaDisplay = freshNova ?? (item?.novaReasoning || item?.novaMarkers?.length
     ? { reasoning: item.novaReasoning ?? "", markers: item.novaMarkers ?? [], confidence: item.novaConfidence ?? "", source: item.novaSource ?? "ai" }
@@ -1610,7 +1648,7 @@ export function IngredientFormDialog({
                     </div>
                     <p className="text-xs text-muted-foreground mb-2">
                       NOVA 1 = unprocessed · 2 = culinary ingredient · 3 = processed · 4 = ultra-processed (UPF).
-                      Worked out automatically from the label declaration every time it's saved. Picking one here saves a manual override the automatic check won't touch.
+                      Worked out automatically from the label declaration as you type, and stored every time it's saved. Tapping one here saves a manual override the automatic check won't touch.
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {([
@@ -1623,28 +1661,45 @@ export function IngredientFormDialog({
                         <button
                           key={String(opt.value)}
                           type="button"
-                          onClick={() => setValue("novaClass", opt.value, { shouldDirty: true })}
+                          onClick={() => { setNovaTouched(true); setValue("novaClass", opt.value, { shouldDirty: true }); }}
                           className={cn(
                             "px-2.5 py-1 rounded-full text-xs font-medium border transition-colors",
-                            watchedNovaClass === opt.value
+                            novaShown.auto && novaShown.value === opt.value && "ring-2 ring-offset-1 ring-offset-card ring-primary/40",
+                            novaShown.value === opt.value
                               ? opt.value === 4
                                 ? "bg-red-600 text-white border-red-600"
                                 : "bg-primary text-primary-foreground border-primary"
                               : "bg-secondary/40 border-border text-muted-foreground hover:bg-secondary",
                           )}
                         >
-                          {opt.label}
+                          {opt.label}{novaShown.auto && novaShown.value === opt.value ? " · auto" : ""}
                         </button>
                       ))}
                     </div>
-                    {scrapeSummary?.upf && scrapeSummary.upf.novaClass != null && (
-                      <p className="mt-2 text-xs rounded-md border border-border bg-secondary/30 px-2 py-1">
-                        <span className="font-medium">From the product page: NOVA {scrapeSummary.upf.novaClass}</span>
-                        {scrapeSummary.upf.markers.length > 0 && <> — {scrapeSummary.upf.markers.join(", ")}</>}
-                        {item?.novaSource === "manual"
-                          ? ". Your manual class is kept — use Analyze with AI to replace it."
-                          : ". Saved with the ingredient."}
-                      </p>
+                    {previewDecl != null && (
+                      <div className="mt-2 text-xs rounded-md border border-border bg-secondary/30 px-2 py-1" role="status" aria-live="polite">
+                        {upfPreview.isFetching ? (
+                          <span className="inline-flex items-center gap-1.5 text-muted-foreground"><Loader2 className="w-3 h-3 animate-spin" /> Classifying…</span>
+                        ) : upfPreview.isError ? (
+                          <span className="text-destructive">
+                            Couldn't work out the UPF class just now ({upfPreview.error instanceof Error ? upfPreview.error.message : "error"}). It will be tried again when you save.
+                          </span>
+                        ) : upfPreview.isSuccess ? (
+                          <>
+                            <span className="font-medium">{previewLabel(upfPreview.data)}</span>
+                            {upfPreview.data?.method === "markers" && <span className="text-muted-foreground"> (from the marker scan)</span>}
+                            {upfPreview.data?.novaClass != null && (
+                              <span className="text-muted-foreground">
+                                {novaTouched || item?.novaSource === "manual"
+                                  ? ". Your manual pick is kept on save."
+                                  : ". Stored with the ingredient when you save."}
+                              </span>
+                            )}
+                          </>
+                        ) : (
+                          <span className="text-muted-foreground">Waiting for you to finish typing…</span>
+                        )}
+                      </div>
                     )}
                     {novaDisplay && (
                       <div className="mt-2 text-xs text-muted-foreground space-y-1">
