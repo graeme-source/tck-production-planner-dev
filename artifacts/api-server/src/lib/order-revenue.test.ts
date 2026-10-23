@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  averageOrderValue, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, orderHasTag, type RevenueOrder,
+  averageOrderValue, getNetRevenue, getRefundTotal, isCountableOrder, isPaidOrder, newVsReturningTotals, orderHasTag, type RevenueOrder,
 } from "./order-revenue";
 
 function order(over: Partial<RevenueOrder> = {}): RevenueOrder {
@@ -77,5 +77,53 @@ describe("orderHasTag", () => {
     expect(orderHasTag(o, "new-customer")).toBe(true);
     expect(orderHasTag(o, "subscription new order")).toBe(true);
     expect(orderHasTag(o, "new")).toBe(false);
+  });
+});
+
+describe("newVsReturningTotals — the At a Glance 'New customers today' split", () => {
+  const partRefund = (total: string, refund: string, tags: string) => order({
+    total_price: total,
+    financial_status: "partially_refunded",
+    tags,
+    refunds: [{ id: 1, created_at: "2026-10-21T10:00:00+01:00", transactions: [{ amount: refund, kind: "refund", status: "success" }] }],
+  });
+  const day = [
+    order({ total_price: "40.00", tags: "2026-10-22, NEW-CUSTOMER" }),           // new (tag in caps)
+    partRefund("50.00", "10.00", " new-customer , Small Box"),                  // new, £40 net
+    order({ total_price: "30.10", tags: "Subscription Recurring Order" }),     // returning
+    order({ total_price: "0.00", tags: "resend" }),                             // returning, £0
+    order({ total_price: "99.00", tags: "new-customer", cancelled_at: "2026-10-21T11:00:00+01:00" }), // out
+    order({ total_price: "25.00", tags: "new-customer", financial_status: "refunded" }),              // out
+    order({ total_price: "12.00", tags: "new-customer-ish" }),                  // not the tag
+  ];
+  const t = newVsReturningTotals(day);
+
+  it("leaves out cancelled and fully refunded orders, and takes partial refunds off", () => {
+    expect(t.orders).toBe(5);
+    expect(t.revenue).toBe(122.1);
+    expect(t.newCustomerOrders).toBe(2);
+    expect(t.newCustomerRevenue).toBe(80);
+  });
+
+  it("new + returning add up exactly to the day's totals (Today's Sales reconciles)", () => {
+    expect(t.returningOrders).toBe(3);
+    expect(t.returningRevenue).toBeCloseTo(42.1, 10);
+    expect(t.newCustomerOrders + t.returningOrders).toBe(t.orders);
+    expect(Math.round((t.newCustomerRevenue + t.returningRevenue) * 100)).toBe(Math.round(t.revenue * 100));
+  });
+
+  it("matches the tag case-insensitively and as a whole tag only", () => {
+    expect(newVsReturningTotals([order({ tags: "New-Customer" })]).newCustomerOrders).toBe(1);
+    expect(newVsReturningTotals([order({ tags: "new-customer-ish" })]).newCustomerOrders).toBe(0);
+  });
+
+  it("gives shares of revenue and of orders", () => {
+    expect(t.newRevenueSharePercent).toBeCloseTo((80 / 122.1) * 100, 6);
+    expect(t.newOrderSharePercent).toBe(40);
+  });
+
+  it("an empty day has no shares, not 0%", () => {
+    const empty = newVsReturningTotals([]);
+    expect(empty).toMatchObject({ orders: 0, revenue: 0, newCustomerOrders: 0, newRevenueSharePercent: null, newOrderSharePercent: null });
   });
 });

@@ -117,7 +117,21 @@ async function fetchSalesSummary(from: string, to: string) {
     todayOrderCount: number;
     todayPaidOrderCount: number;
     todayAov: number | null;
+    /** Today's orders tagged "new-customer" — a subset of todayRevenue /
+     *  todayOrderCount, by the same rules (lib/order-revenue.ts). */
+    todayNewCustomerRevenue: number;
+    todayNewCustomerOrderCount: number;
+    /** 0–100 unrounded; null with no revenue / no orders yet today. */
+    todayNewCustomerRevenueSharePercent: number | null;
+    todayNewCustomerOrderSharePercent: number | null;
   }>;
+}
+
+/** The New customers today tile's small line: "34% of today's sales · 28% of orders". */
+function newCustomerShareLine(revenueShare: number | null, orderShare: number | null): string | undefined {
+  if (revenueShare == null && orderShare == null) return undefined;
+  const pct = (v: number | null) => (v == null ? "—" : `${Math.round(v)}%`);
+  return `${pct(revenueShare)} of today's sales · ${pct(orderShare)} of orders`;
 }
 
 /** The AOV tiles' sub-line: what the figure is divided out of. */
@@ -1165,8 +1179,12 @@ function FounderDashboard() {
   // tile's row (Graeme, 2026-09-26). At a Glance is today's
   // figures, so only Today's Sales / Today's AOV (by the hour) and This Month
   // to Date (by the day) have one — the two month averages don't.
-  type GlanceTrend = "todaySales" | "todayAov" | "monthToDate";
+  type GlanceTrend = "todaySales" | "newCustomersToday" | "todayAov" | "monthToDate";
   const [glanceTrend, setGlanceTrend] = useState<GlanceTrend | null>(null);
+  const [newCustomerTrendMetric, setNewCustomerTrendMetric] = useState<TrendMetricId>("newCustomerOrders");
+  const newCustomerLine = monthSummary
+    ? newCustomerShareLine(monthSummary.todayNewCustomerRevenueSharePercent, monthSummary.todayNewCustomerOrderSharePercent)
+    : undefined;
   const [periodTrend, setPeriodTrend] = useState<TrendMetricId | null>(null);
   const glanceToggle = (id: GlanceTrend): TrendToggle => ({
     open: glanceTrend === id,
@@ -1230,7 +1248,10 @@ function FounderDashboard() {
           </h2>
           <EditTargetsButton />
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 grid-flow-row-dense">
+        {/* Eight columns' worth of tiles (Month to Date and Forecast are
+            two wide): four columns on a wide screen, two on the iPad, so
+            every row is full. */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 grid-flow-row-dense">
           <KpiCard
             title="Today's Sales"
             value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
@@ -1253,6 +1274,41 @@ function FounderDashboard() {
                 periodCaption={`${format(today, "EEE d MMM")} so far, against ${lastWeekName.charAt(0).toLowerCase()}${lastWeekName.slice(1)} (dashed)`}
                 seriesName="Today"
                 compare={{ date: lastWeekStr, name: lastWeekName }}
+                onClose={() => setGlanceTrend(null)}
+              />
+            </div>
+          )}
+          {/* New customers today, straight after Today's Sales (Graeme,
+              2026-10-21). The same orders as Today's Sales split by the
+              "new-customer" tag, so it is always a part of that figure. */}
+          <KpiCard
+            title="New customers today"
+            value={monthSummary ? formatGBP(monthSummary.todayNewCustomerRevenue) : "—"}
+            sub={monthSummary ? `${monthSummary.todayNewCustomerOrderCount} new-customer order${monthSummary.todayNewCustomerOrderCount !== 1 ? "s" : ""}` : undefined}
+            extra={newCustomerLine ? <p className="text-xs text-muted-foreground">{newCustomerLine}</p> : undefined}
+            icon={UserPlus}
+            color="text-sky-500"
+            bg="bg-sky-500/10"
+            loading={monthLoading}
+            error={!!monthError}
+            trend={glanceToggle("newCustomersToday")}
+          />
+          {glanceTrend === "newCustomersToday" && (
+            <div className="col-span-full">
+              <SalesTrendPanel
+                key={`newCustomersToday-${todayStr}`}
+                metric={newCustomerTrendMetric}
+                from={todayStr}
+                to={todayStr}
+                title="New customers by the hour — today"
+                periodCaption={`${format(today, "EEE d MMM")} so far, against ${lastWeekName.charAt(0).toLowerCase()}${lastWeekName.slice(1)} (dashed)`}
+                seriesName="Today"
+                compare={{ date: lastWeekStr, name: lastWeekName }}
+                alternatives={[
+                  { metric: "newCustomerOrders", label: "Orders" },
+                  { metric: "newCustomerRevenue", label: "Sales" },
+                ]}
+                onSwitchMetric={setNewCustomerTrendMetric}
                 onClose={() => setGlanceTrend(null)}
               />
             </div>
@@ -1332,6 +1388,7 @@ function FounderDashboard() {
           />
           <KpiCard
             title="Forecast"
+            className="sm:col-span-2"
             qualifier="Estimated monthly"
             value={monthSummary ? formatGBP(monthSummary.estimatedMonthlyRevenue) : "—"}
             sub={`Based on ${getDaysInMonth(today)}-day month`}
