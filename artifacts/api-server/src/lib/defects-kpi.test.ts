@@ -4,6 +4,7 @@ import {
   attributeRejectStations,
   canEditDefect,
   defectPct,
+  kpiPackRows,
   standardPeriods,
   summariseDefects,
   type DefectTypeInput,
@@ -180,5 +181,16 @@ describe("packs made is the Team efficiency figure", () => {
       { category: FRIED_CHICKEN_CATEGORY, fridgeQty: 0, eightPackBags: 0, batchesTarget: 160, batchesComplete: 157, portionsPerBatch: 1, packSize: 1, rrp: 14.95 },
     ];
     expect(totalPacksMade(madeByLine(rows.filter(r => isMainKitchen(r.category))))).toBe(540);
+  });
+
+  // Team efficiency now loads recipes flagged exclude_from_kpis (their labour
+  // is in its day, 23 Oct 2026); the defect rate must still leave them out.
+  it("leaves recipes flagged out of the KPIs out of the defect rate's packs made", () => {
+    const rows = [
+      { category: "Calzones", fridgeQty: 239, eightPackBags: 0, batchesTarget: 50, batchesComplete: 0, portionsPerBatch: 10, packSize: 2, rrp: 10 },
+      { category: "Desserts", fridgeQty: 0, freezerQty: 144, freezerStored: true, excludeFromKpis: true, eightPackBags: 0, batchesTarget: 18, batchesComplete: 0, portionsPerBatch: 48, packSize: 6, rrp: 11.95 },
+    ];
+    expect(totalPacksMade(madeByLine(rows))).toBe(239 + 144);
+    expect(totalPacksMade(madeByLine(kpiPackRows(rows)))).toBe(239);
   });
 });

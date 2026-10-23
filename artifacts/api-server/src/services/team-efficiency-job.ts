@@ -98,15 +98,12 @@ export async function nonDispatchDays(): Promise<Set<string>> {
 export async function planItems(from: string, to: string): Promise<Map<string, PlanItemInput[]>> {
   const r = await db.execute<Record<string, unknown>>(sql`
     SELECT p.plan_date::text AS date, r.category, i.fridge_qty, (i.fridge_eight_pack_qty + i.freezer_eight_pack_qty) AS bags,
-           i.freezer_qty, r.default_storage,
+           i.freezer_qty, r.default_storage, r.exclude_from_kpis,
            i.batches_target, i.batches_complete, r.portions_per_batch, r.pack_size, r.rrp
     FROM production_plans p
     JOIN production_plan_items i ON i.plan_id = p.id
     JOIN recipes r ON r.id = i.recipe_id
     WHERE p.plan_date BETWEEN ${from} AND ${to}
-      -- Recipes flagged out of the KPIs (migration 0202 — cinnamon buns) are
-      -- not team-efficiency or defects output (Graeme, 16 Oct 2026).
-      AND r.exclude_from_kpis = FALSE
   `);
   const out = new Map<string, PlanItemInput[]>();
   for (const x of r.rows) {
@@ -118,6 +115,10 @@ export async function planItems(from: string, to: string): Promise<Map<string, P
       eightPackBags: num(x.bags),
       freezerQty: num(x.freezer_qty),
       freezerStored: x.default_storage === "freezer",
+      // Recipes flagged out of the KPIs (migration 0202) are still Team
+      // efficiency output — their labour is in the day (Graeme, 23 Oct
+      // 2026). Callers that honour the flag (Defects) filter on it.
+      excludeFromKpis: x.exclude_from_kpis === true,
       batchesTarget: num(x.batches_target),
       batchesComplete: num(x.batches_complete),
       portionsPerBatch: num(x.portions_per_batch),
