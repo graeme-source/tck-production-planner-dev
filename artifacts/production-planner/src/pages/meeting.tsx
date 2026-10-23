@@ -50,6 +50,7 @@ import { defectHeadline, pctText, plural } from "@/lib/defects-view";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { DictateButton } from "@/components/dictate-button";
 import { RecipeSwatch } from "@/components/recipe-swatch";
+import { WhosOnTodayBoard } from "@/components/whos-on-today-board";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -615,10 +616,18 @@ function MeetingShell({
         // Gratitude goes full-bleed (image fills the area between header and
         // footer, with just a little padding); every other slide stays in the
         // centred reading column.
-        slide.kind === "gratitude" ? "overflow-hidden p-4 sm:p-6" : "overflow-y-auto px-8 py-6",
+        slide.kind === "gratitude" ? "overflow-hidden p-4 sm:p-6"
+          : slide.kind === "station_assignments" ? "overflow-y-auto px-4 sm:px-6 py-3"
+          : "overflow-y-auto px-8 py-6",
       )}>
         {slide.kind === "gratitude" ? (
           <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
+        ) : slide.kind === "station_assignments" ? (
+          // Who's On Today sizes itself to exactly this height, full width,
+          // so the whole team shows without scrolling (Graeme, 2026-10-22).
+          <div className="w-full h-full">
+            <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
+          </div>
         ) : (
           <div className="max-w-6xl mx-auto w-full my-auto">
             <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
@@ -1677,41 +1686,6 @@ interface StationAssignmentPerson {
   late?: boolean;
 }
 
-/** A name on the greeting slide, marked with where they are: clocked in,
- *  not in yet, or late. Colour AND shape both carry the meaning — this is
- *  read from across the kitchen, and a red dot alone is no use to anyone
- *  who doesn't see red well. */
-function PersonName({ p, size = "big" }: { p: StationAssignmentPerson; size?: "big" | "small" }) {
-  const late = !!p.late;
-  const inNow = p.punch === "in";
-  const done = p.punch === "finished";
-  return (
-    <span className="flex flex-wrap items-baseline gap-2 min-w-0">
-      <span
-        className={cn(
-          "font-display font-bold leading-tight",
-          size === "big" ? "text-2xl" : "text-base",
-          late && "text-red-600 dark:text-red-400",
-          !late && !inNow && !done && "text-muted-foreground",
-        )}
-        title={late ? "Rostered but not clocked in" : inNow ? "Clocked in" : done ? "Shift finished" : "Not clocked in yet"}
-      >
-        {p.name}
-      </span>
-      {(inNow || done) && (
-        <CheckCircle2 className={cn("flex-shrink-0", size === "big" ? "w-5 h-5" : "w-4 h-4", done ? "text-muted-foreground" : "text-green-600 dark:text-green-400")} />
-      )}
-      {late && (
-        <span className="flex-shrink-0 inline-flex items-center gap-1 rounded-md bg-red-100 dark:bg-red-950/50 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-red-700 dark:text-red-300">
-          <AlertCircle className="w-3 h-3" /> not in
-        </span>
-      )}
-      {p.start && (
-        <span className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">{p.start}–{p.end ?? ""}</span>
-      )}
-    </span>
-  );
-}
 interface StationAssignmentsData {
   available: boolean;
   reason?: string;
@@ -1792,105 +1766,20 @@ function StationAssignmentsSlide({ trialWelcome, dayNumbers }: { trialWelcome?: 
   const inCount = everyone.filter(p => p.punch === "in" || p.punch === "finished").length;
   const stretches = pickStretchesForDay(new Date().toISOString().slice(0, 10));
 
+  // One screen, no scrolling (Graeme, 2026-10-22): greeting + day numbers
+  // in one header row, stretches as a slim strip, and the team as a grid
+  // sized to the space that's left — see components/whos-on-today-board.
   return (
-    <div className="space-y-4">
-      {/* The greeting lives here now, not on the stretches slide: one opening
-          slide that says good morning AND shows who's in. Merged at Graeme's
-          request 2026-08-21 — the room looks at this first, so it's where a
-          missing name should be noticed. */}
-      <div className="flex items-center justify-center gap-6 pb-1">
-        <img
-          src={`${import.meta.env.BASE_URL}tck-logo-dark.png`}
-          alt="TCK"
-          className="h-16 sm:h-20 w-auto object-contain dark:invert dark:brightness-200"
-        />
-        <p className="text-4xl sm:text-5xl font-display font-semibold tracking-tight">
-          Good morning, team
-        </p>
-      </div>
-
-      {/* Trial-shift welcome — set by the presenter on the setup screen;
-          absent = nothing renders at all. */}
-      {trialWelcome && (
-        <div className="flex justify-center">
-          <p className="inline-flex items-center gap-2.5 rounded-2xl bg-primary/10 border border-primary/30 px-5 py-2.5 text-xl sm:text-2xl font-display font-semibold text-primary">
-            <span aria-hidden>👋</span> A big welcome to <span className="font-bold">{trialWelcome}</span> — with us on a trial shift today!
-          </p>
-        </div>
-      )}
-
-      <DayNumbersRow dayNumbers={dayNumbers ?? null} />
-
-      {/* Clocked-in tally, so lateness registers before anyone reads a name. */}
-      <div className="flex items-center justify-center gap-3 text-sm">
-        <span className="inline-flex items-center gap-1.5 rounded-full bg-green-100 dark:bg-green-950/50 px-3 py-1 font-semibold text-green-800 dark:text-green-300">
-          <CheckCircle2 className="w-4 h-4" /> {inCount} clocked in
-        </span>
-        {lateCount > 0 && (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 dark:bg-red-950/50 px-3 py-1 font-semibold text-red-800 dark:text-red-300">
-            <AlertCircle className="w-4 h-4" /> {lateCount} not in yet
-          </span>
-        )}
-      </div>
-
-      {/* Stretches + rota share the opening slide (Graeme, 2026-09-11):
-          the team stretches WHILE reading who's on what station, so one
-          slide covers the whole opening. Stretches run top-to-bottom on
-          the left; people and positions fill the right. The split engages
-          from md (768px) so an iPad in portrait — or with Safari zoom —
-          still shows both side by side; below lg the layout only stacked,
-          which pushed the stretches off-screen once the room was reading
-          the rota (Graeme, 2026-09-14). */}
-      <div className="grid gap-4 grid-cols-[minmax(0,1fr)] md:grid-cols-[minmax(13rem,2fr)_minmax(0,5fr)] items-start">
-        <div className="space-y-1.5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground px-1">Stretches — while we read the board</p>
-          {stretches.map((st, i) => (
-            <div key={i} className="rounded-xl border border-border bg-card px-4 py-2.5 flex items-center gap-3">
-              <span className="text-4xl leading-none" aria-hidden>{st.emoji}</span>
-              <div className="min-w-0">
-                <p className="text-lg font-semibold leading-tight">{st.name}</p>
-                <p className="text-xs text-muted-foreground leading-snug">{st.description}</p>
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {/* One row per station, top to bottom in production-flow order (the
-            mapping's order in Settings mirrors the plan-day station list) —
-            the room reads it like the day's flow, not a wall of tiles. */}
-        <div className="space-y-1.5">
-          {data.stations.map(st => (
-            <div key={st.title}
-              className={cn(
-                "rounded-xl border px-4 py-2 flex items-center gap-4",
-                st.people.length > 0 ? "border-border bg-card" : "border-dashed border-border bg-secondary/20",
-              )}>
-              <p className="w-44 flex-shrink-0 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{st.title}</p>
-              {st.people.length === 0 ? (
-                <p className="text-xl font-display font-bold text-muted-foreground/40">—</p>
-              ) : (
-                <div className="flex flex-wrap items-baseline gap-x-6 gap-y-0.5 min-w-0">
-                  {st.people.map((p, i) => <PersonName key={i} p={p} />)}
-                </div>
-              )}
-            </div>
-          ))}
-          {data.extras.length > 0 && (
-            <div className="rounded-xl border border-border bg-secondary/20 px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Also in today</p>
-              <p className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-sm">
-                {data.extras.map((p, i) => (
-                  <span key={i} className="inline-flex items-baseline gap-1.5">
-                    <PersonName p={p} size="small" />
-                    <span className="text-muted-foreground text-xs">({p.position})</span>
-                  </span>
-                ))}
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <WhosOnTodayBoard
+      stations={data.stations}
+      extras={data.extras}
+      dayNumbers={dayNumbers ?? null}
+      trialWelcome={trialWelcome ?? null}
+      stretches={stretches}
+      inCount={inCount}
+      lateCount={lateCount}
+      logoSrc={`${import.meta.env.BASE_URL}tck-logo-dark.png`}
+    />
   );
 }
 
