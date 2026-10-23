@@ -69,6 +69,7 @@ import { BreakTracker } from "../shared/break-tracker";
 import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
 import { getStationCount, isMacCheese, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
+import { hasBuildingStarted } from "@/lib/building-stations";
 import { tinsCompleteFrom } from "../shared/tin-math";
 import { useMixingCookingRecipes } from "../shared/mixing-cooking-recipes";
 import { builderProgressLine } from "../shared/building-complete";
@@ -641,9 +642,10 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
 
-  // A recipe is locked in place once the building station has started it
-  // (first batch completed by builders). Locked recipes always stay at the top.
-  const isBuildingStarted = (it: ProductionPlanItem) => getStationCount(it, "building") > 0;
+  // A recipe is locked in place once building has started it (first batch
+  // completed on ANY building table — building_1, building_2, …; nothing is
+  // recorded under a bare "building"). Locked recipes always stay at the top.
+  const isBuildingStarted = (it: ProductionPlanItem) => hasBuildingStarted(it as { stationCompletions?: unknown });
   const isOrderLocked = (it: ProductionPlanItem) => isBuildingStarted(it) || it.status === "complete";
 
   // The tins list interleaves recipe rows with break cards at the position the
