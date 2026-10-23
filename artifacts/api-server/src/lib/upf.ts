@@ -24,6 +24,7 @@ import {
   subRecipeSubRecipesTable,
 } from "@workspace/db";
 import { toGrams } from "@workspace/units";
+import { isNovaUnclassified } from "@workspace/product-labels";
 
 
 
@@ -163,7 +164,7 @@ export async function computeUpfSummary(): Promise<UpfSummary> {
     if (ing.novaClass === 4) {
       acc.upfG += grams;
       mergeContributor(acc.upf, { ingredientId: ing.id, name: ing.name, grams, novaMarkers: ing.novaMarkers });
-    } else if (ing.novaClass == null) {
+    } else if (isNovaUnclassified(ing.novaClass)) {
       acc.unclassifiedG += grams;
       acc.unclassified.add(ing.name);
     }
@@ -263,7 +264,7 @@ export async function computeUpfSummary(): Promise<UpfSummary> {
   ]);
   const unclassifiedUsedIngredientIds = [...usedIngredientIds].filter(id => {
     const ing = ingById.get(id);
-    return ing != null && ing.novaClass == null;
+    return ing != null && isNovaUnclassified(ing.novaClass);
   });
 
   return { recipes: recipeResults, subRecipes: subResults, unclassifiedUsedIngredientIds };
