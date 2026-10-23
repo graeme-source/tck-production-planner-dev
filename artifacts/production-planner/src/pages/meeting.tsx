@@ -47,6 +47,8 @@ import { creditLabel } from "@/lib/improvement-credits";
 import { premiumStyle } from "@/lib/improvement-premium";
 import { CreditBadge, PremiumStrip } from "@/components/improvement-credit-weight";
 import { defectHeadline, pctText, plural } from "@/lib/defects-view";
+import { kpiTrend, lastProductionDateLabel, type Better } from "@/lib/kpi-trend";
+import { KpiTrendSparkline, TREND_COLOUR } from "@/components/kpi-trend-sparkline";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { DictateButton } from "@/components/dictate-button";
 import { RecipeSwatch } from "@/components/recipe-swatch";
@@ -136,6 +138,14 @@ export interface DashboardData {
      *  (Defects page). null = lookup failed; optional for older payloads. */
     defects?: { count: number; pct: number | null; packsMade: number } | null;
   };
+  /** The day yesterdayKpis is for — the last day the main kitchen actually
+   *  made something, found from the data (Monday → Friday, bank holidays and
+   *  days off skipped). null = no production history yet; undefined = an
+   *  older server build (the slide falls back to its old look). */
+  lastProductionDay?: string | null;
+  /** Each KPI over the last 7 PRODUCTION days, oldest first, ending on
+   *  lastProductionDay. Keyed like KPI_CATALOG; defects trend on the rate. */
+  kpiTrend?: { days: string[]; series: Partial<Record<string, Array<number | null>>> } | null;
   todayDeliveries: Array<{ id: number; supplierName: string; status: string }>;
   safetyIssues: Array<{ id: number; category: string; severity: string; description: string | null; createdAt: string }>;
   struggles: Array<{ id: number; title: string; description: string; assignedToName?: string | null; createdAt: string }>;
@@ -259,7 +269,7 @@ type SlideKind =
 const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: string; fallbackTitle: string }> = {
   special_prep:        { icon: Award,         color: "text-amber-500",   fallbackTitle: "Test Product Prep" },
   stretches:           { icon: Activity,      color: "text-emerald-500", fallbackTitle: "Stretches" },
-  yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Yesterday's Numbers" },
+  yesterday_kpis:      { icon: ChefHat,       color: "text-violet-500",  fallbackTitle: "Last Production Day" },
   station_assignments: { icon: Users,         color: "text-teal-500",    fallbackTitle: "Who's On Today" },
   order_of_production: { icon: ClipboardCheck,color: "text-primary",     fallbackTitle: "Order of Production" },
   local_delivery:      { icon: Truck,         color: "text-blue-500",    fallbackTitle: "Local Dispatch" },
@@ -1105,7 +1115,7 @@ function SetupTomorrowCard({ date }: { date: string }) {
           </p>
           <h2 className="text-xl font-display font-bold">Set up tomorrow</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            The photo and the lesson can be chosen now. Everything else — the plan, deliveries, yesterday's numbers — is read live on the day.
+            The photo and the lesson can be chosen now. Everything else — the plan, deliveries, the last production day's numbers — is read live on the day.
           </p>
         </div>
         <Calendar className="w-6 h-6 text-amber-500 shrink-0" />
@@ -1351,7 +1361,7 @@ function TomorrowPreview({ date, setup, cacheBust }: {
           </div>
 
           <p className="text-xs text-muted-foreground leading-relaxed">
-            The numbers slides — deliveries, the plan, yesterday's figures — aren't shown
+            The numbers slides — deliveries, the plan, the last production day's figures — aren't shown
             here because tomorrow's don't exist yet. They fill in on the day.
           </p>
         </div>
@@ -1961,28 +1971,34 @@ function SpecialPrepSlide({ data, slide }: { data: DashboardData; slide: Meeting
   );
 }
 
+// Trend read-outs (Last Production Day slide, 2026-10-22).
+const fmt0 = (n: number) => String(Math.round(n));
+const fmt1 = (n: number) => (Math.round(n * 10) / 10).toFixed(1);
+const fmtPct = (n: number) => pctText(n);
+const fmtGrams = (n: number) => `${Math.round(n)} g`;
+
 /** Which KPI tiles a slide should render. Template/meeting-level
  *  `configJson.kpis` overrides this; default matches the three the
  *  kitchen actually tracks day-to-day. */
 const KPI_CATALOG = {
-  builder_rate: { label: "TCK run rate (batches/hr)", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false },
-  packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false },
+  builder_rate: { label: "TCK run rate (batches/hr)", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false , better: "higher" as Better, fmt: fmt1 },
+  packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false , better: "higher" as Better, fmt: fmt1 },
   // Quality rejects: the Wonkies tile carries dog bins as a separate figure
   // underneath, so a slide configured before dog bins existed still shows
   // both. "Dog bins" is also its own tile for slides that want it.
-  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), sub: (k: DashboardData["yesterdayKpis"]) => `+ ${k.dogBinCount ?? 0} dog bin (thrown away)${k.defects ? ` · ${defectHeadline({ ...k.defects, defects: k.defects.count })}` : ""}`, warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 },
-  dog_bins:     { label: "Dog bins",           get: (k: DashboardData["yesterdayKpis"]) => (k.dogBinCount ?? 0).toString(), warn: () => false },
+  wonkies:      { label: "Wonkies",            get: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount.toString(), sub: (k: DashboardData["yesterdayKpis"]) => `+ ${k.dogBinCount ?? 0} dog bin (thrown away)${k.defects ? ` · ${defectHeadline({ ...k.defects, defects: k.defects.count })}` : ""}`, warn: (k: DashboardData["yesterdayKpis"]) => k.wonkyCount > 20 , better: "lower" as Better, fmt: fmt0 },
+  dog_bins:     { label: "Dog bins",           get: (k: DashboardData["yesterdayKpis"]) => (k.dogBinCount ?? 0).toString(), warn: () => false , better: "lower" as Better, fmt: fmt0 },
   // Every defect (wonkies + dog bins + recorded) as a % of packs made — the
   // Defects page figure. Optional tile; "—" when it couldn't be counted.
-  defects:      { label: "Defects",            get: (k: DashboardData["yesterdayKpis"]) => k.defects ? k.defects.count.toString() : "—", sub: (k: DashboardData["yesterdayKpis"]) => k.defects ? (k.defects.pct == null ? "No packs made" : `${pctText(k.defects.pct)} of ${plural(k.defects.packsMade, "pack")}`) : "Couldn't count", warn: () => false },
+  defects:      { label: "Defects",            get: (k: DashboardData["yesterdayKpis"]) => k.defects ? k.defects.count.toString() : "—", sub: (k: DashboardData["yesterdayKpis"]) => k.defects ? (k.defects.pct == null ? "No packs made" : `${pctText(k.defects.pct)} of ${plural(k.defects.packsMade, "pack")}`) : "Couldn't count", warn: () => false , better: "lower" as Better, fmt: fmtPct },
   // Completed improvements only, bucketed by when the work was marked done —
   // never ideas, never the later approval (Graeme, 2026-09-18). Unlike the
   // rates, 0 is a real zero and renders as 0; "—" only when the server
   // couldn't count (null) or is an older cached build (undefined).
-  improvements: { label: "Improvements done",  get: (k: DashboardData["yesterdayKpis"]) => k.improvementsCompleted == null ? "—" : k.improvementsCompleted.toString(), warn: () => false },
-  batches:      { label: "Batches",            get: (k: DashboardData["yesterdayKpis"]) => k.batchesTarget.toString(), warn: () => false },
-  shorts:       { label: "Short on pack",      get: (k: DashboardData["yesterdayKpis"]) => k.shortCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.shortCount > 0 },
-  leftover:     { label: "Leftover filling (g)", get: (k: DashboardData["yesterdayKpis"]) => k.leftoverFillingGrams.toString(), warn: () => false },
+  improvements: { label: "Improvements done",  get: (k: DashboardData["yesterdayKpis"]) => k.improvementsCompleted == null ? "—" : k.improvementsCompleted.toString(), warn: () => false , better: "higher" as Better, fmt: fmt0 },
+  batches:      { label: "Batches",            get: (k: DashboardData["yesterdayKpis"]) => k.batchesTarget.toString(), warn: () => false , better: "neutral" as Better, fmt: fmt0 },
+  shorts:       { label: "Short on pack",      get: (k: DashboardData["yesterdayKpis"]) => k.shortCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.shortCount > 0 , better: "lower" as Better, fmt: fmt0 },
+  leftover:     { label: "Leftover filling (g)", get: (k: DashboardData["yesterdayKpis"]) => k.leftoverFillingGrams.toString(), warn: () => false , better: "lower" as Better, fmt: fmtGrams },
 } as const;
 type KpiKey = keyof typeof KPI_CATALOG;
 const DEFAULT_KPIS: KpiKey[] = ["builder_rate", "packing_rate", "wonkies", "improvements"];
@@ -1991,34 +2007,77 @@ function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: Meeti
   const k = data.yesterdayKpis;
   const configured = Array.isArray(slide.configJson?.kpis) ? (slide.configJson!.kpis as string[]) : null;
   const kpiKeys: KpiKey[] = (configured ?? DEFAULT_KPIS).filter((key): key is KpiKey => key in KPI_CATALOG);
+  const day = data.lastProductionDay;
+  const trend = data.kpiTrend;
+  const when = day ? lastProductionDateLabel(day, data.today) : null;
   return (
     <div>
-      <SectionTitle>{slide.title || "Yesterday's Numbers"}</SectionTitle>
-      <SectionLead>How did the last shift go?</SectionLead>
-      <div className={cn("grid gap-4", kpiKeys.length <= 3 ? "grid-cols-1 sm:grid-cols-3" : "grid-cols-2 sm:grid-cols-3")}>
-        {kpiKeys.map((key) => {
-          const def = KPI_CATALOG[key];
-          return (
-            <KpiTile
-              key={key}
-              label={def.label}
-              value={def.get(k)}
-              sub={"sub" in def ? def.sub(k) : undefined}
-              tone={def.warn(k) ? "warn" : "ok"}
-            />
-          );
-        })}
-      </div>
+      {when ? (
+        // Title and date share a line where there's room, so all four tiles
+        // fit an iPad-landscape screen without scrolling.
+        <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 mb-6">
+          <h2 className="text-5xl font-display font-bold leading-tight">{slide.title || "Last Production Day"}</h2>
+          <p className="text-3xl font-display font-semibold leading-snug">
+            {when.date}
+            <span className="text-muted-foreground font-normal"> · {when.ago}</span>
+          </p>
+        </div>
+      ) : (
+        <>
+          <SectionTitle>{slide.title || "Last Production Day"}</SectionTitle>
+          <SectionLead>How did the last shift go?</SectionLead>
+        </>
+      )}
+      {day === null ? (
+        <div className="glass-panel rounded-2xl p-8 text-2xl text-muted-foreground">
+          No production recorded yet — the numbers appear here after the first day we make.
+        </div>
+      ) : (
+        <div className={cn("grid gap-4",
+          // Two across for four tiles (the default): each sparkline gets room
+          // for its seven day labels inside the deck's slide width.
+          kpiKeys.length <= 3 ? "grid-cols-1 sm:grid-cols-3"
+          : kpiKeys.length === 4 ? "grid-cols-1 sm:grid-cols-2"
+          : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3")}>
+          {kpiKeys.map((key) => {
+            const def = KPI_CATALOG[key];
+            const values = trend?.series[key] ?? null;
+            const t = values ? kpiTrend(values, def.better, def.fmt) : null;
+            return (
+              <KpiTile
+                key={key}
+                label={def.label}
+                value={def.get(k)}
+                sub={"sub" in def ? def.sub(k) : undefined}
+                tone={def.warn(k) ? "warn" : "ok"}
+                beside={t ? (
+                  <p className="text-xl font-semibold tabular-nums" style={{ color: TREND_COLOUR[t.tone] }}>
+                    {t.text}{key === "defects" ? " (defect rate)" : ""}
+                  </p>
+                ) : undefined}
+              >
+                {trend && values && (
+                  <KpiTrendSparkline days={trend.days} values={values} tone={t?.tone ?? "neutral"} fmt={def.fmt} label={def.label} />
+                )}
+              </KpiTile>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
 
-function KpiTile({ label, value, sub, tone = "ok" }: { label: string; value: string; sub?: string; tone?: "ok" | "warn" }) {
+function KpiTile({ label, value, sub, tone = "ok", beside, children }: { label: string; value: string; sub?: string; tone?: "ok" | "warn"; beside?: React.ReactNode; children?: React.ReactNode }) {
   return (
     <div className={cn("glass-panel rounded-2xl p-6", tone === "warn" && "border-amber-300/60 dark:border-amber-700/40")}>
       <p className="text-base font-semibold uppercase tracking-wide text-muted-foreground mb-2">{label}</p>
-      <p className="text-6xl font-display font-bold tabular-nums">{value}</p>
+      <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+        <p className="text-6xl font-display font-bold tabular-nums">{value}</p>
+        {beside}
+      </div>
       {sub && <p className="text-lg font-semibold text-muted-foreground mt-2">{sub}</p>}
+      {children}
     </div>
   );
 }
@@ -3618,7 +3677,7 @@ void ArrowRight;
 const SLIDE_KIND_CATALOG: Array<{ kind: SlideKind; label: string; description: string }> = [
   { kind: "special_prep",        label: "Test Product Prep",    description: "Tomorrow's non-core items being prepped today" },
   { kind: "stretches",           label: "Stretches",            description: "Daily-random stretches, auto-cycling 10s each" },
-  { kind: "yesterday_kpis",      label: "Yesterday's Numbers",  description: "Building rate, packing rate, wonkies and dog bins" },
+  { kind: "yesterday_kpis",      label: "Last Production Day",  description: "Run rate, packing rate, wonkies and more for the last day we made, each with its 7-day trend" },
   { kind: "station_assignments", label: "Who's On Today",       description: "Stations and who's rostered on each, live from Planday" },
   { kind: "order_of_production", label: "Order of Production",  description: "Today's recipe order + batches, with shortages colour-coded" },
   { kind: "local_delivery",      label: "Local Dispatch",       description: "Any local dispatches + today's deliveries in" },

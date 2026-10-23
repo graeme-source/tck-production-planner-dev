@@ -2636,6 +2636,9 @@ async function runStartupMigrations() {
     // the tail of the deck it kept getting skipped (Graeme, 2026-09-14).
     // Stretches left the deck 2026-09-11 (merged into Who's On Today),
     // freeing slot 1 for Safety Issues and 2 for the lesson.
+    // "Yesterday's Numbers" became "Last Production Day" (Graeme,
+    // 2026-10-22 — on a Monday the numbers are Friday's); unheld meetings
+    // still carrying the old title pick the new one up via the CASE below.
     await db.execute(sql`
       UPDATE template_slides ts
       SET order_position = m.new_pos, title = m.new_title
@@ -2647,7 +2650,7 @@ async function runStartupMigrations() {
         ('special_prep', 4, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Dispatch'),
         ('bag_orders', 6, 'Bag Orders'),
-        ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
+        ('yesterday_kpis', 8, 'Last Production Day'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements'),
         ('gratitude', 12, 'Gratitude')
@@ -2658,7 +2661,7 @@ async function runStartupMigrations() {
     await db.execute(sql`
       UPDATE meeting_slides ms
       SET order_position = m.new_pos,
-          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Local Despatch','Struggles','Improvements Required') THEN m.new_title ELSE ms.title END
+          title = CASE WHEN ms.title IN ('Special Prep','Local Delivery','Local Despatch','Struggles','Improvements Required','Yesterday''s Numbers') THEN m.new_title ELSE ms.title END
       FROM (VALUES
         ('station_assignments'::text, 0, 'Who''s On Today'::text),
         ('safety_issues', 1, 'Safety Issues'),
@@ -2667,7 +2670,7 @@ async function runStartupMigrations() {
         ('special_prep', 4, 'Test Product Prep'),
         ('local_delivery', 5, 'Local Dispatch'),
         ('bag_orders', 6, 'Bag Orders'),
-        ('yesterday_kpis', 8, 'Yesterday''s Numbers'),
+        ('yesterday_kpis', 8, 'Last Production Day'),
         ('new_sops', 9, 'New & Updated SOPs'),
         ('struggles', 10, 'Improvements'),
         ('gratitude', 12, 'Gratitude')
