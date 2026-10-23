@@ -8,6 +8,7 @@ import { validate, rawBody } from "../middleware/validate";
 import { reconcileRecipeQuid, snapshotLineQuid } from "../lib/quid-store";
 import { carryQuid, sentQuid } from "../lib/quid-plan";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
+import { computeNutrition } from "../lib/recipe-nutrition";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
@@ -1234,43 +1235,13 @@ export async function computeRecipeNutritionals(recipeId: number) {
   const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, per100gOnly, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
     await gatherRecipeIngredients(recipeId);
 
-  const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
   // Ingredient quantities sum to the recipe-size weight (servings portions),
-  // not a per-batch weight, so divide by servings — not portionsPerBatch.
-  const portionDivisor = servings > 0 ? servings : 1;
-  const portionWeightG = Math.round(cookedWeightG / portionDivisor);
+  // not a per-batch weight, so the portion divisor is servings — not
+  // portionsPerBatch. Cooking loss is water: it concentrates per 100 g but
+  // never reduces per portion (see lib/recipe-nutrition.ts).
+  const { cookedWeightG, portionWeightG, per100g, perPortion } =
+    computeNutrition(items, cookingLossPercent, servings);
   const declaredPackWeightG = Math.round(portionWeightG * packSize);
-
-  const per100g: Record<NutrientKey, number | null> = {
-    energyKj: null, energyKcal: null, fat: null, saturates: null,
-    carbohydrate: null, sugars: null, fibre: null, protein: null, salt: null,
-  };
-
-  if (totalWeightG > 0) {
-    for (const key of NUTRIENT_KEYS) {
-      let total = 0;
-      let allNull = true;
-      for (const item of items) {
-        const val = item.nutrients[key];
-        if (val !== null) {
-          allNull = false;
-          total += (val / 100) * item.quantityG;
-        }
-      }
-      if (!allNull) {
-        per100g[key] = Math.round((total / totalWeightG) * 100 * 100) / 100;
-      }
-    }
-  }
-
-  const perPortion: Record<NutrientKey, number | null> = { ...per100g };
-  if (portionWeightG > 0) {
-    for (const key of NUTRIENT_KEYS) {
-      if (per100g[key] !== null) {
-        perPortion[key] = Math.round((per100g[key]! / 100) * portionWeightG * 100) / 100;
-      }
-    }
-  }
 
   // No pack size (migration 0286, e.g. fried chicken sold by weight):
   // per 100 g only. The portion / pack weights and the per-portion column
