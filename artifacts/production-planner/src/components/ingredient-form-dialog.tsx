@@ -13,7 +13,7 @@ import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { detectAllergens, ALLERGEN_DISPLAY, declarationNeedsWrapper, labelNameFor, wrapDeclaration } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
-import { useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -37,6 +37,7 @@ import {
   shouldOfferFillBlanks,
   type NutritionField,
 } from "@/lib/nutrition-entry";
+import { summariseScrape, SCRAPE_FIELD_LABELS, type FieldSource, type ScrapeUpf } from "@/lib/scrape-summary";
 
 export type IngredientFormMode = "ingredient" | "supply";
 
@@ -252,11 +253,9 @@ export function IngredientFormDialog({
   const inputClass = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
   const numInputClass = "w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30";
 
-  // Scrape panel — user pastes the product URL and we let Claude pull
-  // brand, pack size, price etc. out of the page. The preview lists
-  // each field with an apply checkbox so nothing overwrites
-  // already-typed values without the user OK'ing it.
-  const [scrapeLoading, setScrapeLoading] = useState(false);
+  // Scrape panel — a product URL fills the form directly (see the URL
+  // scrape below); a photo read lists each field with an apply checkbox
+  // so nothing overwrites already-typed values without the user OK'ing it.
   const [scrapeError, setScrapeError] = useState<string | null>(null);
   type ScrapedFields = {
     name: string | null;
@@ -281,12 +280,16 @@ export function IngredientFormDialog({
     salt: number | null;
   };
   const [scraped, setScraped] = useState<ScrapedFields | null>(null);
-  const [applyFlags, setApplyFlags] = useState<Record<keyof ScrapedFields, boolean>>({
+  const ALL_APPLY_FLAGS: Record<keyof ScrapedFields, boolean> = {
     name: true, brand: true, packSize: true, packUnit: true, costPerPack: true,
-    supplierPartNumber: true, ingredients: false, allergens: true, notes: false,
+    supplierPartNumber: true, ingredients: true, allergens: true, notes: true,
     supplierId: true, supplierName: true,
     energyKj: true, energyKcal: true, fat: true, saturates: true,
     carbohydrate: true, sugars: true, protein: true, fibre: true, salt: true,
+  };
+  // Photo reads still go through the tick-to-apply review panel.
+  const [applyFlags, setApplyFlags] = useState<Record<keyof ScrapedFields, boolean>>({
+    ...ALL_APPLY_FLAGS, ingredients: false, notes: false,
   });
   const orderingUrlValue = watch("orderingUrl") ?? "";
 
@@ -324,33 +327,56 @@ export function IngredientFormDialog({
     return null;
   };
 
-  const runScrape = async () => {
-    const url = (orderingUrlValue || "").trim();
-    if (!url) { setScrapeError("Paste a product URL above first."); return; }
-    setScrapeError(null);
-    setScrapeLoading(true);
-    setScraped(null);
-    try {
+  // URL scrape (23 Oct 2026, objective G): one tap fills every field it
+  // found straight into the form — nutrition, declaration, allergens, pack,
+  // price — and a summary says what was found and what's still missing. The
+  // NOVA preview is shown here; the server works it out again (cached) and
+  // stores it when the ingredient is saved.
+  type ScrapeUrlResponse = {
+    extracted: Omit<ScrapedFields, "supplierId" | "supplierName">;
+    sources?: Record<string, FieldSource>;
+    upf?: ScrapeUpf | null;
+    method?: string;
+    warnings?: string[];
+  };
+  const [scrapeSummary, setScrapeSummary] = useState<(ReturnType<typeof summariseScrape> & { upf: ScrapeUpf | null; warnings: string[] }) | null>(null);
+  if (!open && scrapeSummary) setScrapeSummary(null);
+  const scrapeMutation = useMutation({
+    mutationFn: async (url: string): Promise<ScrapeUrlResponse> => {
       const res = await fetch("/api/ingredients/scrape-url", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`);
-      const extracted = data.extracted as Omit<ScrapedFields, "supplierId" | "supplierName">;
+      return data as ScrapeUrlResponse;
+    },
+    onMutate: () => { setScrapeError(null); setScraped(null); setScrapeSummary(null); },
+    onSuccess: (data, url) => {
       const supplierMatch = matchSupplierFromUrl(url);
-      setScraped({
-        ...extracted,
+      const full: ScrapedFields = {
+        ...data.extracted,
         supplierId: supplierMatch?.id ?? null,
         supplierName: supplierMatch?.name ?? null,
+      };
+      // Everything found goes straight in; anything not found is left as it was.
+      applyScrapedFields(full, ALL_APPLY_FLAGS);
+      setNutritionOpen(true);
+      setScrapeSummary({
+        ...summariseScrape(data.sources, data.extracted.allergens ?? [], data.upf),
+        upf: data.upf ?? null,
+        warnings: data.warnings ?? [],
       });
-    } catch (err) {
-      setScrapeError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setScrapeLoading(false);
-    }
+    },
+    onError: (err) => setScrapeError(err instanceof Error ? err.message : String(err)),
+  });
+  const scrapeLoading = scrapeMutation.isPending;
+  const runScrape = () => {
+    const url = (orderingUrlValue || "").trim();
+    if (!url) { setScrapeError("Paste a product URL above first."); return; }
+    scrapeMutation.mutate(url);
   };
 
   // Photo-of-label scrape — the operator photographs the physical pack
@@ -572,6 +598,11 @@ export function IngredientFormDialog({
 
   const applyScraped = () => {
     if (!scraped) return;
+    applyScrapedFields(scraped, applyFlags);
+    setScraped(null);
+  };
+
+  function applyScrapedFields(scraped: ScrapedFields, applyFlags: Record<keyof ScrapedFields, boolean>) {
     if (applyFlags.name && scraped.name) setValue("name", scraped.name);
     if (applyFlags.brand && scraped.brand) setValue("brand", scraped.brand);
     if (applyFlags.packSize && scraped.packSize != null) setValue("packWeight", scraped.packSize);
@@ -612,14 +643,17 @@ export function IngredientFormDialog({
         sulphites: "sulphur_dioxide",
         sulfites: "sulphur_dioxide",
       };
-      const current = new Set(watchedAllergens);
+      const current = new Set<string>(watch("allergens") ?? []);
+      const codes = new Set<string>(UK14_ALLERGENS.map(x => x.value));
       for (const a of scraped.allergens) {
-        const code = map[a.toLowerCase().trim()];
+        const key = a.toLowerCase().trim();
+        // The URL scrape already returns UK14 codes; photo reads return names.
+        const code = codes.has(key) ? key : map[key];
         if (code) current.add(code);
       }
       setValue("allergens", Array.from(current));
     }
-    if (applyFlags.notes && scraped.notes) {
+    if (applyFlags.notes && scraped.notes && !(watch("notes") ?? "").includes(scraped.notes)) {
       const existing = watch("notes") ?? "";
       const next = existing ? `${existing}\n${scraped.notes}` : scraped.notes;
       setValue("notes", next);
@@ -636,8 +670,7 @@ export function IngredientFormDialog({
         setValue(key, scraped[key]);
       }
     }
-    setScraped(null);
-  };
+  }
 
   type PreviewRow = { key: keyof ScrapedFields; label: string; display: string };
   const fieldRowsToPreview: PreviewRow[] = scraped
@@ -670,7 +703,7 @@ export function IngredientFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto z-[200]">
+      <DialogContent className="sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto z-[200]">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">
             {editingItem ? "Edit Item" : "Add New Item"}
@@ -720,7 +753,7 @@ export function IngredientFormDialog({
         <div className="mb-4 rounded-xl border border-primary/30 bg-primary/5 p-4">
           <p className="text-sm font-semibold mb-1">Scrape from supplier page</p>
           <p className="text-xs text-muted-foreground mb-3">
-            Paste a product URL (Brakes, Bidfood, supermarkets, anywhere) and we'll pull the name, brand, pack size, price and allergens out of the page.
+            Paste a product URL (Brakes, Bidfood, supermarkets, anywhere) and we'll fill in the name, pack size, price, nutrition, ingredient declaration and allergens, and work out the UPF (NOVA) class. Check the form, then save.
           </p>
           <div className="flex gap-2">
             <input
@@ -740,6 +773,44 @@ export function IngredientFormDialog({
             </button>
           </div>
           {scrapeError && <p className="text-xs text-destructive mt-2">{scrapeError}</p>}
+          {scrapeSummary && (
+            <div className="mt-3 rounded-lg border border-border bg-background p-3 space-y-2" role="status">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-semibold">{scrapeSummary.text}</p>
+                <button type="button" aria-label="Hide summary" onClick={() => setScrapeSummary(null)} className="text-muted-foreground hover:text-foreground shrink-0">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Filled into the form below — check it, then save.
+                {scrapeSummary.upf?.novaClass != null && " The UPF class is stored with the ingredient when you save."}
+              </p>
+              {scrapeSummary.missing.length > 0 && (
+                <p className="text-xs font-medium text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-md px-2 py-1">
+                  Not on the page — fill in by hand if you have it: {scrapeSummary.missing.join(", ")}
+                </p>
+              )}
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(scrapeSummary.sources)
+                  .filter(([k]) => k !== "packUnit" && SCRAPE_FIELD_LABELS[k])
+                  .map(([k, src]) => (
+                    <span
+                      key={k}
+                      className={cn(
+                        "px-2 py-0.5 rounded-full text-[11px] font-medium border",
+                        src === "parsed" && "bg-primary/10 border-primary/30 text-foreground",
+                        src === "ai" && "bg-sky-50 dark:bg-sky-950/30 border-sky-300 dark:border-sky-800 text-sky-900 dark:text-sky-100",
+                        src === "missing" && "bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-800 text-amber-900 dark:text-amber-100",
+                      )}
+                      title={src === "parsed" ? "Read from the page's product data" : src === "ai" ? "Read by AI — double-check" : "Not found"}
+                    >
+                      {SCRAPE_FIELD_LABELS[k]}{src === "ai" ? " · AI" : src === "missing" ? " · missing" : ""}
+                    </span>
+                  ))}
+              </div>
+              {scrapeSummary.warnings.map(w => <p key={w} className="text-xs text-amber-800 dark:text-amber-200">{w}</p>)}
+            </div>
+          )}
 
           {/* Photo of label — the no-URL path. Photograph the pack and the
               same fields land in the same review panel below. */}
@@ -1539,7 +1610,7 @@ export function IngredientFormDialog({
                     </div>
                     <p className="text-xs text-muted-foreground mb-2">
                       NOVA 1 = unprocessed · 2 = culinary ingredient · 3 = processed · 4 = ultra-processed (UPF).
-                      Changing it here saves a manual override the AI won't touch.
+                      Worked out automatically from the label declaration every time it's saved. Picking one here saves a manual override the automatic check won't touch.
                     </p>
                     <div className="flex flex-wrap gap-1.5">
                       {([
@@ -1566,6 +1637,15 @@ export function IngredientFormDialog({
                         </button>
                       ))}
                     </div>
+                    {scrapeSummary?.upf && scrapeSummary.upf.novaClass != null && (
+                      <p className="mt-2 text-xs rounded-md border border-border bg-secondary/30 px-2 py-1">
+                        <span className="font-medium">From the product page: NOVA {scrapeSummary.upf.novaClass}</span>
+                        {scrapeSummary.upf.markers.length > 0 && <> — {scrapeSummary.upf.markers.join(", ")}</>}
+                        {item?.novaSource === "manual"
+                          ? ". Your manual class is kept — use Analyze with AI to replace it."
+                          : ". Saved with the ingredient."}
+                      </p>
+                    )}
                     {novaDisplay && (
                       <div className="mt-2 text-xs text-muted-foreground space-y-1">
                         {novaDisplay.reasoning && (
