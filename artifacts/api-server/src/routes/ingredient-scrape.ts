@@ -5,9 +5,11 @@
  * supplier part number, allergens, ingredients string, etc.
  *
  * The front-end calls this from the "Scrape" button next to the
- * Ordering URL field in the ingredient form dialog. Result is shown to
- * the operator as a preview panel; they confirm before any of it
- * lands in the actual form state.
+ * Ordering URL field in the ingredient form dialog. Since 23 Oct 2026 the
+ * URL result fills the form straight away (the operator reviews the form
+ * before saving) together with a per-field "parsed / AI / missing" report
+ * and a NOVA preview. Brakes pages are read from their product data without
+ * any AI (lib/brakes-product.ts); other sites, and any gaps, go to Claude.
  *
  * Security: this is a server-side fetcher, so it's an SSRF vector if
  * left unchecked. We require http(s), block private/loopback/link-local
@@ -18,6 +20,14 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { validate } from "../middleware/validate";
+import { detectAllergens, UK14_CODES, type AllergenCode } from "@workspace/allergens";
+import {
+  NUTRIENT_KEYS, isBrakesUrl, brakesProductCode, brakesProductApiUrl, brakesProductFromHtml,
+  parseBrakesProduct, type BrakesParsed, type BrakesProductJson,
+} from "../lib/brakes-product";
+import { classifyDeclaration, type NovaResult } from "../lib/upf-classify";
+import { isAmazonUrl, amazonAsin, isAmazonBlocked, parseAmazonProduct } from "../lib/amazon-product";
 
 const router: IRouter = Router();
 
@@ -51,9 +61,9 @@ export function isUrlSafe(raw: string): { ok: true; url: URL } | { ok: false; re
   return { ok: true, url };
 }
 
-export async function fetchPage(url: URL): Promise<string> {
+export async function fetchPage(url: URL, accept = "text/html,application/xhtml+xml", timeoutMs = FETCH_TIMEOUT_MS): Promise<string> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const res = await fetch(url.toString(), {
       signal: controller.signal,
@@ -61,7 +71,7 @@ export async function fetchPage(url: URL): Promise<string> {
         // Many wholesale sites block obvious bot UA strings. A normal
         // browser UA lands the public product page without issues.
         "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml",
+        "Accept": accept,
         "Accept-Language": "en-GB,en;q=0.9",
       },
       redirect: "follow",
@@ -80,7 +90,7 @@ export async function fetchPage(url: URL): Promise<string> {
       if (total > MAX_BYTES) { reader.cancel().catch(() => undefined); break; }
       chunks.push(value);
     }
-    const combined = new Uint8Array(total);
+    const combined = new Uint8Array(chunks.reduce((n, c) => n + c.byteLength, 0));
     let offset = 0;
     for (const c of chunks) { combined.set(c, offset); offset += c.byteLength; }
     return new TextDecoder("utf-8").decode(combined);
@@ -89,12 +99,36 @@ export async function fetchPage(url: URL): Promise<string> {
   }
 }
 
-/** Tear out scripts/styles/SVG and collapse whitespace so we send the
- *  smallest useful payload to Claude. Also pulls a few <meta> tags and
- *  any application/ld+json blocks since those are usually where product
- *  data lives in the modern Shopify / Magento templates these wholesale
- *  sites are built on. */
-function distillHtml(html: string): string {
+const DATA_WORDS = /ingredient|nutrition|nutrient|allergen|energy|saturates|kcal/i;
+const WINDOW = 4_000;
+
+/** Up to `max` text windows around the data words in a big JSON/script blob.
+ *  The old scrape kept only the FIRST 30 KB of each blob — on Brakes the
+ *  product data sits ~350 KB into an 800 KB state blob, behind the site
+ *  navigation, so the AI never saw it. Windows around the hits find it
+ *  wherever it is. */
+export function dataWindows(body: string, max = 8): string[] {
+  const out: string[] = [];
+  const re = new RegExp(DATA_WORDS.source, "gi");
+  let lastEnd = -1;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(body)) && out.length < max) {
+    const start = Math.max(0, m.index - WINDOW / 4, lastEnd);
+    const end = Math.min(body.length, m.index + WINDOW);
+    if (end <= start) continue;
+    out.push(body.slice(start, end));
+    lastEnd = end;
+    re.lastIndex = end;
+  }
+  return out;
+}
+
+/** Page text for the AI fallback: the WHOLE visible + collapsed text. Hidden
+ *  accordions (`d-none`, `<details>`, aria-hidden tabs) are still in the
+ *  HTML, so nothing is filtered by visibility; table cells and rows keep
+ *  their structure ("Fat (g) | 17") instead of being run together; and
+ *  JSON-LD plus any data-looking script blobs are searched in full. */
+export function distillHtml(html: string): string {
   // Capture metadata we want to surface in the prompt.
   const metaPatterns = [
     /<meta[^>]+(?:property|name)=["'](og:title|og:description|product:price:amount|product:brand|product:retailer_part_no)["'][^>]+content=["']([^"']+)["']/gi,
@@ -105,56 +139,52 @@ function distillHtml(html: string): string {
     let m: RegExpExecArray | null;
     while ((m = re.exec(html))) meta.push(`${m[1]}: ${m[2]}`);
   }
-  // JSON-LD blocks — usually rich Product schema.
   const ldBlocks: string[] = [];
   const ldRe = /<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
   let ld: RegExpExecArray | null;
-  while ((ld = ldRe.exec(html))) ldBlocks.push(ld[1].trim());
+  while ((ld = ldRe.exec(html))) ldBlocks.push(ld[1].trim().slice(0, 20_000));
 
-  // Embedded JSON app-state (__NEXT_DATA__ and friends). Sites like Brakes
-  // render the Ingredients / Nutrition / Allergens tabs client-side from a
-  // JSON blob in a script tag, so stripping all scripts would lose exactly
-  // the data the scrape is for. Keep script bodies that look like data (a
-  // quoted ingredients/allergen/nutrition key) rather than code.
   const dataBlocks: string[] = [];
   const scriptRe = /<script[^>]*>([\s\S]*?)<\/script>/gi;
   let sm: RegExpExecArray | null;
-  while ((sm = scriptRe.exec(html)) && dataBlocks.length < 4) {
+  while ((sm = scriptRe.exec(html)) && dataBlocks.length < 12) {
     const body = sm[1]?.trim();
-    if (!body || body.length < 80) continue;
-    if (ldBlocks.includes(body)) continue;
-    if (/"(ingredients?|allergens?|nutrients?|nutritio\w*)"\s*:/i.test(body)) {
-      dataBlocks.push(body.slice(0, 30_000));
-    }
+    if (!body || body.length < 80 || ldBlocks.some(b => body.startsWith(b.slice(0, 200)))) continue;
+    if (!DATA_WORDS.test(body)) continue;
+    if (body.length <= WINDOW * 2) dataBlocks.push(body);
+    else dataBlocks.push(...dataWindows(body, 12 - dataBlocks.length));
   }
 
-  // Title tag (cheap signal).
   const titleMatch = /<title[^>]*>([^<]*)<\/title>/i.exec(html);
   const titleTag = titleMatch?.[1]?.trim();
 
-  // Strip scripts/styles/svg, then HTML tags, then collapse whitespace.
-  const stripped = html
+  const text = html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
     .replace(/<style[\s\S]*?<\/style>/gi, " ")
     .replace(/<svg[\s\S]*?<\/svg>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
+    // Keep allergen emphasis visible to the model: <strong>MILK</strong> → MILK
+    .replace(/<(strong|b)\b[^>]*>([\s\S]*?)<\/\1>/gi, (_m, _t, inner: string) => inner.replace(/<[^>]+>/g, "").toUpperCase())
+    .replace(/<\/(td|th)>/gi, " | ")
+    .replace(/<\/(tr|p|li|h[1-6]|div|section|details|summary|dt|dd)>|<br\s*\/?>/gi, "\n")
     .replace(/<[^>]+>/g, " ")
     .replace(/&nbsp;/g, " ")
-    .replace(/\s+/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n[\s|]*/g, "\n")
+    .replace(/\n{2,}/g, "\n")
     .trim();
 
   const parts: string[] = [];
   if (titleTag) parts.push(`<title>${titleTag}</title>`);
   if (meta.length) parts.push(`<meta>\n${meta.join("\n")}\n</meta>`);
   if (ldBlocks.length) parts.push(`<json-ld>\n${ldBlocks.join("\n---\n")}\n</json-ld>`);
-  if (dataBlocks.length) parts.push(`<embedded-data>\n${dataBlocks.join("\n---\n")}\n</embedded-data>`);
-  // Generous body cap — the Ingredients / Nutrition tab text sits deep in
-  // the page on wholesale sites, well past the old 15K cut-off.
-  parts.push(`<body>\n${stripped.slice(0, 60_000)}\n</body>`);
+  if (dataBlocks.length) parts.push(`<embedded-data>\n${dataBlocks.join("\n---\n").slice(0, 60_000)}\n</embedded-data>`);
+  parts.push(`<page-text>\n${text.slice(0, 120_000)}\n</page-text>`);
   return parts.join("\n\n");
 }
 
-interface ScrapedFields {
+export interface ScrapedFields {
   name: string | null;
   brand: string | null;
   packSize: number | null;
@@ -242,7 +272,6 @@ export function normaliseScrapedFields(raw: unknown): ScrapedFields {
  *
  *  Shared by /scrape-url and /scrape-photo so the two extraction paths can't
  *  drift. Pure — returns a new object, never mutates the input. */
-const NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "protein", "fibre", "salt"] as const;
 
 export function applyMissingNutrientZeros(extracted: ScrapedFields): ScrapedFields {
   const present = NUTRIENT_KEYS.filter(k => extracted[k] != null).length;
@@ -290,68 +319,223 @@ const EXTRACT_INGREDIENT_FIELDS_TOOL: Anthropic.Tool = {
   },
 };
 
-router.post("/scrape-url", async (req: Request, res: Response) => {
-  if (!isClaudeConfigured()) {
-    res.status(503).json({ error: "Scraping requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
-    return;
-  }
-  const rawUrl = String(req.body?.url ?? "").trim();
-  if (!rawUrl) { res.status(400).json({ error: "url is required" }); return; }
+// ── Scrape a product URL: structured parse first, AI only for the gaps ─────
+//
+// Graeme, 23 Oct 2026: pasting a Brakes URL must ALWAYS bring in the
+// nutrition, the ingredient declaration and the allergens, and work out the
+// UPF/NOVA class, in one go. Brakes is parsed deterministically
+// (lib/brakes-product.ts); the AI only fills what the parse couldn't find, and
+// handles every other supplier site. Each field says where it came from.
 
+export type FieldSource = "parsed" | "ai" | "missing";
+export const SCRAPE_FIELD_KEYS = [
+  "name", "brand", "packSize", "packUnit", "costPerPack", "supplierPartNumber",
+  "ingredients", "allergens", ...NUTRIENT_KEYS,
+] as const;
+export type ScrapeFieldKey = (typeof SCRAPE_FIELD_KEYS)[number];
+
+/** Free-form allergen names (AI output: "Milk", "Wheat", "Sesame seeds") → UK14
+ *  codes through the shared keyword engine. Codes pass straight through. */
+export function allergenCodesFromNames(names: string[]): AllergenCode[] {
+  const out = new Set<AllergenCode>();
+  for (const raw of names) {
+    const n = raw.trim().toLowerCase();
+    if (!n) continue;
+    if ((UK14_CODES as readonly string[]).includes(n)) { out.add(n as AllergenCode); continue; }
+    if (n === "dairy" || n === "lactose") { out.add("milk"); continue; }
+    if (n === "tree nuts") { out.add("nuts"); continue; }
+    for (const c of detectAllergens(n.replace(/_/g, " "))) out.add(c);
+  }
+  return [...out].sort();
+}
+
+/** A structured parse (Brakes, Amazon) → the ScrapedFields shape plus where
+ *  each field came from. */
+export function scrapedFromParsed(p: BrakesParsed & { brand?: string | null }): { fields: ScrapedFields; sources: Record<ScrapeFieldKey, FieldSource> } {
+  const fields: ScrapedFields = {
+    ...normaliseScrapedFields({}),
+    name: p.name,
+    brand: p.brand ?? null,
+    packSize: p.packSize,
+    packUnit: p.packUnit,
+    costPerPack: p.costPerPack,
+    supplierPartNumber: p.supplierPartNumber,
+    ingredients: p.ingredients,
+    allergens: p.allergens,
+    notes: p.mayContain ? `May contain: ${p.mayContain}` : null,
+    ...p.nutrition,
+  };
+  const sources = {} as Record<ScrapeFieldKey, FieldSource>;
+  for (const k of SCRAPE_FIELD_KEYS) {
+    if (k === "allergens") sources[k] = p.allergensStated ? "parsed" : "missing";
+    else sources[k] = fields[k] != null ? "parsed" : "missing";
+  }
+  return { fields, sources };
+}
+export const scrapedFromBrakes = scrapedFromParsed;
+
+/** Thrown when a site answered with a robot check instead of the product. */
+export const AMAZON_BLOCKED_MESSAGE = "Amazon blocked the read (it showed a robot check instead of the product). Paste the ingredients into the Label Declaration box instead.";
+
+/** Which fields still need the AI after a structured parse. A Brakes
+ *  nutrition table that exists but shows "-" for a nutrient (fibre on cured
+ *  meats, say) is the page saying "not declared" — the AI can't know better,
+ *  so a partial table does NOT trigger it; only a missing table does. Brand
+ *  isn't on Brakes' product data at all, so it never triggers it either. */
+export function fieldsNeedingAi(sources: Record<ScrapeFieldKey, FieldSource>): ScrapeFieldKey[] {
+  const need: ScrapeFieldKey[] = [];
+  for (const k of ["name", "packSize", "costPerPack", "ingredients", "allergens"] as const) {
+    if (sources[k] === "missing") need.push(k);
+  }
+  if (sources.packSize === "missing") need.push("packUnit");
+  const anyNutrient = NUTRIENT_KEYS.some(k => sources[k] !== "missing");
+  if (!anyNutrient) need.push(...NUTRIENT_KEYS);
+  return need;
+}
+
+/** Fill only the `need` fields from the AI result; parsed values always win. */
+export function mergeAiFields(
+  base: ScrapedFields,
+  sources: Record<ScrapeFieldKey, FieldSource>,
+  ai: ScrapedFields,
+  need: readonly ScrapeFieldKey[],
+): { fields: ScrapedFields; sources: Record<ScrapeFieldKey, FieldSource> } {
+  const fields: ScrapedFields = { ...base };
+  const src = { ...sources };
+  const set = <K extends keyof ScrapedFields>(k: K, v: ScrapedFields[K]) => { fields[k] = v; };
+  for (const k of need) {
+    if (k === "allergens") {
+      if (ai.allergens.length > 0) { set("allergens", allergenCodesFromNames(ai.allergens)); src.allergens = "ai"; }
+      continue;
+    }
+    const v = ai[k];
+    if (v != null) { set(k, v as never); src[k] = "ai"; }
+  }
+  if (!fields.brand && ai.brand) { fields.brand = ai.brand; src.brand = "ai"; }
+  if (!fields.notes && ai.notes) fields.notes = ai.notes;
+  return { fields, sources: src };
+}
+
+const scrapeUrlBodySchema = z.object({ url: z.string().trim().min(1, "url is required").max(2048) });
+
+async function aiExtractFromHtml(url: URL, html: string): Promise<ScrapedFields> {
+  const client = getClaudeClient();
+  const response = await client.messages.create({
+    model: CLAUDE_MODELS.haiku,
+    max_tokens: 2048,
+    tool_choice: { type: "tool", name: "extract_ingredient_fields" },
+    tools: [EXTRACT_INGREDIENT_FIELDS_TOOL],
+    messages: [{
+      role: "user",
+      content: `Extract the ingredient fields for the form. Source URL: ${url.toString()}
+
+The page text below includes sections that are collapsed or hidden on screen (accordions / tabs such as Ingredients, Allergens, Nutrition) — read all of it. The <embedded-data> section is the page's JSON app state; product data often lives there rather than in the text.
+
+Ingredients: copy the FULL declaration exactly as written, keeping allergen words in CAPITALS (the page bolds them; bold text has been turned into CAPITALS for you).
+Nutritional values: per 100g / 100ml only. Leave a nutrient null when the page doesn't state it (a "-" means not stated) or only gives per-portion values — do NOT back-calculate and do NOT fill in 0 for something that isn't printed. A printed 0 is 0.
+Allergens: only what the product CONTAINS — never "may contain" / cross-contact lines (put those in notes).
+
+${distillHtml(html)}`,
+    }],
+  });
+  const toolUse = response.content.find(b => b.type === "tool_use");
+  if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a tool_use block");
+  return normaliseScrapedFields(toolUse.input);
+}
+
+router.post("/scrape-url", validate(scrapeUrlBodySchema), async (req: Request, res: Response) => {
+  const rawUrl = String((req.body as { url: string }).url).trim();
   const check = isUrlSafe(rawUrl);
   if (!check.ok) { res.status(400).json({ error: check.reason }); return; }
+  const url = check.url;
 
-  let html: string;
-  try {
-    html = await fetchPage(check.url);
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (msg.includes("aborted")) {
-      res.status(504).json({ error: "Page took too long to load (>45s)" });
+  let fields: ScrapedFields = normaliseScrapedFields({});
+  let sources = Object.fromEntries(SCRAPE_FIELD_KEYS.map(k => [k, "missing"])) as Record<ScrapeFieldKey, FieldSource>;
+  let method: "brakes-api" | "brakes-page" | "amazon-page" | "ai" | "none" = "none";
+  let html: string | null = null;
+  const warnings: string[] = [];
+
+  // 1. Brakes: read the product data directly — first the product API the
+  //    page itself calls, then the page's embedded state.
+  const brakesCode = isBrakesUrl(url) ? brakesProductCode(url) : null;
+  if (brakesCode) {
+    let product: BrakesProductJson | null = null;
+    try {
+      const json = JSON.parse(await fetchPage(new URL(brakesProductApiUrl(brakesCode)), "application/json", 20_000)) as BrakesProductJson;
+      if (Array.isArray(json.classifications) && json.classifications.length > 0) { product = json; method = "brakes-api"; }
+    } catch (err) {
+      console.warn(`[ingredient-scrape] Brakes product API failed for ${brakesCode}:`, err instanceof Error ? err.message : err);
+    }
+    if (!product) {
+      try {
+        html = await fetchPage(url);
+        product = brakesProductFromHtml(html, brakesCode);
+        if (product) method = "brakes-page";
+      } catch (err) {
+        console.warn("[ingredient-scrape] Brakes page fetch failed:", err instanceof Error ? err.message : err);
+      }
+    }
+    if (product) ({ fields, sources } = scrapedFromParsed(parseBrakesProduct(product)));
+  }
+
+  // 1b. Amazon: the product page itself, read deterministically. A robot
+  //     check is reported as such — never handed to the AI to guess from.
+  if (method === "none" && isAmazonUrl(url)) {
+    try {
+      html = await fetchPage(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(msg.includes("aborted") ? 504 : 502).json({ error: `Couldn't load the Amazon page: ${msg}` });
       return;
     }
-    res.status(502).json({ error: `Failed to fetch page: ${msg}` });
-    return;
-  }
-
-  const distilled = distillHtml(html);
-
-  const client = getClaudeClient();
-  let extracted: ScrapedFields;
-  try {
-    // Use tool_use so we get a typed JSON object back instead of having
-    // to parse free-form text. Returns a single tool_use block.
-    const response = await client.messages.create({
-      model: CLAUDE_MODELS.haiku,
-      max_tokens: 1536,
-      tool_choice: { type: "tool", name: "extract_ingredient_fields" },
-      tools: [EXTRACT_INGREDIENT_FIELDS_TOOL],
-      messages: [{
-        role: "user",
-        content: `Extract the ingredient fields for the form. Source URL: ${check.url.toString()}
-
-Nutritional values: use the per-100g column on supplier pages (Brakes, Bidfood, supermarkets typically show a Nutrition tab with a table). Leave a nutritional field null if only per-portion values are stated — do NOT back-calculate. The <embedded-data> section (when present) is the page's JSON app state — tabbed content like Ingredients, Allergens and Nutrition often lives there rather than in the body text, so check it carefully.
-
-${distilled}`,
-      }],
-    });
-
-    const toolUse = response.content.find(b => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") {
-      throw new Error("Claude did not return a tool_use block");
+    if (isAmazonBlocked(html)) {
+      res.status(502).json({ error: AMAZON_BLOCKED_MESSAGE, blocked: true });
+      return;
     }
-    extracted = normaliseScrapedFields(toolUse.input);
-  } catch (err) {
-    console.error("[ingredient-scrape] Claude extraction failed:", err);
-    const msg = err instanceof Error ? err.message : String(err);
-    res.status(502).json({ error: `Extraction failed: ${msg}` });
-    return;
+    const parsed = parseAmazonProduct(html, amazonAsin(url));
+    if (parsed.name || parsed.ingredients) {
+      ({ fields, sources } = scrapedFromParsed(parsed));
+      method = "amazon-page";
+    }
   }
 
-  res.json({
-    url: check.url.toString(),
-    extracted: applyMissingNutrientZeros(extracted),
-  });
+  // 2. AI for whatever is still missing (everything, on other sites).
+  const need = method === "none" ? [...SCRAPE_FIELD_KEYS] : fieldsNeedingAi(sources);
+  if (need.length > 0) {
+    if (!isClaudeConfigured()) {
+      if (method === "none") {
+        res.status(503).json({ error: "Scraping this site requires the Anthropic API key. Ask an admin to set ANTHROPIC_API_KEY." });
+        return;
+      }
+      warnings.push("Some fields weren't on the product data and the AI reader isn't set up to look for them.");
+    } else {
+      try {
+        if (html == null) html = await fetchPage(url);
+        const ai = await aiExtractFromHtml(url, html);
+        ({ fields, sources } = mergeAiFields(fields, sources, ai, need));
+        if (method === "none") method = "ai";
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error("[ingredient-scrape] AI extraction failed:", err);
+        if (method === "none") {
+          const status = msg.includes("aborted") ? 504 : 502;
+          res.status(status).json({ error: status === 504 ? "Page took too long to load (>45s)" : `Couldn't read that page: ${msg}` });
+          return;
+        }
+        warnings.push(`The AI reader couldn't fill the gaps (${msg}).`);
+      }
+    }
+  }
+
+  // 3. One fell swoop: a declaration means a NOVA class straight away. The
+  //    same result is reused (cached) when the ingredient is saved, which is
+  //    when it's actually stored.
+  let upf: NovaResult | null = null;
+  if (fields.ingredients) {
+    upf = await classifyDeclaration({ name: fields.name ?? "", brand: fields.brand, labelDeclaration: fields.ingredients });
+  }
+
+  res.json({ url: url.toString(), method, extracted: fields, sources, upf, warnings });
 });
 
 // ── Scrape from photos of the physical label ────────────────────────────────

@@ -1,0 +1,418 @@
+{
+ "code": "149839",
+ "name": "Diced Chorizo",
+ "packSize": "1 x 500g",
+ "netWeight": 0.5,
+ "price": {
+  "currencyIso": "GBP",
+  "formattedValue": "£6.76",
+  "priceType": "BUY",
+  "value": 6.76
+ },
+ "classifications": [
+  {
+   "code": "handlingAndCooking",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.oven_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Oven Cooking Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.food_safety_tips",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Food Safety Tips",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.microwave_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Microwave Cooking Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.freezing_and_thawing_guidelines",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Freeze and Thawing Guidelines",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.pan_fry_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Pan Fry Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.steam_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Steam Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.grill_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Grill Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.deep_fry_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Deep Fry Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.barbecue_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Barbeque Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.other_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Other Cooking Instructions",
+     "range": false
+    }
+   ],
+   "name": "Handling and Cooking"
+  },
+  {
+   "code": "nutrition",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.nutrition_unit",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "per 100g"
+      }
+     ],
+     "name": "Nutrition Unit",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_100_kcal",
+     "comparable": true,
+     "featureUnit": {
+      "name": "calories",
+      "symbol": "kcal",
+      "unitType": "201"
+     },
+     "featureValues": [
+      {
+       "value": "342"
+      }
+     ],
+     "name": "Energy (kcal)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_serve_kcal",
+     "comparable": true,
+     "featureUnit": {
+      "name": "calories",
+      "symbol": "kcal",
+      "unitType": "201"
+     },
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Energy per serve kcal",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_100_kj",
+     "comparable": true,
+     "featureUnit": {
+      "name": "kilojoules",
+      "symbol": "kj",
+      "unitType": "202"
+     },
+     "featureValues": [
+      {
+       "value": "1422"
+      }
+     ],
+     "name": "Energy (KJ)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_serve_kj",
+     "comparable": true,
+     "featureUnit": {
+      "name": "kilojoules",
+      "symbol": "kj",
+      "unitType": "202"
+     },
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Energy per serve kj",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.protein_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "22.7"
+      }
+     ],
+     "name": "Protein (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.protein_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Protein per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.carbohydrate_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "4"
+      }
+     ],
+     "name": "Carbohydrates (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.carbohydrate_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Carbohydrate per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.sugars_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "1.28"
+      }
+     ],
+     "name": "Of which sugars (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.sugars_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Sugars per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fat_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "26.2"
+      }
+     ],
+     "name": "Fat (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fat_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fat per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.saturates_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "8.9"
+      }
+     ],
+     "name": "Of which saturates (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.saturates_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Saturates per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fibre_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fibre (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fibre_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fibre per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.salt_equivalent_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "2.9"
+      }
+     ],
+     "name": "Salt (g)",
+     "range": false
+    }
+   ],
+   "name": "Nutrition"
+  },
+  {
+   "code": "ingredientsAndAllergens",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.ingredients",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "Pork (122g per110g of finished product), lactose (<b>MILK</b>), salt, dextrin paprika, caseinate (<b>MILK</b>), dextrose, garlic, emulsifier (diphosphate), spices, antioxidant (sodium ascorbate), and preservatives (sodium nitrite, potassium nitrate). Casing not edible."
+      }
+     ],
+     "name": "Ingredients",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.allergenscontains",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "Milk"
+      }
+     ],
+     "name": "Contains",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.contains_milk",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Contain Milk",
+     "range": false
+    }
+   ],
+   "name": "Ingredients and allergens"
+  },
+  {
+   "code": "productPackingInfo",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/productPackingInfo.primary_packaging",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Primary Packaging",
+     "range": false
+    }
+   ],
+   "name": "Product Packaging Info"
+  }
+ ],
+ "unitPriceStr": "£13.52/kg",
+ "unitsPerCase": 8,
+ "sapUnit": {
+  "availabilityCode": "pieces",
+  "code": "pieces",
+  "name": "Piece"
+ },
+ "url": "/delicatessen/cooked-cured-meat-poultry/continental/spanish/diced-chorizo/p/149839"
+}

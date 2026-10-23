@@ -10,6 +10,7 @@ import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
 import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
 import { pgErrorCode, FOREIGN_KEY_VIOLATION, ingredientInUseMessage } from "../lib/ingredient-in-use";
+import { shouldAutoClassify, classifyDeclaration, novaColumns } from "../lib/upf-classify";
 import * as z from "zod";
 
 const router: IRouter = Router();
@@ -168,6 +169,19 @@ router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, r
   if (ratioError) { res.status(400).json({ error: ratioError }); return; }
   const packsError = validateStockInPacks(stockInPacks, packWeight);
   if (packsError) { res.status(400).json({ error: packsError }); return; }
+  // NOVA on create (Graeme, 23 Oct 2026 — objective G): a class picked by
+  // hand is stored as 'manual'; otherwise a declaration is classified now and
+  // stored with the row, so no ingredient with a deck is left unanalysed.
+  const rawNova = (req.body as { novaClass?: unknown }).novaClass;
+  const manualNova = rawNova != null && [1, 2, 3, 4].includes(Number(rawNova)) ? Number(rawNova) : null;
+  const autoNova = shouldAutoClassify({
+    declaration: labelDeclaration || null,
+    previousDeclaration: null,
+    novaSource: null,
+    novaAnalyzedAt: null,
+    perishable,
+    manualThisSave: manualNova != null,
+  }) ? await classifyDeclaration({ name, brand, category, labelDeclaration: String(rawLabelDeclaration ?? labelDeclaration) }) : null;
   const [row] = await db.insert(ingredientsTable).values({
     name,
     unit,
@@ -231,6 +245,10 @@ router.post("/", validate(CreateIngredientBodyWithSecondaryPrice), async (req, r
     // declaration text implies is auto-added to the ticked list.
     allergens: [...new Set([...(allergens ?? []), ...detectAllergens(labelDeclaration || null)])],
     nutritionalsAiEstimated: !!nutritionalsAiEstimated,
+    ...(manualNova != null ? {
+      novaClass: manualNova, novaSource: "manual", novaConfidence: "high",
+      novaReasoning: "Set manually", novaMarkers: [] as string[], novaAnalyzedAt: new Date(),
+    } : autoNova ? novaColumns(autoNova) : {}),
   }).returning();
 
   generateQrCode("ingredient", row.id)
@@ -460,11 +478,29 @@ router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req,
   // manual override when it actually changed — otherwise an untouched AI
   // classification would get relabelled 'manual' and the batch analyzer
   // would skip it forever.
+  const [current] = await db.select({
+    novaClass: ingredientsTable.novaClass,
+    novaSource: ingredientsTable.novaSource,
+    novaAnalyzedAt: ingredientsTable.novaAnalyzedAt,
+    labelDeclaration: ingredientsTable.labelDeclaration,
+    perishable: ingredientsTable.perishable,
+  }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
   let novaChanged = false;
   if (novaClass !== undefined) {
-    const [current] = await db.select({ novaClass: ingredientsTable.novaClass }).from(ingredientsTable).where(eq(ingredientsTable.id, id));
     novaChanged = current != null && (current.novaClass ?? null) !== (novaClass != null ? Number(novaClass) : null);
   }
+  // Automatic NOVA on save (Graeme, 23 Oct 2026 — objective G): a new or
+  // changed declaration is classified and stored with this save. Never over a
+  // class set by hand — before or in this save (lib/upf-classify.ts).
+  const effectiveDeclaration = labelDeclaration !== undefined ? (labelDeclaration || null) : (current?.labelDeclaration ?? null);
+  const autoNova = current && shouldAutoClassify({
+    declaration: effectiveDeclaration,
+    previousDeclaration: current.labelDeclaration,
+    novaSource: novaChanged ? (novaClass != null ? "manual" : null) : current.novaSource,
+    novaAnalyzedAt: novaChanged ? null : current.novaAnalyzedAt,
+    perishable: perishable ?? current.perishable,
+    manualThisSave: novaChanged && novaClass != null,
+  }) ? await classifyDeclaration({ name, brand, category, labelDeclaration: String((labelDeclaration !== undefined ? rawLabelDeclaration : null) || effectiveDeclaration) }) : null;
   // Need the effective packWeight: explicit override in body or fall back to the
   // stored value so toggling stockInPacks on doesn't require re-entering the pack size.
   let effectivePackWeight = packWeight;
@@ -566,6 +602,7 @@ router.put("/:id", validate(UpdateIngredientBodyWithSecondaryPrice), async (req,
       novaMarkers: [] as string[],
       novaAnalyzedAt: novaClass != null ? new Date() : null,
     } : {}),
+    ...(autoNova ? novaColumns(autoNova) : {}),
   }).where(eq(ingredientsTable.id, id)).returning();
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json({ ...mapRow(row), labelDeclarationWrapped });

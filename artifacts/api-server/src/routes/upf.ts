@@ -27,7 +27,8 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { db, ingredientsTable, recipeIngredientsTable, subRecipeIngredientsTable, usersTable } from "@workspace/db";
 import { eq, inArray, and, isNull, sql } from "drizzle-orm";
-import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { isClaudeConfigured } from "../lib/ai/claude";
+import { classifyBatch, classifyDeclaration, type Classification, type IngredientRow } from "../lib/upf-classify";
 import { computeUpfSummary } from "../lib/upf";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
@@ -59,127 +60,35 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
   res.status(403).json({ error: "Manager access required" });
 }
 
-interface Classification {
-  ingredientId: number;
-  isFood: boolean;
-  novaClass: number | null;
-  markers: string[];
-  reasoning: string;
-  confidence: "high" | "medium" | "low";
-}
-
-const CLASSIFY_TOOL = {
-  name: "classify_ingredients",
-  description: "Record the NOVA processing classification for each ingredient in the batch.",
-  input_schema: {
-    type: "object" as const,
-    properties: {
-      classifications: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            ingredientId: { type: "integer", description: "The ingredient id exactly as given in the input list." },
-            isFood: { type: "boolean", description: "false for non-food items (cleaning products, packaging, gloves, labels) — they get no NOVA class." },
-            novaClass: {
-              type: ["integer", "null"],
-              enum: [1, 2, 3, 4, null],
-              description: "NOVA class: 1 unprocessed/minimally processed; 2 processed culinary ingredient; 3 processed food; 4 ultra-processed (UPF). Null only when isFood is false.",
-            },
-            markers: {
-              type: "array",
-              items: { type: "string" },
-              description: "For NOVA 4 only: the specific UPF marker ingredients found or expected (e.g. 'glucose-fructose syrup', 'modified maize starch', 'flavourings', 'emulsifier (E471)'). Empty for NOVA 1-3.",
-            },
-            reasoning: { type: "string", description: "One or two short sentences explaining the classification. Mention when you're judging from the name alone because no label declaration was given." },
-            confidence: {
-              type: "string",
-              enum: ["high", "medium", "low"],
-              description: "high = label declaration given or the item is unambiguous (salt, olive oil); medium = typical formulation of a known product type; low = name alone and formulations vary widely (could be NOVA 3 or 4 depending on brand).",
-            },
-          },
-          required: ["ingredientId", "isFood", "novaClass", "markers", "reasoning", "confidence"],
-        },
-      },
-    },
-    required: ["classifications"],
-  },
-};
-
-const CLASSIFY_GUIDANCE = `You are classifying commercial kitchen ingredients on the NOVA food processing scale for a UK food manufacturer (The Calzone Kitchen) that wants to measure and reduce the UPF content of its products.
-
-NOVA classes:
-1 — Unprocessed / minimally processed foods: fresh/frozen/dried vegetables, fruit, herbs, plain meat and poultry, milk, plain yoghurt, eggs, plain flour, dried pasta, water, plain spices.
-2 — Processed culinary ingredients: oils, butter, sugar, salt, honey, vinegar, lard, starches (plain corn flour / potato starch).
-3 — Processed foods: made by combining class 1 + class 2 with traditional preservation methods — canned vegetables in brine, tomato passata/puree, most traditional cheeses, cured meats made of meat+salt+spices only, bread made of flour/water/salt/yeast, tinned beans in water.
-4 — Ultra-processed foods (UPF): industrial formulations, typically identified by ingredients you would not find in a home kitchen: glucose-fructose syrup, maltodextrin, modified starches, hydrogenated fats, protein isolates, flavourings (natural or artificial), flavour enhancers, colours, emulsifiers, sweeteners, thickeners/stabilisers used to engineer texture (when part of an industrial formulation), preservatives beyond traditional salting/canning, anti-caking agents in seasoning blends, smoke flavour.
-
-Judging rules:
-- When a label declaration (ingredients list) is provided, judge from it directly: the presence of UPF markers (flavourings, modified starch, glucose syrups, colours, emulsifiers, yeast extract used as flavour enhancer, etc.) => NOVA 4. List the exact markers you found.
-- When no declaration is provided, judge from the ingredient name, brand and category as sold to UK catering (Sysco, Brakes, Bidfood etc. own-brand norms). Typical commercial formulations count: e.g. wholesale BBQ sauce or ranch dressing is almost always NOVA 4; plain dried oregano is NOVA 1; a plain hard cheese is NOVA 3.
-- Cured continental meats (pepperoni, chorizo, prosciutto): NOVA 4 when they contain preservatives (nitrites), dextrose or flavourings — the wholesale norm — otherwise 3. Without a label, assume the wholesale norm (4) for pepperoni/chorizo at medium confidence; prosciutto (pork+salt) is 3.
-- Plain single spices/herbs are 1. Seasoning MIXES with anti-caking agents, flavour enhancers or sugar as a formulation are 4; a simple home-style blend of plain spices is 1.
-- Cheese: traditional cheeses (mozzarella, cheddar, feta, gorgonzola, taleggio, parmesan) are 3. Processed cheese products (nacho cheese sauce with stabilisers) are 4.
-- Sub-recipe items made in-house appear here only as raw ingredients — classify what is bought, not what is made from it.
-- isFood=false for cleaning chemicals, packaging, gloves, labels, stationery and other non-food items; give them novaClass null.
-- Water is NOVA 1.
-
-Classify EVERY ingredient in the list, echoing its ingredientId exactly.`;
-
-interface IngredientRow {
-  id: number;
-  name: string;
-  brand: string | null;
-  category: string | null;
-  labelDeclaration: string | null;
-  novaSource: string | null;
-}
-
-function buildBatchPrompt(rows: IngredientRow[]): string {
-  const lines = rows.map(r => {
-    const parts = [`id=${r.id} | name: ${r.name.trim()}`];
-    if (r.brand?.trim()) parts.push(`brand: ${r.brand.trim()}`);
-    if (r.category?.trim()) parts.push(`category: ${r.category.trim()}`);
-    if (r.labelDeclaration?.trim()) parts.push(`label declaration: ${r.labelDeclaration.trim().slice(0, 600)}`);
-    return "- " + parts.join(" | ");
-  });
-  return `${CLASSIFY_GUIDANCE}\n\nIngredients to classify:\n${lines.join("\n")}`;
-}
-
-async function classifyBatch(rows: IngredientRow[]): Promise<Classification[]> {
-  const client = getClaudeClient();
-  const response = await client.messages.create({
-    model: CLAUDE_MODELS.sonnet,
-    max_tokens: 8192,
-    tool_choice: { type: "tool", name: "classify_ingredients" },
-    tools: [CLASSIFY_TOOL],
-    messages: [{ role: "user", content: buildBatchPrompt(rows) }],
-  });
-  const toolUse = response.content.find(b => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a tool_use block");
-  const raw = (toolUse.input as { classifications?: unknown[] }).classifications ?? [];
-  const validIds = new Set(rows.map(r => r.id));
-  const out: Classification[] = [];
-  for (const item of raw) {
-    const c = item as Record<string, unknown>;
-    const id = Number(c["ingredientId"]);
-    if (!validIds.has(id)) continue;
-    const novaRaw = c["novaClass"];
-    const nova = typeof novaRaw === "number" && novaRaw >= 1 && novaRaw <= 4 ? Math.round(novaRaw) : null;
-    const conf = c["confidence"];
-    out.push({
-      ingredientId: id,
-      isFood: c["isFood"] !== false,
-      novaClass: c["isFood"] === false ? null : nova,
-      markers: Array.isArray(c["markers"]) ? (c["markers"] as unknown[]).map(String).slice(0, 20) : [],
-      reasoning: typeof c["reasoning"] === "string" ? c["reasoning"] : "",
-      confidence: conf === "high" || conf === "medium" || conf === "low" ? conf : "low",
-    });
-  }
-  return out;
-}
-
 const BATCH_SIZE = 12;
+
+// Live NOVA preview for the ingredient form (Graeme, 23 Oct 2026 — objective
+// G): classifies the declaration being typed, stores NOTHING. The save runs
+// the same classification server-side and stores it (cached, so the preview
+// and the save are one AI call). Falls back to the UPF marker scan when the
+// AI isn't available; null = couldn't decide.
+export const upfPreviewBodySchema = z.object({
+  labelDeclaration: z.string().trim().min(1, "Declaration is empty").max(5000),
+  name: z.string().max(300).nullish(),
+  brand: z.string().max(200).nullish(),
+  category: z.string().max(100).nullish(),
+});
+
+router.post("/preview", validate(upfPreviewBodySchema), async (req: Request, res: Response) => {
+  const body = req.body as z.infer<typeof upfPreviewBodySchema>;
+  try {
+    const result = await classifyDeclaration({
+      name: body.name ?? "",
+      brand: body.brand ?? null,
+      category: body.category ?? null,
+      labelDeclaration: body.labelDeclaration,
+    });
+    res.json({ result });
+  } catch (err) {
+    console.error("[upf] preview failed:", err);
+    res.status(502).json({ error: "Couldn't work out the UPF class just now" });
+  }
+});
 
 router.post("/analyze", requireAdminOrManager, async (req: Request, res: Response) => {
   if (!isClaudeConfigured()) {

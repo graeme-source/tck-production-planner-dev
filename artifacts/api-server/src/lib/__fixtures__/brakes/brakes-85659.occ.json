@@ -1,0 +1,528 @@
+{
+ "code": "85659",
+ "name": "Knorr Professional Patak's Korma Concentrated Sauce 1.1L",
+ "packSize": "1 x 1.1ltr",
+ "netWeight": 1.164,
+ "price": {
+  "currencyIso": "GBP",
+  "formattedValue": "£13.44",
+  "priceType": "BUY",
+  "value": 13.44
+ },
+ "classifications": [
+  {
+   "code": "handlingAndCooking",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.oven_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Oven Cooking Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.food_safety_tips",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "Store in a cool, dry place away from direct sunlight. Once opened, keep refrigerated and use within 5 days, or freeze remaining contents immediately. Defrost in a refrigerator and use within 24 hours. Best Before End: See lid."
+      }
+     ],
+     "name": "Food Safety Tips",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.microwave_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Microwave Cooking Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.freezing_and_thawing_guidelines",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Freeze and Thawing Guidelines",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.pan_fry_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Pan Fry Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.steam_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Steam Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.grill_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Grill Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.deep_fry_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Deep Fry Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.barbecue_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Barbeque Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.other_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "To make 2.2 litres add one part water to one part concentrated sauce, alternatively use as desired or according to a ufs.com recipe suggestion. Suggested portion size 100ml (50ml sauce + 50ml water)."
+      }
+     ],
+     "name": "Other Cooking Instructions",
+     "range": false
+    }
+   ],
+   "name": "Handling and Cooking"
+  },
+  {
+   "code": "nutrition",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.suitable_for_vegetarians",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Suitable for Vegetarians",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.nutrition_unit",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "per 100g"
+      }
+     ],
+     "name": "Nutrition Unit",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_100_kcal",
+     "comparable": true,
+     "featureUnit": {
+      "name": "calories",
+      "symbol": "kcal",
+      "unitType": "201"
+     },
+     "featureValues": [
+      {
+       "value": "234"
+      }
+     ],
+     "name": "Energy (kcal)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_serve_kcal",
+     "comparable": true,
+     "featureUnit": {
+      "name": "calories",
+      "symbol": "kcal",
+      "unitType": "201"
+     },
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Energy per serve kcal",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_100_kj",
+     "comparable": true,
+     "featureUnit": {
+      "name": "kilojoules",
+      "symbol": "kj",
+      "unitType": "202"
+     },
+     "featureValues": [
+      {
+       "value": "974"
+      }
+     ],
+     "name": "Energy (KJ)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_serve_kj",
+     "comparable": true,
+     "featureUnit": {
+      "name": "kilojoules",
+      "symbol": "kj",
+      "unitType": "202"
+     },
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Energy per serve kj",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.protein_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "2"
+      }
+     ],
+     "name": "Protein (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.protein_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Protein per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.carbohydrate_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "18"
+      }
+     ],
+     "name": "Carbohydrates (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.carbohydrate_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Carbohydrate per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.sugars_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "14"
+      }
+     ],
+     "name": "Of which sugars (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.sugars_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Sugars per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fat_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "17"
+      }
+     ],
+     "name": "Fat (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fat_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fat per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.saturates_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "9.7"
+      }
+     ],
+     "name": "Of which saturates (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.saturates_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Saturates per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fibre_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "1.8"
+      }
+     ],
+     "name": "Fibre (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fibre_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fibre per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.salt_equivalent_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "1.5"
+      }
+     ],
+     "name": "Salt (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.vegetarian_alternatives",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Vegetarian Alternatives",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.gluten_free_alternatives",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Gluten Free Alternatives",
+     "range": false
+    }
+   ],
+   "name": "Nutrition"
+  },
+  {
+   "code": "ingredientsAndAllergens",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.ingredients",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "<p>Water, sugar, single cream (<strong>MILK</strong>) (8%), creamed coconut (8%), double cream (<strong>MILK</strong>) (5%), rapeseed oil, modified starch, desiccated coconut (2.5%), concentrated tomato puree, spices, ginger puree (1.5%), garlic puree, salt, dried onions, cumin powder, acid (lactic acid), lemon juice concentrate, dried coriander leaf.</p>"
+      }
+     ],
+     "name": "Ingredients",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.allergenscontains",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "Milk"
+      }
+     ],
+     "name": "Contains",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.contains_milk",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Contain Milk",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.gluten_free",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Does Not Contain Gluten",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.may_contain_almond",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "May Contain Almond",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.may_contain_cashew_nuts",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "May Contain Cashew Nut",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.may_contain_mustard",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "May Contain Mustard",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.may_contain_nuts",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "May Contain Nuts",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.may_contain_peanuts",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "May Contain Peanuts",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.allergensmaycontain",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "Almonds, Cashew Nut, Mustard and Peanuts"
+      }
+     ],
+     "name": "May contain",
+     "range": false
+    }
+   ],
+   "name": "Ingredients and allergens"
+  },
+  {
+   "code": "productPackingInfo",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/productPackingInfo.primary_packaging",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Primary Packaging",
+     "range": false
+    }
+   ],
+   "name": "Product Packaging Info"
+  }
+ ],
+ "unitPriceStr": "£12.22/ltr",
+ "unitsPerCase": 2,
+ "sapUnit": {
+  "availabilityCode": "pieces",
+  "code": "pieces",
+  "name": "Piece"
+ },
+ "url": "/dry-store/foods-of-the-world/cooking-sauces/indian/knorr-professional-patak-s-korma-concentrated-sauce-1-1l/p/85659"
+}
