@@ -1,5 +1,6 @@
 import * as z from "zod";
 import type { Ingredient } from "@workspace/api-client-react";
+import { nutritionInputToValue } from "./nutrition-entry";
 
 // Shared form schema covering every field either ingredient-edit dialog needs
 // (both Ingredients page and Inventory page). A superset keeps the two forms
@@ -11,6 +12,11 @@ const nullableNumber = (check: (s: z.ZodNumber) => z.ZodNumber = (s) => s) =>
     (v) => (v === "" || v === null || v === undefined ? null : Number(v)),
     check(z.number()).nullable().optional(),
   );
+
+// Per-100g nutrition: blank = not entered (null), a typed 0 = entered as 0.
+// See lib/nutrition-entry.ts — the website sync relies on this distinction.
+const nutritionNumber = () =>
+  z.preprocess(nutritionInputToValue, z.number().min(0).nullable().optional());
 
 // Ingredients (food items used in recipes) must always use a native weight,
 // volume, or count unit — packs/bottles/bags only appear in stock check,
@@ -95,15 +101,15 @@ export const ingredientFormSchema = z.object({
   shopifyUnitsPerPack: nullableNumber((n) => n.positive()),
 
   // Nutritionals
-  energyKj: nullableNumber((n) => n.min(0)),
-  energyKcal: nullableNumber((n) => n.min(0)),
-  fat: nullableNumber((n) => n.min(0)),
-  saturates: nullableNumber((n) => n.min(0)),
-  carbohydrate: nullableNumber((n) => n.min(0)),
-  sugars: nullableNumber((n) => n.min(0)),
-  protein: nullableNumber((n) => n.min(0)),
-  fibre: nullableNumber((n) => n.min(0)),
-  salt: nullableNumber((n) => n.min(0)),
+  energyKj: nutritionNumber(),
+  energyKcal: nutritionNumber(),
+  fat: nutritionNumber(),
+  saturates: nutritionNumber(),
+  carbohydrate: nutritionNumber(),
+  sugars: nutritionNumber(),
+  protein: nutritionNumber(),
+  fibre: nutritionNumber(),
+  salt: nutritionNumber(),
   labelDeclaration: z.string().optional(),
   allergens: z.array(z.string()).optional(),
   // True when per-100g values came from the AI estimate flow. Cleared
