@@ -14,19 +14,20 @@ describe("stockCountSanity", () => {
     const s = stockCountSanity({ nativeQty: 5, recentNative: recent });
     expect(s).toMatchObject({ level: "warn", direction: "low", basis: "recent", typicalNative: 200 });
     expect(sanityMessage(s, { value: 5, unit: "g", item: basil }))
-      .toBe("Are you sure — 5 g? That's a lot less than usual (usually about 200 g).");
+      .toBe("Are you sure — 5 g? That's a lot less than usual — count again to be sure.");
   });
   it("asks about a count over 5× usual, in the unit typed (Graeme: 'Are you sure — 5,500 g?')", () => {
     const s = stockCountSanity({ nativeQty: 5500, recentNative: [550, 600, 500] });
     expect(s).toMatchObject({ level: "warn", direction: "high" });
     expect(sanityMessage(s, { value: 5500, unit: "g", item: basil }))
-      .toBe("Are you sure — 5,500 g? That's a lot more than usual (usually about 550 g).");
+      .toBe("Are you sure — 5,500 g? That's a lot more than usual — count again to be sure.");
   });
-  it("shows usual in the typed unit even when it's stored in another", () => {
+  it("never shows the usual figure — counts stay blind (Graeme, 23 Oct)", () => {
     // Chicken stored in kg, counted (by a manager's choice) in grams.
     const s = stockCountSanity({ nativeQty: 124, recentNative: [12, 13, 11] });
-    expect(sanityMessage(s, { value: 124000, unit: "g", item: chicken }))
-      .toBe("Are you sure — 124,000 g? That's a lot more than usual (usually about 12,000 g).");
+    const msg = sanityMessage(s, { value: 124000, unit: "g", item: chicken })!;
+    expect(msg).toBe("Are you sure — 124,000 g? That's a lot more than usual — count again to be sure.");
+    expect(msg).not.toMatch(/12,000|12 kg|usually about/);
   });
   it("falls back to 5× today's plan need only when there's no history", () => {
     expect(stockCountSanity({ nativeQty: 600, recentNative: [], planNeedNative: 100 })).toMatchObject({ level: "warn", basis: "plan" });

@@ -68,16 +68,14 @@ export function sanityMessage(
   entered: { value: number; unit: StockCheckUnit; item: StockCheckUnitItem },
 ): string | null {
   if (s.level !== "warn") return null;
-  const typicalCount = nativeToStockCount(s.typicalNative, entered.unit, entered.item);
-  const typical = typicalCount == null
-    ? null
-    : formatStockCount(Math.round(typicalCount * 1000) / 1000, entered.unit, entered.item);
+  // Counts stay blind (Graeme, 23 Oct 2026: "Keep counts blind"): the usual
+  // or planned figure decides WHETHER to ask, but is never shown — only the
+  // number the person typed.
   const ask = `Are you sure — ${formatStockCount(entered.value, entered.unit, entered.item)}?`;
-  if (typical == null) return ask;
-  if (s.basis === "plan") return `${ask} That's a lot more than today's plan needs (${typical}).`;
+  if (s.basis === "plan") return `${ask} That's a lot more than today's plan needs — count again to be sure.`;
   return s.direction === "high"
-    ? `${ask} That's a lot more than usual (usually about ${typical}).`
-    : `${ask} That's a lot less than usual (usually about ${typical}).`;
+    ? `${ask} That's a lot more than usual — count again to be sure.`
+    : `${ask} That's a lot less than usual — count again to be sure.`;
 }
 
 /** Parse a typed amount: a finite number ≥ 0, else null. Thousands commas
