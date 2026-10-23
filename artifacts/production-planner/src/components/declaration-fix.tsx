@@ -28,8 +28,15 @@ export type { DeclarationIssue };
 
 /** One ingredient's edit dialog, loaded by id. Closes itself on a plain
  *  save; when the save wrapped the declaration it stays open on the saved
- *  record so you can see exactly what will print. */
-export function EditIngredientDialog({ ingredientId, onClose, onSaved }: { ingredientId: number; onClose: () => void; onSaved?: () => void }) {
+ *  record so you can see exactly what will print.
+ *  `focusDeclaration` (default on) opens on the Label Declaration field; the
+ *  recipe editor rows' "Open" button turns it off to show the whole record. */
+export function EditIngredientDialog({ ingredientId, onClose, onSaved, focusDeclaration = true }: {
+  ingredientId: number;
+  onClose: () => void;
+  onSaved?: () => void;
+  focusDeclaration?: boolean;
+}) {
   const qc = useQueryClient();
   const { toast } = useToast();
   const { data: suppliers } = useListSuppliers();
@@ -56,7 +63,7 @@ export function EditIngredientDialog({ ingredientId, onClose, onSaved }: { ingre
           setSaved(s => ({ row, version: (s?.version ?? 0) + 1 }));
           toast({ title: `Saved ${row.name}`, description: "Wrapped under its name for the label." });
         } else {
-          toast({ title: `Saved ${row.name}`, description: "The label checks have been re-run." });
+          toast({ title: `Saved ${row.name}`, description: focusDeclaration ? "The label checks have been re-run." : "Every recipe using it has been refreshed." });
           onClose();
         }
       },
@@ -86,7 +93,7 @@ export function EditIngredientDialog({ ingredientId, onClose, onSaved }: { ingre
       defaultMode={(item as Ingredient & { perishable?: boolean }).perishable === false ? "supply" : "ingredient"}
       suppliers={suppliers ?? []}
       onSave={handleSave}
-      focusDeclaration
+      focusDeclaration={focusDeclaration}
       declarationNotice={saved ? `Saved — wrapped under its name for the label: ${(saved.row as Ingredient & { labelDeclaration?: string | null }).labelDeclaration ?? ""}` : null}
     />
   );

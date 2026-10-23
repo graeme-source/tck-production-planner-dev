@@ -670,7 +670,7 @@ export function IngredientFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[90vh] overflow-y-auto z-[200]">
+      <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto z-[200]">
         <DialogHeader>
           <DialogTitle className="font-display text-xl">
             {editingItem ? "Edit Item" : "Add New Item"}

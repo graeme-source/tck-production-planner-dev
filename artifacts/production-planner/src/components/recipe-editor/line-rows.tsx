@@ -19,11 +19,16 @@
  * marinadeAddAtCooking — field paths are built from `name`, so the form's
  * own types aren't visible here.
  */
-import { useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { useFieldArray, type UseFormReturn } from "react-hook-form";
-import { FlaskConical, Plus, X } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
+import { FlaskConical, Plus, SquareArrowOutUpRight, X } from "lucide-react";
+import { getGetUpfSummaryQueryKey, useListIngredients } from "@workspace/api-client-react";
+import { ingredientGapChips, type NutrientKey } from "@workspace/product-labels";
 import { IngredientCombobox } from "@/components/ingredient-combobox";
+import { EditIngredientDialog } from "@/components/declaration-fix";
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
+import { sharedNameDetail, sharedNameIds } from "@/lib/ingredient-duplicates";
 import { cn } from "@/lib/utils";
 import { formatLineCost } from "@/lib/recipe-line-cost";
 import { QuantityInput } from "./quantity-input";
@@ -83,8 +88,26 @@ export function LineRows(props: LineRowsProps) {
   // removing a row doesn't hand its setting to the next one).
   const [display, setDisplay] = useState<Record<string, "g" | "kg">>({});
 
+  // Ingredient rows: tell look-alike records apart and open the one in use
+  // (Graeme, 2026-10-23: "click on these ingredients … so I can see exactly
+  // which one we're using"). Objective G.
+  const qc = useQueryClient();
+  const [openIngredientId, setOpenIngredientId] = useState<number | null>(null);
+  // The full records (nutrients aren't on the page's option list) — the same
+  // cached /api/ingredients query the pages use, so a save refreshes both.
+  const { data: allIngredients } = useListIngredients();
+  const recordById = useMemo(() => {
+    const m = new Map<number, Partial<Record<NutrientKey, number | string | null>> & { novaClass?: number | null }>();
+    for (const i of allIngredients ?? []) m.set(i.id, i as unknown as Partial<Record<NutrientKey, number | string | null>> & { novaClass?: number | null });
+    return m;
+  }, [allIngredients]);
+  const sharedIds = useMemo(
+    () => (props.kind === "ingredient" ? sharedNameIds(props.options) : new Set<number>()),
+    [props.kind, props.options],
+  );
+
   const pickerOptions = props.kind === "ingredient"
-    ? props.options
+    ? props.options.map(o => ({ id: o.id, name: o.name, unit: o.unit, detail: sharedNameDetail(o, sharedIds) }))
     : props.options.map(s => ({ id: s.id, name: s.name, unit: s.yieldUnit }));
 
   const grid = productionTicks
@@ -134,21 +157,38 @@ export function LineRows(props: LineRowsProps) {
           const targets = link ? link.targets(row) : [];
           const ratio = ing?.processingRatio;
           const subUpf = sub && props.kind === "subRecipe" ? props.upfById?.get(sub.id) : undefined;
+          const record = ing ? recordById.get(ing.id) : undefined;
+          const gaps = record ? ingredientGapChips(record) : [];
           return (
             <div key={field.id} className="space-y-1">
               <div className={cn("grid gap-x-2 items-center", grid)}>
-                <IngredientCombobox
-                  value={pickedId}
-                  onChange={id => set(`${path}.${idField}`, id)}
-                  options={pickerOptions}
-                  placeholder={props.kind === "ingredient" ? "Select ingredient…" : "Select sub-recipe…"}
-                  emptyText={props.kind === "ingredient" ? undefined : "No sub-recipes found"}
-                  onCreateNew={props.kind === "ingredient" && props.onQuickAdd ? () => props.onQuickAdd?.(index) : undefined}
-                />
+                <div className="flex items-center gap-1 min-w-0">
+                  <IngredientCombobox
+                    value={pickedId}
+                    onChange={id => set(`${path}.${idField}`, id)}
+                    options={pickerOptions}
+                    placeholder={props.kind === "ingredient" ? "Select ingredient…" : "Select sub-recipe…"}
+                    emptyText={props.kind === "ingredient" ? undefined : "No sub-recipes found"}
+                    onCreateNew={props.kind === "ingredient" && props.onQuickAdd ? () => props.onQuickAdd?.(index) : undefined}
+                  />
+                  {props.kind === "ingredient" && ing && (
+                    <button
+                      type="button"
+                      onClick={() => setOpenIngredientId(ing.id)}
+                      className="shrink-0 inline-flex items-center gap-1 h-9 px-2 rounded-lg border border-border text-[11px] font-medium text-primary hover:bg-primary/10 transition-colors"
+                      title={`Open ${ing.name} (#${ing.id}) — its full ingredient record`}
+                      aria-label={`Open ingredient ${ing.name}, number ${ing.id}`}
+                      data-testid={`open-ingredient-${ing.id}`}
+                    >
+                      <span className="tabular-nums text-muted-foreground">#{ing.id}</span>
+                      <SquareArrowOutUpRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
                 {props.kind === "ingredient" ? (
-                  <span className="text-[11px] text-muted-foreground truncate inline-flex items-center gap-1" title={ing?.supplierName ?? undefined}>
+                  <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1 min-w-0">
                     <UpfChip novaClass={ing?.novaClass} markers={ing?.novaMarkers} />
-                    <span className="truncate">{ing?.supplierName ?? <span className="text-muted-foreground/40">—</span>}</span>
+                    <span className="break-words min-w-0">{ing?.supplierName ?? <span className="text-muted-foreground/40">—</span>}</span>
                   </span>
                 ) : subUpf != null && (subUpf.upfPercent ?? 0) > 0 ? (
                   <UpfPercentPill
@@ -209,6 +249,23 @@ export function LineRows(props: LineRowsProps) {
                   <X className="w-4 h-4" />
                 </button>
               </div>
+
+              {gaps.length > 0 && ing && (
+                <div className="pl-1 flex items-center gap-1.5 flex-wrap">
+                  {gaps.map(g => (
+                    <button
+                      key={g.kind}
+                      type="button"
+                      onClick={() => setOpenIngredientId(ing.id)}
+                      title={g.title}
+                      className="min-h-7 px-2 py-0.5 rounded-full border border-amber-400 bg-amber-50 dark:bg-amber-900/20 text-[11px] font-semibold text-amber-800 dark:text-amber-200 hover:bg-amber-100 dark:hover:bg-amber-900/40 transition-colors"
+                      data-testid={`gap-${g.kind}-${ing.id}`}
+                    >
+                      {g.label}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               {ratioNote && ratio != null && ratio < 1 && (
                 <div className="ml-1 text-xs text-amber-600 flex items-center gap-1">
@@ -272,6 +329,17 @@ export function LineRows(props: LineRowsProps) {
       >
         <Plus className="w-4 h-4" /> {addLabel}
       </button>
+
+      {openIngredientId != null && (
+        <EditIngredientDialog
+          ingredientId={openIngredientId}
+          focusDeclaration={false}
+          onClose={() => setOpenIngredientId(null)}
+          // The list, the record and the nutrition / deck checks are refreshed
+          // by the dialog; the UPF roll-up behind the row badges is ours.
+          onSaved={() => { void qc.invalidateQueries({ queryKey: getGetUpfSummaryQueryKey() }); }}
+        />
+      )}
     </div>
   );
 }
