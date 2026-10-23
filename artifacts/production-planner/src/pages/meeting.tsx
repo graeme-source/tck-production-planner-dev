@@ -25,7 +25,7 @@ import {
   Sparkles, ChefHat, Truck, ShoppingBag, AlertCircle, FileText, MessageCircle,
   HeartHandshake, Activity, BookOpen, Award, Loader2, ClipboardCheck, Sun,
   CheckCircle2, Heart, Settings, Edit3, Calendar, GripVertical, Plus, Trash2, Save,
-  Shuffle, Camera, Image as ImageIcon, Info, Users, AlertTriangle,
+  Shuffle, Camera, Image as ImageIcon, Info, Users, AlertTriangle, BellRing,
 } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -53,6 +53,9 @@ import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { DictateButton } from "@/components/dictate-button";
 import { RecipeSwatch } from "@/components/recipe-swatch";
 import { WhosOnTodayBoard } from "@/components/whos-on-today-board";
+import { fallbackGratitudePhotoUrl, gratitudeImageMode } from "@/lib/gratitude-photo";
+import { withStandingRemindersSlide, reminderLinesFromNote, STANDING_REMINDERS_KIND, STANDING_REMINDERS_SLIDE_ID } from "@/lib/meeting-reminders";
+import { StandingRemindersCard, StandingRemindersSlide, useCanEditReminders, useReminderActions } from "@/components/meeting-reminders";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -166,6 +169,11 @@ export interface DashboardData {
   gratitude: Array<{ id: number; fromName: string; toName: string | null; content: string }>;
 }
 
+/** Fill a built-in slide (the standing Reminders slide) out to a full MeetingSlide. */
+function toMeetingSlide(s: { id: number; kind: string; title: string; orderPosition: number }): MeetingSlide {
+  return { ...s, contentMd: null, configJson: null };
+}
+
 export async function fetchDashboard(): Promise<DashboardData> {
   const res = await fetch(`${BASE}/api/morning-meetings/dashboard`, { credentials: "include" });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -264,6 +272,7 @@ type SlideKind =
   | "recent_improvements"
   | "lesson"
   | "gratitude"
+  | "standing_reminders"
   | "custom_markdown";
 
 const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: string; fallbackTitle: string }> = {
@@ -282,6 +291,7 @@ const SLIDE_KIND_META: Record<SlideKind, { icon: React.ElementType; color: strin
   recent_improvements: { icon: CheckCircle2,  color: "text-green-500",   fallbackTitle: "Recent Improvements" },
   lesson:              { icon: BookOpen,      color: "text-purple-500",  fallbackTitle: "Today's Lean Lesson" },
   gratitude:           { icon: Heart,         color: "text-rose-500",    fallbackTitle: "Gratitude" },
+  standing_reminders:  { icon: BellRing,      color: "text-amber-500",   fallbackTitle: "Reminders" },
   custom_markdown:     { icon: BookOpen,      color: "text-slate-500",   fallbackTitle: "Note" },
 };
 
@@ -347,7 +357,9 @@ export default function MeetingPage() {
   // the meeting hasn't been started yet `data.slides` is empty and the
   // user is still on the setup screen, so this is only consulted in
   // meeting mode.
-  const slides = useMemo<MeetingSlide[]>(() => data?.slides ?? [], [data?.slides]);
+  // Every meeting also gets the standing Reminders slide (lib/meeting-reminders):
+  // it isn't in the template — like Safety, it's always there.
+  const slides = useMemo<MeetingSlide[]>(() => withStandingRemindersSlide(data?.slides ?? [], toMeetingSlide), [data?.slides]);
   // The runner always shows the live day. "Preview tomorrow's meeting" used
   // to set this, but it could only ever borrow tomorrow's slide list — the
   // numbers stayed today's — so it read as broken and was removed. The prop
@@ -760,7 +772,7 @@ function SetupLessonCard({ data, ensureMeeting, onReadBriefing }: {
   if (!data.lesson) return null;
   const overridden = data.meeting?.exampleId != null;
   return (
-    <div className="glass-panel rounded-2xl p-6 mb-6">
+    <div className="glass-panel rounded-2xl p-5 sm:p-6">
       <div className="flex items-start justify-between mb-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
@@ -862,34 +874,44 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
   }
 
   const hasPhoto = !!meeting?.hasGratitudePhoto;
+  const thumbSrc = hasPhoto && meeting
+    ? `${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`
+    : fallbackGratitudePhotoUrl(data.today, meeting?.gratitudeSeed ?? 0);
+  // Same rule as the slide (lib/gratitude-photo): an image that fails to
+  // load shows the prompt, never a broken-image icon with alt text.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const mode = gratitudeImageMode(hasPhoto, failedSrc === thumbSrc);
+  const prompt = pickGratitudeForDay(data.today);
   return (
-    <div className="glass-panel rounded-2xl p-6 mb-6">
-      <div className="flex items-center justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Gratitude photo</p>
-          <p className="text-sm text-muted-foreground">
-            {hasPhoto
-              ? "Loaded — it'll fill the gratitude slide, uncropped."
-              : "This is today's automatic image — shuffle it if it's a dud, or add your own photo."}
-          </p>
-        </div>
-        {hasPhoto && meeting ? (
-          <img
-            src={`${BASE}/api/morning-meetings/${meeting.id}/gratitude-photo?v=${cacheBust}`}
-            alt="Gratitude"
-            className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
-          />
+    <div className="glass-panel rounded-2xl p-5 sm:p-6">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">Gratitude photo</p>
+      {/* The picture the slide will actually show today, big enough to judge
+          — a dud (the cat incident) is caught here, not live on the slide. */}
+      <div className="relative w-full rounded-xl overflow-hidden bg-black/5 border border-border" style={{ aspectRatio: "3 / 2" }}>
+        {mode === "prompt" ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-center gap-2 p-4 bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30">
+            <div className="text-5xl leading-none">{prompt.emoji}</div>
+            <p className="text-base font-semibold leading-snug">{prompt.line}</p>
+          </div>
         ) : (
-          // The automatic image the slide will actually show today, so a dud
-          // (the cat incident) is caught here rather than live on slide 13.
           <img
-            key={meeting?.gratitudeSeed ?? 0}
-            src={fallbackGratitudePhotoUrl(data.today, meeting?.gratitudeSeed ?? 0)}
-            alt="Today's automatic gratitude image"
-            className="w-28 h-16 rounded-xl object-cover bg-black/5 border border-border flex-shrink-0"
+            key={thumbSrc}
+            src={thumbSrc}
+            alt={hasPhoto ? "Today's gratitude photo" : "Today's automatic gratitude image"}
+            className={cn("absolute inset-0 w-full h-full", hasPhoto ? "object-contain" : "object-cover")}
+            onError={() => setFailedSrc(thumbSrc)}
           />
         )}
       </div>
+      <p className="text-sm text-muted-foreground mt-3">
+        {mode === "uploaded"
+          ? "Loaded — it'll fill the gratitude slide, uncropped."
+          : mode === "automatic"
+            ? "Today's automatic image — shuffle it if it's a dud, or add your own photo."
+            : hasPhoto
+              ? "Your photo didn't load — try replacing it. The slide will show the gratitude prompt instead."
+              : "The automatic image service isn't responding, so the slide will show this gratitude prompt. Add your own photo to use a picture."}
+      </p>
       <div className="flex gap-2 mt-3 flex-wrap">
         {/* No cropper (Graeme, 2026-09-11): iPhone HEIC shots can't be
             decoded by the browser canvas, so cropping blocked uploads
@@ -921,6 +943,31 @@ function SetupGratitudeCard({ data, ensureMeeting }: {
         )}
       </div>
     </div>
+  );
+}
+
+/** Small gratitude preview for the get-ahead card. Same rule as the slide
+ *  (lib/gratitude-photo): an image that won't load shows the day's prompt
+ *  emoji, never a broken-image icon with its alt text. */
+function GratitudeThumb({ src, hasPhoto, dateIso }: { src: string; hasPhoto: boolean; dateIso: string }) {
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const mode = gratitudeImageMode(hasPhoto, failedSrc === src);
+  if (mode === "prompt") {
+    return (
+      <div className="w-28 h-16 rounded-xl border border-border flex-shrink-0 flex items-center justify-center text-3xl bg-gradient-to-br from-rose-100 via-amber-50 to-emerald-100 dark:from-rose-900/30 dark:via-amber-900/20 dark:to-emerald-900/30"
+        title="The image didn't load — the slide will show the gratitude prompt">
+        {pickGratitudeForDay(dateIso).emoji}
+      </div>
+    );
+  }
+  return (
+    <img
+      key={src}
+      src={src}
+      alt={hasPhoto ? "Gratitude photo" : "Automatic gratitude image"}
+      onError={() => setFailedSrc(src)}
+      className={cn("rounded-xl bg-black/5 border border-border flex-shrink-0", hasPhoto ? "w-16 h-16 object-contain" : "w-28 h-16 object-cover")}
+    />
   );
 }
 
@@ -970,7 +1017,7 @@ function TrialWelcomeCard({ data, ensureMeeting }: {
 }) {
   const queryClient = useQueryClient();
   return (
-    <div className="glass-panel rounded-2xl p-6 mb-6">
+    <div className="glass-panel rounded-2xl p-5 sm:p-6">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Trial shifts today</p>
       <p className="text-sm text-muted-foreground mb-3">
         Anyone in on a trial? Their name gets a warm welcome on the opening slide. Leave empty and nothing shows.
@@ -1107,7 +1154,7 @@ function SetupTomorrowCard({ date }: { date: string }) {
 
   const hasPhoto = !!setup?.hasGratitudePhoto;
   return (
-    <div className="glass-panel rounded-2xl p-6 mb-6 border border-amber-500/30">
+    <div className="glass-panel rounded-2xl p-5 sm:p-6 border border-amber-500/30">
       <div className="flex items-start justify-between mb-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-1">
@@ -1181,20 +1228,13 @@ function SetupTomorrowCard({ date }: { date: string }) {
                 : "Tomorrow's automatic image — shuffle it if it's a dud, or add your own photo."}
             </p>
           </div>
-          {hasPhoto && setup?.meetingId ? (
-            <img
-              src={`${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`}
-              alt="Tomorrow's gratitude"
-              className="w-16 h-16 rounded-xl object-contain bg-black/5 border border-border flex-shrink-0"
-            />
-          ) : (
-            <img
-              key={setup?.gratitudeSeed ?? 0}
-              src={fallbackGratitudePhotoUrl(date, setup?.gratitudeSeed ?? 0)}
-              alt="Tomorrow's automatic gratitude image"
-              className="w-28 h-16 rounded-xl object-cover bg-black/5 border border-border flex-shrink-0"
-            />
-          )}
+          <GratitudeThumb
+            dateIso={date}
+            hasPhoto={!!(hasPhoto && setup?.meetingId)}
+            src={hasPhoto && setup?.meetingId
+              ? `${BASE}/api/morning-meetings/${setup.meetingId}/gratitude-photo?v=${cacheBust}`
+              : fallbackGratitudePhotoUrl(date, setup?.gratitudeSeed ?? 0)}
+          />
         </div>
         <div className="flex gap-2 mt-3 flex-wrap">
           <input ref={tomorrowCameraRef} type="file" accept="image/*" capture="environment" className="hidden"
@@ -1380,7 +1420,12 @@ function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
   const [adding, setAdding] = useState(false);
   const [editingReminderId, setEditingReminderId] = useState<number | null>(null);
   const [reminderText, setReminderText] = useState("");
-  const slides = data.slides ?? [];
+  const canKeep = useCanEditReminders();
+  const { addMany } = useReminderActions();
+  // The day's slides as the room will see them — including the built-in
+  // standing Reminders slide, which can't be removed from here (it's on
+  // every meeting; its reminders are removed one by one instead).
+  const slides = withStandingRemindersSlide(data.slides ?? [], toMeetingSlide);
 
   const refresh = () => queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
 
@@ -1397,41 +1442,55 @@ function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
     try {
       const id = await ensureMeeting();
       if (!id) return;
-      const res = await fetch(`${BASE}/api/morning-meetings/${id}/slides`, {
+      await fetch(`${BASE}/api/morning-meetings/${id}/slides`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ kind, title: label }),
       });
-      const row = await res.json();
       refresh();
       setAdding(false);
-      // A fresh Reminders note opens straight into its editor.
-      if (kind === "custom_markdown" && label === "Reminders" && row?.id) {
-        setEditingReminderId(row.id);
-        setReminderText("");
-      }
     } finally { setBusy(false); }
   }
 
   async function saveReminder(slideId: number) {
     setBusy(true);
     try {
-      await fetch(`${BASE}/api/morning-meetings/slides/${slideId}`, {
+      const res = await fetch(`${BASE}/api/morning-meetings/slides/${slideId}`, {
         method: "PUT", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ contentMd: reminderText }),
       });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       setEditingReminderId(null);
       refresh();
-      toast({ title: "Reminders saved" });
+      toast({ title: "Note saved" });
+    } catch (e) {
+      toast({ title: "Couldn't save the note", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
+    } finally { setBusy(false); }
+  }
+
+  /** "Keep every day": an old one-day note becomes standing reminders (one
+   *  per line). The day's note slide is only taken off AFTER the reminders
+   *  are safely saved, so nothing can be lost in between. */
+  async function keepEveryDay(slide: MeetingSlide) {
+    const lines = reminderLinesFromNote(slide.contentMd);
+    if (lines.length === 0) return;
+    setBusy(true);
+    try {
+      await addMany.mutateAsync(lines.map(text => ({ text })));
+      await fetch(`${BASE}/api/morning-meetings/slides/${slide.id}`, { method: "DELETE", credentials: "include" });
+      refresh();
+      toast({ title: `${lines.length} reminder${lines.length === 1 ? "" : "s"} kept every day`, description: "They're on the Reminders slide until removed." });
+    } catch (e) {
+      toast({ title: "Couldn't keep those reminders", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
     } finally { setBusy(false); }
   }
 
   return (
-    <div className="glass-panel rounded-2xl p-6 mb-6">
+    <div className="glass-panel rounded-2xl p-5 sm:p-6">
       <div className="flex items-center justify-between gap-3 mb-1">
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Today's slides</p>
-        <button onClick={onEditToday} className="text-xs text-muted-foreground hover:text-foreground underline">
+        <button onClick={onEditToday} className="text-sm text-muted-foreground hover:text-foreground underline">
           Full editor
         </button>
       </div>
@@ -1446,31 +1505,50 @@ function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
           Prepare today's slides (from the template)
         </button>
       ) : (
-        <ul className="mt-2 space-y-1">
+        <ul className="mt-2 space-y-0.5">
           {slides.map(s => {
             const meta = SLIDE_KIND_META[s.kind as SlideKind];
             const Icon = meta?.icon ?? FileText;
-            const isReminder = s.kind === "custom_markdown";
+            const builtIn = s.id === STANDING_REMINDERS_SLIDE_ID;
+            const isNote = s.kind === "custom_markdown";
+            const noteLines = isNote ? reminderLinesFromNote(s.contentMd) : [];
             return (
               <li key={s.id} className="group">
                 <div className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 hover:bg-secondary/30">
                   <Icon className={cn("w-4 h-4 flex-shrink-0", meta?.color ?? "text-muted-foreground")} />
-                  <span className="text-sm flex-1 min-w-0 truncate">{s.title}</span>
-                  {isReminder && (
+                  <span className="text-sm flex-1 min-w-0 break-words">
+                    {s.title}
+                    {builtIn && <span className="text-muted-foreground"> · every day</span>}
+                  </span>
+                  {isNote && (
                     <button
                       onClick={() => { setEditingReminderId(editingReminderId === s.id ? null : s.id); setReminderText(s.contentMd ?? ""); }}
-                      className="p-1 rounded-md text-muted-foreground hover:text-foreground" title="Edit content" aria-label="Edit slide content">
-                      <Edit3 className="w-3.5 h-3.5" />
+                      className="p-1.5 rounded-md text-muted-foreground hover:text-foreground" title="Edit content" aria-label="Edit slide content">
+                      <Edit3 className="w-4 h-4" />
                     </button>
                   )}
-                  <button
-                    onClick={() => removeSlide(s.id)}
-                    disabled={busy}
-                    className="p-1 rounded-md text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive disabled:opacity-30"
-                    title="Remove from today's meeting" aria-label={`Remove ${s.title}`}>
-                    <X className="w-3.5 h-3.5" />
-                  </button>
+                  {!builtIn && (
+                    <button
+                      onClick={() => removeSlide(s.id)}
+                      disabled={busy}
+                      className="p-1.5 rounded-md text-muted-foreground sm:opacity-0 sm:group-hover:opacity-100 focus:opacity-100 hover:text-destructive disabled:opacity-30"
+                      title="Remove from today's meeting" aria-label={`Remove ${s.title}`}>
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
+                {/* An old one-day note (how reminders used to work): offer to
+                    turn it into standing reminders. */}
+                {isNote && canKeep && noteLines.length > 0 && editingReminderId !== s.id && (
+                  <div className="ml-8 mr-2 mb-1.5">
+                    <button
+                      onClick={() => keepEveryDay(s)}
+                      disabled={busy}
+                      className="px-3 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+                      <BellRing className="w-3.5 h-3.5 text-amber-500" /> Keep {noteLines.length === 1 ? "this" : `these ${noteLines.length}`} every day
+                    </button>
+                  </div>
+                )}
                 {editingReminderId === s.id && (
                   <div className="ml-8 mr-2 mb-2 space-y-1.5">
                     <textarea
@@ -1494,28 +1572,22 @@ function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
 
       {slides.length > 0 && (
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            onClick={() => addSlide("custom_markdown", "Reminders")}
-            disabled={busy}
-            className="px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
-            <Plus className="w-3.5 h-3.5" /> Reminders slide
-          </button>
           {adding ? (
             <select
-              className="px-3 py-1.5 rounded-lg border border-border bg-background text-sm"
+              className="px-3 py-2 rounded-lg border border-border bg-background text-sm"
               defaultValue=""
               onChange={e => {
                 const item = SLIDE_KIND_CATALOG.find(k => k.kind === e.target.value);
                 if (item) addSlide(item.kind, item.label);
               }}
             >
-              <option value="" disabled>Add a slide…</option>
+              <option value="" disabled>Add a slide for today only…</option>
               {SLIDE_KIND_CATALOG.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}
             </select>
           ) : (
             <button onClick={() => setAdding(true)} disabled={busy}
-              className="px-3 py-1.5 rounded-lg border border-border text-sm text-muted-foreground hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
-              <Plus className="w-3.5 h-3.5" /> Other slide
+              className="px-3 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-secondary/40 disabled:opacity-50 inline-flex items-center gap-1.5">
+              <Plus className="w-4 h-4" /> Add a slide for today
             </button>
           )}
         </div>
@@ -1524,6 +1596,11 @@ function SetupSlidesCard({ data, ensureMeeting, onEditToday }: {
   );
 }
 
+/** The prep page. Full width (no max-width container — cards flow into 1–3
+ *  columns to suit the screen) and the Start button lives in a bar pinned
+ *  to the bottom, so it's on screen the moment the page opens at any size
+ *  (Graeme, 23 Oct 2026). The bar is a flex sibling of the scrolling area,
+ *  not an overlay, so it never covers the last card. */
 function SetupScreen({
   data, ensureMeeting, onReadBriefing, onStart, starting, onExit,
   onEditToday, onEditTemplate, onEditCurriculum, isAdmin,
@@ -1539,76 +1616,89 @@ function SetupScreen({
   onEditCurriculum: () => void;
   isAdmin: boolean;
 }) {
+  // Cards stack down each column; break-inside-avoid keeps a card whole.
+  const cell = "break-inside-avoid mb-4 lg:mb-5";
   return (
-    <div className="fixed inset-0 bg-background overflow-y-auto">
-      <div className="max-w-3xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-8">
-          <button onClick={onExit} className="flex items-center gap-2 text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="w-4 h-4" /> Dashboard
-          </button>
-          <p className="text-xs text-muted-foreground">{format(new Date(data.today + "T00:00:00"), "EEEE d MMMM yyyy")}</p>
-        </div>
+    <div className="fixed inset-0 bg-background flex flex-col">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="w-full px-4 sm:px-6 lg:px-8 pt-5 pb-4">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <button onClick={onExit} className="flex items-center gap-2 text-muted-foreground hover:text-foreground h-10">
+              <ArrowLeft className="w-4 h-4" /> Dashboard
+            </button>
+            <p className="text-sm text-muted-foreground text-right">{format(new Date(data.today + "T00:00:00"), "EEEE d MMMM yyyy")}</p>
+          </div>
 
-        <div className="flex items-center gap-3 mb-2">
-          <Sparkles className="w-7 h-7 text-amber-500" />
-          <h1 className="text-3xl font-display font-bold">Morning Meeting</h1>
-        </div>
-        <p className="text-muted-foreground mb-6">Two Second Lean — 10 minutes. Safety, stretches, the plan, today's lesson, gratitude.</p>
-
-        {/* Editor + scheduling row — sits above the host setup so the
-            host can see at a glance that today's meeting is editable. */}
-        <div className="flex flex-wrap items-center gap-2 mb-8">
-          <button
-            onClick={onEditToday}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
-          >
-            <Edit3 className="w-3.5 h-3.5" />
-            Edit today's meeting
-          </button>
-          {isAdmin && (
-            <>
+          <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-3 mb-5">
+            <div className="min-w-0">
+              <div className="flex items-center gap-3 mb-1">
+                <Sparkles className="w-7 h-7 text-amber-500" />
+                <h1 className="text-3xl font-display font-bold">Morning Meeting</h1>
+              </div>
+              <p className="text-muted-foreground">Two Second Lean — 10 minutes. Safety, stretches, the plan, today's lesson, gratitude.</p>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
               <button
-                onClick={onEditTemplate}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
+                onClick={onEditToday}
+                className="flex items-center gap-1.5 px-3 h-10 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40"
               >
-                <Settings className="w-3.5 h-3.5" />
-                Edit master template
+                <Edit3 className="w-4 h-4" />
+                Edit today's meeting
               </button>
-              <button
-                onClick={onEditCurriculum}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
-              >
-                <BookOpen className="w-3.5 h-3.5" />
-                Lean curriculum
-              </button>
-            </>
-          )}
+              {isAdmin && (
+                <>
+                  <button
+                    onClick={onEditTemplate}
+                    className="flex items-center gap-1.5 px-3 h-10 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
+                  >
+                    <Settings className="w-4 h-4" />
+                    Edit master template
+                  </button>
+                  <button
+                    onClick={onEditCurriculum}
+                    className="flex items-center gap-1.5 px-3 h-10 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 text-muted-foreground"
+                  >
+                    <BookOpen className="w-4 h-4" />
+                    Lean curriculum
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+
+          <div className="columns-1 md:columns-2 xl:columns-3 gap-4 lg:gap-5">
+            <div className={cell}><StandingRemindersCard /></div>
+            {data.lesson && <div className={cell}><SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} /></div>}
+            <div className={cell}><TrialWelcomeCard data={data} ensureMeeting={ensureMeeting} /></div>
+            <div className={cell}><SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} /></div>
+            <div className={cell}><SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} /></div>
+            {/* data.tomorrow is the next MEETING day (Monday on a Friday) — the
+                old calendar-tomorrow here filed Friday's photo/lesson under a
+                Saturday meeting that never runs. */}
+            <div className={cell}><SetupTomorrowCard date={data.tomorrow} /></div>
+          </div>
         </div>
+      </div>
 
-        <SetupLessonCard data={data} ensureMeeting={ensureMeeting} onReadBriefing={onReadBriefing} />
-        <SetupGratitudeCard data={data} ensureMeeting={ensureMeeting} />
-        <TrialWelcomeCard data={data} ensureMeeting={ensureMeeting} />
-        <SetupSlidesCard data={data} ensureMeeting={ensureMeeting} onEditToday={onEditToday} />
-        {/* data.tomorrow is the next MEETING day (Monday on a Friday) — the
-            old calendar-tomorrow here filed Friday's photo/lesson under a
-            Saturday meeting that never runs. */}
-        <SetupTomorrowCard date={data.tomorrow} />
-
-        <button
-          onClick={onStart}
-          disabled={starting}
-          className="w-full px-6 py-4 rounded-2xl bg-primary text-primary-foreground text-lg font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
-        >
-          {starting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
-          Start meeting
-        </button>
-
-        {data.meeting && (
-          <p className="text-center text-xs text-muted-foreground mt-3">
-            Meeting already started today by {data.meeting.hostName ?? "someone"} at {format(new Date(data.meeting.startedAt), "HH:mm")}
-            {data.meeting.endedAt ? ` · ended ${format(new Date(data.meeting.endedAt), "HH:mm")}` : ""}
+      {/* Pinned Start bar — always visible; safe-area aware for the iPad /
+          iPhone home indicator. */}
+      <div className="shrink-0 border-t border-border bg-background/95 backdrop-blur px-4 sm:px-6 lg:px-8 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+          <p className="text-sm text-muted-foreground flex-1 min-w-0 order-2 sm:order-1 text-center sm:text-left">
+            {data.meeting
+              ? <>Meeting already started today by {data.meeting.hostName ?? "someone"} at {format(new Date(data.meeting.startedAt), "HH:mm")}
+                  {data.meeting.endedAt ? ` · ended ${format(new Date(data.meeting.endedAt), "HH:mm")}` : ""}</>
+              : "Ready when you are."}
           </p>
-        )}
+          <button
+            onClick={onStart}
+            disabled={starting}
+            className="order-1 sm:order-2 w-full sm:w-auto sm:min-w-[280px] h-14 px-8 rounded-2xl bg-primary text-primary-foreground text-lg font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
+          >
+            {starting ? <Loader2 className="w-5 h-5 animate-spin" /> : <Play className="w-5 h-5" />}
+            Start meeting
+          </button>
+        </div>
       </div>
     </div>
   );
@@ -1901,6 +1991,7 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "lesson":
     case "learning": return <LearningSlide data={data} slide={slide} />;
     case "gratitude": return <GratitudeSlide data={data} onRefresh={onRefresh} slide={slide} />;
+    case STANDING_REMINDERS_KIND: return <StandingRemindersSlide title={slide.title} />;
     case "custom_markdown": return <CustomMarkdownSlide slide={slide} />;
     default: return <CustomMarkdownSlide slide={slide} />;
   }
@@ -3547,29 +3638,6 @@ function pickGratitudeForDay(dateIso: string) {
   return GRATITUDE_PROMPTS[dateSeed(dateIso) % GRATITUDE_PROMPTS.length];
 }
 
-// Fallback photo themes when no photo is uploaded — deliberately narrowed
-// to reliably beautiful subjects only (Graeme, 2026-08-25): sunsets,
-// flowers, beaches. One theme is chosen per day, deterministically from
-// the date.
-const GRATITUDE_PHOTO_THEMES = [
-  "sunset", "sunset,sky", "sunset,sea",
-  "flowers", "flowers,garden", "flowers,meadow",
-  "beach", "beach,ocean",
-] as const;
-
-// Live, key-less themed image for the fallback. LoremFlickr serves a random
-// Creative-Commons photo matching the tag; `lock=<seed>` pins it for the whole
-// day so it doesn't reshuffle on every render, but rotates day to day.
-// `shuffle` is the meeting's stored shuffle counter — bumping it from the
-// setup screen re-rolls the day's pick when it's a dud (the cat incident,
-// Graeme 2026-09-11). Prime multiplier so consecutive bumps land on a
-// genuinely different lock, not the next photo in the same sequence.
-export function fallbackGratitudePhotoUrl(dateIso: string, shuffle = 0): string {
-  const seed = dateSeed(dateIso) + shuffle * 7919;
-  const theme = GRATITUDE_PHOTO_THEMES[seed % GRATITUDE_PHOTO_THEMES.length];
-  return `https://loremflickr.com/1200/800/${encodeURIComponent(theme)}?lock=${seed}`;
-}
-
 function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide: MeetingSlide; onRefresh: () => void }) {
   void slide;
   void onRefresh;
@@ -3583,16 +3651,15 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
   // card, or the get-ahead card the afternoon before). The slide itself
   // carries no upload/caption controls — it's a presentation, not a form
   // (Graeme, 2026-08-25).
-  const [fallbackFailed, setFallbackFailed] = useState(false);
-
   const uploadedUrl = meetingId ? `${BASE}/api/morning-meetings/${meetingId}/gratitude-photo` : "";
   const fallbackUrl = fallbackGratitudePhotoUrl(todayIso, data.meeting?.gratitudeSeed ?? 0);
-
-  // Show an image whenever we have an uploaded one, or the live themed fallback
-  // hasn't failed to load. If the fallback can't load (e.g. offline), drop back
-  // to the original emoji + prompt so the slide is never blank.
-  const showImage = hasPhoto || !fallbackFailed;
   const imageSrc = hasPhoto ? uploadedUrl : fallbackUrl;
+
+  // Show an image unless it failed to load (photo service down, offline) —
+  // then drop back to the original emoji + prompt so the slide is never
+  // blank. Keyed by src, so a new photo / shuffle gets a fresh try.
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
+  const showImage = gratitudeImageMode(hasPhoto, failedSrc === imageSrc) !== "prompt";
 
   // Heavy text shadow so the overlaid caption stays legible over ANY photo,
   // light or dark, from across the room.
@@ -3623,7 +3690,7 @@ function GratitudeSlide({ data, slide, onRefresh }: { data: DashboardData; slide
             src={imageSrc}
             alt={hasPhoto ? (serverCaption || "Today's gratitude photo") : "Something to be grateful for"}
             className={cn("absolute inset-0 w-full h-full", hasPhoto ? "object-contain" : "object-cover")}
-            onError={() => { if (!hasPhoto) setFallbackFailed(true); }}
+            onError={() => setFailedSrc(imageSrc)}
           />
           {/* Scrim — darkens top + bottom so the label and caption read over
               any image without hiding the middle of the photo. */}
