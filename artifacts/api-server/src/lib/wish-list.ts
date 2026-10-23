@@ -450,3 +450,20 @@ export function readProductPage(html: string, pageUrl: string | null): ProductPa
     storeName: storeNameFor(pageUrl, siteName ?? brandName),
   };
 }
+
+/** A readable name from the link itself, for when the shop won't let us
+ *  read the page: the last meaningful path segment, dashes to spaces,
+ *  first letter capitalised. Null if nothing usable. */
+export function titleFromUrl(url: string | null): string | null {
+  if (!url) return null;
+  let path: string;
+  try { path = decodeURIComponent(new URL(url).pathname); } catch { return null; }
+  const segments = path.split("/").filter(Boolean);
+  // Wanted: a slug with real words in it (three lowercase letters in a
+  // row), not a product code like an Amazon ASIN or "c123".
+  const best = [...segments].reverse().find(s => /[a-z]{3,}/.test(s.replace(/\.(html?|php|aspx?)$/i, "")) && !/^(dp|gp|product|products)$/i.test(s));
+  if (!best) return null;
+  const words = best.replace(/\.(html?|php|aspx?)$/i, "").replace(/[-_+]+/g, " ").replace(/\s+/g, " ").trim();
+  if (words.length < 3) return null;
+  return (words[0].toUpperCase() + words.slice(1)).slice(0, 300);
+}

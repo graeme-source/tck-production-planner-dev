@@ -11,6 +11,7 @@ import {
   storeNameFor,
   stripSiteSuffix,
   summariseVotes,
+  titleFromUrl,
   titlesNearlySame,
   unacknowledgedItems,
   urlDuplicateKey,
@@ -161,6 +162,15 @@ describe("stripSiteSuffix / storeNameFor", () => {
     expect(storeNameFor("https://www.amazon.co.uk/dp/B00AB12CDE")).toBe("Amazon");
     expect(storeNameFor("https://www.some-shop.co.uk/x")).toBe("some-shop.co.uk");
     expect(storeNameFor("https://www.some-shop.co.uk/x", "Some Shop")).toBe("Some Shop");
+  });
+});
+
+describe("titleFromUrl", () => {
+  it("makes a name from the link when the page can't be read", () => {
+    expect(titleFromUrl(GGM_CLEAN)).toBe("Commercial walk behind scrubber dryer work rate 1200 m2 h tanks 4 5l 7 5l incl charging cable kbssk");
+    expect(titleFromUrl("https://www.nisbets.co.uk/vogue-tongs-300mm/p/c123.html")).toBe("Vogue tongs 300mm");
+    expect(titleFromUrl("https://www.amazon.co.uk/dp/B00AB12CDE")).toBeNull();
+    expect(titleFromUrl("https://example.com/")).toBeNull();
   });
 });
 

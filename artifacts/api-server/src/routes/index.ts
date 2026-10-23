@@ -99,6 +99,7 @@ import aiRouter from "./ai";
 import recipeDesignerRouter from "./recipe-designer";
 import morningMeetingsRouter from "./morning-meetings";
 import meetingRemindersRouter from "./meeting-reminders";
+import wishListRouter from "./wish-list";
 import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
@@ -517,6 +518,8 @@ router.use("/morning-meetings", morningMeetingsRouter);
 // Standing meeting reminders (migration 0250): read for anyone signed in,
 // add/remove manager/admin (guarded inside).
 router.use("/meeting-reminders", meetingRemindersRouter);
+// Wish List — equipment & things we need (Graeme, 23 Oct 2026). Anyone signed in.
+router.use("/wish-list", wishListRouter);
 router.use("/end-of-day", endOfDayRouter);
 // Defects: anyone signed in may record one; edits, deletes and the type list
 // are guarded inside the router (routes/defects.ts).
