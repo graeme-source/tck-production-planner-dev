@@ -70,6 +70,8 @@ import { useModalScrollKeeper, useNoScrollAutoFocus } from "@/hooks/use-modal-sc
 import { createPortal } from "react-dom";
 import { getStationCount, isMacCheese, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID } from "../shared/constants";
 import { tinsCompleteFrom } from "../shared/tin-math";
+import { useMixingCookingRecipes } from "../shared/mixing-cooking-recipes";
+import { builderProgressLine } from "../shared/building-complete";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
 // Weight the cooked meat filling should come to once every tray is out of the
@@ -510,22 +512,10 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
       setEditSaving(false);
     }
   };
-  const [cookingRecipes, setCookingRecipes] = useState<PrepRecipeDetail[]>([]);
-  useEffect(() => {
-    fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
-      .then(r => r.json())
-      .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes(d.recipes ?? []))
-      .catch((err) => { console.warn("[MixingStation] Cooking recipes fetch failed:", err); });
-    const interval = setInterval(() => {
-      fetch(`/api/production-plans/${plan.id}/prep-requirements-by-recipe?station=prep_meat`, { credentials: "include" })
-        .then(r => r.json())
-        // Mac & Cheese prep (incl. its pigs-in-blankets cook temp) lives on the
-        // Mac & Cheese station — keep it out of the mixing tray-cooking flow.
-        .then((d: { recipes?: PrepRecipeDetail[] }) => setCookingRecipes((d.recipes ?? []).filter(r => !isMacCheese({ recipeCategory: r.recipeCategory }))))
-        .catch((err) => { console.warn("[MixingStation] Cooking recipes poll failed:", err); });
-    }, 10000);
-    return () => clearInterval(interval);
-  }, [plan.id]);
+  // One React Query hook with the Mac & Cheese filter applied to every load
+  // (first and refresh), so pigs in blankets can't flash up here (#205).
+  const { data: cookingRecipesData } = useMixingCookingRecipes<PrepRecipeDetail>(plan.id);
+  const cookingRecipes = cookingRecipesData ?? [];
 
   const [fillingData, setFillingData] = useState<FillingMixItem[]>([]);
   useEffect(() => {
@@ -1797,6 +1787,16 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
 
               <span>{mixingCount} / {target} batches total</span>
             </div>
+
+            {/* How far the builders are on this flavour — display only
+                (#160), from the same counts the Building station uses. */}
+            <p className="mt-1 text-sm font-medium text-amber-700 dark:text-amber-400">
+              {builderProgressLine({
+                target: item.batchesTarget ?? 0,
+                built: getStationCount(item, "building_1") + getStationCount(item, "building_2"),
+                markedComplete: !!item.builderMarkedCompleteAt,
+              })}
+            </p>
 
             {sched && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
               <div className="mt-1.5 space-y-0.5">

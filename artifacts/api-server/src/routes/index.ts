@@ -18,6 +18,7 @@ import recipeColoursRouter from "./recipe-colours";
 import recipeProductionRouteRouter from "./recipe-production-route";
 import recipeQuidRouter from "./recipe-quid";
 import productionPlansRouter from "./production-plans";
+import stationBreakNotesRouter from "./station-break-notes";
 import buildingTablesRouter from "./building-tables";
 import buildingTargetFinishRouter from "./building-target-finish";
 import doughMixProgressRouter from "./dough-mix-progress";
@@ -301,6 +302,8 @@ router.use("/factory-forecast", factoryForecastRouter);
 // End-of-week factory number for the Dispatch Orders panel (16 Oct 2026).
 router.use("/week-end-stock", weekEndStockRouter);
 router.use("/production-plans", productionPlansRouter);
+// Optional note on a station break ("Anything to note?", Fix queue #61).
+router.use("/station-breaks", stationBreakNotesRouter);
 // Who is actually on each building table (last batch recorder + who opened
 // it) — read-only, feeds the dashboard chooser and the building lock.
 router.use("/building-tables", buildingTablesRouter);

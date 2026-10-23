@@ -11,6 +11,9 @@ import {
   stockCheckAlarmHeadline,
   stockCheckAlarmState,
   stockCheckAlarmWindow,
+  shouldShowStockCheckPopup,
+  stockCheckPopupDismissKey,
+  stockCheckPopupHeadline,
 } from "./stock-check-alarm";
 
 const at = (hhmm: string, ss = 0) => {
@@ -172,5 +175,42 @@ describe("outstandingStockChecks + londonClock", () => {
     const c = londonClock(new Date("2026-10-13T13:45:30Z"));
     expect(c).toEqual({ dateStr: "2026-10-13", dayName: "Tuesday", secondsOfDay: at("14:45", 30) });
     expect(londonClock(new Date("2026-10-13T23:30:00Z")).dateStr).toBe("2026-10-14");
+  });
+});
+
+describe("shouldShowStockCheckPopup — 5 minutes before the deadline (Fix queue #324)", () => {
+  const base = { outstandingCount: 3, prepDay: true, window, dismissedToday: false };
+
+  it("shows from 14:55 when stock checks are still outstanding on a prep day", () => {
+    expect(shouldShowStockCheckPopup({ ...base, secondsOfDay: at("14:54", 59) })).toBe(false);
+    expect(shouldShowStockCheckPopup({ ...base, secondsOfDay: at("14:55") })).toBe(true);
+    expect(shouldShowStockCheckPopup({ ...base, secondsOfDay: at("15:20") })).toBe(true);
+  });
+
+  it("follows the deadline in the timed reminder", () => {
+    const w = { warnFrom: "12:00", deadline: "12:30" };
+    expect(shouldShowStockCheckPopup({ ...base, window: w, secondsOfDay: at("12:24") })).toBe(false);
+    expect(shouldShowStockCheckPopup({ ...base, window: w, secondsOfDay: at("12:25") })).toBe(true);
+  });
+
+  it("stays away when everything is recorded, it isn't a prep day, or it was dismissed today", () => {
+    const t = at("14:56");
+    expect(shouldShowStockCheckPopup({ ...base, outstandingCount: 0, secondsOfDay: t })).toBe(false);
+    expect(shouldShowStockCheckPopup({ ...base, prepDay: false, secondsOfDay: t })).toBe(false);
+    expect(shouldShowStockCheckPopup({ ...base, dismissedToday: true, secondsOfDay: t })).toBe(false);
+  });
+
+  it("words the headline with minutes left, then overdue", () => {
+    expect(stockCheckPopupHeadline({ outstandingCount: 3, window, secondsOfDay: at("14:55") }))
+      .toBe("Stock check due in 5 minutes, 3 items still to record");
+    expect(stockCheckPopupHeadline({ outstandingCount: 1, window, secondsOfDay: at("14:59", 30) }))
+      .toBe("Stock check due in 1 minute, 1 item still to record");
+    expect(stockCheckPopupHeadline({ outstandingCount: 2, window, secondsOfDay: at("15:01") }))
+      .toBe("Stock check overdue, 2 items still to record");
+  });
+
+  it("remembers the dismissal per person per day", () => {
+    expect(stockCheckPopupDismissKey(7, "2026-10-22")).not.toBe(stockCheckPopupDismissKey(8, "2026-10-22"));
+    expect(stockCheckPopupDismissKey(7, "2026-10-22")).not.toBe(stockCheckPopupDismissKey(7, "2026-10-23"));
   });
 });

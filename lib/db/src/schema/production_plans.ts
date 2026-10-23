@@ -193,6 +193,8 @@ export const stationBreaksTable = pgTable("station_breaks", {
   breakType: text("break_type").notNull().default("morning"),
   startedAt: timestamp("started_at").notNull().defaultNow(),
   endedAt: timestamp("ended_at"),
+  /** Optional "Anything to note?" from the break screen (migration 0221). */
+  note: text("note"),
 });
 
 export const dptSettingsTable = pgTable("dpt_settings", {

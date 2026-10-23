@@ -208,3 +208,43 @@ export function stockCheckAlarmHeadline(input: {
       return `Overdue — ${n} stock ${plural(n, "check", "checks")} not recorded`;
   }
 }
+
+// ── 5-minute pop-up (Fix queue #324) ─────────────────────────────────────────
+
+/** How long before the deadline the must-dismiss pop-up appears (14:55 for
+ *  the 15:00 default — it follows the deadline in the timed reminder). */
+export const STOCK_CHECK_POPUP_LEAD_SECONDS = 5 * 60;
+
+/** Show the full-screen "Stock check due in 5 minutes" pop-up? On a prep day,
+ *  from five minutes before the deadline, while anything due is still
+ *  unrecorded, until this person has dismissed it today. It stays up past
+ *  the deadline (then worded as overdue) for anyone who hasn't seen it. */
+export function shouldShowStockCheckPopup(input: {
+  outstandingCount: number;
+  prepDay: boolean;
+  secondsOfDay: number;
+  window: StockCheckAlarmWindow;
+  dismissedToday: boolean;
+}): boolean {
+  if (input.dismissedToday || !input.prepDay || input.outstandingCount <= 0) return false;
+  return input.secondsOfDay >= hhmmToSeconds(input.window.deadline) - STOCK_CHECK_POPUP_LEAD_SECONDS;
+}
+
+/** The pop-up's headline: "Stock check due in 5 minutes, 3 items still to
+ *  record", or overdue once the deadline has passed. */
+export function stockCheckPopupHeadline(input: {
+  outstandingCount: number;
+  secondsOfDay: number;
+  window: StockCheckAlarmWindow;
+}): string {
+  const n = input.outstandingCount;
+  const items = `${n} ${plural(n, "item", "items")} still to record`;
+  const left = hhmmToSeconds(input.window.deadline) - input.secondsOfDay;
+  if (left <= 0) return `Stock check overdue, ${items}`;
+  const mins = Math.max(1, Math.ceil(left / 60));
+  return `Stock check due in ${mins} ${plural(mins, "minute", "minutes")}, ${items}`;
+}
+
+/** Device storage key for "I'm aware, carry on" — once per person per day. */
+export const stockCheckPopupDismissKey = (userId: number | null, londonDate: string) =>
+  `stock-check-popup-dismissed:${userId ?? "anon"}:${londonDate}`;

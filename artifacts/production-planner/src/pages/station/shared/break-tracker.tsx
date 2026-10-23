@@ -6,6 +6,7 @@ import { format, parseISO, differenceInSeconds } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useCreateStationBreak, useEndStationBreak } from "@workspace/api-client-react";
 import type { StationType } from "./constants";
+import { BreakNoteField, useBreakNoteAutosave } from "./break-note";
 
 interface BreakTrackerProps {
   planId: number;
@@ -29,6 +30,8 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
   const endBreak = useEndStationBreak();
   const activeBreakRef = useRef<ActiveBreak | null>(null);
   activeBreakRef.current = activeBreak;
+  // Optional "Anything to note?" on the break, autosaved (#61).
+  const breakNote = useBreakNoteAutosave(activeBreak?.id ?? null);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,6 +120,8 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
 
   const stopBreak = () => {
     if (!activeBreak) return;
+    // Save any note typed in the last moment before the break ends.
+    breakNote.flush();
     endBreak.mutate(
       {
         id: planId,
@@ -190,7 +195,7 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
         style={{ backdropFilter: "blur(6px)", WebkitBackdropFilter: "blur(6px)", background: "rgba(0,0,0,0.75)" }}
       >
         <div className={cn(
-          "relative flex flex-col items-center gap-6 rounded-3xl border-2 p-10 shadow-2xl w-full max-w-sm mx-4",
+          "relative flex flex-col items-center gap-6 rounded-3xl border-2 p-6 sm:p-10 shadow-2xl w-full max-w-sm mx-4 max-h-[92dvh] overflow-y-auto",
           "bg-gray-900/95",
           ringBg
         )}>
@@ -219,6 +224,8 @@ export function BreakTracker({ planId, stationType, onBreakChange, onBreakActive
               </p>
             )}
           </div>
+
+          <BreakNoteField {...breakNote} />
 
           <button
             onClick={stopBreak}

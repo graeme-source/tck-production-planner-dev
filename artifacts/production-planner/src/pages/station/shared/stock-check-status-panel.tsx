@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
-import { AlarmClock, CheckCircle2, Package } from "lucide-react";
+import { AlarmClock, CheckCircle2, Package, X as XIcon } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { StockCheckDialog, StockCheckTrigger, useRecordedStockLabel } from "./stock-check-entry";
@@ -15,6 +17,9 @@ import {
   stockCheckAlarmHeadline,
   stockCheckAlarmState,
   stockCheckAlarmWindow,
+  shouldShowStockCheckPopup,
+  stockCheckPopupDismissKey,
+  stockCheckPopupHeadline,
   type PrepTarget,
 } from "./stock-check-alarm";
 
@@ -88,6 +93,15 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   const clock = useLondonClock();
   const reminders = useTimedReminders();
   const recordedStockLabel = useRecordedStockLabel();
+  const { state: authState } = useAuth();
+  const userId = authState.status === "authenticated" ? authState.user.id : null;
+  const dismissKey = stockCheckPopupDismissKey(userId, clock.dateStr);
+  const [dismissedToday, setDismissedToday] = useState(() => readDismissed(dismissKey));
+  useEffect(() => { setDismissedToday(readDismissed(dismissKey)); }, [dismissKey]);
+  const dismissPopup = () => {
+    setDismissedToday(true);
+    try { localStorage.setItem(dismissKey, "1"); } catch { /* storage unavailable: dismissed for this session only */ }
+  };
 
   const { data, isLoading } = useQuery({
     queryKey: stockChecksQueryKey(checkDate),
@@ -136,6 +150,11 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   const state = stockCheckAlarmState(alarm);
   const headline = stockCheckAlarmHeadline({ ...alarm, state });
   const red = state === "warning" || state === "overdue";
+
+  // 5 minutes before the deadline: a must-dismiss pop-up listing what's
+  // still to record (#324). Hidden while a stock-check entry is open so the
+  // person can record straight from it; it comes back for anything left.
+  const showPopup = shouldShowStockCheckPopup({ ...alarm, dismissedToday });
 
   const visibleItems = showCompleted ? [...outstanding, ...completed] : outstanding;
 
@@ -256,6 +275,14 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
           </div>
         </div>
       )}
+      {showPopup && !activeItem && (
+        <StockCheckDuePopup
+          headline={stockCheckPopupHeadline(alarm)}
+          items={outstanding}
+          onPick={id => { setOpen(true); setActiveId(id); }}
+          onDismiss={dismissPopup}
+        />
+      )}
       {activeItem && (
         <StockCheckDialog
           ingredient={activeItem}
@@ -265,5 +292,71 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
         />
       )}
     </div>
+  );
+}
+
+function readDismissed(key: string): boolean {
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
+}
+
+/** Full-screen "Stock check due in 5 minutes" pop-up (Fix queue #324). Each
+ *  outstanding item is a big button that opens its stock check; "I'm aware,
+ *  carry on" (or X) dismisses it for this person for the rest of the day. */
+function StockCheckDuePopup({ headline, items, onPick, onDismiss }: {
+  headline: string;
+  items: StockCheckStatusItem[];
+  onPick: (id: number) => void;
+  onDismiss: () => void;
+}) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[105] flex items-center justify-center bg-black/70 p-3 sm:p-4"
+      role="alertdialog"
+      aria-modal="true"
+      aria-labelledby="stock-check-due-title"
+    >
+      <div className="bg-card text-foreground border-4 border-red-600 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col">
+        <div className="flex items-start gap-3 px-5 pt-5 pb-4 bg-red-600 text-white rounded-t-xl">
+          <AlarmClock className="w-8 h-8 flex-shrink-0 mt-0.5" />
+          <h2 id="stock-check-due-title" className="flex-1 min-w-0 font-display font-bold text-2xl leading-tight">
+            {headline}
+          </h2>
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Close"
+            className="w-11 h-11 -mr-2 -mt-1 rounded-full flex items-center justify-center text-white hover:bg-white/15 flex-shrink-0"
+          >
+            <XIcon className="w-7 h-7" />
+          </button>
+        </div>
+        <div className="px-5 py-4 overflow-y-auto">
+          <p className="text-base text-muted-foreground mb-3">Tap an item to record its stock check now.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {items.map(it => (
+              <button
+                key={it.id}
+                type="button"
+                onClick={() => onPick(it.id)}
+                className="min-h-16 px-4 py-3 rounded-xl border-2 border-red-500 bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200 text-lg font-bold text-left flex items-center gap-3 hover:bg-red-100 dark:hover:bg-red-900/40 active:scale-[0.98] transition-transform"
+              >
+                <Package className="w-6 h-6 flex-shrink-0" />
+                <span className="flex-1 min-w-0 break-words">{it.name}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="px-5 py-4 border-t border-border">
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="w-full min-h-14 rounded-xl bg-secondary text-foreground text-lg font-semibold hover:bg-secondary/80"
+          >
+            I&rsquo;m aware, carry on
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }

@@ -42,6 +42,7 @@ router.get("/breaks", async (req, res) => {
       breakType: stationBreaksTable.breakType,
       startedAt: stationBreaksTable.startedAt,
       endedAt: stationBreaksTable.endedAt,
+      note: stationBreaksTable.note,
       userName: usersTable.name,
       planDate: productionPlansTable.planDate,
     })
@@ -81,6 +82,8 @@ router.get("/breaks", async (req, res) => {
       durationMinutes,
       allowedMinutes,
       overUnder,
+      // Optional "Anything to note?" from the break screen (#61).
+      note: r.note ?? null,
     };
   });
 

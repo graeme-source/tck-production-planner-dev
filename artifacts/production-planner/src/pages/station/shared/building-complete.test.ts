@@ -1,7 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { isBuildingComplete, isItemBuilt, buildProgressPercent, stillToBuild, type BuildProgressItem } from "./building-complete";
+import { isBuildingComplete, isItemBuilt, buildProgressPercent, stillToBuild, builderProgressLine, type BuildProgressItem } from "./building-complete";
 
 const item = (target: number, built: number, markedComplete = false): BuildProgressItem => ({ target, built, markedComplete });
+
+describe("builderProgressLine (Fix queue #160)", () => {
+  it("shows built and left on a mixing row", () => {
+    expect(builderProgressLine(item(13, 6))).toBe("Builders: 6 of 13 built · 7 left");
+    expect(builderProgressLine(item(13, 0))).toBe("Builders: 0 of 13 built · 13 left");
+  });
+
+  it("says all built once the target is reached, extras included", () => {
+    expect(builderProgressLine(item(13, 13))).toBe("Builders: all 13 built");
+    expect(builderProgressLine(item(13, 15))).toBe("Builders: all 13 built");
+  });
+
+  it("says finished when a builder marked the item finished (short build)", () => {
+    expect(builderProgressLine(item(13, 11, true))).toBe("Builders: finished · 11 built");
+  });
+});
 
 describe("isBuildingComplete", () => {
   // Regression: plan 172 (18 Sep 2026). Mac cheese built 16 of 14 packs —
