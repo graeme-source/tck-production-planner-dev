@@ -98,6 +98,7 @@ export async function nonDispatchDays(): Promise<Set<string>> {
 export async function planItems(from: string, to: string): Promise<Map<string, PlanItemInput[]>> {
   const r = await db.execute<Record<string, unknown>>(sql`
     SELECT p.plan_date::text AS date, r.category, i.fridge_qty, (i.fridge_eight_pack_qty + i.freezer_eight_pack_qty) AS bags,
+           i.freezer_qty, r.default_storage,
            i.batches_target, i.batches_complete, r.portions_per_batch, r.pack_size, r.rrp
     FROM production_plans p
     JOIN production_plan_items i ON i.plan_id = p.id
@@ -115,6 +116,8 @@ export async function planItems(from: string, to: string): Promise<Map<string, P
       category: (x.category as string | null) || null,
       fridgeQty: num(x.fridge_qty),
       eightPackBags: num(x.bags),
+      freezerQty: num(x.freezer_qty),
+      freezerStored: x.default_storage === "freezer",
       batchesTarget: num(x.batches_target),
       batchesComplete: num(x.batches_complete),
       portionsPerBatch: num(x.portions_per_batch),
