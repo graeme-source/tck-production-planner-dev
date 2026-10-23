@@ -16,6 +16,7 @@ import { StagingEnvBanner } from "@/components/staging-env-banner";
 import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
 import TeamListsPage from "@/pages/team-lists";
+import WishListPage from "@/pages/wish-list";
 import MeetingPage from "@/pages/meeting";
 import VisitorCheckIn from "@/pages/visitor-check-in";
 import PackReport from "@/pages/pack-report";
@@ -234,6 +235,8 @@ function Router() {
                   people ticked on each list; server-enforced. Reached from the dashboard card and quick actions. */}
               <Route path="/lists" component={TeamListsPage} />
               <Route path="/lists/:id" component={TeamListsPage} />
+              {/* Wish List — equipment & things we need (Graeme, 23 Oct 2026). Everyone signed in. */}
+              <Route path="/wish-list" component={WishListPage} />
               <Route path="/finance" component={FinancePage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />

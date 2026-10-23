@@ -39,7 +39,7 @@ const BLOCKED_HOST_PATTERNS = [
   /\.internal$/i,
 ];
 
-function isUrlSafe(raw: string): { ok: true; url: URL } | { ok: false; reason: string } {
+export function isUrlSafe(raw: string): { ok: true; url: URL } | { ok: false; reason: string } {
   let url: URL;
   try { url = new URL(raw); } catch { return { ok: false, reason: "Invalid URL" }; }
   if (url.protocol !== "http:" && url.protocol !== "https:") {
@@ -51,7 +51,7 @@ function isUrlSafe(raw: string): { ok: true; url: URL } | { ok: false; reason: s
   return { ok: true, url };
 }
 
-async function fetchPage(url: URL): Promise<string> {
+export async function fetchPage(url: URL): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {

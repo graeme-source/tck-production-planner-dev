@@ -9,6 +9,9 @@ import { RecordIssueModal } from "@/components/record-issue-modal";
 import { PullKanbanModal } from "@/components/pull-kanban-modal";
 import { RecordDefectModal, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
 import { ReportIncidentModal } from "@/components/report-incident-modal";
+import { AddToWishListSheet } from "@/components/wish-list/add-to-wish-list-sheet";
+import { WishListAlert } from "@/components/wish-list/wish-list-alert";
+import { WISH_LIST_NAME, WISH_LIST_PATH, WISH_LIST_SUBTITLE } from "@/lib/wish-list";
 import { SwipePanel } from "@/components/swipe-panel";
 import { SwipePanelTourCard, useSwipePanelTour } from "@/components/swipe-panel-tour";
 import { useAnyPromptShowing } from "@/lib/prompt-presence";
@@ -76,7 +79,7 @@ import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assista
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { TestRequestCard } from "@/components/test-request-card";
-import { ClipboardCheck } from "lucide-react";
+import { ClipboardCheck, Gift } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
@@ -93,6 +96,9 @@ export const navItems: NavItem[] = [
   // emergency, carriers, services, and suppliers read from their records.
   { name: "Contacts", href: "/contacts", icon: BookUser },
   { name: "Improvements", href: "/improvements", icon: TrendingUp },
+  // Wish List — equipment & things we need; anyone can add and vote
+  // (Graeme, 23 Oct 2026). Also in Quick actions.
+  { name: WISH_LIST_NAME, href: WISH_LIST_PATH, icon: Gift },
   { name: "Training", href: "/training", icon: GraduationCap },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
 ];
@@ -1012,6 +1018,7 @@ export function QuickActionsDock() {
   const [kanbanOpen, setKanbanOpen] = useState(false);
   const [defectOpen, setDefectOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
+  const [wishOpen, setWishOpen] = useState(false);
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
   // Accident & incident reports are managers and admins only (the
   // /api/incidents router and the HACCP tab are behind the same guard).
@@ -1030,6 +1037,7 @@ export function QuickActionsDock() {
         onOpenIssue={() => setIssueOpen(true)}
         onOpenKanban={() => setKanbanOpen(true)}
         onOpenDefect={() => setDefectOpen(true)}
+        onOpenWishList={() => setWishOpen(true)}
         onOpenIncident={canReportIncident ? () => setIncidentOpen(true) : undefined}
       />
       {canReportIncident && <ReportIncidentModal open={incidentOpen} onClose={() => setIncidentOpen(false)} />}
@@ -1037,6 +1045,10 @@ export function QuickActionsDock() {
       <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
       <PullKanbanModal open={kanbanOpen} onClose={() => setKanbanOpen(false)} />
       <RecordDefectModal open={defectOpen} onClose={() => setDefectOpen(false)} />
+      <AddToWishListSheet open={wishOpen} onClose={() => setWishOpen(false)} />
+      {/* "Something's been added to the Wish List" — must-dismiss, founder
+          and admins only (the server returns nothing for anyone else). */}
+      <WishListAlert />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
       {/* The founder's swipe-from-the-left into The Business (touch screens
@@ -1061,7 +1073,7 @@ export function QuickActionsDock() {
 // opens it. ALWAYS starts
 // shut: a shared iPad must never greet the next person with it open
 // (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
-function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenIncident }: {
+function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenWishList, onOpenIncident }: {
   assistantOpen: boolean;
   onOpenAssistant: () => void;
   onOpenTodos: () => void;
@@ -1069,6 +1081,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   onOpenIssue: () => void;
   onOpenKanban: () => void;
   onOpenDefect: () => void;
+  onOpenWishList: () => void;
   /** Managers and admins only; absent → no "Report accident / incident" button. */
   onOpenIncident?: () => void;
 }) {
@@ -1105,6 +1118,8 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
     // Defects & waste (2026-10-01, waste 2026-10-09): product that can't go
     // out, or anything binned — from anywhere, never a station button.
     { key: "defect", label: REPORT_DEFECT_LABEL, hint: "Mislabel, binned, left out…", icon: AlertOctagon, tone: "bg-amber-600 text-white shadow-amber-600/30", onClick: run(onOpenDefect) },
+    // Wish List (Graeme, 23 Oct 2026): paste a link to ask for kit.
+    { key: "wish-list", label: `Add to ${WISH_LIST_NAME}`, hint: WISH_LIST_SUBTITLE, icon: Gift, tone: "bg-pink-500 text-white shadow-pink-500/30", onClick: run(onOpenWishList) },
     { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: "bg-violet-500 text-white shadow-violet-500/30", onClick: run(onOpenKanban) },
     { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: Bot, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
   ];
@@ -1115,7 +1130,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
         open={open}
         onOpenChange={onOpenChange}
         title="Quick actions"
-        tabLabel={`Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue,${canReportIncident ? " Report accident / incident," : ""} ${REPORT_DEFECT_LABEL}, Pull kanban, Ask ${ASSISTANT_NAME}`}
+        tabLabel={`Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue,${canReportIncident ? " Report accident / incident," : ""} ${REPORT_DEFECT_LABEL}, Add to ${WISH_LIST_NAME}, Pull kanban, Ask ${ASSISTANT_NAME}`}
         highlightTab={tour.active && tour.step === "try"}
         badge={openTodoCount}
         edgeSwipeEnabled={swipeAllowed}
