@@ -18,6 +18,9 @@ export interface IngredientComboboxOption {
   id: number;
   name: string;
   unit: string;
+  /** Extra line to tell look-alikes apart, e.g. "Brakes · #319" when two
+   *  ingredients share a name (lib/ingredient-duplicates sharedNameDetail). */
+  detail?: string | null;
 }
 
 interface Props {
@@ -39,7 +42,10 @@ export function IngredientCombobox({ value, onChange, options, placeholder, clas
   const inputRef = useRef<HTMLInputElement>(null);
 
   const selected = options.find(o => o.id === Number(value));
-  const filtered = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
+  // "#320" finds ingredient 320 — the id shown on editor rows.
+  const q = search.toLowerCase();
+  const idQ = q.trim();
+  const filtered = options.filter(o => o.name.toLowerCase().includes(q) || (idQ.startsWith("#") && `#${o.id}` === idQ));
 
   useEffect(() => {
     if (!open) return;
@@ -94,10 +100,10 @@ export function IngredientCombobox({ value, onChange, options, placeholder, clas
         <button
           type="button"
           onClick={() => { setOpen(true); setSearch(""); }}
-          className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs text-left focus:outline-none focus:ring-2 focus:ring-primary/30 truncate"
+          className="w-full px-2 py-1.5 bg-background border border-border rounded-lg text-xs text-left focus:outline-none focus:ring-2 focus:ring-primary/30 whitespace-normal break-words"
         >
           {selected
-            ? <span>{selected.name} <span className="text-muted-foreground">({selected.unit})</span></span>
+            ? <span>{selected.name} <span className="text-muted-foreground">({selected.unit})</span>{selected.detail && <span className="text-muted-foreground"> · {selected.detail}</span>}</span>
             : <span className="text-muted-foreground">{placeholder ?? "Select…"}</span>
           }
         </button>
@@ -116,6 +122,7 @@ export function IngredientCombobox({ value, onChange, options, placeholder, clas
                   className={`w-full text-left px-3 py-1.5 text-xs hover:bg-accent transition-colors ${Number(value) === o.id ? "bg-accent font-medium" : ""}`}
                 >
                   {o.name} <span className="text-muted-foreground">({o.unit})</span>
+                  {o.detail && <span className="block text-[10px] text-amber-700 dark:text-amber-300">{o.detail}</span>}
                 </button>
               ))
             }
