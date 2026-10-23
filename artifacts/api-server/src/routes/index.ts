@@ -59,6 +59,7 @@ import storageLocationsRouter from "./storage-locations";
 import stockTransfersRouter from "./stock-transfers";
 import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
+import kanbanCardsRouter from "./kanban-cards";
 import ordersRouter from "./orders";
 import supplierPricingRouter from "./supplier-pricing";
 import orderSplitsRouter from "./order-splits";
@@ -358,6 +359,8 @@ router.use("/storage-locations", storageLocationsRouter);
 router.use("/stock-transfers", stockTransfersRouter);
 router.use("/dpt-ingredient-requirements", dptIngredientRequirementsRouter);
 router.use("/kanbans", kanbansRouter);
+// Printable kanban cards — one A5 fold sheet per card, as a PDF.
+router.use("/kanban-cards", kanbanCardsRouter);
 router.use("/orders", ordersRouter);
 // Primary + secondary supplier pack prices — minimum-order top-ups on Orders.
 router.use("/supplier-pricing", supplierPricingRouter);

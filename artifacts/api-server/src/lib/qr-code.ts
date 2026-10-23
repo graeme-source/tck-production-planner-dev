@@ -35,7 +35,7 @@ export type QrSourceType = "ingredient" | "recipe" | "sub_recipe";
  * Both formats are read by lib/kanban-qr.ts, so cards can be reprinted
  * gradually. Nothing already stuck to a shelf stops working.
  */
-function qrPayload(sourceType: QrSourceType, id: number): string {
+export function qrPayload(sourceType: QrSourceType, id: number): string {
   const base = (process.env["APP_BASE_URL"] ?? "").trim().replace(/\/$/, "");
   if (!base) return JSON.stringify({ type: sourceType, id });
   return `${base}/scan?type=${sourceType}&id=${id}`;
