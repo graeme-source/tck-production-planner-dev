@@ -17,19 +17,26 @@ import {
   stockCheckAlarmHeadline,
   stockCheckAlarmState,
   stockCheckAlarmWindow,
-  shouldShowStockCheckPopup,
   stockCheckPopupDismissKey,
-  stockCheckPopupHeadline,
+  stockCheckPopupView,
   type PrepTarget,
 } from "./stock-check-alarm";
 
 // ─────────────────────────────────────────────────────────────────────────
-// StockCheckStatusPanel — "Stock check records for today", at the top of
-// every prep screen (Prep hub, Main Prep, Bases & Sauces, Raw Meat). Lists
-// every stock-check-enabled ingredient due today and highlights which
-// haven't been recorded yet. Outstanding items are shown by default so the
-// operator's eye goes straight to what still needs doing; "Show completed"
-// reveals the recorded ones so a reading can be overwritten.
+// Today's prep stock checks. Four pieces, one source:
+//
+//   • usePrepStockChecks — the data + alarm state (stock-check-alarm.ts).
+//   • StockCheckList     — every stock-check-enabled ingredient due today,
+//                          outstanding first; "Show completed" reveals the
+//                          recorded ones so a reading can be overwritten.
+//   • StockCheckStatusPanel — the collapsible bar on the Prepping For hub.
+//   • StockCheckDuePopupHost — the 14:55 must-dismiss pop-up (#324), shown
+//                          on the hub (inside the panel) and on every prep
+//                          section (inside the tabs), whichever tab is open.
+//
+// On the prep sections (Main Prep, Bases & Sauces, Raw Meat) the bar became
+// the fourth tab, Stock Check (prep-section-tabs.tsx, Graeme 22 Oct 2026):
+// the tab carries the colour + count and its body is StockCheckList.
 //
 // On a prep day it is also the 3pm alarm (Graeme, 13 Oct 2026): from the
 // warning time it flashes red with the minutes left and the outstanding
@@ -79,29 +86,11 @@ function useLondonClock(intervalMs = 5_000) {
   return clock;
 }
 
-export function StockCheckStatusPanel({ checkDate, prepTarget }: {
-  /** The day the readings are recorded against (the plan being prepped for). */
-  checkDate: string;
-  /** The plan being prepped for — the alarm only fires when its prep is today. */
-  prepTarget: PrepTarget | null;
-}) {
-  const [open, setOpen] = useState(false);
-  const [showCompleted, setShowCompleted] = useState(false);
-  // The item whose stock-check dialog is open (row button or red chip).
-  const [activeId, setActiveId] = useState<number | null>(null);
-  const reducedMotion = usePrefersReducedMotion();
+/** Today's stock checks for the prep screens — the one source for the hub
+ *  panel, the Stock Check tab and the 14:55 pop-up, so they can't disagree. */
+export function usePrepStockChecks(checkDate: string, prepTarget: PrepTarget | null) {
   const clock = useLondonClock();
   const reminders = useTimedReminders();
-  const recordedStockLabel = useRecordedStockLabel();
-  const { state: authState } = useAuth();
-  const userId = authState.status === "authenticated" ? authState.user.id : null;
-  const dismissKey = stockCheckPopupDismissKey(userId, clock.dateStr);
-  const [dismissedToday, setDismissedToday] = useState(() => readDismissed(dismissKey));
-  useEffect(() => { setDismissedToday(readDismissed(dismissKey)); }, [dismissKey]);
-  const dismissPopup = () => {
-    setDismissedToday(true);
-    try { localStorage.setItem(dismissKey, "1"); } catch { /* storage unavailable: dismissed for this session only */ }
-  };
 
   const { data, isLoading } = useQuery({
     queryKey: stockChecksQueryKey(checkDate),
@@ -116,18 +105,6 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   });
   const items = data?.stockIngredients ?? [];
   const checks = data?.checks ?? [];
-  // Use-by dates recorded with today's counts (#165) — shown on each row,
-  // red when today or past.
-  const { data: useByData } = useQuery<{ useBy: Record<string, string> }>({
-    queryKey: ["stock-check-use-by", checkDate],
-    enabled: !!checkDate,
-    refetchInterval: 30_000,
-    queryFn: async () => {
-      const res = await fetch(`/api/stock-check-use-by?checkDate=${checkDate}`, { credentials: "include" });
-      if (!res.ok) throw new Error(`Use-by dates failed to load (${res.status})`);
-      return res.json();
-    },
-  });
 
   const dueItems = items.filter(it => isStockCheckDueToday(it, clock.dayName));
   const checkByIngredient = new Map<number, StockCheckRecord>();
@@ -149,16 +126,130 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   };
   const state = stockCheckAlarmState(alarm);
   const headline = stockCheckAlarmHeadline({ ...alarm, state });
+  return { isLoading, items, checkByIngredient, outstanding, completed, alarm, state, headline, londonDate: clock.dateStr };
+}
+
+export type PrepStockChecks = ReturnType<typeof usePrepStockChecks>;
+
+/** The list of today's stock checks, each row opening the shared entry
+ *  dialog. The body of the hub panel (when shown) and of the Stock Check tab. */
+export function StockCheckList({ checkDate, checks, activeId, setActiveId }: {
+  checkDate: string;
+  checks: PrepStockChecks;
+  /** The item whose entry dialog is open — lifted so the hub panel's red
+   *  chips can open one too. */
+  activeId: number | null;
+  setActiveId: (id: number | null) => void;
+}) {
+  const [showCompleted, setShowCompleted] = useState(false);
+  const recordedStockLabel = useRecordedStockLabel();
+  const { items, checkByIngredient, outstanding, completed, state } = checks;
   const red = state === "warning" || state === "overdue";
-
-  // 5 minutes before the deadline: a must-dismiss pop-up listing what's
-  // still to record (#324). Hidden while a stock-check entry is open so the
-  // person can record straight from it; it comes back for anything left.
-  const showPopup = shouldShowStockCheckPopup({ ...alarm, dismissedToday });
-
   const visibleItems = showCompleted ? [...outstanding, ...completed] : outstanding;
-
   const activeItem = activeId != null ? items.find(it => it.id === activeId) ?? null : null;
+  // Use-by dates recorded with today's counts (#165) — shown on each row,
+  // red when today or past.
+  const { data: useByData } = useQuery<{ useBy: Record<string, string> }>({
+    queryKey: ["stock-check-use-by", checkDate],
+    enabled: !!checkDate,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const res = await fetch(`/api/stock-check-use-by?checkDate=${checkDate}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Use-by dates failed to load (${res.status})`);
+      return res.json();
+    },
+  });
+
+  return (
+    <>
+      {completed.length > 0 && (
+        <div className="px-4 py-2 flex items-center justify-between text-sm border-b border-border/60">
+          <span className="text-muted-foreground">
+            {outstanding.length === 0
+              ? "Everything for today is in."
+              : `${completed.length} already recorded`}
+          </span>
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none min-h-11">
+            <input
+              type="checkbox"
+              checked={showCompleted}
+              onChange={e => setShowCompleted(e.target.checked)}
+              className="w-5 h-5 rounded border-border"
+            />
+            <span>Show completed</span>
+          </label>
+        </div>
+      )}
+      <div className="divide-y divide-border/60">
+        {visibleItems.length === 0 && (
+          <div className="px-4 py-3 text-sm text-muted-foreground">
+            {completed.length === 0
+              ? "No stock checks are due today."
+              : <>Nothing outstanding — tick &ldquo;Show completed&rdquo; to review today&rsquo;s records.</>}
+          </div>
+        )}
+        {visibleItems.map(it => {
+          const record = checkByIngredient.get(it.id);
+          const recordNative = record ? Number(record.quantity) : null;
+          const timeLabel = record
+            ? new Date(record.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })
+            : null;
+          return (
+            <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm flex-wrap">
+              {record
+                ? <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
+                : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
+              <span className="font-semibold text-base flex-1 min-w-[8rem]">{it.name}</span>
+              {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
+              {record && useByData?.useBy[String(it.id)] && (() => {
+                const iso = useByData.useBy[String(it.id)]!;
+                const warn = useByWarning(iso, londonToday());
+                return (
+                  <span
+                    className={cn(
+                      "text-sm font-semibold rounded-lg px-2 py-1",
+                      warn ? "bg-red-100 text-red-800 border border-red-400 dark:bg-red-950/50 dark:text-red-200" : "bg-secondary text-foreground",
+                    )}
+                    title={warn ?? undefined}
+                  >
+                    Use by {new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
+                    {warn ? (iso < londonToday() ? " — PASSED" : " — TODAY") : ""}
+                  </span>
+                );
+              })()}
+              <StockCheckTrigger
+                recordedLabel={record && recordNative != null ? recordedStockLabel(recordNative, it) : null}
+                onClick={() => setActiveId(it.id)}
+              />
+            </div>
+          );
+        })}
+      </div>
+      {activeItem && (
+        <StockCheckDialog
+          ingredient={activeItem}
+          checkDate={checkDate}
+          currentNative={checkByIngredient.has(activeItem.id) ? Number(checkByIngredient.get(activeItem.id)!.quantity) : null}
+          onClose={() => setActiveId(null)}
+        />
+      )}
+    </>
+  );
+}
+
+export function StockCheckStatusPanel({ checkDate, prepTarget }: {
+  /** The day the readings are recorded against (the plan being prepped for). */
+  checkDate: string;
+  /** The plan being prepped for — the alarm only fires when its prep is today. */
+  prepTarget: PrepTarget | null;
+}) {
+  const [open, setOpen] = useState(false);
+  // The item whose stock-check dialog is open (row button or red chip).
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const reducedMotion = usePrefersReducedMotion();
+  const checks = usePrepStockChecks(checkDate, prepTarget);
+  const { isLoading, outstanding, state, headline } = checks;
+  const red = state === "warning" || state === "overdue";
 
   if (isLoading || state === "none") return null;
 
@@ -212,85 +303,11 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
 
       {open && (
         <div className="border-t border-border/60 bg-card text-foreground">
-          {completed.length > 0 && (
-            <div className="px-4 py-2 flex items-center justify-between text-sm border-b border-border/60">
-              <span className="text-muted-foreground">
-                {outstanding.length === 0
-                  ? "Everything for today is in."
-                  : `${completed.length} already recorded`}
-              </span>
-              <label className="inline-flex items-center gap-2 cursor-pointer select-none min-h-11">
-                <input
-                  type="checkbox"
-                  checked={showCompleted}
-                  onChange={e => setShowCompleted(e.target.checked)}
-                  className="w-5 h-5 rounded border-border"
-                />
-                <span>Show completed</span>
-              </label>
-            </div>
-          )}
-          <div className="divide-y divide-border/60">
-            {visibleItems.length === 0 && (
-              <div className="px-4 py-3 text-sm text-muted-foreground">
-                Nothing outstanding — tick &ldquo;Show completed&rdquo; to review today&rsquo;s records.
-              </div>
-            )}
-            {visibleItems.map(it => {
-              const record = checkByIngredient.get(it.id);
-              const recordNative = record ? Number(record.quantity) : null;
-              const timeLabel = record
-                ? new Date(record.checkedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" })
-                : null;
-              return (
-                <div key={it.id} className="px-4 py-2.5 flex items-center gap-3 text-sm flex-wrap">
-                  {record
-                    ? <CheckCircle2 className="w-5 h-5 text-emerald-500 flex-shrink-0" />
-                    : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
-                  <span className="font-semibold text-base flex-1 min-w-[8rem] truncate">{it.name}</span>
-                  {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
-                  {record && useByData?.useBy[String(it.id)] && (() => {
-                    const iso = useByData.useBy[String(it.id)]!;
-                    const warn = useByWarning(iso, londonToday());
-                    return (
-                      <span
-                        className={cn(
-                          "text-sm font-semibold rounded-lg px-2 py-1",
-                          warn ? "bg-red-100 text-red-800 border border-red-400 dark:bg-red-950/50 dark:text-red-200" : "bg-secondary text-foreground",
-                        )}
-                        title={warn ?? undefined}
-                      >
-                        Use by {new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
-                        {warn ? (iso < londonToday() ? " — PASSED" : " — TODAY") : ""}
-                      </span>
-                    );
-                  })()}
-                  <StockCheckTrigger
-                    recordedLabel={record && recordNative != null ? recordedStockLabel(recordNative, it) : null}
-                    onClick={() => setActiveId(it.id)}
-                  />
-                </div>
-              );
-            })}
-          </div>
+          <StockCheckList checkDate={checkDate} checks={checks} activeId={activeId} setActiveId={setActiveId} />
         </div>
       )}
-      {showPopup && !activeItem && (
-        <StockCheckDuePopup
-          headline={stockCheckPopupHeadline(alarm)}
-          items={outstanding}
-          onPick={id => { setOpen(true); setActiveId(id); }}
-          onDismiss={dismissPopup}
-        />
-      )}
-      {activeItem && (
-        <StockCheckDialog
-          ingredient={activeItem}
-          checkDate={checkDate}
-          currentNative={checkByIngredient.has(activeItem.id) ? Number(checkByIngredient.get(activeItem.id)!.quantity) : null}
-          onClose={() => setActiveId(null)}
-        />
-      )}
+      {/* The 14:55 pop-up, hidden while an entry from this panel is open. */}
+      <StockCheckDuePopupHost checkDate={checkDate} checks={checks} suppressed={activeId != null} />
     </div>
   );
 }
@@ -299,12 +316,65 @@ function readDismissed(key: string): boolean {
   try { return localStorage.getItem(key) === "1"; } catch { return false; }
 }
 
+/** The 14:55 must-dismiss pop-up (#324) for a prep screen, fed by the same
+ *  usePrepStockChecks result as that screen's bar or Stock Check tab. Picking
+ *  an item opens its stock check here (the pop-up hides while it's open and
+ *  comes back for anything left); "I'm aware, carry on" or X dismisses it for
+ *  this person for the rest of the day. Mount one per screen. */
+export function StockCheckDuePopupHost({ checkDate, checks, suppressed = false }: {
+  checkDate: string;
+  checks: PrepStockChecks;
+  /** True while another stock-check entry on this screen is open. */
+  suppressed?: boolean;
+}) {
+  const [activeId, setActiveId] = useState<number | null>(null);
+  const { state: authState } = useAuth();
+  const userId = authState.status === "authenticated" ? authState.user.id : null;
+  const dismissKey = stockCheckPopupDismissKey(userId, checks.londonDate);
+  const [dismissedToday, setDismissedToday] = useState(() => readDismissed(dismissKey));
+  useEffect(() => { setDismissedToday(readDismissed(dismissKey)); }, [dismissKey]);
+  const dismissPopup = () => {
+    setDismissedToday(true);
+    try { localStorage.setItem(dismissKey, "1"); } catch { /* storage unavailable: dismissed for this session only */ }
+  };
+
+  const view = checks.isLoading ? null : stockCheckPopupView({
+    outstanding: checks.outstanding,
+    prepDay: checks.alarm.prepDay,
+    secondsOfDay: checks.alarm.secondsOfDay,
+    window: checks.alarm.window,
+    dismissedToday,
+  });
+  const activeItem = activeId != null ? checks.items.find(it => it.id === activeId) ?? null : null;
+
+  return (
+    <>
+      {view && !activeItem && !suppressed && (
+        <StockCheckDuePopup
+          headline={view.headline}
+          items={view.items}
+          onPick={setActiveId}
+          onDismiss={dismissPopup}
+        />
+      )}
+      {activeItem && (
+        <StockCheckDialog
+          ingredient={activeItem}
+          checkDate={checkDate}
+          currentNative={checks.checkByIngredient.has(activeItem.id) ? Number(checks.checkByIngredient.get(activeItem.id)!.quantity) : null}
+          onClose={() => setActiveId(null)}
+        />
+      )}
+    </>
+  );
+}
+
 /** Full-screen "Stock check due in 5 minutes" pop-up (Fix queue #324). Each
  *  outstanding item is a big button that opens its stock check; "I'm aware,
  *  carry on" (or X) dismisses it for this person for the rest of the day. */
 function StockCheckDuePopup({ headline, items, onPick, onDismiss }: {
   headline: string;
-  items: StockCheckStatusItem[];
+  items: readonly StockCheckStatusItem[];
   onPick: (id: number) => void;
   onDismiss: () => void;
 }) {

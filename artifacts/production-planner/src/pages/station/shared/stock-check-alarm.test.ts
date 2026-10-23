@@ -14,6 +14,7 @@ import {
   shouldShowStockCheckPopup,
   stockCheckPopupDismissKey,
   stockCheckPopupHeadline,
+  stockCheckPopupView,
 } from "./stock-check-alarm";
 
 const at = (hhmm: string, ss = 0) => {
@@ -212,5 +213,23 @@ describe("shouldShowStockCheckPopup — 5 minutes before the deadline (Fix queue
   it("remembers the dismissal per person per day", () => {
     expect(stockCheckPopupDismissKey(7, "2026-10-22")).not.toBe(stockCheckPopupDismissKey(8, "2026-10-22"));
     expect(stockCheckPopupDismissKey(7, "2026-10-22")).not.toBe(stockCheckPopupDismissKey(7, "2026-10-23"));
+  });
+});
+
+describe("stockCheckPopupView — the pop-up on every prep screen uses the shared stock-check figures", () => {
+  const outstanding = [{ id: 1, name: "Milk" }, { id: 2, name: "Double cream" }];
+  const base = { outstanding, prepDay: true, window, dismissedToday: false };
+
+  it("lists exactly the outstanding items and counts that same list in the headline", () => {
+    const v = stockCheckPopupView({ ...base, secondsOfDay: at("14:55") });
+    expect(v?.items).toBe(outstanding);
+    expect(v?.headline).toBe("Stock check due in 5 minutes, 2 items still to record");
+  });
+
+  it("is null before 14:55, when nothing is outstanding, off a prep day, or once dismissed", () => {
+    expect(stockCheckPopupView({ ...base, secondsOfDay: at("14:54") })).toBeNull();
+    expect(stockCheckPopupView({ ...base, outstanding: [], secondsOfDay: at("14:56") })).toBeNull();
+    expect(stockCheckPopupView({ ...base, prepDay: false, secondsOfDay: at("14:56") })).toBeNull();
+    expect(stockCheckPopupView({ ...base, dismissedToday: true, secondsOfDay: at("14:56") })).toBeNull();
   });
 });

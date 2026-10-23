@@ -248,3 +248,23 @@ export function stockCheckPopupHeadline(input: {
 /** Device storage key for "I'm aware, carry on" — once per person per day. */
 export const stockCheckPopupDismissKey = (userId: number | null, londonDate: string) =>
   `stock-check-popup-dismissed:${userId ?? "anon"}:${londonDate}`;
+
+/** What the pop-up shows, from the same figures as the hub bar and the Stock
+ *  Check tab (usePrepStockChecks): null when it shouldn't show, otherwise
+ *  its headline and exactly the outstanding items the bar and tab list. The
+ *  count in the headline is the length of that list, so the pop-up can never
+ *  say "3 items" while showing two. */
+export function stockCheckPopupView<T>(input: {
+  outstanding: readonly T[];
+  prepDay: boolean;
+  secondsOfDay: number;
+  window: StockCheckAlarmWindow;
+  dismissedToday: boolean;
+}): { headline: string; items: readonly T[] } | null {
+  const outstandingCount = input.outstanding.length;
+  if (!shouldShowStockCheckPopup({ ...input, outstandingCount })) return null;
+  return {
+    headline: stockCheckPopupHeadline({ outstandingCount, secondsOfDay: input.secondsOfDay, window: input.window }),
+    items: input.outstanding,
+  };
+}

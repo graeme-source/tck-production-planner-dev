@@ -19,12 +19,11 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { BreakTracker } from "../shared/break-tracker";
 import { PrepDateBanner, PrepDraftBanner, useNextActivePlan, fmtPrepQty, toastDraftBlocked } from "../shared/prep-helpers";
-import { StockCheckStatusPanel } from "../shared/stock-check-status-panel";
 import { prepTargetOf } from "../shared/stock-check-alarm";
 import type { NextActivePlan } from "../shared/prep-helpers";
 import { MixExtraNote } from "../shared/mix-extra-note";
 import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep-presence";
-import { PrepSubNav } from "./prep-hub";
+import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { StationStockChecks } from "../shared/station-stock-checks";
@@ -774,6 +773,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   // ?direct=1 — see main-prep-station for rationale.
   const search = useSearch();
   const isDirect = new URLSearchParams(search).get("direct") === "1";
+  // Stock Check is the fourth prep tab (?tab=stock-check) — Graeme, 22 Oct.
+  const stockTabOpen = usePrepStockTabOpen();
   const { data: nextPlanData, isLoading: isNextPlanLoading } = useNextActivePlan(isDirect ? undefined : plan.planDate, "prep");
   const nextPlan = isDirect ? null : (nextPlanData as NextActivePlan | null);
   const noFuturePlan = !isDirect && !isNextPlanLoading && nextPlan != null && nextPlan.planId == null;
@@ -986,6 +987,18 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const totalUnits = progress.total;
   const overallPct = progressPct(progress);
   const baseUnitsTotal = progress.bases?.total ?? 0;
+  const checkDate = nextPlan?.planDate ?? plan.planDate;
+  const prepTarget = prepTargetOf(nextPlan, plan);
+  const tabs = (
+    <PrepSectionTabs
+      planId={plan.id}
+      current="prep_bases"
+      progressPlanId={targetPlanId}
+      currentProgress={noFuturePlan ? null : progress}
+      checkDate={checkDate}
+      prepTarget={prepTarget}
+    />
+  );
 
   if (loading || isNextPlanLoading) {
     return <div className="flex items-center justify-center py-20 text-muted-foreground"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading…</div>;
@@ -994,7 +1007,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   if (noFuturePlan) {
     return (
       <div className="space-y-4">
-        <PrepSubNav planId={plan.id} current="prep_bases" />
+        {tabs}
         <div className="bg-card border border-border rounded-xl p-8 text-center">
           <Layers className="w-10 h-10 text-muted-foreground mx-auto mb-3 opacity-50" />
           <h2 className="font-semibold text-lg mb-1">No future production plan</h2>
@@ -1007,11 +1020,18 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     );
   }
 
+  if (stockTabOpen) {
+    return (
+      <div className="space-y-4">
+        <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
+        {tabs}
+        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {/* Stock check records for today — top of every prep screen; flashes
-          red from 14:45 on a prep day until they're all in. */}
-      <StockCheckStatusPanel checkDate={nextPlan?.planDate ?? plan.planDate} prepTarget={prepTargetOf(nextPlan, plan)} />
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
@@ -1022,7 +1042,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
       )}
       <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
 
-      <PrepSubNav planId={plan.id} current="prep_bases" />
+      {tabs}
       {sopViewer.dialog}
       {replenishTarget && (
         <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
