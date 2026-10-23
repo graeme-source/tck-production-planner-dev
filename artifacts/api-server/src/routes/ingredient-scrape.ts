@@ -27,6 +27,7 @@ import {
   parseBrakesProduct, type BrakesParsed, type BrakesProductJson,
 } from "../lib/brakes-product";
 import { classifyDeclaration, type NovaResult } from "../lib/upf-classify";
+import { isAmazonUrl, amazonAsin, isAmazonBlocked, parseAmazonProduct } from "../lib/amazon-product";
 
 const router: IRouter = Router();
 
@@ -348,11 +349,13 @@ export function allergenCodesFromNames(names: string[]): AllergenCode[] {
   return [...out].sort();
 }
 
-/** A Brakes parse → the ScrapedFields shape plus where each field came from. */
-export function scrapedFromBrakes(p: BrakesParsed): { fields: ScrapedFields; sources: Record<ScrapeFieldKey, FieldSource> } {
+/** A structured parse (Brakes, Amazon) → the ScrapedFields shape plus where
+ *  each field came from. */
+export function scrapedFromParsed(p: BrakesParsed & { brand?: string | null }): { fields: ScrapedFields; sources: Record<ScrapeFieldKey, FieldSource> } {
   const fields: ScrapedFields = {
     ...normaliseScrapedFields({}),
     name: p.name,
+    brand: p.brand ?? null,
     packSize: p.packSize,
     packUnit: p.packUnit,
     costPerPack: p.costPerPack,
@@ -369,6 +372,10 @@ export function scrapedFromBrakes(p: BrakesParsed): { fields: ScrapedFields; sou
   }
   return { fields, sources };
 }
+export const scrapedFromBrakes = scrapedFromParsed;
+
+/** Thrown when a site answered with a robot check instead of the product. */
+export const AMAZON_BLOCKED_MESSAGE = "Amazon blocked the read (it showed a robot check instead of the product). Paste the ingredients into the Label Declaration box instead.";
 
 /** Which fields still need the AI after a structured parse. A Brakes
  *  nutrition table that exists but shows "-" for a nutrient (fibre on cured
@@ -444,7 +451,7 @@ router.post("/scrape-url", validate(scrapeUrlBodySchema), async (req: Request, r
 
   let fields: ScrapedFields = normaliseScrapedFields({});
   let sources = Object.fromEntries(SCRAPE_FIELD_KEYS.map(k => [k, "missing"])) as Record<ScrapeFieldKey, FieldSource>;
-  let method: "brakes-api" | "brakes-page" | "ai" | "none" = "none";
+  let method: "brakes-api" | "brakes-page" | "amazon-page" | "ai" | "none" = "none";
   let html: string | null = null;
   const warnings: string[] = [];
 
@@ -468,7 +475,28 @@ router.post("/scrape-url", validate(scrapeUrlBodySchema), async (req: Request, r
         console.warn("[ingredient-scrape] Brakes page fetch failed:", err instanceof Error ? err.message : err);
       }
     }
-    if (product) ({ fields, sources } = scrapedFromBrakes(parseBrakesProduct(product)));
+    if (product) ({ fields, sources } = scrapedFromParsed(parseBrakesProduct(product)));
+  }
+
+  // 1b. Amazon: the product page itself, read deterministically. A robot
+  //     check is reported as such — never handed to the AI to guess from.
+  if (method === "none" && isAmazonUrl(url)) {
+    try {
+      html = await fetchPage(url);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      res.status(msg.includes("aborted") ? 504 : 502).json({ error: `Couldn't load the Amazon page: ${msg}` });
+      return;
+    }
+    if (isAmazonBlocked(html)) {
+      res.status(502).json({ error: AMAZON_BLOCKED_MESSAGE, blocked: true });
+      return;
+    }
+    const parsed = parseAmazonProduct(html, amazonAsin(url));
+    if (parsed.name || parsed.ingredients) {
+      ({ fields, sources } = scrapedFromParsed(parsed));
+      method = "amazon-page";
+    }
   }
 
   // 2. AI for whatever is still missing (everything, on other sites).

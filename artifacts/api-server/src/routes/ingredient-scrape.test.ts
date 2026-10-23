@@ -18,10 +18,13 @@ import {
   fieldsNeedingAi,
   mergeAiFields,
   scrapedFromBrakes,
+  scrapedFromParsed,
+  AMAZON_BLOCKED_MESSAGE,
   scrapePhotoBodySchema,
   normaliseScrapedFields,
 } from "./ingredient-scrape";
 import { brakesProductFromHtml, parseBrakesProduct, type BrakesProductJson } from "../lib/brakes-product";
+import { parseAmazonProduct } from "../lib/amazon-product";
 
 const fixture = (name: string) =>
   readFileSync(fileURLToPath(new URL(`../lib/__fixtures__/brakes/${name}`, import.meta.url)), "utf8");
@@ -256,5 +259,33 @@ describe("distillHtml — the AI fallback sees the collapsed sections and the em
   it("the page's own ng-state parses to the same fields as the product API", () => {
     const fromPage = brakesProductFromHtml(fixture("brakes-149839.html"), "149839")!;
     expect(scrapedFromBrakes(parseBrakesProduct(fromPage))).toEqual(brakes("149839"));
+  });
+});
+
+describe("Amazon scrape — parsed first, AI only for what the page lacks", () => {
+  const amazon = (asin: string) => scrapedFromParsed(parseAmazonProduct(fixture(`../amazon/amazon-${asin}.html`)));
+
+  it("vanilla extract: ingredients, brand, pack and price parsed; nutrition left for the AI to look for (it isn't on the page)", () => {
+    const { fields, sources } = amazon("B0FX9Q7BFM");
+    expect(fields.ingredients).toBe("Water, Alcohol (35%), Sugar, Vanilla Bean Extractives.");
+    expect(sources.ingredients).toBe("parsed");
+    expect(sources.brand).toBe("parsed");
+    expect(sources.energyKj).toBe("missing");
+    const need = fieldsNeedingAi(sources);
+    expect(need).not.toContain("ingredients");
+    expect(need).toContain("energyKj");
+    expect(need).toContain("allergens");
+  });
+
+  it("ketchup with a nutrition table and allergen row needs no AI", () => {
+    const { sources, fields } = amazon("B07CS54584");
+    expect(fieldsNeedingAi(sources)).toEqual([]);
+    expect(fields.allergens).toEqual(["celery"]);
+    expect(fields.saturates).toBe(0);
+    expect(fields.fibre).toBeNull();
+  });
+
+  it("the blocked message tells the person what to do", () => {
+    expect(AMAZON_BLOCKED_MESSAGE).toMatch(/paste the ingredients/i);
   });
 });
