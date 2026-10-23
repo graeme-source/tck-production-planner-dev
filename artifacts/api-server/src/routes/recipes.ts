@@ -12,6 +12,7 @@ import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
 import { toGrams } from "@workspace/units";
+import { NUTRIENT_KEYS, missingNutrients } from "@workspace/product-labels";
 import { buildRecipeIngredientDeck } from "../lib/recipe-ingredient-deck";
 import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
 import { packBarcodeFor } from "../lib/barcode-store";
@@ -1005,7 +1006,8 @@ router.delete("/:id/shopify-mapping", async (req, res) => {
   }
 });
 
-const NUTRIENT_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "fibre", "protein", "salt"] as const;
+// One shared "what is missing" rule — also drives the amber chips on the
+// recipe / sub-recipe editor rows (@workspace/product-labels ingredient-gaps).
 type NutrientKey = typeof NUTRIENT_KEYS[number];
 
 interface IngredientNutrientRow {
@@ -1190,17 +1192,17 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   // silently understates whichever nutrients it lacks, so the panel must not
   // be treated as complete until every value on every ingredient is present.
   const missingNutritionals = items
-    .filter(i => NUTRIENT_KEYS.some(k => i.nutrients[k] === null))
+    .filter(i => missingNutrients(i.nutrients).length > 0)
     .map(i => i.name);
 
   // Which specific nutrients are absent, per ingredient — so the UI can say
   // "Mozzarella: fat, saturates" rather than just naming the ingredient.
   const missingNutritionalDetail = items
-    .filter(i => NUTRIENT_KEYS.some(k => i.nutrients[k] === null))
+    .filter(i => missingNutrients(i.nutrients).length > 0)
     .map(i => ({
       ingredientId: i.ingredientId,
       name: i.name,
-      missing: NUTRIENT_KEYS.filter(k => i.nutrients[k] === null),
+      missing: missingNutrients(i.nutrients),
     }));
 
   const missingDeclarations = items

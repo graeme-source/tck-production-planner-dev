@@ -75,6 +75,35 @@ export function findLikelyDuplicates(
   return out.sort((a, b) => (a.reason === b.reason ? 0 : a.reason === "code" ? -1 : 1));
 }
 
+/**
+ * Ids of ingredients whose name matches another one on file (same rule as
+ * above: case, punctuation and plurals ignored) — e.g. the two "White Wine
+ * Vinegar" records #319 and #323. The recipe / sub-recipe picker shows the
+ * supplier and id beside these so Graeme can tell which one he's picking
+ * (2026-10-23). Objective G.
+ */
+export function sharedNameIds(options: readonly { id: number; name: string }[]): Set<number> {
+  const byName = new Map<string, number[]>();
+  for (const o of options) {
+    const key = normaliseIngredientName(o.name ?? "");
+    if (!key) continue;
+    const ids = byName.get(key);
+    if (ids) ids.push(o.id); else byName.set(key, [o.id]);
+  }
+  const out = new Set<number>();
+  for (const ids of byName.values()) if (ids.length > 1) for (const id of ids) out.add(id);
+  return out;
+}
+
+/** "Supplier · #id" for a picker option that shares its name, else null. */
+export function sharedNameDetail(
+  option: { id: number; supplierName?: string | null },
+  shared: ReadonlySet<number>,
+): string | null {
+  if (!shared.has(option.id)) return null;
+  return `${option.supplierName?.trim() || "No supplier"} · #${option.id}`;
+}
+
 /** The warning line under the name field, or null. */
 export function duplicateWarning(matches: readonly DuplicateMatch[]): string | null {
   if (matches.length === 0) return null;

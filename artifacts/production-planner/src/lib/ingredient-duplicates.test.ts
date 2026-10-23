@@ -1,5 +1,26 @@
 import { describe, it, expect } from "vitest";
-import { findLikelyDuplicates, duplicateWarning, normaliseIngredientName } from "./ingredient-duplicates";
+import { findLikelyDuplicates, duplicateWarning, normaliseIngredientName, sharedNameIds, sharedNameDetail } from "./ingredient-duplicates";
+
+describe("sharedNameIds / sharedNameDetail", () => {
+  const options = [
+    { id: 319, name: "White Wine Vinegar", supplierName: "Brakes" },
+    { id: 323, name: "white wine vinegar ", supplierName: null },
+    { id: 320, name: "Kikkoman Soy Sauce", supplierName: "Bidfood" },
+    { id: 321, name: "Soy Sauce", supplierName: "Bidfood" },
+  ];
+  it("flags only ingredients whose names match another", () => {
+    expect([...sharedNameIds(options)].sort()).toEqual([319, 323]);
+  });
+  it("gives supplier and id for a shared name, nothing otherwise", () => {
+    const shared = sharedNameIds(options);
+    expect(sharedNameDetail(options[0], shared)).toBe("Brakes · #319");
+    expect(sharedNameDetail(options[1], shared)).toBe("No supplier · #323");
+    expect(sharedNameDetail(options[2], shared)).toBeNull();
+  });
+  it("ignores blank names", () => {
+    expect(sharedNameIds([{ id: 1, name: "" }, { id: 2, name: "" }]).size).toBe(0);
+  });
+});
 
 // #326: a second "Mixed Herbs" was added beside the first.
 const existing = [
