@@ -84,16 +84,19 @@ export default function WishListPage() {
     <div className="space-y-5">
       <PageHeader
         title={WISH_LIST_NAME}
-        description={WISH_LIST_SUBTITLE}
         action={
           <button
             onClick={() => setAdding(true)}
             className="h-10 px-4 bg-primary text-primary-foreground rounded-xl font-semibold flex items-center gap-2 hover:bg-primary/90"
           >
-            <Plus className="w-5 h-5" /> <span className="hidden sm:inline">Add something</span>
+            <Plus className="w-5 h-5" /> <span className="hidden xl:inline">Add something</span>
           </button>
         }
       />
+
+      {/* The subtitle lives here, not in the top bar: on an iPad the bar's
+          description squeezed the page name down to "W…". */}
+      <p className="text-lg text-muted-foreground">{WISH_LIST_SUBTITLE} — paste a link to ask, tap +1 once a day for what you need most.</p>
 
       <div className="flex flex-col gap-3">
         <div className="flex flex-wrap gap-2" role="tablist" aria-label="Show">
@@ -158,19 +161,21 @@ export default function WishListPage() {
         </div>
       )}
 
+      {/* Table or cards by the width the PAGE has (a container query), not
+          the screen: iPad landscape with the menu open is a card-width page. */}
       {shown.length > 0 && (
-        <>
-          {/* Desktop / iPad landscape: the table. */}
-          <div className="hidden lg:block rounded-2xl border border-border overflow-hidden">
-            <table className="w-full text-left">
+        <div className="@container">
+          {/* Wide page: the table. */}
+          <div className="hidden @5xl:block rounded-2xl border border-border overflow-hidden">
+            <table className="w-full text-left table-fixed">
               <thead className="bg-secondary/60 text-sm uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 font-bold">Item</th>
-                  <th className="px-4 py-3 font-bold whitespace-nowrap">Price</th>
-                  <th className="px-4 py-3 font-bold whitespace-nowrap">Asked for by</th>
-                  <th className="px-4 py-3 font-bold w-[260px]">Votes</th>
-                  <th className="px-4 py-3 font-bold">Status</th>
-                  <th className="px-4 py-3 font-bold"><span className="sr-only">Actions</span></th>
+                  <th className="px-4 py-3 font-bold w-[150px]">Price</th>
+                  <th className="px-4 py-3 font-bold w-[160px]">Asked for by</th>
+                  <th className="px-4 py-3 font-bold w-[200px]">Votes</th>
+                  <th className="px-4 py-3 font-bold w-[150px]">Status</th>
+                  <th className="px-4 py-3 font-bold w-[120px]"><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -186,12 +191,12 @@ export default function WishListPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-4 py-3 whitespace-nowrap"><Price item={item} /></td>
+                    <td className="px-4 py-3"><Price item={item} /></td>
                     <td className="px-4 py-3">
                       <p className="font-semibold">{item.createdByName ?? "—"}</p>
                       <p className="text-sm text-muted-foreground whitespace-nowrap">{feedTimestamp(item.createdAt)}</p>
                     </td>
-                    <td className="px-4 py-3"><Votes item={item} topVotes={topVotes} /></td>
+                    <td className="px-4 py-3"><Votes item={item} topVotes={topVotes} stack /></td>
                     <td className="px-4 py-3"><StatusPill item={item} /></td>
                     <td className="px-4 py-3 text-right">
                       <RowActions item={item} canManage={canManage} onManage={setManaging} onEdit={setEditing} />
@@ -202,8 +207,8 @@ export default function WishListPage() {
             </table>
           </div>
 
-          {/* Phone / iPad portrait: big cards. */}
-          <ul className="lg:hidden grid grid-cols-1 md:grid-cols-2 gap-3">
+          {/* Narrower page (phone, iPad): big cards. */}
+          <ul className="@5xl:hidden grid grid-cols-1 @xl:grid-cols-2 gap-3">
             {shown.map(item => (
               <li key={item.id} className="rounded-3xl border-2 border-border p-4 space-y-3 bg-card">
                 <div className="flex gap-3 items-start">
@@ -225,7 +230,7 @@ export default function WishListPage() {
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       <AddToWishListSheet open={adding} onClose={() => setAdding(false)} />
@@ -267,13 +272,14 @@ function Price({ item, inline = false }: { item: WishListItem; inline?: boolean 
   );
 }
 
-function Votes({ item, topVotes }: { item: WishListItem; topVotes: number }) {
+/** `stack`: button under the bar (narrow table column); otherwise beside it. */
+function Votes({ item, topVotes, stack = false }: { item: WishListItem; topVotes: number; stack?: boolean }) {
   const vote = useVote();
   const pct = voteBarPercent(item.votes.total, topVotes);
   const isTop = topVotes > 0 && item.votes.total === topVotes && (item.status === "requested" || item.status === "approved");
   const open = item.status === "requested" || item.status === "approved";
   return (
-    <div className="flex items-center gap-3">
+    <div className={cn("flex gap-3", stack ? "flex-col items-stretch gap-2" : "items-center")}>
       <div className="flex-1 min-w-0">
         <p className="flex items-baseline gap-1.5">
           <span className="text-2xl font-bold tabular-nums">{item.votes.total}</span>
@@ -294,7 +300,8 @@ function Votes({ item, topVotes }: { item: WishListItem; topVotes: number }) {
           })}
           aria-label={item.votes.votedToday ? "You've voted for this today" : `Add a vote for ${item.title} today`}
           className={cn(
-            "h-14 min-w-[104px] px-3 rounded-2xl text-base font-bold flex items-center justify-center gap-1.5 flex-shrink-0",
+            stack ? "h-12" : "h-14",
+            "min-w-[104px] px-3 rounded-2xl text-base font-bold flex items-center justify-center gap-1.5 flex-shrink-0",
             item.votes.votedToday ? "bg-secondary text-muted-foreground" : "bg-pink-500 text-white hover:bg-pink-600 shadow-md shadow-pink-500/30",
           )}
         >
