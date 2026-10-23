@@ -13,8 +13,10 @@
  *      (1 box = 12 kg)" — the pack's own name since #327, 22 Oct 2026 —
  *      → "I understand — weigh in kilograms".
  *   A count far off what the app expected (last count + deliveries −
- *   usage), or zero straight after a positive count, asks "Are you sure?
- *   We expected about 2 kg" and needs a second tap (#327).
+ *   usage), or zero straight after a positive count, asks "That's very
+ *   different from what we'd expect — count again to be sure" / "That's
+ *   zero — are you sure the shelf is empty?" and needs a second tap (#327).
+ *   Blind: the expected figure is never shown (Graeme, 23 Oct 2026).
  *   2. One big number field with the unit huge and bold right after it, a
  *      Dictate button (spoken numbers: "five hundred and fifty"), and one
  *      big "Enter stock" button. A plain-words read-back says what will be
@@ -96,8 +98,8 @@ export function useStockCheckHistory(checkDate: string) {
   });
 }
 
-/** What the app expects this count to be (#327) — only ever shown in the
- *  "Are you sure? We expected about 2 kg" question after a far-off count. */
+/** What the app expects this count to be (#327) — used only to decide
+ *  whether to ask "are you sure?"; never shown (counts stay blind). */
 export function useStockCheckExpected(ingredientId: number) {
   return useQuery<{ expectedNative: number | null; lastCountNative: number | null; coverage: string }>({
     queryKey: ["stock-check-expected", ingredientId],

@@ -96,8 +96,9 @@ export function parseStockAmount(raw: string): number | null {
 // count plus deliveries minus planned use), or zero straight after a
 // positive count, ask 'Are you sure? We expected about 2 kg' and require a
 // second tap." Expected = the running-stock ledger (GET
-// /api/stock-check-expected). Counts stay blind: the figure is only shown
-// in the question, after a far-off number has been typed.
+// /api/stock-check-expected). Counts stay blind (Graeme, 23 Oct 2026): the
+// expected figure is used only to decide whether to ask — the question
+// itself never shows it.
 
 /** More than this many times the expected figure, or under 1/this of it. */
 export const EXPECTED_FAR_RATIO = 2;
@@ -140,17 +141,18 @@ export function expectedCountSanity(input: {
   return { level: "ok" };
 }
 
-/** "Are you sure — 0 kg? We expected about 2 kg." in the unit typed. */
+/** The question for a far-off or zero count. BLIND (Graeme, 23 Oct 2026:
+ *  "Keep counts blind — remove the expected figure from the 'Are you sure?'
+ *  check"): it never contains the expected / ledger figure, so it takes no
+ *  sanity detail beyond the reason — only the person's own typed amount
+ *  appears. Still needs a second tap (stock-check-entry.tsx). */
 export function expectedSanityMessage(
   s: ExpectedCountSanity,
   entered: { value: number; unit: StockCheckUnit; item: StockCheckUnitItem },
 ): string | null {
   if (s.level !== "warn") return null;
-  const ask = `Are you sure — ${formatStockCount(entered.value, entered.unit, entered.item)}?`;
-  const exp = nativeToStockCount(s.expectedNative, entered.unit, entered.item);
-  if (exp == null) return ask;
-  const rounded = entered.unit === "g" ? Math.round(exp) : Math.round(exp * 10) / 10;
-  return `${ask} We expected about ${formatStockCount(rounded, entered.unit, entered.item)}.`;
+  if (s.reason === "zero-after-positive") return "That's zero — are you sure the shelf is empty?";
+  return `${formatStockCount(entered.value, entered.unit, entered.item)}? That's very different from what we'd expect — count again to be sure.`;
 }
 
 // ── Use-by on a stock check (#165, Graeme approved 22 Oct 2026) ───────────

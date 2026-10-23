@@ -10,9 +10,9 @@
  * ledger, lib/stock-ledger*.ts), in the ingredient's own unit; null when it
  * has never been counted. coverage says how much of its usage the app sees
  * ("untracked" = none, so the figure only ever grows — the entry then
- * doesn't compare against it). The entry never SHOWS this figure before the
- * count is typed — counts stay blind; it only appears in "Are you sure?
- * We expected about 2 kg" when a typed count is far off it.
+ * doesn't compare against it). The entry never SHOWS this figure — counts
+ * stay blind (Graeme, 23 Oct 2026); it only decides whether the entry asks
+ * "are you sure?" when a typed count is far off it.
  * Read-only; its own file because production-plans.ts takes no new code.
  */
 import { Router, type IRouter } from "express";
