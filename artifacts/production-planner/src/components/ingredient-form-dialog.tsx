@@ -19,6 +19,7 @@ import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loa
 import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
+import { PackNameField } from "@/components/pack-name-field";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import {
@@ -907,6 +908,12 @@ export function IngredientFormDialog({
             </div>
           </div>
 
+          {/* What the pack is called — box, roll, bag (#327). Autosaves on
+              its own endpoint, so it needs a saved ingredient. */}
+          {editingItem?.id
+            ? <PackNameField ingredientId={editingItem.id} />
+            : <p className="text-xs text-muted-foreground">Save the ingredient first to name its pack (box, roll, bag…).</p>}
+
           {liveCostPerUnit !== null && (
             <div className="rounded-lg bg-secondary/30 border border-border px-3.5 py-2.5 text-sm flex items-center justify-between">
               <span className="text-muted-foreground">Implied cost per {watchedUnit || "unit"}:</span>
@@ -1028,6 +1035,17 @@ export function IngredientFormDialog({
                   Stock check, ordering and goods-in count this in whole {watchedUnit === "ml" || watchedUnit === "l" ? "bottles" : "packs"} instead of {watchedUnit || "weight"}. Recipes and prep still use {watchedUnit || "the native unit"}. Requires Pack size.
                 </p>
                 {errors.stockInPacks && <span className="text-destructive text-xs ml-6 block mt-1">{String(errors.stockInPacks.message)}</span>}
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" {...register("prepOneTinPerRecipe")} className="w-4 h-4 rounded border-border" />
+                  <span className="text-sm font-medium">One tin per recipe in Main Prep</span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-1 ml-6">
+                  Main Prep weighs this as a single tin for each recipe, however many batches (e.g. Fresh Basil, Rosemary).
+                  The Orders page&apos;s &ldquo;still to prep&rdquo; counts the same tins.
+                </p>
               </div>
 
               <div className="bg-secondary/30 rounded-lg px-4 py-3">

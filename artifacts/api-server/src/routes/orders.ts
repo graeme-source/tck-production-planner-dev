@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, type SurplusByDeliveryWeekday } from "@workspace/business-days";
+import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 import {
   db,
   productionPlansTable,
@@ -18,6 +18,7 @@ import {
 import { eq, and, or, isNull, desc, sql, inArray, notInArray, lte, gte } from "drizzle-orm";
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
+import { markSplitsPlaced, splitsForCalculate, type SplitView } from "../lib/order-splits";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
 import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
@@ -175,6 +176,7 @@ router.get("/calculate", async (req, res) => {
       stockInPacks: ingredientsTable.stockInPacks,
       caseSizePacks: ingredientsTable.caseSizePacks,
       palletSize: ingredientsTable.palletSize,
+      packName: ingredientsTable.packName,
     })
     .from(ingredientsTable)
     .where(inArray(ingredientsTable.id, ingredientIds));
@@ -451,6 +453,16 @@ router.get("/calculate", async (req, res) => {
       palletSize: number | null;
       orderInPallets: boolean;
       palletSizeMissing: boolean;
+      // "Split with another supplier" (#248 + #328): packs of this line
+      // moved to another supplier's order (taken off), and fixed packs
+      // moved here from another supplier's order (added on). The page's
+      // stock-edit recompute re-applies both (packsAfterSplits).
+      splitAwayPacks?: number;
+      splitInPacks?: number;
+      /** What one pack is called — "box", "roll" (#327). Null = pack. */
+      packName?: string | null;
+      splitsAway?: SplitView[];
+      splitsIn?: SplitView[];
     }>;
   }> = {};
 
@@ -621,6 +633,7 @@ router.get("/calculate", async (req, res) => {
       palletSize: positivePalletSize(detail.palletSize),
       orderInPallets,
       palletSizeMissing,
+      packName: detail.packName ?? null,
     });
   }
 
@@ -647,6 +660,7 @@ router.get("/calculate", async (req, res) => {
           stockInPacks: ingredientsTable.stockInPacks,
           palletSize: ingredientsTable.palletSize,
           stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+          packName: ingredientsTable.packName,
         })
         .from(ingredientsTable)
         .where(eq(ingredientsTable.id, kanban.ingredientId))
@@ -733,7 +747,26 @@ router.get("/calculate", async (req, res) => {
         palletSize: positivePalletSize(d.palletSize),
         orderInPallets: kanbanUnitVal === "pallet",
         palletSizeMissing: kanbanPacks.warning === "pallet-size-missing",
+        packName: d.packName ?? null,
       });
+    }
+  }
+
+  // ── "Split with another supplier" (#248 + #328) ─────────────────────────
+  // Packs split AWAY from a line on this plan come off it — today's supplier
+  // keeps the rest, before and after its order is placed.
+  const splits = await splitsForCalculate(planId, today);
+  const lineQtyForPacks = (l: { unit: string; packWeight: number }, packs: number) =>
+    l.unit === "packs" || l.unit === "bottles" ? packs : Math.round(packsToBaseQty(packs, l.packWeight) * 100) / 100;
+  for (const so of Object.values(supplierOrderMap)) {
+    for (const l of so.lines) {
+      const away = splits.away.get(`${so.supplier.id}:${l.ingredientId}`);
+      if (!away?.length) continue;
+      const awayPacks = away.reduce((n, x) => n + x.packs, 0);
+      l.splitAwayPacks = awayPacks;
+      l.splitsAway = away;
+      l.packsToOrder = packsAfterSplits(l.packsToOrder, awayPacks, 0);
+      l.orderQty = lineQtyForPacks(l, l.packsToOrder);
     }
   }
 
@@ -812,6 +845,89 @@ router.get("/calculate", async (req, res) => {
   // Drop suppliers whose entire requirement is already covered.
   for (const sid of Object.keys(supplierOrderMap)) {
     if (supplierOrderMap[Number(sid)].lines.length === 0) delete supplierOrderMap[Number(sid)];
+  }
+
+  // Splits due IN today (or overdue and still not placed) join the target
+  // supplier's order as a fixed amount, marked "Split from Express, Mon".
+  // After the placed-order dedupe on purpose: the split is its own order
+  // line, whatever that supplier ordered earlier. Placing the order marks
+  // it placed (markSplitsPlaced); until then it can be cancelled.
+  for (const sp of splits.incoming) {
+    const sid = sp.targetSupplierId;
+    if (!supplierOrderMap[sid]) {
+      const supplier = supplierLookup[sid] ?? (await db.select().from(suppliersTable).where(eq(suppliersTable.id, sid)).limit(1))[0];
+      if (!supplier) continue;
+      supplierLookup[sid] ??= supplier;
+      supplierOrderMap[sid] = {
+        supplier: {
+          id: sid,
+          name: supplier.name,
+          contactName: supplier.contactName ?? null,
+          email: supplier.email ?? null,
+          phone: supplier.phone ?? null,
+          orderingPhone: supplier.orderingPhone ?? null,
+          website: supplier.website ?? null,
+          leadTimeDays: supplier.leadTimeDays ?? 1,
+          cutoffTime: supplier.cutoffTime ?? "17:00",
+        },
+        lines: [],
+      };
+    }
+    const lines = supplierOrderMap[sid].lines;
+    const existing = lines.find(l => l.ingredientId === sp.ingredientId);
+    if (existing) {
+      existing.splitInPacks = (existing.splitInPacks ?? 0) + sp.packs;
+      existing.splitsIn = [...(existing.splitsIn ?? []), sp];
+      existing.packsToOrder += sp.packs;
+      existing.orderQty = lineQtyForPacks(existing, existing.packsToOrder);
+      existing.belowRequirement = false;
+      continue;
+    }
+    const [d] = await db.select().from(ingredientsTable).where(eq(ingredientsTable.id, sp.ingredientId)).limit(1);
+    if (!d) continue;
+    const packWeight = Number(d.packWeight) || 1;
+    // Priced at this supplier when it's the ingredient's secondary and has
+    // its own price, otherwise the usual price (same as minimum top-ups).
+    const costPerPack = d.secondarySupplierId === sid && d.secondaryCostPerPack != null
+      ? Number(d.secondaryCostPerPack)
+      : Number(d.costPerPack) || 0;
+    const ls = lineStockFor(d.id, d.stockCheckEnabled ?? false);
+    lines.push({
+      ingredientId: d.id,
+      ingredientName: d.name,
+      unit: d.unit ?? "kg",
+      totalRequired: 0,
+      stockOnHand: Math.round(ls.stockOnHand * 100) / 100,
+      surplusTarget: 0,
+      packWeight,
+      costPerPack,
+      supplierPartNumber: d.supplierId === sid ? d.supplierPartNumber ?? null : null,
+      orderQty: packsToBaseQty(sp.packs, packWeight),
+      packsToOrder: sp.packs,
+      isKanban: false,
+      kanbanFloorPacks: null,
+      stockCounted: d.stockCheckEnabled ?? false,
+      stockBasis: ls.basis,
+      expectedStock: ls.expectedStock,
+      expectedAtLastCount: ls.expectedAtLastCount,
+      orderingUrl: d.supplierId === sid ? d.orderingUrl ?? null : null,
+      lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
+      belowRequirement: false,
+      stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
+      caseSizePacks: null,
+      // The split is a fixed amount: no requirement, surplus, prep or
+      // inbound maths on this line, so a stock edit can't change it.
+      inboundQty: 0,
+      inboundDeliveries: [],
+      prepOutstandingQty: 0,
+      nativeUnit: d.unit ?? "kg",
+      palletSize: positivePalletSize(d.palletSize),
+      orderInPallets: false,
+      palletSizeMissing: false,
+      splitInPacks: sp.packs,
+      splitsIn: [sp],
+      packName: d.packName ?? null,
+    });
   }
 
   // Suppliers configured with orderFrequency=weekly + orderDays only place
@@ -1206,6 +1322,10 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
       ));
   }
 
+  // Splits from another supplier's order that were on this one are now
+  // ordered — they leave "waiting" and can no longer be cancelled (#248).
+  await markSplitsPlaced(orderId);
+
   res.json({
     ...updated,
     createdAt: updated.createdAt.toISOString(),
@@ -1294,6 +1414,8 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
           or(eq(kanbanItemsTable.supplierId, updated.supplierId), isNull(kanbanItemsTable.supplierId)),
         ));
     }
+
+    await markSplitsPlaced(orderId);
 
     console.log(`[Orders] Resubmitted PO ${orderId} with ${cleanedLines.length} lines`);
     res.json({

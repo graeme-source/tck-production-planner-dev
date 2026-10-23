@@ -57,6 +57,7 @@ export const ingredientFormSchema = z.object({
   bottleSize: nullableNumber((n) => n.min(0)),
   prepCountPerPortion: nullableNumber((n) => n.int().positive()),
   isPasta: z.boolean().optional(),
+  prepOneTinPerRecipe: z.boolean().optional(),
   // When true, stock check / orders / goods-in all operate in whole packs.
   // Prep and recipes continue to use the native unit. Requires packWeight > 0.
   stockInPacks: z.boolean().optional(),
@@ -167,6 +168,7 @@ export function emptyIngredientFormDefaults(
     bottleSize: null,
     prepCountPerPortion: null,
     isPasta: false,
+    prepOneTinPerRecipe: false,
     stockInPacks: false,
     stockCheckEnabled: false,
     stockCheckFrequency: "daily",
@@ -254,6 +256,7 @@ export function ingredientToFormValues(
     bottleSize: num(it.bottleSize),
     prepCountPerPortion: num(it.prepCountPerPortion),
     isPasta: bool(it.isPasta),
+    prepOneTinPerRecipe: bool(it.prepOneTinPerRecipe),
     stockInPacks: bool(it.stockInPacks),
     stockCheckEnabled: bool(it.stockCheckEnabled),
     stockCheckFrequency: (it.stockCheckFrequency as "daily" | "weekly" | undefined) ?? "daily",
@@ -326,6 +329,7 @@ export function buildIngredientPayload(data: IngredientFormValues) {
     bottleSize: data.isBottle ? (data.bottleSize ?? null) : null,
     prepCountPerPortion: data.prepCountPerPortion ?? null,
     isPasta: data.isPasta ?? false,
+    prepOneTinPerRecipe: data.prepOneTinPerRecipe ?? false,
     stockInPacks: data.stockInPacks ?? false,
     stockCheckEnabled: data.stockCheckEnabled ?? false,
     stockCheckFrequency: data.stockCheckFrequency ?? "daily",

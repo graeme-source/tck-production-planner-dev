@@ -41,6 +41,8 @@ export interface StockCheckUnitItem {
   stockInPacks?: boolean | null;
   /** ingredients.stock_check_unit — null/undefined = the default rule. */
   stockCheckUnit?: string | null;
+  /** ingredients.pack_name (#327): "box", "roll" … null = pack / bottle. */
+  packName?: string | null;
 }
 
 function packSize(item: StockCheckUnitItem): number | null {
@@ -82,7 +84,7 @@ export function resolveStockCheckUnit(item: StockCheckUnitItem): StockCheckUnit 
 /** Short unit after the number: "g", "kg", "packs", "bottles", "each". */
 export function stockCheckUnitSymbol(unit: StockCheckUnit, item: StockCheckUnitItem, qty = 2): string {
   if (unit === "g" || unit === "kg") return unit;
-  if (unit === "packs") return packNoun(item.unit, qty);
+  if (unit === "packs") return packNoun(item.unit, qty, item.packName);
   return unitWord(item.unit, qty) || item.unit;
 }
 
@@ -90,7 +92,7 @@ export function stockCheckUnitSymbol(unit: StockCheckUnit, item: StockCheckUnitI
 export function stockCheckUnitName(unit: StockCheckUnit, item: StockCheckUnitItem): string {
   if (unit === "g") return "grams";
   if (unit === "kg") return "kilograms";
-  if (unit === "packs") return packNoun(item.unit, 2);
+  if (unit === "packs") return packNoun(item.unit, 2, item.packName);
   const w = unitWord(item.unit, 2) || item.unit;
   return w.toLowerCase() === "pcs" ? "pieces" : w;
 }
@@ -99,7 +101,18 @@ export function stockCheckUnitName(unit: StockCheckUnit, item: StockCheckUnitIte
 export function stockCheckPackLabel(unit: StockCheckUnit, item: StockCheckUnitItem): string | null {
   const pw = packSize(item);
   if (unit !== "packs" || pw == null) return null;
-  return `1 ${packNoun(item.unit, 1)} = ${formatPackSize(pw, item.unit)}`;
+  return `1 ${packNoun(item.unit, 1, item.packName)} = ${formatPackSize(pw, item.unit)}`;
+}
+
+/**
+ * Exactly what to do, in one line (#327): "Count BOXES (1 box = 12 kg)",
+ * "Weigh in KILOGRAMS", "Count EACH". Counting for packs and count units,
+ * weighing for g / kg.
+ */
+export function stockCheckInstruction(unit: StockCheckUnit, item: StockCheckUnitItem): { verb: "Count" | "Weigh in"; what: string; detail: string | null } {
+  const what = stockCheckUnitName(unit, item).toUpperCase();
+  if (unit === "g" || unit === "kg") return { verb: "Weigh in", what, detail: null };
+  return { verb: "Count", what, detail: stockCheckPackLabel(unit, item) };
 }
 
 /** The typed count (in the check unit) → the ingredient's own unit, which
@@ -169,7 +182,7 @@ export function describeStockCount(value: number, unit: StockCheckUnit, item: St
     if (!sameAsOwn) extras.push(`${formatStockNumber(native)} ${unitWord(ownUnit, native) || ownUnit} saved`);
     if (pw != null && value > 0 && !(pw === 1 && !isWeighable(ownUnit))) {
       const packs = Math.round((native / pw) * 100) / 100;
-      extras.push(`${formatStockNumber(packs)} ${packNoun(ownUnit, packs)} of ${formatPackSize(pw, ownUnit)}`);
+      extras.push(`${formatStockNumber(packs)} ${packNoun(ownUnit, packs, item.packName)} of ${formatPackSize(pw, ownUnit)}`);
     }
   }
   return { entered, extras, native };

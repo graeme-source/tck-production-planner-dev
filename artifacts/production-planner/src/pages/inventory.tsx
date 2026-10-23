@@ -30,6 +30,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useSearch } from "wouter";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
+import { packNoun } from "@workspace/units";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -84,6 +85,8 @@ interface KanbanCardData {
   supplierPartNumber: string | null;
   location: string | null;
   qrCodeUrl: string | null;
+  /** What one pack is called — "box", "roll" (#327). Null = pack. */
+  packName?: string | null;
 }
 
 async function printKanban(ingredientId: number) {
@@ -111,7 +114,8 @@ async function printKanban(ingredientId: number) {
   // ingredient's native unit. ("packs" kept for legacy rows saved plural.)
   const kanbanUnitLabel = (qty: number): string => {
     switch (card.kanbanUnit) {
-      case "pack": case "packs": return qty === 1 ? "pack" : "packs";
+      // A named pack (#327) reads "2 boxes"; otherwise "pack(s)" as before.
+      case "pack": case "packs": return packNoun("pack", qty, card.packName);
       case "bottle": return qty === 1 ? "bottle" : "bottles";
       case "pallet": return qty === 1 ? "pallet" : "pallets";
       default: return card.unit;

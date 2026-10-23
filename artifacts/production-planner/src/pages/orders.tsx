@@ -32,7 +32,10 @@ import {
   GripVertical,
   ScanLine,
   Copy,
+  Scissors,
 } from "lucide-react";
+import { OrderSplitDialog, OrderSplitsWaiting, useCancelOrderSplit, type OrderSplit } from "@/components/order-split-dialog";
+import { splitDateLabel } from "@workspace/business-days";
 import { QrScanner } from "@/components/qr-scanner";
 import {
   DndContext, DragOverlay, PointerSensor, useSensor, useSensors,
@@ -45,7 +48,8 @@ import {
   formatDeliveryDate,
   toISODate,
 } from "@workspace/business-days";
-import { resolveDeliveryDate } from "@/lib/order-delivery";
+import { parseISODate, resolveDeliveryDate } from "@/lib/order-delivery";
+import { openOrdersForSupplier, orderTargetFor, placedOrderEditState, showsPendingCard } from "@/lib/supplier-order-target";
 import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
 import { useNow } from "@/hooks/use-now";
@@ -160,6 +164,12 @@ type OrderLine = SurplusLineFields & {
   palletSize?: number | null;
   orderInPallets?: boolean;
   palletSizeMissing?: boolean;
+  // "Split with another supplier" (#248 + #328) — the splits behind
+  // splitAwayPacks / splitInPacks (SurplusLineFields), for the line's notes.
+  splitsAway?: OrderSplit[];
+  splitsIn?: OrderSplit[];
+  /** What one pack is called — "box", "roll" (#327). Null = pack. */
+  packName?: string | null;
 };
 
 type SupplierOrder = {
@@ -195,6 +205,8 @@ type PurchaseOrder = {
   status: string;
   createdAt: string;
   placedAt: string | null;
+  /** YYYY-MM-DD; null on a draft that was never placed. */
+  expectedDeliveryDate: string | null;
   notes: string | null;
   lines: Array<{
     id: number;
@@ -223,6 +235,11 @@ type Plan = {
   planDate: string;
   status: string;
 };
+
+/** A placed order reopened into the To Order view for editing. Its delivery
+ *  date is kept so the card starts at the order's own date, not today + lead
+ *  time (fix-queue #194). */
+type ReopenedOrder = { id: number; expectedDeliveryDate: string | null };
 
 type EditableLine = OrderLine & {
   checked: boolean;
@@ -375,6 +392,12 @@ function buildOrderWhatsAppShare(supplierName: string, lines: EditableLine[], de
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
+/** "Thu 23 Oct" for a placed order's YYYY-MM-DD delivery date. */
+function orderDueText(iso: string | null | undefined): string {
+  const d = parseISODate(iso);
+  return d ? formatDeliveryDate(d) : "no date set";
+}
+
 export default function Orders() {
   const queryClient = useQueryClient();
   const { state: authState } = useAuth();
@@ -430,7 +453,46 @@ export default function Orders() {
   // was already placed today, we "reopen" that PO into the pending view so
   // they can edit + resubmit. Maps supplierId → existing PO id so the place
   // mutation can route to the resubmit endpoint instead of creating a new PO.
-  const [reopenedPlacedOrders, setReopenedPlacedOrders] = useState<Record<number, number>>({});
+  const [reopenedPlacedOrders, setReopenedPlacedOrders] = useState<Record<number, ReopenedOrder>>({});
+
+  // Suppliers whose placed order stays as it is while a SECOND, separate
+  // order (own delivery date, own confirmation, own send) is built on the To
+  // Order tab — fix-queue #194. Kept per plan in sessionStorage so a refresh
+  // doesn't fold the new order's queued kanbans back out of sight.
+  const [separateOrderSuppliers, setSeparateOrderSuppliers] = useState<Set<number>>(new Set());
+  useEffect(() => {
+    if (!selectedPlanId) { setSeparateOrderSuppliers(new Set()); return; }
+    try {
+      const raw = sessionStorage.getItem(`orders_separateSuppliers_${selectedPlanId}`);
+      const ids = raw ? (JSON.parse(raw) as number[]) : [];
+      setSeparateOrderSuppliers(new Set(ids.filter(n => Number.isFinite(n))));
+    } catch {
+      setSeparateOrderSuppliers(new Set());
+    }
+  }, [selectedPlanId]);
+  const updateSeparateOrderSuppliers = useCallback((fn: (prev: Set<number>) => Set<number>) => {
+    setSeparateOrderSuppliers(prev => {
+      const next = fn(prev);
+      if (next === prev) return prev;
+      try {
+        if (!selectedPlanId) return next;
+        if (next.size === 0) sessionStorage.removeItem(`orders_separateSuppliers_${selectedPlanId}`);
+        else sessionStorage.setItem(`orders_separateSuppliers_${selectedPlanId}`, JSON.stringify([...next]));
+      } catch { /* storage blocked — the in-memory state still works */ }
+      return next;
+    });
+  }, [selectedPlanId]);
+
+  // "Add to order #N / Start a separate order" questions waiting for an
+  // answer, one per supplier, asked in turn. `apply` adds the line(s) once
+  // the operator has picked which order they go on.
+  const [orderChoices, setOrderChoices] = useState<Array<{
+    supplierId: number;
+    supplierName: string;
+    orders: PurchaseOrder[];
+    what: string;
+    apply: () => void;
+  }>>([]);
 
   // Issue 5: global toggle to show items that are daily stock-checked but
   // aren't required because we have enough stock. Default hidden.
@@ -446,6 +508,31 @@ export default function Orders() {
   // ingredient assigned to that supplier so operators can add one-off
   // manual lines without waiting for an auto-calc.
   const [addItemDialog, setAddItemDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
+
+  // "Split with another supplier" (#248 + #328): the line being split.
+  const [splitDialog, setSplitDialog] = useState<{ supplierId: number; supplierName: string; line: EditableLine } | null>(null);
+  const refreshCalc = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
+  }, [queryClient]);
+  const cancelSplit = useCancelOrderSplit(refreshCalc);
+  // Today's supplier keeps the rest straight away — also when the person has
+  // typed a stock figure, which a refetch deliberately doesn't overwrite.
+  const applySplitLocally = useCallback((supplierId: number, split: OrderSplit) => {
+    setEditableLines(prev => {
+      const lines = prev[supplierId];
+      if (!lines) return prev;
+      return {
+        ...prev,
+        [supplierId]: lines.map(l => l.ingredientId !== split.ingredientId ? l : {
+          ...l,
+          editedPacks: Math.max(0, l.editedPacks - split.packs),
+          splitAwayPacks: (l.splitAwayPacks ?? 0) + split.packs,
+          splitsAway: [...(l.splitsAway ?? []), split],
+        }),
+      };
+    });
+    refreshCalc();
+  }, [refreshCalc]);
 
   // Operator-dismissed supplier cards for the current plan. Persisted in
   // sessionStorage so a refresh doesn't re-surface them; cleared when the
@@ -935,22 +1022,21 @@ export default function Orders() {
       }));
     }
 
-    setReopenedPlacedOrders(prev => ({ ...prev, [supplierId]: placedPO.id }));
+    setReopenedPlacedOrders(prev => ({
+      ...prev,
+      [supplierId]: { id: placedPO.id, expectedDeliveryDate: placedPO.expectedDeliveryDate ?? null },
+    }));
+    // The card starts at the order's OWN delivery date (fix-queue #194). A
+    // date moved earlier in this session belonged to a different order for
+    // this supplier — drop it, or it would silently move this one.
+    setDeliveryDates(prev => {
+      if (!(supplierId in prev)) return prev;
+      const next = { ...prev };
+      delete next[supplierId];
+      return next;
+    });
     setExpandedSuppliers(prev => new Set([...prev, supplierId]));
   }, [reopenedPlacedOrders, calculated?.suppliers]);
-
-  // Used by kanban/manual add flows: looks up the placed PO for a supplier
-  // in the currently-selected plan and reopens it if found.
-  const reopenPlacedOrderIfAny = useCallback((supplierId: number) => {
-    if (reopenedPlacedOrders[supplierId]) return;
-    const placedPO = placedOrders.find(o =>
-      o.status === "placed" &&
-      o.planId === selectedPlanId &&
-      o.supplierId === supplierId,
-    );
-    if (!placedPO) return;
-    reopenPlacedOrder(placedPO);
-  }, [placedOrders, selectedPlanId, reopenedPlacedOrders, reopenPlacedOrder]);
 
   // Deep-link from the deliveries page: ?editPo=N pops the matching placed
   // order into edit mode as soon as the placed-orders query lands. We strip
@@ -995,10 +1081,21 @@ export default function Orders() {
     // in the pending view for that plan.
     if (order.planId && order.planId !== selectedPlanId) {
       setSelectedPlanId(order.planId);
+    } else if (placedOrderEditState(order, reopenedPlacedOrders, separateOrderSuppliers) === "supplier-busy") {
+      // One in-progress card per supplier: another of its orders (or a new
+      // separate one) is already open. Mixing them would put lines on the
+      // wrong order.
+      toast({
+        title: `Another ${order.supplierName ?? "supplier"} order is open`,
+        description: "Finish (or clear) the order already on the To Order tab, then edit this one.",
+        variant: "destructive",
+      });
+      setViewFilter("pending");
+      return;
     }
     reopenPlacedOrder(order);
     setViewFilter("pending");
-  }, [selectedPlanId, setSelectedPlanId, reopenPlacedOrder]);
+  }, [selectedPlanId, setSelectedPlanId, reopenPlacedOrder, reopenedPlacedOrders, separateOrderSuppliers]);
 
   // Drop a single line from the in-progress order. Used when an
   // auto-included stock-check item shouldn't actually be ordered this round —
@@ -1095,98 +1192,111 @@ export default function Orders() {
         !addedKanbanIngredientIds.has(k.ingredientId) &&
         effectiveSupplierIdFor(k) != null
     );
-    // Persist every pull server-side (kanban_items, queued for today) so the
-    // added lines survive navigation and plan regeneration — the lines below
-    // are just the optimistic view of what /calculate will now re-emit on
-    // every load. Placing the order flips the rows to 'ordered' as usual.
+    // One question per supplier that already has a placed order and no card
+    // open: add to that order, or start a separate one (#194). Kanbans for
+    // every other supplier are added straight away, exactly as before. A
+    // kanban isn't queued until its order is picked, so cancelling the
+    // question leaves nothing half-added.
+    const bySupplier = new Map<number, KanbanIngredient[]>();
     for (const kanban of toAdd) {
-      fetch(`${BASE}/api/kanbans/queue`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ingredientId: kanban.ingredientId, supplierId: effectiveSupplierIdFor(kanban) }),
-      }).catch(() => {
-        toast({
-          title: "Kanban not saved",
-          description: `${kanban.ingredientName ?? "Item"} was added to the screen but couldn't be saved — it may disappear if you leave the page.`,
-          variant: "destructive",
-        });
-      });
+      const sid = effectiveSupplierIdFor(kanban)!;
+      bySupplier.set(sid, [...(bySupplier.get(sid) ?? []), kanban]);
     }
-    for (const kanban of toAdd) {
-      // Same conversion as the server's kanban-only lines (@workspace/units):
-      // a pallet card orders pallet_size packs. A "weight" card's amount is
-      // still read as a pack count here, exactly as the server's kanban-only
-      // path does (unchanged — see routes/orders.ts). Pallet and weight lines
-      // are in the item's own unit; pack and bottle cards stay pack-counted.
-      const packWeight = Number(kanban.packWeight) > 0 ? Number(kanban.packWeight) : 1;
-      const kanbanPacks = kanbanOrderPacks(kanban.kanbanOrderAmount ?? kanban.kanbanQuantity, kanban.kanbanUnit === "weight" ? "pack" : kanban.kanbanUnit, {
-        packWeight,
-        palletSize: kanban.palletSize,
-      });
-      const qty = kanbanPacks.packs;
-      const nativeUnit = kanban.ingredientUnit ?? "kg";
-      const unit =
-        kanban.kanbanUnit === "pack" ? "packs"
-        : kanban.kanbanUnit === "bottle" ? "bottles"
-        : nativeUnit;
-      const supplierId = effectiveSupplierIdFor(kanban)!;
-      const newLine: EditableLine = {
-        ingredientId: kanban.ingredientId,
-        ingredientName: kanban.ingredientName ?? "Unknown",
-        unit,
-        totalRequired: 0,
-        stockOnHand: 0,
-        surplusTarget: 0,
-        packWeight,
-        nativeUnit,
-        palletSize: positivePalletSize(kanban.palletSize),
-        orderInPallets: kanban.kanbanUnit === "pallet",
-        palletSizeMissing: kanbanPacks.warning === "pallet-size-missing",
-        costPerPack: kanban.costPerPack ?? 0,
-        // The part number belongs to the primary supplier — only quote it
-        // when the kanban is actually being ordered from them.
-        supplierPartNumber: supplierId === kanban.supplierId ? (kanban.supplierPartNumber ?? null) : null,
-        orderQty: unit === "packs" || unit === "bottles" ? qty : packsToBaseQty(qty, packWeight),
-        packsToOrder: qty,
-        kanbanFloorPacks: qty,
-        isKanban: true,
-        orderingUrl: kanban.orderingUrl ?? null,
-        lastStockCheckAt: null,
-        checked: false,
-        editedPacks: qty,
-        editedStock: 0,
-        stockDirty: false,
-      };
-      const supplierName =
-        allSuppliers.find(s => s.id === supplierId)?.name
-        ?? (supplierId === kanban.supplierId ? kanban.supplierName : null)
-        ?? `Supplier #${supplierId}`;
-      // If this supplier already has a placed PO for the current plan, pull
-      // that PO's lines into view so the operator can resubmit with the new
-      // kanban item included, rather than losing the addition.
-      reopenPlacedOrderIfAny(supplierId);
-      clearRemovedMark(kanban.ingredientId);
-      setEditableLines(prev => {
-        const existing = prev[supplierId] ?? [];
-        const alreadyHas = existing.some(l => l.ingredientId === kanban.ingredientId);
-        if (alreadyHas) return prev;
-        return { ...prev, [supplierId]: [...existing, newLine] };
-      });
-      const dptSupplierIds = new Set((calculated?.suppliers ?? []).map(s => s.supplier.id));
-      if (!dptSupplierIds.has(supplierId)) {
-        setKanbanOnlySupplierInfo(prev => ({
-          ...prev,
-          [supplierId]: { id: supplierId, name: supplierName },
-        }));
-      }
-      setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+    for (const [sid, kanbans] of bySupplier) {
+      const name = allSuppliers.find(s => s.id === sid)?.name
+        ?? kanbans[0].supplierName ?? `Supplier #${sid}`;
+      withOrderTarget(sid, name, kanbans.map(k => k.ingredientName ?? "Item").join(", "),
+        () => kanbans.forEach(k => addKanbanLine(k, sid)));
     }
-    setAddedKanbanIngredientIds(prev => new Set([...prev, ...toAdd.map(k => k.ingredientId)]));
     setKanbanSearchOpen(false);
     setKanbanSearch("");
     setSelectedKanbanIds(new Set());
     setKanbanSupplierOverrides({});
+  };
+
+  const addKanbanLine = (kanban: KanbanIngredient, supplierId: number) => {
+    // Persist the pull server-side (kanban_items, queued for today) so the
+    // added line survives navigation and plan regeneration — the line below
+    // is just the optimistic view of what /calculate will now re-emit on
+    // every load. Placing the order flips the row to 'ordered' as usual.
+    fetch(`${BASE}/api/kanbans/queue`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ingredientId: kanban.ingredientId, supplierId }),
+    }).catch(() => {
+      toast({
+        title: "Kanban not saved",
+        description: `${kanban.ingredientName ?? "Item"} was added to the screen but couldn't be saved — it may disappear if you leave the page.`,
+        variant: "destructive",
+      });
+    });
+    // Same conversion as the server's kanban-only lines (@workspace/units):
+    // a pallet card orders pallet_size packs. A "weight" card's amount is
+    // still read as a pack count here, exactly as the server's kanban-only
+    // path does (unchanged — see routes/orders.ts). Pallet and weight lines
+    // are in the item's own unit; pack and bottle cards stay pack-counted.
+    const packWeight = Number(kanban.packWeight) > 0 ? Number(kanban.packWeight) : 1;
+    const kanbanPacks = kanbanOrderPacks(kanban.kanbanOrderAmount ?? kanban.kanbanQuantity, kanban.kanbanUnit === "weight" ? "pack" : kanban.kanbanUnit, {
+      packWeight,
+      palletSize: kanban.palletSize,
+    });
+    const qty = kanbanPacks.packs;
+    const nativeUnit = kanban.ingredientUnit ?? "kg";
+    const unit =
+      kanban.kanbanUnit === "pack" ? "packs"
+      : kanban.kanbanUnit === "bottle" ? "bottles"
+      : nativeUnit;
+    const newLine: EditableLine = {
+      ingredientId: kanban.ingredientId,
+      ingredientName: kanban.ingredientName ?? "Unknown",
+      unit,
+      totalRequired: 0,
+      stockOnHand: 0,
+      surplusTarget: 0,
+      packWeight,
+      nativeUnit,
+      palletSize: positivePalletSize(kanban.palletSize),
+      orderInPallets: kanban.kanbanUnit === "pallet",
+      palletSizeMissing: kanbanPacks.warning === "pallet-size-missing",
+      costPerPack: kanban.costPerPack ?? 0,
+      // The part number belongs to the primary supplier — only quote it
+      // when the kanban is actually being ordered from them.
+      supplierPartNumber: supplierId === kanban.supplierId ? (kanban.supplierPartNumber ?? null) : null,
+      orderQty: unit === "packs" || unit === "bottles" ? qty : packsToBaseQty(qty, packWeight),
+      packsToOrder: qty,
+      kanbanFloorPacks: qty,
+      isKanban: true,
+      orderingUrl: kanban.orderingUrl ?? null,
+      lastStockCheckAt: null,
+      checked: false,
+      editedPacks: qty,
+      editedStock: 0,
+      stockDirty: false,
+    };
+    const supplierName =
+      allSuppliers.find(s => s.id === supplierId)?.name
+      ?? (supplierId === kanban.supplierId ? kanban.supplierName : null)
+      ?? `Supplier #${supplierId}`;
+    // Which order this joins was settled before we got here
+    // (withOrderTarget): the supplier's open card, a reopened placed
+    // order, or a new separate order.
+    clearRemovedMark(kanban.ingredientId);
+    setEditableLines(prev => {
+      const existing = prev[supplierId] ?? [];
+      const alreadyHas = existing.some(l => l.ingredientId === kanban.ingredientId);
+      if (alreadyHas) return prev;
+      return { ...prev, [supplierId]: [...existing, newLine] };
+    });
+    const dptSupplierIds = new Set((calculated?.suppliers ?? []).map(s => s.supplier.id));
+    if (!dptSupplierIds.has(supplierId)) {
+      setKanbanOnlySupplierInfo(prev => ({
+        ...prev,
+        [supplierId]: { id: supplierId, name: supplierName },
+      }));
+    }
+    setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+    setAddedKanbanIngredientIds(prev => new Set([...prev, kanban.ingredientId]));
   };
 
   // Issue 4: fetch every ingredient belonging to the supplier whose "Add
@@ -1227,7 +1337,9 @@ export default function Orders() {
     if (!desc) { toast({ title: "Description required", variant: "destructive" }); return; }
     if (!Number.isFinite(qty) || qty <= 0) { toast({ title: "Quantity must be > 0", variant: "destructive" }); return; }
     const supplierId = addItemDialog.supplierId;
-    reopenPlacedOrderIfAny(supplierId);
+    // The "+ Add item" picker only opens on a card that is already settled as
+    // a new, separate or reopened order (see withOrderTarget), so the line
+    // simply joins that card.
     const syntheticId = miscIdCounter.current--;
     const newLine: EditableLine = {
       ingredientId: syntheticId,
@@ -1266,10 +1378,6 @@ export default function Orders() {
   const handleAddManualItem = (ingredient: SupplierIngredient) => {
     if (!addItemDialog) return;
     const supplierId = addItemDialog.supplierId;
-    // Same reopen-if-placed logic as kanban adds — an operator adding an
-    // item to a supplier whose order already went through should see the
-    // previous lines and be able to resubmit with the addition.
-    reopenPlacedOrderIfAny(supplierId);
     clearRemovedMark(ingredient.id);
     const packWeight = Number(ingredient.packWeight) || 1;
     const costPerPack = Number(ingredient.costPerPack) || 0;
@@ -1333,7 +1441,7 @@ export default function Orders() {
 
       // Reopened placed order → hit the resubmit endpoint instead of create+place.
       // This REPLACES the old lines with the new full set and bumps placedAt.
-      const reopenedPOId = reopenedPlacedOrders[supplierId];
+      const reopenedPOId = reopenedPlacedOrders[supplierId]?.id;
       if (reopenedPOId) {
         const resubmitRes = await fetch(`${BASE}/api/orders/purchase-orders/${reopenedPOId}/resubmit`, {
           method: "PATCH",
@@ -1408,6 +1516,23 @@ export default function Orders() {
           if (!prev[placedSupplierId]) return prev;
           const next = { ...prev };
           delete next[placedSupplierId];
+          return next;
+        });
+        // The date moved for THIS order is now saved on it. Left behind, it
+        // would become the starting date of the next order or edit for the
+        // same supplier and quietly override that order's own date (#194).
+        setDeliveryDates(prev => {
+          if (!(placedSupplierId in prev)) return prev;
+          const next = { ...prev };
+          delete next[placedSupplierId];
+          return next;
+        });
+        // A separate second order is now placed in its own right — the
+        // supplier goes back to "everything placed" (#194).
+        updateSeparateOrderSuppliers(prev => {
+          if (!prev.has(placedSupplierId)) return prev;
+          const next = new Set(prev);
+          next.delete(placedSupplierId);
           return next;
         });
       }
@@ -1498,9 +1623,20 @@ export default function Orders() {
   // Suppliers whose placed order has been "reopened" via a kanban/manual add
   // are shown in the pending view so the operator can resubmit.
   const reopenedSupplierIds = new Set(Object.keys(reopenedPlacedOrders).map(Number));
-  const dptPendingSuppliersAll = suppliers.filter(s => !placedSupplierIds.has(s.supplier.id) || reopenedSupplierIds.has(s.supplier.id));
+  // New needs the calc found while the placed order is past the supplier's
+  // edit cutoff — a fresh order (845c5a92). The placed-supplier filter below
+  // used to hide that card on the same plan; it now shows as a new order.
+  const lockedOpenPoSupplierIds = new Set(suppliers.filter(s => s.supplier.lockedOpenPo).map(s => s.supplier.id));
+  /** Does this supplier have an in-progress card on To Order? (#194) */
+  const hasPendingCard = (supplierId: number): boolean => showsPendingCard({
+    placed: placedSupplierIds.has(supplierId),
+    reopened: reopenedSupplierIds.has(supplierId),
+    separate: separateOrderSuppliers.has(supplierId),
+    lockedOpenPo: lockedOpenPoSupplierIds.has(supplierId),
+  });
+  const dptPendingSuppliersAll = suppliers.filter(s => hasPendingCard(s.supplier.id));
   const kanbanOnlyPendingAll = Object.values(kanbanOnlySupplierInfo)
-    .filter(s => (!placedSupplierIds.has(s.id) || reopenedSupplierIds.has(s.id)) && !suppliers.some(ds => ds.supplier.id === s.id))
+    .filter(s => hasPendingCard(s.id) && !suppliers.some(ds => ds.supplier.id === s.id))
     .map(s => {
       // Hydrate contact details from the supplier directory — the producers
       // of kanbanOnlySupplierInfo only carry id + name, and without this the
@@ -1528,7 +1664,10 @@ export default function Orders() {
   // supplier directory. Everything on screen and the date actually sent on
   // placing come from here, so they can't disagree.
   const getDeliveryDateForSupplier = (supplierId: number): Date =>
-    resolveDeliveryDate(supplierId, allPendingSuppliers, supplierDirectory, deliveryDates);
+    resolveDeliveryDate(
+      supplierId, allPendingSuppliers, supplierDirectory, deliveryDates,
+      reopenedPlacedOrders[supplierId]?.expectedDeliveryDate,
+    );
 
   // Moving a supplier's delivery date re-works the surplus of any line with
   // a surplus-by-delivery-day setting (same surplusFor the server used) and
@@ -1609,7 +1748,15 @@ export default function Orders() {
       persistDismissed(next);
       return next;
     });
-  }, [persistDismissed]);
+    // Dismissing a separate second order abandons it — the supplier's
+    // placed order stays as it was.
+    updateSeparateOrderSuppliers(prev => {
+      if (!prev.has(supplierId)) return prev;
+      const next = new Set(prev);
+      next.delete(supplierId);
+      return next;
+    });
+  }, [persistDismissed, updateSeparateOrderSuppliers]);
   const restoreSupplier = useCallback((supplierId: number) => {
     setDismissedSupplierIds(prev => {
       if (!prev.has(supplierId)) return prev;
@@ -1623,19 +1770,80 @@ export default function Orders() {
   const filteredPickerSuppliers = debouncedAddSupplierSearch.trim()
     ? pickerSuppliers.filter(s => s.name.toLowerCase().includes(debouncedAddSupplierSearch.toLowerCase()))
     : pickerSuppliers;
-  const handleAddManualSupplier = useCallback((supplier: { id: number; name: string }) => {
-    // Drop the dismiss state if the operator is re-adding a supplier they'd
-    // previously dismissed — otherwise the new card wouldn't appear.
-    restoreSupplier(supplier.id);
-    setKanbanOnlySupplierInfo(prev => ({ ...prev, [supplier.id]: { id: supplier.id, name: supplier.name } }));
-    setEditableLines(prev => prev[supplier.id] ? prev : { ...prev, [supplier.id]: [] });
-    setExpandedSuppliers(prev => new Set([...prev, supplier.id]));
+  const handleAddManualSupplier = (supplier: { id: number; name: string }) => {
     setAddSupplierDialogOpen(false);
     setAddSupplierSearch("");
-    // Open the per-supplier "Add item" picker straight away so the operator
-    // doesn't land on an empty card with no obvious next step.
-    setAddItemDialog({ supplierId: supplier.id, supplierName: supplier.name });
-  }, [restoreSupplier]);
+    // A supplier that already has a placed order asks which order first
+    // (#194); otherwise this opens its card exactly as before.
+    withOrderTarget(supplier.id, supplier.name, null, () => {
+      // Drop the dismiss state if the operator is re-adding a supplier they'd
+      // previously dismissed — otherwise the new card wouldn't appear.
+      restoreSupplier(supplier.id);
+      setKanbanOnlySupplierInfo(prev => ({ ...prev, [supplier.id]: { id: supplier.id, name: supplier.name } }));
+      setEditableLines(prev => prev[supplier.id] ? prev : { ...prev, [supplier.id]: [] });
+      setExpandedSuppliers(prev => new Set([...prev, supplier.id]));
+      // Open the per-supplier "Add item" picker straight away so the operator
+      // doesn't land on an empty card with no obvious next step.
+      setAddItemDialog({ supplierId: supplier.id, supplierName: supplier.name });
+    });
+  };
+
+  // ── Two orders from one supplier (fix-queue #194) ─────────────────────
+  // Lines for a supplier whose order is already placed used to be forced
+  // into that order (and its date). Now the operator picks: add to an
+  // existing order, or start a separate one with its own delivery date,
+  // confirmation and send.
+
+  /** Run `apply` against the right order for this supplier — straight away
+   *  when there's no question to ask, after the operator answers otherwise. */
+  const withOrderTarget = (supplierId: number, supplierName: string, what: string | null, apply: () => void) => {
+    const target = orderTargetFor(
+      hasPendingCard(supplierId),
+      openOrdersForSupplier(placedOrders, supplierId, selectedPlanId),
+    );
+    if (target.kind === "card") { apply(); return; }
+    setOrderChoices(q => [
+      ...q.filter(c => c.supplierId !== supplierId),
+      { supplierId, supplierName, orders: target.orders, what: what ?? "", apply },
+    ]);
+  };
+
+  /** Open a new, empty-dated order card for a supplier that already has a
+   *  placed order on this plan. The placed order is untouched. */
+  const startSeparateOrder = (supplierId: number, supplierName: string) => {
+    updateSeparateOrderSuppliers(prev => prev.has(supplierId) ? prev : new Set([...prev, supplierId]));
+    // Its own delivery date: start from the supplier's lead time, not a date
+    // moved for an earlier order this session.
+    setDeliveryDates(prev => {
+      if (!(supplierId in prev)) return prev;
+      const next = { ...prev };
+      delete next[supplierId];
+      return next;
+    });
+    restoreSupplier(supplierId);
+    if (!suppliers.some(s => s.supplier.id === supplierId)) {
+      setKanbanOnlySupplierInfo(prev => ({ ...prev, [supplierId]: { id: supplierId, name: supplierName } }));
+    }
+    setEditableLines(prev => prev[supplierId] ? prev : { ...prev, [supplierId]: [] });
+    setExpandedSuppliers(prev => new Set([...prev, supplierId]));
+  };
+
+  const answerOrderChoice = (pick: PurchaseOrder | "separate" | null) => {
+    const choice = orderChoices[0];
+    setOrderChoices(q => q.slice(1));
+    if (!choice || pick === null) return;
+    if (pick === "separate") startSeparateOrder(choice.supplierId, choice.supplierName);
+    else reopenPlacedOrder(pick);
+    choice.apply();
+  };
+
+  /** Placed tab → "New separate order": a second order for this supplier. */
+  const handleStartSeparateOrder = (order: PurchaseOrder) => {
+    const name = order.supplierName ?? `Supplier #${order.supplierId}`;
+    startSeparateOrder(order.supplierId, name);
+    setViewFilter("pending");
+    setAddItemDialog({ supplierId: order.supplierId, supplierName: name });
+  };
 
   const deleteOrderMutation = useMutation({
     mutationFn: async (poId: number) => {
@@ -1982,6 +2190,10 @@ export default function Orders() {
         </div>
       )}
 
+      {/* Splits saved for another supplier's order day (#248 + #328) —
+          cancellable here until that order is placed. */}
+      {viewFilter === "pending" && <OrderSplitsWaiting onChanged={refreshCalc} />}
+
       {viewFilter === "pending" && !calcLoading && pendingSuppliers.length === 0 && selectedPlanId && (
         <div className="text-center py-12 text-muted-foreground">
           No pending orders. All supplier orders have been placed or no ingredients need ordering.
@@ -2006,7 +2218,7 @@ export default function Orders() {
         const nonRequiredCount = allLines.length - orderableLines.length;
         const expanded = expandedSuppliers.has(so.supplier.id);
         const cost = estimatedCost(orderableLines);
-        const reopenedPOId = reopenedPlacedOrders[so.supplier.id];
+        const reopenedPOId = reopenedPlacedOrders[so.supplier.id]?.id;
         const isReopened = !!reopenedPOId;
 
         // Minimum order value (Graeme, 2026-10-01). Below it → amber notice
@@ -2058,7 +2270,13 @@ export default function Orders() {
                     {isReopened && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                         <RefreshCw className="w-2.5 h-2.5" />
-                        Editing placed order #{reopenedPOId}
+                        Editing placed order #{reopenedPOId} (due {orderDueText(reopenedPlacedOrders[so.supplier.id]?.expectedDeliveryDate)})
+                      </span>
+                    )}
+                    {!isReopened && separateOrderSuppliers.has(so.supplier.id) && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-400 border border-sky-500/30">
+                        <Plus className="w-2.5 h-2.5" />
+                        New separate order
                       </span>
                     )}
                   </div>
@@ -2087,7 +2305,14 @@ export default function Orders() {
                   {/* An open PO past its edit cutoff can't take these items —
                       say so plainly, or the team thinks the system forgot
                       about the order that's already on its way. */}
-                  {so.supplier.lockedOpenPo && !isReopened && (
+                  {!isReopened && separateOrderSuppliers.has(so.supplier.id) && (
+                    <p className="text-xs text-sky-700 dark:text-sky-400 mt-0.5">
+                      {openOrdersForSupplier(placedOrders, so.supplier.id, selectedPlanId)
+                        .map(o => `Order #${o.id} (due ${orderDueText(o.expectedDeliveryDate)})`)
+                        .join(", ") || "The placed order"} stays as it is — this is a second order with its own delivery date.
+                    </p>
+                  )}
+                  {so.supplier.lockedOpenPo && !isReopened && !separateOrderSuppliers.has(so.supplier.id) && (
                     <p className="text-xs text-amber-700 dark:text-amber-400 mt-0.5">
                       Order #{so.supplier.lockedOpenPo.id} (due {so.supplier.lockedOpenPo.expectedDeliveryDate}) is past
                       its {so.supplier.leadTimeDays ?? 1}-day cutoff — this is a new, separate order.
@@ -2211,6 +2436,30 @@ export default function Orders() {
                                 Kanban
                               </span>
                             )}
+                            {(line.splitsIn ?? []).map(sp => (
+                              <span key={`in-${sp.id}`} className="flex flex-wrap items-center gap-1.5 mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-sky-500/15 text-sky-700 dark:text-sky-300">
+                                  <Scissors className="w-3 h-3" /> {sp.label} — {sp.packs} {packNoun(line.unit, sp.packs, line.packName)}
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={cancelSplit.isPending}
+                                  onClick={() => {
+                                    if (window.confirm(`Cancel this split? ${sp.packs} ${packNoun(line.unit, sp.packs, line.packName)} of ${line.ingredientName} won't be ordered from ${so.supplier.name}.`)) cancelSplit.mutate(sp.id);
+                                  }}
+                                  className="text-xs font-medium underline underline-offset-2 text-muted-foreground hover:text-destructive"
+                                >
+                                  Cancel split
+                                </button>
+                              </span>
+                            ))}
+                            {(line.splitsAway ?? []).map(sp => (
+                              <span key={`away-${sp.id}`} className="flex items-center gap-1 mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">
+                                <Scissors className="w-3 h-3" />
+                                {sp.packs} {packNoun(line.unit, sp.packs, line.packName)} split to {sp.targetSupplierName}, {splitDateLabel(sp.targetOrderDate)}
+                                {sp.status === "placed" ? " (ordered)" : ""}
+                              </span>
+                            ))}
                             {unconfirmedPriceIds.has(line.ingredientId) && (
                               <span
                                 className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-700 dark:text-amber-400 mt-0.5 ml-1"
@@ -2364,7 +2613,7 @@ export default function Orders() {
                           >
                             {line.isMisc ? "—"
                               : line.stockInPacks && line.packWeight > 0
-                              ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight))}`
+                              ? `${Math.ceil(line.surplusTarget / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.surplusTarget / line.packWeight), line.packName)}`
                               : `${line.surplusTarget.toLocaleString()} ${line.unit}`}
                             {/* Which surplus applied and why — always shown
                                 when the delivery day chose it. */}
@@ -2377,7 +2626,7 @@ export default function Orders() {
                           <td className="p-3 text-right tabular-nums">
                             {line.isMisc ? "—"
                               : line.stockInPacks && line.packWeight > 0
-                              ? `${Math.ceil(line.totalRequired / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.totalRequired / line.packWeight))}`
+                              ? `${Math.ceil(line.totalRequired / line.packWeight)} ${packNoun(line.unit, Math.ceil(line.totalRequired / line.packWeight), line.packName)}`
                               : `${line.totalRequired.toLocaleString()} ${line.unit}`}
                           </td>
                           {lines.some(l => l.costPerPack > 0) && (
@@ -2394,7 +2643,18 @@ export default function Orders() {
                               )}
                             </td>
                           )}
-                          <td className="p-3 text-right">
+                          <td className="p-3 text-right whitespace-nowrap">
+                            {!line.isMisc && line.ingredientId > 0 && !isNonOrderable && line.editedPacks > 0 && (
+                              <button
+                                type="button"
+                                onClick={() => setSplitDialog({ supplierId: so.supplier.id, supplierName: so.supplier.name, line })}
+                                className="p-1.5 rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                                title={`Split ${line.ingredientName} with another supplier`}
+                                aria-label={`Split ${line.ingredientName} with another supplier`}
+                              >
+                                <Scissors className="w-4 h-4" />
+                              </button>
+                            )}
                             <button
                               type="button"
                               onClick={() => removeLine(so.supplier.id, line.ingredientId)}
@@ -2622,7 +2882,9 @@ export default function Orders() {
             </div>
           )}
           {placedForPlan.map(order => {
-            const isReopened = !!reopenedPlacedOrders[order.supplierId];
+            // Keyed by ORDER: with two orders from one supplier, editing one
+            // mustn't show the other as "being edited" (#194).
+            const editState = placedOrderEditState(order, reopenedPlacedOrders, separateOrderSuppliers);
             return (
             <div key={order.id} className="rounded-xl border border-green-500/30 bg-green-500/5 overflow-hidden">
               <div className="p-4 flex flex-wrap items-center justify-between gap-3">
@@ -2637,21 +2899,43 @@ export default function Orders() {
                       &middot; {order.lines.length} item{order.lines.length !== 1 ? "s" : ""}
                       &middot; Order #{order.id}
                     </p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                      <Truck className="w-3 h-3 inline shrink-0" />
+                      Due {orderDueText(order.expectedDeliveryDate)}
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2 ml-auto">
+                <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
                   <span className="px-2.5 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-700">
                     Placed
                   </span>
                   <button
                     type="button"
                     onClick={() => handleEditPlacedOrder(order)}
-                    disabled={isReopened}
+                    disabled={editState !== "free"}
                     className="min-h-[44px] px-3 py-1.5 rounded-lg text-sm sm:text-xs font-medium transition-colors border border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-                    title={isReopened ? "Already being edited in the To Order tab" : "Reopen this order so you can add or change items, then resubmit"}
+                    title={editState === "editing"
+                      ? "Already being edited in the To Order tab"
+                      : editState === "supplier-busy"
+                        ? "Another order for this supplier is open on the To Order tab — finish that first"
+                        : "Reopen this order so you can add or change items, then resubmit"}
                   >
                     <RefreshCw className="w-3 h-3" />
-                    {isReopened ? "Being edited…" : "Edit order"}
+                    {editState === "editing" ? "Being edited…" : "Edit order"}
+                  </button>
+                  {/* A second order from the same supplier, delivered on its
+                      own day (fix-queue #194). This order is left alone. */}
+                  <button
+                    type="button"
+                    onClick={() => handleStartSeparateOrder(order)}
+                    disabled={editState !== "free"}
+                    className="min-h-[44px] px-3 py-1.5 rounded-lg text-sm sm:text-xs font-medium transition-colors border border-border hover:bg-secondary disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={editState === "free"
+                      ? "Start a new order for this supplier with its own delivery date — this order stays as it is"
+                      : "An order for this supplier is already open on the To Order tab"}
+                  >
+                    <Plus className="w-3 h-3" />
+                    New separate order
                   </button>
                 </div>
               </div>
@@ -2693,6 +2977,63 @@ export default function Orders() {
           })}
         </div>
       )}
+
+      {/* Which order? (fix-queue #194) — asked when adding to a supplier
+          that already has a placed order and no card open. One supplier at
+          a time; closing it adds nothing. */}
+      <Dialog open={orderChoices.length > 0} onOpenChange={open => { if (!open) answerOrderChoice(null); }}>
+        <DialogContent className="max-w-lg w-[95vw] max-h-[92dvh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-lg">
+              <Truck className="w-5 h-5 text-primary" />
+              {orderChoices[0]?.supplierName} already has an order
+            </DialogTitle>
+          </DialogHeader>
+          {orderChoices[0] && (
+            <div className="flex-1 min-h-0 overflow-y-auto space-y-3">
+              <p className="text-sm text-muted-foreground">
+                {orderChoices[0].what
+                  ? <>Where should <span className="font-medium text-foreground">{orderChoices[0].what}</span> go?</>
+                  : "Add to the order that's already placed, or start a separate one?"}
+              </p>
+              {orderChoices[0].orders.map(o => (
+                <button
+                  key={o.id}
+                  type="button"
+                  onClick={() => answerOrderChoice(o)}
+                  className="w-full min-h-[64px] rounded-xl border-2 border-amber-500/40 bg-amber-500/5 hover:bg-amber-500/15 p-4 text-left transition-colors flex items-center gap-3"
+                >
+                  <RefreshCw className="w-5 h-5 text-amber-600 shrink-0" />
+                  <span className="min-w-0">
+                    <span className="block font-semibold">Add to order #{o.id} (due {orderDueText(o.expectedDeliveryDate)})</span>
+                    <span className="block text-xs text-muted-foreground">
+                      {o.lines.length} item{o.lines.length !== 1 ? "s" : ""} already on it · keeps its delivery date · resend it after
+                    </span>
+                  </span>
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => answerOrderChoice("separate")}
+                className="w-full min-h-[64px] rounded-xl border-2 border-sky-500/40 bg-sky-500/5 hover:bg-sky-500/15 p-4 text-left transition-colors flex items-center gap-3"
+              >
+                <Plus className="w-5 h-5 text-sky-600 shrink-0" />
+                <span className="min-w-0">
+                  <span className="block font-semibold">Start a separate order</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Its own delivery date, its own confirmation and its own send to the supplier
+                  </span>
+                </span>
+              </button>
+              {orderChoices.length > 1 && (
+                <p className="text-xs text-muted-foreground">
+                  Then {orderChoices.length - 1} more supplier{orderChoices.length > 2 ? "s" : ""} to ask about.
+                </p>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Scan a physical kanban card — one scan queues it for today's order */}
       <Dialog open={scanKanbanOpen} onOpenChange={setScanKanbanOpen}>
@@ -2940,6 +3281,34 @@ export default function Orders() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* "Split with another supplier" (#248 + #328) */}
+      {splitDialog && (() => {
+        const pricing = pricingById.get(splitDialog.line.ingredientId);
+        // The ingredient's other supplier: its secondary when this card is
+        // its usual supplier, otherwise its usual supplier.
+        const other = pricing
+          ? (pricing.supplierId === splitDialog.supplierId ? pricing.secondarySupplierId : pricing.supplierId)
+          : null;
+        return (
+          <OrderSplitDialog
+            open
+            onClose={() => setSplitDialog(null)}
+            line={{
+              ingredientId: splitDialog.line.ingredientId,
+              ingredientName: splitDialog.line.ingredientName,
+              packs: splitDialog.line.editedPacks,
+              unit: splitDialog.line.unit,
+              packName: splitDialog.line.packName ?? null,
+            }}
+            fromSupplier={{ id: splitDialog.supplierId, name: splitDialog.supplierName }}
+            planId={selectedPlanId}
+            suppliers={allSuppliers}
+            secondarySupplierId={other ?? null}
+            onSplit={split => applySplitLocally(splitDialog.supplierId, split)}
+          />
+        );
+      })()}
 
       {/* Issue 4: per-supplier Add Item picker */}
       <Dialog

@@ -75,10 +75,12 @@ export const fmtPackSize = formatPackSize;
 export function packSizeHint(
   packWeight: number | string | null | undefined,
   nativeUnit: string,
+  /** What one pack is called — "box" (#327). */
+  packName?: string | null,
 ): string | null {
   const pw = packWeight == null ? NaN : Number(packWeight);
   if (!Number.isFinite(pw) || pw <= 0) return null;
-  return `${fmtPackSize(pw, nativeUnit)} per ${packNoun(nativeUnit, 1)}`;
+  return `${fmtPackSize(pw, nativeUnit)} per ${packNoun(nativeUnit, 1, packName)}`;
 }
 
 // Render a PO line quantity in two parts: a primary "<count> pack(s)" label
@@ -92,16 +94,18 @@ export function formatLineQtyParts(
   nativeUnit: string | null | undefined,
   packWeight: number | string | null | undefined,
   stockInPacks: boolean | null | undefined,
+  /** What one pack is called — "box" (#327). */
+  packName?: string | null,
 ): { primary: string; descriptor: string | null } {
   const pw = packWeight == null ? NaN : Number(packWeight);
   const hasPackSize = Number.isFinite(pw) && pw > 0;
   const lineIsPackUnit = lineUnit === "packs" || lineUnit === "bottles";
   const native = nativeUnit ?? lineUnit;
   const buildDescriptor = (count: number) =>
-    `${fmtPackSize(pw, native)} per ${packNoun(native, 1)}`;
+    `${fmtPackSize(pw, native)} per ${packNoun(native, 1, packName)}`;
   if (lineIsPackUnit && hasPackSize) {
     return {
-      primary: `${qty} ${packNoun(native, qty)}`,
+      primary: `${qty} ${packNoun(native, qty, packName)}`,
       descriptor: buildDescriptor(qty),
     };
   }
@@ -109,7 +113,7 @@ export function formatLineQtyParts(
     // 2 dp, not whole packs — part-packs (0.5 of a box) are a real count.
     const count = Math.round((qty / pw) * 100) / 100;
     return {
-      primary: `${count} ${packNoun(native, count)}`,
+      primary: `${count} ${packNoun(native, count, packName)}`,
       descriptor: buildDescriptor(count),
     };
   }

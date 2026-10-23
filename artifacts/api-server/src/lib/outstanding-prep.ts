@@ -3,7 +3,8 @@ import { sql } from "drizzle-orm";
 import { londonDateString } from "./london-time";
 import { mixExtraFor } from "./mix-extra";
 import { loadRecipeMixExtras } from "./mix-extra-loader";
-import { directLineChannel, isTinOutstanding, lineRawQtyForItem, tinCountForLine } from "./stock-usage-rules";
+import { directLineChannel, lineRawQtyForItem, outstandingLineQty, prepUnitCount } from "./stock-usage-rules";
+import { loadRawMeatTrays } from "./raw-meat-trays";
 
 // ── Outstanding prep for TODAY, in raw ingredient units ────────────────────
 //
@@ -31,6 +32,13 @@ import { directLineChannel, isTinOutstanding, lineRawQtyForItem, tinCountForLine
 // last few prep days are now swept for deferred-and-uncompleted tins;
 // non-deferred tins of past prep days stay excluded (an unticked tin from
 // two days ago is a missed tick, not future consumption).
+//
+// Tins are the STATION's tins (#320 + #325, 22 Oct 2026): prepUnitCount in
+// lib/stock-usage-rules.ts, shared with Main Prep and the Raw Meat station.
+// A raw meat with a tray capacity counts the Raw Meat station's trays (meat
+// + marinade kg ÷ kg per tray), and an ingredient set to "one tin per
+// recipe" counts one tin — before this, a Carnizone chicken tin and half of
+// every basil tin could never be ticked, so finished prep held orders up.
 //
 // Scope: tin-tracked prep only (main prep, veg and raw meat stations — the
 // direct-ingredient reconstruction the old /prep-progress endpoint used,
@@ -136,7 +144,8 @@ export async function computeOutstandingPrepRaw(
 
     const rowsRes = await db.execute(sql`
       SELECT ri.id AS line_id, ri.ingredient_id, ri.quantity, ri.include_in_filling_mix, ri.is_topping,
-             i.name AS ingredient_name, i.category, i.processing_ratio
+             i.name AS ingredient_name, i.category, i.processing_ratio,
+             COALESCE(i.prep_one_tin_per_recipe, false) AS one_tin_per_recipe
       FROM recipe_ingredients ri
       LEFT JOIN ingredients i ON ri.ingredient_id = i.id
       WHERE ri.recipe_id = ${item.recipe_id}
@@ -144,6 +153,9 @@ export async function computeOutstandingPrepRaw(
     `);
     // Main prep makes each recipe's Mix +g once a day (lib/mix-extra.ts).
     const mixExtras = await loadRecipeMixExtras(item.recipe_id);
+    // Raw Meat station trays, counted exactly as the station counts them
+    // (#320) — loaded only when this recipe has a raw meat to prep.
+    let rawMeatTrays: Map<number, number | null> | null = null;
 
     for (const row of rowsRes.rows as any[]) {
       // Only lines weighed into prep tins (lib/stock-usage-rules.ts — the
@@ -157,13 +169,25 @@ export async function computeOutstandingPrepRaw(
         ingredientName: row.ingredient_name ?? null,
       }) !== "prep") continue;
 
-      const isFillingMix = row.include_in_filling_mix ?? false;
-      const tinCount = tinCountForLine({
+      if (row.category === "raw_meat" && rawMeatTrays == null) {
+        rawMeatTrays = await loadRawMeatTrays({
+          recipeId: item.recipe_id,
+          portionsPerBatch: Number(item.portions_per_batch) || 10,
+          batchesTarget: batches,
+        });
+      }
+
+      // The station's own tins/trays (#320 + #325): the Raw Meat station's
+      // trays for a meat with a tray capacity, Main Prep's one-tin-per-
+      // recipe setting, otherwise tins from batches and overrides.
+      const tinCount = prepUnitCount({
         batchesTarget: batches,
         maxBatchesPerTin: item.max_batches_per_tin ?? null,
-        includeInFillingMix: isFillingMix,
+        includeInFillingMix: row.include_in_filling_mix ?? false,
         mixingTinOverride: item.mixing_tin_override ?? null,
         tinOverride: overrideMap.get(`${item.plan_id}_${item.recipe_id}_${row.ingredient_id}`) ?? null,
+        oneTinPerRecipe: !!row.one_tin_per_recipe,
+        rawMeatTrays: row.category === "raw_meat" ? rawMeatTrays?.get(row.ingredient_id) ?? null : null,
       });
       if (tinCount <= 0) continue;
 
@@ -175,24 +199,34 @@ export async function computeOutstandingPrepRaw(
         processingRatio: row.processing_ratio != null ? Number(row.processing_ratio) : null,
       });
       if (rawQty <= 0) continue;
-      const perTin = rawQty / tinCount;
 
       const checkedAtStr = checkedAtByIngredient[row.ingredient_id];
-      const checkedAt = checkedAtStr ? new Date(checkedAtStr) : null;
-
+      const tinKey = (tin: number) => `${item.plan_id}_${item.recipe_id}_${row.ingredient_id}_${tin}`;
+      const tickedAtMs = new Map<number, number>();
       for (let tin = 1; tin <= tinCount; tin++) {
-        const key = `${item.plan_id}_${item.recipe_id}_${row.ingredient_id}_${tin}`;
-        // Backlog plans: only tins the team explicitly deferred are still
-        // owed. Today's plans: every tin counts, deferred included — a
-        // deferred tin is prepped tomorrow from stock counted today, so the
-        // order still has to cover it.
-        if (isBacklog && !deferredTins.has(key)) continue;
-        const doneAt = completedAtByTin.get(key);
-        if (!isTinOutstanding(doneAt ? doneAt.getTime() : null, checkedAt ? checkedAt.getTime() : null)) continue;
-        byIngredient[row.ingredient_id] = (byIngredient[row.ingredient_id] ?? 0) + perTin;
-        (byPlan[item.plan_id] ??= {})[row.ingredient_id] =
-          ((byPlan[item.plan_id] ?? {})[row.ingredient_id] ?? 0) + perTin;
+        const doneAt = completedAtByTin.get(tinKey(tin));
+        if (doneAt) tickedAtMs.set(tin, doneAt.getTime());
       }
+      // Backlog plans: only tins the team explicitly deferred are still
+      // owed. Today's plans: every tin counts, deferred included — a
+      // deferred tin is prepped tomorrow from stock counted today, so the
+      // order still has to cover it.
+      let only: Set<number> | undefined;
+      if (isBacklog) {
+        only = new Set<number>();
+        for (let tin = 1; tin <= tinCount; tin++) if (deferredTins.has(tinKey(tin))) only.add(tin);
+      }
+      const qty = outstandingLineQty({
+        unitCount: tinCount,
+        rawQty,
+        tickedAtMs,
+        checkedAtMs: checkedAtStr ? new Date(checkedAtStr).getTime() : null,
+        only,
+      });
+      if (!(qty > 0)) continue;
+      byIngredient[row.ingredient_id] = (byIngredient[row.ingredient_id] ?? 0) + qty;
+      (byPlan[item.plan_id] ??= {})[row.ingredient_id] =
+        ((byPlan[item.plan_id] ?? {})[row.ingredient_id] ?? 0) + qty;
     }
   }
 

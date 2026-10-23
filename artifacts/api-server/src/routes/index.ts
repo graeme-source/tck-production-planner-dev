@@ -26,6 +26,8 @@ import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
 import stockCheckHistoryRouter from "./stock-check-history";
 import stockCheckUnitsRouter from "./stock-check-units";
+import stockCheckExpectedRouter from "./stock-check-expected";
+import stockCheckUseByRouter from "./stock-check-use-by";
 import stockAccuracyRouter from "./stock-accuracy";
 import teamEfficiencyRouter from "./team-efficiency";
 import dptCalculatorRouter from "./dpt-calculator";
@@ -57,6 +59,7 @@ import dptIngredientRequirementsRouter from "./dpt-ingredient-requirements";
 import kanbansRouter from "./kanbans";
 import ordersRouter from "./orders";
 import supplierPricingRouter from "./supplier-pricing";
+import orderSplitsRouter from "./order-splits";
 import deliveriesRouter from "./deliveries";
 import unexpectedDeliveriesRouter from "./unexpected-deliveries";
 import shortDeliveryReportsRouter from "./short-delivery-reports";
@@ -311,6 +314,10 @@ router.use("/timing-health", timingHealthRouter);
 router.use("/stock-check-history", stockCheckHistoryRouter);
 // The unit each item is stock-checked in (GET all; PUT /:id managers).
 router.use("/stock-check-units", stockCheckUnitsRouter);
+// Expected count for the stock-check "Are you sure?" (#327).
+router.use("/stock-check-expected", stockCheckExpectedRouter);
+// Use-by date on a stock check (#165).
+router.use("/stock-check-use-by", stockCheckUseByRouter);
 // Running ("expected") stock vs real counts — managers only, never shown at
 // stations or on count screens (docs/RUNNING_STOCK.md).
 router.use("/stock-accuracy", stockAccuracyRouter);
@@ -345,6 +352,8 @@ router.use("/kanbans", kanbansRouter);
 router.use("/orders", ordersRouter);
 // Primary + secondary supplier pack prices — minimum-order top-ups on Orders.
 router.use("/supplier-pricing", supplierPricingRouter);
+// "Split with another supplier" on an Orders line (#248 + #328).
+router.use("/order-splits", orderSplitsRouter);
 // Unexpected deliveries first: the deliveries router's GET /:id would
 // otherwise read "unexpected" as a purchase-order id.
 router.use("/deliveries/unexpected", unexpectedDeliveriesRouter);

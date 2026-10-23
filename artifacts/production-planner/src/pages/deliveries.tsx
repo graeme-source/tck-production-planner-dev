@@ -54,6 +54,8 @@ interface POLine {
   // The ingredient's native unit (kg / g / ml / l / pieces). May differ from
   // `unit` when the line was stored as a pack count ("packs" / "bottles").
   nativeUnit?: string | null;
+  /** What one pack is called — "box", "roll" (#327). Null = pack. */
+  packName?: string | null;
   unitPrice: number | null;
   checkedOff: boolean;
   goodsInChecked?: boolean;
@@ -246,6 +248,8 @@ interface ReceivingLine {
   // The ingredient's native unit (kg / g / ml / l / pieces). May differ from
   // `unit` when the line was stored as a pack count ("packs" / "bottles").
   nativeUnit?: string | null;
+  /** What one pack is called (#327). */
+  packName?: string | null;
   useByDate: string;
   shelfLifeDays: number | null;
   requiresUseByDate: boolean;
@@ -438,6 +442,7 @@ function ReceivingDialog({
             quantityReceived: reopened && reopened.arrived > 0 ? reopened.arrived : initialQuantity(facts),
             unit: l.unit,
             nativeUnit: l.nativeUnit,
+            packName: l.packName ?? null,
             useByDate: existingUseBy || autoUseByDate,
             shelfLifeDays: l.shelfLifeDays,
             requiresUseByDate: l.requiresUseByDate ?? false,
@@ -918,10 +923,10 @@ function ReceivingDialog({
                         ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
                         : 0;
                       const nativeUnitForLine = line.nativeUnit ?? line.unit;
-                      const sizeHint = inPacks ? packSizeHint(line.packWeight, nativeUnitForLine) : null;
+                      const sizeHint = inPacks ? packSizeHint(line.packWeight, nativeUnitForLine, line.packName) : null;
                       const orderedDisplay = inPacks ? (
                         <>
-                          {orderedPacks} {packNoun(nativeUnitForLine, orderedPacks)}
+                          {orderedPacks} {packNoun(nativeUnitForLine, orderedPacks, line.packName)}
                           {sizeHint && (
                             <> <span className="text-sm font-normal text-muted-foreground">({sizeHint})</span></>
                           )}
@@ -973,9 +978,9 @@ function ReceivingDialog({
                           <span>Received</span>
                           {inPacks ? (
                             <>
-                              <span className="text-sm font-semibold">({packNoun(line.nativeUnit ?? line.unit, receivedPackCount || 0)})</span>
+                              <span className="text-sm font-semibold">({packNoun(line.nativeUnit ?? line.unit, receivedPackCount || 0, line.packName)})</span>
                               {(() => {
-                                const hint = packSizeHint(line.packWeight, line.nativeUnit ?? line.unit);
+                                const hint = packSizeHint(line.packWeight, line.nativeUnit ?? line.unit, line.packName);
                                 return hint ? <span className="text-xs font-normal text-muted-foreground">{hint}</span> : null;
                               })()}
                             </>
@@ -1072,13 +1077,13 @@ function ReceivingDialog({
                         ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
                         : 0;
                       const native = line.nativeUnit ?? line.unit;
-                      const sizeHint = inPacks ? packSizeHint(line.packWeight, native) : null;
+                      const sizeHint = inPacks ? packSizeHint(line.packWeight, native, line.packName) : null;
                       return (
                         <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
                           <AlertTriangle className="w-3.5 h-3.5" />
                           {line.quantityReceived < line.quantityOrdered ? "Short — goes on the short-delivery report" : "More than ordered"} (
                           {inPacks
-                            ? <>{orderedPacks} {packNoun(native, orderedPacks)}{sizeHint && <> <span className="opacity-70">({sizeHint})</span></>}</>
+                            ? <>{orderedPacks} {packNoun(native, orderedPacks, line.packName)}{sizeHint && <> <span className="opacity-70">({sizeHint})</span></>}</>
                             : `${line.quantityOrdered} ${line.unit}`}
                           {" "}ordered)
                         </div>
@@ -1980,6 +1985,7 @@ export default function Deliveries() {
                             line.nativeUnit,
                             line.packWeight,
                             line.stockInPacks,
+                            line.packName,
                           );
                           const received = formatLineQtyParts(
                             line.quantityReceived,
@@ -1987,6 +1993,7 @@ export default function Deliveries() {
                             line.nativeUnit,
                             line.packWeight,
                             line.stockInPacks,
+                            line.packName,
                           );
                           return (
                             <span

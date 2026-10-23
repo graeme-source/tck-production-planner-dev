@@ -25,13 +25,14 @@ import { sql } from "drizzle-orm";
 import { convertQuantity } from "@workspace/units";
 import { resolveSubRecipeIngredients, type ResolvedIngredient } from "./ingredient-resolver";
 import { createMixExtrasCache } from "./mix-extra-loader";
+import { loadRawMeatTrays } from "./raw-meat-trays";
 import { mixExtraFor, type MixExtras } from "./mix-extra";
 import {
   builtBatchFraction,
   directLineChannel,
   lineRawQtyForItem,
   subRecipeLineChannel,
-  tinCountForLine,
+  prepUnitCount,
   type DirectLineChannel,
 } from "./stock-usage-rules";
 import {
@@ -73,6 +74,8 @@ interface DirectLine {
   category: string | null;
   name: string | null;
   ratio: number | null;
+  /** ingredients.prep_one_tin_per_recipe (migration 0240). */
+  oneTinPerRecipe: boolean;
 }
 
 interface SubLine {
@@ -113,7 +116,8 @@ async function loadRecipeShapes(recipeIds: number[]): Promise<Map<number, Recipe
   const direct = await db.execute(sql`
     SELECT ri.id AS line_id, ri.recipe_id, ri.ingredient_id, ri.quantity::float8 AS quantity,
            ri.include_in_filling_mix, ri.is_topping, ri.marinade_for_ingredient_id,
-           i.category, i.name, i.processing_ratio::float8 AS ratio
+           i.category, i.name, i.processing_ratio::float8 AS ratio,
+           COALESCE(i.prep_one_tin_per_recipe, false) AS one_tin_per_recipe
     FROM recipe_ingredients ri LEFT JOIN ingredients i ON i.id = ri.ingredient_id
     WHERE ri.recipe_id IN (${list})
   `);
@@ -142,6 +146,7 @@ async function loadRecipeShapes(recipeIds: number[]): Promise<Map<number, Recipe
       category: d.category ?? null,
       name: d.name ?? null,
       ratio: d.ratio != null ? Number(d.ratio) : null,
+      oneTinPerRecipe: !!d.one_tin_per_recipe,
     });
   }
   for (const s of subs.rows as any[]) {
@@ -322,6 +327,16 @@ export async function loadStockLedgers(opts: {
     for (const o of ovRes.rows as any[]) tinOverrides.set(`${o.plan_id}_${o.recipe_id}_${o.ingredient_id}`, Number(o.tin_count));
   }
 
+  // Raw Meat station trays per plan item, loaded once (#320) — the same
+  // trays the station ticks and the Orders page's "still to prep" counts.
+  const trayCache = new Map<string, Promise<Map<number, number | null>>>();
+  const traysFor = (planId: number, recipeId: number, portionsPerBatch: number, batchesTarget: number) => {
+    const key = `${planId}_${recipeId}`;
+    let p = trayCache.get(key);
+    if (!p) { p = loadRawMeatTrays({ recipeId, portionsPerBatch, batchesTarget }); trayCache.set(key, p); }
+    return p;
+  };
+
   for (const t of ticks) {
     const shape = shapes.get(Number(t.recipe_id));
     const item = planItems.get(`${t.plan_id}_${t.recipe_id}`);
@@ -332,12 +347,17 @@ export async function loadStockLedgers(opts: {
     for (const line of shape.direct) {
       if (line.ingredientId !== Number(t.ingredient_id) || line.marinadeFor != null) continue;
       if (lineChannel(line, shape) !== "prep") continue;
-      const tinCount = tinCountForLine({
+      const rawMeatTrays = line.category === "raw_meat"
+        ? (await traysFor(Number(t.plan_id), Number(t.recipe_id), shape.portionsPerBatch, item.batches)).get(line.ingredientId) ?? null
+        : null;
+      const tinCount = prepUnitCount({
         batchesTarget: item.batches,
         maxBatchesPerTin: item.maxPerTin,
         includeInFillingMix: line.includeInFillingMix,
         mixingTinOverride: item.mixingTinOverride,
         tinOverride: tinOverrides.get(`${t.plan_id}_${t.recipe_id}_${line.ingredientId}`) ?? null,
+        oneTinPerRecipe: line.oneTinPerRecipe,
+        rawMeatTrays,
       });
       // Same tins outstanding-prep counts (1…tinCount).
       if (tinCount <= 0 || Number(t.tin_number) > tinCount || Number(t.tin_number) < 1) continue;

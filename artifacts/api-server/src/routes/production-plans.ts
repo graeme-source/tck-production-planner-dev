@@ -22,6 +22,7 @@ import { londonDateString, londonStartOfDay } from "../lib/london-time";
 import { builtPortionWeightG } from "../lib/built-portion-weight";
 import { subMarinadeQtyPerPortion, subMarinadeTotalGrams, isMeatCookSubRecipe } from "../lib/sub-recipe-marinades";
 import { loadRawMeatMarinades, type RawMeatMarinade } from "../lib/raw-meat-marinades";
+import { prepUnitCount, stationRawMeatTrays } from "../lib/stock-usage-rules";
 import { mixExtraFor, mixExtraPrepQty, roundMixExtra, MixExtraNotes } from "../lib/mix-extra";
 import { createMixExtrasCache } from "../lib/mix-extra-loader";
 import { productionDateFromJulianBatch } from "../lib/julian-batch";
@@ -4649,22 +4650,20 @@ router.get("/:id/prep-requirements-by-recipe", async (req, res) => {
 
     if (!hasRelevantIngredients) continue;
 
-    // Per-ingredient tray count — each raw meat uses its own capacity + its own marinades
+    // Per-ingredient tray count — each raw meat uses its own capacity + its
+    // own marinades. One shared rule (lib/stock-usage-rules.ts) so the Orders
+    // page's "still to prep" counts these same trays (#320).
     let trayCount: number | null = null;
     if (station === "prep_meat") {
+      const trays = stationRawMeatTrays(ingredients, marinades);
       let totalTrays = 0;
       let anyHasCapacity = false;
       for (const ing of ingredients) {
-        if (!ing.isRawMeat) continue;
-        if (!ing.rawMeatTrayCapacityKg) continue;
+        const n = trays.get(ing.ingredientId);
+        if (n == null) continue;
         anyHasCapacity = true;
-        const meatKg = ing.unit === "g" ? ing.rawQty / 1000 : ing.rawQty;
-        const ingMarinadeKg = marinades
-          .filter(m => m.rawMeatIngredientId === ing.ingredientId)
-          .reduce((sum, m) => sum + m.totalGrams, 0) / 1000;
-        const combinedKg = meatKg + ingMarinadeKg;
-        ing.trayCount = Math.ceil(combinedKg / ing.rawMeatTrayCapacityKg);
-        totalTrays += ing.trayCount;
+        ing.trayCount = n;
+        totalTrays += n;
       }
       if (anyHasCapacity) trayCount = totalTrays;
     }
@@ -6968,6 +6967,7 @@ router.get("/:id/main-prep", async (req, res) => {
         showInPrep: recipeIngredientsTable.showInPrep,
         prepCountPerPortion: ingredientsTable.prepCountPerPortion,
         isPasta: ingredientsTable.isPasta,
+        prepOneTinPerRecipe: ingredientsTable.prepOneTinPerRecipe,
       })
       .from(recipeIngredientsTable)
       .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -6997,23 +6997,20 @@ router.get("/:id/main-prep", async (req, res) => {
         if (isMozzType && !row.includeInFillingMix) continue;
       }
 
-      // Determine effective tin count with overrides
+      // Effective tin count: the shared rule (lib/stock-usage-rules.ts
+      // prepUnitCount) the Orders page's "still to prep" also uses (#325),
+      // including the ingredient's "one tin per recipe" setting.
       const isFillingMix = row.includeInFillingMix ?? false;
-      let tinCount = defaultTinCount;
-      let isOverridden = false;
-      if (isFillingMix && planItem.mixingTinOverride != null) {
-        // Filling mix ingredients use recipe-level mixing override
-        tinCount = planItem.mixingTinOverride;
-        isOverridden = true;
-      } else if (!isFillingMix) {
-        // Non-filling ingredients check per-ingredient override
-        const overrideKey = `${planItem.recipeId}_${row.ingredientId}`;
-        const override = prepTinOverrideMap.get(overrideKey);
-        if (override != null) {
-          tinCount = override;
-          isOverridden = true;
-        }
-      }
+      const tinOverride = !isFillingMix ? prepTinOverrideMap.get(`${planItem.recipeId}_${row.ingredientId}`) ?? null : null;
+      const isOverridden = isFillingMix ? planItem.mixingTinOverride != null : tinOverride != null;
+      const tinCount = prepUnitCount({
+        batchesTarget,
+        maxBatchesPerTin: planItem.maxBatchesPerTin ?? null,
+        includeInFillingMix: isFillingMix,
+        mixingTinOverride: planItem.mixingTinOverride ?? null,
+        tinOverride,
+        oneTinPerRecipe: row.prepOneTinPerRecipe ?? false,
+      });
 
       const portionsPerBatch = Number(planItem.portionsPerBatch) || 10;
       const qtyPerPortion = Number(row.quantity) || 0;
@@ -7110,6 +7107,7 @@ router.get("/:id/main-prep", async (req, res) => {
           subRecipeYield: subRecipesTable.yield,
           isBase: subRecipesTable.isBase,
           expandInPrep: subRecipesTable.expandInPrep,
+          prepOneTinPerRecipe: subRecipesTable.prepOneTinPerRecipe,
           isTopping: recipeSubRecipesTable.isTopping,
           showInPrep: recipeSubRecipesTable.showInPrep,
         })
@@ -7312,6 +7310,9 @@ router.get("/:id/main-prep", async (req, res) => {
           continue; // skip adding to subRecipeMap
         }
 
+        // "One tin per recipe" sub-recipes (Garlic Butter) — a setting since
+        // migration 0240, was a hard-coded name list (#325).
+        if (sr.prepOneTinPerRecipe) srTinCount = 1;
         const qtyPerTin = srTinCount > 0 ? roundByUnit(roundedQty / srTinCount, unit) : roundedQty;
         mixNotes.add("subRecipe", sr.subRecipeId, srMixExtra);
 
@@ -7431,30 +7432,11 @@ router.get("/:id/main-prep", async (req, res) => {
     }
   }
 
-  // Ingredients that always get 1 tin per recipe (no splitting within a recipe)
-  const SINGLE_TIN_PER_RECIPE_IDS = new Set([18, 19, 202]); // Basil, Basil puree, Garlic Butter
-  for (const [ingId, ing] of ingredientMap) {
-    if (!SINGLE_TIN_PER_RECIPE_IDS.has(ingId)) continue;
-    for (const r of ing.recipes) {
-      r.tinCount = 1;
-      r.qtyPerTin = roundByUnit(r.qtyForRecipe, ing.unit);
-    }
-  }
-
-  // Same rule for sub-recipes — when Garlic Butter (or Basil/Basil Puree) is
-  // pulled in as a sub-recipe rather than a direct ingredient, the loop above
-  // misses it because subRecipeIngredients is keyed by sub-recipe id, not
-  // ingredient id. Match by name (case-insensitive) so it stays a single
-  // weighing per parent recipe regardless of how it was wired up.
-  const SINGLE_TIN_PER_RECIPE_SUB_RECIPE_NAMES = new Set(["garlic butter", "basil", "basil puree"]);
-  for (const sr of subRecipeIngredients) {
-    if (!SINGLE_TIN_PER_RECIPE_SUB_RECIPE_NAMES.has(sr.ingredientName.toLowerCase())) continue;
-    for (const r of sr.recipes) {
-      r.tinCount = 1;
-      r.qtyPerTin = roundByUnit(r.qtyForRecipe, sr.unit);
-    }
-    sr.totalTinCount = sr.recipes.reduce((s, r) => s + r.tinCount, 0);
-  }
+  // "One tin per recipe" (Fresh Basil, Rosemary, Garlic Butter) is now an
+  // ingredient / sub-recipe setting (migration 0240), applied where each tin
+  // count is worked out — prepUnitCount for ingredients above, and the
+  // sub-recipe loop for sub-recipes — instead of hard-coded ids and names
+  // here (#325).
 
   const FIXED_TWO_TIN_IDS = new Set<number>();
   for (const [ingId, ing] of ingredientMap) {

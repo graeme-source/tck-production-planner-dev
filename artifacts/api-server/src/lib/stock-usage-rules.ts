@@ -22,6 +22,8 @@
  * filling-mix sub-recipe at mixing, anything else at building.
  */
 
+import { kgOrNull } from "@workspace/units";
+
 /** Same tin rule the prep screens use: ceil(batches ÷ max per tin), at least
  *  2 tins once there are more than 5 batches. Null when the item has no
  *  per-tin limit (the caller then treats it as one tin). */
@@ -87,6 +89,104 @@ export function tinCountForLine(input: TinCountInput): number {
   if (input.includeInFillingMix && input.mixingTinOverride != null) return input.mixingTinOverride;
   if (!input.includeInFillingMix && input.tinOverride != null) return input.tinOverride;
   return defaultTinCount;
+}
+
+// ── How many tins / trays the station makes for one line (#320 + #325) ────
+//
+// THE answer to "how many things does the prep room tick for this
+// ingredient under this recipe". Main Prep (routes/production-plans.ts
+// /main-prep), the Raw Meat station (/prep-requirements-by-recipe), the
+// Orders page's "still to prep" (lib/outstanding-prep.ts) and the running
+// stock ledger (lib/stock-ledger-data.ts) all call prepUnitCount, so the
+// Orders page can never again expect a tin the station doesn't show:
+//   #320 — Carnizone chicken: the station made 2 TRAYS by weight, the
+//          Orders page expected 3 TINS by batches, so a 3rd tin could never
+//          be ticked and ~2 kg stayed "still to prep" forever.
+//   #325 — Fresh Basil: Main Prep weighs it as ONE tin per recipe, the
+//          Orders page expected 2 on an 11-batch Margherita, so half the
+//          basil stayed "still to prep" forever.
+
+/** Raw Meat station trays for one meat under one recipe: the meat's raw kg
+ *  plus every marinade travelling on it (lib/raw-meat-marinades.ts),
+ *  divided by the meat's kg per tray, rounded up. null when the meat has no
+ *  tray capacity (the station then shows no trays to tick). A hair of
+ *  tolerance stops float noise (8.000000001 kg on 4 kg trays) adding a tray. */
+export function rawMeatTrayCount(args: { meatKg: number; marinadeKg: number; capacityKg: number | null | undefined }): number | null {
+  const cap = Number(args.capacityKg);
+  if (!Number.isFinite(cap) || cap <= 0) return null;
+  const kg = (Number(args.meatKg) || 0) + (Number(args.marinadeKg) || 0);
+  if (!(kg > 0)) return 0;
+  return Math.ceil(kg / cap - 1e-9);
+}
+
+export interface TrayMeatRow {
+  ingredientId: number;
+  isRawMeat: boolean;
+  unit: string;
+  /** Raw quantity for the run in `unit`, rounded as the station shows it. */
+  rawQty: number;
+  rawMeatTrayCapacityKg: number | null;
+}
+
+/** Pure: trays per raw meat (null = no tray capacity, nothing to tick). */
+export function stationRawMeatTrays(
+  meats: TrayMeatRow[],
+  marinades: Array<{ rawMeatIngredientId: number; totalGrams: number }>,
+): Map<number, number | null> {
+  const out = new Map<number, number | null>();
+  for (const m of meats) {
+    if (!m.isRawMeat) continue;
+    const marinadeKg = marinades
+      .filter(x => x.rawMeatIngredientId === m.ingredientId)
+      .reduce((s, x) => s + (Number(x.totalGrams) || 0), 0) / 1000;
+    out.set(m.ingredientId, rawMeatTrayCount({
+      meatKg: kgOrNull(m.rawQty, m.unit) ?? m.rawQty,
+      marinadeKg,
+      capacityKg: m.rawMeatTrayCapacityKg,
+    }));
+  }
+  return out;
+}
+
+export interface PrepUnitCountInput extends TinCountInput {
+  /** ingredients / sub_recipes .prep_one_tin_per_recipe (migration 0240):
+   *  Main Prep weighs it as ONE tin per recipe whatever the batches. */
+  oneTinPerRecipe?: boolean;
+  /** Raw Meat station lines only: the trays rawMeatTrayCount gives. A
+   *  number (trays exist) wins over the tin rule; null/undefined = not a
+   *  tray-counted line, fall through to tins. */
+  rawMeatTrays?: number | null;
+}
+
+/** How many tins (Main Prep) or trays (Raw Meat) the station makes for one
+ *  line of one plan item — numbered 1…n, ticked one by one. 0 = nothing. */
+export function prepUnitCount(input: PrepUnitCountInput): number {
+  if (input.rawMeatTrays != null) return Math.max(0, input.rawMeatTrays);
+  if (input.oneTinPerRecipe) return 1;
+  return tinCountForLine(input);
+}
+
+/** What's still to prep on one line: its raw quantity split evenly over its
+ *  tins/trays, summed over the ones not yet inside the counted stock (see
+ *  isTinOutstanding). `only` limits it to particular tin numbers (deferred
+ *  tins on a backlog plan). Pure — outstanding-prep's per-line maths. */
+export function outstandingLineQty(args: {
+  unitCount: number;
+  rawQty: number;
+  /** Earliest tick per tin number (ms). */
+  tickedAtMs: ReadonlyMap<number, number>;
+  checkedAtMs: number | null;
+  only?: ReadonlySet<number>;
+}): number {
+  if (args.unitCount <= 0 || !(args.rawQty > 0)) return 0;
+  const perUnit = args.rawQty / args.unitCount;
+  let total = 0;
+  for (let n = 1; n <= args.unitCount; n++) {
+    if (args.only && !args.only.has(n)) continue;
+    if (!isTinOutstanding(args.tickedAtMs.get(n) ?? null, args.checkedAtMs)) continue;
+    total += perUnit;
+  }
+  return total;
 }
 
 /** Raw quantity (ingredient's own unit) a line needs for a whole plan item:

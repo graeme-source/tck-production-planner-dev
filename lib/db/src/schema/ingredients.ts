@@ -32,6 +32,10 @@ export const ingredientsTable = pgTable("ingredients", {
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
   prepWeightMode: text("prep_weight_mode").notNull().default("raw"),
   rawMeatTrayCapacityKg: numeric("raw_meat_tray_capacity_kg", { precision: 10, scale: 4 }),
+  // Main Prep weighs this as ONE tin per recipe however many batches (Fresh
+  // Basil, Rosemary, Garlic Butter). Read by prepUnitCount (api lib
+  // stock-usage-rules.ts) for Main Prep, Orders and the ledger. Migration 0240.
+  prepOneTinPerRecipe: boolean("prep_one_tin_per_recipe").notNull().default(false),
   minCookingTempC: numeric("min_cooking_temp_c", { precision: 5, scale: 2 }),
   estimatedCookTimeMin: integer("estimated_cook_time_min"),
   // PROCESSING time only, in minutes, after cooking and before it can go into
@@ -49,6 +53,10 @@ export const ingredientsTable = pgTable("ingredients", {
   // (the item's own count unit). NULL = the default rule. Read only through
   // resolveStockCheckUnit (@workspace/units). Migration 0204. Objective F.
   stockCheckUnit: text("stock_check_unit"),
+  // What the pack is called — 'box', 'roll', 'bag' … (PACK_NAMES in
+  // @workspace/units). NULL = "pack" / "bottle". Display only. Migration
+  // 0242, fix-queue #327.
+  packName: text("pack_name"),
   surplusPercent: numeric("surplus_percent", { precision: 8, scale: 2 }).notNull().default("10"),
   surplusMode: text("surplus_mode").notNull().default("percent"),
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),

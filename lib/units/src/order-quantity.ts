@@ -14,10 +14,31 @@
  * (Graeme, 2026-09-26). A pallet is now a real pallet: pallet_size packs.
  */
 
+/**
+ * What the supplier's pack is called, when it isn't just a "pack" (fix-queue
+ * #327, Jane Miles, Oct 2026): mozzarella is counted in BOXES, cling film in
+ * ROLLS. ingredients.pack_name (migration 0242) holds one of these; null =
+ * the old wording (pack / bottle). A fixed list so the plural is always right
+ * and nobody types "Boxs".
+ */
+export const PACK_NAMES = ["box", "bag", "roll", "tub", "case", "tray", "tin", "jar", "sack", "bucket", "bottle", "carton", "pack"] as const;
+export type PackName = (typeof PACK_NAMES)[number];
+
+export function isPackName(v: unknown): v is PackName {
+  return typeof v === "string" && (PACK_NAMES as readonly string[]).includes(v);
+}
+
+/** "box" → "boxes", "bag" → "bags". */
+export function pluralPackName(name: PackName): string {
+  return /(s|x|ch|sh)$/.test(name) ? `${name}es` : `${name}s`;
+}
+
 /** Pack / bottle noun for an ingredient's unit: bottles for liquids, packs
  *  for everything else. Already-pluralised pack units ("packs" / "bottles")
- *  collapse back to the right singular/plural. */
-export function packNoun(unit: string, count: number): string {
+ *  collapse back to the right singular/plural. With the ingredient's own
+ *  pack name (#327) that word is used instead: "3 boxes", "1 roll". */
+export function packNoun(unit: string, count: number, packName?: string | null): string {
+  if (isPackName(packName)) return count === 1 ? packName : pluralPackName(packName);
   const isLiquid = unit === "ml" || unit === "l" || unit === "L" || unit === "bottle" || unit === "bottles";
   const base = isLiquid ? "bottle" : "pack";
   return count === 1 ? base : `${base}s`;

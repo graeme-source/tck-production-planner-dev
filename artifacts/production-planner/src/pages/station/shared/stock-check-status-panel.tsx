@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { StockCheckDialog, StockCheckTrigger, useRecordedStockLabel } from "./stock-check-entry";
 import { useTimedReminders } from "./timed-reminders";
+import { useByWarning } from "./stock-count-units";
+import { londonToday } from "@/lib/station-training";
 import {
   isPrepDayToday,
   londonClock,
@@ -100,6 +102,18 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
   });
   const items = data?.stockIngredients ?? [];
   const checks = data?.checks ?? [];
+  // Use-by dates recorded with today's counts (#165) — shown on each row,
+  // red when today or past.
+  const { data: useByData } = useQuery<{ useBy: Record<string, string> }>({
+    queryKey: ["stock-check-use-by", checkDate],
+    enabled: !!checkDate,
+    refetchInterval: 30_000,
+    queryFn: async () => {
+      const res = await fetch(`/api/stock-check-use-by?checkDate=${checkDate}`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Use-by dates failed to load (${res.status})`);
+      return res.json();
+    },
+  });
 
   const dueItems = items.filter(it => isStockCheckDueToday(it, clock.dayName));
   const checkByIngredient = new Map<number, StockCheckRecord>();
@@ -216,6 +230,22 @@ export function StockCheckStatusPanel({ checkDate, prepTarget }: {
                     : <span className={cn("w-5 h-5 rounded-full border-2 flex-shrink-0", red ? "border-red-500" : "border-amber-500")} />}
                   <span className="font-semibold text-base flex-1 min-w-[8rem] truncate">{it.name}</span>
                   {timeLabel && <span className="text-xs text-muted-foreground">{timeLabel}</span>}
+                  {record && useByData?.useBy[String(it.id)] && (() => {
+                    const iso = useByData.useBy[String(it.id)]!;
+                    const warn = useByWarning(iso, londonToday());
+                    return (
+                      <span
+                        className={cn(
+                          "text-sm font-semibold rounded-lg px-2 py-1",
+                          warn ? "bg-red-100 text-red-800 border border-red-400 dark:bg-red-950/50 dark:text-red-200" : "bg-secondary text-foreground",
+                        )}
+                        title={warn ?? undefined}
+                      >
+                        Use by {new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}
+                        {warn ? (iso < londonToday() ? " — PASSED" : " — TODAY") : ""}
+                      </span>
+                    );
+                  })()}
                   <StockCheckTrigger
                     recordedLabel={record && recordNative != null ? recordedStockLabel(recordNative, it) : null}
                     onClick={() => setActiveId(it.id)}

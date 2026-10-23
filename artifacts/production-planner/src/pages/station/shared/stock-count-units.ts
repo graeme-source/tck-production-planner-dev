@@ -89,3 +89,78 @@ export function parseStockAmount(raw: string): number | null {
   const n = Number(t);
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
+
+// ── Against what the app EXPECTED (#327, Graeme approved 22 Oct 2026) ──────
+//
+// "A sense check before saving: if a count is far off what's expected (last
+// count plus deliveries minus planned use), or zero straight after a
+// positive count, ask 'Are you sure? We expected about 2 kg' and require a
+// second tap." Expected = the running-stock ledger (GET
+// /api/stock-check-expected). Counts stay blind: the figure is only shown
+// in the question, after a far-off number has been typed.
+
+/** More than this many times the expected figure, or under 1/this of it. */
+export const EXPECTED_FAR_RATIO = 2;
+
+export type ExpectedCountSanity =
+  | { level: "ok" }
+  | { level: "warn"; reason: "far-off" | "zero-after-positive"; expectedNative: number };
+
+export function expectedCountSanity(input: {
+  nativeQty: number;
+  /** Last count + deliveries − usage, own unit; null = never counted. */
+  expectedNative: number | null | undefined;
+  /** The most recent count, own unit. */
+  lastCountNative: number | null | undefined;
+  /** False when the app sees none of this item's usage — its expected
+   *  figure only grows, so "far off" can't be judged. */
+  usageTracked: boolean;
+  /** One pack, own unit — a gap smaller than a pack is never questioned. */
+  packWeight?: number | null;
+}): ExpectedCountSanity {
+  const { nativeQty } = input;
+  if (!Number.isFinite(nativeQty) || nativeQty < 0) return { level: "ok" };
+  const expected = input.expectedNative != null && Number.isFinite(input.expectedNative) ? input.expectedNative : null;
+  const tolerance = Math.max(0, Number(input.packWeight) || 0);
+  const last = input.lastCountNative ?? 0;
+
+  // Zero straight after a positive count — unless the app itself expects
+  // it to be (about) gone.
+  if (nativeQty === 0 && last > 0) {
+    if (expected != null && input.usageTracked && expected <= tolerance) return { level: "ok" };
+    const about = expected != null && input.usageTracked && expected > 0 ? expected : last;
+    return { level: "warn", reason: "zero-after-positive", expectedNative: about };
+  }
+
+  if (expected == null || !input.usageTracked || expected <= 0) return { level: "ok" };
+  if (Math.abs(nativeQty - expected) <= tolerance) return { level: "ok" };
+  if (nativeQty > expected * EXPECTED_FAR_RATIO || nativeQty < expected / EXPECTED_FAR_RATIO) {
+    return { level: "warn", reason: "far-off", expectedNative: expected };
+  }
+  return { level: "ok" };
+}
+
+/** "Are you sure — 0 kg? We expected about 2 kg." in the unit typed. */
+export function expectedSanityMessage(
+  s: ExpectedCountSanity,
+  entered: { value: number; unit: StockCheckUnit; item: StockCheckUnitItem },
+): string | null {
+  if (s.level !== "warn") return null;
+  const ask = `Are you sure — ${formatStockCount(entered.value, entered.unit, entered.item)}?`;
+  const exp = nativeToStockCount(s.expectedNative, entered.unit, entered.item);
+  if (exp == null) return ask;
+  const rounded = entered.unit === "g" ? Math.round(exp) : Math.round(exp * 10) / 10;
+  return `${ask} We expected about ${formatStockCount(rounded, entered.unit, entered.item)}.`;
+}
+
+// ── Use-by on a stock check (#165, Graeme approved 22 Oct 2026) ───────────
+
+/** Warning for a use-by entered on a count: today or already past. Null when
+ *  it's later (or not a date). Compared as calendar days (YYYY-MM-DD). */
+export function useByWarning(useByIso: string, todayIso: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(useByIso) || !/^\d{4}-\d{2}-\d{2}/.test(todayIso)) return null;
+  const today = todayIso.slice(0, 10);
+  if (useByIso === today) return "Use-by is TODAY — use it today or throw it away.";
+  if (useByIso < today) return "Use-by has PASSED — don't use it. Throw it away and record it as waste.";
+  return null;
+}

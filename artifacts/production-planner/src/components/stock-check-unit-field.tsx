@@ -17,6 +17,7 @@ import { Loader2 } from "lucide-react";
 import {
   defaultStockCheckUnit,
   isStockCheckUnit,
+  stockCheckInstruction,
   stockCheckPackLabel,
   stockCheckUnitName,
   type StockCheckUnit,
@@ -66,7 +67,7 @@ export function StockCheckUnitField({ ingredientId }: { ingredientId: number }) 
     return <p className="text-sm text-destructive">Couldn&rsquo;t load the stock-check unit. Close and reopen to try again.</p>;
   }
 
-  const item = { unit: row.unit, packWeight: row.packWeight, stockInPacks: row.stockInPacks };
+  const item = { unit: row.unit, packWeight: row.packWeight, stockInPacks: row.stockInPacks, packName: row.packName };
   const def = defaultStockCheckUnit(item);
   const describe = (u: StockCheckUnit) => {
     const pack = stockCheckPackLabel(u, item);
@@ -108,7 +109,7 @@ export function StockCheckUnitField({ ingredientId }: { ingredientId: number }) 
         })}
       </div>
       <p className="text-xs text-muted-foreground">
-        Every stock check of this item says &ldquo;This stock check must be recorded in {stockCheckUnitName(choice === "auto" ? def : choice, item).toUpperCase()}&rdquo; and takes one number. It&rsquo;s still stored in {row.unit}.
+        Every stock check of this item says &ldquo;{(() => { const ins = stockCheckInstruction(choice === "auto" ? def : choice, { ...item, packName: row.packName }); return `${ins.verb} ${ins.what}${ins.detail ? ` (${ins.detail})` : ""}`; })()}&rdquo; and takes one number. It&rsquo;s still stored in {row.unit}.
       </p>
     </div>
   );
