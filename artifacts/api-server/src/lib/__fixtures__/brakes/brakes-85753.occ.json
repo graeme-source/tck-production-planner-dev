@@ -1,0 +1,495 @@
+{
+ "code": "85753",
+ "name": "KTC Vegetable Oil (Bottle in Box) 20L",
+ "packSize": "1 x 20ltr",
+ "netWeight": 18.547,
+ "price": {
+  "currencyIso": "GBP",
+  "formattedValue": "£30.89",
+  "priceType": "BUY",
+  "value": 30.89
+ },
+ "classifications": [
+  {
+   "code": "handlingAndCooking",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.oven_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Oven Cooking Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.food_safety_tips",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "Store at ambient temperatures, off the floor in a clean dry area. Keep away from strong odorous materials and direct sunlight. Always replace cap after use.Best Before End: See Side of CaseSafety InformationOil and fat spillages are potentially dangerous as they make surfaces slippery. The handling of hot oils and fats should be done with care and only facilitated by the use of oil resistant gloves and suitable clothing. The container may be used for the safe storage of used cooking oil but you should not attempt to fill with hot oil."
+      }
+     ],
+     "name": "Food Safety Tips",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.microwave_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Microwave Cooking Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.freezing_and_thawing_guidelines",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Freeze and Thawing Guidelines",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.pan_fry_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Pan Fry Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.steam_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Steam Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.grill_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Grill Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.deep_fry_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Deep Fry Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.barbecue_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Barbeque Instructions",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/handlingAndCooking.other_cooking_instructions",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "None"
+      }
+     ],
+     "name": "Other Cooking Instructions",
+     "range": false
+    }
+   ],
+   "name": "Handling and Cooking"
+  },
+  {
+   "code": "nutrition",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.suitable_for_vegetarians",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Suitable for Vegetarians",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.suitable_for_vegans",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Suitable for Vegans",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.nutrition_unit",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "per 100g"
+      }
+     ],
+     "name": "Nutrition Unit",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_100_kcal",
+     "comparable": true,
+     "featureUnit": {
+      "name": "calories",
+      "symbol": "kcal",
+      "unitType": "201"
+     },
+     "featureValues": [
+      {
+       "value": "899"
+      }
+     ],
+     "name": "Energy (kcal)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_serve_kcal",
+     "comparable": true,
+     "featureUnit": {
+      "name": "calories",
+      "symbol": "kcal",
+      "unitType": "201"
+     },
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Energy per serve kcal",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_100_kj",
+     "comparable": true,
+     "featureUnit": {
+      "name": "kilojoules",
+      "symbol": "kj",
+      "unitType": "202"
+     },
+     "featureValues": [
+      {
+       "value": "3696"
+      }
+     ],
+     "name": "Energy (KJ)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.energy_per_serve_kj",
+     "comparable": true,
+     "featureUnit": {
+      "name": "kilojoules",
+      "symbol": "kj",
+      "unitType": "202"
+     },
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Energy per serve kj",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.protein_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "0"
+      }
+     ],
+     "name": "Protein (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.protein_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Protein per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.carbohydrate_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "0"
+      }
+     ],
+     "name": "Carbohydrates (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.carbohydrate_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Carbohydrate per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.sugars_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "0"
+      }
+     ],
+     "name": "Of which sugars (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.sugars_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Sugars per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fat_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "99.9"
+      }
+     ],
+     "name": "Fat (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fat_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fat per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.saturates_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "14.5"
+      }
+     ],
+     "name": "Of which saturates (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.saturates_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Saturates per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fibre_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "0"
+      }
+     ],
+     "name": "Fibre (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.fibre_per_serve",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Fibre per serve",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.salt_equivalent_per_100",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "0"
+      }
+     ],
+     "name": "Salt (g)",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.vegetarian_alternatives",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Vegetarian Alternatives",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.vegan_alternatives",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Vegan Alternatives",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/nutrition.halal",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Halal",
+     "range": false
+    }
+   ],
+   "name": "Nutrition"
+  },
+  {
+   "code": "ingredientsAndAllergens",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.ingredients",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "<p>Refined Soyabean Oil , Anti-Foaming Agent: Dimethyl Polysiloxane (E900).</p>"
+      }
+     ],
+     "name": "Ingredients",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/ingredientsAndAllergens.allergenscontains",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "None of the 14 Food Allergens"
+      }
+     ],
+     "name": "Contains",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.dairy_free",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Dairy Free",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.gluten_free",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Does Not Contain Gluten",
+     "range": false
+    },
+    {
+     "code": "BrakesCCClassification/1.0/allergens.nut_free",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "true"
+      }
+     ],
+     "name": "Nut Free",
+     "range": false
+    }
+   ],
+   "name": "Ingredients and allergens"
+  },
+  {
+   "code": "productPackingInfo",
+   "features": [
+    {
+     "code": "BrakesCCClassification/1.0/productPackingInfo.primary_packaging",
+     "comparable": true,
+     "featureValues": [
+      {
+       "value": "-"
+      }
+     ],
+     "name": "Primary Packaging",
+     "range": false
+    }
+   ],
+   "name": "Product Packaging Info"
+  }
+ ],
+ "unitPriceStr": "£1.54/ltr",
+ "unitsPerCase": 1,
+ "sapUnit": {
+  "availabilityCode": "pieces",
+  "code": "pieces",
+  "name": "Piece"
+ },
+ "url": "/dry-store/oil/vegetable-oil/vegetable-oil/ktc-vegetable-oil-bottle-in-box-20l/p/85753"
+}
