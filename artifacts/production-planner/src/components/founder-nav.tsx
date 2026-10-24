@@ -8,7 +8,7 @@
  * founder). Someone with only one tab gets no strip at all.
  */
 import { Link, useLocation } from "wouter";
-import { Calendar, LineChart, Calculator, Megaphone } from "lucide-react";
+import { Calendar, LineChart, Calculator, Megaphone, FlaskConical } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
@@ -22,6 +22,7 @@ const ICONS: Record<string, typeof LineChart> = {
   "/founder/focus": Calendar,
   "/founder/pnl": Calculator,
   "/founder/sales": Megaphone,
+  "/founder/ab-tests": FlaskConical,
 };
 
 export function FounderNav() {
