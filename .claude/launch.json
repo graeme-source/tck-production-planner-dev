@@ -366,6 +366,27 @@
       ],
       "cwd": "artifacts/production-planner",
       "port": 5294
+    },
+    {
+      "name": "api-smartadd",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH ALLOWED_ORIGIN=http://localhost:5295 PORT=59750 pnpm run dev"
+      ],
+      "cwd": "artifacts/api-server",
+      "port": 59750,
+      "autoPort": true
+    },
+    {
+      "name": "frontend-smartadd",
+      "runtimeExecutable": "/bin/bash",
+      "runtimeArgs": [
+        "-lc",
+        "PATH=/opt/homebrew/bin:$PATH API_PROXY_TARGET=http://localhost:59750 pnpm exec vite --config vite.config.ts --host 0.0.0.0 --port 5295 --strictPort"
+      ],
+      "cwd": "artifacts/production-planner",
+      "port": 5295
     }
   ]
 }
