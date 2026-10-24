@@ -1,3 +1,4 @@
+import { TodoMorningReview } from "@/components/todo-morning-review";
 import React, { ReactNode, useCallback, useState, useEffect, useRef } from "react";
 import { Link, useLocation, useSearch } from "wouter";
 import { TeamListsPanelSection } from "@/components/team-lists/team-lists-dashboard";
@@ -1051,6 +1052,8 @@ export function QuickActionsDock() {
       <WishListAlert />
       <TodoSheet open={todosOpen} onClose={() => setTodosOpen(false)} />
       <TodoInterstitial />
+      {/* 8am review of your own to-do list, for anyone who has it on (2026-10-24). */}
+      <TodoMorningReview />
       {/* The founder's swipe-from-the-left into The Business (touch screens
           only; renders and listens to nothing for anyone else). */}
       <BusinessSwipe />

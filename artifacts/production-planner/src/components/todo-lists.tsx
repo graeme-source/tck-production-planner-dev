@@ -38,8 +38,11 @@ import { useNoScrollAutoFocus } from "@/hooks/use-modal-scroll";
 import {
   CalendarDays, Camera, Check, CheckCircle2, ChevronRight, Circle, ClipboardList,
   ExternalLink, Flag, Lightbulb, ListChecks, Loader2, MessageSquare, Pencil, Plus, RotateCcw,
-  Send, SlidersHorizontal, Trash2, X,
+  Send, SlidersHorizontal, Sun, Trash2, X,
 } from "lucide-react";
+
+import { SmartAddBox } from "@/components/smart-add/smart-add-box";
+import { useSetTodoReviewEnabled, useTodoReview } from "@/components/todo-morning-review";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -345,6 +348,7 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
             <span className="hidden sm:inline">Team lists</span>
           </a>
         )}
+        {viewUserId === null && <MorningReviewToggle />}
         <button
           onClick={onClose}
           aria-label="Close to-dos"
@@ -357,7 +361,7 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
       {/* Body — stays mounted under the pop-up, so its scroll position is
           exactly where it was when the pop-up closes. */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-4 md:px-6 py-5 pb-24">
+        <div className="w-full px-4 md:px-6 py-5 pb-24">
           <TodoList
             meId={me.id}
             canManage={canManage}
@@ -400,6 +404,29 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
         />
       )}
     </div>
+  );
+}
+
+/** Switch the 8am review on or off (components/todo-morning-review.tsx). */
+function MorningReviewToggle() {
+  const review = useTodoReview();
+  const set = useSetTodoReviewEnabled();
+  if (!review.data) return null;
+  const on = review.data.enabled;
+  return (
+    <button
+      type="button"
+      onClick={() => set.mutate(!on)}
+      disabled={set.isPending}
+      title={on ? "Your list pops up for review at 8am every day — tap to switch off" : "Have your list pop up for review at 8am every day"}
+      className={cn(
+        "h-14 px-4 rounded-2xl border-2 font-bold inline-flex items-center gap-2 transition-colors",
+        on ? "border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" : "border-border text-muted-foreground hover:bg-secondary",
+      )}
+    >
+      <Sun className="w-6 h-6" />
+      <span className="hidden sm:inline">8am review: {on ? "on" : "off"}</span>
+    </button>
   );
 }
 
@@ -571,46 +598,19 @@ function QuickAdd({ inputRef, title, setTitle, assigneeId, isMine, onAdded, onMo
   onAdded: (task: TodoTask) => void;
   onMoreDetails: (title: string) => void;
 }) {
-  const addMut = useMutation({
-    mutationFn: (t: string): Promise<TodoTask> => post("/api/todos", todoCreateBody({ ...EMPTY_TODO_FORM, title: t }, assigneeId)),
-    onSuccess: (saved: TodoTask, t) => {
-      // Only clear what was sent — anything typed meanwhile stays.
-      setTitle(cur => (cur.trim() === t ? "" : cur));
-      if (!isMine) toast({ title: "Added to their list — they'll be shown it", description: saved.title });
-      onAdded(saved);
-    },
-    onError: (e: Error) => toast({ title: "Couldn't add it", description: `${e.message} — your text is still in the box.`, variant: "destructive" }),
-  });
-
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const t = title.trim();
-    if (!t || addMut.isPending) return;
-    addMut.mutate(t);
-  };
-
+  // The shared smart add box (2026-10-24): "every thursday", "next monday",
+  // "p1" and "@Jane Miles" read the same here as on team lists and
+  // checklists, and the AI can file it on a team list or checklist instead.
   return (
     <div className="sticky top-0 z-10 -mx-4 md:-mx-6 px-4 md:px-6 py-2 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">
-      <form onSubmit={submit} className="flex gap-2">
-        <input
-          ref={inputRef}
-          value={title}
-          onChange={e => setTitle(e.target.value)}
-          placeholder={isMine ? "Add a to-do…" : "Add to this list…"}
-          aria-label={isMine ? "Add a to-do" : "Add to this list"}
-          maxLength={300}
-          enterKeyHint="done"
-          className="flex-1 min-w-0 h-16 px-5 rounded-2xl border-2 border-border bg-card text-xl font-semibold focus:outline-none focus:ring-2 focus:ring-primary/40"
-        />
-        <button
-          type="submit"
-          disabled={!title.trim() || addMut.isPending}
-          className="h-16 px-5 md:px-6 rounded-2xl bg-primary text-primary-foreground text-xl font-bold flex items-center justify-center gap-2 hover:opacity-90 active:scale-[0.99] transition-all disabled:opacity-40 shadow-lg shadow-primary/20 flex-shrink-0"
-        >
-          {addMut.isPending ? <Loader2 className="w-6 h-6 animate-spin" /> : <Plus className="w-7 h-7" />}
-          Add
-        </button>
-      </form>
+      <SmartAddBox
+        context={{ kind: "todo", assigneeId }}
+        inputRef={inputRef}
+        value={title}
+        onValueChange={setTitle}
+        placeholder={isMine ? "Add a to-do…" : "Add to this list…"}
+        onAdded={a => { if (a.kind === "todo") onAdded(a.row as TodoTask); }}
+      />
       <button
         type="button"
         onClick={() => { onMoreDetails(title.trim()); }}

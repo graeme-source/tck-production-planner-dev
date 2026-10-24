@@ -17,7 +17,8 @@ import {
   ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock, ExternalLink, Eye, EyeOff,
   Loader2, Pencil, Plus, Settings2, SkipForward, Undo2, ListChecks, Repeat, Rows3,
 } from "lucide-react";
-import { describeRule, parseQuickTask } from "@workspace/recurrence";
+import { describeRule } from "@workspace/recurrence";
+import { SmartAddBox } from "@/components/smart-add/smart-add-box";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -490,59 +491,17 @@ function TaskRow({ item, entry, today, onEdit, justAdded = false, isNew = false,
   );
 }
 
-/** "Add a task": type and press Enter; it's added as every day and you
- *  stay on the list — the box clears and keeps the cursor for the next one
- *  (Graeme, 2026-10-13). The new row's "Set days" chip opens its editor. */
-function AddTask({ listId, today, onAdded, compact = false }: { listId: number; today: string; onAdded: (id: number) => void; compact?: boolean }) {
-  const [title, setTitle] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const add = useAddItem(listId);
-  // "P1", "every 6 months", "every mon at 9am" in the title set those
-  // settings (Graeme, 2026-10-15) — shown below the box before adding.
-  const quick = useMemo(() => parseQuickTask(title, today), [title, today]);
-  function submit(e: React.FormEvent) {
-    e.preventDefault();
-    const t = title.trim();
-    if (!t || add.isPending) return;
-    const q = parseQuickTask(t, today);
-    const payload = {
-      title: q.title || t,
-      ...(q.priority ? { priority: q.priority } : {}),
-      ...(q.rule ? { recurrence: q.rule, carryOver: defaultCarryOver(q.rule) } : {}),
-      ...(q.time ? { timeOfDay: q.time } : {}),
-    };
-    add.mutate(payload, {
-      onSuccess: row => {
-        // Only clear what was sent — anything typed meanwhile stays.
-        setTitle(cur => (cur.trim() === t ? "" : cur));
-        onAdded(row.id);
-        inputRef.current?.focus({ preventScroll: true });
-      },
-    });
-  }
+/** "Add a task": type (or say) it and press Enter — the shared smart add
+ *  box (components/smart-add), so "p1", "every thursday", "next monday" and
+ *  "@Jane Miles" work here exactly as on to-dos and checklists. You stay on
+ *  the list; the new row glows if it landed here (Graeme, 2026-10-13/24). */
+function AddTask({ listId, onAdded, compact = false }: { listId: number; today?: string; onAdded: (id: number) => void; compact?: boolean }) {
   return (
-    <form onSubmit={submit} className="space-y-1">
-      <div className="flex gap-2">
-        <input ref={inputRef} value={title} onChange={e => setTitle(e.target.value)} placeholder="Add a task" enterKeyHint="done"
-          className={cn("flex-1 min-w-0 rounded-2xl border-2 border-dashed border-border bg-background focus:outline-none focus:border-primary focus:border-solid", compact ? "h-12 px-3 text-base" : "h-14 px-4 text-lg")} aria-label="Add a task" maxLength={300} />
-        <button type="submit" disabled={!title.trim() || add.isPending}
-          className={cn(compact ? "h-12 px-3" : "h-14 px-5", "rounded-2xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 disabled:opacity-40")}>
-          {add.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Plus className="w-5 h-5" />} Add
-        </button>
-      </div>
-      {(quick.priority || quick.rule || quick.time) && (
-        <p className="text-sm text-primary font-semibold flex flex-wrap items-center gap-x-3 gap-y-1 px-1">
-          <span>Adds “{quick.title || "…"}”</span>
-          {quick.priority && <span className="inline-flex items-center gap-1"><span className={cn("w-2.5 h-2.5 rounded-full", PRIORITY_STYLES[quick.priority].dot)} /> {PRIORITY_STYLES[quick.priority].label}</span>}
-          {quick.rule && <span className="inline-flex items-center gap-1"><Repeat className="w-4 h-4" /> {describeRule(quick.rule)}</span>}
-          {quick.time && <span className="inline-flex items-center gap-1"><Clock className="w-4 h-4" /> {quick.time}</span>}
-        </p>
-      )}
-      {!compact && !quick.rule && !quick.priority && title.trim() === "" && (
-        <p className="text-xs text-muted-foreground px-1">Tip: type “p1” for priority, or “every 6 months”, “every mon at 9am”, “quarterly”.</p>
-      )}
-      {add.error && <p className="text-sm text-red-600">Couldn't add it — {(add.error as Error).message}. Your text is still here; try again.</p>}
-    </form>
+    <SmartAddBox
+      context={{ kind: "team_list", listId }}
+      size={compact ? "md" : "lg"}
+      onAdded={a => { if (a.kind === "team_list_item" && a.destination.kind === "team_list" && a.destination.listId === listId) onAdded(a.id); }}
+    />
   );
 }
 

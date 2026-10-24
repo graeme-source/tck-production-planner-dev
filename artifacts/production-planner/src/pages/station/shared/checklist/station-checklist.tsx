@@ -3,11 +3,12 @@ import { useQuery } from "@tanstack/react-query";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Minus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
-  BookOpen,
+  BookOpen, X,
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { TempDial } from "@/components/temp-dial";
 import { PersonalTodosStrip } from "@/components/todo-lists";
+import { SmartAddBox } from "@/components/smart-add/smart-add-box";
 import { CuriosityTimeCard } from "@/components/curiosity-time";
 import { FriedChickenSubmitStock } from "@/components/fried-chicken/submit-stock";
 import { cn } from "@/lib/utils";
@@ -48,9 +49,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   const [adminMode, setAdminMode] = useState(false);
   const [showCompletedByCategory, setShowCompletedByCategory] = useState<Record<string, boolean>>({});
   const [addingItem, setAddingItem] = useState(false);
-  const [addTitle, setAddTitle] = useState("");
-  const [addCategory, setAddCategory] = useState<Category>("opening");
-  const [addRecurring, setAddRecurring] = useState(true);
+  const [addCategory, setAddCategory] = useState<Category>(defaultCategory ?? "opening");
   const [completionNotes, setCompletionNotes] = useState("");
   const [skipMode, setSkipMode] = useState(false);
   const [skipReason, setSkipReason] = useState("");
@@ -258,44 +257,6 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
     }
   };
 
-  const handleAddItem = () => {
-    if (!addTitle.trim()) return;
-    runOneoff(async (signal) => {
-      if (addRecurring) {
-        // Create a template (recurring task)
-        await guardedFetch(`${BASE}/api/checklists/templates`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            stationType,
-            category: addCategory,
-            title: addTitle.trim(),
-            schedule: "daily",
-            orderPosition: 999,
-          }),
-          signal,
-        });
-        toast({ title: "Recurring task added" });
-      } else {
-        // Create a one-off item (today only)
-        await guardedFetch(`${BASE}/api/checklists/oneoff`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            planId,
-            stationType,
-            category: addCategory,
-            title: addTitle.trim(),
-          }),
-          signal,
-        });
-        toast({ title: "One-off item added" });
-      }
-      setAddTitle("");
-      setAddingItem(false);
-    });
-  };
-
   const handleDeleteOneoff = (item: ChecklistItem & { category: Category }) => {
     if (item.type !== "oneoff") return;
     runOneoff(async (signal) => {
@@ -352,7 +313,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
               className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
               <Plus className="w-3.5 h-3.5" />
-              Add One-off Task
+              Add Task
             </button>
           </div>
         </div>
@@ -364,64 +325,41 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
         </div>
       </div>
 
-      {/* Add item form */}
+      {/* Add item — the shared smart add box (2026-10-24): "wipe scales every
+          friday, closing check", "just today", "@Jane Miles …" read the same
+          here as on team lists and to-dos. The category picked is where it
+          goes when the words don't say. */}
       {addingItem && (
         <div className="bg-card border border-border rounded-xl px-5 py-4 space-y-3">
-          <p className="text-sm font-semibold">Add Checklist Item</p>
-          <input
-            type="text"
-            placeholder="Item title..."
-            value={addTitle}
-            onChange={e => setAddTitle(e.target.value)}
-            className="w-full px-3 py-2 border border-border rounded-lg text-sm bg-background"
-            autoFocus
-          />
           <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={addCategory}
-              onChange={e => setAddCategory(e.target.value as Category)}
-              className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-            >
-              <option value="opening">Opening</option>
-              <option value="cleaning">Cleaning</option>
-              <option value="closing">Closing</option>
-            </select>
-            <div className="flex items-center bg-secondary/40 rounded-lg p-0.5">
-              <button
-                type="button"
-                onClick={() => setAddRecurring(true)}
-                className={cn(
-                  "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
-                  addRecurring ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
+            <p className="text-base font-semibold flex-1">Add a checklist task</p>
+            <label className="text-sm text-muted-foreground flex items-center gap-2">
+              If it doesn't say, add to
+              <select
+                value={addCategory}
+                onChange={e => setAddCategory(e.target.value as Category)}
+                className="px-3 py-2 border border-border rounded-lg text-sm bg-background text-foreground"
               >
-                Recurring
-              </button>
-              <button
-                type="button"
-                onClick={() => setAddRecurring(false)}
-                className={cn(
-                  "px-3 py-1.5 rounded-md text-xs font-medium transition-colors",
-                  !addRecurring ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                Today Only
-              </button>
-            </div>
-            <button
-              onClick={handleAddItem}
-              disabled={oneoffBusy || !addTitle.trim()}
-              className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium disabled:opacity-50"
-            >
-              {oneoffBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add"}
-            </button>
+                <option value="opening">Opening</option>
+                <option value="cleaning">Cleaning</option>
+                <option value="closing">Closing</option>
+              </select>
+            </label>
             <button
               onClick={() => setAddingItem(false)}
-              className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+              aria-label="Close"
+              className="h-10 w-10 rounded-lg hover:bg-secondary inline-flex items-center justify-center"
             >
-              Cancel
+              <X className="w-5 h-5" />
             </button>
           </div>
+          <SmartAddBox
+            context={{ kind: "checklist", stationType, category: addCategory, planId }}
+            size="md"
+            autoFocus
+            placeholder="e.g. clean packing computer every Thursday, cleaning check"
+            onAdded={a => { if (a.kind === "checklist_template" || a.kind === "checklist_oneoff") refetch(); }}
+          />
         </div>
       )}
 
