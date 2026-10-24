@@ -4,6 +4,10 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { onTodoDoneChanged } from "../lib/test-box-todos";
+import { isDueOn, isRecurrenceRule, nextOccurrenceAfter, normaliseRule, type RecurrenceRule } from "@workspace/recurrence";
+import { validate } from "../middleware/validate";
+import { londonDateString } from "../lib/london-time";
+import { reviewDue } from "../lib/todo-review";
 
 // ── Per-user to-do lists ────────────────────────────────────────────────────
 // Every user has their own list. Managers and admins can put tasks on
@@ -56,6 +60,8 @@ interface TaskRow {
   comment_count: number;
   attachment_count: number;
   improvement_id: number | null;
+  recurrence: RecurrenceRule | null;
+  time_of_day: string | null;
 }
 
 async function sessionUser(req: Request): Promise<{ id: number; role: string } | null> {
@@ -196,6 +202,59 @@ router.get("/unacknowledged", async (req: Request, res: Response) => {
 });
 
 // GET /api/todos/:id — one task with its full timeline.
+// ── The 8am review (2026-10-24) ─────────────────────────────────────────────
+// "A daily, unmissable task that pops up at 8 am every day to force me to
+// review my to-do list." The client polls this; when `due` is true it takes
+// over the screen until the person finishes the review (or snoozes it).
+
+router.get("/review", async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const rows = await db.execute<{ enabled: boolean; last_reviewed_on: string | null; snoozed_until: string | null }>(sql`
+    SELECT enabled, to_char(last_reviewed_on, 'YYYY-MM-DD') AS last_reviewed_on, snoozed_until
+    FROM todo_review_prefs WHERE user_id = ${user.id}
+  `);
+  const p = rows.rows[0];
+  const now = new Date();
+  res.json({
+    enabled: p?.enabled ?? false,
+    due: p ? reviewDue({ enabled: p.enabled, lastReviewedOn: p.last_reviewed_on, snoozedUntil: p.snoozed_until ? new Date(p.snoozed_until) : null }, now) : false,
+    lastReviewedOn: p?.last_reviewed_on ?? null,
+  });
+});
+
+const ReviewSettingsBody = z.object({ enabled: z.boolean() });
+router.put("/review", validate(ReviewSettingsBody), async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const { enabled } = req.body as z.infer<typeof ReviewSettingsBody>;
+  await db.execute(sql`
+    INSERT INTO todo_review_prefs (user_id, enabled) VALUES (${user.id}, ${enabled})
+    ON CONFLICT (user_id) DO UPDATE SET enabled = EXCLUDED.enabled, updated_at = NOW()
+  `);
+  res.json({ ok: true, enabled });
+});
+
+const ReviewActionBody = z.object({ action: z.enum(["done", "snooze"]), minutes: z.number().int().min(5).max(240).optional() });
+router.post("/review", validate(ReviewActionBody), async (req: Request, res: Response) => {
+  const user = await sessionUser(req);
+  if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const { action, minutes } = req.body as z.infer<typeof ReviewActionBody>;
+  if (action === "done") {
+    await db.execute(sql`
+      INSERT INTO todo_review_prefs (user_id, last_reviewed_on) VALUES (${user.id}, ${londonDateString()})
+      ON CONFLICT (user_id) DO UPDATE SET last_reviewed_on = EXCLUDED.last_reviewed_on, snoozed_until = NULL, updated_at = NOW()
+    `);
+  } else {
+    const until = new Date(Date.now() + (minutes ?? 30) * 60_000);
+    await db.execute(sql`
+      INSERT INTO todo_review_prefs (user_id, snoozed_until) VALUES (${user.id}, ${until})
+      ON CONFLICT (user_id) DO UPDATE SET snoozed_until = EXCLUDED.snoozed_until, updated_at = NOW()
+    `);
+  }
+  res.json({ ok: true });
+});
+
 router.get("/:id", async (req: Request, res: Response) => {
   const user = await sessionUser(req);
   if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
@@ -236,6 +295,9 @@ const CreateBody = z.object({
   priority: z.enum(PRIORITIES).default("normal"),
   scheduledFor: z.string().regex(DATE_RE).nullish(),
   dueDate: z.string().regex(DATE_RE).nullish(),
+  // Repeating to-dos (smart add, 2026-10-24): ticking one off creates the next.
+  recurrence: z.custom<RecurrenceRule>(isRecurrenceRule, "Not a repeat rule").nullish(),
+  timeOfDay: z.string().regex(/^\d{2}:\d{2}$/).nullish(),
 });
 
 router.post("/", async (req: Request, res: Response) => {
@@ -248,12 +310,17 @@ router.post("/", async (req: Request, res: Response) => {
     res.status(403).json({ error: "Only managers can add to other people's lists" });
     return;
   }
+  const rule = b.recurrence ? normaliseRule(b.recurrence) : null;
+  // A repeating to-do sits on its first due day, so it isn't "today" on a
+  // day it doesn't run.
+  const scheduledFor = b.scheduledFor ?? (rule ? firstDueOnOrAfter(rule, londonDateString()) : null);
   try {
     const creatorName = await userName(user.id);
     const rows = await db.execute<{ id: number }>(sql`
-      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, scheduled_for, due_date)
+      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, scheduled_for, due_date, recurrence, time_of_day)
       VALUES (${b.assigneeId}, ${user.id}, ${creatorName}, ${b.title}, ${b.notes ?? null}, ${b.url ?? null},
-              ${b.priority}, ${b.scheduledFor ?? null}, ${b.dueDate ?? null})
+              ${b.priority}, ${scheduledFor}, ${b.dueDate ?? null},
+              ${rule ? JSON.stringify(rule) : null}::jsonb, ${b.timeOfDay ?? null})
       RETURNING id
     `);
     const id = rows.rows[0].id;
@@ -267,6 +334,10 @@ router.post("/", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Failed to create task" });
   }
 });
+
+function firstDueOnOrAfter(rule: RecurrenceRule, date: string): string | null {
+  return isDueOn(rule, date) ? date : nextOccurrenceAfter(rule, date);
+}
 
 const EditBody = z.object({
   title: z.string().trim().min(1).max(300).optional(),
@@ -390,11 +461,33 @@ async function setDone(req: Request, res: Response, done: boolean) {
     if (done && task.created_by && task.created_by !== user.id) {
       await notify(task.created_by, `${name} completed: ${task.title}`);
     }
+    if (done && task.status !== "done" && task.recurrence && isRecurrenceRule(task.recurrence)) {
+      await createNextOccurrence(task, user.id, name);
+    }
     res.json(await taskById(task.id));
   } catch (err) {
     console.error("[Todos] complete/reopen error:", err);
     res.status(500).json({ error: "Failed to update task" });
   }
+}
+
+/**
+ * A repeating to-do ticked off: the next one goes on the list for its next
+ * due day (after today, or after the day it was for if that's later). It's
+ * already acknowledged — the person saw the first one.
+ */
+async function createNextOccurrence(task: TaskRow, userId: number, name: string) {
+  const today = londonDateString();
+  const from = task.scheduled_for && String(task.scheduled_for).slice(0, 10) > today ? String(task.scheduled_for).slice(0, 10) : today;
+  const next = nextOccurrenceAfter(task.recurrence as RecurrenceRule, from);
+  if (!next) return;
+  const rows = await db.execute<{ id: number }>(sql`
+    INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, scheduled_for, recurrence, time_of_day, acknowledged_at)
+    VALUES (${task.assignee_id}, ${task.created_by}, ${task.created_by_name}, ${task.title}, ${task.notes}, ${task.url},
+            ${task.priority}, ${next}, ${JSON.stringify(task.recurrence)}::jsonb, ${task.time_of_day}, NOW())
+    RETURNING id
+  `);
+  await addTimeline(rows.rows[0].id, userId, name, "event", `Repeats — this one is for ${next}`);
 }
 
 const CommentBody = z.object({ body: z.string().trim().min(1).max(2000) });

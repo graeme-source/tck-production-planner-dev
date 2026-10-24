@@ -143,6 +143,7 @@ import founderFocusRouter from "./founder-focus";
 import founderAdSpendRouter from "./founder-ad-spend";
 import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
+import smartAddRouter from "./smart-add";
 import founderSalesRouter from "./founder-sales";
 import salesDriversRouter from "./sales-drivers";
 import revenueTargetsRouter from "./revenue-targets";
@@ -247,6 +248,7 @@ async function requireAdminOrManager(req: Request, res: Response, next: NextFunc
 // Protected routes
 router.use("/users", usersRouter);
 router.use("/todos", todosRouter);
+router.use("/smart-add", smartAddRouter);
 router.use("/test-requests", testRequestsRouter);
 router.use("/onboarding", onboardingRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
