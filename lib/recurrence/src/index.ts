@@ -295,3 +295,4 @@ export function weekdayFromName(name: string): Weekday | null {
 }
 
 export * from "./phrase";
+export * from "./smart-add";
