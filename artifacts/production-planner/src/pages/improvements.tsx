@@ -105,6 +105,8 @@ type Improvement = {
   media?: Array<{ id: number; kind: "image" | "video"; phase: "before" | "after" | "stitched" | null }>;
   /** Has THIS viewer opened it? Powers the To-review tab and NEW markers. */
   seenByMe?: boolean;
+  /** Did THIS viewer log it? The nav badge's "not mine" (see needsReview). */
+  submittedByMe?: boolean;
   /** Credits on the improvement score: 1, or 2/3 when the founder marked
    *  it a great / substantial one (migration 0171). */
   creditWeight?: number;
@@ -198,6 +200,12 @@ export default function Improvements() {
   // How far down the feed the reader has got — 10 at a time (2026-10-02).
   const [feedRequested, setFeedRequested] = useState(FEED_PAGE_SIZE);
   useEffect(() => { setFeedRequested(FEED_PAGE_SIZE); }, [showImprovements, showIdeas]);
+  // How many the feed has already put on screen for these filters. An
+  // unseen one beyond the first ten stretches the feed to reach it; once
+  // it's seen the feed must not shrink back and whip that card away from
+  // under the reader (Graeme, 24 Oct — the last card vanished the moment it
+  // counted as seen).
+  const feedShownRef = useRef<{ filters: string; shown: number }>({ filters: "", shown: 0 });
   const queryClient = useQueryClient();
 
   // Deep link from the notification bell: /improvements?open=123 lands on
@@ -326,8 +334,14 @@ export default function Improvements() {
           .sort(byFeedNewest);
         // Ten at a time, more as the reader reaches the bottom — but never
         // cut off something still unseen: it must be reachable to be seen.
+        // …and never fewer than already shown, so one going "seen" doesn't
+        // drop the cards below it back behind "Show older".
         const lastUnseenIdx = sorted.reduce((n, i, idx) => (needsReview(i) ? idx : n), -1);
-        const timeline = sorted.slice(0, feedShownCount(sorted.length, feedRequested, lastUnseenIdx));
+        const filters = `${showImprovements}/${showIdeas}`;
+        const alreadyShown = feedShownRef.current.filters === filters ? feedShownRef.current.shown : 0;
+        const shownCount = feedShownCount(sorted.length, Math.max(feedRequested, alreadyShown), lastUnseenIdx);
+        feedShownRef.current = { filters, shown: shownCount };
+        const timeline = sorted.slice(0, shownCount);
         const olderCount = sorted.length - timeline.length;
         return (
         <>
@@ -503,7 +517,6 @@ function VoteButton({ item, variant }: { item: Improvement; variant: "feed" | "d
  *  opening it (improvement_views), so the NEW badge, the To review tab and
  *  the nav count all move on together. Open to everyone. */
 function SeenButton({ item }: { item: Improvement }) {
-  const queryClient = useQueryClient();
   const markSeen = useMarkImprovementSeen();
   const [saving, setSaving] = useState(false);
   return (
@@ -511,12 +524,10 @@ function SeenButton({ item }: { item: Improvement }) {
       onClick={async e => {
         e.stopPropagation();
         setSaving(true);
-        // Tick it off at once; the refetch confirms.
-        queryClient.setQueryData<Improvement[]>(["improvements"], old =>
-          old?.map(i => (i.id === item.id ? { ...i, seenByMe: true } : i)));
+        // markSeen ticks it off and drops the nav badge at once; the
+        // refetch it triggers confirms.
         await markSeen(item.id);
         setSaving(false);
-        queryClient.invalidateQueries({ queryKey: ["improvements"] });
       }}
       disabled={saving}
       title="Mark as reviewed without opening it"
@@ -558,10 +569,10 @@ function LoadOlder({ remaining, onLoad }: { remaining: number; onLoad: () => voi
 function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
   const isFounder = useIsFounder();
   const premium = premiumStyle(item.creditWeight);
-  // Read it and scroll past it = seen (Graeme, 2026-10-01). Recorded at
-  // once (nav count, NEW badge), but the card stays where it is — showing
-  // "Seen ✓" — until the list next refreshes, so the To review list never
-  // jumps under your thumb mid-scroll.
+  // Read it and scroll past it = seen (Graeme, 2026-10-01; 24 Oct). Recorded
+  // at once (nav count, NEW badge), but the card keeps its size — the
+  // "I've seen this" button becomes "Seen ✓" in the same spot — so the feed
+  // never jumps under your thumb mid-scroll.
   const markSeen = useMarkImprovementSeen();
   const [autoSeen, setAutoSeen] = useState(false);
   const seenRef = useSeenOnScroll<HTMLDivElement>(needsReview(item) && !autoSeen, () => {
@@ -645,14 +656,14 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
           <CreditWeightControl improvementId={item.id} weight={item.creditWeight} />
         </div>
       )}
-      {(item.stage === "todo" || needsReview(item)) && (
+      {(item.stage === "todo" || needsReview(item) || autoSeen) && (
         <div className="mt-3 flex gap-2 flex-wrap">
           {item.stage === "todo" && (
             <div className="flex-1 min-w-[220px]">
               <VoteButton item={item} variant="feed" />
             </div>
           )}
-          {needsReview(item) && (autoSeen
+          {(needsReview(item) || autoSeen) && (autoSeen
             ? <span className="h-14 px-5 rounded-2xl text-emerald-700 dark:text-emerald-400 text-lg font-bold flex items-center gap-2"><CheckCircle2 className="w-5 h-5" /> Seen</span>
             : <SeenButton item={item} />)}
         </div>

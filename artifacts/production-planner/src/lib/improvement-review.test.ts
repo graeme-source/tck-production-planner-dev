@@ -66,4 +66,8 @@ describe("feed shows 10 at a time (2026-10-02)", () => {
   });
   it("always reaches the oldest unseen improvement", () => {
     expect(feedShownCount(111, 10, 14)).toBe(15);
+  });
+  it("doesn't shrink back once that one is seen (the page passes what it already shows) — 24 Oct", () => {
+    const shown = feedShownCount(111, 10, 14); // 15 on screen
+    expect(feedShownCount(111, Math.max(10, shown), -1)).toBe(15);
   });});

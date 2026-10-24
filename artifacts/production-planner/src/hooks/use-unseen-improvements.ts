@@ -10,6 +10,7 @@
  *  genuinely new. A badge that opens on "31" is one nobody ever clears.
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { needsReview, type ReviewableImprovement } from "@/lib/improvement-review";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -29,15 +30,35 @@ export function useUnseenImprovementCount(): number {
   return data?.count ?? 0;
 }
 
-/** Check one off — called when an improvement is opened and read. */
+/** The feed list's cache key (pages/improvements.tsx). */
+const IMPROVEMENTS_LIST_KEY = ["improvements"];
+
+/** Check one off — scrolled past, "I've seen this", or opened.
+ *
+ *  The nav badge drops AT ONCE (Graeme, 24 Oct: scrolling past should take
+ *  it off the number in the left-hand navigation): if the feed's copy says
+ *  this one is counted, the cached count goes down by one and the card is
+ *  marked seen, then the server confirms and both are refetched. */
 export function useMarkImprovementSeen() {
   const queryClient = useQueryClient();
   return async (id: number) => {
+    const list = queryClient.getQueryData<Array<ReviewableImprovement & { id: number }>>(IMPROVEMENTS_LIST_KEY);
+    const item = Array.isArray(list) ? list.find(i => i.id === id) : undefined;
+    if (item && needsReview(item)) {
+      // Stop an in-flight refetch landing the old number on top of ours.
+      await queryClient.cancelQueries({ queryKey: UNSEEN_IMPROVEMENTS_KEY, exact: true });
+      queryClient.setQueryData<{ count: number }>(UNSEEN_IMPROVEMENTS_KEY, old =>
+        old ? { count: Math.max(0, old.count - 1) } : old);
+      queryClient.setQueryData<Array<ReviewableImprovement & { id: number }>>(IMPROVEMENTS_LIST_KEY, old =>
+        old?.map(i => (i.id === id ? { ...i, seenByMe: true } : i)));
+    }
     try {
       await fetch(`${BASE}/api/improvements/${id}/seen`, { method: "POST", credentials: "include" });
-      queryClient.invalidateQueries({ queryKey: UNSEEN_IMPROVEMENTS_KEY });
     } catch {
-      // Never let a bookkeeping call get in the way of reading the thing.
+      // Never let a bookkeeping call get in the way of reading the thing;
+      // the refetch below puts the true count back.
     }
+    queryClient.invalidateQueries({ queryKey: UNSEEN_IMPROVEMENTS_KEY, exact: true });
+    queryClient.invalidateQueries({ queryKey: IMPROVEMENTS_LIST_KEY, exact: true });
   };
 }

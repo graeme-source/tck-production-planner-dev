@@ -1,10 +1,18 @@
 /**
  * Marks an improvement seen once it has been read and scrolled past — the
  * rules are in lib/seen-on-scroll.ts. Fires at most once per card.
+ *
+ * Samples the card's position on every scroll of the box it lives in (one
+ * per animation frame) and four times a second while it sits still, so the
+ * dwell clock runs while you read and "past" is judged from where the card
+ * actually is — not from catching one exact edge-crossing event, which the
+ * first version depended on and often missed (Graeme, 16 and 24 Oct).
  */
 import { useEffect, useRef } from "react";
-import { isLookedAt, scrolledPastAfterReading } from "@/lib/seen-on-scroll";
+import { newSeenTracker, stepSeen } from "@/lib/seen-on-scroll";
 import { appScrollContainer } from "@/lib/scroll";
+
+const TICK_MS = 250;
 
 export function useSeenOnScroll<T extends HTMLElement>(enabled: boolean, onSeen: () => void) {
   const ref = useRef<T | null>(null);
@@ -13,37 +21,64 @@ export function useSeenOnScroll<T extends HTMLElement>(enabled: boolean, onSeen:
 
   useEffect(() => {
     const el = ref.current;
-    if (!enabled || !el || typeof IntersectionObserver === "undefined") return;
-    let dwellMs = 0;
-    let lookingSince: number | null = null;
-    let fired = false;
-    const thresholds = Array.from({ length: 21 }, (_, i) => i / 20);
-    // Watch against the box the card really scrolls in. Sidebar pages scroll
-    // #app-main-scroll, which starts below the top bar; with the window as
-    // the root, "off the top" was measured against the wrong edge and a card
-    // hidden under the top bar never counted (Graeme, 2026-10-16). Full-
-    // screen pages scroll the window, so fall back to that.
+    if (!enabled || !el) return;
+    // Sidebar pages scroll #app-main-scroll (it starts below the top bar);
+    // full-screen pages scroll the window.
     const container = appScrollContainer();
-    const root = container && container !== el && container.contains(el) ? container : null;
-    const observer = new IntersectionObserver(entries => {
-      for (const entry of entries) {
-        const now = performance.now();
-        const viewportH = entry.rootBounds?.height ?? root?.clientHeight ?? window.innerHeight;
-        const rootTop = entry.rootBounds?.top ?? root?.getBoundingClientRect().top ?? 0;
-        const looking = entry.isIntersecting
-          && isLookedAt(entry.intersectionRect.height, entry.boundingClientRect.height, viewportH);
-        if (looking && lookingSince == null) lookingSince = now;
-        if (!looking && lookingSince != null) { dwellMs += now - lookingSince; lookingSince = null; }
-        if (!fired && !entry.isIntersecting
-          && scrolledPastAfterReading(dwellMs, entry.boundingClientRect.bottom, rootTop)) {
-          fired = true;
-          observer.disconnect();
-          onSeenRef.current();
-        }
+    const box = container && container !== el && container.contains(el) ? container : null;
+
+    let tracker = newSeenTracker();
+    let fired = false;
+    let frame = 0;
+
+    const sample = () => {
+      frame = 0;
+      if (fired || !el.isConnected) return;
+      const card = el.getBoundingClientRect();
+      let rootTop = 0;
+      let rootBottom = window.innerHeight;
+      let atEnd: boolean;
+      if (box) {
+        rootTop = box.getBoundingClientRect().top;
+        rootBottom = rootTop + box.clientHeight;
+        atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 2;
+      } else {
+        const doc = document.scrollingElement ?? document.documentElement;
+        atEnd = window.scrollY + window.innerHeight >= doc.scrollHeight - 2;
       }
-    }, { root, threshold: thresholds });
-    observer.observe(el);
-    return () => observer.disconnect();
+      const step = stepSeen(tracker, {
+        now: performance.now(),
+        cardTop: card.top,
+        cardBottom: card.bottom,
+        rootTop,
+        rootBottom,
+        atEnd,
+        hidden: document.visibilityState === "hidden",
+      });
+      tracker = step.tracker;
+      if (step.seen) {
+        fired = true;
+        stop();
+        onSeenRef.current();
+      }
+    };
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(sample); };
+    const scroller: HTMLElement | Window = box ?? window;
+    scroller.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll, { passive: true });
+    document.addEventListener("visibilitychange", sample);
+    const timer = window.setInterval(sample, TICK_MS);
+    sample();
+
+    function stop() {
+      scroller.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+      document.removeEventListener("visibilitychange", sample);
+      window.clearInterval(timer);
+      if (frame) cancelAnimationFrame(frame);
+      frame = 0;
+    }
+    return stop;
   }, [enabled]);
 
   return ref;
