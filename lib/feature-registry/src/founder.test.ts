@@ -99,15 +99,15 @@ describe("allowedFounderTabs", () => {
     allowedFounderTabs({ email, grantedKeys }).map(t => t.href);
 
   it("gives the founder every tab", () => {
-    expect(hrefs(FOUNDER_EMAIL, [])).toEqual(["/founder/numbers", "/founder/focus", "/founder/pnl", "/founder/sales"]);
+    expect(hrefs(FOUNDER_EMAIL, [])).toEqual(["/founder/numbers", "/founder/focus", "/founder/pnl", "/founder/sales", "/founder/ab-tests"]);
   });
 
-  it("gives Tommy Numbers + Sales & Marketing only", () => {
-    expect(hrefs(TOMMY, ["founder.numbers", "founder.sales"])).toEqual(["/founder/numbers", "/founder/sales"]);
+  it("gives Tommy Numbers + Sales & Marketing (and its A/B tests tab) only", () => {
+    expect(hrefs(TOMMY, ["founder.numbers", "founder.sales"])).toEqual(["/founder/numbers", "/founder/sales", "/founder/ab-tests"]);
   });
 
-  it("gives a Sales-only grantee just that tab", () => {
-    expect(hrefs(TOMMY, ["founder.sales"])).toEqual(["/founder/sales"]);
+  it("gives a Sales-only grantee Sales & Marketing and its A/B tests tab", () => {
+    expect(hrefs(TOMMY, ["founder.sales"])).toEqual(["/founder/sales", "/founder/ab-tests"]);
   });
 
   it("gives an admin with no grant nothing", () => {
