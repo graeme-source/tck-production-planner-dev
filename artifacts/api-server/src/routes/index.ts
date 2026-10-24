@@ -145,6 +145,7 @@ import metaAdsRouter from "./meta-ads";
 import todosRouter from "./todos";
 import smartAddRouter from "./smart-add";
 import founderSalesRouter from "./founder-sales";
+import abTestsRouter from "./ab-tests";
 import salesDriversRouter from "./sales-drivers";
 import revenueTargetsRouter from "./revenue-targets";
 import marketingCalendarRouter from "./marketing-calendar";
@@ -410,6 +411,8 @@ router.use("/contracts", contractsRouter);
 // Starter forms: owner-scoped + HR-records access, guarded inside the router.
 router.use("/starter-forms", starterFormsRouter);
 router.use("/founder-sales", founderSalesRouter);
+// Business → Website A/B tests: Sales & Marketing access (routes/ab-tests.ts).
+router.use("/ab-tests", abTestsRouter);
 router.use("/sales-drivers", salesDriversRouter);
 // Monthly revenue targets (minimum + per-month stretch): read by founder.numbers
 // and founder.sales grantees, changed by the founder only — guarded inside.

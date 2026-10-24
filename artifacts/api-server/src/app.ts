@@ -9,6 +9,7 @@ import router from "./routes";
 import { BIG_BODY_JSON_ROUTES } from "./lib/big-body-routes";
 import { CSP_DIRECTIVES } from "./lib/csp";
 import publicSurveysRouter from "./routes/public-surveys";
+import publicAbRouter from "./routes/public-ab";
 
 const sessionSecret = process.env["SESSION_SECRET"];
 if (!sessionSecret) {
@@ -27,6 +28,8 @@ app.set("trust proxy", 1);
 // stricter rate limits and its own body parser. Everything else on /api is
 // untouched — requests that don't match this prefix fall through as before.
 app.use("/api/public/surveys", publicSurveysRouter);
+// The website A/B snippet's visit/add-to-cart pings — same reasoning (routes/public-ab.ts).
+app.use("/api/public/ab", publicAbRouter);
 
 const allowedOrigin = process.env["ALLOWED_ORIGIN"] ?? `https://${process.env["REPLIT_DEV_DOMAIN"]}`;
 

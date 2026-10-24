@@ -30,7 +30,7 @@ import { addDaysToDateString, londonDaysWindowUtc } from "./london-time";
 const CACHE_FIELDS =
   "id,name,tags,created_at,updated_at,cancelled_at,financial_status,fulfillment_status," +
   "total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address," +
-  "line_items,refunds,note";
+  "line_items,refunds,note,note_attributes,source_name";
 
 interface CachedOrder extends ShopifyOrder {
   updated_at: string;
