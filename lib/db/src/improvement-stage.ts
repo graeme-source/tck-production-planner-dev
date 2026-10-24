@@ -45,6 +45,40 @@ export function stageOf(status: string): ImprovementStage {
   }
 }
 
+/** Every stored status, live and legacy — for rules that list statuses. */
+export const ALL_IMPROVEMENT_STATUSES: readonly ImprovementStatus[] = [
+  "submitted_for_review", "awaiting_approval", "complete", "rejected",
+  "acknowledged", "approved", "in_development", "testing",
+];
+
+/**
+ * The nav badge's rule: which improvements count as "not seen yet" for a
+ * viewer. Finished work only (anything past "to do"), logged by someone
+ * else, not looked at since it was finished. GET /improvements/unseen-count
+ * applies it in SQL (its status list is UNSEEN_COUNT_STATUSES) and the feed
+ * applies it card by card through `submittedByMe` + `seenByMe`, so a card
+ * the badge counts is always a card the feed lets you clear by scrolling.
+ *
+ * Why the exact rule matters (Graeme, 24 Oct): the feed used to key "mine"
+ * on credit/assignment while the badge keyed on who logged it, so an
+ * improvement someone else logged but credited to you was counted by the
+ * badge yet had no NEW marker, no "I've seen this" button and no scroll
+ * tracking — the only way to clear it was to open it.
+ */
+export const UNSEEN_COUNT_STATUSES: readonly ImprovementStatus[] =
+  ALL_IMPROVEMENT_STATUSES.filter(s => stageOf(s) !== "todo");
+
+export function countsAsUnseen(
+  row: { progressStatus: string; submittedBy: number | null },
+  viewerId: number | null | undefined,
+  seenSinceDone: boolean,
+): boolean {
+  if (viewerId == null) return false;
+  return stageOf(row.progressStatus) !== "todo"
+    && row.submittedBy !== viewerId
+    && !seenSinceDone;
+}
+
 export const STAGE_LABEL: Record<ImprovementStage, string> = {
   todo: "To do",
   waiting: "Waiting for approval",

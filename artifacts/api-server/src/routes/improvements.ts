@@ -4,7 +4,7 @@ import {
   notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, shouldAutoSubmit,
   formatCreditNames, isCredited, withLead, MAX_CREDITED_PEOPLE, type CreditPerson,
-  canEditImprovement, IMPROVEMENT_EDIT_REFUSED, managerOnlyFieldsIn,
+  canEditImprovement, IMPROVEMENT_EDIT_REFUSED, managerOnlyFieldsIn, UNSEEN_COUNT_STATUSES,
 } from "@workspace/db";
 import { eq, desc, asc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -121,9 +121,10 @@ router.get("/unseen-count", async (req: Request, res: Response) => {
       FROM improvement_submissions i
       WHERE (i.submitted_by IS DISTINCT FROM ${userId})
         -- Finished improvements only: ideas go straight into the feed and
-        -- never need reviewing (Graeme, 2026-09-24). Mirrors stageOf():
-        -- anything past 'To do' is an improvement.
-        AND i.progress_status IN ('complete', 'awaiting_approval', 'rejected')
+        -- never need reviewing (Graeme, 2026-09-24). The list comes from
+        -- stageOf() (anything past 'To do'), and the feed applies the same
+        -- rule card by card — countsAsUnseen() in @workspace/db.
+        AND i.progress_status::text = ANY(${`{${UNSEEN_COUNT_STATUSES.join(",")}}`}::text[])
         -- Seen means seen SINCE it was finished — having opened it back when
         -- it was an idea doesn't count as reviewing the finished work.
         AND NOT EXISTS (
@@ -247,6 +248,11 @@ router.get("/", async (req: Request, res: Response) => {
       ),
       media: mediaById.get(r.id) ?? [],
       seenByMe: seenIds.has(r.id),
+      // Who LOGGED it — the nav badge's "not mine" (countsAsUnseen). Not
+      // isMine, which is about credit and assignment: the two disagreeing
+      // left credited-to-me improvements on the badge with no way to clear
+      // them from the feed (Graeme, 24 Oct).
+      submittedByMe: viewer.id != null && r.submittedBy === viewer.id,
       reactions: reactionsById.get(r.id) ?? [],
     })));
   } catch (err) {
