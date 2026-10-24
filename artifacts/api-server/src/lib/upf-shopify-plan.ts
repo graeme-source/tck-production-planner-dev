@@ -1,6 +1,7 @@
 /**
  * What the website should say about each product — UPF %, calories and
- * protein per portion — as pure decisions, no I/O. The runner
+ * protein per portion, and the full nutrition table — as pure decisions,
+ * no I/O. The runner
  * (upf-shopify-sync.ts) feeds it the live recipe facts, the recipe →
  * Shopify product links and what we last wrote, and applies the writes it
  * returns. Objective B.
@@ -17,8 +18,21 @@
  *  - A product that's no longer linked to any recipe loses its figures.
  */
 
-export const WEBSITE_METRICS = ["upf", "kcal", "protein"] as const;
+export const WEBSITE_METRICS = ["upf", "kcal", "protein", "nutrition"] as const;
 export type WebsiteMetric = (typeof WEBSITE_METRICS)[number];
+/** Numbers for the icons; the nutrition table travels as a JSON string. */
+export type FigureValue = number | string;
+
+export const NUTRITION_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "carbohydrate", "sugars", "fibre", "protein", "salt"] as const;
+export type NutritionKey = (typeof NUTRITION_KEYS)[number];
+export type NutritionValues = Record<NutritionKey, number | null>;
+
+/** The recipe's nutrition panel as the Recipes page computes it. */
+export interface NutritionPanel {
+  portionWeightG: number;
+  per100g: NutritionValues;
+  perPortion: NutritionValues;
+}
 
 export interface RecipeFacts {
   recipeId: number;
@@ -30,6 +44,9 @@ export interface RecipeFacts {
   /** Ingredients with no kcal / no protein figure. */
   missingKcal: string[];
   missingProtein: string[];
+  nutrition: NutritionPanel | null;
+  /** Ingredients missing any nutrition value — holds back the whole table. */
+  missingNutrition: string[];
 }
 
 export interface ProductLink {
@@ -42,14 +59,14 @@ export interface ProductLink {
 export interface LedgerEntry {
   productGid: string;
   productTitle: string | null;
-  published: Record<WebsiteMetric, number | null>;
+  published: Record<WebsiteMetric, FigureValue | null>;
 }
 
 export type ProductStatus = "linked" | "several_recipes" | "unlinked";
 
 export interface MetricDecision {
   /** The figure the website should show; null = show nothing. */
-  value: number | null;
+  value: FigureValue | null;
   /** Why it's held back (plain English), when value is null. */
   heldBecause: string | null;
   /** True when Shopify needs a write (set or remove) to match. */
@@ -77,7 +94,38 @@ export function websiteUpfPercent(percent: number): number {
 const list = (names: string[]) => [...names].sort().join(", ");
 
 /** Each figure for one recipe: the value, or why it's held back. */
-export function recipeFigures(r: RecipeFacts): Record<WebsiteMetric, { value: number | null; heldBecause: string | null }> {
+/** Label-style rounding: energy whole numbers, salt 2 dp, the rest 1 dp. */
+function roundNutrient(key: NutritionKey, v: number): number {
+  if (key === "energyKj" || key === "energyKcal") return Math.round(v);
+  if (key === "salt") return Math.round(v * 100) / 100;
+  return Math.round(v * 10) / 10;
+}
+
+/**
+ * The nutrition table as the JSON the theme reads (custom.nutrition_panel),
+ * or null when any value is missing. Keys in a fixed order so an unchanged
+ * recipe always produces the identical string (no needless writes).
+ */
+export function nutritionPanelJson(panel: NutritionPanel): string | null {
+  if (!(panel.portionWeightG > 0)) return null;
+  const pick = (vals: NutritionValues): Record<NutritionKey, number> | null => {
+    const out = {} as Record<NutritionKey, number>;
+    for (const k of NUTRITION_KEYS) {
+      const v = vals[k];
+      if (v == null || !Number.isFinite(v) || v < 0) return null;
+      out[k] = roundNutrient(k, v);
+    }
+    return out;
+  };
+  const per100g = pick(panel.per100g);
+  const perPortion = pick(panel.perPortion);
+  if (!per100g || !perPortion) return null;
+  return JSON.stringify({ portionWeightG: Math.round(panel.portionWeightG), per100g, perPortion });
+}
+
+type Figures = Record<WebsiteMetric, { value: FigureValue | null; heldBecause: string | null }>;
+
+export function recipeFigures(r: RecipeFacts): Figures {
   const held = (why: string) => ({ value: null, heldBecause: why });
   const upf = r.upfPercent == null
     ? held("the recipe has no weighable ingredients")
@@ -94,7 +142,13 @@ export function recipeFigures(r: RecipeFacts): Record<WebsiteMetric, { value: nu
     : r.proteinPerPortion == null || r.proteinPerPortion < 0 || r.kcalPerPortion == null || r.kcalPerPortion <= 0
       ? held("no portion weight / nutrition yet")
       : { value: Math.round(r.proteinPerPortion * 10) / 10, heldBecause: null };
-  return { upf, kcal, protein };
+  const panelJson = r.nutrition ? nutritionPanelJson(r.nutrition) : null;
+  const nutrition = r.missingNutrition.length > 0
+    ? held(`missing nutrition on: ${list(r.missingNutrition)}`)
+    : panelJson == null
+      ? held("no portion weight / nutrition yet")
+      : { value: panelJson, heldBecause: null };
+  return { upf, kcal, protein, nutrition };
 }
 
 export function planWebsiteSync(
@@ -112,7 +166,7 @@ export function planWebsiteSync(
     byProduct.set(link.productGid, p);
   }
 
-  const metricsFor = (gid: string, figures: Record<WebsiteMetric, { value: number | null; heldBecause: string | null }>): Record<WebsiteMetric, MetricDecision> => {
+  const metricsFor = (gid: string, figures: Figures): Record<WebsiteMetric, MetricDecision> => {
     const last = ledgerByGid.get(gid);
     const out = {} as Record<WebsiteMetric, MetricDecision>;
     for (const m of WEBSITE_METRICS) {

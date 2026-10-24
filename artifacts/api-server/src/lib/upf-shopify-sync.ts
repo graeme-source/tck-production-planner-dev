@@ -1,7 +1,8 @@
 /**
- * Pushes each recipe's UPF %, calories and protein per portion to its
- * Shopify product's metafields, so the menu card's three-icon strip always
- * matches the planner (Graeme, 2026-10-22). Objective B. Decisions live in
+ * Pushes each recipe's UPF %, calories and protein per portion, and its
+ * full nutrition table (per 100 g and per portion), to its Shopify product's
+ * metafields, so the menu card icons and the nutrition table always match
+ * the planner (Graeme, 2026-10-22; table 2026-10-24). Objective B. Decisions live in
  * upf-shopify-plan.ts; this file only reads, writes and records — see
  * migration 0214_upf_shopify_sync.sql for the why.
  *
@@ -16,16 +17,19 @@ import { isStaging } from "./app-env";
 import { computeUpfSummary } from "./upf";
 import { computeRecipeNutritionals } from "../routes/recipes";
 import {
-  planWebsiteSync, WEBSITE_METRICS,
-  type ProductLink, type LedgerEntry, type ProductDecision, type RecipeFacts, type WebsiteMetric,
+  planWebsiteSync, WEBSITE_METRICS, NUTRITION_KEYS,
+  type ProductLink, type LedgerEntry, type ProductDecision, type RecipeFacts, type WebsiteMetric, type FigureValue,
 } from "./upf-shopify-plan";
 import { shopifyGraphQL, shopifyGraphQLWrite, ShopifyWritesBlockedError } from "../services/shopify";
 
 /** The product metafields the theme reads (snippets/tck-card-facts.liquid). */
-export const WEBSITE_METAFIELDS: Record<WebsiteMetric, { namespace: string; key: string; type: string; format: (v: number) => string }> = {
-  upf: { namespace: "custom", key: "upf_percent", type: "number_decimal", format: v => v.toFixed(1) },
-  kcal: { namespace: "custom", key: "kcal_per_portion", type: "number_integer", format: v => String(Math.round(v)) },
-  protein: { namespace: "custom", key: "protein_per_portion", type: "number_decimal", format: v => v.toFixed(1) },
+export const WEBSITE_METAFIELDS: Record<WebsiteMetric, { namespace: string; key: string; type: string; format: (v: FigureValue) => string }> = {
+  upf: { namespace: "custom", key: "upf_percent", type: "number_decimal", format: v => Number(v).toFixed(1) },
+  kcal: { namespace: "custom", key: "kcal_per_portion", type: "number_integer", format: v => String(Math.round(Number(v))) },
+  protein: { namespace: "custom", key: "protein_per_portion", type: "number_decimal", format: v => Number(v).toFixed(1) },
+  // The nutrition table (snippets/tck-nutrition-table.liquid): per 100 g and
+  // per portion, already JSON from nutritionPanelJson.
+  nutrition: { namespace: "custom", key: "nutrition_panel", type: "json", format: v => String(v) },
 };
 
 /** Shopify takes at most 25 metafields per metafieldsSet / metafieldsDelete. */
@@ -94,6 +98,8 @@ async function loadRecipeFacts(recipeIds: number[]): Promise<RecipeFacts[]> {
     if (!u) continue;
     const n = await computeRecipeNutritionals(recipeId);
     const lacking = (key: string) => n.completeness.missingNutritionalDetail.filter(d => (d.missing as string[]).includes(key)).map(d => d.name);
+    const values = (src: Record<string, number | null>) =>
+      Object.fromEntries(NUTRITION_KEYS.map(k => [k, src[k] ?? null])) as Record<(typeof NUTRITION_KEYS)[number], number | null>;
     facts.push({
       recipeId,
       name: u.name,
@@ -103,14 +109,16 @@ async function loadRecipeFacts(recipeIds: number[]): Promise<RecipeFacts[]> {
       proteinPerPortion: n.portionWeightG > 0 ? n.perPortion.protein : null,
       missingKcal: lacking("energyKcal"),
       missingProtein: lacking("protein"),
+      nutrition: n.portionWeightG > 0 ? { portionWeightG: n.portionWeightG, per100g: values(n.per100g), perPortion: values(n.perPortion) } : null,
+      missingNutrition: n.completeness.missingNutritionalDetail.map(d => d.name),
     });
   }
   return facts;
 }
 
 async function loadLedger(): Promise<LedgerEntry[]> {
-  const r = await db.execute<{ product_gid: string; product_title: string | null; upf_published: string | null; kcal_published: number | null; protein_published: string | null }>(sql`
-    SELECT product_gid, product_title, upf_published::text, kcal_published, protein_published::text FROM upf_shopify_sync
+  const r = await db.execute<{ product_gid: string; product_title: string | null; upf_published: string | null; kcal_published: number | null; protein_published: string | null; nutrition_published: string | null }>(sql`
+    SELECT product_gid, product_title, upf_published::text, kcal_published, protein_published::text, nutrition_published FROM upf_shopify_sync
      -- A row never written, or whose last write failed, says nothing reliable
      -- about Shopify: leave it out so the plan writes that product again.
      WHERE written_at IS NOT NULL AND last_error IS NULL
@@ -119,12 +127,12 @@ async function loadLedger(): Promise<LedgerEntry[]> {
   return r.rows.map(x => ({
     productGid: x.product_gid,
     productTitle: x.product_title,
-    published: { upf: num(x.upf_published), kcal: num(x.kcal_published), protein: num(x.protein_published) },
+    published: { upf: num(x.upf_published), kcal: num(x.kcal_published), protein: num(x.protein_published), nutrition: x.nutrition_published },
   }));
 }
 
 type UserErrors = Array<{ field: string[] | null; message: string }>;
-interface Write { productGid: string; metric: WebsiteMetric; value: number | null }
+interface Write { productGid: string; metric: WebsiteMetric; value: FigureValue | null }
 
 /** Applies the writes; returns per-product errors (gid → message). */
 async function writeToShopify(decisions: ProductDecision[]): Promise<Map<string, string>> {
@@ -174,15 +182,17 @@ async function record(decisions: ProductDecision[], failed: Map<string, string>,
     const error = failed.get(d.productGid) ?? null;
     // The *_published columns only move when Shopify actually took the write.
     const written = wrote && !error;
-    const { upf, kcal, protein } = d.metrics;
+    const { upf, kcal, protein, nutrition } = d.metrics;
     await db.execute(sql`
       INSERT INTO upf_shopify_sync (product_gid, product_title, recipe_names, status,
         upf_percent, upf_published, upf_held, kcal_per_portion, kcal_published, kcal_held,
-        protein_per_portion, protein_published, protein_held, last_error, checked_at, written_at)
+        protein_per_portion, protein_published, protein_held,
+        nutrition_panel, nutrition_published, nutrition_held, last_error, checked_at, written_at)
       VALUES (${d.productGid}, ${d.productTitle}, ${d.recipeNames.join(", ") || null}, ${d.status},
         ${upf.value}, ${written ? upf.value : null}, ${upf.heldBecause},
         ${kcal.value}, ${written ? kcal.value : null}, ${kcal.heldBecause},
         ${protein.value}, ${written ? protein.value : null}, ${protein.heldBecause},
+        ${nutrition.value}, ${written ? nutrition.value : null}, ${nutrition.heldBecause},
         ${error}, NOW(), ${written ? sql`NOW()` : null})
       ON CONFLICT (product_gid) DO UPDATE SET
         product_title = EXCLUDED.product_title,
@@ -197,6 +207,9 @@ async function record(decisions: ProductDecision[], failed: Map<string, string>,
         protein_per_portion = EXCLUDED.protein_per_portion,
         protein_published = CASE WHEN ${written} THEN EXCLUDED.protein_published ELSE upf_shopify_sync.protein_published END,
         protein_held = EXCLUDED.protein_held,
+        nutrition_panel = EXCLUDED.nutrition_panel,
+        nutrition_published = CASE WHEN ${written} THEN EXCLUDED.nutrition_published ELSE upf_shopify_sync.nutrition_published END,
+        nutrition_held = EXCLUDED.nutrition_held,
         last_error = EXCLUDED.last_error,
         checked_at = NOW(),
         written_at = CASE WHEN ${written} THEN NOW() ELSE upf_shopify_sync.written_at END
@@ -251,5 +264,5 @@ export function startUpfShopifySync(): void {
   };
   schedule("*/10 * * * *", tick, { timezone: "Europe/London" });
   setTimeout(tick, 3 * 60_000).unref();
-  console.log("[upf-sync] UPF %, kcal and protein → Shopify every 10 minutes");
+  console.log("[upf-sync] UPF %, kcal, protein and nutrition table → Shopify every 10 minutes");
 }

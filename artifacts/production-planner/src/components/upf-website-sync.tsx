@@ -27,6 +27,8 @@ interface SyncProduct {
   upf: Figure;
   kcal: Figure;
   protein: Figure;
+  /** value 1 = the table is ready to publish; null = held back. */
+  nutrition: Figure;
   lastError: string | null;
   checkedAt: string;
   writtenAt: string | null;
@@ -89,7 +91,7 @@ export function UpfWebsiteSync() {
 
   if (q.isLoading || q.error || !q.data) return null;
   const { products, writesBlocked } = q.data;
-  const complete = products.filter(p => p.upf.value != null && p.kcal.value != null && p.protein.value != null);
+  const complete = products.filter(p => p.upf.value != null && p.kcal.value != null && p.protein.value != null && p.nutrition.value != null);
   const incomplete = products.length - complete.length;
   const failing = products.filter(p => p.lastError);
   const lastCheck = products.reduce<string | null>((a, p) => (!a || p.checkedAt > a ? p.checkedAt : a), null);
@@ -99,7 +101,7 @@ export function UpfWebsiteSync() {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-2 font-semibold text-sm min-h-11" aria-expanded={open}>
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          <Globe className="w-4 h-4 text-primary" /> UPF, calories &amp; protein on the website
+          <Globe className="w-4 h-4 text-primary" /> UPF, calories, protein &amp; nutrition on the website
         </button>
         <span className="text-sm text-muted-foreground">
           {complete.length} complete · {incomplete} with a figure held back · updates every 10 min · last check {ago(lastCheck)}
@@ -133,6 +135,7 @@ export function UpfWebsiteSync() {
                   <th className="px-4 py-2 font-medium">UPF</th>
                   <th className="px-4 py-2 font-medium">Calories / portion</th>
                   <th className="px-4 py-2 font-medium">Protein / portion</th>
+                  <th className="px-4 py-2 font-medium">Nutrition table</th>
                   <th className="px-4 py-2 font-medium">Last sent</th>
                 </tr>
               </thead>
@@ -155,6 +158,7 @@ export function UpfWebsiteSync() {
                       <FigureCell figure={p.protein} label={v => `${Math.round(v)} g`} />
                       {p.lastError && <p className="text-xs text-red-700 mt-1">Shopify: {p.lastError}</p>}
                     </td>
+                    <td className="px-4 py-2"><FigureCell figure={p.nutrition} label={() => "Per 100 g & per portion"} /></td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{ago(p.writtenAt)}</td>
                   </tr>
                 ))}

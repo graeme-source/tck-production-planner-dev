@@ -194,12 +194,14 @@ router.get("/shopify-sync", async (_req: Request, res: Response) => {
       upf_percent: string | null; upf_published: string | null; upf_held: string | null;
       kcal_per_portion: number | null; kcal_published: number | null; kcal_held: string | null;
       protein_per_portion: string | null; protein_published: string | null; protein_held: string | null;
+      nutrition_panel: string | null; nutrition_published: string | null; nutrition_held: string | null;
       last_error: string | null; checked_at: string; written_at: string | null;
     }>(sql`
       SELECT product_gid, product_title, recipe_names, status,
              upf_percent::text, upf_published::text, upf_held,
              kcal_per_portion, kcal_published, kcal_held,
              protein_per_portion::text, protein_published::text, protein_held,
+             nutrition_panel, nutrition_published, nutrition_held,
              last_error, checked_at, written_at
         FROM upf_shopify_sync WHERE status <> 'unlinked' ORDER BY product_title
     `);
@@ -215,6 +217,7 @@ router.get("/shopify-sync", async (_req: Request, res: Response) => {
         upf: { value: num(x.upf_percent), published: num(x.upf_published), heldBecause: x.upf_held },
         kcal: { value: num(x.kcal_per_portion), published: num(x.kcal_published), heldBecause: x.kcal_held },
         protein: { value: num(x.protein_per_portion), published: num(x.protein_published), heldBecause: x.protein_held },
+        nutrition: { value: x.nutrition_panel == null ? null : 1, published: x.nutrition_published == null ? null : 1, heldBecause: x.nutrition_held },
         lastError: x.last_error,
         checkedAt: x.checked_at,
         writtenAt: x.written_at,

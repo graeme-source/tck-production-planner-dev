@@ -20,6 +20,10 @@ export const upfShopifySyncTable = pgTable("upf_shopify_sync", {
   proteinPerPortion: numeric("protein_per_portion", { precision: 6, scale: 1 }),
   proteinPublished: numeric("protein_published", { precision: 6, scale: 1 }),
   proteinHeld: text("protein_held"),
+  /** Nutrition table JSON (migration 0261); NULL = held back. */
+  nutritionPanel: text("nutrition_panel"),
+  nutritionPublished: text("nutrition_published"),
+  nutritionHeld: text("nutrition_held"),
   lastError: text("last_error"),
   checkedAt: timestamp("checked_at", { withTimezone: true }).notNull().defaultNow(),
   writtenAt: timestamp("written_at", { withTimezone: true }),

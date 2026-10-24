@@ -1,16 +1,23 @@
 import { describe, it, expect } from "vitest";
-import { planWebsiteSync, websiteUpfPercent, recipeFigures, type RecipeFacts, type ProductLink, type LedgerEntry } from "./upf-shopify-plan";
+import { planWebsiteSync, websiteUpfPercent, recipeFigures, nutritionPanelJson, type RecipeFacts, type ProductLink, type LedgerEntry, type NutritionValues } from "./upf-shopify-plan";
+
+const vals = (over: Partial<NutritionValues> = {}): NutritionValues => ({
+  energyKj: 1046.4, energyKcal: 250.2, fat: 9.87, saturates: 4.04, carbohydrate: 28.66,
+  sugars: 3.21, fibre: 2.05, protein: 12.34, salt: 1.234, ...over,
+});
 
 const recipe = (recipeId: number, over: Partial<RecipeFacts> = {}): RecipeFacts => ({
   recipeId, name: `Recipe ${recipeId}`,
   upfPercent: 0, unclassifiedIngredients: [],
   kcalPerPortion: 512.4, proteinPerPortion: 24.36,
   missingKcal: [], missingProtein: [],
+  nutrition: { portionWeightG: 205.4, per100g: vals(), perPortion: vals() },
+  missingNutrition: [],
   ...over,
 });
 const link = (productGid: string, recipeId: number): ProductLink => ({ productGid, productTitle: productGid, recipeId });
-const ledger = (productGid: string, upf: number | null, kcal: number | null = 512, protein: number | null = 24.4): LedgerEntry =>
-  ({ productGid, productTitle: productGid, published: { upf, kcal, protein } });
+const ledger = (productGid: string, upf: number | null, kcal: number | null = 512, protein: number | null = 24.4, nutrition: string | null = null): LedgerEntry =>
+  ({ productGid, productTitle: productGid, published: { upf, kcal, protein, nutrition } });
 
 describe("websiteUpfPercent", () => {
   it("keeps 0 as UPF free", () => expect(websiteUpfPercent(0)).toBe(0));
@@ -68,10 +75,12 @@ describe("planWebsiteSync", () => {
   });
 
   it("only writes the figures that changed", () => {
-    const [d] = planWebsiteSync([recipe(1, { upfPercent: 1.2 })], [link("p1", 1)], [ledger("p1", 3.8)]);
+    const panel = recipeFigures(recipe(1)).nutrition.value as string;
+    const [d] = planWebsiteSync([recipe(1, { upfPercent: 1.2 })], [link("p1", 1)], [ledger("p1", 3.8, 512, 24.4, panel)]);
     expect(d.metrics.upf.needsWrite).toBe(true);
     expect(d.metrics.kcal.needsWrite).toBe(false);
     expect(d.metrics.protein.needsWrite).toBe(false);
+    expect(d.metrics.nutrition.needsWrite).toBe(false);
   });
 
   it("removes the figures from a product that is no longer linked", () => {
@@ -82,7 +91,34 @@ describe("planWebsiteSync", () => {
   });
 
   it("leaves an already-cleared unlinked product alone", () => {
-    const [d] = planWebsiteSync([], [], [ledger("old", null, null, null)]);
+    const [d] = planWebsiteSync([], [], [ledger("old", null, null, null, null)]);
     expect(Object.values(d.metrics).some(m => m.needsWrite)).toBe(false);
+  });
+});
+
+describe("nutrition table", () => {
+  it("rounds like a label: energy whole, salt 2 dp, the rest 1 dp", () => {
+    const json = nutritionPanelJson({ portionWeightG: 205.4, per100g: vals(), perPortion: vals() });
+    expect(JSON.parse(json!)).toEqual({
+      portionWeightG: 205,
+      per100g: { energyKj: 1046, energyKcal: 250, fat: 9.9, saturates: 4, carbohydrate: 28.7, sugars: 3.2, fibre: 2.1, protein: 12.3, salt: 1.23 },
+      perPortion: { energyKj: 1046, energyKcal: 250, fat: 9.9, saturates: 4, carbohydrate: 28.7, sugars: 3.2, fibre: 2.1, protein: 12.3, salt: 1.23 },
+    });
+  });
+
+  it("is identical for an unchanged recipe, so nothing is rewritten", () => {
+    const p = { portionWeightG: 200, per100g: vals(), perPortion: vals() };
+    expect(nutritionPanelJson(p)).toBe(nutritionPanelJson({ ...p }));
+  });
+
+  it("is withheld when any value is missing", () => {
+    expect(nutritionPanelJson({ portionWeightG: 200, per100g: vals({ fibre: null }), perPortion: vals() })).toBeNull();
+    expect(nutritionPanelJson({ portionWeightG: 0, per100g: vals(), perPortion: vals() })).toBeNull();
+  });
+
+  it("holds back the whole table when an ingredient is missing nutrition, but not the icons", () => {
+    const f = recipeFigures(recipe(1, { missingNutrition: ["Basil"] }));
+    expect(f.nutrition).toEqual({ value: null, heldBecause: "missing nutrition on: Basil" });
+    expect(f.kcal.value).toBe(512);
   });
 });
