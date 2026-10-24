@@ -16,7 +16,7 @@
  *                      Rendered once in Layout; polls quietly.
  *   useMyOpenTodoCount — badge feed for buttons that open the sheet.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, isBefore, isToday, parseISO } from "date-fns";
 import { useAuth } from "@/contexts/auth-context";
@@ -42,7 +42,7 @@ import {
 } from "lucide-react";
 
 import { SmartAddBox } from "@/components/smart-add/smart-add-box";
-import { useSetTodoReviewEnabled, useTodoReview } from "@/components/todo-morning-review";
+import { MorningReviewBanner, useSetTodoReviewEnabled, useTodoReview } from "@/components/todo-morning-review";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -271,7 +271,27 @@ function listKeyFor(meId: number, userId: number) {
   return userId === meId ? ["todos", "mine", meId] : ["todos", "user", userId];
 }
 
+// Is a to-do sheet open anywhere (Quick actions, the 8am review, …)? The
+// 8am review swaps its takeover for a banner inside the list while it is.
+let todoSheetsOpen = 0;
+const todoSheetListeners = new Set<() => void>();
+function bumpTodoSheets(by: number) {
+  todoSheetsOpen += by;
+  todoSheetListeners.forEach(l => l());
+}
+export function useTodoSheetOpen(): boolean {
+  return useSyncExternalStore(
+    cb => { todoSheetListeners.add(cb); return () => { todoSheetListeners.delete(cb); }; },
+    () => todoSheetsOpen > 0,
+  );
+}
+
 export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onClose: () => void; initialTaskId?: number | null }) {
+  useEffect(() => {
+    if (!open) return;
+    bumpTodoSheets(1);
+    return () => bumpTodoSheets(-1);
+  }, [open]);
   const { state } = useAuth();
   const me = state.status === "authenticated" ? state.user : null;
   const canManage = me?.role === "admin" || me?.role === "manager";
@@ -357,6 +377,9 @@ export function TodoSheet({ open, onClose, initialTaskId }: { open: boolean; onC
           <X className="w-7 h-7" />
         </button>
       </div>
+
+      {/* The 8am review, while it's due: what to do, and the finish button. */}
+      {viewUserId === null && <MorningReviewBanner />}
 
       {/* Body — stays mounted under the pop-up, so its scroll position is
           exactly where it was when the pop-up closes. */}
