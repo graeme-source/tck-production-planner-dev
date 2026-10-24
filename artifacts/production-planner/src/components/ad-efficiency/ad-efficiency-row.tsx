@@ -11,7 +11,7 @@
  */
 import { useId, useMemo, useState } from "react";
 import { SpendContextNotes } from "@/components/sales-drivers/spend-context-notes";
-import { ArrowDownRight, ArrowUpRight, HelpCircle, History, Megaphone, Minus } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, ChevronDown, HelpCircle, History, Megaphone, Minus } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
@@ -20,6 +20,9 @@ import {
   spendSourceLine, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
 } from "@/lib/ad-efficiency";
 import { yesterdayLondon, type RoasResult, type RoasWindow } from "@/lib/roas";
+import {
+  canExpandDayList, dayListCaption, dayListToggleLabel, readDayListExpanded, visibleDayRows, writeDayListExpanded,
+} from "@/lib/kpi-day-list";
 import { BAND_HEADER_CLASS, BAND_TEXT_CLASS, type KpiBand } from "@/lib/station-kpi-bands";
 import { useAdEfficiencySettings, useSpendSources } from "./api";
 import { RoasTargetsButton } from "./targets-dialog";
@@ -157,7 +160,7 @@ function Sparkline({ points, target, band, caption }: { points: SparkPoint[]; ta
  *  ROAS for that particular day only, not the average on that day"). The big
  *  number above stays the window's figure; the line still shows the rolling
  *  figure across 30 days on hover/drag. Coloured against the card's target. */
-function LastSevenDays({ points, dayOnly, target, caption }: {
+function LastSevenDays({ points, dayOnly, target, caption, expandId }: {
   /** The card's rolling figure as it stood each day — the coloured column. */
   points: SparkPoint[];
   /** Each day on its own (that day's sales ÷ that day's spend), shown plain
@@ -165,15 +168,29 @@ function LastSevenDays({ points, dayOnly, target, caption }: {
   dayOnly?: SparkPoint[];
   target: number;
   caption: string;
+  /** Set on the 30-day cards: the list can open to every day of the window
+   *  (Graeme, 2026-10-24), remembered per card under this id. Left out on
+   *  the 7-day card, which stays exactly as it was. */
+  expandId?: string;
 }) {
+  const [expanded, setExpanded] = useState(() => (expandId ? readDayListExpanded(expandId) : false));
+  const expandable = !!expandId && canExpandDayList(points.length);
+  const isOpen = expandable && expanded;
   const last = points.slice(-7);
   if (last.length === 0) return null;
+  const rows = expandable ? visibleDayRows(points, isOpen) : [...last].reverse();
+  const shownCaption = expandable ? dayListCaption(caption, isOpen, points.length) : caption;
+  const toggle = () => {
+    const next = !isOpen;
+    setExpanded(next);
+    if (expandId) writeDayListExpanded(expandId, next);
+  };
   const dayBy = new Map((dayOnly ?? []).map(p => [p.date, p.percent]));
   const pct = (v: number | null | undefined) => (v == null ? "—" : `${Math.round(v)}%`);
   return (
-    <div className="space-y-px" aria-label={`Last 7 days — ${caption}`}>
+    <div className="space-y-px" aria-label={expandable ? shownCaption : `Last 7 days — ${caption}`}>
       <div className="flex items-center justify-between gap-2 px-1 pb-0.5 text-xs text-muted-foreground">
-        <span>{dayOnly ? "Last 7 days" : caption}</span>
+        <span>{dayOnly ? "Last 7 days" : shownCaption}</span>
         {dayOnly && (
           <span className="flex items-center gap-2">
             <span className="w-14 text-right">That day</span>
@@ -181,7 +198,7 @@ function LastSevenDays({ points, dayOnly, target, caption }: {
           </span>
         )}
       </div>
-      {[...last].reverse().map(p => {
+      {rows.map(p => {
         const shade = roasShade(p.percent, target);
         const d = new Date(`${p.date}T12:00:00Z`);
         return (
@@ -197,12 +214,24 @@ function LastSevenDays({ points, dayOnly, target, caption }: {
           </div>
         );
       })}
+      {expandable && (
+        // Always visible (iPad has no hover); a mouse hover darkens it.
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={isOpen}
+          className="group w-full mt-1 flex items-center justify-center gap-1 rounded-md py-1.5 text-xs font-semibold text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+        >
+          <span>{dayListToggleLabel(isOpen, points.length)}</span>
+          <ChevronDown className={cn("w-4 h-4 transition-transform group-hover:translate-y-0.5", isOpen && "rotate-180 group-hover:-translate-y-0.5")} />
+        </button>
+      )}
     </div>
   );
 }
 
 function RoasCard({
-  title, qualifier, result, target, settings, spark, daily, dailyCaption, sparkCaption, window: win, revenueLabel, onShowHistory,
+  title, qualifier, result, target, settings, spark, daily, dailyCaption, dayListId, sparkCaption, window: win, revenueLabel, onShowHistory,
 }: {
   title: string;
   /** The window, under the title: "Last 7 days". */
@@ -218,6 +247,8 @@ function RoasCard({
   daily?: SparkPoint[];
   /** Caption over the list when it shows the rolling figure. */
   dailyCaption?: string;
+  /** Lets the day list open to the whole window (30-day cards only). */
+  dayListId?: string;
   /** Shows a "Last 90 days" button that opens the full history. */
   onShowHistory?: () => void;
   sparkCaption: string;
@@ -261,7 +292,7 @@ function RoasCard({
           </div>
         </div>
         <Sparkline points={spark} target={target} band={band} caption={sparkCaption} />
-        <LastSevenDays points={spark} dayOnly={daily} target={target} caption={dailyCaption ?? "Average as it stood each day"} />
+        <LastSevenDays points={spark} dayOnly={daily} target={target} caption={dailyCaption ?? "Average as it stood each day"} expandId={dayListId} />
         {onShowHistory && (
           <button
             type="button"
@@ -380,6 +411,7 @@ export function AdEfficiencyRow() {
               settings={settings}
               spark={view.sparkNc30}
               dailyCaption="30-day average as it stood each day"
+              dayListId="nc30"
               sparkCaption="Rolling 30-day, last 30 days"
               window={windows.last30}
               revenueLabel="New customers"
@@ -392,6 +424,7 @@ export function AdEfficiencyRow() {
               settings={settings}
               spark={view.spark30}
               dailyCaption="30-day average as it stood each day"
+              dayListId="total30"
               sparkCaption="Rolling 30-day, last 30 days"
               window={windows.last30}
               revenueLabel="Total sales"
