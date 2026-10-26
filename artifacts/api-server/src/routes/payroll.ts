@@ -4,13 +4,17 @@
  *
  *   GET  /?from&to        the period's report: hours and gross pay per
  *                         person, sick days, joiners (with their payroll
- *                         paperwork) and leavers. No take-home estimate —
+ *                         paperwork) and leavers (added by hand — Planday
+ *                         only marks them after their last payroll). No take-home estimate —
  *                         Graeme removed it 2026-10-26; the bureau's
  *                         figures are the only net pay.
  *   GET  /pdf?from&to     the same as a PDF
  *   POST /email           { from, to, emails[], note? } — PDF + joiners'
  *                         starter forms, logged (migration 0266)
  *   GET  /sends           the send log
+ *   POST /leavers         { from, name, lastDay, note? } — add a leaver to
+ *                         the period (migration 0267)
+ *   DELETE /leavers/:id   take one off again
  *
  * Planday is read-only here; lib/payroll/* does the work.
  */
@@ -52,7 +56,7 @@ function demoPayroll(from: string, to: string): PayrollData {
     people,
     sick: [{ plandayEmployeeId: 2, name: "Sample Person B", date: to.slice(0, 8) + "14", hours: 7.5, contractHoursPerWeek: 22.5, contractDaysPerWeek: 3 }],
     joiners: [{ plandayEmployeeId: 4, appUserId: null, name: "Sample Person D", date: to.slice(0, 8) + "06" }],
-    leavers: [{ plandayEmployeeId: 5, appUserId: null, name: "Sample Person E", date: to.slice(0, 8) + "17" }],
+    leavers: [],
     totals: { hours: people.reduce((s, p) => s + p.hours, 0), grossPay: Math.round(people.reduce((s, p) => s + p.grossPay, 0) * 100) / 100 },
     warnings: ["Sample data — made-up people so the report can be looked at. Test server only."],
   };
@@ -69,7 +73,12 @@ async function buildReport(from: string, to: string, demo = false) {
   const data = demo && DEMO_ALLOWED ? demoPayroll(from, to) : await loadPayrollData(from, to);
   const joinerDocs = await loadStarterDocs(data.joiners.filter(j => j.appUserId != null).map(j => ({ userId: j.appUserId!, name: j.name })));
   const joiners = data.joiners.map(j => ({ ...j, documents: joinerDocs.filter(d => d.userId === j.appUserId).map(d => d.title) }));
-  return { ...data, joiners, joinerDocs };
+  // Leavers come only from the hand-added list: Planday doesn't know yet.
+  const leavers = (await db.execute<{ id: number; name: string; date: string; note: string | null; addedBy: string | null }>(sql`
+    SELECT id, name, to_char(last_day, 'YYYY-MM-DD') AS date, note, added_by_name AS "addedBy"
+      FROM payroll_leavers WHERE period_from = ${from} ORDER BY last_day, name
+  `)).rows;
+  return { ...data, joiners, leavers, joinerDocs };
 }
 
 /** "Wed 14 Oct 2026" — the PDF prints these as given. */
@@ -83,7 +92,7 @@ function pdfInput(r: Awaited<ReturnType<typeof buildReport>>): PayrollPdfInput {
     totals: r.totals,
     sick: r.sick.map(s => ({ name: s.name, date: ukDay(s.date), hours: s.hours, contractDaysPerWeek: s.contractDaysPerWeek, contractHoursPerWeek: s.contractHoursPerWeek })),
     joiners: r.joiners.map(j => ({ name: j.name, date: ukDay(j.date), documents: j.documents })),
-    leavers: r.leavers.map(l => ({ name: l.name, date: ukDay(l.date) })),
+    leavers: r.leavers.map(l => ({ name: l.name, date: ukDay(l.date), note: l.note })),
   };
 }
 
@@ -152,6 +161,31 @@ router.get("/sends", async (_req: Request, res: Response) => {
       FROM payroll_report_sends ORDER BY sent_at DESC LIMIT 50
   `);
   res.json({ sends: rows.rows });
+});
+
+const leaverBody = z.object({
+  from: DATE,
+  name: z.string().trim().min(1).max(120),
+  lastDay: DATE,
+  note: z.string().trim().max(500).nullish(),
+});
+
+router.post("/leavers", validate(leaverBody), async (req: Request, res: Response) => {
+  const b = req.body as z.infer<typeof leaverBody>;
+  const by = await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${req.session.userId ?? 0}`);
+  const row = await db.execute<{ id: number }>(sql`
+    INSERT INTO payroll_leavers (period_from, name, last_day, note, added_by, added_by_name)
+    VALUES (${b.from}, ${b.name}, ${b.lastDay}, ${b.note || null}, ${req.session.userId ?? null}, ${by.rows[0]?.name ?? null})
+    RETURNING id
+  `);
+  res.json({ ok: true, id: row.rows[0]?.id });
+});
+
+router.delete("/leavers/:id", async (req: Request, res: Response) => {
+  const id = z.coerce.number().int().positive().safeParse(req.params["id"]);
+  if (!id.success) { res.status(400).json({ error: "Bad leaver id" }); return; }
+  await db.execute(sql`DELETE FROM payroll_leavers WHERE id = ${id.data}`);
+  res.json({ ok: true });
 });
 
 export default router;

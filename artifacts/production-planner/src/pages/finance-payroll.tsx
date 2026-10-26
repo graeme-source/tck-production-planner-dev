@@ -2,12 +2,13 @@
  * Finance → Payroll (Graeme, 2026-10-26): the monthly Planday payroll report
  * — 25th of last month to the 24th of this one — with each person's hours
  * and gross pay, sick days (with their normal working week),
- * joiners (with their payroll paperwork) and leavers. Download it as a PDF or
+ * joiners (with their payroll paperwork) and leavers — added by hand, since
+ * Planday only marks a leaver after their last payroll. Download it as a PDF or
  * email it with the starter forms attached. API: /api/payroll.
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, FileText, Loader2, Mail, Thermometer, UserMinus, UserPlus, Users } from "lucide-react";
+import { Download, FileText, Loader2, Mail, Plus, Thermometer, UserMinus, UserPlus, Users, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -17,9 +18,10 @@ interface Period { from: string; to: string; label: string }
 interface Person { plandayEmployeeId: number; name: string; hours: number; shifts: number; hourlyRate: number | null; salaried: boolean; grossPay: number; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
 interface Sick { plandayEmployeeId: number; name: string; date: string; hours: number | null; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
 interface Change { plandayEmployeeId: number; name: string; date: string; documents?: string[] }
+interface Leaver { id: number; name: string; date: string; note: string | null; addedBy: string | null }
 interface Report {
   period: Period; periods: Period[]; current: Period;
-  people: Person[]; sick: Sick[]; joiners: Change[]; leavers: Change[];
+  people: Person[]; sick: Sick[]; joiners: Change[]; leavers: Leaver[];
   totals: { hours: number; grossPay: number };
   warnings: string[];
   demo?: boolean; demoAllowed?: boolean;
@@ -149,9 +151,7 @@ export function PayrollPanel() {
                   ))}
                 </Section>
                 <Section icon={<UserMinus className="w-5 h-5" />} title={`Leavers · ${r.leavers.length}`}>
-                  {r.leavers.length === 0 ? <p className="text-sm text-muted-foreground">No leavers.</p> : r.leavers.map((l, i) => (
-                    <p key={i} className="rounded-xl bg-secondary/50 px-3 py-2"><span className="font-semibold">{l.name}</span> · last day {day(l.date)}</p>
-                  ))}
+                  <LeaversPanel from={r.period.from} to={r.period.to} leavers={r.leavers} names={r.people.map(p => p.name)} />
                 </Section>
               </div>
 
@@ -193,6 +193,61 @@ export function PayrollPanel() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+/** Leavers are added by hand: Planday only marks someone as gone after
+ *  their last payroll has run, which is after this report. */
+function LeaversPanel({ from, to, leavers, names }: { from: string; to: string; leavers: Leaver[]; names: string[] }) {
+  const qc = useQueryClient();
+  const [name, setName] = useState("");
+  const [lastDay, setLastDay] = useState("");
+  const [note, setNote] = useState("");
+  const refresh = () => qc.invalidateQueries({ queryKey: ["payroll"] });
+  const add = useMutation({
+    mutationFn: () => api<{ ok: true }>("/leavers", { method: "POST", body: JSON.stringify({ from, name: name.trim(), lastDay, note: note.trim() || null }) }),
+    onSuccess: () => { toast({ title: "Leaver added", description: `${name.trim()} · saved` }); setName(""); setLastDay(""); setNote(""); void refresh(); },
+    onError: (e: Error) => toast({ title: "Didn't save", description: e.message, variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: (id: number) => api<{ ok: true }>(`/leavers/${id}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "Leaver removed" }); void refresh(); },
+    onError: (e: Error) => toast({ title: "Didn't remove", description: e.message, variant: "destructive" }),
+  });
+  const ok = name.trim().length > 0 && /^\d{4}-\d{2}-\d{2}$/.test(lastDay);
+  return (
+    <div className="space-y-3">
+      {leavers.length === 0 ? <p className="text-sm text-muted-foreground">No leavers added for this pay period.</p> : leavers.map(l => (
+        <div key={l.id} className="rounded-xl bg-secondary/50 px-3 py-2 flex items-start gap-2">
+          <div className="flex-1 min-w-0">
+            <p><span className="font-semibold break-words">{l.name}</span> · last day {day(l.date)}</p>
+            {l.note && <p className="text-sm text-muted-foreground break-words">{l.note}</p>}
+            {l.addedBy && <p className="text-xs text-muted-foreground">added by {l.addedBy}</p>}
+          </div>
+          <button type="button" aria-label={`Remove ${l.name}`} disabled={remove.isPending} onClick={() => remove.mutate(l.id)}
+            className="h-9 w-9 shrink-0 rounded-lg border-2 border-border inline-flex items-center justify-center hover:bg-secondary">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+      <div className="rounded-2xl border-2 border-dashed border-border p-3 space-y-2">
+        <p className="text-sm font-semibold">Add a leaver</p>
+        <input list="payroll-leaver-names" value={name} onChange={e => setName(e.target.value)} placeholder="Name"
+          className="w-full h-11 px-3 rounded-xl border-2 border-border bg-background" />
+        <datalist id="payroll-leaver-names">{names.map(n => <option key={n} value={n} />)}</datalist>
+        <label className="block text-sm space-y-1">
+          <span className="text-muted-foreground">Last day</span>
+          <input type="date" value={lastDay} onChange={e => setLastDay(e.target.value)}
+            className="w-full h-11 px-3 rounded-xl border-2 border-border bg-background" />
+        </label>
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note for payroll (optional) — e.g. holiday owed"
+          className="w-full h-11 px-3 rounded-xl border-2 border-border bg-background" />
+        <button type="button" disabled={!ok || add.isPending} onClick={() => add.mutate()}
+          className="h-11 w-full rounded-xl bg-primary text-primary-foreground font-semibold inline-flex items-center justify-center gap-2 disabled:opacity-50">
+          {add.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add leaver
+        </button>
+      </div>
     </div>
   );
 }

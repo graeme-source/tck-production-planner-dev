@@ -12,7 +12,7 @@ export interface PayrollPdfInput {
   totals: { hours: number; grossPay: number };
   sick: Array<{ name: string; date: string; hours: number | null; contractDaysPerWeek: number | null; contractHoursPerWeek: number | null }>;
   joiners: Array<{ name: string; date: string; documents: string[] }>;
-  leavers: Array<{ name: string; date: string }>;
+  leavers: Array<{ name: string; date: string; note?: string | null }>;
 }
 
 const GREEN = "#7cb342";
@@ -125,7 +125,7 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
         <Text style={s.h2}>Leavers</Text>
         {data.leavers.length === 0 ? <Empty text="No leavers." /> : data.leavers.map((l, i) => (
           <Text key={i} style={s.item}>
-            <Text style={{ fontFamily: "Helvetica-Bold" }}>{l.name}</Text> — last day {l.date}
+            <Text style={{ fontFamily: "Helvetica-Bold" }}>{l.name}</Text> — last day {l.date}{l.note ? ` · ${l.note}` : ""}
           </Text>
         ))}
 

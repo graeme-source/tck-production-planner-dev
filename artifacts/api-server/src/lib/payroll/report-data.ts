@@ -18,7 +18,11 @@
  *     registration dated inside the period whose ABSENCE ACCOUNT NAME
  *     contains "sick" (case-insensitive — "Sick", "Sick Unpaid", "Sick -
  *     paid"; the shared isSickName rule). Pending records count (sickness
- *     gets recorded before it's approved) but are warned about.
+ *     gets recorded before it's approved) but are warned about. ALSO rota
+ *     shifts whose SHIFT TYPE name contains "sick" — the team often marks a
+ *     sick day by changing the shift's type rather than raising an absence
+ *     (Tommy, Oct 2026, was missed). One day per person per date either way;
+ *     a shift's hours are its rota length when it has times.
  *   JOINERS — Planday hire date (hiredFrom, or hiredDate as the list
  *     endpoint names it) inside the period, active or deactivated.
  *   LEAVERS — deactivated Planday employees whose deactivation date is
@@ -151,6 +155,13 @@ export interface PayrollInput {
   deactivatedEmployees: PayrollEmployeeInput[] | null;
   absenceRecords: PayrollAbsenceRecordInput[];
   absenceAccounts: Array<{ id: number; name: string }>;
+  /** Rota shifts for the period (any status) and Planday's shift types —
+   *  sick-typed shifts are sick days too. Optional: absent = absences only. */
+  rotaShifts?: ReadonlyArray<{ id: number; employeeId: number | null; date: string; startDateTime?: string | null; endDateTime?: string | null; shiftTypeId?: number | null }>;
+  shiftTypes?: ReadonlyArray<{ id: number; name: string }>;
+  /** false = don't look for leavers in Planday (the report's leavers are
+   *  added by hand — Planday only marks them after their last payroll). */
+  listLeavers?: boolean;
   contracts: PayrollContractInput[];
   appUsers: PayrollAppUserInput[];
 }
@@ -337,6 +348,24 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
       });
     }
   }
+  const shiftTypeName = new Map((input.shiftTypes ?? []).map(t => [t.id, t.name]));
+  for (const s of input.rotaShifts ?? []) {
+    const date = day(s.date);
+    if (s.employeeId == null || s.shiftTypeId == null || !within(date, period)) continue;
+    if (!isSickName(shiftTypeName.get(s.shiftTypeId))) continue;
+    const key = `${s.employeeId}|${date}`;
+    if (sickKey.has(key)) continue;
+    const ms = s.startDateTime && s.endDateTime ? Date.parse(s.endDateTime) - Date.parse(s.startDateTime) : NaN;
+    const c = contractOf(s.employeeId);
+    sickKey.set(key, {
+      plandayEmployeeId: s.employeeId,
+      name: nameOf(s.employeeId),
+      date: date!,
+      hours: Number.isFinite(ms) && ms > 0 ? round2(ms / 3_600_000) : null,
+      contractHoursPerWeek: c.hours,
+      contractDaysPerWeek: c.days,
+    });
+  }
   const sick = [...sickKey.values()].sort((a, b) => a.name.localeCompare(b.name) || a.date.localeCompare(b.date));
   if (pendingSick.size > 0) {
     warnings.push(`${pendingSick.size} sickness record${pendingSick.size === 1 ? " is" : "s are"} not approved in Planday yet but are included.`);
@@ -361,7 +390,9 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
   }
 
   const leavers: StaffChange[] = [];
-  if (input.deactivatedEmployees == null) {
+  if (input.listLeavers === false) {
+    // Leavers come from the hand-added list instead.
+  } else if (input.deactivatedEmployees == null) {
     warnings.push("Couldn't fetch deactivated employees from Planday, so leavers can't be listed.");
   } else {
     const undated: string[] = [];

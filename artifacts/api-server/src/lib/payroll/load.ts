@@ -14,8 +14,10 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import {
   isPlandayConfigured, getPlandayPayrollRows, getPlandayEmployees, getPlandayAbsenceRecords,
-  getPlandayAbsenceAccounts, getPlandayContractRules, plandayRead, plandayReadAll,
+  getPlandayAbsenceAccounts, getPlandayContractRules, getPlandayShiftTypes, plandayRead, plandayReadAll,
 } from "../../services/planday";
+import { getAttendanceFromCache } from "../../services/planday-attendance-cache";
+import { isSickName } from "../../services/attendance-classify";
 import { getContractRuleFacts } from "../../services/planday-employment";
 import { payPeriodLabel } from "./period";
 import {
@@ -124,19 +126,25 @@ async function contractsFor(plandayIds: number[]): Promise<PayrollContractInput[
 export async function loadPayrollData(from: string, to: string): Promise<PayrollData> {
   if (!isPlandayConfigured()) throw new Error("Planday isn't connected, so there's no payroll to show.");
 
-  const [payrollRows, employees, deactivated, absenceRecords, absenceAccounts, users] = await Promise.all([
+  const [payrollRows, employees, deactivated, absenceRecords, absenceAccounts, users, attendance, shiftTypes] = await Promise.all([
     payrollRowsFor(from, to),
     getPlandayEmployees(),
     deactivatedEmployees(),
     getPlandayAbsenceRecords(from, to),
     getPlandayAbsenceAccounts(),
     appUsers(),
+    // Rota shifts with their types: a sick day is often a shift re-typed
+    // "Sick" rather than an absence. The mirror serves stale if Planday's down.
+    getAttendanceFromCache(from, to),
+    getPlandayShiftTypes(),
   ]);
 
   // Contract rules for everyone the report mentions: paid, sick, or linked.
   const ids = new Set<number>();
   for (const r of payrollRows) ids.add(r.employeeId);
   for (const a of absenceRecords) ids.add(a.employeeId);
+  const sickTypes = new Set(shiftTypes.filter(t => isSickName(t.name)).map(t => t.id));
+  for (const s of attendance.shifts) if (s.employeeId != null && s.shiftTypeId != null && sickTypes.has(s.shiftTypeId)) ids.add(s.employeeId);
   for (const u of users) if (u.isActive && u.plandayEmployeeId != null) ids.add(u.plandayEmployeeId);
   const contracts = await contractsFor([...ids]);
 
@@ -147,6 +155,9 @@ export async function loadPayrollData(from: string, to: string): Promise<Payroll
     deactivatedEmployees: deactivated,
     absenceRecords,
     absenceAccounts,
+    rotaShifts: attendance.shifts,
+    shiftTypes,
+    listLeavers: false,
     contracts,
     appUsers: users,
   });

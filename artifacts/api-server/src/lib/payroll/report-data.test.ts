@@ -237,6 +237,32 @@ describe("assemblePayroll — sickness", () => {
     expect(d.sick[0].hours).toBe(8.25);
     expect(d.warnings.some(w => w.includes("777"))).toBe(true);
   });
+
+  it("lists no Planday leavers, and no leaver warnings, when leavers are added by hand", () => {
+    const d = assemblePayroll(baseInput({ listLeavers: false, deactivatedEmployees: null }));
+    expect(d.leavers).toEqual([]);
+    expect(d.warnings.some(w => /leaver|deactivated/i.test(w))).toBe(false);
+  });
+
+  // Regression (Graeme, 26 Oct 2026): Tommy's sick day was a rota shift
+  // re-typed "Sick" with no absence record, and the report said 0 sick days.
+  it("counts rota shifts whose shift type is sick, once per day", () => {
+    const d = assemblePayroll(baseInput({
+      shiftTypes: [{ id: 9, name: "Sick Leave" }, { id: 10, name: "Holiday (with Pay)" }, { id: 11, name: "Normal" }],
+      rotaShifts: [
+        { id: 900, employeeId: 102, date: "2026-10-12", startDateTime: "2026-10-12T07:00:00", endDateTime: "2026-10-12T15:30:00", shiftTypeId: 9 },
+        { id: 901, employeeId: 101, date: "2026-10-13", shiftTypeId: 10 },
+        { id: 902, employeeId: 101, date: "2026-10-14", shiftTypeId: 11 },
+        { id: 903, employeeId: 102, date: "2026-09-20", shiftTypeId: 9 }, // before the period
+        { id: 904, employeeId: 101, date: "2026-10-06", shiftTypeId: 9 }, // same day as an absence
+      ],
+      absenceRecords: [{ id: 1, employeeId: 101, status: "Approved", registrations: [{ date: "2026-10-06", account: { id: ACC_SICK }, hours: 7 }] }],
+    }));
+    expect(d.sick.map(s => [s.name, s.date, s.hours])).toEqual([
+      ["Chris Coles", "2026-10-06", 7],
+      ["Tommy Reed", "2026-10-12", 8.5],
+    ]);
+  });
 });
 
 describe("assemblePayroll — joiners and leavers", () => {
