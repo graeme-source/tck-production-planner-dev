@@ -295,6 +295,52 @@ async function recentForViewer(v: TeamViewer) {
   });
 }
 
+/**
+ * Messages that just arrived FOR you — the swipe-away toasts (Graeme,
+ * 2026-10-26: "a toast pop-up that doesn't stop the user doing what they're
+ * doing, but it does stay up until they just swipe it away"). Same "for you"
+ * rule as the unread badge (to you, your station, Everyone, a mention or a
+ * reply), newer than `afterId`, never your own, never a must-confirm one
+ * (those already take over the screen). `latestId` is the newest message
+ * the viewer can see, so a first call sets the starting point without
+ * toasting yesterday's chat.
+ */
+export const TOAST_MAX = 5;
+export async function newMessagesFor(v: TeamViewer, afterId: number | null) {
+  const latest = await db.execute<{ id: number | null }>(sql`
+    SELECT MAX(m.id) AS id FROM team_messages m JOIN team_message_conversations c ON c.id = m.conversation_id
+    WHERE ${visibleWhere(v)}
+  `);
+  const latestId = Number(latest.rows[0]?.id ?? 0);
+  if (afterId == null) return { latestId, messages: [] };
+  const rows = await db.execute<UnreadRow & { sender_name: string | null; body: string | null; media_kinds: MediaKind[] | null }>(sql`
+    SELECT ${FACT_COLUMNS}, m.created_at, (m.deleted_at IS NOT NULL) AS deleted, m.requires_ack,
+      m.sender_name, m.body,
+      EXISTS (SELECT 1 FROM team_message_reads r WHERE r.message_id = m.id AND r.user_id = ${v.userId}) AS read,
+      NULL::text[] AS acked,
+      (SELECT array_agg(a.kind ORDER BY a.position, a.id) FROM team_message_attachments a WHERE a.message_id = m.id) AS media_kinds
+    FROM team_messages m JOIN team_message_conversations c ON c.id = m.conversation_id
+    WHERE m.id > ${afterId}
+      AND m.legacy_station_message_id IS NULL
+      AND ${visibleWhere(v)}
+    ORDER BY m.id DESC
+    LIMIT 50
+  `);
+  const now = new Date();
+  const messages = rows.rows
+    .filter(r => !r.requires_ack && countsAsUnread({ ...factsOf(r), createdAt: r.created_at, deleted: Boolean(r.deleted), readByViewer: Boolean(r.read) }, v, now))
+    .slice(0, TOAST_MAX)
+    .map(r => ({
+      id: Number(r.id),
+      key: r.key,
+      audience: audienceOf(r),
+      senderName: r.sender_name,
+      preview: bodyOrMediaPreview(r.body ?? "", r.media_kinds ?? []),
+      createdAt: iso(r.created_at)!,
+    }));
+  return { latestId, messages };
+}
+
 export async function unreadSummary(v: TeamViewer) {
   const recent = await recentForViewer(v);
   return {
