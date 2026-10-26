@@ -632,7 +632,14 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
         {item.mediaCount > 0 && (
           <span className="flex items-center gap-1.5"><Camera className="w-4 h-4" /> {item.mediaCount}</span>
         )}
-        {(item.creditNames ?? item.creditedToName) && <span>{item.creditNames ?? item.creditedToName}</span>}
+        {/* Who: the people credited once it's done; for an idea (no credit
+            yet) who put it forward — ideas showed no name at all (Graeme,
+            2026-10-26). */}
+        {isIdea(item)
+          ? (item.creditNames ?? item.creditedToName ?? item.submittedByName) && (
+            <span className="font-semibold text-foreground/80">from {item.creditNames ?? item.creditedToName ?? item.submittedByName}</span>
+          )
+          : (item.creditNames ?? item.creditedToName ?? item.submittedByName) && <span>{item.creditNames ?? item.creditedToName ?? item.submittedByName}</span>}
         {item.subjectTitle && (
           <span className="text-sm px-2 py-0.5 rounded-lg bg-secondary font-semibold">
             {item.subjectTitle}{item.subjectConfirmed ? "" : "?"}
