@@ -233,7 +233,7 @@ async function loadResults(apiKey: string): Promise<Map<string, KlaviyoCampaignR
       data: {
         type: "campaign-values-report",
         attributes: {
-          statistics: ["recipients", "open_rate", "click_rate", "conversions", "conversion_value"],
+          statistics: ["recipients", "open_rate", "opens_unique", "click_rate", "clicks_unique", "conversions", "conversion_uniques", "conversion_value"],
           timeframe: { key: "last_365_days" },
           conversion_metric_id: conversionMetricId,
           filter: "equals(send_channel,\"email\")",

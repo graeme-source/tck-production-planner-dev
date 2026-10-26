@@ -8,6 +8,7 @@
  *
  * Modal rule: explicit X, card capped at 92dvh with internal scrolling.
  */
+import { EmailResultsBlock } from "./email-results";
 import { createPortal } from "react-dom";
 import { format, parseISO } from "date-fns";
 import { BadgeCheck, ExternalLink, History, Loader2, Mail, PencilLine, Undo2, Users, X } from "lucide-react";
@@ -106,6 +107,16 @@ export function EmailPanel({ email, canApprove, onClose }: { email: CalEmail; ca
           </div>
 
           <p className="text-base font-medium">{sendLine(email)}</p>
+
+          {email.results && (
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Results · {email.results.recipients.toLocaleString("en-GB")} recipients
+              </p>
+              <EmailResultsBlock r={email.results} />
+              <p className="text-xs text-muted-foreground">From Klaviyo (its own attribution), refreshed every 30 minutes.</p>
+            </div>
+          )}
 
           <div className="flex items-start gap-2 text-sm">
             <Users className="w-4 h-4 mt-0.5 text-muted-foreground flex-shrink-0" />

@@ -9,7 +9,7 @@
 import { db, marketingEmailApprovalsTable } from "@workspace/db";
 import { inArray } from "drizzle-orm";
 import { awaitsApproval, emailApprovalStatus, klaviyoApprovalKey, type ApprovalSnapshot } from "@workspace/marketing-calendar";
-import { klaviyoEmailsForRange, klaviyoUndatedDrafts, type KlaviyoCalendarEmail, type KlaviyoUndatedDraft } from "./klaviyo-campaign-calendar";
+import { klaviyoCampaignResults, klaviyoEmailsForRange, klaviyoUndatedDrafts, type KlaviyoCalendarEmail, type KlaviyoCampaignResult, type KlaviyoUndatedDraft } from "./klaviyo-campaign-calendar";
 
 type ApprovalRow = typeof marketingEmailApprovalsTable.$inferSelect;
 type AnyEmail = KlaviyoCalendarEmail | KlaviyoUndatedDraft;
@@ -73,10 +73,23 @@ export async function withApprovals(emails: readonly AnyEmail[], today: string):
 
 /** The calendar's emails in [from, to] plus undated drafts, each with its status. */
 export async function calendarEmails(from: string, to: string, today: string): Promise<{
-  connected: boolean; emails: EmailWithApproval[]; undatedDrafts: EmailWithApproval[];
+  connected: boolean; emails: Array<EmailWithApproval & { results: KlaviyoCampaignResult | null }>; undatedDrafts: EmailWithApproval[];
+  resultsUpdatedAt: string | null;
 }> {
   const [ranged, undated] = await Promise.all([klaviyoEmailsForRange(from, to), klaviyoUndatedDrafts()]);
-  if (!ranged.connected) return { connected: false, emails: [], undatedDrafts: [] };
+  if (!ranged.connected) return { connected: false, emails: [], undatedDrafts: [], resultsUpdatedAt: null };
   const [emails, drafts] = await Promise.all([withApprovals(ranged.emails, today), withApprovals(undated ?? [], today)]);
-  return { connected: true, emails, undatedDrafts: drafts };
+  // Sent emails carry Klaviyo's results — opens, clicks, placed orders and
+  // their £ (Graeme, 2026-10-26: "see from the sales and marketing
+  // dashboard, at a glance, what the data for each campaign is"). One shared
+  // report, cached 30 minutes; the calendar still loads if it fails.
+  const anySent = emails.some(e => e.status === "Sent" || e.status === "Sending");
+  const report = anySent ? await klaviyoCampaignResults().catch(() => null) : null;
+  const byId = new Map((report?.results ?? []).map(r => [r.campaignId, r]));
+  return {
+    connected: true,
+    emails: emails.map(e => ({ ...e, results: byId.get(e.id) ?? null })),
+    undatedDrafts: drafts,
+    resultsUpdatedAt: report?.updatedAt ?? null,
+  };
 }

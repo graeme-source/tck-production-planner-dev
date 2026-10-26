@@ -15,6 +15,7 @@
  * green with a "Today" label. The status shows on the chip itself — there is
  * no separate approvals list (Graeme, 2026-10-20).
  */
+import { emailResultsChip } from "./email-results";
 import { useMemo } from "react";
 import { BadgeCheck, Mail, PencilLine, Users } from "lucide-react";
 import { customerGroupChip, layoutWeek, monthGridWeeks, type DragMode } from "@workspace/marketing-calendar";
@@ -119,7 +120,7 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                         key={`email-${m.id}`}
                         type="button"
                         onClick={() => onOpenEmail(m)}
-                        title={`${m.status === "Draft" ? "Klaviyo draft" : `Klaviyo · ${m.status}`}: “${m.subject ?? m.name}” · ${approved ? "Approved" : m.status === "Sent" || m.status === "Sending" ? "Sent without approval" : "Needs approval"}`}
+                        title={`${m.status === "Draft" ? "Klaviyo draft" : `Klaviyo · ${m.status}`}: “${m.subject ?? m.name}” · ${approved ? "Approved" : m.status === "Sent" || m.status === "Sending" ? "Sent without approval" : "Needs approval"}${m.results ? ` · ${(m.results.openRate * 100).toFixed(1)}% opened, ${(m.results.clickRate * 100).toFixed(2)}% clicked, ${emailResultsChip(m.results)}` : ""}`}
                         className={cn(
                           "self-start pointer-events-auto mx-[3px] flex flex-col gap-0.5 rounded-lg px-1 py-1 text-[10px] lg:text-[11px] leading-tight font-semibold text-left",
                           m.status === "Draft" ? KLAVIYO_TONE.draft : m.status === "Sent" ? KLAVIYO_TONE.sent : cn(KLAVIYO_TONE.solid, "shadow-sm"),
@@ -136,6 +137,9 @@ export function MonthGrid({ month, today, phases, emails, onOpenPhase, onOpenEma
                             : m.status !== "Sent" && <span className="w-2.5 h-2.5 rounded-full bg-amber-400 ring-2 ring-white/80 flex-shrink-0" aria-label="Needs approval" />}
                         </span>
                         <span className="break-words hyphens-auto" lang="en-GB">{m.subject ?? m.name}</span>
+                        {m.results && (
+                          <span className="font-bold tabular-nums text-primary">{emailResultsChip(m.results)}</span>
+                        )}
                       </button>
                     );
                   }

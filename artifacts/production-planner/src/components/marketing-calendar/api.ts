@@ -246,6 +246,21 @@ export interface CalEmail {
     approvedBy: string | null;
     approvedAt: string | null;
   };
+  /** Klaviyo's results once sent (2026-10-26); null until it has any. */
+  results?: EmailResults | null;
+}
+
+export interface EmailResults {
+  recipients: number;
+  openRate: number;
+  opens: number;
+  clickRate: number;
+  clicks: number;
+  /** Placed orders attributed to the email, and their £. */
+  orders: number;
+  revenue: number;
+  buyers: number;
+  orderRate: number;
 }
 
 export interface CalEmailsResponse {
@@ -253,6 +268,8 @@ export interface CalEmailsResponse {
   canApprove: boolean;
   emails: CalEmail[];
   undatedDrafts: CalEmail[];
+  /** When Klaviyo's results were last read (they refresh every 30 min). */
+  resultsUpdatedAt?: string | null;
   error?: string;
 }
 
