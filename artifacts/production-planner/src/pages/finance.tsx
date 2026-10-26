@@ -1323,9 +1323,16 @@ function AdminPanel() {
                 {typeof qbo.data.mirroredTxns === "number" ? ` · ${qbo.data.mirroredTxns} posted transactions mirrored` : ""}
                 {qbo.data.lastError && <span className="text-destructive"> · {qbo.data.lastError}</span>}
               </p>
-              <Button size="sm" variant="outline" onClick={() => qboSync.mutate()} disabled={qboSync.isPending}>
-                {qboSync.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button size="sm" variant="outline" onClick={() => qboSync.mutate()} disabled={qboSync.isPending}>
+                  {qboSync.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
+                </Button>
+                {/* Signs in to QuickBooks again — what fixes a login that can't
+                    be read or has expired (2026-10-26). Keeps the mirrored data. */}
+                <Button size="sm" variant={qbo.data.lastError ? "default" : "outline"} asChild>
+                  <a href={`${BASE}/api/finance/qbo/connect`}>Reconnect QuickBooks</a>
+                </Button>
+              </div>
 
               {/* Auto-import: purchases from one QBO account (the Capital on
                   Tap card) become lines here automatically — the CSV

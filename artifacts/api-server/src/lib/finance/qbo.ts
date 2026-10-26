@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "crypto";
 import { db, finLinesTable, finQboConnectionTable, finQboTxnsTable } from "@workspace/db";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
-import { sealSecret, openSecret } from "./secret-box";
+import { sealSecret, openSecret, SecretUnreadableError } from "./secret-box";
 import { merchantsLooselyMatch } from "./merchant-normalise";
 
 // Read-only QuickBooks Online connection (docs/vat-reconciliation/PLAN.md,
@@ -193,7 +193,11 @@ export async function runQboSync(): Promise<QboSyncOutcome> {
   try {
     return await doQboSync();
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    // The stored QuickBooks login can't be read after the encryption key
+    // changes (2026-10-26: SESSION_SECRET rotated) — say what fixes it.
+    const msg = err instanceof SecretUnreadableError
+      ? "The saved QuickBooks login can't be read since the encryption key changed — press Reconnect QuickBooks."
+      : err instanceof Error ? err.message : String(err);
     const [conn] = await db.select({ id: finQboConnectionTable.id }).from(finQboConnectionTable).limit(1);
     if (conn) await db.update(finQboConnectionTable).set({ lastError: msg, updatedAt: new Date() }).where(eq(finQboConnectionTable.id, conn.id));
     return { purchases: 0, bills: 0, linesClosed: 0, error: msg };
