@@ -6,6 +6,10 @@
  * a point for the figure. The line takes the trend's colour — green when the
  * KPI is moving the good way, red the bad way, grey when level or neutral.
  * A day without a figure is a gap, never a fake zero.
+ *
+ * Since 2026-10-26 the line is the ROLLING 7-day average (each point = that
+ * day and the 6 production days before it), so it shows the trend rather
+ * than one odd shift; the tooltip gives the day's own figure as well.
  */
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { trendDayLabel, type KpiTrend } from "@/lib/kpi-trend";
@@ -16,7 +20,7 @@ export const TREND_COLOUR: Record<KpiTrend["tone"], string> = {
   neutral: "hsl(var(--muted-foreground))",
 };
 
-interface Point { day: string; value: number | null }
+interface Point { day: string; value: number | null; daily: number | null }
 
 function TipBox({ active, payload, fmt }: { active?: boolean; payload?: Array<{ payload: Point }>; fmt: (n: number) => string }) {
   if (!active || !payload?.length) return null;
@@ -24,26 +28,30 @@ function TipBox({ active, payload, fmt }: { active?: boolean; payload?: Array<{ 
   return (
     <div className="rounded-lg border border-border bg-card px-3 py-1.5 shadow-lg text-base">
       <span className="font-semibold">{new Date(`${p.day}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" })}</span>
-      <span className="ml-2 tabular-nums">{p.value == null ? "no figure" : fmt(p.value)}</span>
+      <span className="ml-2 tabular-nums">{p.daily == null ? "no figure" : fmt(p.daily)}</span>
+      {p.value != null && <span className="ml-2 tabular-nums text-muted-foreground">· 7-day avg {fmt(p.value)}</span>}
     </div>
   );
 }
 
-export function KpiTrendSparkline({ days, values, tone, fmt, label }: {
+export function KpiTrendSparkline({ days, values, daily, tone, fmt, label }: {
   days: string[];
+  /** What the line draws — the rolling 7-day averages. */
   values: Array<number | null>;
+  /** Each day's own figure, for the tooltip (defaults to `values`). */
+  daily?: Array<number | null>;
   tone: KpiTrend["tone"];
   fmt: (n: number) => string;
   label: string;
 }) {
-  const data: Point[] = days.map((day, i) => ({ day, value: values[i] ?? null }));
+  const data: Point[] = days.map((day, i) => ({ day, value: values[i] ?? null, daily: (daily ?? values)[i] ?? null }));
   if (data.filter(p => p.value != null).length < 2) {
     return <p className="text-base text-muted-foreground mt-3">Not enough production days for a trend yet</p>;
   }
   const colour = TREND_COLOUR[tone];
   const last = data.length - 1;
   return (
-    <div className="h-24 w-full mt-2" data-no-swipe role="img" aria-label={`${label} over the last ${days.length} production days`}>
+    <div className="h-24 w-full mt-2" data-no-swipe role="img" aria-label={`${label}, 7-day average over the last ${days.length} production days`}>
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={data} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
           {/* Padding keeps the first and last day labels whole at the edges. */}

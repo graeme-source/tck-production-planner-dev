@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { kpiTrend, lastProductionDateLabel, trendDayLabel } from "./kpi-trend";
+import { kpiTrend, kpiWeekTrend, lastProductionDateLabel, rollingAverages, trendDayLabel } from "./kpi-trend";
 
 describe("kpiTrend", () => {
   it("compares the last day with the average of the previous ones", () => {
@@ -69,5 +69,29 @@ describe("lastProductionDateLabel", () => {
 describe("trendDayLabel", () => {
   it("is short weekday + day number", () => {
     expect(trendDayLabel("2026-10-16")).toBe("Fri 16");
+  });
+});
+
+describe("weekly trend — 7-day average vs the 7 before (2026-10-26)", () => {
+  const lastWeek = [16, 16, 17, 16, 17, 16, 17];   // avg 16.43
+  const thisWeek = [20, 21, 22, 21, 22, 21, 21];   // avg 21.14
+  it("compares the two weeks' averages, not yesterday alone", () => {
+    const t = kpiWeekTrend([...lastWeek, ...thisWeek], "higher", n => n.toFixed(1))!;
+    expect(t.direction).toBe("up");
+    expect(t.tone).toBe("good");
+    expect(Math.round(t.pct!)).toBe(29);
+    expect(t.text).toBe("▲ 29% · 7-day avg 21.1 vs 16.4");
+  });
+  it("lower is better: wonkies falling reads good", () => {
+    expect(kpiWeekTrend([20, 20, 20, 20, 20, 20, 20, 10, 10, 10, 10, 10, 10, 10], "lower")!.tone).toBe("good");
+  });
+  it("without two weeks of history it falls back to last day vs the days before", () => {
+    expect(kpiWeekTrend([10, 10, 10, 10, 10, 10, 20], "higher")!.text).toBe("▲ 100% vs average of previous 6");
+  });
+  it("rolling averages smooth the line", () => {
+    const r = rollingAverages([...lastWeek, ...thisWeek]);
+    expect(r[13]).toBeCloseTo(21.14, 2);
+    expect(r[6]).toBeCloseTo(16.43, 2);
+    expect(rollingAverages([null, null, 5])).toEqual([null, null, null]);
   });
 });

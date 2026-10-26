@@ -52,6 +52,56 @@ export function kpiTrend(values: ReadonlyArray<number | null>, better: Better, f
   return { direction, tone, pct, delta, previousAverage, previousDays: earlier.length, text };
 }
 
+/** Production days in each window of the weekly trend. */
+export const TREND_WINDOW = 7;
+/** Fewest days with a figure for a window's average to count. */
+const MIN_WINDOW_FIGURES = 3;
+
+function mean(xs: ReadonlyArray<number | null>): { avg: number; n: number } | null {
+  const v = xs.filter((x): x is number => x != null);
+  return v.length ? { avg: v.reduce((s, x) => s + x, 0) / v.length, n: v.length } : null;
+}
+
+/**
+ * Rolling average over the `window` production days ending at each day
+ * (days without a figure left out); null until a window has enough figures.
+ * The slide's line (Graeme, 2026-10-26: "the line that tracks it is the
+ * last 7 days' average") — smoother than single days, so a real change
+ * stands out from one odd shift.
+ */
+export function rollingAverages(values: ReadonlyArray<number | null>, window = TREND_WINDOW): Array<number | null> {
+  return values.map((_, i) => {
+    const m = mean(values.slice(Math.max(0, i - window + 1), i + 1));
+    return m && m.n >= Math.min(MIN_WINDOW_FIGURES, i + 1) ? m.avg : null;
+  });
+}
+
+/**
+ * The last 7 production days' average against the 7 before (Graeme,
+ * 2026-10-26: "the 30% increase ... how it is up to the previous 7 days'
+ * average", not just yesterday's number). Falls back to the last day vs the
+ * days before it while there isn't two weeks of history.
+ */
+export function kpiWeekTrend(values: ReadonlyArray<number | null>, better: Better, fmt: (n: number) => string = n => String(round1(n))): KpiTrend | null {
+  const recent = mean(values.slice(-TREND_WINDOW));
+  const before = mean(values.slice(-2 * TREND_WINDOW, -TREND_WINDOW));
+  if (!recent || !before || recent.n < MIN_WINDOW_FIGURES || before.n < MIN_WINDOW_FIGURES) {
+    return kpiTrend(values.slice(-TREND_WINDOW), better, fmt);
+  }
+  const delta = recent.avg - before.avg;
+  const pct = before.avg === 0 ? null : (delta / Math.abs(before.avg)) * 100;
+  const flat = Math.abs(delta) < 1e-9 || (pct != null && Math.abs(pct) < FLAT_PCT);
+  const direction: KpiTrend["direction"] = flat ? "flat" : delta > 0 ? "up" : "down";
+  const tone: KpiTrend["tone"] =
+    direction === "flat" || better === "neutral" ? "neutral"
+    : (direction === "up") === (better === "higher") ? "good" : "bad";
+  const avgs = `7-day avg ${fmt(recent.avg)} vs ${fmt(before.avg)}`;
+  const text = direction === "flat"
+    ? `● Level · ${avgs}`
+    : `${direction === "up" ? "▲" : "▼"} ${pct != null ? `${Math.round(Math.abs(pct))}%` : fmt(Math.abs(delta))} · ${avgs}`;
+  return { direction, tone, pct, delta, previousAverage: before.avg, previousDays: before.n, text };
+}
+
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
 }

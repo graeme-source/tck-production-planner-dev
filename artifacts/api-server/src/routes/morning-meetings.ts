@@ -470,7 +470,10 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
     // headline tiles are simply the last day of the trend series — one
     // calculation, so the big number and the sparkline can't disagree.
     // (The end-of-day meeting still means TODAY and is unchanged.)
-    const lastProduction = await loadLastProductionKpis(today).catch(err => {
+    // 14 production days: the slide's trend is the last 7 days' average
+    // against the 7 before (Graeme, 2026-10-26), and its line is the rolling
+    // 7-day average, which needs the 6 days before the first point.
+    const lastProduction = await loadLastProductionKpis(today, 14).catch(err => {
       console.warn("[morning-meeting] last production KPIs failed:", err);
       return null;
     });

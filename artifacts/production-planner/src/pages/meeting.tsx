@@ -47,7 +47,7 @@ import { creditLabel } from "@/lib/improvement-credits";
 import { premiumStyle } from "@/lib/improvement-premium";
 import { CreditBadge, PremiumStrip } from "@/components/improvement-credit-weight";
 import { defectHeadline, pctText, plural } from "@/lib/defects-view";
-import { kpiTrend, lastProductionDateLabel, type Better } from "@/lib/kpi-trend";
+import { kpiWeekTrend, lastProductionDateLabel, rollingAverages, TREND_WINDOW, type Better } from "@/lib/kpi-trend";
 import { KpiTrendSparkline, TREND_COLOUR } from "@/components/kpi-trend-sparkline";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
 import { DictateButton } from "@/components/dictate-button";
@@ -2132,8 +2132,13 @@ function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: Meeti
           : "grid-cols-1 sm:grid-cols-2 xl:grid-cols-3")}>
           {kpiKeys.map((key) => {
             const def = KPI_CATALOG[key];
+            // Big number = the last day; the % and the line = 7-day averages
+            // (this week's vs the week before; Graeme, 2026-10-26).
             const values = trend?.series[key] ?? null;
-            const t = values ? kpiTrend(values, def.better, def.fmt) : null;
+            const t = values ? kpiWeekTrend(values, def.better, def.fmt) : null;
+            const lineDays = trend ? trend.days.slice(-TREND_WINDOW) : [];
+            const lineValues = values ? rollingAverages(values).slice(-TREND_WINDOW) : null;
+            const lineDaily = values ? values.slice(-TREND_WINDOW) : undefined;
             return (
               <KpiTile
                 key={key}
@@ -2148,7 +2153,7 @@ function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: Meeti
                 ) : undefined}
               >
                 {trend && values && (
-                  <KpiTrendSparkline days={trend.days} values={values} tone={t?.tone ?? "neutral"} fmt={def.fmt} label={def.label} />
+                  <KpiTrendSparkline days={lineDays} values={lineValues!} daily={lineDaily} tone={t?.tone ?? "neutral"} fmt={def.fmt} label={def.label} />
                 )}
               </KpiTile>
             );
