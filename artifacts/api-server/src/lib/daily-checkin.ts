@@ -115,3 +115,47 @@ export function boardPlace(
   // "of" = everyone with credits this month — the people actually in the race.
   return { place: first + 1, of: ranked.filter(r => r.credits30 > 0).length };
 }
+
+/**
+ * "Ideas from the team" on the card (Graeme, 2026-10-26): "include a feed of
+ * improvement ideas ... things that other people have decided ... to
+ * generate a little bit of creativity, and give people things to think about
+ * through the day."
+ *
+ * Other people's improvements from the last 30 days — done ones and ideas
+ * still waiting — never their own. Ones with a photo go first (a picture
+ * sells an idea from across the kitchen), then a daily shuffle per person,
+ * so each morning shows different ones and two people on one iPad don't get
+ * the same set. Same set all day.
+ */
+export const TEAM_IDEAS_PER_DAY = 6;
+
+export interface TeamIdeaRow {
+  id: number;
+  title: string;
+  station: string;
+  byName: string | null;
+  byUserIds: number[];
+  done: boolean;
+  /** An "after" photo if there is one, else any photo. */
+  photoId: number | null;
+  at: string;
+}
+
+export interface TeamIdea {
+  id: number;
+  title: string;
+  station: string;
+  by: string | null;
+  done: boolean;
+  photoId: number | null;
+}
+
+export function teamIdeasForDay(rows: readonly TeamIdeaRow[], userId: number, day: string, n: number = TEAM_IDEAS_PER_DAY): TeamIdea[] {
+  return rows
+    .filter(r => !r.byUserIds.includes(userId))
+    .map(r => ({ r, k: seedOf(`${day}:${userId}:${r.id}`) }))
+    .sort((a, b) => Number(b.r.photoId != null) - Number(a.r.photoId != null) || a.k - b.k)
+    .slice(0, n)
+    .map(({ r }) => ({ id: r.id, title: r.title, station: r.station, by: r.byName, done: r.done, photoId: r.photoId }));
+}

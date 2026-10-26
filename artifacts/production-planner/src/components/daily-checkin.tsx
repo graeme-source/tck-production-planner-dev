@@ -27,13 +27,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Crown, Lightbulb, Loader2, Sparkles, Star, Trophy } from "lucide-react";
+import { CheckCircle2, Crown, Lightbulb, Loader2, Sparkles, Star, Trophy } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { INITIAL_SIGN_IN, nextSignIn, promptHiddenOnPath, type SignInTracker } from "@/lib/emergency-contacts";
 import {
   boardLine, checkinHoldsOthers, checkinMessage, goalBarFill, scoreSum, shouldShowCheckin,
-  type CheckinCard, type CheckinStatus,
+  type CheckinCard, type CheckinStatus, type TeamIdea,
 } from "@/lib/daily-checkin";
 import { premiumStyle } from "@/lib/improvement-premium";
 import { DAILY_CHECKIN_PROMPT_KEY, useReportPromptShowing } from "@/lib/prompt-presence";
@@ -56,7 +56,7 @@ function londonHourNow(): number {
 
 export function DailyCheckin() {
   const { state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt } = useAuth();
-  const [location] = useLocation();
+  const [location, navigate] = useLocation();
   const qc = useQueryClient();
   const userId = state.status === "authenticated" ? state.user.id : null;
 
@@ -119,16 +119,25 @@ export function DailyCheckin() {
 
   return (
     <>
-      {show && q.data?.card && <CheckinCardView card={q.data.card} onAnswer={answer} busy={ack.isPending} />}
+      {show && q.data?.card && (
+        <CheckinCardView
+          card={q.data.card}
+          onAnswer={answer}
+          busy={ack.isPending}
+          // Tapping a team idea counts as "Got it" and opens that improvement.
+          onOpenIdea={id => { answer("got_it"); navigate(`/improvements?open=${id}`); }}
+        />
+      )}
       <RecordImprovementModal open={logOpen} onClose={() => setLogOpen(false)} />
     </>
   );
 }
 
-function CheckinCardView({ card, onAnswer, busy }: {
+function CheckinCardView({ card, onAnswer, busy, onOpenIdea }: {
   card: CheckinCard;
   onAnswer: (choice: "got_it" | "log_now") => void;
   busy: boolean;
+  onOpenIdea: (id: number) => void;
 }) {
   const msg = checkinMessage(card, londonHourNow());
   const hasScore = card.scorePct != null;
@@ -249,6 +258,8 @@ function CheckinCardView({ card, onAnswer, busy }: {
               </>
             )}
           </div>
+
+          {(card.teamIdeas?.length ?? 0) > 0 && <TeamIdeas ideas={card.teamIdeas!} onOpen={onOpenIdea} />}
         </div>
 
         {/* Always reachable: outside the scrolling area. */}
@@ -278,6 +289,51 @@ function Tile({ label, value, className, icon }: { label: string; value: number;
     <div className={cn("rounded-2xl border-2 border-border px-4 py-3", className)}>
       <p className="text-sm font-bold flex items-center gap-1.5">{icon}{label}</p>
       <p className="text-3xl font-extrabold tabular-nums mt-1">{value}</p>
+    </div>
+  );
+}
+
+/**
+ * "Ideas from the team" (Graeme, 2026-10-26: "a feed of improvement ideas
+ * ... things that other people have decided ... to generate a little bit of
+ * creativity"). Other people's improvements and ideas from the last 30 days,
+ * a different set each morning, swipe sideways. Tap one to open it.
+ */
+function TeamIdeas({ ideas, onOpen }: { ideas: TeamIdea[]; onOpen: (id: number) => void }) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-xl font-bold">Ideas from the team</p>
+        <p className="text-base text-muted-foreground">What others have spotted lately — could the same thing work where you are?</p>
+      </div>
+      <div className="flex gap-3 overflow-x-auto snap-x snap-mandatory pb-2 -mx-1 px-1" data-no-swipe>
+        {ideas.map(i => (
+          <button
+            key={i.id}
+            type="button"
+            onClick={() => onOpen(i.id)}
+            className="snap-start shrink-0 w-56 sm:w-60 text-left rounded-2xl border-2 border-border bg-card overflow-hidden hover:border-primary/50 active:scale-[0.99] transition"
+          >
+            {i.photoId != null ? (
+              <img src={`${BASE}/api/improvements/attachments/${i.photoId}`} alt="" loading="lazy" className="w-full h-32 object-cover bg-secondary" />
+            ) : (
+              <div className="w-full h-32 bg-amber-50 dark:bg-amber-950/30 flex items-center justify-center">
+                <Lightbulb className="w-10 h-10 text-amber-500" aria-hidden />
+              </div>
+            )}
+            <div className="p-3 space-y-1">
+              <p className="text-base font-bold leading-snug line-clamp-3">{i.title}</p>
+              <p className="text-sm text-muted-foreground">
+                {i.by ?? "Someone"}
+                {" · "}
+                {i.done
+                  ? <span className="inline-flex items-center gap-1 text-primary font-semibold"><CheckCircle2 className="w-3.5 h-3.5" />Done</span>
+                  : <span className="text-amber-600 dark:text-amber-400 font-semibold">Idea</span>}
+              </p>
+            </div>
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
