@@ -139,7 +139,8 @@ async function freshAccessToken(): Promise<{ realmId: string; accessToken: strin
   });
 }
 
-async function qboQuery<T>(query: string): Promise<T[]> {
+// Exported for read-only callers (cash-flow open bills); writes never go through here.
+export async function qboQuery<T>(query: string): Promise<T[]> {
   const { realmId, accessToken } = await freshAccessToken();
   const url = `${API_BASE}/v3/company/${realmId}/query?query=${encodeURIComponent(query)}&minorversion=75`;
   const res = await fetch(url, {
