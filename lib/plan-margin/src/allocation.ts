@@ -35,6 +35,11 @@ export interface AllocationPoolRow {
   floorBatches: number;
   /** false = takes no batches at all (e.g. made in another kitchen). Default true. */
   eligible?: boolean;
+  /** At most this many batches ABOVE the floor (orders + margin) — a
+   *  scheduled DPT rule such as "leaving the one-time menu: orders + 2
+   *  batches a day" (Graeme, 2026-10-26). Real orders are always made; the
+   *  capacity it doesn't take goes to the other recipes. null = no cap. */
+  extraBatchesCap?: number | null;
 }
 
 export interface TargetAllocation {
@@ -64,6 +69,22 @@ export function largestRemainderRound(exact: number[], total: number): number[] 
   return floors;
 }
 
+/** Rounding can hand a capped row one batch over its cap; give that batch to
+ *  the uncapped row with the most batches instead. */
+function capRounding(batches: number[], pool: ReadonlyArray<{ floor: number; cap: number }>): number[] {
+  const out = [...batches];
+  for (let i = 0; i < out.length; i++) {
+    const max = pool[i].floor + pool[i].cap;
+    while (out[i] > max) {
+      let j = -1;
+      for (let k = 0; k < out.length; k++) if (pool[k].cap === Infinity && (j < 0 || out[k] > out[j])) j = k;
+      if (j < 0) break;
+      out[i]--; out[j]++;
+    }
+  }
+  return out;
+}
+
 export function solveTargetAllocation(rows: readonly AllocationPoolRow[], capacity: number): TargetAllocation {
   const n = rows.length;
   const zeros = (): TargetAllocation => ({ batches: rows.map(() => 0), targets: rows.map(() => null), floorsExceedCapacity: false });
@@ -71,8 +92,11 @@ export function solveTargetAllocation(rows: readonly AllocationPoolRow[], capaci
 
   const eligible = rows.map(r => r.eligible !== false);
   const pool = rows.map((r, i) => eligible[i]
-    ? { weight: Math.max(0, r.weight || 0), ppb: r.ppb > 0 ? r.ppb : 1, proj: r.proj || 0, floor: Math.max(0, Math.floor(r.floorBatches || 0)) }
-    : { weight: 0, ppb: 1, proj: 0, floor: 0 });
+    ? {
+      weight: Math.max(0, r.weight || 0), ppb: r.ppb > 0 ? r.ppb : 1, proj: r.proj || 0, floor: Math.max(0, Math.floor(r.floorBatches || 0)),
+      cap: r.extraBatchesCap == null || !Number.isFinite(r.extraBatchesCap) ? Infinity : Math.max(0, Math.floor(r.extraBatchesCap)),
+    }
+    : { weight: 0, ppb: 1, proj: 0, floor: 0, cap: 0 });
   const idx = pool.map((_, i) => i).filter(i => eligible[i]);
   // Rounding only ever hands units to eligible rows.
   const round = (exact: number[], total: number): number[] => {
@@ -98,8 +122,16 @@ export function solveTargetAllocation(rows: readonly AllocationPoolRow[], capaci
     return { batches: pool.map(p => p.floor), targets: rows.map(() => null), floorsExceedCapacity: false };
   }
 
-  const exactAt = (lambda: number) => pool.map(p => Math.max(p.floor, Math.max(0, lambda * p.weight - p.proj) / p.ppb));
+  // A capped row stops at floor + cap however high the level goes.
+  const exactAt = (lambda: number) => pool.map(p => Math.min(p.floor + p.cap, Math.max(p.floor, Math.max(0, lambda * p.weight - p.proj) / p.ppb)));
   const need = (lambda: number) => exactAt(lambda).reduce((s, e) => s + e, 0);
+  // Every row capped and the caps can't use the day: make what the caps
+  // allow, don't force the rest onto capped rows.
+  const most = need(1e12);
+  if (most < capacity) {
+    const e = exactAt(1e12);
+    return { batches: round(e, Math.round(most)), targets: rows.map(() => null), floorsExceedCapacity: false };
+  }
   let lo = 0, hi = 1;
   while (need(hi) < capacity && hi < 1e12) hi *= 2;
   for (let i = 0; i < 80; i++) {
@@ -108,7 +140,7 @@ export function solveTargetAllocation(rows: readonly AllocationPoolRow[], capaci
   }
   const lambda = (lo + hi) / 2;
   return {
-    batches: round(exactAt(lambda), capacity),
+    batches: capRounding(round(exactAt(lambda), capacity), pool),
     targets: pool.map(p => p.weight > 0 ? Math.round(lambda * p.weight) : null),
     floorsExceedCapacity: false,
   };

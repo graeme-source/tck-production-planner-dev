@@ -47,6 +47,8 @@ export interface AllocationRecipe {
    *  (@workspace/plan-margin minBatchesForOrders, 15 Oct 2026). Defaults to
    *  deficitBatches, so a shortfall is always covered in WHOLE batches. */
   floorBatches?: number;
+  /** A scheduled DPT rule's "orders + N batches" (lib/dpt-schedules.ts). */
+  extraBatchesCap?: number | null;
 }
 
 export interface DailyAllocation {
@@ -86,6 +88,7 @@ export function allocateDailyBatches(recipes: readonly AllocationRecipe[], total
     proj: r.proj,
     floorBatches: r.floorBatches ?? r.deficitBatches,
     eligible: inKitchen[i],
+    extraBatchesCap: r.extraBatchesCap ?? null,
   })), totalDailyBatches);
   return {
     suggestedBatches: solved.batches,
