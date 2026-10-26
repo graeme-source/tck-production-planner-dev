@@ -32,6 +32,17 @@ export interface CheckinCard {
   board: { place: number; of: number } | null;
   prompts: CheckinPrompt[];
   nudge: { term: string; nutshell: string } | null;
+  /** Other people's recent improvements and ideas (2026-10-26); absent from older servers. */
+  teamIdeas?: TeamIdea[];
+}
+
+export interface TeamIdea {
+  id: number;
+  title: string;
+  station: string;
+  by: string | null;
+  done: boolean;
+  photoId: number | null;
 }
 
 export interface CheckinStatus { day: string; due: boolean; card: CheckinCard | null }

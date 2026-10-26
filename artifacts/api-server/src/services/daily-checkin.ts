@@ -11,8 +11,8 @@ import { improvementTotals } from "../lib/improvement-score";
 import { londonDateString } from "../lib/london-time";
 import { firstNameOf } from "../lib/order-reschedule";
 import {
-  boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay,
-  type CheckinChoice, type CheckinPrompt,
+  boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay, teamIdeasForDay,
+  type CheckinChoice, type CheckinPrompt, type TeamIdea, type TeamIdeaRow,
 } from "../lib/daily-checkin";
 import { loadImprovementScores } from "./improvement-score";
 import { loadLeanerBoard } from "./leaner-board";
@@ -35,7 +35,39 @@ export interface CheckinStatus {
     board: { place: number; of: number } | null;
     prompts: CheckinPrompt[];
     nudge: { term: string; nutshell: string } | null;
+    /** Other people's recent improvements and ideas, to spark one (2026-10-26). */
+    teamIdeas: TeamIdea[];
   };
+}
+
+/** Other people's improvements and ideas from the last 30 days, for the card. */
+async function loadTeamIdeaRows(): Promise<TeamIdeaRow[]> {
+  const rows = await db.execute<{
+    id: number; title: string; station: string; by_name: string | null; by_ids: number[] | null;
+    done: boolean; photo_id: number | null; at: Date | string;
+  }>(sql`
+    WITH pairs AS (${CREDIT_PAIRS})
+    SELECT s.id, s.title, s.station,
+           COALESCE(s.credited_to_name, s.submitted_by_name) AS by_name,
+           ARRAY_REMOVE(ARRAY_AGG(DISTINCT p.user_id) || ARRAY[s.submitted_by], NULL) AS by_ids,
+           s.progress_status = 'complete' AS done,
+           (SELECT a.id FROM improvement_attachments a
+             WHERE a.improvement_id = s.id AND a.kind = 'image'
+             ORDER BY (a.phase = 'after') DESC NULLS LAST, a.id DESC LIMIT 1) AS photo_id,
+           COALESCE(s.done_at, s.created_at) AS at
+      FROM improvement_submissions s
+      LEFT JOIN pairs p ON p.improvement_id = s.id
+     WHERE s.type = 'improvement'
+       AND s.progress_status IN ('complete', 'submitted_for_review')
+       AND COALESCE(s.done_at, s.created_at) >= NOW() - INTERVAL '30 days'
+     GROUP BY s.id
+  `);
+  return (rows.rows ?? []).map(r => ({
+    id: Number(r.id), title: r.title, station: r.station, byName: r.by_name,
+    byUserIds: (r.by_ids ?? []).map(Number), done: !!r.done,
+    photoId: r.photo_id == null ? null : Number(r.photo_id),
+    at: r.at instanceof Date ? r.at.toISOString() : String(r.at),
+  }));
 }
 
 export async function loadCheckinStatus(userId: number, now: Date = new Date()): Promise<CheckinStatus> {
@@ -91,6 +123,11 @@ export async function loadCheckinStatus(userId: number, now: Date = new Date()):
       board,
       prompts: promptsForDay(userId, day),
       nudge: nudgeLine(),
+      // A nice-to-have: the card still shows if this trips.
+      teamIdeas: teamIdeasForDay(await loadTeamIdeaRows().catch(err => {
+        console.warn("[daily-checkin] team ideas unavailable:", err);
+        return [] as TeamIdeaRow[];
+      }), userId, day),
     },
   };
 }

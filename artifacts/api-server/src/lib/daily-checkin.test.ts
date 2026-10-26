@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay, PROMPTS_PER_DAY } from "./daily-checkin";
+import { boardPlace, checkinDay, isCheckinDue, nudgeLine, promptsForDay, PROMPTS_PER_DAY, teamIdeasForDay } from "./daily-checkin";
 import { LMS_EIGHT_WASTES } from "./lean-corpus";
 
 describe("checkinDay — the London calendar day", () => {
@@ -119,5 +119,24 @@ describe("boardPlace", () => {
   it("says nothing when they have no credits this month, or aren't on the board", () => {
     expect(boardPlace(ranked, 4)).toBeNull();
     expect(boardPlace(ranked, 99)).toBeNull();
+  });
+});
+
+describe("teamIdeasForDay (2026-10-26)", () => {
+  const row = (id: number, by: number, photo: boolean, done = true) => ({
+    id, title: `Idea ${id}`, station: "general", byName: `Person ${by}`, byUserIds: [by], done, photoId: photo ? id * 10 : null, at: "2026-10-20",
+  });
+  const rows = [row(1, 7, false), row(2, 8, true), row(3, 5, true), row(4, 8, false, false), row(5, 9, true), row(6, 9, false), row(7, 8, true), row(8, 8, false)];
+  it("never shows your own, photos first, at most 6", () => {
+    const out = teamIdeasForDay(rows, 5, "2026-10-26");
+    expect(out.map(i => i.id)).not.toContain(3);
+    expect(out).toHaveLength(6);
+    expect(out.slice(0, 3).every(i => i.photoId != null)).toBe(true);
+  });
+  it("same all day, different another day or for another person", () => {
+    const a = teamIdeasForDay(rows, 5, "2026-10-26", 3).map(i => i.id);
+    expect(teamIdeasForDay(rows, 5, "2026-10-26", 3).map(i => i.id)).toEqual(a);
+    const ids = (d: string, u: number) => teamIdeasForDay(rows.map(r => ({ ...r, photoId: null })), u, d, 3).map(i => i.id).join();
+    expect(new Set([ids("2026-10-26", 5), ids("2026-10-27", 5), ids("2026-10-28", 5), ids("2026-10-26", 6)]).size).toBeGreaterThan(1);
   });
 });
