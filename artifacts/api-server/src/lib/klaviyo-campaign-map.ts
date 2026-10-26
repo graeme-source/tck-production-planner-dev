@@ -174,6 +174,13 @@ export interface KlaviyoCampaignResult {
   recipients: number;
   openRate: number;
   clickRate: number;
+  /** People who opened / clicked / placed an order — the counts Klaviyo shows
+   *  under each rate (Graeme, 2026-10-26). */
+  opens: number;
+  clicks: number;
+  buyers: number;
+  /** Placed-order rate: buyers ÷ recipients. */
+  orderRate: number;
   /** Placed orders attributed to the email (Klaviyo's attribution). */
   orders: number;
   /** £ of those orders. */
@@ -192,7 +199,7 @@ export interface RawCampaignValuesRow {
  * open and click rates are weighted by each message's recipients.
  */
 export function campaignResultsFromReport(rows: readonly RawCampaignValuesRow[]): Map<string, KlaviyoCampaignResult> {
-  const acc = new Map<string, { recipients: number; opens: number; clicks: number; orders: number; revenue: number }>();
+  const acc = new Map<string, { recipients: number; opens: number; clicks: number; orders: number; revenue: number; uOpens: number; uClicks: number; buyers: number; haveUniques: boolean }>();
   for (const r of rows) {
     const id = r.groupings?.campaign_id;
     if (!id) continue;
@@ -200,12 +207,18 @@ export function campaignResultsFromReport(rows: readonly RawCampaignValuesRow[])
     const s = r.statistics ?? {};
     const n = (k: string) => { const v = s[k]; return typeof v === "number" && Number.isFinite(v) ? v : 0; };
     const recipients = n("recipients");
-    const a = acc.get(id) ?? { recipients: 0, opens: 0, clicks: 0, orders: 0, revenue: 0 };
+    const a = acc.get(id) ?? { recipients: 0, opens: 0, clicks: 0, orders: 0, revenue: 0, uOpens: 0, uClicks: 0, buyers: 0, haveUniques: false };
     a.recipients += recipients;
     a.opens += n("open_rate") * recipients;
     a.clicks += n("click_rate") * recipients;
     a.orders += n("conversions");
     a.revenue += n("conversion_value");
+    // Klaviyo's own unique counts when the report has them; otherwise
+    // worked back from the rates (older cached reports).
+    if (typeof s["opens_unique"] === "number") a.haveUniques = true;
+    a.uOpens += n("opens_unique");
+    a.uClicks += n("clicks_unique");
+    a.buyers += n("conversion_uniques");
     acc.set(id, a);
   }
   const out = new Map<string, KlaviyoCampaignResult>();
@@ -217,6 +230,10 @@ export function campaignResultsFromReport(rows: readonly RawCampaignValuesRow[])
       clickRate: a.recipients > 0 ? a.clicks / a.recipients : 0,
       orders: Math.round(a.orders),
       revenue: Math.round(a.revenue * 100) / 100,
+      opens: Math.round(a.haveUniques ? a.uOpens : a.opens),
+      clicks: Math.round(a.haveUniques ? a.uClicks : a.clicks),
+      buyers: Math.round(a.haveUniques ? a.buyers : a.orders),
+      orderRate: a.recipients > 0 ? (a.haveUniques ? a.buyers : a.orders) / a.recipients : 0,
     });
   }
   return out;

@@ -17,6 +17,7 @@
  * (drafts-section.tsx, Graeme 2026-10-21). The ordering is buildAgenda() in
  * @workspace/marketing-calendar — tested there.
  */
+import { EmailResultsBlock } from "./email-results";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { format, parseISO } from "date-fns";
 import { BadgeCheck, ChevronDown, ChevronUp, Flag, Loader2, Mail, PencilLine, Play, Tag, Users } from "lucide-react";
@@ -317,6 +318,7 @@ export function EmailRow({ email: m, canApprove, onOpen }: { email: CalEmail; ca
           <span className="block text-xs text-muted-foreground break-words">
             {m.status === "Draft" ? "Draft in Klaviyo" : m.status}{m.subject ? ` · ${m.name}` : ""}
           </span>
+          {m.results && <span className="block pt-1.5"><EmailResultsBlock r={m.results} compact /></span>}
         </span>
       </button>
       <div className="flex items-center gap-2 flex-wrap justify-end ml-auto">

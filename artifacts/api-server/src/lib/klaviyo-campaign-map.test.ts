@@ -108,7 +108,16 @@ describe("Klaviyo results per campaign (email list view)", () => {
 
   it("missing statistics count as nothing", () => {
     const r = campaignResultsFromReport([{ groupings: { campaign_id: "c3" }, statistics: { recipients: null } }]).get("c3")!;
-    expect(r).toEqual({ campaignId: "c3", recipients: 0, openRate: 0, clickRate: 0, orders: 0, revenue: 0 });
+    expect(r).toEqual({ campaignId: "c3", recipients: 0, openRate: 0, clickRate: 0, orders: 0, revenue: 0, opens: 0, clicks: 0, buyers: 0, orderRate: 0 });
+  });
+
+  it("uses Klaviyo's unique counts for the numbers under each rate (2026-10-26)", () => {
+    const r = campaignResultsFromReport([{ groupings: { campaign_id: "c4", send_channel: "email" }, statistics: {
+      recipients: 19824, open_rate: 0.49724, opens_unique: 9826, click_rate: 0.02829, clicks_unique: 559,
+      conversions: 204, conversion_uniques: 204, conversion_value: 9392.00991,
+    } }]).get("c4")!;
+    expect(r).toMatchObject({ recipients: 19824, opens: 9826, clicks: 559, buyers: 204, orders: 204, revenue: 9392.01 });
+    expect(r.orderRate).toBeCloseTo(204 / 19824, 6);
   });
 });
 
