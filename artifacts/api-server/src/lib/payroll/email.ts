@@ -45,7 +45,6 @@ export function buildPayrollEmail(input: PayrollEmailInput): EmailPayload {
     "",
     `Attached is The Calzone Kitchen payroll report for ${input.periodLabel}` +
       (extras ? `, plus ${extras} starter form${extras === 1 ? "" : "s"}.` : "."),
-    "Take-home figures in the report are estimates only.",
     ...(note ? ["", note] : []),
     "",
     "Thanks,",

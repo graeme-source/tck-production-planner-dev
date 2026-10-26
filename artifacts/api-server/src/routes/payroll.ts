@@ -2,9 +2,11 @@
  * /api/payroll — Finance → Payroll (Graeme, 2026-10-26). Same access as
  * Finance (the founder and the accountants).
  *
- *   GET  /?from&to        the period's report: hours, pay and estimated
- *                         take-home per person, sick days, joiners (with
- *                         their payroll paperwork) and leavers
+ *   GET  /?from&to        the period's report: hours and gross pay per
+ *                         person, sick days, joiners (with their payroll
+ *                         paperwork) and leavers. No take-home estimate —
+ *                         Graeme removed it 2026-10-26; the bureau's
+ *                         figures are the only net pay.
  *   GET  /pdf?from&to     the same as a PDF
  *   POST /email           { from, to, emails[], note? } — PDF + joiners'
  *                         starter forms, logged (migration 0266)
@@ -22,7 +24,6 @@ import { resolveFinanceAccess } from "./finance";
 import { payPeriodFor, previousPayPeriods } from "../lib/payroll/period";
 import { loadPayrollData } from "../lib/payroll/load";
 import type { PayrollData } from "../lib/payroll/report-data";
-import { estimateNetPay } from "../lib/payroll/net-pay";
 import { renderPayrollPdf, type PayrollPdfInput } from "../lib/payroll/pdf";
 import { sendPayrollEmail } from "../lib/payroll/email";
 import { loadStarterDocs } from "../lib/payroll/starter-docs";
@@ -66,15 +67,9 @@ function periodOf(q: { from?: string; to?: string }) {
 
 async function buildReport(from: string, to: string, demo = false) {
   const data = demo && DEMO_ALLOWED ? demoPayroll(from, to) : await loadPayrollData(from, to);
-  const people = data.people.map(p => {
-    const est = p.grossPay > 0 ? estimateNetPay(p.grossPay) : null;
-    return { ...p, netEstimate: est ? est.net : null };
-  });
-  const assumptions = data.people.length ? (estimateNetPay(1000).assumptions ?? []) : [];
   const joinerDocs = await loadStarterDocs(data.joiners.filter(j => j.appUserId != null).map(j => ({ userId: j.appUserId!, name: j.name })));
   const joiners = data.joiners.map(j => ({ ...j, documents: joinerDocs.filter(d => d.userId === j.appUserId).map(d => d.title) }));
-  const totals = { ...data.totals, netEstimate: Math.round(people.reduce((s, p) => s + (p.netEstimate ?? 0), 0) * 100) / 100 };
-  return { ...data, people, joiners, totals, assumptions, joinerDocs };
+  return { ...data, joiners, joinerDocs };
 }
 
 /** "Wed 14 Oct 2026" — the PDF prints these as given. */
@@ -84,12 +79,11 @@ function pdfInput(r: Awaited<ReturnType<typeof buildReport>>): PayrollPdfInput {
   return {
     periodLabel: r.period.label,
     generatedAt: new Date().toLocaleString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
-    people: r.people.map(p => ({ name: p.name, hours: p.hours, shifts: p.shifts, hourlyRate: p.hourlyRate, grossPay: p.grossPay, netEstimate: p.netEstimate })),
+    people: r.people.map(p => ({ name: p.name, hours: p.hours, shifts: p.shifts, hourlyRate: p.hourlyRate, grossPay: p.grossPay })),
     totals: r.totals,
     sick: r.sick.map(s => ({ name: s.name, date: ukDay(s.date), hours: s.hours, contractDaysPerWeek: s.contractDaysPerWeek, contractHoursPerWeek: s.contractHoursPerWeek })),
     joiners: r.joiners.map(j => ({ name: j.name, date: ukDay(j.date), documents: j.documents })),
     leavers: r.leavers.map(l => ({ name: l.name, date: ukDay(l.date) })),
-    assumptions: r.assumptions,
   };
 }
 

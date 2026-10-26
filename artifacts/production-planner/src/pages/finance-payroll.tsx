@@ -1,7 +1,7 @@
 /**
  * Finance → Payroll (Graeme, 2026-10-26): the monthly Planday payroll report
- * — 25th of last month to the 24th of this one — with each person's hours,
- * pay and estimated take-home, sick days (with their normal working week),
+ * — 25th of last month to the 24th of this one — with each person's hours
+ * and gross pay, sick days (with their normal working week),
  * joiners (with their payroll paperwork) and leavers. Download it as a PDF or
  * email it with the starter forms attached. API: /api/payroll.
  */
@@ -14,14 +14,14 @@ import { cn } from "@/lib/utils";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface Period { from: string; to: string; label: string }
-interface Person { plandayEmployeeId: number; name: string; hours: number; shifts: number; hourlyRate: number | null; salaried: boolean; grossPay: number; netEstimate: number | null; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
+interface Person { plandayEmployeeId: number; name: string; hours: number; shifts: number; hourlyRate: number | null; salaried: boolean; grossPay: number; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
 interface Sick { plandayEmployeeId: number; name: string; date: string; hours: number | null; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
 interface Change { plandayEmployeeId: number; name: string; date: string; documents?: string[] }
 interface Report {
   period: Period; periods: Period[]; current: Period;
   people: Person[]; sick: Sick[]; joiners: Change[]; leavers: Change[];
-  totals: { hours: number; grossPay: number; netEstimate: number };
-  assumptions: string[]; warnings: string[];
+  totals: { hours: number; grossPay: number };
+  warnings: string[];
   demo?: boolean; demoAllowed?: boolean;
 }
 interface Send { id: number; from: string; to: string; sentTo: string[]; attachments: string[]; sentBy: string | null; ok: boolean; error: string | null; sentAt: string }
@@ -95,11 +95,10 @@ export function PayrollPanel() {
 
       {r && (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-3">
             <Big label="People paid" value={String(r.people.length)} sub={r.period.label} />
             <Big label="Hours" value={hrs(r.totals.hours)} />
             <Big label="Gross pay" value={gbp(r.totals.grossPay)} />
-            <Big label="Take-home (estimate)" value={gbp(r.totals.netEstimate)} sub="see assumptions below" />
           </div>
 
           {r.warnings.length > 0 && (
@@ -118,7 +117,6 @@ export function PayrollPanel() {
                       <p className="text-sm text-muted-foreground">{p.shifts} shift{p.shifts === 1 ? "" : "s"} · {hrs(p.hours)}{p.hourlyRate != null ? ` · ${gbp(p.hourlyRate)}/h` : p.salaried ? " · salaried" : ""}</p>
                       <div className="flex gap-4 mt-1">
                         <p><span className="text-xs text-muted-foreground block">Gross</span><span className="font-bold tabular-nums">{gbp(p.grossPay)}</span></p>
-                        <p><span className="text-xs text-muted-foreground block">Take-home (est.)</span><span className="font-bold tabular-nums text-primary">{gbp(p.netEstimate)}</span></p>
                       </div>
                     </div>
                   ))}
@@ -157,12 +155,6 @@ export function PayrollPanel() {
                 </Section>
               </div>
 
-              {r.assumptions.length > 0 && (
-                <div className="text-xs text-muted-foreground space-y-0.5 max-w-prose">
-                  <p className="font-semibold">Take-home is an estimate:</p>
-                  {r.assumptions.map((a, i) => <p key={i}>{a}</p>)}
-                </div>
-              )}
             </div>
 
             <aside className="rounded-3xl border-2 border-border bg-card p-4 space-y-3 xl:sticky xl:top-4">

@@ -8,12 +8,11 @@ type Style = Parameters<typeof StyleSheet.create>[0][string];
 export interface PayrollPdfInput {
   periodLabel: string;
   generatedAt: string;
-  people: Array<{ name: string; hours: number; shifts: number; hourlyRate: number | null; grossPay: number; netEstimate: number | null }>;
-  totals: { hours: number; grossPay: number; netEstimate: number };
+  people: Array<{ name: string; hours: number; shifts: number; hourlyRate: number | null; grossPay: number }>;
+  totals: { hours: number; grossPay: number };
   sick: Array<{ name: string; date: string; hours: number | null; contractDaysPerWeek: number | null; contractHoursPerWeek: number | null }>;
   joiners: Array<{ name: string; date: string; documents: string[] }>;
   leavers: Array<{ name: string; date: string }>;
-  assumptions: string[];
 }
 
 const GREEN = "#7cb342";
@@ -35,7 +34,6 @@ const s = StyleSheet.create({
   empty: { color: MUTED, fontStyle: "italic" },
   item: { marginBottom: 4 },
   sub: { color: MUTED, fontSize: 8.5 },
-  foot: { marginTop: 20, paddingTop: 6, borderTopWidth: 0.5, borderTopColor: RULE, fontSize: 7.5, color: MUTED },
   pageNo: { position: "absolute", bottom: 20, right: 36, fontSize: 7.5, color: MUTED },
 });
 
@@ -45,7 +43,6 @@ const COLS = [
   { key: "hours", label: "Hours", flex: 1.2, num: true },
   { key: "rate", label: "Rate", flex: 1.2, num: true },
   { key: "gross", label: "Gross", flex: 1.6, num: true },
-  { key: "net", label: "Est. take-home", flex: 1.8, num: true },
 ] as const;
 
 const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -94,12 +91,11 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
               hrs(p.hours),
               p.hourlyRate == null ? "—" : gbp(p.hourlyRate),
               gbp(p.grossPay),
-              p.netEstimate == null ? "—" : gbp(p.netEstimate),
             ]} />
           </View>
         ))}
         <View style={s.totalRow} wrap={false}>
-          <Cells values={["Total", "", hrs(data.totals.hours), "", gbp(data.totals.grossPay), gbp(data.totals.netEstimate)]} />
+          <Cells values={["Total", "", hrs(data.totals.hours), "", gbp(data.totals.grossPay)]} />
         </View>
 
         <Text style={s.h2}>Sick days</Text>
@@ -132,13 +128,6 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
             <Text style={{ fontFamily: "Helvetica-Bold" }}>{l.name}</Text> — last day {l.date}
           </Text>
         ))}
-
-        <View style={s.foot} wrap={false}>
-          <Text>
-            Take-home is an estimate only, for planning — the payroll bureau's figures are final.
-          </Text>
-          {data.assumptions.map((a, i) => <Text key={i}>• {a}</Text>)}
-        </View>
 
         <Text style={s.pageNo} fixed render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
       </Page>
