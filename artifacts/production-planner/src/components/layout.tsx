@@ -25,7 +25,7 @@ import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { useFounderArea } from "@/hooks/use-founder-area";
-import { FEATURE_REGISTRY } from "@workspace/feature-registry";
+import { FEATURE_REGISTRY, isFounderEmail } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
 import { 
   LayoutDashboard,
@@ -82,7 +82,7 @@ import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial"
 import { TestRequestCard } from "@/components/test-request-card";
 import { ClipboardCheck, Gift } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert, Wallet } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -158,8 +158,6 @@ export const analyticsSubItems: NavItem[] = [
   // Finance moved under Analytics (Graeme, 2026-10-07). Admins and
   // bookkeepers only — filtered where the group is drawn.
   { name: "Finance", href: "/finance", icon: Banknote },
-  // Cash flow (2026-10-26): same people as Finance.
-  { name: "Cash flow", href: "/finance/cash-flow", icon: Wallet },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
@@ -304,7 +302,7 @@ export function NavLinks({
   visibleInventoryItems: NavItem[];
   location: string;
   search: string;
-  user: { name?: string; role?: string; isBookkeeper?: boolean } | null;
+  user: { name?: string; email?: string; role?: string; isBookkeeper?: boolean } | null;
   onNavigate?: () => void;
   /** Accountant (finance-only) users: hide Lean Cave / Settings. */
   hideBottomNav?: boolean;
@@ -408,7 +406,8 @@ export function NavLinks({
     const isDispatches = item.href === "/dispatches";
 
     if (item.href === "/reports" && (user?.role === "admin" || user?.role === "manager")) {
-      const seesFinance = user?.role === "admin" || Boolean(user?.isBookkeeper);
+      // Finance: the founder and the accountants only (2026-10-26).
+      const seesFinance = isFounderEmail(user?.email) || Boolean(user?.isBookkeeper);
       const subs = analyticsSubItems.filter(i => !i.href.startsWith("/finance") || seesFinance);
       return renderNavGroup("analytics", item.name, item.icon, subs, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
     }

@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { cn } from "@/lib/utils";
+import { Link, Redirect, useLocation } from "wouter";
+import { isFounderEmail } from "@workspace/feature-registry";
+import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -129,10 +133,43 @@ const FILTERS = [
   { key: "all", label: "All" },
 ] as const;
 
+/**
+ * Finance: the founder's and the accountants' only (Graeme, 2026-10-26 — not
+ * managers, not other admins; the server enforces it). Two tabs: outstanding
+ * invoices, and the cash flow ("cash flow should be on the finance page").
+ */
 export default function FinancePage() {
   const { state } = useAuth();
+  const [location] = useLocation();
   const user = state.status === "authenticated" ? state.user : null;
-  const isAdmin = user?.role === "admin";
+  if (!user) return null;
+  const allowed = isFounderEmail(user.email) || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
+  if (!allowed) return <Redirect to="/" />;
+  const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : "invoices";
+  return (
+    <div className="space-y-5">
+      <PageHeader title="Finance" description={tab === "cash-flow"
+        ? "The bank balance day by day: Shopify payouts in, QuickBooks bills out on their due dates, and anything you add."
+        : "Every card transaction that still needs its invoice or receipt. Upload the Capital on Tap export; the app hunts the mailbox and stores what it finds."} />
+      <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit" aria-label="Finance">
+        {[{ href: "/finance", label: "Outstanding invoices", key: "invoices" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }].map(t => (
+          <Link key={t.key} href={t.href}
+            className={cn("px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors",
+              tab === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60")}>
+            {t.label}
+          </Link>
+        ))}
+      </nav>
+      {tab === "cash-flow" ? <CashFlowPanel /> : <InvoicesTab />}
+    </div>
+  );
+}
+
+function InvoicesTab() {
+  const { state } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  // The connection settings and who-has-access are the founder's.
+  const isAdmin = isFounderEmail(user?.email);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
@@ -198,11 +235,6 @@ export default function FinancePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Finance — outstanding invoices"
-        description="Every card transaction that still needs its invoice or receipt. Upload the Capital on Tap export; the app hunts the mailbox and stores what it finds."
-      />
-
       {/* Summary + upload */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

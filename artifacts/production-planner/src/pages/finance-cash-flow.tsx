@@ -6,14 +6,11 @@
  *
  * A day-by-day running balance: the bank balance (set by hand), Shopify
  * payouts in (live), QuickBooks bills out on their due dates (live), and the
- * money in/out added here. Access as Finance. API: /api/cash-flow.
+ * money in/out added here. A tab of the Finance page. API: /api/cash-flow.
  */
 import { useEffect, useState } from "react";
-import { Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDownLeft, ArrowUpRight, Check, Loader2, Plus, Repeat, Trash2, Wallet } from "lucide-react";
-import { PageHeader } from "@/components/page-header";
-import { useAuth } from "@/contexts/auth-context";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -56,21 +53,14 @@ function SaveTag({ state }: { state: SaveState }) {
   return null;
 }
 
-export default function FinanceCashFlow() {
-  const { state } = useAuth();
-  const user = state.status === "authenticated" ? state.user : null;
-  const allowed = !!user && (user.role === "admin" || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper));
+/** The Cash flow tab inside Finance (pages/finance.tsx decides who sees it). */
+export function CashFlowPanel() {
   const [days, setDays] = useState(14);
-  const q = useQuery({ queryKey: ["cash-flow", days], queryFn: () => api<CashFlow>(`?days=${days}`), enabled: allowed, refetchInterval: 5 * 60_000 });
-
-  if (!user) return null;
-  if (!allowed) return <Redirect to="/" />;
+  const q = useQuery({ queryKey: ["cash-flow", days], queryFn: () => api<CashFlow>(`?days=${days}`), refetchInterval: 5 * 60_000 });
   const d = q.data;
 
   return (
     <div className="space-y-5">
-      <PageHeader title="Cash flow" description="The bank balance day by day: Shopify payouts in, QuickBooks bills out on their due dates, and anything you add." />
-
       {q.isLoading && <div className="flex items-center gap-2 text-muted-foreground py-10 justify-center"><Loader2 className="w-5 h-5 animate-spin" /> Reading QuickBooks and Shopify…</div>}
       {q.error && <p className="text-red-600">Couldn't load the cash flow — {(q.error as Error).message}</p>}
 

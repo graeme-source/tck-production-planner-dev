@@ -15,7 +15,8 @@ import {
 } from "@workspace/db";
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
-import { requireAdmin } from "../middleware/roles";
+import { requireFounder } from "../middleware/founder-access";
+import { isFounderEmail } from "@workspace/feature-registry";
 import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
@@ -39,15 +40,18 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 
 // ---------------------------------------------------------------------------
 // Access guards
 
+// Finance is the founder's and the accountants' only (Graeme, 2026-10-26:
+// "make sure finance isn't available to anyone apart from the accountant
+// user profiles and me as the founder ... not available to managers") —
+// being an admin no longer opens it. "admin" here means the founder.
 export async function resolveFinanceAccess(req: Request): Promise<"admin" | "bookkeeper" | null> {
-  if (req.session.userRole === "admin") return "admin";
   if (!req.session.userId) return null;
   const [user] = await db
-    .select({ role: usersTable.role, isBookkeeper: usersTable.isBookkeeper })
+    .select({ email: usersTable.email, isBookkeeper: usersTable.isBookkeeper })
     .from(usersTable)
     .where(eq(usersTable.id, req.session.userId));
   if (!user) return null;
-  if (user.role === "admin") return "admin";
+  if (isFounderEmail(user.email)) return "admin";
   if (user.isBookkeeper) return "bookkeeper";
   return null;
 }
@@ -646,7 +650,7 @@ const mailboxSchema = z.object({
   scanSince: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
-router.put("/mailbox", requireAdmin, validate(mailboxSchema), async (req: Request, res: Response) => {
+router.put("/mailbox", requireFounder, validate(mailboxSchema), async (req: Request, res: Response) => {
   try {
     const { emailAddress, password, scanSince } = req.body as z.infer<typeof mailboxSchema>;
     const sealed = sealSecret(password);
@@ -666,7 +670,7 @@ router.put("/mailbox", requireAdmin, validate(mailboxSchema), async (req: Reques
   }
 });
 
-router.get("/mailbox", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/mailbox", requireFounder, async (_req: Request, res: Response) => {
   const [box] = await db
     .select({
       emailAddress: finMailboxTable.emailAddress,
@@ -688,7 +692,7 @@ const scanRangeSchema = z.object({
 
 // One-off ranged scan — reaches back before the configured backfill date
 // without touching the incremental cursor.
-router.post("/mailbox/scan-range", requireAdmin, validate(scanRangeSchema), async (req: Request, res: Response) => {
+router.post("/mailbox/scan-range", requireFounder, validate(scanRangeSchema), async (req: Request, res: Response) => {
   const { from, to } = req.body as z.infer<typeof scanRangeSchema>;
   runMailboxSync({ rangeFrom: from, rangeTo: to })
     .then((o) => {
@@ -699,7 +703,7 @@ router.post("/mailbox/scan-range", requireAdmin, validate(scanRangeSchema), asyn
   res.json({ started: true, from, to: to ?? null });
 });
 
-router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) => {
+router.post("/mailbox/sync", requireFounder, async (_req: Request, res: Response) => {
   // Fire-and-forget: a first backfill can take many minutes, and holding the
   // HTTP request open that long just times out and invites double-clicks.
   // Progress is visible via GET /mailbox (lastSyncAt / lastError).
@@ -716,7 +720,7 @@ router.post("/mailbox/sync", requireAdmin, async (_req: Request, res: Response) 
 // QuickBooks (read-only) — ADMIN ONLY. Rules out card lines that are
 // already posted. The app never writes to QuickBooks.
 
-router.get("/qbo/status", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/qbo/status", requireFounder, async (_req: Request, res: Response) => {
   try {
     res.json(await qboStatus());
   } catch (err) {
@@ -725,7 +729,7 @@ router.get("/qbo/status", requireAdmin, async (_req: Request, res: Response) => 
   }
 });
 
-router.get("/qbo/connect", requireAdmin, async (req: Request, res: Response) => {
+router.get("/qbo/connect", requireFounder, async (req: Request, res: Response) => {
   if (!qboConfigured()) {
     res.status(503).json({ error: "QuickBooks app credentials not set — add QBO_CLIENT_ID and QBO_CLIENT_SECRET to the environment first." });
     return;
@@ -765,7 +769,7 @@ router.get("/qbo/callback", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/qbo/sync", requireAdmin, async (_req: Request, res: Response) => {
+router.post("/qbo/sync", requireFounder, async (_req: Request, res: Response) => {
   runQboSync()
     .then((o) => {
       if (o.error) console.error("[finance] QBO sync finished with error:", o.error);
@@ -775,7 +779,7 @@ router.post("/qbo/sync", requireAdmin, async (_req: Request, res: Response) => {
   res.json({ started: true });
 });
 
-router.delete("/qbo", requireAdmin, async (_req: Request, res: Response) => {
+router.delete("/qbo", requireFounder, async (_req: Request, res: Response) => {
   await dbForQbo.delete(finQboConnectionTable);
   res.json({ ok: true });
 });
@@ -785,7 +789,7 @@ router.delete("/qbo", requireAdmin, async (_req: Request, res: Response) => {
 
 /** Distinct payment accounts seen on mirrored purchases — the picker's
  *  options. Accounts only appear after at least one sync has run. */
-router.get("/qbo/accounts", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/qbo/accounts", requireFounder, async (_req: Request, res: Response) => {
   const rows = ((await dbForQbo.execute(sql`
     SELECT account_name, COUNT(*)::int AS n
       FROM fin_qbo_txns
@@ -801,7 +805,7 @@ router.get("/qbo/accounts", requireAdmin, async (_req: Request, res: Response) =
  *  immediately and then with every hourly sync. */
 router.put(
   "/qbo/auto-import",
-  requireAdmin,
+  requireFounder,
   validate(z.object({ account: z.string().min(1).max(200).nullable() })),
   async (req: Request, res: Response) => {
     const { account } = req.body as { account: string | null };
@@ -823,7 +827,7 @@ router.put(
 // Finance access management — ADMIN ONLY. Lives here (not settings.tsx,
 // which the charter freezes): grant/revoke the bookkeeper flag.
 
-router.get("/access", requireAdmin, async (_req: Request, res: Response) => {
+router.get("/access", requireFounder, async (_req: Request, res: Response) => {
   const users = await db
     .select({ id: usersTable.id, name: usersTable.name, email: usersTable.email, role: usersTable.role, isBookkeeper: usersTable.isBookkeeper })
     .from(usersTable)
@@ -833,7 +837,7 @@ router.get("/access", requireAdmin, async (_req: Request, res: Response) => {
 
 const accessSchema = z.object({ isBookkeeper: z.boolean() });
 
-router.patch("/access/:userId", requireAdmin, validate(accessSchema), async (req: Request, res: Response) => {
+router.patch("/access/:userId", requireFounder, validate(accessSchema), async (req: Request, res: Response) => {
   const userId = Number(req.params.userId);
   const { isBookkeeper } = req.body as z.infer<typeof accessSchema>;
   const [row] = await db
