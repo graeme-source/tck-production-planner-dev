@@ -3,6 +3,7 @@ import { cn } from "@/lib/utils";
 import { Link, Redirect, useLocation } from "wouter";
 import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
+import { PayrollPanel } from "@/pages/finance-payroll";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -145,14 +146,16 @@ export default function FinancePage() {
   if (!user) return null;
   const allowed = isFounderEmail(user.email) || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
   if (!allowed) return <Redirect to="/" />;
-  const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : "invoices";
+  const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : location.startsWith("/finance/payroll") ? "payroll" : "invoices";
   return (
     <div className="space-y-5">
       <PageHeader title="Finance" description={tab === "cash-flow"
         ? "The bank balance day by day: Shopify payouts in, QuickBooks bills out on their due dates, and anything you add."
+        : tab === "payroll"
+        ? "The monthly payroll report from Planday (25th to 24th): hours, pay, sick days, joiners and leavers — download or email it."
         : "Every card transaction that still needs its invoice or receipt. Upload the Capital on Tap export; the app hunts the mailbox and stores what it finds."} />
       <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit" aria-label="Finance">
-        {[{ href: "/finance", label: "Outstanding invoices", key: "invoices" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }].map(t => (
+        {[{ href: "/finance", label: "Outstanding invoices", key: "invoices" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
           <Link key={t.key} href={t.href}
             className={cn("px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors",
               tab === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60")}>
@@ -160,7 +163,7 @@ export default function FinancePage() {
           </Link>
         ))}
       </nav>
-      {tab === "cash-flow" ? <CashFlowPanel /> : <InvoicesTab />}
+      {tab === "cash-flow" ? <CashFlowPanel /> : tab === "payroll" ? <PayrollPanel /> : <InvoicesTab />}
     </div>
   );
 }

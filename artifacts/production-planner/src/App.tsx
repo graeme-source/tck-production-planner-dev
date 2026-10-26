@@ -240,6 +240,7 @@ function Router() {
               {/* Wish List — equipment & things we need (Graeme, 23 Oct 2026). Everyone signed in. */}
               <Route path="/wish-list" component={WishListPage} />
               <Route path="/finance/cash-flow" component={FinancePage} />
+              <Route path="/finance/payroll" component={FinancePage} />
               <Route path="/finance" component={FinancePage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />

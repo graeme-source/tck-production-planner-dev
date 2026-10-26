@@ -146,7 +146,7 @@ export const bottomNavItems: NavItem[] = [
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
 // under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/test-requests", "/finance", "/finance/cash-flow"];
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/test-requests", "/finance", "/finance/cash-flow", "/finance/payroll"];
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
