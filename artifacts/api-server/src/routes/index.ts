@@ -160,6 +160,7 @@ import googleAdsIngestRouter from "./google-ads-ingest";
 import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
+import cashFlowRouter from "./cash-flow";
 import featuresRouter from "./features";
 import contractsRouter from "./contracts";
 import uploadedContractsRouter from "./uploaded-contracts";
@@ -388,6 +389,8 @@ router.use("/founder-panels", founderPanelsRouter);
 // Finance / VAT reconciliation — access gated inside the router (admin or
 // isBookkeeper); mailbox settings admin-only at the route layer.
 router.use("/finance", financeRouter);
+// Finance → Cash flow (2026-10-26); same access as Finance, checked inside.
+router.use("/cash-flow", cashFlowRouter);
 // Feature grants (cherry-picked access, optional SOP-training gate).
 router.use("/features", featuresRouter);
 // Customer surveys — admin builds/reads them here; the public submission API

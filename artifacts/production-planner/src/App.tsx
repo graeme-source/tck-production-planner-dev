@@ -1,4 +1,5 @@
 import React from "react";
+import FinanceCashFlow from "@/pages/finance-cash-flow";
 import { Switch, Route, Router as WouterRouter, Redirect, useLocation, useSearch } from "wouter";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { QueryClient, QueryClientProvider, MutationCache, QueryCache } from "@tanstack/react-query";
@@ -238,6 +239,7 @@ function Router() {
               <Route path="/lists/:id" component={TeamListsPage} />
               {/* Wish List — equipment & things we need (Graeme, 23 Oct 2026). Everyone signed in. */}
               <Route path="/wish-list" component={WishListPage} />
+              <Route path="/finance/cash-flow" component={FinanceCashFlow} />
               <Route path="/finance" component={FinancePage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>
               <Route path="/orders" component={Orders} />
