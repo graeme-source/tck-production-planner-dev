@@ -6,6 +6,7 @@
 // If those are not set, production credentials are attempted but will likely fail on the
 // training server (which rejects production accounts with a 419 Authentication Error).
 
+import { explainAddressLoss, type AddressLoss } from "../lib/apc-address-loss";
 import { buildCancelRequest, interpretCancelReply } from "../lib/apc-cancel";
 
 const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0";
@@ -128,6 +129,9 @@ interface PlaceOrderResult {
 export interface AddressReviewFlag {
   kind: "conflicting-postcode" | "town-too-long" | "truncated";
   message: string;
+  /** For a shortened line: exactly what's lost, whether it matters, and a
+   *  line that would fit without losing anything that does (2026-10-26). */
+  loss?: AddressLoss;
 }
 
 export interface NormalisedAddress {
@@ -270,13 +274,10 @@ export function normaliseAddress(
   const postcodeKey = key(opts.postcode ?? "");
 
   let c = rawCity;
-  if (c.length > ADDRESS_LINE_MAX) {
+  const townCut = c.length > ADDRESS_LINE_MAX;
+  if (townCut) {
     c = c.slice(0, ADDRESS_LINE_MAX).trim();
     warnings.push(`City truncated from "${rawCity}" to "${c}"`);
-    review.push({
-      kind: "town-too-long",
-      message: `Town "${rawCity}" is ${rawCity.length} characters — APC allows ${ADDRESS_LINE_MAX}. Check the correct post town before booking.`,
-    });
   }
 
   // ── 1. Lift delivery notes out of an address line ────────────────────────
@@ -333,17 +334,32 @@ export function normaliseAddress(
   a1 = fitted.head;
   if (fitted.tail) a2 = a2 ? `${fitted.tail}, ${a2}` : fitted.tail;
 
+  let a2Cut: { full: string } | null = null;
   if (a2) {
     a2 = squash(dedupeComponents(a2));
     if (a2.length > ADDRESS_LINE_MAX) {
       const full = a2;
       a2 = splitToFit(a2).head.slice(0, ADDRESS_LINE_MAX).trim();
       warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
-      review.push({
-        kind: "truncated",
-        message: `Address line 2 was too long and lost "${full.slice(a2.length).trim()}". Check the address before booking.`,
-      });
+      a2Cut = { full };
     }
+  }
+  // The review flags carry the label as it will print, so they're built
+  // once every line is final.
+  if (townCut) {
+    review.push({
+      kind: "town-too-long",
+      message: `Town "${rawCity}" is ${rawCity.length} characters — APC allows ${ADDRESS_LINE_MAX}. Check the correct post town before booking.`,
+      loss: explainAddressLoss({ field: "Town", original: rawCity, kept: c, address1: a1, address2: a2 || null, city: c, postcode: opts.postcode }),
+    });
+  }
+  if (a2Cut) {
+    const loss = explainAddressLoss({ field: "Address line 2", original: a2Cut.full, kept: a2, address1: a1, address2: a2 || null, city: c, postcode: opts.postcode });
+    review.push({
+      kind: "truncated",
+      message: `Address line 2 was too long and lost "${loss.lost || a2Cut.full.slice(a2.length).trim()}". Check the address before booking.`,
+      loss,
+    });
   }
 
   return {

@@ -1,3 +1,4 @@
+import type { AddressLoss } from "../lib/apc-address-loss";
 import { Router, type Request, type Response, type NextFunction } from "express";
 import { db, skuLocationsTable, variantLocationsTable, skuBarcodesTable, appSettingsTable, usersTable, shopifyFulfilmentTrackingTable, apcConsignmentsTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
@@ -2014,6 +2015,9 @@ type PreflightOrder = {
   existingWaybill: string | null;
   problems: string[];
   reviews: string[];
+  /** Shortened address lines, spelled out (lost words, label, suggestion) —
+   *  shown as a picture, not a sentence (2026-10-26). */
+  addressLosses?: AddressLoss[];
 };
 
 async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: ReadonlySet<number> = new Set()) {
@@ -2143,8 +2147,18 @@ async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: R
       if (!sa.zip?.trim()) row.problems.push("No postcode");
       if (!sa.city?.trim()) row.problems.push("No town");
       const norm = normaliseAddress(sa.address1 ?? "", sa.address2 ?? undefined, sa.city ?? "", { postcode: sa.zip, countryCode: sa.country_code ?? "GB" });
-      for (const flag of norm.review) row.reviews.push(flag.message);
-      for (const w of norm.warnings) row.reviews.push(w);
+      // A shortened line with its loss worked out is drawn from `loss`; its
+      // sentence and the matching "truncated from" warning would only say
+      // the same thing again in a paragraph.
+      const losses = norm.review.flatMap(f => (f.loss ? [f.loss] : []));
+      if (losses.length) row.addressLosses = losses;
+      for (const flag of norm.review) if (!flag.loss) row.reviews.push(flag.message);
+      for (const w of norm.warnings) {
+        if (losses.some(l => w.startsWith(`${l.field === "Town" ? "City" : l.field} truncated from`))) continue;
+        row.reviews.push(w);
+      }
+      // Still "needs a look" even when the only note is the picture.
+      if (losses.length && row.reviews.length === 0) row.reviews.push(losses.every(l => l.safe) ? "Address shortened — nothing that matters lost" : "Address shortened — check what's lost");
     }
     if (!codesConfigured) row.problems.push("APC service codes not configured in Settings");
 
