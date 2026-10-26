@@ -87,6 +87,8 @@ export const FOUNDER_TABS = [
   { href: "/founder/sales", label: "Sales & Marketing", feature: FOUNDER_FEATURES.sales },
   // Website A/B tests (2026-10-24): same people as Sales & Marketing.
   { href: "/founder/ab-tests", label: "Website A/B tests", feature: FOUNDER_FEATURES.sales },
+  // Floor map (2026-10-26): the founder's own while he tries it out.
+  { href: "/founder/floor", label: "Floor map" },
 ] as const satisfies ReadonlyArray<{ href: string; label: string; feature?: FounderFeatureKey }>;
 
 export type FounderTab = (typeof FOUNDER_TABS)[number];
