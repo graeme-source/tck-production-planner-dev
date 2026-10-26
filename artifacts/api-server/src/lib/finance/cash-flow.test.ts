@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { forecastCashFlow, itemDates, type CfItem } from "./cash-flow";
+import { forecastCashFlow, itemDates, shortError, type CfItem } from "./cash-flow";
 
 const TODAY = "2026-10-26";
 const item = (p: Partial<CfItem>): CfItem => ({ id: 1, label: "Capital on Tap", direction: "out", amount: 5000, onDate: null, everyDays: null, startsOn: null, endsOn: null, vendorName: null, active: true, ...p });
@@ -46,5 +46,17 @@ describe("cash-flow forecast (2026-10-26)", () => {
     expect(f.days[0].outs.find(o => o.ref === "x")?.undated).toBe(true);
     expect(f.days[0].ins[0]).toMatchObject({ ref: "q", late: true });
     expect(f.days[0].closing).toBe(1000 + 700 - 50 - 100);
+  });
+});
+
+describe("shortError (2026-10-26: the chip showed Shopify's whole error page)", () => {
+  it("keeps just the reason from an HTML error page", () => {
+    const html = 'Shopify token error 400: <!DOCTYPE html><html><head><title>400 - Oauth error invalid_request</title></head><body>…</body></html>';
+    expect(shortError(html)).toBe("Oauth error invalid_request");
+  });
+  it("plain text is kept, long text is cut, nothing stays nothing", () => {
+    expect(shortError("Couldn't reach Shopify")).toBe("Couldn't reach Shopify");
+    expect(shortError("x".repeat(300))!.length).toBe(140);
+    expect(shortError(null)).toBeNull();
   });
 });

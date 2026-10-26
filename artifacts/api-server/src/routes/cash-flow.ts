@@ -19,7 +19,7 @@ import { db } from "@workspace/db";
 import { validate, validateQuery } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { resolveFinanceAccess } from "./finance";
-import { forecastCashFlow, type CfItem } from "../lib/finance/cash-flow";
+import { forecastCashFlow, shortError, type CfItem } from "../lib/finance/cash-flow";
 import { loadOpenBills } from "../lib/finance/qbo-open-bills";
 import { loadShopifyPayouts } from "../lib/finance/shopify-payouts";
 
@@ -49,17 +49,39 @@ const toItem = (r: ItemRow) => ({
   startsOn: r.starts_on, endsOn: r.ends_on, finVendorId: r.fin_vendor_id, vendorName: r.vendor_name, notes: r.notes, active: r.active,
 });
 
-const forecastQuery = z.object({ days: z.coerce.number().int().min(7).max(90).optional() });
+// Sample bills and payouts for the TEST server only (?demo=1), so the page
+// can be tried without QuickBooks or Shopify. Never on live.
+const DEMO_ALLOWED = process.env["NODE_ENV"] !== "production";
+function demoSources(today: string) {
+  const day = (n: number) => new Date(Date.parse(`${today}T12:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+  return {
+    bills: [
+      { id: "demo-1", vendorName: "Brakes", docNumber: "INV-48812", dueDate: day(-3), balance: 2140.55 },
+      { id: "demo-2", vendorName: "PIB Butchers", docNumber: "7731", dueDate: day(2), balance: 3890 },
+      { id: "demo-3", vendorName: "Bako", docNumber: null, dueDate: day(5), balance: 1260.4 },
+      { id: "demo-4", vendorName: "Packaging Supplies Ltd", docNumber: "PS-2210", dueDate: day(9), balance: 980 },
+    ],
+    payouts: [
+      { id: "demo-p1", date: day(1), status: "SCHEDULED" as const, net: 6420.18 },
+      { id: "demo-p2", date: day(4), status: "SCHEDULED" as const, net: 5875.6 },
+      { id: "demo-p3", date: day(8), status: "SCHEDULED" as const, net: 7012.33 },
+    ],
+  };
+}
+
+const forecastQuery = z.object({ days: z.coerce.number().int().min(7).max(90).optional(), demo: z.enum(["1"]).optional() });
 router.get("/", validateQuery(forecastQuery), async (_req: Request, res: Response) => {
-  const days = (res.locals["query"] as z.infer<typeof forecastQuery>).days ?? 14;
+  const q = res.locals["query"] as z.infer<typeof forecastQuery>;
+  const days = q.days ?? 14;
   const today = londonDateString();
+  const demo = DEMO_ALLOWED && q.demo === "1" ? demoSources(today) : null;
   const [settings, itemRows, vendors, bills, payouts] = await Promise.all([
     db.execute<{ bank_balance: string; balance_as_of: string; updated_by_name: string | null; updated_at: string }>(sql`
       SELECT bank_balance, to_char(balance_as_of, 'YYYY-MM-DD') AS balance_as_of, updated_by_name, updated_at FROM cash_flow_settings WHERE id = 1`),
     db.execute<ItemRow>(sql`SELECT ${ITEM_COLS} FROM cash_flow_items ORDER BY active DESC, COALESCE(on_date, starts_on), id`),
     db.execute<{ id: number; name: string }>(sql`SELECT id, name FROM fin_vendors ORDER BY name`),
-    loadOpenBills(),
-    loadShopifyPayouts(),
+    demo ? Promise.resolve(null) : loadOpenBills(),
+    demo ? Promise.resolve(null) : loadShopifyPayouts(),
   ]);
   const s = settings.rows[0];
   const items = itemRows.rows.map(toItem);
@@ -67,8 +89,8 @@ router.get("/", validateQuery(forecastQuery), async (_req: Request, res: Respons
   const balanceAsOf = s?.balance_as_of ?? today;
   const forecast = forecastCashFlow({
     today, days, balance, balanceAsOf,
-    bills: bills.bills.map(b => ({ id: b.id, vendorName: b.vendorName, docNumber: b.docNumber, dueDate: b.dueDate, balance: b.balance })),
-    payouts: payouts.payouts.map(p => ({ id: p.id, date: p.date, status: p.status, net: p.net })),
+    bills: demo ? demo.bills : (bills?.bills ?? []).map(b => ({ id: b.id, vendorName: b.vendorName, docNumber: b.docNumber, dueDate: b.dueDate, balance: b.balance })),
+    payouts: demo ? demo.payouts : (payouts?.payouts ?? []).map(p => ({ id: p.id, date: p.date, status: p.status, net: p.net })),
     items: items as CfItem[],
   });
   res.json({
@@ -77,9 +99,14 @@ router.get("/", validateQuery(forecastQuery), async (_req: Request, res: Respons
     forecast,
     items,
     vendors: vendors.rows.map(v => ({ id: Number(v.id), name: v.name })),
-    sources: {
-      quickbooks: { connected: bills.connected, bills: bills.bills.length, fetchedAt: bills.fetchedAt, error: bills.error ?? null },
-      shopify: { available: payouts.available, reason: payouts.reason ?? null, balance: payouts.balance, fetchedAt: payouts.fetchedAt, error: payouts.error ?? null },
+    demo: !!demo,
+    demoAllowed: DEMO_ALLOWED,
+    sources: demo ? {
+      quickbooks: { connected: true, bills: demo.bills.length, fetchedAt: null, error: null },
+      shopify: { available: true, reason: null, balance: 1830.4, fetchedAt: null, error: null },
+    } : {
+      quickbooks: { connected: !!bills?.connected, bills: bills?.bills.length ?? 0, fetchedAt: bills?.fetchedAt ?? null, error: shortError(bills?.error) },
+      shopify: { available: !!payouts?.available, reason: shortError(payouts?.reason), balance: payouts?.balance ?? null, fetchedAt: payouts?.fetchedAt ?? null, error: shortError(payouts?.error) },
     },
   });
 });

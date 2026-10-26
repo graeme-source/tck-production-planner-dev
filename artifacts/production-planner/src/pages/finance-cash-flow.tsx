@@ -24,6 +24,9 @@ interface Item {
 }
 interface CashFlow {
   today: string;
+  /** Test server only: sample bills and payouts instead of QuickBooks/Shopify. */
+  demo?: boolean;
+  demoAllowed?: boolean;
   balance: { amount: number; asOf: string; set: boolean; updatedBy: string | null; updatedAt: string | null };
   forecast: { start: string; openingBalance: number; days: Day[]; lowest: { date: string; balance: number } | null; totalIn: number; totalOut: number };
   items: Item[];
@@ -56,7 +59,8 @@ function SaveTag({ state }: { state: SaveState }) {
 /** The Cash flow tab inside Finance (pages/finance.tsx decides who sees it). */
 export function CashFlowPanel() {
   const [days, setDays] = useState(14);
-  const q = useQuery({ queryKey: ["cash-flow", days], queryFn: () => api<CashFlow>(`?days=${days}`), refetchInterval: 5 * 60_000 });
+  const [demo, setDemo] = useState(false);
+  const q = useQuery({ queryKey: ["cash-flow", days, demo], queryFn: () => api<CashFlow>(`?days=${days}${demo ? "&demo=1" : ""}`), refetchInterval: 5 * 60_000 });
   const d = q.data;
 
   return (
@@ -73,6 +77,19 @@ export function CashFlowPanel() {
             <BigCard label={`Money in · ${days} days`} tone="good" value={gbp0(d.forecast.totalIn)} sub="Shopify payouts + added" />
             <BigCard label={`Money out · ${days} days`} tone="plain" value={gbp0(d.forecast.totalOut)} sub="Bills due + added" />
           </div>
+
+          {d.demoAllowed && (
+            <div className={cn("rounded-2xl border-2 px-4 py-2.5 flex flex-wrap items-center gap-3", d.demo ? "border-violet-400 bg-violet-50 dark:bg-violet-950/30" : "border-dashed border-border")}>
+              <p className="text-sm flex-1 min-w-[14rem]">
+                {d.demo
+                  ? <><span className="font-bold">Sample data</span> — made-up bills and payouts so the page can be tried. Not real. Test server only.</>
+                  : "Test server: QuickBooks and Shopify can't be reached from here."}
+              </p>
+              <button type="button" onClick={() => setDemo(v => !v)} className="h-10 px-4 rounded-xl border-2 border-violet-400 font-semibold hover:bg-violet-100 dark:hover:bg-violet-900/40">
+                {d.demo ? "Back to real data" : "Show sample data"}
+              </button>
+            </div>
+          )}
 
           <Sources s={d.sources} />
 

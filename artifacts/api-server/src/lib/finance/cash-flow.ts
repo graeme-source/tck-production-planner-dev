@@ -127,3 +127,13 @@ export function forecastCashFlow(args: {
   }
   return { start, openingBalance: round2(balance), days, lowest, totalIn: round2(totalIn), totalOut: round2(totalOut) };
 }
+
+/** An upstream error as one short readable line — Shopify's token errors
+ *  arrive as a whole HTML page, which the chip on the page used to show in
+ *  full (2026-10-26). */
+export function shortError(e: string | null | undefined): string | null {
+  if (!e) return null;
+  const why = e.match(/Oauth error [^<\n]+/i)?.[0];
+  const text = (why ?? e.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
+  return text.length > 140 ? `${text.slice(0, 139)}…` : text;
+}
