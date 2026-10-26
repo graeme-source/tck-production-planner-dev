@@ -6,6 +6,7 @@
 // If those are not set, production credentials are attempted but will likely fail on the
 // training server (which rejects production accounts with a 419 Authentication Error).
 
+import { explainAddressLoss, type AddressLoss } from "../lib/apc-address-loss";
 import { buildCancelRequest, interpretCancelReply } from "../lib/apc-cancel";
 
 const APC_API_BASE = process.env.APC_API_BASE ?? "https://apc.hypaship.com/api/3.0";
@@ -128,6 +129,9 @@ interface PlaceOrderResult {
 export interface AddressReviewFlag {
   kind: "conflicting-postcode" | "town-too-long" | "truncated";
   message: string;
+  /** For a shortened line: exactly what's lost, whether it matters, and a
+   *  line that would fit without losing anything that does (2026-10-26). */
+  loss?: AddressLoss;
 }
 
 export interface NormalisedAddress {
@@ -139,10 +143,18 @@ export interface NormalisedAddress {
    *  address2). Callers should append it to the consignment Instructions
    *  rather than let it eat an address line. */
   instructions?: string;
+  /** APC's County field, used as one more printed line for overflow — the
+   *  rest of a long town ("Christchurch and Poole") or of address line 2
+   *  (Graeme, 2026-10-26). Absent when nothing needed it. */
+  county?: string;
   review: AddressReviewFlag[];
 }
 
-const ADDRESS_LINE_MAX = 35;
+/** APC prints at most 30 characters of each address line on the label
+ *  (integration guide §10.3 — the API itself takes up to 63), so lines are
+ *  fitted to what PRINTS (2026-10-26; was 35, which APC accepted but the
+ *  label cut short without anyone seeing). */
+const ADDRESS_LINE_MAX = 30;
 
 /** Loose UK postcode matcher — good enough to spot a postcode typed into a
  *  street line. Deliberately permissive about the inner space. */
@@ -205,10 +217,30 @@ function stripTrailingTown(line: string, town: string): string {
   return line;
 }
 
+/** Words that only dress up a town's name ("The Royal Town of Sutton
+ *  Coldfield", "City of Westminster") — a part made of these plus the town is
+ *  the town again. Deliberately short: anything else ("Sutton Coldfield
+ *  House", "Flat 2") is never treated as a repeat. */
+const TOWN_DRESSING = new Set(["the", "royal", "town", "city", "borough", "village", "of", "royalborough", "county", "metropolitan"]);
+
+/** Is this part of a line just the town again, maybe dressed up? */
+function restatesTown(part: string, town: string): boolean {
+  const t = key(town);
+  if (!t) return false;
+  const k = key(part);
+  if (k === t) return true;
+  if (!k.endsWith(t)) return false;
+  const words = part.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  const townWords = town.toLowerCase().replace(/[^a-z\s]/g, " ").split(/\s+/).filter(Boolean);
+  const prefix = words.slice(0, words.length - townWords.length);
+  return prefix.length > 0 && prefix.every(w => TOWN_DRESSING.has(w));
+}
+
 /** Split a line to fit, preferring a real boundary over an arbitrary word
  *  gap: comma first, then full stop, then a word break that does not leave a
  *  connector word dangling. */
 function splitToFit(line: string): { head: string; tail: string } {
+  // Callers fit to the printed line length; see ADDRESS_LINE_MAX.
   if (line.length <= ADDRESS_LINE_MAX) return { head: line, tail: "" };
 
   const parts = components(line);
@@ -243,7 +275,7 @@ function splitToFit(line: string): { head: string; tail: string } {
 }
 
 /**
- * Reshape a Shopify address into APC's 35-character lines — the automated
+ * Reshape a Shopify address into APC's 30-character printed lines — the automated
  * version of carving an address up by hand before a CSV upload.
  *
  * Order matters: strip what is redundant BEFORE splitting, because most
@@ -269,14 +301,23 @@ export function normaliseAddress(
   const rawCity = squash(city);
   const postcodeKey = key(opts.postcode ?? "");
 
+  // A town too long for its line ("Bournemouth, Christchurch and Poole") is
+  // split at a natural break and the rest goes on the County line, which
+  // prints too — nothing lost, so nothing to flag. Only a town that can't be
+  // split that way is cut short and flagged.
   let c = rawCity;
+  let county: string | undefined;
+  let townCut = false;
   if (c.length > ADDRESS_LINE_MAX) {
-    c = c.slice(0, ADDRESS_LINE_MAX).trim();
-    warnings.push(`City truncated from "${rawCity}" to "${c}"`);
-    review.push({
-      kind: "town-too-long",
-      message: `Town "${rawCity}" is ${rawCity.length} characters — APC allows ${ADDRESS_LINE_MAX}. Check the correct post town before booking.`,
-    });
+    const split = splitToFit(c);
+    if (split.tail && split.head.length <= ADDRESS_LINE_MAX && split.tail.length <= ADDRESS_LINE_MAX) {
+      c = split.head;
+      county = split.tail;
+    } else {
+      c = c.slice(0, ADDRESS_LINE_MAX).trim();
+      townCut = true;
+      warnings.push(`City truncated from "${rawCity}" to "${c}"`);
+    }
   }
 
   // ── 1. Lift delivery notes out of an address line ────────────────────────
@@ -328,28 +369,61 @@ export function normaliseAddress(
   if (!a1 && a2) { a1 = a2; a2 = ""; }
   if (!a1) a1 = originalA1.slice(0, ADDRESS_LINE_MAX);
 
-  // ── 4. Fit to 35 characters, overflow cascading down ─────────────────────
+  // ── 4. Fit to 30 characters, overflow cascading down (line 1 → 2 → County) ─
   const fitted = splitToFit(a1);
   a1 = fitted.head;
   if (fitted.tail) a2 = a2 ? `${fitted.tail}, ${a2}` : fitted.tail;
 
+  let a2Cut: { full: string } | null = null;
   if (a2) {
     a2 = squash(dedupeComponents(a2));
+    const a2Before = a2;
     if (a2.length > ADDRESS_LINE_MAX) {
-      const full = a2;
-      a2 = splitToFit(a2).head.slice(0, ADDRESS_LINE_MAX).trim();
-      warnings.push(`Address line 2 truncated from "${full}" to "${a2}"`);
-      review.push({
-        kind: "truncated",
-        message: `Address line 2 was too long and lost "${full.slice(a2.length).trim()}". Check the address before booking.`,
-      });
+      // First drop any part that only restates the town (it's on the town
+      // line already) — "The Royal Town of Sutton Coldfield, Birmingham"
+      // with town "Sutton Coldfield" is really just "Birmingham".
+      // Nothing is lost, so no warning (a warning puts the order under
+      // "needs a look").
+      const trimmed = components(a2).filter(p => !restatesTown(p, c)).join(", ");
+      if (trimmed) a2 = trimmed;
     }
+    if (a2.length > ADDRESS_LINE_MAX) {
+      const split = splitToFit(a2);
+      // The rest of line 2 goes on the County line when it's free and fits:
+      // it prints, so nothing is lost and nothing needs a look.
+      if (!county && split.tail && split.head.length <= ADDRESS_LINE_MAX && split.tail.length <= ADDRESS_LINE_MAX) {
+        a2 = split.head;
+        county = split.tail;
+      } else {
+        a2 = split.head.slice(0, ADDRESS_LINE_MAX).trim();
+        warnings.push(`Address line 2 truncated from "${a2Before}" to "${a2}"`);
+        a2Cut = { full: a2Before };
+      }
+    }
+  }
+  // The review flags carry the label as it will print, so they're built
+  // once every line is final.
+  if (townCut) {
+    review.push({
+      kind: "town-too-long",
+      message: `Town "${rawCity}" is ${rawCity.length} characters — APC allows ${ADDRESS_LINE_MAX}. Check the correct post town before booking.`,
+      loss: explainAddressLoss({ field: "Town", original: rawCity, kept: c, address1: a1, address2: a2 || null, city: c, county: county ?? null, postcode: opts.postcode }),
+    });
+  }
+  if (a2Cut) {
+    const loss = explainAddressLoss({ field: "Address line 2", original: a2Cut.full, kept: a2, address1: a1, address2: a2 || null, city: c, county: county ?? null, postcode: opts.postcode });
+    review.push({
+      kind: "truncated",
+      message: `Address line 2 was too long and lost "${loss.lost || a2Cut.full.slice(a2.length).trim()}". Check the address before booking.`,
+      loss,
+    });
   }
 
   return {
     address1: a1,
     ...(a2 ? { address2: a2 } : {}),
     city: c,
+    ...(county ? { county } : {}),
     warnings,
     ...(instructions ? { instructions } : {}),
     review,
@@ -411,6 +485,7 @@ async function placeOrder(req: ApcShipmentRequest): Promise<PlaceOrderResult> {
           ...(addr.address2 ? { AddressLine2: addr.address2 } : {}),
           PostalCode: req.recipient.postcode,
           City: addr.city,
+          ...(addr.county ? { County: addr.county } : {}),
           CountryCode: req.recipient.country ?? "GB",
           Contact: {
             PersonName: req.recipient.name.slice(0, 35),

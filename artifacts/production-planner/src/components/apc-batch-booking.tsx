@@ -43,6 +43,66 @@ export interface PreflightOrder {
   existingWaybill: string | null;
   problems: string[];
   reviews: string[];
+  /** Shortened address lines spelled out (server lib/apc-address-loss.ts). */
+  addressLosses?: AddressLoss[];
+}
+
+interface AddressLossPart { text: string; safeBecause: string | null }
+interface AddressLoss {
+  field: "Address line 2" | "Town";
+  original: string;
+  kept: string;
+  lost: string;
+  lostParts: AddressLossPart[];
+  safe: boolean;
+  suggestion: { line: string; dropped: AddressLossPart[] } | null;
+  label: { address1: string; address2: string | null; city: string; county?: string | null; postcode: string | null };
+}
+
+/**
+ * What a shortened address loses, at a glance (Graeme, 2026-10-26: "I
+ * shouldn't have to read a whole paragraph ... put the Birmingham bit that's
+ * been lost in big red writing"): the lost words big, whether that matters,
+ * the label as it will print, and a better line when there is one. The fix
+ * itself is made on the order in Shopify (the order number links there).
+ */
+function AddressLossView({ loss }: { loss: AddressLoss }) {
+  const l = loss.label;
+  return (
+    <span className={cn("block mt-1.5 rounded-lg border-2 p-2.5 space-y-2",
+      loss.safe ? "border-green-300 bg-green-50/70 dark:bg-green-950/20 dark:border-green-800" : "border-red-300 bg-red-50/70 dark:bg-red-950/20 dark:border-red-800")}>
+      <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">{loss.field} loses</span>
+        <span className="text-xl font-extrabold text-red-600 line-through decoration-2 break-words">{loss.lost || "—"}</span>
+      </span>
+      <span className={cn("block text-sm font-semibold", loss.safe ? "text-green-700 dark:text-green-400" : "text-red-700 dark:text-red-400")}>
+        {loss.safe
+          ? `✓ Fine to book: ${loss.lostParts.map(p => p.safeBecause).join("; ")}.`
+          : `✗ Could matter: ${loss.lostParts.filter(p => !p.safeBecause).map(p => `"${p.text}"`).join(", ")} won't be on the label. Fix the address in Shopify first.`}
+      </span>
+      <span className="block">
+        <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">The label will say</span>
+        <span className="block mt-0.5 rounded-md bg-card border border-border px-2 py-1 font-mono text-sm leading-snug">
+          <span className="block">{l.address1}</span>
+          {l.address2 && <span className="block">{l.address2}</span>}
+          <span className="block">{l.city}</span>
+          {l.county && <span className="block">{l.county}</span>}
+          {l.postcode && <span className="block">{l.postcode}</span>}
+        </span>
+      </span>
+      {loss.suggestion && (
+        <span className="block">
+          <span className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Better {loss.field.toLowerCase()}</span>
+          <span className="block mt-0.5 text-sm">
+            {loss.suggestion.line
+              ? <span className="font-mono font-bold bg-card border border-primary/50 rounded px-1.5 py-0.5">{loss.suggestion.line}</span>
+              : <span className="font-bold">leave it empty</span>}
+            <span className="text-muted-foreground"> — drops {loss.suggestion.dropped.map(p => `"${p.text}"`).join(" and ")} ({loss.suggestion.dropped.map(p => p.safeBecause).join("; ")}), nothing else lost.</span>
+          </span>
+        </span>
+      )}
+    </span>
+  );
 }
 
 interface Preflight {
@@ -145,6 +205,7 @@ function OrderLine({ o, tone, adminBase, selectable, checked, onToggle }: {
             {[...o.problems, ...o.reviews].join(" · ")}
           </span>
         )}
+        {o.addressLosses?.map((loss, i) => <AddressLossView key={i} loss={loss} />)}
         {o.existingWaybill && (
           <span className="block text-xs text-muted-foreground font-mono mt-0.5">{o.existingWaybill}</span>
         )}
