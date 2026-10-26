@@ -162,3 +162,36 @@ describe("weekEndFactoryNumber", () => {
     expect(res.ifNoMoreOrders).toBe(340);
   });
 });
+
+describe("best guess — making what we could on unplanned days (26 Oct 2026)", () => {
+  // Monday: 1,100 in the fridge, 1,000 planned, 1,531 to go out, Wed–Fri unplanned.
+  const late = (latePacks: number) => ({ latePacks, low: latePacks - 50, high: latePacks + 50, closed: false });
+  const input = {
+    today: "2026-10-26", weekEnd: "2026-11-01", stockNow: 1100, stillToWrapToday: 500, stillToDispatchToday: 400,
+    days: [
+      { date: "2026-10-26", isDispatchDay: true, plannedPacks: 0, hasPlan: true, knownOrderPacks: 0, late: late(0) },
+      { date: "2026-10-27", isDispatchDay: true, plannedPacks: 500, hasPlan: true, knownOrderPacks: 400, late: late(100) },
+      { date: "2026-10-28", isDispatchDay: true, plannedPacks: 0, hasPlan: false, knownOrderPacks: 300, late: late(200), couldMakePacks: 500 },
+      { date: "2026-10-29", isDispatchDay: true, plannedPacks: 0, hasPlan: false, knownOrderPacks: 231, late: late(300), couldMakePacks: 500 },
+      { date: "2026-10-30", isDispatchDay: true, plannedPacks: 0, hasPlan: false, knownOrderPacks: 200, late: late(336), couldMakePacks: 500 },
+    ],
+  };
+  it("adds what we could make, and keeps the plans-only prediction", () => {
+    const r = weekEndFactoryNumber(input);
+    expect(r.ifNoMoreOrders).toBe(1100 + 1000 - 1531);
+    expect(r.predicted).toBe(569 - 936);
+    expect(r.couldMake).toBe(1500);
+    expect(r.bestGuess).toBe(569 + 1500 - 936);
+    expect(r.unplannedDays).toEqual(["2026-10-28", "2026-10-29", "2026-10-30"]);
+  });
+  it("selling faster than normal takes more off", () => {
+    const r = weekEndFactoryNumber({ ...input, salesFactor: 1.1 });
+    expect(r.bestGuessMore).toBe(Math.round(936 * 1.1));
+    expect(r.bestGuess).toBe(Math.round(569 + 1500 - 936 * 1.1));
+    expect(r.predicted).toBe(569 - 936);
+  });
+  it("today's capacity never counts — today has its own plan or none", () => {
+    const r = weekEndFactoryNumber({ ...input, days: input.days.map(d => d.date === "2026-10-26" ? { ...d, hasPlan: false, couldMakePacks: 999 } : d) });
+    expect(r.couldMake).toBe(1500);
+  });
+});

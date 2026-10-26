@@ -10,6 +10,12 @@
  * from the same weekly-orders feed the panel's green bars draw.
  *
  * A finished week shows what it actually ended on (fridge change log).
+ *
+ * Three numbers (Graeme, 26 Oct 2026): what's in the fridge NOW; Sunday
+ * predicted with the plans as they stand; and the best guess — every day
+ * with no plan yet making what the kitchen could (the "could still make"
+ * capacity forecast), late orders nudged by how sales are running.
+ * "If no more orders" stays in the working, not as a headline.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -39,6 +45,7 @@ type WeekEndStockResponse =
       stillToDispatchToday: number | null;
       todayDispatchError: string | null;
       days: ServerDay[];
+      sales?: { last7: number; normal7: number; ratio: number | null; factor: number };
       klaviyoConnected: boolean;
     };
 
@@ -59,7 +66,7 @@ export function useWeekEndStock(weekStart: string, enabled: boolean) {
 }
 
 /** The server inputs + the orders already placed, run through the shared maths. */
-function useWeekEnd(weekStart: string, knownPacksByDate: ReadonlyMap<string, number>, ordersReady: boolean) {
+function useWeekEnd(weekStart: string, knownPacksByDate: ReadonlyMap<string, number>, ordersReady: boolean, couldMakeByDate?: Readonly<Record<string, number>>) {
   const { data, isLoading, error } = useWeekEndStock(weekStart, true);
   const result = useMemo(() => {
     if (!data || (data.phase !== "current" && data.phase !== "future") || !ordersReady) return null;
@@ -69,9 +76,10 @@ function useWeekEnd(weekStart: string, knownPacksByDate: ReadonlyMap<string, num
       stockNow: data.stock?.packs ?? null,
       stillToWrapToday: data.stillToWrapToday,
       stillToDispatchToday: data.stillToDispatchToday,
-      days: data.days.map(d => ({ ...d, knownOrderPacks: knownPacksByDate.get(d.date) ?? 0 })),
+      days: data.days.map(d => ({ ...d, knownOrderPacks: knownPacksByDate.get(d.date) ?? 0, couldMakePacks: couldMakeByDate?.[d.date] ?? 0 })),
+      salesFactor: data.sales?.factor ?? 1,
     });
-  }, [data, knownPacksByDate, ordersReady]);
+  }, [data, knownPacksByDate, ordersReady, couldMakeByDate]);
   return { data, result, isLoading, error };
 }
 
@@ -94,12 +102,14 @@ function EndNumber({ packs, approx, label, sub }: { packs: number; approx?: bool
  * @param knownPacksByDate  despatch date → packs on orders already placed
  *   (weekly-orders packCount) for every date from today to the week's Sunday.
  */
-export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady }: {
+export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady, couldMakeByDate }: {
   weekStart: string;
   knownPacksByDate: ReadonlyMap<string, number>;
   ordersReady: boolean;
+  /** Plan date → packs the kitchen could make (unplanned days) — the panel's "could still make" bars. */
+  couldMakeByDate?: Readonly<Record<string, number>>;
 }) {
-  const { data, result, isLoading, error } = useWeekEnd(weekStart, knownPacksByDate, ordersReady);
+  const { data, result, isLoading, error } = useWeekEnd(weekStart, knownPacksByDate, ordersReady, couldMakeByDate);
 
   const shell = (children: React.ReactNode) => (
     <div className="w-full sm:w-auto rounded-xl border-2 border-border bg-secondary/40 p-3 space-y-2">
@@ -120,14 +130,20 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady }: {
   if (!result) return null;
   if (result.status !== "ok") return shell(<p className="text-xs text-muted-foreground leading-snug">{describeWeekEnd(result, dayName)}</p>);
 
+  const sales = data.sales;
+  const trend = sales?.ratio != null && Math.abs(sales.ratio - 1) >= 0.05
+    ? `selling ${Math.round(Math.abs(sales.ratio - 1) * 100)}% ${sales.ratio > 1 ? "above" : "below"} normal this week`
+    : "selling about as normal this week";
   return shell(
     <>
-      <EndNumber packs={result.ifNoMoreOrders ?? 0} label="if no more orders" />
+      {data.phase === "current" && result.stockNow != null && (
+        <EndNumber packs={result.stockNow} label="in the fridge now" />
+      )}
       {result.predicted != null ? (
         <EndNumber
           packs={result.predicted}
           approx
-          label="predicted"
+          label={result.unplannedDays.length ? "Sunday, with today's plans only" : "Sunday, predicted"}
           sub={result.expectedMore ? `after ~${result.expectedMore.toLocaleString("en-GB")} more ordered as normal` : "nothing more expected"}
         />
       ) : (
@@ -135,17 +151,28 @@ export function WeekEndStock({ weekStart, knownPacksByDate, ordersReady }: {
           No prediction for {result.predictionGap.map(dayName).join(", ")} — not enough order history.
         </p>
       )}
+      {result.bestGuess != null && result.couldMake > 0 && (
+        <div className="rounded-lg bg-primary/10 -mx-1 px-2 py-1.5">
+          <EndNumber
+            packs={result.bestGuess}
+            approx
+            label="Sunday, best guess"
+            sub={`making the ~${result.couldMake.toLocaleString("en-GB")} we could on unplanned days · ${trend}`}
+          />
+        </div>
+      )}
     </>,
   );
 }
 
 /** The plain line + the working, under the chart. */
-export function WeekEndStockLine({ weekStart, knownPacksByDate, ordersReady }: {
+export function WeekEndStockLine({ weekStart, knownPacksByDate, ordersReady, couldMakeByDate }: {
   weekStart: string;
   knownPacksByDate: ReadonlyMap<string, number>;
   ordersReady: boolean;
+  couldMakeByDate?: Readonly<Record<string, number>>;
 }) {
-  const { data, result } = useWeekEnd(weekStart, knownPacksByDate, ordersReady);
+  const { data, result } = useWeekEnd(weekStart, knownPacksByDate, ordersReady, couldMakeByDate);
 
   if (!data) return null;
   if (data.phase === "past") {
@@ -193,7 +220,20 @@ export function WeekEndStockLine({ weekStart, knownPacksByDate, ordersReady }: {
           )}
           {result.unplannedDays.length > 0 && (
             <li className="text-amber-600 dark:text-amber-400">
-              No plan yet for {result.unplannedDays.map(dayName).join(", ")} — counted as nothing made.
+              No plan yet for {result.unplannedDays.map(dayName).join(", ")} — counted as nothing made in the figures above.
+            </li>
+          )}
+          {result.bestGuess != null && result.couldMake > 0 && (
+            <li>
+              Best guess: + <span className="font-semibold text-foreground tabular-nums">~{fmt(result.couldMake)}</span> the team could make on
+              the unplanned days (same Planday capacity as the "could make" bars), and the usual late orders
+              {data.sales?.ratio != null
+                ? ` × ${data.sales.factor.toFixed(2)} because the last 7 days sold ${fmt(data.sales.last7)} packs against a normal ${fmt(data.sales.normal7)} (half the difference, capped at 25%)`
+                : ""}{" "}
+              = <span className="font-semibold text-foreground tabular-nums">~{fmt(result.bestGuess)}</span>
+              {result.bestGuessLow != null && result.bestGuessHigh != null && result.bestGuessLow !== result.bestGuessHigh
+                ? `, likely ${fmt(result.bestGuessLow)} to ${fmt(result.bestGuessHigh)}`
+                : ""}
             </li>
           )}
           {result.tightest && result.tightest.packs < 0 && (

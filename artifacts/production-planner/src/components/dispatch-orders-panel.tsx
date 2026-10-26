@@ -418,7 +418,7 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
                 </div>
               )}
               {showWeekEnd && (
-                <WeekEndStock weekStart={weekStartStr} knownPacksByDate={knownPacksByDate} ordersReady={weekEndOrdersReady} />
+                <WeekEndStock weekStart={weekStartStr} knownPacksByDate={knownPacksByDate} ordersReady={weekEndOrdersReady} couldMakeByDate={forecastByDate} />
               )}
             </div>
           )}
@@ -427,7 +427,7 @@ export function DispatchOrdersPanel({ className }: { className?: string }) {
       </div>
 
       {showWeekEnd && weeklyOrders && (
-        <WeekEndStockLine weekStart={weekStartStr} knownPacksByDate={knownPacksByDate} ordersReady={weekEndOrdersReady} />
+        <WeekEndStockLine weekStart={weekStartStr} knownPacksByDate={knownPacksByDate} ordersReady={weekEndOrdersReady} couldMakeByDate={forecastByDate} />
       )}
 
       {weeklyOrders && (

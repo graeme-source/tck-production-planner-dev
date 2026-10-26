@@ -31,7 +31,7 @@ import * as z from "zod";
 import { db, stockEntriesTable } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import {
-  addDays, forecastLateOrders, indexOrdersByDate, londonWallTimeMs, orderCutoffMs,
+  addDays, forecastLateOrders, indexOrdersByDate, salesMomentum, londonWallTimeMs, orderCutoffMs,
 } from "@workspace/stock-prediction";
 import { loadEmailWindow, loadForecastOrders } from "../lib/factory-forecast-data";
 import { loadPlannedTwoPacksByDate, loadStillToWrapToday } from "../lib/plan-start-stock-inputs";
@@ -159,6 +159,8 @@ router.get("/", async (req, res) => {
       stillToDispatchToday: fulfilment == null ? 0 : fulfilment.diagnostics.error ? null : Math.round(sum(fulfilment.byRecipe)),
       todayDispatchError: fulfilment?.diagnostics.error ?? null,
       days,
+      // How sales are running vs the 4 weeks before — nudges the best guess.
+      sales: salesMomentum(orders, now),
       klaviyoConnected: emailWindow.klaviyoConnected,
     });
   } catch (err) {

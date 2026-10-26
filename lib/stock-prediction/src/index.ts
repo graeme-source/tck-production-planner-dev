@@ -183,3 +183,4 @@ export * from "./factory-forecast";
 export * from "./batch-advice";
 // End-of-week factory number for the Dispatch Orders panel (Graeme, 16 Oct 2026).
 export * from "./week-end";
+export * from "./sales-momentum";

@@ -21,6 +21,17 @@
  *                       (forecastLateOrders — the SAME forecast the Create
  *                       Plan factory number uses; no second sales model).
  *
+ *   Best guess (26 Oct) = Predicted
+ *                     + what the kitchen could make on every despatch week
+ *                       day with no plan yet (the same Planday capacity
+ *                       forecast as the panel's "could still make" bar)
+ *                     − a nudge to the late orders for how sales are running
+ *                       this week (sales-momentum.ts)
+ *     Graeme: "Assume that we will make everything that we can ... It's
+ *     saying we're going to have 548 packs ... we've currently got like
+ *     1,100 in there, and if we make as much as we want every day this week,
+ *     we will have a lot more."
+ *
  * Deliberately NOT clamped at zero: a negative end is the useful answer —
  * "short by 40 packs" — not a hidden zero. The lowest point during the week
  * is reported too, so a mid-week shortfall that later production makes good
@@ -70,6 +81,9 @@ export interface WeekEndDay {
   /** Packs on orders already placed for this day's despatch. Ignored for
    *  today — today's figure is stillToDispatchToday. */
   knownOrderPacks: number;
+  /** No plan yet: what the kitchen could make this day (capacity forecast).
+   *  Only used for the best guess, and only after today. */
+  couldMakePacks?: number;
   /** Expected further orders for this despatch; null = no forecast possible
    *  (too little history). Ignored on non-despatch days. */
   late: WeekEndLate | null;
@@ -88,6 +102,9 @@ export interface WeekEndInput {
   stillToDispatchToday: number | null;
   /** Today through weekEnd (other dates are ignored), any order. */
   days: readonly WeekEndDay[];
+  /** Multiplier on the usual late orders for how sales are running now
+   *  (salesMomentum().factor); 1 = as normal. Best guess only. */
+  salesFactor?: number;
 }
 
 export type WeekEndStatus =
@@ -126,6 +143,15 @@ export interface WeekEndResult {
   /** 80% range for `predicted` (more late orders → lower fridge). */
   predictedLow: number | null;
   predictedHigh: number | null;
+  /** Could still make on unplanned days after today (capacity forecast). */
+  couldMake: number;
+  /** End of week if every unplanned day makes what it could, late orders
+   *  nudged by how sales are running. Null when `predicted` is. */
+  bestGuess: number | null;
+  bestGuessLow: number | null;
+  bestGuessHigh: number | null;
+  /** The late orders in the best guess, after the sales nudge. */
+  bestGuessMore: number | null;
   /** Open despatch days with no forecast — why `predicted` is missing. */
   predictionGap: string[];
   /** Despatch days after today with no production plan yet — counted as
@@ -141,7 +167,8 @@ const r = (n: number) => Math.round(n);
 
 export function weekEndFactoryNumber(input: WeekEndInput): WeekEndResult {
   const empty: WeekEndResult = {
-    status: "ok", stockNow: input.stockNow, toMake: 0, toDispatch: 0,
+    status: "ok", stockNow: input.stockNow, toMake: 0, toDispatch: 0, couldMake: 0,
+    bestGuess: null, bestGuessLow: null, bestGuessHigh: null, bestGuessMore: null,
     ifNoMoreOrders: null, expectedMore: null, predicted: null, predictedLow: null, predictedHigh: null,
     predictionGap: [], unplannedDays: [], tightest: null, steps: [],
   };
@@ -163,7 +190,7 @@ export function weekEndFactoryNumber(input: WeekEndInput): WeekEndResult {
 
   let known = input.stockNow;
   let predicted: number | null = input.stockNow;
-  let toMake = 0, toDispatch = 0, expectedMore = 0, down = 0, up = 0;
+  let toMake = 0, toDispatch = 0, expectedMore = 0, down = 0, up = 0, couldMake = 0;
   const predictionGap: string[] = [];
   const unplannedDays: string[] = [];
   const steps: WeekEndStep[] = [];
@@ -184,6 +211,7 @@ export function weekEndFactoryNumber(input: WeekEndInput): WeekEndResult {
         up += Math.max(0, d.late.high - late);
       }
     }
+    if (!isToday && !d.hasPlan) couldMake += Math.max(0, d.couldMakePacks ?? 0);
     // Production on a non-despatch day (a weekend plan) still lands in the fridge.
     toMake += made;
     toDispatch += out;
@@ -196,9 +224,17 @@ export function weekEndFactoryNumber(input: WeekEndInput): WeekEndResult {
   }
 
   const hasForecast = predictionGap.length === 0;
+  const factor = input.salesFactor != null && Number.isFinite(input.salesFactor) && input.salesFactor > 0 ? input.salesFactor : 1;
+  const more = expectedMore * factor;
+  const best = known + couldMake - more;
   return {
     status: "ok",
     stockNow: r(input.stockNow),
+    couldMake: r(couldMake),
+    bestGuess: hasForecast ? r(best) : null,
+    bestGuessLow: hasForecast ? r(best - up * factor) : null,
+    bestGuessHigh: hasForecast ? r(best + down * factor) : null,
+    bestGuessMore: hasForecast ? r(more) : null,
     toMake: r(toMake),
     toDispatch: r(toDispatch),
     ifNoMoreOrders: r(known),
@@ -240,7 +276,9 @@ export function describeWeekEnd(res: WeekEndResult, dayName: (date: string) => s
   // Without this, a week whose later days aren't planned yet reads as a
   // frightening shortfall with no reason given.
   if (res.unplannedDays.length > 0) {
-    parts.push(`no plan yet for ${res.unplannedDays.map(dayName).join(", ")}, so nothing counted as made`);
+    parts.push(res.bestGuess != null && res.couldMake > 0
+      ? `best guess ${formatEndPacks(res.bestGuess, true, false)} if ${res.unplannedDays.map(dayName).join(", ")} make what they could`
+      : `no plan yet for ${res.unplannedDays.map(dayName).join(", ")}, so nothing counted as made`);
   }
   return parts.join(" · ");
 }
