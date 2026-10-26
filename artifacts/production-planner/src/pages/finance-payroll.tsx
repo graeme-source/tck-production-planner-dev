@@ -22,6 +22,7 @@ interface Report {
   people: Person[]; sick: Sick[]; joiners: Change[]; leavers: Change[];
   totals: { hours: number; grossPay: number; netEstimate: number };
   assumptions: string[]; warnings: string[];
+  demo?: boolean; demoAllowed?: boolean;
 }
 interface Send { id: number; from: string; to: string; sentTo: string[]; attachments: string[]; sentBy: string | null; ok: boolean; error: string | null; sentAt: string }
 
@@ -42,13 +43,18 @@ const normalWeek = (days: number | null, hours: number | null) =>
 export function PayrollPanel() {
   const qc = useQueryClient();
   const [period, setPeriod] = useState<Period | null>(null);
-  const qs = period ? `?from=${period.from}&to=${period.to}` : "";
-  const q = useQuery({ queryKey: ["payroll", period?.from ?? "default"], queryFn: () => api<Report>(qs) });
+  // Made-up people, test server only (the server refuses it on live).
+  const [demo, setDemo] = useState(false);
+  const params = new URLSearchParams(period ? { from: period.from, to: period.to } : {});
+  if (demo) params.set("demo", "1");
+  const qs = params.size ? `?${params}` : "";
+  const q = useQuery({ queryKey: ["payroll", period?.from ?? "default", demo], queryFn: () => api<Report>(qs) });
   const sends = useQuery({ queryKey: ["payroll-sends"], queryFn: () => api<{ sends: Send[] }>("/sends") });
   const [emails, setEmails] = useState("");
   const [note, setNote] = useState("");
   const [withForms, setWithForms] = useState(true);
   const r = q.data;
+  const demoAllowed = r?.demoAllowed ?? import.meta.env.DEV;
   const send = useMutation({
     mutationFn: () => api<{ ok: true; attached: string[] }>("/email", { method: "POST", body: JSON.stringify({
       from: r!.period.from, to: r!.period.to,
@@ -80,6 +86,12 @@ export function PayrollPanel() {
 
       {q.isLoading && <div className="flex items-center gap-2 text-muted-foreground py-10 justify-center"><Loader2 className="w-5 h-5 animate-spin" /> Reading Planday…</div>}
       {q.error && <p className="text-red-600">{(q.error as Error).message}</p>}
+      {demoAllowed && (
+        <button type="button" onClick={() => setDemo(d => !d)}
+          className="h-11 px-4 rounded-xl border-2 border-dashed border-amber-500 text-amber-700 dark:text-amber-400 font-semibold">
+          {demo ? "Back to real data" : "Show sample data (test server only)"}
+        </button>
+      )}
 
       {r && (
         <>
@@ -155,7 +167,7 @@ export function PayrollPanel() {
 
             <aside className="rounded-3xl border-2 border-border bg-card p-4 space-y-3 xl:sticky xl:top-4">
               <p className="text-lg font-bold">Send or download</p>
-              <a href={`${BASE}/api/payroll/pdf?from=${r.period.from}&to=${r.period.to}`}
+              <a href={`${BASE}/api/payroll/pdf?from=${r.period.from}&to=${r.period.to}${r.demo ? "&demo=1" : ""}`}
                 className="h-12 rounded-xl border-2 border-border font-semibold inline-flex items-center justify-center gap-2 w-full hover:bg-secondary">
                 <Download className="w-5 h-5" /> Download PDF
               </a>
@@ -171,7 +183,7 @@ export function PayrollPanel() {
                 <input type="checkbox" checked={withForms} onChange={e => setWithForms(e.target.checked)} className="mt-1" />
                 <span>Attach joiners' payroll paperwork (HMRC starter checklist, payroll details, P45). Health forms are never sent.</span>
               </label>
-              <button type="button" disabled={!emailsOk || send.isPending} onClick={() => send.mutate()}
+              <button type="button" disabled={!emailsOk || send.isPending || !!r.demo} onClick={() => send.mutate()}
                 className="h-12 w-full rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center justify-center gap-2 disabled:opacity-40">
                 {send.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Mail className="w-5 h-5" />} Send report
               </button>

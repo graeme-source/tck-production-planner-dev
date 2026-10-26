@@ -21,6 +21,7 @@ import { londonDateString } from "../lib/london-time";
 import { resolveFinanceAccess } from "./finance";
 import { payPeriodFor, previousPayPeriods } from "../lib/payroll/period";
 import { loadPayrollData } from "../lib/payroll/load";
+import type { PayrollData } from "../lib/payroll/report-data";
 import { estimateNetPay } from "../lib/payroll/net-pay";
 import { renderPayrollPdf, type PayrollPdfInput } from "../lib/payroll/pdf";
 import { sendPayrollEmail } from "../lib/payroll/email";
@@ -33,7 +34,28 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
 });
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const periodQuery = z.object({ from: DATE.optional(), to: DATE.optional() });
+const periodQuery = z.object({ from: DATE.optional(), to: DATE.optional(), demo: z.enum(["1"]).optional() });
+
+// Made-up people for the TEST server only (?demo=1), so the report and PDF
+// can be looked at without Planday. Never on live.
+const DEMO_ALLOWED = process.env["NODE_ENV"] !== "production";
+function demoPayroll(from: string, to: string): PayrollData {
+  const person = (id: number, name: string, shifts: number, hours: number, rate: number, days: number | null, weekHours: number | null) =>
+    ({ plandayEmployeeId: id, appUserId: null, name, hours, shifts, hourlyRate: rate, salaried: false, grossPay: Math.round(hours * rate * 100) / 100, contractHoursPerWeek: weekHours, contractDaysPerWeek: days });
+  const people = [
+    person(1, "Sample Person A", 19, 141.5, 12.21, 5, 37.5), person(2, "Sample Person B", 12, 88, 12.21, 3, 22.5),
+    person(3, "Sample Person C", 21, 160.25, 13.5, 5, 40), person(4, "Sample Person D", 8, 52, 12.21, null, 16),
+  ];
+  return {
+    period: { from, to, label: `${payPeriodFor(to).label} (SAMPLE DATA)` },
+    people,
+    sick: [{ plandayEmployeeId: 2, name: "Sample Person B", date: to.slice(0, 8) + "14", hours: 7.5, contractHoursPerWeek: 22.5, contractDaysPerWeek: 3 }],
+    joiners: [{ plandayEmployeeId: 4, appUserId: null, name: "Sample Person D", date: to.slice(0, 8) + "06" }],
+    leavers: [{ plandayEmployeeId: 5, appUserId: null, name: "Sample Person E", date: to.slice(0, 8) + "17" }],
+    totals: { hours: people.reduce((s, p) => s + p.hours, 0), grossPay: Math.round(people.reduce((s, p) => s + p.grossPay, 0) * 100) / 100 },
+    warnings: ["Sample data — made-up people so the report can be looked at. Test server only."],
+  };
+}
 
 function periodOf(q: { from?: string; to?: string }) {
   if (q.from && q.to) return { from: q.from, to: q.to };
@@ -42,8 +64,8 @@ function periodOf(q: { from?: string; to?: string }) {
   return previousPayPeriods(londonDateString(), 1)[0] ?? current;
 }
 
-async function buildReport(from: string, to: string) {
-  const data = await loadPayrollData(from, to);
+async function buildReport(from: string, to: string, demo = false) {
+  const data = demo && DEMO_ALLOWED ? demoPayroll(from, to) : await loadPayrollData(from, to);
   const people = data.people.map(p => {
     const est = p.grossPay > 0 ? estimateNetPay(p.grossPay) : null;
     return { ...p, netEstimate: est ? est.net : null };
@@ -72,10 +94,11 @@ function pdfInput(r: Awaited<ReturnType<typeof buildReport>>): PayrollPdfInput {
 }
 
 router.get("/", validateQuery(periodQuery), async (_req: Request, res: Response) => {
-  const { from, to } = periodOf(res.locals["query"] as z.infer<typeof periodQuery>);
+  const q = res.locals["query"] as z.infer<typeof periodQuery>;
+  const { from, to } = periodOf(q);
   try {
-    const { joinerDocs: _docs, ...report } = await buildReport(from, to);
-    res.json({ ...report, periods: previousPayPeriods(londonDateString(), 6), current: payPeriodFor(londonDateString()) });
+    const { joinerDocs: _docs, ...report } = await buildReport(from, to, q.demo === "1");
+    res.json({ ...report, demo: q.demo === "1" && DEMO_ALLOWED, demoAllowed: DEMO_ALLOWED, periods: previousPayPeriods(londonDateString(), 6), current: payPeriodFor(londonDateString()) });
   } catch (err) {
     console.error("[payroll] report failed:", err);
     res.status(502).json({ error: "Couldn't build the payroll report from Planday — try again" });
@@ -83,9 +106,10 @@ router.get("/", validateQuery(periodQuery), async (_req: Request, res: Response)
 });
 
 router.get("/pdf", validateQuery(periodQuery), async (_req: Request, res: Response) => {
-  const { from, to } = periodOf(res.locals["query"] as z.infer<typeof periodQuery>);
+  const q = res.locals["query"] as z.infer<typeof periodQuery>;
+  const { from, to } = periodOf(q);
   try {
-    const r = await buildReport(from, to);
+    const r = await buildReport(from, to, q.demo === "1");
     const pdf = await renderPayrollPdf(pdfInput(r));
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="TCK payroll ${from} to ${to}.pdf"`);
