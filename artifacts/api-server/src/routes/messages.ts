@@ -26,7 +26,7 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE, type Audience,
 } from "@workspace/messages";
 import {
-  loadViewer, parseAtStations, chatPage, conversationList, unreadSummary, markRead, namesFor,
+  loadViewer, parseAtStations, chatPage, conversationList, unreadSummary, newMessagesFor, markRead, namesFor,
   sendMessage, notifyByPush, messageById, visibleMessageRow, resetMentions, ackTargets,
   notifySenderOfAck, stationBanner, activeUserIds, uploadsByIds, claimUploads, type TeamViewer,
 } from "../lib/team-messages";
@@ -66,6 +66,17 @@ router.get("/unread", validateQuery(atQuery), async (req: Request, res: Response
   const v = await viewerOr401(req, res, (res.locals["query"] as z.infer<typeof atQuery>).at);
   if (!v) return;
   res.json(await unreadSummary(v));
+});
+
+// GET /toasts?after=<id> — messages that just arrived for you, for the
+// swipe-away pop-ups (lib/team-messages newMessagesFor). Without `after`:
+// just where to start from.
+const toastsQuery = z.object({ at: z.string().max(400).optional(), after: z.coerce.number().int().min(0).optional() });
+router.get("/toasts", validateQuery(toastsQuery), async (req: Request, res: Response) => {
+  const q = res.locals["query"] as z.infer<typeof toastsQuery>;
+  const v = await viewerOr401(req, res, q.at);
+  if (!v) return;
+  res.json(await newMessagesFor(v, q.after ?? null));
 });
 
 // GET /conversations — the chat list, latest first.

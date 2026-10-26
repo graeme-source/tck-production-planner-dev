@@ -14,6 +14,7 @@ import { MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useMessagesUnread, OPEN_MESSAGES_EVENT } from "./messages-api";
 import { MessagesPanel } from "./messages-panel";
+import { MessageToasts } from "./message-toasts";
 
 export function MessagesButton({ at = [], className, labelAlways = false }: {
   at?: string[];
@@ -75,6 +76,8 @@ export function MessagesButton({ at = [], className, labelAlways = false }: {
         <MessagesPanel at={at} initialKey={initialKey} onClose={() => setOpen(false)} />,
         document.body,
       )}
+      {/* New messages pop up as swipe-away cards (2026-10-26). */}
+      <MessageToasts at={at} paused={open} />
     </>
   );
 }
