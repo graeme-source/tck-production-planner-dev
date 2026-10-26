@@ -5,6 +5,7 @@ import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
 import { FRIED_CHICKEN_CATEGORY } from "./fried-chicken";
 import { allocateDailyBatches, orderFloorBatches } from "../lib/daily-batch-allocation";
+import { loadDptCapsForDate } from "../lib/dpt-schedules";
 import { loadPlanMarginSettings } from "../lib/plan-margin-settings";
 import { calzoneLineBatches, feedingStations, usesShopifyStock } from "@workspace/production-schedule";
 // Aliased: this file has its own in-handler requireManagerOrAdmin() helper
@@ -1433,6 +1434,8 @@ export async function calculatePlanData(planDate: string) {
   // batches. If no DPT packs are configured at all, it falls back to the
   // live sales split.
   const useDptWeights = totalDptPacksSold > 0;
+  // Scheduled DPT rules for THIS plan date (lib/dpt-schedules.ts, 2026-10-26).
+  const dptCaps = await loadDptCapsForDate(planDate);
   const allocation = allocateDailyBatches(recipesWithData.map(r => ({
     category: r.recipeCategory ?? null,
     weight: useDptWeights ? r.dptPercent : (totalPacksSold > 0 ? r.salesPercent : 0),
@@ -1440,6 +1443,7 @@ export async function calculatePlanData(planDate: string) {
     proj: r.estimatedFactoryNumber - r.bagPackEquivalents - (r.dispatch2Qty + r.dispatch3Qty),
     deficitBatches: r.deficitBatches,
     floorBatches: orderFloorBatches(r, planMargin),
+    extraBatchesCap: r.recipeId != null ? dptCaps.get(r.recipeId)?.extraBatches ?? null : null,
   })), totalDailyBatches);
   const { totalDeficitBatches, remainingCapacity } = allocation;
   const suggestedByIdx = allocation.suggestedBatches;
@@ -1465,6 +1469,7 @@ export async function calculatePlanData(planDate: string) {
     return {
       ...r,
       dptPercent: Math.round(r.dptPercent * 10) / 10,
+      dptSchedule: r.recipeId != null ? dptCaps.get(r.recipeId) ?? null : null,
       surplusBatches,
       suggestedBatches,
       tinCount,

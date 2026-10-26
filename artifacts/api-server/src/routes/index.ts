@@ -23,6 +23,7 @@ import buildingTablesRouter from "./building-tables";
 import buildingTargetFinishRouter from "./building-target-finish";
 import doughMixProgressRouter from "./dough-mix-progress";
 import dptSettingsRouter from "./dpt-settings";
+import dptSchedulesRouter from "./dpt-schedules";
 import timingStandardsRouter from "./timing-standards";
 import timingHealthRouter from "./timing-health";
 import stockCheckHistoryRouter from "./stock-check-history";
@@ -319,6 +320,8 @@ router.use("/building-target-finish", buildingTargetFinishRouter);
 // (the plan the dough is for) so reloads and other iPads agree.
 router.use("/dough-mix-progress", doughMixProgressRouter);
 router.use("/dpt-settings", requireAdminOrManager, dptSettingsRouter);
+// Scheduled DPT rules — "orders + N batches" from a date (2026-10-26).
+router.use("/dpt-schedules", requireAdminOrManager, dptSchedulesRouter);
 router.use("/timing-standards", timingStandardsRouter);
 // Missing/stale schedule timing inputs + suggestions (manager/admin, read-only).
 router.use("/timing-health", timingHealthRouter);

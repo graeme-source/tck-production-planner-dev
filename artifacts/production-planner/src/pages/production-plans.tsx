@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
+import { DptSchedulesSection } from "@/components/dpt-schedules-section";
 import {
   useListProductionPlans,
   useGetProductionPlan,
@@ -243,7 +244,14 @@ interface AllocRecipe {
   packsPerBatch: number;
   stockAfterPacks: number;
   demandPacks: number;
+  /** A scheduled DPT rule's "orders + N batches" for this plan date. */
+  extraBatchesCap?: number | null;
 }
+
+/** The scheduled DPT rule /calculate attached to a row (2026-10-26). */
+interface DptScheduleCap { scheduleId: number; extraBatches: number; reason: string | null; startsOn: string; endsOn: string | null }
+const capOf = (row: unknown): number | null =>
+  (row as { dptSchedule?: DptScheduleCap | null }).dptSchedule?.extraBatches ?? null;
 
 /** Target-stock allocation (Graeme, 2026-08-06): the plan should RESULT in
  *  end-of-horizon factory numbers split by the DPT percentages. The solver is
@@ -263,6 +271,7 @@ function allocateBatchesToTargets(recipes: AllocRecipe[], capacity: number, marg
       stockPacks: r.stockAfterPacks + r.demandPacks,
       packsPerBatch: r.packsPerBatch,
     }, margin).batches,
+    extraBatchesCap: r.extraBatchesCap ?? null,
   })), capacity);
   return recipes.map((r, idx) => ({
     suggestedBatches: solved.batches[idx],
@@ -981,6 +990,11 @@ function DptSettingsDialog({
             </div>
           </>
         )}
+
+        {/* Dated "orders + N batches" rules, e.g. a recipe leaving the one-time menu (2026-10-26). */}
+        <div className="border-t border-border pt-4">
+          <DptSchedulesSection open={open} />
+        </div>
 
         <div className="flex items-center justify-end gap-2 pt-2 border-t border-border">
           <button
@@ -2233,6 +2247,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       packsPerBatch: r.packsPerBatch,
       stockAfterPacks: r.estimatedFactoryNumber - (r.bagPackEquivalents ?? 0) - r.dispatch2Qty - r.dispatch3Qty,
       demandPacks: r.dispatch2Qty + r.dispatch3Qty,
+      extraBatchesCap: capOf(r),
     })), capacity);
     // Capture any manual batch edits the user has already made so we can preserve them
     const prevItems = itemsRef.current;
@@ -2351,6 +2366,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
         packsPerBatch: it.packsPerBatch,
         stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
         demandPacks: it.dispatch2Qty + it.dispatch3Qty,
+        extraBatchesCap: capOf(it),
       }));
       const alloc = allocateBatches(recipesForAlloc, Math.max(0, newTotal - queuedSum));
       return capForSlowMeat(prev.map(item => {
@@ -2435,6 +2451,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       packsPerBatch: it.packsPerBatch,
       stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
       demandPacks: it.dispatch2Qty + it.dispatch3Qty,
+      extraBatchesCap: capOf(it),
     }));
     const alloc = allocateBatches(recipesForAlloc, Math.max(0, effectiveTotalBatches - queuedSum));
     isDirty.current = true;
@@ -2959,6 +2976,22 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   placeholder="Optional notes for this plan..."
                 />
               </div>
+
+              {/* Scheduled DPT rules shaping THIS plan date (2026-10-26). */}
+              {(calcData?.recipes ?? []).some((r: CalcRecipe) => capOf(r) != null) && (
+                <div className="rounded-xl border-2 border-amber-400 bg-amber-50/70 dark:bg-amber-950/20 px-3 py-2 text-sm space-y-0.5">
+                  <p className="font-bold">Scheduled for this plan date</p>
+                  {(calcData!.recipes as CalcRecipe[]).filter(r => capOf(r) != null).map(r => {
+                    const sch = (r as unknown as { dptSchedule: DptScheduleCap }).dptSchedule;
+                    return (
+                      <p key={r.recipeId}>
+                        <span className="font-semibold">{r.recipeName}</span>: orders + up to {sch.extraBatches} batch{sch.extraBatches === 1 ? "" : "es"}
+                        {sch.reason ? <span className="text-muted-foreground"> — {sch.reason}</span> : null}
+                      </p>
+                    );
+                  })}
+                </div>
+              )}
 
               <div className="border-t border-border pt-4 space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center justify-between">
@@ -3773,6 +3806,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       packsPerBatch: it.packsPerBatch,
       stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
       demandPacks: it.dispatch2Qty + it.dispatch3Qty,
+      extraBatchesCap: capOf(it),
     }));
     const alloc = editAllocateBatches(recipesForAlloc, editEffectiveTotalBatches);
     isDirty.current = true;

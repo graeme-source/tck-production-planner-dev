@@ -181,3 +181,31 @@ describe("batch allocation never rounds orders away", () => {
     expect(solveTargetAllocation(tests(true), 0).batches).toEqual([0, 0, 0]);
   });
 });
+
+describe("scheduled cap: orders + N extra batches (2026-10-26)", () => {
+  // Philly weight 9% of 100 batches, low stock; others share the rest.
+  const rows = (cap: number | null) => [
+    { weight: 9, ppb: 5, proj: 0, floorBatches: 3, extraBatchesCap: cap },
+    { weight: 50, ppb: 5, proj: 0, floorBatches: 10 },
+    { weight: 41, ppb: 5, proj: 0, floorBatches: 10 },
+  ];
+  it("without a cap the recipe takes its DPT share", () => {
+    const { batches } = solveTargetAllocation(rows(null), 100);
+    expect(batches[0]).toBe(9);
+    expect(batches.reduce((a, b) => a + b, 0)).toBe(100);
+  });
+  it("with 'orders + 2' it gets its 3 for orders plus 2; the rest goes to the others", () => {
+    const { batches } = solveTargetAllocation(rows(2), 100);
+    expect(batches[0]).toBe(5);
+    expect(batches.reduce((a, b) => a + b, 0)).toBe(100);
+    expect(batches[1] + batches[2]).toBe(95);
+  });
+  it("orders are never cut: a big order floor still gets made", () => {
+    const r = rows(2); r[0] = { ...r[0], floorBatches: 20 };
+    expect(solveTargetAllocation(r, 100).batches[0]).toBeGreaterThanOrEqual(20);
+    expect(solveTargetAllocation(r, 100).batches[0]).toBeLessThanOrEqual(22);
+  });
+  it("cap 0 = orders only", () => {
+    expect(solveTargetAllocation(rows(0), 100).batches[0]).toBe(3);
+  });
+});
