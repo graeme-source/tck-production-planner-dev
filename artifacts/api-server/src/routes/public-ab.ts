@@ -22,12 +22,19 @@ const router: IRouter = Router();
 
 const SHOP_ORIGINS = ["https://thecalzonekitchen.co.uk", "https://www.thecalzonekitchen.co.uk"];
 
+/** The shop's own pages (and local testing). No Origin = not a browser. */
+function shopOrigin(origin: string | undefined): boolean {
+  if (!origin || SHOP_ORIGINS.includes(origin) || /^https:\/\/[a-z0-9-]+\.myshopify\.com$/.test(origin)) return true;
+  return process.env["NODE_ENV"] !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+}
+
 router.use(cors({
   credentials: false,
   origin: (origin, callback) => {
-    if (!origin || SHOP_ORIGINS.includes(origin) || /^https:\/\/[a-z0-9-]+\.myshopify\.com$/.test(origin)) { callback(null, true); return; }
-    if (process.env["NODE_ENV"] !== "production" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) { callback(null, true); return; }
-    callback(new Error(`CORS: origin '${origin}' not allowed`));
+    if (shopOrigin(origin)) { callback(null, true); return; }
+    // Anything else (a shopifypreview.com share link, another site) is
+    // simply not answered with CORS headers — no error, no log noise.
+    callback(null, false);
   },
 }));
 
@@ -55,8 +62,9 @@ const hitBody = z.object({
 const BOT_UA = /bot|crawl|spider|slurp|preview|headless|lighthouse|pingdom|monitor/i;
 
 router.post("/hit", hitLimiter, async (req: Request, res: Response) => {
-  // Bots don't count — Shopify leaves them out of sessions too.
-  if (BOT_UA.test(req.get("user-agent") ?? "")) { res.status(204).end(); return; }
+  // Bots don't count — Shopify leaves them out of sessions too. Nor do theme
+  // share-previews (shopifypreview.com): a beacon arrives whatever CORS says.
+  if (BOT_UA.test(req.get("user-agent") ?? "") || !shopOrigin(req.get("origin"))) { res.status(204).end(); return; }
   let raw: unknown = req.body;
   if (typeof raw === "string") { try { raw = JSON.parse(raw); } catch { raw = null; } }
   const parsed = hitBody.safeParse(raw);
