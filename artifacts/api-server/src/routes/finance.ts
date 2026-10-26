@@ -39,7 +39,7 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 
 // ---------------------------------------------------------------------------
 // Access guards
 
-async function resolveFinanceAccess(req: Request): Promise<"admin" | "bookkeeper" | null> {
+export async function resolveFinanceAccess(req: Request): Promise<"admin" | "bookkeeper" | null> {
   if (req.session.userRole === "admin") return "admin";
   if (!req.session.userId) return null;
   const [user] = await db

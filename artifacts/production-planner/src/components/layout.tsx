@@ -82,7 +82,7 @@ import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial"
 import { TestRequestCard } from "@/components/test-request-card";
 import { ClipboardCheck, Gift } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert, Wallet } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -146,7 +146,7 @@ export const bottomNavItems: NavItem[] = [
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
 // under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/test-requests", "/finance"];
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/defects", "/test-requests", "/finance", "/finance/cash-flow"];
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
@@ -158,6 +158,8 @@ export const analyticsSubItems: NavItem[] = [
   // Finance moved under Analytics (Graeme, 2026-10-07). Admins and
   // bookkeepers only — filtered where the group is drawn.
   { name: "Finance", href: "/finance", icon: Banknote },
+  // Cash flow (2026-10-26): same people as Finance.
+  { name: "Cash flow", href: "/finance/cash-flow", icon: Wallet },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
@@ -407,7 +409,7 @@ export function NavLinks({
 
     if (item.href === "/reports" && (user?.role === "admin" || user?.role === "manager")) {
       const seesFinance = user?.role === "admin" || Boolean(user?.isBookkeeper);
-      const subs = analyticsSubItems.filter(i => i.href !== "/finance" || seesFinance);
+      const subs = analyticsSubItems.filter(i => !i.href.startsWith("/finance") || seesFinance);
       return renderNavGroup("analytics", item.name, item.icon, subs, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
     }
 
