@@ -20,7 +20,7 @@ import { FounderNav } from "@/components/founder-nav";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { cn } from "@/lib/utils";
 import { coreTileStatuses, BAND_TEXT_CLASS, type KpiBand } from "@/lib/station-kpi-bands";
-import { AREAS, LAYERS, PLAN_H, PLAN_W, areaForRotaStation, areaForSensor, defaultLayers, mergeLayers, pctBox, shortName, type Area, type AreaId, type LayerState } from "@/lib/floor-map";
+import { AREAS, LAYERS, PLAN_H, PLAN_IMAGE, PLAN_W, areaForRotaStation, areaForSensor, defaultLayers, mergeLayers, pctBox, shortName, type Area, type AreaId, type LayerState } from "@/lib/floor-map";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -175,10 +175,13 @@ export default function FounderFloor() {
         <span className="inline-flex items-center gap-1.5 text-sm font-bold text-muted-foreground mr-1"><Layers className="w-4 h-4" /> Layers</span>
         {LAYERS.map(l => {
           const on = layers[l.id];
+          // The drawing prints its own room names, so ours would double up.
+          const covered = l.id === "labels" && layers.drawing;
           return (
-            <button key={l.id} type="button" title={l.hint} aria-pressed={on}
+            <button key={l.id} type="button" title={covered ? "The drawing shows the room names" : l.hint} aria-pressed={on}
+              disabled={covered}
               onClick={() => setLayers(prev => ({ ...prev, [l.id]: !prev[l.id] }))}
-              className={cn("h-11 px-4 rounded-xl border-2 font-semibold inline-flex items-center gap-2 transition-colors",
+              className={cn("h-11 px-4 rounded-xl border-2 font-semibold inline-flex items-center gap-2 transition-colors disabled:opacity-40",
                 on ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-secondary")}>
               {on ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}{l.label}
             </button>
@@ -194,18 +197,29 @@ export default function FounderFloor() {
         {/* The plan: as wide as the panel, capped by screen height so it fits without scrolling. */}
         <div className="w-full mx-auto" style={{ maxWidth: `calc((100dvh - 230px) * ${PLAN_W / PLAN_H})` }}>
           <div className="relative w-full rounded-2xl border-2 border-border bg-background" style={{ aspectRatio: `${PLAN_W} / ${PLAN_H}` }}>
-            {/* The building's outer walls. */}
-            <div className="absolute border-[3px] border-muted-foreground/50 rounded-sm" style={pctBox([240, 118, 848, 914])} />
+            {layers.drawing ? (
+              // The to-scale drawing: walls, doors, fridges and its own room
+              // names. Areas sit over it in the drawing's pixels.
+              <img src={`${BASE}${PLAN_IMAGE}`} alt="Factory floor plan" draggable={false}
+                className="absolute inset-0 w-full h-full select-none pointer-events-none rounded-2xl dark:invert dark:hue-rotate-180" />
+            ) : (
+              // Without the drawing, just the building's outer walls.
+              <div className="absolute border-[3px] border-muted-foreground/50 rounded-sm" style={pctBox([240, 118, 848, 914])} />
+            )}
             {AREAS.map(a => {
               const people = peopleByArea.m.get(a.id) ?? [];
               const temps = tempsByArea.get(a.id) ?? [];
               const kpi = kpiFor(a);
+              const banded = layers.kpis && kpi && kpi.band !== "neutral";
               return (
                 <div key={a.id} style={pctBox(a.rect)}
-                  className={cn("absolute border-2 rounded-md p-[0.6%] flex flex-col gap-[3%] overflow-hidden", AREA_FILL[a.kind],
-                    layers.kpis && kpi && kpi.band !== "neutral" ? BAND_BORDER[kpi.band] : layers.people && people.length ? "border-primary/60" : "border-border")}
+                  className={cn("absolute border-2 rounded-md p-[0.6%] flex flex-col gap-[3%] overflow-hidden",
+                    // Over the drawing the areas are see-through: only an
+                    // area with something to say gets an outline.
+                    layers.drawing ? "bg-transparent" : AREA_FILL[a.kind],
+                    banded ? BAND_BORDER[kpi!.band] : layers.people && people.length ? "border-primary/60" : layers.drawing ? "border-transparent" : "border-border")}
                   title={a.label}>
-                  {layers.labels && (
+                  {layers.labels && !layers.drawing && (
                     // Narrow areas (stairs, goods in) get smaller type so a
                     // word never breaks in the middle.
                     <p className="font-bold uppercase text-muted-foreground leading-tight [overflow-wrap:normal]"

@@ -30,9 +30,9 @@ describe("floor map (2026-10-26)", () => {
 
 describe("map layers", () => {
   it("defaults: names, people and paces on; sensors off", () => {
-    expect(mergeLayers(null)).toEqual({ labels: true, people: true, kpis: true, sensors: false });
+    expect(mergeLayers(null)).toEqual({ drawing: true, labels: true, people: true, kpis: true, sensors: false });
   });
   it("saved choices win; unknown keys and bad values are ignored", () => {
-    expect(mergeLayers({ labels: false, sensors: true, gone: true, people: "yes" })).toEqual({ labels: false, people: true, kpis: true, sensors: true });
+    expect(mergeLayers({ labels: false, sensors: true, gone: true, people: "yes" })).toEqual({ drawing: true, labels: false, people: true, kpis: true, sensors: true });
   });
 });

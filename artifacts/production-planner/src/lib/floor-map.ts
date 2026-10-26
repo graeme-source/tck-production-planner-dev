@@ -4,13 +4,18 @@
  * KPIs for the different sections, as well as who is on what station on
  * the current day."
  *
- * Areas are traced from the to-scale plan (1160 × 1240 units, 1 m ≈ 60).
+ * Areas are traced from the to-scale plan, in the drawing's own pixels
+ * (public/images/floor-plan.png, 1173 × 1257, 1 m ≈ 60), so the page can
+ * lay them straight over the drawing (Graeme, 2026-10-26: "use the image
+ * that I gave you as a base").
  * Pure: the page draws these and hangs the live data on them; the matching
  * rules (rota station → area, sensor → area) are tested.
  */
 
-export const PLAN_W = 1160;
-export const PLAN_H = 1240;
+export const PLAN_W = 1173;
+export const PLAN_H = 1257;
+/** The to-scale wall drawing the areas sit on. */
+export const PLAN_IMAGE = "/images/floor-plan.png";
 
 export type AreaId =
   | "dough" | "building" | "ovens" | "wrapping" | "mixing" | "prep" | "wash" | "raw" | "sauce"
@@ -112,7 +117,7 @@ export function pctBox(rect: Area["rect"]) {
 // view, but if I want more information, like fridges, it can show me that").
 // A new layer is one entry here plus what it draws on the page.
 
-export type LayerId = "labels" | "people" | "kpis" | "sensors";
+export type LayerId = "drawing" | "labels" | "people" | "kpis" | "sensors";
 
 export interface MapLayer {
   id: LayerId;
@@ -123,7 +128,8 @@ export interface MapLayer {
 }
 
 export const LAYERS: readonly MapLayer[] = [
-  { id: "labels", label: "Room names", defaultOn: true, hint: "The name of each area" },
+  { id: "drawing", label: "Drawing", defaultOn: true, hint: "The to-scale drawing of the walls, doors and fridges" },
+  { id: "labels", label: "Room names", defaultOn: true, hint: "The name of each area (the drawing has its own)" },
   { id: "people", label: "People", defaultOn: true, hint: "Who the rota puts on each section today" },
   { id: "kpis", label: "Live paces", defaultOn: true, hint: "Line run rate, wrapping and packing pace, factory number" },
   { id: "sensors", label: "Fridges & freezers", defaultOn: false, hint: "Live temperature sensors" },
