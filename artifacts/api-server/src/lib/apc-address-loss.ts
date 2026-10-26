@@ -19,7 +19,8 @@
  * Pure. services/apc.ts normaliseAddress attaches it to its review flag.
  */
 
-export const LABEL_LINE_MAX = 35;
+/** Characters of each address line APC prints (integration guide §10.3). */
+export const LABEL_LINE_MAX = 30;
 
 const key = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 const parts = (line: string) => line.split(",").map(p => p.trim()).filter(Boolean);
@@ -70,7 +71,7 @@ export interface AddressLoss {
    *  "" means "leave the line empty". */
   suggestion: { line: string; dropped: AddressLossPart[] } | null;
   /** The label as it will print. */
-  label: { address1: string; address2: string | null; city: string; postcode: string | null };
+  label: { address1: string; address2: string | null; city: string; county: string | null; postcode: string | null };
 }
 
 function whySafe(part: string, ctx: { address1: string; city: string }): string | null {
@@ -101,6 +102,7 @@ export function explainAddressLoss(input: {
   address1: string;
   address2: string | null;
   city: string;
+  county?: string | null;
   postcode?: string | null;
 }): AddressLoss {
   const { field, original, kept, address1, city } = input;
@@ -129,6 +131,6 @@ export function explainAddressLoss(input: {
     lostParts,
     safe: lostParts.length > 0 && lostParts.every(p => p.safeBecause != null),
     suggestion,
-    label: { address1, address2: input.address2, city, postcode: input.postcode ?? null },
+    label: { address1, address2: input.address2, city, county: input.county ?? null, postcode: input.postcode ?? null },
   };
 }

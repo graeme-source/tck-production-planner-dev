@@ -2697,6 +2697,7 @@ router.get("/address-review", requireFulfilmentAccess, async (req: Request, res:
             address1: result.address1,
             address2: result.address2 ?? null,
             city: result.city,
+            county: result.county ?? null,
             postcode: sa.zip,
           },
         };

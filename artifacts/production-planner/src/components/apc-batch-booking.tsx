@@ -56,7 +56,7 @@ interface AddressLoss {
   lostParts: AddressLossPart[];
   safe: boolean;
   suggestion: { line: string; dropped: AddressLossPart[] } | null;
-  label: { address1: string; address2: string | null; city: string; postcode: string | null };
+  label: { address1: string; address2: string | null; city: string; county?: string | null; postcode: string | null };
 }
 
 /**
@@ -86,6 +86,7 @@ function AddressLossView({ loss }: { loss: AddressLoss }) {
           <span className="block">{l.address1}</span>
           {l.address2 && <span className="block">{l.address2}</span>}
           <span className="block">{l.city}</span>
+          {l.county && <span className="block">{l.county}</span>}
           {l.postcode && <span className="block">{l.postcode}</span>}
         </span>
       </span>

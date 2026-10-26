@@ -111,6 +111,7 @@ const deliveryPayload = {
   ...(addr.address2 ? { AddressLine2: addr.address2 } : {}),
   PostalCode: sa.zip,
   City: addr.city,
+  ...(addr.county ? { County: addr.county } : {}),
   CountryCode: sa.countryCodeV2 ?? "GB",
   Contact: {
     PersonName: customerName.slice(0, 35),

@@ -3,15 +3,29 @@ import { explainAddressLoss } from "./apc-address-loss";
 import { normaliseAddress } from "../services/apc";
 
 describe("what a shortened APC address loses (2026-10-26)", () => {
-  it("#138172: Birmingham is lost — safe, and line 2 can go entirely", () => {
+  it("#138172 no longer loses anything: the town restatement drops, Birmingham stays", () => {
     const n = normaliseAddress("12 Example Road", "The Royal Town of Sutton Coldfield, Birmingham", "Sutton Coldfield", { postcode: "B72 1AA" });
+    expect(n.address2).toBe("Birmingham");
+    expect(n.review).toEqual([]);
+  });
+  it("Bournemouth, Christchurch and Poole: Town + County, no flag", () => {
+    const n = normaliseAddress("24 St Mark's Road", undefined, "Bournemouth, Christchurch and Poole", { postcode: "BH11 8SZ" });
+    expect([n.city, n.county, n.review.length]).toEqual(["Bournemouth", "Christchurch and Poole", 0]);
+  });
+  it("when the County line is taken, the loss is spelled out", () => {
+    const n = normaliseAddress("12 Example Road", "Riverside Business Park, Unit 14 Rear Entrance", "Bournemouth, Christchurch and Poole", { postcode: "BH11 8SZ" });
     const loss = n.review.find(r => r.kind === "truncated")!.loss!;
-    expect(loss.lost).toBe("Birmingham");
-    expect(loss.kept).toBe("The Royal Town of Sutton Coldfield");
-    expect(loss.safe).toBe(true);
-    expect(loss.lostParts[0].safeBecause).toMatch(/wider area/);
+    expect(loss.lost).toBe("Unit 14 Rear Entrance");
+    expect(loss.safe).toBe(false);
+    expect(loss.label.county).toBe("Christchurch and Poole");
+  });
+  it("a lost wider area is safe, and the better line is suggested", () => {
+    const loss = explainAddressLoss({
+      field: "Address line 2", original: "The Royal Town of Sutton Coldfield, Birmingham", kept: "The Royal Town of Sutton Coldf",
+      address1: "12 Example Road", address2: "The Royal Town of Sutton Coldf", city: "Sutton Coldfield",
+    });
+    expect(loss.lostParts.find(p => p.text === "Birmingham")?.safeBecause).toMatch(/wider area/);
     expect(loss.suggestion).toMatchObject({ line: "" });
-    expect(loss.label).toEqual({ address1: "12 Example Road", address2: "The Royal Town of Sutton Coldfield", city: "Sutton Coldfield", postcode: "B72 1AA" });
   });
   it("a lost flat or building name is NOT safe", () => {
     const loss = explainAddressLoss({

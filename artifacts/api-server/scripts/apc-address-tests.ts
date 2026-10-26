@@ -11,13 +11,13 @@
  */
 import { normaliseAddress } from "../src/services/apc";
 
-const MAX = 35;
+const MAX = 30;
 
 type Case = {
   name: string;
   why: string;
   in: { a1: string; a2?: string; city: string; postcode?: string };
-  expect: { a1: string; a2?: string; city?: string; instructions?: string; review?: string[] };
+  expect: { a1: string; a2?: string; city?: string; county?: string; instructions?: string; review?: string[]; noReview?: boolean };
 };
 
 const cases: Case[] = [
@@ -45,9 +45,9 @@ const cases: Case[] = [
 
   // ── Whole address crammed into the street line ─────────────────────────
   {
-    name: "#132491", why: "postcode already has its own field — drop it, no split needed",
+    name: "#132491", why: "postcode already has its own field — drop it; the rest splits at the comma to fit APC's 30 printed characters",
     in: { a1: "15 Oast Court, Sittingbourne, kent, ME10 4DZ", city: "Sittingbourne", postcode: "ME10 4DZ" },
-    expect: { a1: "15 Oast Court, Sittingbourne, kent" },
+    expect: { a1: "15 Oast Court, Sittingbourne", a2: "kent" },
   },
   {
     name: "#132143", why: "postcode at the START of the line",
@@ -109,9 +109,24 @@ const cases: Case[] = [
   // ── Town too long for APC ──────────────────────────────────────────────
   {
     // The long string really is in Shopify's CITY field on this order.
-    name: "#132449", why: "39-char town — truncate but flag for a human",
+    name: "#132449", why: "39-char town — the rest goes on the County line, which prints: nothing lost, no flag (2026-10-26)",
     in: { a1: "11 Hoprig Place", city: "Preston, Seton and Gosford, East Lothian", postcode: "EH32 9TA" },
-    expect: { a1: "11 Hoprig Place", city: "Preston, Seton and Gosford, East Lo", review: ["town-too-long"] },
+    expect: { a1: "11 Hoprig Place", city: "Preston, Seton and Gosford", county: "East Lothian", noReview: true },
+  },
+  {
+    name: "#138xxx", why: "Graeme 26 Oct: 'Bournemouth, Christchurch and Poole' (36) failed at APC — Town + County, no flag",
+    in: { a1: "24 St Mark's Road", city: "Bournemouth, Christchurch and Poole", postcode: "BH11 8SZ" },
+    expect: { a1: "24 St Mark's Road", city: "Bournemouth", county: "Christchurch and Poole", noReview: true },
+  },
+  {
+    name: "#138172", why: "'The Royal Town of Sutton Coldfield' only restates the town — dropped; Birmingham kept, no flag",
+    in: { a1: "12 Example Road", a2: "The Royal Town of Sutton Coldfield, Birmingham", city: "Sutton Coldfield", postcode: "B72 1AA" },
+    expect: { a1: "12 Example Road", a2: "Birmingham", noReview: true },
+  },
+  {
+    name: "overflow", why: "line 2 too long with no town to drop — the rest goes on the County line, no flag",
+    in: { a1: "Flat 4", a2: "Riverside Business Park, Unit 14 Rear Entrance", city: "Leeds", postcode: "LS1 1AA" },
+    expect: { a1: "Flat 4", a2: "Riverside Business Park", county: "Unit 14 Rear Entrance", noReview: true },
   },
 
   // ── Ordinary addresses must pass through untouched ─────────────────────
@@ -133,6 +148,8 @@ for (const c of cases) {
   if (c.expect.a2 !== undefined && got.address2 !== c.expect.a2) problems.push(`address2\n      want "${c.expect.a2}"\n      got  "${got.address2 ?? "(none)"}"`);
   if (c.expect.a2 === undefined && got.address2) problems.push(`address2 should be empty, got "${got.address2}"`);
   if (c.expect.city !== undefined && got.city !== c.expect.city) problems.push(`city want "${c.expect.city}" got "${got.city}"`);
+  if (c.expect.county !== undefined && got.county !== c.expect.county) problems.push(`county want "${c.expect.county}" got "${got.county ?? ""}"`);
+  if (c.expect.noReview && got.review.length > 0) problems.push(`expected no review flag, got [${got.review.map(r => r.kind).join(", ")}]`);
   if (c.expect.instructions !== undefined && got.instructions !== c.expect.instructions) {
     problems.push(`instructions\n      want "${c.expect.instructions}"\n      got  "${got.instructions ?? "(none)"}"`);
   }
