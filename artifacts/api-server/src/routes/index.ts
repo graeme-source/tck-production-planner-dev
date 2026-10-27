@@ -32,6 +32,7 @@ import stockCheckExpectedRouter from "./stock-check-expected";
 import stockCheckUseByRouter from "./stock-check-use-by";
 import stockAccuracyRouter from "./stock-accuracy";
 import teamEfficiencyRouter from "./team-efficiency";
+import prepTimesRouter from "./prep-times";
 import dptCalculatorRouter from "./dpt-calculator";
 import stockRouter from "./stock";
 import stockItemsRouter from "./stock-items";
@@ -345,6 +346,9 @@ router.use("/stock-check-use-by", stockCheckUseByRouter);
 // stations or on count screens (docs/RUNNING_STOCK.md).
 router.use("/stock-accuracy", stockAccuracyRouter);
 router.use("/team-efficiency", teamEfficiencyRouter);
+// Prep times and batch profit after line + prep labour — a founder-only
+// read endpoint, no screen (checked inside).
+router.use("/prep-times", prepTimesRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/eight-pack-stock", eightPackStockRouter);
