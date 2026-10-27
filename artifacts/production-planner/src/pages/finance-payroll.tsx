@@ -12,6 +12,7 @@ import { Briefcase, Download, FileText, Loader2, Mail, Plus, Thermometer, UserMi
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { PayrollAccountantEmail } from "@/components/payroll-accountant-email";
+import { PayrollMonthEnd, PayrollMonthEndHistory } from "@/components/payroll-month-end";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -63,12 +64,14 @@ export function PayrollPanel() {
   const [emails, setEmails] = useState("");
   const [note, setNote] = useState("");
   const [withForms, setWithForms] = useState(true);
+  // Month-end history appendix — off by default so the monthly report stays short.
+  const [withHistory, setWithHistory] = useState(false);
   const r = q.data;
   const demoAllowed = r?.demoAllowed ?? import.meta.env.DEV;
   const send = useMutation({
     mutationFn: () => api<{ ok: true; attached: string[] }>("/email", { method: "POST", body: JSON.stringify({
       from: r!.period.from, to: r!.period.to,
-      emails: emails.split(/[,;\s]+/).map(e => e.trim()).filter(Boolean), note: note.trim() || null, includeStarterForms: withForms,
+      emails: emails.split(/[,;\s]+/).map(e => e.trim()).filter(Boolean), note: note.trim() || null, includeStarterForms: withForms, includeHistory: withHistory,
     }) }),
     onSuccess: res => { toast({ title: "Payroll report sent", description: `${res.attached.length} file${res.attached.length === 1 ? "" : "s"} attached` }); void qc.invalidateQueries({ queryKey: ["payroll-sends"] }); },
     onError: (e: Error) => { toast({ title: "Didn't send", description: e.message, variant: "destructive" }); void qc.invalidateQueries({ queryKey: ["payroll-sends"] }); },
@@ -169,6 +172,8 @@ export function PayrollPanel() {
                 )}
               </Section>
 
+              {!r.demo && <PayrollMonthEnd from={r.period.from} to={r.period.to} />}
+
               <Section icon={<Thermometer className="w-5 h-5" />} title={`Sick days · ${r.sick.length}`}>
                 {r.sick.length === 0 ? <p className="text-sm text-muted-foreground">No sick days this period.</p> : (
                   <div className="space-y-1.5">
@@ -223,9 +228,9 @@ export function PayrollPanel() {
 
             <aside className="rounded-3xl border-2 border-border bg-card p-4 space-y-3 xl:sticky xl:top-4">
               <p className="text-lg font-bold">Send or download</p>
-              <a href={`${BASE}/api/payroll/pdf?from=${r.period.from}&to=${r.period.to}${r.demo ? "&demo=1" : ""}`}
+              <a href={`${BASE}/api/payroll/pdf?from=${r.period.from}&to=${r.period.to}${r.demo ? "&demo=1" : ""}${withHistory ? "&history=1" : ""}`}
                 className="h-12 rounded-xl border-2 border-border font-semibold inline-flex items-center justify-center gap-2 w-full hover:bg-secondary">
-                <Download className="w-5 h-5" /> Download PDF
+                <Download className="w-5 h-5" /> Download PDF{withHistory ? " + history" : ""}
               </a>
               <label className="block space-y-1 text-sm">
                 <span className="font-semibold">Email to</span>
@@ -238,6 +243,10 @@ export function PayrollPanel() {
               <label className="flex items-start gap-2 text-sm">
                 <input type="checkbox" checked={withForms} onChange={e => setWithForms(e.target.checked)} className="mt-1" />
                 <span>Attach joiners' payroll paperwork (HMRC starter checklist, payroll details, P45). Health forms are never sent.</span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input type="checkbox" checked={withHistory} onChange={e => setWithHistory(e.target.checked)} className="mt-1" />
+                <span>Add the month-end history since 31 Mar 2025 as an appendix (and a CSV). This month's month-end adjustments are always in the report.</span>
               </label>
               <button type="button" disabled={!emailsOk || send.isPending || !!r.demo} onClick={() => send.mutate()}
                 className="h-12 w-full rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center justify-center gap-2 disabled:opacity-40">
@@ -255,6 +264,8 @@ export function PayrollPanel() {
               )}
             </aside>
           </div>
+
+          {!r.demo && <PayrollMonthEndHistory />}
         </>
       )}
     </div>
