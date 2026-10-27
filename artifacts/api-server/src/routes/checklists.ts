@@ -20,6 +20,8 @@ import {
   locationTemperatureRecordsTable,
   variantLocationsTable,
   skuLocationsTable,
+  improvementPromptAnswersTable,
+  improvementSubmissionsTable,
 } from "@workspace/db";
 import { eq, and, or, gt, asc, desc, gte, lte, sql, isNull, inArray } from "drizzle-orm";
 import * as z from "zod";
@@ -37,6 +39,9 @@ import {
   asksForReading, normaliseReadingLabels, readingConfigProblem, missingReadings, UNLABELLED,
 } from "../lib/checklist-readings";
 import { resolveChecklistStation } from "../lib/checklist-stations";
+import {
+  IMPROVEMENT_PROMPT_TYPE, isOptionalChecklistType, checklistSummary, pinOptionalLast, shouldAddPromptOnCreate,
+} from "../lib/checklist-optional";
 
 type ChecklistCompletion = typeof checklistCompletionsTable.$inferSelect;
 type ItemReading = {
@@ -149,6 +154,27 @@ router.post("/templates", async (req: Request, res: Response) => {
     stationType: canonicalStation,
     scheduleDays: scheduleDays ? JSON.stringify(scheduleDays) : null,
   }).returning();
+
+  // A station's first closing item starts a new closing checklist — which
+  // ends with "Have you made an improvement today?" by default (Graeme,
+  // 2026-10-27). Not if the station has ever had it: removed stays removed.
+  const [existingPrompt] = await db.select({ id: checklistTemplatesTable.id }).from(checklistTemplatesTable)
+    .where(and(
+      eq(checklistTemplatesTable.stationType, canonicalStation),
+      eq(checklistTemplatesTable.dynamicDataType, IMPROVEMENT_PROMPT_TYPE),
+    ))
+    .limit(1);
+  if (shouldAddPromptOnCreate({ category: row.category, dynamicDataType: row.dynamicDataType, stationHasPrompt: !!existingPrompt })) {
+    await db.insert(checklistTemplatesTable).values({
+      stationType: canonicalStation,
+      category: "closing",
+      title: "Have you made an improvement today?",
+      description: "Optional. Tap Yes to log it, or No — tomorrow's another chance.",
+      schedule: "daily",
+      orderPosition: row.orderPosition + 1,
+      dynamicDataType: IMPROVEMENT_PROMPT_TYPE,
+    });
+  }
   res.status(201).json(row);
 });
 
@@ -315,6 +341,29 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
     readingsByTemplate.set(r.templateId, list);
   }
 
+  // "Have you made an improvement today?" is answered per PERSON, not per
+  // station: everyone who signs in at the end of the day gets asked, so its
+  // done state is the signed-in person's answer for today (London day).
+  let myPromptAnswer: { answer: string; improvementId: number | null; improvementTitle: string | null; answeredAt: Date } | null = null;
+  let myName: string | null = null;
+  const userId = req.session.userId;
+  if (userId && filtered.some((t: { dynamicDataType: string | null }) => t.dynamicDataType === IMPROVEMENT_PROMPT_TYPE)) {
+    const [a] = await db.select({
+      answer: improvementPromptAnswersTable.answer,
+      improvementId: improvementPromptAnswersTable.improvementId,
+      improvementTitle: improvementSubmissionsTable.title,
+      answeredAt: improvementPromptAnswersTable.answeredAt,
+    })
+      .from(improvementPromptAnswersTable)
+      .leftJoin(improvementSubmissionsTable, eq(improvementSubmissionsTable.id, improvementPromptAnswersTable.improvementId))
+      .where(and(eq(improvementPromptAnswersTable.userId, userId), eq(improvementPromptAnswersTable.day, londonDateString())));
+    myPromptAnswer = a ? { ...a, improvementTitle: a.improvementTitle ?? null } : null;
+    if (myPromptAnswer) {
+      const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
+      myName = u?.name ?? null;
+    }
+  }
+
   // Build completion map
   const completionMap = new Map<number, ChecklistCompletion>(completions.map((c: ChecklistCompletion) => [c.templateId, c]));
 
@@ -340,12 +389,45 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
     readingMax: number | null;
     readings: ItemReading[];
     readingsMissing: string[];
+    /** Optional items never count in done/total and never block (lib/checklist-optional.ts). */
+    optional: boolean;
+    /** The signed-in person's answer today, on the improvement question only. */
+    promptAnswer: { answer: string; improvementId: number | null; improvementTitle: string | null } | null;
   }>> = {};
 
   for (const t of filtered) {
-    const completion = completionMap.get(t.id);
+    const isPrompt = t.dynamicDataType === IMPROVEMENT_PROMPT_TYPE;
+    const completion = isPrompt ? undefined : completionMap.get(t.id);
     const cat = t.category;
     if (!categories[cat]) categories[cat] = [];
+    if (isPrompt) {
+      categories[cat].push({
+        type: "template",
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        dynamicDataType: t.dynamicDataType,
+        schedule: t.schedule,
+        scheduleDays: t.scheduleDays,
+        completed: !!myPromptAnswer,
+        completedBy: myPromptAnswer ? myName : null,
+        completedAt: myPromptAnswer?.answeredAt.toISOString() ?? null,
+        completionId: null,
+        notes: null,
+        skippedReason: null,
+        readingUnit: null,
+        readingLabels: [],
+        readingMin: null,
+        readingMax: null,
+        readings: [],
+        readingsMissing: [],
+        optional: true,
+        promptAnswer: myPromptAnswer
+          ? { answer: myPromptAnswer.answer, improvementId: myPromptAnswer.improvementId, improvementTitle: myPromptAnswer.improvementTitle }
+          : null,
+      });
+      continue;
+    }
     categories[cat].push({
       type: "template",
       id: t.id,
@@ -368,6 +450,8 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
       readingsMissing: asksForReading(t.readingUnit)
         ? missingReadings(normaliseReadingLabels(t.readingLabels), (readingsByTemplate.get(t.id) ?? []).map(r => r.label))
         : [],
+      optional: isOptionalChecklistType(t.dynamicDataType),
+      promptAnswer: null,
     });
   }
 
@@ -394,18 +478,22 @@ router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationTy
       readingMax: null,
       readings: [],
       readingsMissing: [],
+      optional: false,
+      promptAnswer: null,
     });
   }
 
-  // Summary counts
-  const allItems = Object.values(categories).flat();
-  const total = allItems.length;
-  const done = allItems.filter(i => i.completed).length;
+  // Optional items always close their section, whatever the drag order.
+  for (const cat of Object.keys(categories)) categories[cat] = pinOptionalLast(categories[cat]);
+
+  // Summary counts — required items only, so an optional question can never
+  // hold a checklist short of 100%.
+  const summary = checklistSummary(Object.values(categories).flat());
 
   res.json({
     planStatus: plan.status,
     categories,
-    summary: { total, done },
+    summary,
   });
 });
 
@@ -721,6 +809,8 @@ router.get("/missing", async (req: Request, res: Response) => {
   for (const { day, anchorPlanId } of workingDays) {
     const sameDayPlanIds = plansByDate.get(day) ?? [];
     for (const t of templates) {
+      // Optional items (the end-of-day improvement question) are never "missed".
+      if (isOptionalChecklistType(t.dynamicDataType)) continue;
       if (!templateMatchesDay(t, day)) continue;
       if (completedDays.get(t.id)?.has(day)) continue;
       const donePlans = completedPlans.get(t.id);
