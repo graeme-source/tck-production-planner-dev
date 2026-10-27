@@ -1,17 +1,24 @@
 /**
- * Barcodes (Graeme, 2026-10-10). Objectives A and F.
+ * Barcodes (Graeme, 2026-10-10; two-way with Shopify 2026-10-12). Objectives A, D and F.
  *
- * Our table is the source of truth for scanning; nothing here writes to
- * Shopify. Rules: @workspace/barcodes. DB side: lib/barcode-store.ts.
+ * Our table is the single source of truth. A save here (either page) is sent
+ * to Shopify automatically (lib/barcode-push.ts — the only writer); the
+ * hourly check adopts Shopify's where we have none. Rules: @workspace/barcodes.
+ * DB side: lib/barcode-store.ts.
  *
  *   GET  /recipes/:id                    a recipe's barcode groups + recent history (signed in)
- *   PUT  /recipes/:id/:kind              set a group's barcode; 409 asks to confirm a move (manager/admin)
+ *   PUT  /recipes/:id/:kind              set a group's barcode (or, with no pack listing yet, the
+ *                                        barcode HELD for the recipe); 409 asks to confirm a move (manager/admin)
  *   POST /variants/:variantId/use-shopify   take Shopify's barcode (manager/admin)
+ *   POST /variants/:variantId/send-ours     send ours over a different number in Shopify (manager/admin)
+ *   POST /variants/:variantId/retry-push    send again after "Not sent" (manager/admin)
  *   PUT  /variants/:variantId/same-product  mark a listing the same product as another (admin)
  *   POST /variants/:variantId/packer-set    packing bench: set the barcode of a product that has NONE,
  *                                           scanned off the pack after a check by eye (packing access)
  *   GET  /overview                       every group, clashes, reused codes (manager/admin)
  *   POST /pull                           one-time pull / check now, dry run or real (admin) — READS Shopify
+ *   POST /shopify-sync/preview           what a bulk sync would change in Shopify / here — sends nothing (admin)
+ *   POST /shopify-sync/apply             the bulk sync of the previewed items (admin)
  *   GET  /scan-map                       live variant → barcode map for the packing screen
  *   POST /scan-rejections                log a refused / unmatched scan (packing screen)
  *   GET  /scan-rejections                recent refused scans (manager/admin)
@@ -20,25 +27,19 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { db, usersTable } from "@workspace/db";
 import { LINK_KINDS, type LinkKind } from "@workspace/barcodes";
 import { requireAdmin, requireManagerOrAdmin } from "../middleware/roles";
-import { validate, validateQuery } from "../middleware/validate";
+import { rawBody, validate, validateQuery } from "../middleware/validate";
 import { requireFulfilmentAccess } from "../lib/fulfilment-access";
 import {
-  BarcodeRefused, applyF2fLinks, f2fSuggestions, loadOwnership, loadEvents, loadGroups, loadOverview, loadScanRejections, logScanRejection, reconcileBarcodes, scanMap,
+  BarcodeRefused, actorOf, applyF2fLinks, applySync, f2fSuggestions, loadOwnership, loadEvents, loadGroups, loadOverview, loadScanRejections, logScanRejection,
+  previewSync, reconcileBarcodes, retryPush, scanMap, sendOursToShopify,
   setGroupBarcode, setPackerBarcode, setSameProductAs, useShopifyBarcode, type Actor,
 } from "../lib/barcode-store";
 
 const router: IRouter = Router();
 
-async function actor(req: Request): Promise<Actor> {
-  const id = req.session.userId ?? null;
-  if (!id) return { id: null, name: null };
-  const [u] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, id));
-  return { id, name: u?.name ?? null };
-}
+const actor = (req: Request): Promise<Actor> => actorOf(req.session.userId ?? null);
 
 function fail(res: Response, err: unknown, where: string) {
   if (err instanceof BarcodeRefused) {
@@ -103,7 +104,8 @@ router.put("/variants/:variantId/same-product", requireAdmin, validate(SameBody)
 // product with no barcode gets one here — the packer checks the pack by eye,
 // scans it and confirms. Only when the product has none; a number another
 // product holds is refused (fetch a manager). Changing a barcode stays on
-// PUT /recipes/:id/:kind (manager/admin). Nothing is written to Shopify.
+// PUT /recipes/:id/:kind (manager/admin). The number is then sent to Shopify
+// like any other save (barcode-push.ts).
 const PackerSetBody = z.object({
   barcode: z.string().min(1).max(40),
   /** What the packer saw on screen — used only to name a variant we've never stored. */
@@ -170,6 +172,44 @@ router.post("/f2f-links", requireAdmin, validate(F2fBody), async (req, res) => {
     const applied = await applyF2fLinks((req.body as z.infer<typeof F2fBody>).variantIds, await actor(req));
     res.json({ applied });
   } catch (err) { fail(res, err, "POST /f2f-links"); }
+});
+
+// ── App → Shopify (12 Oct 2026) ─────────────────────────────────────────────
+// Every save above is sent to Shopify automatically (lib/barcode-push.ts).
+// These are the person-driven ones: choose ours over a different number,
+// retry a send that didn't go, and the one-time preview + bulk sync.
+
+const EmptyBody = z.object({});
+
+router.post("/variants/:variantId/send-ours", requireManagerOrAdmin, validate(EmptyBody), async (req, res) => {
+  const p = VariantParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Invalid variant id" }); return; }
+  try { res.json(await sendOursToShopify(p.data.variantId, await actor(req))); }
+  catch (err) { fail(res, err, "POST /variants/:id/send-ours"); }
+});
+
+router.post("/variants/:variantId/retry-push", requireManagerOrAdmin, validate(EmptyBody), async (req, res) => {
+  const p = VariantParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Invalid variant id" }); return; }
+  try { res.json({ result: await retryPush(p.data.variantId, await actor(req)) }); }
+  catch (err) { fail(res, err, "POST /variants/:id/retry-push"); }
+});
+
+/** Reads Shopify and our table; sends and saves nothing. */
+router.post("/shopify-sync/preview", requireAdmin, validate(EmptyBody), async (_req, res) => {
+  try { res.json(await previewSync()); } catch (err) { fail(res, err, "POST /shopify-sync/preview"); }
+});
+
+const SyncBody = z.object({
+  items: z.array(z.object({ variantId: z.string().regex(/^\d{1,20}$/), action: z.enum(["overwrite", "fill", "adopt"]) })).min(1).max(1000),
+});
+
+router.post("/shopify-sync/apply", requireAdmin, validate(SyncBody), async (req, res) => {
+  try {
+    // Nested array: read it unstripped, then hold it to the same schema.
+    const body = SyncBody.parse(rawBody(req));
+    res.json(await applySync(body.items, await actor(req)));
+  } catch (err) { fail(res, err, "POST /shopify-sync/apply"); }
 });
 
 export default router;

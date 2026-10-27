@@ -15,7 +15,7 @@ import { toGrams, effectivePackSize, hasPackSize, packSizeToStore } from "@works
 import { NUTRIENT_KEYS, missingNutrients } from "@workspace/product-labels";
 import { buildRecipeIngredientDeck } from "../lib/recipe-ingredient-deck";
 import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
-import { packBarcodeFor } from "../lib/barcode-store";
+import { actorOf, afterListingLinked, packBarcodeFor } from "../lib/barcode-store";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { parseOvenOverride } from "../lib/recipe-oven-override";
 import { parseSecondaryColour } from "../lib/recipe-secondary-colour";
@@ -938,6 +938,9 @@ router.post("/:id/shopify-mapping", async (req, res) => {
     } catch (skuErr) {
       console.warn("[recipes] shopify_sku sync failed:", skuErr instanceof Error ? skuErr.message : skuErr);
     }
+    // The barcode held for this recipe (or its product's existing one) goes
+    // onto the new listing and is sent to Shopify (lib/barcode-store.ts).
+    await afterListingLinked(recipeId, await actorOf(req.session.userId)).catch(err => console.error("[recipes] barcode after linking failed:", err));
     const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at`);
     res.json(saved.rows);
   } catch (err: unknown) {
@@ -974,6 +977,9 @@ router.put("/:id/shopify-mapping", async (req, res) => {
     } catch (skuErr) {
       console.warn("[recipes] shopify_sku sync failed:", skuErr instanceof Error ? skuErr.message : skuErr);
     }
+    // The barcode held for this recipe (or its product's existing one) goes
+    // onto the new listing and is sent to Shopify (lib/barcode-store.ts).
+    await afterListingLinked(recipeId, await actorOf(req.session.userId)).catch(err => console.error("[recipes] barcode after linking failed:", err));
     const saved = await db.execute(sql`SELECT * FROM recipe_shopify_mappings WHERE recipe_id = ${recipeId} ORDER BY created_at`);
     res.json(saved.rows);
   } catch (err: unknown) {
