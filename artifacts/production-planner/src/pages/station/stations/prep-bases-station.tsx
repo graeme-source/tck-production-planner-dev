@@ -619,7 +619,8 @@ export function SubRecipeMakeFlow({
   }
 
   return (
-    <div className="space-y-4">
+    // data-tour: the "pick a sub-recipe" list, for walkthroughs (docs/STATION_TUTORIALS.md).
+    <div className="space-y-4" data-tour="prep-bases-pick">
       <div className="flex items-center gap-2">
         {onClose && (
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary/60 transition-colors">

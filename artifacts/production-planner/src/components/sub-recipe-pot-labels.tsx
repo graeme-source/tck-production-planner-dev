@@ -90,7 +90,7 @@ export function SubRecipePotLabels({ subRecipeId, madeGrams }: { subRecipeId: nu
   const d = q.data;
   const step = (by: number) => setCountText(String(Math.min(d.maxCount, Math.max(1, (valid ? count : 0) + by))));
   return (
-    <div className="w-full max-w-xl rounded-2xl border-2 border-border bg-card p-4 space-y-3 text-left">
+    <div data-tour="pot-labels" className="w-full max-w-xl rounded-2xl border-2 border-border bg-card p-4 space-y-3 text-left">
       <p className="text-lg font-bold">Pot labels</p>
       <img src={d.png} alt={`Pot label: ${d.name}`} className="w-full rounded-lg ring-1 ring-border bg-white" />
       <p className="text-sm text-muted-foreground">

@@ -70,12 +70,12 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
   return (
     <div className="mt-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={print} disabled={busy}
+        <button type="button" onClick={print} disabled={busy} data-tour="five-pack-labels"
           className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
           {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : printed ? <Check className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
           {printed ? "Print again" : `Print all ${d.total} 5-pack labels`}
         </button>
-        <button type="button" onClick={() => setOpen(o => !o)}
+        <button type="button" onClick={() => setOpen(o => !o)} data-tour="five-pack-labels-see"
           className="h-12 px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:bg-secondary inline-flex items-center gap-1">
           See the labels <ChevronDown className={cn("w-4 h-4 transition-transform", open && "rotate-180")} />
         </button>
