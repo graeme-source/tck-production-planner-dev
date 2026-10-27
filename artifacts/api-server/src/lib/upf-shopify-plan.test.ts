@@ -63,11 +63,28 @@ describe("planWebsiteSync", () => {
     expect(d.metrics.kcal).toMatchObject({ value: 512, needsWrite: true });
   });
 
-  it("holds back everything on a product linked to several recipes", () => {
+  // Graeme, 2026-10-27: 500g and 1.2kg (or 2-pack and 8-pack) are the same
+  // recipe split only for stock — show what they agree on.
+  it("publishes the figures every linked recipe agrees on (sizes of one recipe)", () => {
     const [d] = planWebsiteSync([recipe(1), recipe(2)], [link("p1", 1), link("p1", 2)], []);
     expect(d.status).toBe("several_recipes");
+    expect(d.metrics.upf.value).not.toBeNull();
+    expect(d.metrics.kcal.value).toBe(512);
+    expect(d.metrics.nutrition.value).toBe(recipeFigures(recipe(1)).nutrition.value);
+  });
+
+  it("holds back only the figure the linked recipes disagree on", () => {
+    const [d] = planWebsiteSync([recipe(1, { upfPercent: 3.8 }), recipe(2, { upfPercent: 12 })], [link("p1", 1), link("p1", 2)], []);
     expect(d.metrics.upf.value).toBeNull();
+    expect(d.metrics.upf.heldBecause).toMatch(/differ/);
+    expect(d.metrics.kcal.value).toBe(512);
+  });
+
+  it("holds a figure when any linked recipe can't give it", () => {
+    const [d] = planWebsiteSync([recipe(1), recipe(2, { missingProtein: ["Corn Syrup"] })], [link("p1", 1), link("p1", 2)], []);
     expect(d.metrics.protein.value).toBeNull();
+    expect(d.metrics.protein.heldBecause).toMatch(/Corn Syrup/);
+    expect(d.metrics.upf.value).not.toBeNull();
   });
 
   it("treats two variants of the same recipe on one product as one recipe", () => {

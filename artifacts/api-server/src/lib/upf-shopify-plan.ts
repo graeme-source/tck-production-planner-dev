@@ -13,8 +13,10 @@
  *    ingredient holds back the UPF %; an ingredient missing its kcal (or
  *    protein) holds back that figure. The website then shows nothing for
  *    it rather than a wrong number. Each figure is held back on its own.
- *  - A product linked to more than one recipe has no single answer, so all
- *    its figures are held back.
+ *  - A product linked to more than one recipe (its sizes: 500g and 1.2kg,
+ *    2-pack and 8-pack — split only so each variant's stock is right) shows
+ *    a figure when every linked recipe gives the SAME figure; a figure they
+ *    disagree on is held back (Graeme, 2026-10-27).
  *  - A product that's no longer linked to any recipe loses its figures.
  *
  * No pack size (Graeme, 2026-10-27; migration 0286 — e.g. fried chicken,
@@ -190,6 +192,22 @@ export function recipeFigures(r: RecipeFacts): Figures {
   return { upf, kcal, protein, nutrition };
 }
 
+/** Several recipes behind one product: each figure is shown when they all
+ *  agree on it (sizes of the same recipe do), else held with the reason. */
+export function agreedFigures(recipes: RecipeFacts[]): Figures {
+  const each = recipes.map(r => ({ name: r.name, f: recipeFigures(r) }));
+  const out = {} as Figures;
+  for (const m of WEBSITE_METRICS) {
+    const firstHeld = each.find(e => e.f[m].value == null);
+    if (firstHeld) { out[m] = { value: null, heldBecause: `${firstHeld.name}: ${firstHeld.f[m].heldBecause ?? "no figure"}` }; continue; }
+    const values = new Set(each.map(e => JSON.stringify(e.f[m].value)));
+    out[m] = values.size === 1
+      ? { value: each[0]!.f[m].value, heldBecause: null }
+      : { value: null, heldBecause: `the linked recipes differ (${each.map(e => e.name).join(", ")})` };
+  }
+  return out;
+}
+
 export function planWebsiteSync(
   recipes: RecipeFacts[],
   links: ProductLink[],
@@ -224,7 +242,7 @@ export function planWebsiteSync(
     if (linked.length === 0) {
       decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "unlinked", metrics: metricsFor(gid, allHeld("not linked to a recipe")) });
     } else if (linked.length > 1) {
-      decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "several_recipes", metrics: metricsFor(gid, allHeld(`linked to more than one recipe (${recipeNames.join(", ")})`)) });
+      decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "several_recipes", metrics: metricsFor(gid, agreedFigures(linked)) });
     } else {
       decisions.push({ productGid: gid, productTitle: p.title, recipeNames, status: "linked", metrics: metricsFor(gid, recipeFigures(linked[0])) });
     }
