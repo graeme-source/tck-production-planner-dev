@@ -306,6 +306,11 @@ function variantView(variantId: string, s: OwnershipState): VariantView {
     heldBack = !current ? "An old (retired) product — it doesn't claim a barcode." : c ? describeClash(c) : "Held back.";
   }
   const managedByHand = s.clubSpecial.has(variantId);
+  // Ours is on its way to Shopify (sending, or waiting / failed with Shopify
+  // still holding what we're replacing) — a change in flight, not a disagreement.
+  const st = row?.shopifyPushState;
+  const theirs = row?.shopifyBarcode ?? null;
+  const inFlight = st === "sending" || ((st === "waiting" || st === "failed") && (theirs == null || (row?.shopifyPushFrom != null && gtinKey(row.shopifyPushFrom) === gtinKey(theirs))));
   return {
     variantId,
     name: variantName(row, `Shopify variant ${variantId}`),
@@ -321,7 +326,7 @@ function variantView(variantId: string, s: OwnershipState): VariantView {
     shopifyCheckedAt,
     notInShopify,
     // The Club Special follows the current special — never "different".
-    differentInShopify: !managedByHand && isDifferentInShopify({ ours: claimed, shopifyBarcode: row?.shopifyBarcode ?? null, shopifyCheckedAt, notInShopify }),
+    differentInShopify: !managedByHand && !inFlight && isDifferentInShopify({ ours: claimed, shopifyBarcode: row?.shopifyBarcode ?? null, shopifyCheckedAt, notInShopify }),
     sameProductAs: row?.sameProductAs ?? null,
     push: row?.shopifyPushState
       ? { state: row.shopifyPushState, barcode: row.shopifyPushBarcode, at: row.shopifyPushAt, message: row.shopifyPushMessage }
@@ -714,14 +719,18 @@ export async function retryPush(variantId: string, actor: Actor | null): Promise
   const row = s.byVariant.get(variantId);
   if (!row) throw new BarcodeRefused(404, "We hold nothing for that listing.");
   const link = s.linkOf.get(variantId);
+  // Only a send that was going ahead (waiting / failed) may replace what
+  // Shopify had then; a disagreement stays one until a person chooses.
+  const wasGoing = row.shopifyPushState === "waiting" || row.shopifyPushState === "failed" || row.shopifyPushState === "sending";
+  const from = wasGoing ? row.shopifyPushFrom : null;
   if (link) {
     const targets = groupTargets(s, link.recipeId, link.kind, null).filter(t => t.variantId === variantId)
-      .map(t => ({ ...t, replaceable: [...t.replaceable, row.shopifyPushFrom] }));
+      .map(t => ({ ...t, replaceable: [...t.replaceable, from] }));
     const [r] = await runPush(targets, actor);
     return r ?? null;
   }
   const ours = row.shopifyPushBarcode ?? s.ownership.barcodeOf.get(variantId) ?? null;
-  const [r] = await runPush([{ variantId, ours, replaceable: [row.shopifyPushFrom, row.barcode], clubSpecial: s.clubSpecial.has(variantId), name: variantName(row, variantId) }], actor);
+  const [r] = await runPush([{ variantId, ours, replaceable: [from], clubSpecial: s.clubSpecial.has(variantId), name: variantName(row, variantId) }], actor);
   return r ?? null;
 }
 
