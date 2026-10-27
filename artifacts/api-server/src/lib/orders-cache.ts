@@ -27,10 +27,18 @@ import { addDaysToDateString, londonDaysWindowUtc } from "./london-time";
 
 // Union of getOrdersByDateRange + getOrdersForPnl field lists, plus
 // updated_at (the sync cursor) and shipping_address/note for future callers.
+//
+// fulfillments + total_tax added 27 Oct 2026 for the month-end deferred
+// income (lib/payroll/month-end.ts), which needs each order's dispatch time.
+// Before that, only rows that arrived on page 2+ of a fetch carried them:
+// fetchOrdersPaged sends page_info alone after page 1, so later pages came
+// back with EVERY field while page 1 and every small incremental sync got
+// just this list. Result: ~0% of Sep–Oct 2026 orders had fulfilments in the
+// mirror, ~90% of older ones did. refreshOrdersByIds fills the gaps.
 const CACHE_FIELDS =
   "id,name,tags,created_at,updated_at,cancelled_at,financial_status,fulfillment_status," +
   "total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address," +
-  "line_items,refunds,note,note_attributes,source_name";
+  "line_items,refunds,note,note_attributes,source_name,fulfillments,total_tax";
 
 interface CachedOrder extends ShopifyOrder {
   updated_at: string;
@@ -164,6 +172,22 @@ export async function ensureOrdersFresh(fromDate: string): Promise<void> {
     await inFlight;
     return;
   }
+}
+
+/**
+ * Re-read particular orders from Shopify (READ-ONLY GET, 250 ids a call)
+ * and update their mirror rows — for rows saved before fulfillments were in
+ * CACHE_FIELDS. Returns how many came back.
+ */
+export async function refreshOrdersByIds(ids: readonly number[]): Promise<number> {
+  const unique = [...new Set(ids.filter(n => Number.isFinite(n) && n > 0))];
+  let n = 0;
+  for (let i = 0; i < unique.length; i += 250) {
+    const orders = await fetchOrdersPaged({ ids: unique.slice(i, i + 250).join(",") });
+    await upsertOrders(orders);
+    n += orders.length;
+  }
+  return n;
 }
 
 /**
