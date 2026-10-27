@@ -10,6 +10,7 @@ import {
   BookOpen, FlaskConical,
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import type { SopAmountsContext } from "@/lib/sop-amounts";
 import { format, parseISO } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
@@ -178,6 +179,20 @@ export interface LinkedItem {
     tinCount: number;
     qtyPerTin: number;
   }>;
+}
+
+/** Today's amounts for an SOP opened from a prep row (issue #340): the
+ *  row's own total plus its linked items, formatted exactly as the row shows
+ *  them. Shared with Bases & Sauces, whose ingredient rows are the same shape. */
+export function prepRowSopAmounts(ing: MainPrepIngredient, linked: LinkedItem[] | undefined): SopAmountsContext {
+  const total = fmtPrepQty(ing.totalQty, ing.unit);
+  return {
+    title: `For today: ${total} ${ing.ingredientName}`,
+    amounts: [
+      { name: ing.ingredientName, amountText: total },
+      ...(linked ?? []).map(li => ({ name: li.ingredientName, amountText: fmtPrepQty(li.totalQty, li.unit) })),
+    ],
+  };
 }
 
 export function useMainPrepData(planId: number, station: string = "main_prep") {
@@ -1094,7 +1109,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                             <div className="mt-2">
                               <SopChips
                                 links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
-                                onOpen={sopViewer.open}
+                                // The SOP opens with this row's own numbers in it
+                                // (issue #340) — the same figures shown above.
+                                onOpen={(id, where) => sopViewer.open(id, where, prepRowSopAmounts(ing, linkedItems[ing.ingredientId]))}
                                 attach={[
                                   { targetType: "ingredient", a: ing.ingredientId, text: "main_prep", label: "Everywhere", subject: ing.ingredientName },
                                   ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({

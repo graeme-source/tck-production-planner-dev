@@ -53,6 +53,8 @@ function qtyToGrams(qty: number, unit: string | null): number {
 }
 import { cn } from "@/lib/utils";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import type { SopPlace } from "@/components/sop-detach";
+import type { SopAmountsContext } from "@/lib/sop-amounts";
 import { TimingFlag, recipeTimingHref, ingredientTimingHref, meatMissingLabel } from "@/components/timing-flag";
 import { kgOrNull } from "@workspace/units";
 import { toast } from "@/hooks/use-toast";
@@ -1828,7 +1830,8 @@ interface MixingOverviewRowProps {
   /** This flavour's SOPs on the mixing surface + attach wiring (Graeme,
    *  2026-09-09) — rendered on the expanded card. */
   sopLinks: SopLink[];
-  onOpenSop: (sopId: number) => void;
+  /** Third argument: the tin's amounts, shown inside the SOP (issue #340). */
+  onOpenSop: (sopId: number, where?: SopPlace, amounts?: SopAmountsContext) => void;
   sopQueryKey: unknown[];
   /** The live re-plan for this item (moves with the builders). */
   live: LiveRecipe | null;
@@ -2039,7 +2042,17 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         <div className="px-4 py-2 border-t border-border/40">
           <SopChips
             links={sopLinks}
-            onOpen={onOpenSop}
+            // The SOP opens with this tin's per-tin amounts in it — the same
+            // figures as the filling list below (issue #340).
+            onOpen={(id, where) => onOpenSop(id, where, filling && hasFillingItems
+              ? {
+                  title: `For this tin: ${item.recipeName ?? "this recipe"} filling — tin ${Math.min(tinsComplete + 1, tinsTarget)} of ${tinsTarget}`,
+                  amounts: [
+                    ...filling.fillingIngredients.map(fi => ({ name: fi.name ?? `Ingredient #${fi.ingredientId}`, amountText: `${formatMixQty(fi.qtyPerTin, fi.unit)} per tin` })),
+                    ...filling.fillingSubRecipes.map(fs => ({ name: fs.name ?? `Sub-recipe #${fs.subRecipeId}`, amountText: `${formatMixQty(fs.qtyPerTin, fs.unit)} per tin` })),
+                  ],
+                }
+              : undefined)}
             attach={{ targetType: "recipe", a: item.recipeId, text: "mixing", label: item.recipeName ?? "this recipe", subject: item.recipeName ?? undefined, station: "mixing" }}
             queryKeysToInvalidate={[sopQueryKey]}
           />

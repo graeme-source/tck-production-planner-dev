@@ -26,6 +26,7 @@ import { toast } from "@/hooks/use-toast";
 import { rankSops } from "@/lib/sop-search";
 import { type SopPlace } from "@/components/sop-detach";
 import { StandardsSopsDialog, SopViewer } from "@/components/standards-sops-dialog";
+import type { SopAmountsContext } from "@/lib/sop-amounts";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -73,19 +74,27 @@ interface SopListEntry {
 /** One viewer per surface: `const sopViewer = useSopViewer()` then render
  *  `sopViewer.dialog` once and pass `sopViewer.open` to any chip. When a
  *  chip passes where the SOP is attached, the viewer offers "Wrong place for
- *  this SOP?" at its foot — the only way to take it off (2026-09-28). */
+ *  this SOP?" at its foot — the only way to take it off (2026-09-28).
+ *  A prep row that knows the day's quantities passes them as the third
+ *  argument, and the SOP shows them (issue #340). */
 export function useSopViewer(currentStationType?: string | null) {
   const [sopId, setSopId] = useState<number | null>(null);
   const [place, setPlace] = useState<SopPlace | undefined>(undefined);
+  const [amounts, setAmounts] = useState<SopAmountsContext | undefined>(undefined);
   return {
-    open: (id: number, where?: SopPlace) => { setPlace(where); setSopId(id); },
+    open: (id: number, where?: SopPlace, todaysAmounts?: SopAmountsContext) => {
+      setPlace(where);
+      setAmounts(todaysAmounts);
+      setSopId(id);
+    },
     dialog: (
       <StandardsSopsDialog
         open={sopId != null}
-        onClose={() => { setSopId(null); setPlace(undefined); }}
+        onClose={() => { setSopId(null); setPlace(undefined); setAmounts(undefined); }}
         currentStationType={currentStationType}
         initialSopId={sopId ?? undefined}
         detachFrom={place}
+        amounts={amounts}
       />
     ),
   };

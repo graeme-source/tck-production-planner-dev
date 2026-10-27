@@ -13,6 +13,8 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import type { SopPlace } from "@/components/sop-detach";
+import type { SopAmount, SopAmountsContext } from "@/lib/sop-amounts";
 import { format } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
@@ -28,7 +30,7 @@ import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-repl
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { SubRecipePotLabels, useSubRecipesWithLabels } from "@/components/sub-recipe-pot-labels";
 import { StationStockChecks } from "../shared/station-stock-checks";
-import { useMainPrepData } from "./main-prep-station";
+import { useMainPrepData, prepRowSopAmounts } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
 import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, tasksLine } from "@/lib/prep-progress";
@@ -67,6 +69,26 @@ function fmtScaledQty(qty: number, unit: string, batches: number): string {
   return formatPrepWeight(qty * batches, unit);
 }
 
+/** The make-checklist's lines (ingredients, then sub-recipe components) —
+ *  one list feeding both the checklist and the SOP's amounts, so the SOP can
+ *  never show a different number from the row being ticked. */
+function scaledChecklistItems(
+  ingredients: SubRecipePlanRequirement["ingredients"],
+  subRecipeComponents: SubRecipePlanRequirement["subRecipeComponents"],
+) {
+  return [
+    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false, packWeight: i.packWeight ?? null, componentSubRecipeId: null as number | null })),
+    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true, packWeight: null as number | null, componentSubRecipeId: c.componentSubRecipeId as number | null })),
+  ];
+}
+
+/** Amounts for an SOP opened while making `batches` mixes (issue #340). */
+function makeFlowSopAmounts(sr: SubRecipePlanRequirement, batches: number, title: string): SopAmountsContext | undefined {
+  const amounts: SopAmount[] = scaledChecklistItems(sr.ingredients, sr.subRecipeComponents)
+    .map(item => ({ name: item.label, amountText: fmtScaledQty(item.qty, item.unit, batches) }));
+  return amounts.length > 0 && batches > 0 ? { title, amounts } : undefined;
+}
+
 function ScaledIngredientChecklist({
   ingredients,
   subRecipeComponents,
@@ -85,10 +107,7 @@ function ScaledIngredientChecklist({
    *  without leaving the checklist. */
   onReplenishComponent?: (subRecipeId: number, name: string) => void;
 }) {
-  const allItems = [
-    ...ingredients.map(i => ({ key: `ing-${i.id}`, label: i.ingredientName, qty: i.quantity, unit: i.unit, isComponent: false, packWeight: i.packWeight ?? null, componentSubRecipeId: null as number | null })),
-    ...subRecipeComponents.map(c => ({ key: `comp-${c.id}`, label: c.componentSubRecipeName, qty: c.quantity, unit: c.componentYieldUnit, isComponent: true, packWeight: null as number | null, componentSubRecipeId: c.componentSubRecipeId as number | null })),
-  ];
+  const allItems = scaledChecklistItems(ingredients, subRecipeComponents);
 
   if (allItems.length === 0) {
     return <p className="text-base text-muted-foreground italic py-4 text-center">No ingredients defined for this sub-recipe.</p>;
@@ -206,7 +225,8 @@ export function SubRecipeMakeFlow({
   /** Optional SOP wiring: when the host page supplies these, each pick-list
    *  row carries its "Show me how" button + attach affordance. */
   sopLinksBySubRecipe?: Record<number, SopLink[]>;
-  onOpenSop?: (sopId: number) => void;
+  /** Third argument: the day's amounts for the row (issue #340). */
+  onOpenSop?: (sopId: number, where?: SopPlace, amounts?: SopAmountsContext) => void;
   sopQueryKey?: unknown[];
   /** The plan the host screen is prepping for — making a sub-recipe here is
    *  timed in the background (the founder-only prep times report). Omit = untimed. */
@@ -320,6 +340,22 @@ export function SubRecipeMakeFlow({
     return Math.ceil(netNeeded / yieldPerBatch);
   })();
 
+  // "Show me how" while making it, carrying the exact amounts on the
+  // checklist (issue #340). Fetches its own links so the replenish popup —
+  // which has no host SOP wiring — gets it too; the viewer renders inside
+  // this flow so it stacks above that popup.
+  const checklistSrId = state.phase === "checklist" ? state.sr?.subRecipeId ?? null : null;
+  const checklistSopKey = ["sop-links-sub-recipes", String(checklistSrId ?? "")];
+  const { data: checklistSopLinks } = useQuery<Record<number, SopLink[]>>({
+    queryKey: checklistSopKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-sub-recipes?ids=${checklistSrId}&station=prep_bases`, { credentials: "include" });
+      return res.ok ? res.json() : {};
+    },
+    enabled: checklistSrId != null,
+  });
+  const flowSopViewer = useSopViewer("prep_bases");
+
   const checkedCount = state.checked.size;
   const totalItems = (sr?.ingredients?.length ?? 0) + (sr?.subRecipeComponents?.length ?? 0);
 
@@ -399,6 +435,20 @@ export function SubRecipeMakeFlow({
             <p className="text-base text-muted-foreground">
               {state.batches} mix{state.batches !== 1 ? "es" : ""} · Total yield: {formatPrepWeight(yieldPerBatch * state.batches, sr?.yieldUnit)}
             </p>
+            {sr && (
+              <div className="mt-1.5">
+                <SopChips
+                  links={checklistSopLinks?.[sr.subRecipeId] ?? []}
+                  onOpen={(id, where) => flowSopViewer.open(id, where, makeFlowSopAmounts(
+                    sr,
+                    state.batches,
+                    `For today: ${state.batches} mix${state.batches !== 1 ? "es" : ""} of ${sr.subRecipeName} · ${formatPrepWeight(yieldPerBatch * state.batches, sr.yieldUnit)}`,
+                  ))}
+                  attach={{ targetType: "sub_recipe", a: sr.subRecipeId, text: "prep_bases", label: sr.subRecipeName, station: "prep_bases" }}
+                  queryKeysToInvalidate={[checklistSopKey, ...(sopQueryKey ? [sopQueryKey] : [])]}
+                />
+              </div>
+            )}
           </div>
           <div className={cn(
             "px-3 py-1.5 rounded-xl text-base font-semibold",
@@ -423,6 +473,7 @@ export function SubRecipeMakeFlow({
               onReplenishComponent={onReplenishComponent}
             />
 
+            {flowSopViewer.dialog}
             {checkedCount === totalItems && totalItems > 0 && (
               <button
                 onClick={() => {
@@ -721,7 +772,9 @@ export function SubRecipeMakeFlow({
                     <div className="mt-1.5" onClick={e => e.stopPropagation()}>
                       <SopChips
                         links={sopLinksBySubRecipe?.[sr.subRecipeId] ?? []}
-                        onOpen={onOpenSop}
+                        onOpen={(id, where) => onOpenSop(id, where, batchsNeeded != null && batchsNeeded > 0
+                          ? makeFlowSopAmounts(sr, batchsNeeded, `Plan needs ${batchsNeeded} mix${batchsNeeded !== 1 ? "es" : ""} of ${sr.subRecipeName} — before your stock check`)
+                          : undefined)}
                         attach={{ targetType: "sub_recipe", a: sr.subRecipeId, text: "prep_bases", label: sr.subRecipeName, station: "prep_bases" }}
                         queryKeysToInvalidate={sopQueryKey ? [sopQueryKey] : []}
                       />
@@ -1405,7 +1458,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     <div className="mt-2 flex items-start justify-between gap-2">
                       <SopChips
                         links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
-                        onOpen={sopViewer.open}
+                        onOpen={(id, where) => sopViewer.open(id, where, prepRowSopAmounts(ing, linkedItems[ing.ingredientId]))}
                         attach={[
                           { targetType: "ingredient", a: ing.ingredientId, text: "prep_bases", label: "Everywhere", subject: ing.ingredientName },
                           ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
