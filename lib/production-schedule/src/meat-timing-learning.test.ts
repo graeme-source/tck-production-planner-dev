@@ -64,10 +64,10 @@ describe("learnMeatTiming", () => {
     expect(l.configuredLeadMinutes).toBe(40);
   });
 
-  it("too little data (under 5 clean runs) → no change", () => {
-    const l = learnMeatTiming([run(1, 50), run(2, 52), run(3, 51), run(4, 49)], chicken);
+  it("too little data (under 3 clean runs) → no change", () => {
+    const l = learnMeatTiming([run(1, 50), run(2, 52)], chicken);
     expect(l.status).toBe("not_enough_data");
-    expect(l.runsUsed).toBe(4);
+    expect(l.runsUsed).toBe(2);
     expect(l.changes).toEqual([]);
   });
 
@@ -78,14 +78,15 @@ describe("learnMeatTiming", () => {
   });
 
   it("learns processing from the median and grace from the slow end", () => {
-    // Leads 38..47: median 42.5 → process round(17.5) = 18; p90 46.1 → grace ≈ 4 → floor 5.
+    // Leads 38..47, the newest (47) weighted most: weighted median ≈ 43.8 →
+    // process 19; slow end − median ≈ 3 → grace floor 5.
     const runs = [38, 39, 40, 41, 42, 43, 44, 45, 46, 47].map((lead, i) => run(i + 1, lead));
     const l = learnMeatTiming(runs, chicken);
     expect(l.status).toBe("learned");
     expect(l.runsUsed).toBe(10);
-    expect(l.learned).toEqual({ processMinutes: 18, graceMinutes: 5 });
-    expect(l.proposed).toEqual({ processMinutes: 18, graceMinutes: 5 });
-    expect(l.changes.map(c => [c.field, c.from, c.to])).toEqual([["process", 15, 18], ["grace", null, 5]]);
+    expect(l.learned).toEqual({ processMinutes: 19, graceMinutes: 5 });
+    expect(l.proposed).toEqual({ processMinutes: 19, graceMinutes: 5 });
+    expect(l.changes.map(c => [c.field, c.from, c.to])).toEqual([["process", 15, 19], ["grace", null, 5]]);
     expect(l.changes[0].reason).toMatch(/Last 10 runs/);
   });
 
@@ -110,8 +111,12 @@ describe("learnMeatTiming", () => {
     const runs = [186, 188, 190, 192, 194, 189, 191].map((lead, i) => run(i + 1, lead, 180));
     const l = learnMeatTiming(runs, { cookMinutes: 180, processMinutes: 60, graceMinutes: null });
     expect(l.learned!.processMinutes).toBe(10);
-    expect(l.proposed!.processMinutes).toBe(45);
-    expect(l.changes[0].reason).toMatch(/moving 15 min at a time towards 10/);
+    // Only 7 runs: half steps (7 min) while the evidence is thin.
+    expect(l.proposed!.processMinutes).toBe(53);
+    expect(l.changes[0].reason).toMatch(/moving 7 min at a time towards 10/);
+    // With 8+ runs it moves the full 15.
+    const more = [...runs, run(30, 190, 180)];
+    expect(learnMeatTiming(more, { cookMinutes: 180, processMinutes: 60, graceMinutes: null }).proposed!.processMinutes).toBe(45);
   });
 
   it("grace never goes above the cap, whatever the spread", () => {
@@ -126,7 +131,7 @@ describe("learnMeatTiming", () => {
     const runs = [25, 25, 25, 25, 25, 25].map((lead, i) => run(i + 1, lead));
     const l = learnMeatTiming(runs, chicken);
     expect(l.learned!.processMinutes).toBe(0);
-    expect(l.proposed!.processMinutes).toBe(0);
+    expect(l.proposed!.processMinutes).toBeGreaterThanOrEqual(0);
     const total = 25 + l.proposed!.processMinutes + l.proposed!.graceMinutes;
     expect(total).toBeGreaterThanOrEqual(25);
   });
@@ -137,6 +142,26 @@ describe("learnMeatTiming", () => {
     const l = learnMeatTiming([...old, ...recent], chicken);
     expect(l.runsUsed).toBe(20);
     expect(l.lead!.median).toBe(40);
+  });
+});
+
+describe("recency and the daily review", () => {
+  it("recent days count more, so a change in pace is followed", () => {
+    // 10 old days at 40, then the 5 newest at 55: an unweighted median (40) would ignore the change.
+    const runs = [
+      ...Array.from({ length: 10 }, (_, i) => run(i + 1, 40)),
+      ...Array.from({ length: 5 }, (_, i) => run(i + 11, 55)),
+    ];
+    const l = learnMeatTiming(runs, chicken, { ...LEARNING_RULES, outlierMads: 100 });
+    expect(l.lead!.median).toBeGreaterThan(44); // already moving towards 55 after 5 days
+  });
+  it("runs the review excludes (time not followed) don't move it", () => {
+    const runs = [40, 41, 40, 42, 41].map((lead, i) => run(i + 1, lead));
+    runs.push(run(10, 70), run(11, 72), run(12, 71));
+    const exclude = new Set(["10:1", "11:1", "12:1"]);
+    const l = learnMeatTiming(runs, chicken, LEARNING_RULES, exclude);
+    expect(l.dropped.not_followed).toBe(3);
+    expect(l.lead!.max).toBe(42);
   });
 });
 

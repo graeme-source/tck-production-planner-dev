@@ -33,10 +33,17 @@
 //     meat may sit ready before it's needed, so it stays short. The 4-hour
 //     rule for the whole build is checked by the live schedule (holdBreach).
 //
-// SAFE AUTOMATION — a value moves at most `maxStepMinutes` per learning run,
-// only on `minRuns` clean runs, and only when the change is at least
+// SAFE AUTOMATION — a value moves at most `maxStepMinutes` per learning run
+// (half that while there are fewer than `fullStepRuns` runs), only on
+// `minRuns` clean runs, and only when the change is at least
 // `minChangeMinutes`. One odd day can't swing it: the median ignores single
 // days, and runs far from the rest (MAD outlier rule) are dropped first.
+// RECENT DAYS COUNT MORE: each older run weighs `recencyDecay` × the one
+// after it, so a change in production pace is followed within days while a
+// single day still can't drag the median.
+//
+// The daily review (meat-daily-review.ts) can exclude runs where the time
+// wasn't followed (human, not the model) or capacity got in the way.
 //
 // Pure: callers load the rows, this does the arithmetic.
 
@@ -67,6 +74,10 @@ export interface LearningRules {
   windowRuns: number;
   /** Fewer clean runs than this → no learning, configured values stand. */
   minRuns: number;
+  /** Below this many runs, steps are halved (converge from little data, carefully). */
+  fullStepRuns: number;
+  /** Weight of each older run relative to the next newer one. */
+  recencyDecay: number;
   /** A tray shorter than this fraction of the cook time was tapped in and out together. */
   trayMinFraction: number;
   /** …and never shorter than this, whatever the cook time. */
@@ -93,7 +104,9 @@ export interface LearningRules {
 
 export const LEARNING_RULES: Readonly<LearningRules> = {
   windowRuns: 20,
-  minRuns: 5,
+  minRuns: 3,
+  fullStepRuns: 8,
+  recencyDecay: 0.9,
   trayMinFraction: 0.5,
   trayMinMinutes: 3,
   trayMaxMultiple: 3,
@@ -114,6 +127,7 @@ export type RunDropReason =
   | "no_filling_tick"
   | "filling_before_cooked"
   | "too_long"
+  | "not_followed"
   | "outlier";
 
 export interface LeadStats {
@@ -168,7 +182,33 @@ function clamp(v: number, lo: number, hi: number): number {
 }
 
 function emptyDrops(): Record<RunDropReason, number> {
-  return { no_real_tray: 0, no_filling_tick: 0, filling_before_cooked: 0, too_long: 0, outlier: 0 };
+  return { no_real_tray: 0, no_filling_tick: 0, filling_before_cooked: 0, too_long: 0, not_followed: 0, outlier: 0 };
+}
+
+/**
+ * Weighted percentile: values with weights, the value where the running
+ * weight first reaches p of the total (interpolating across the step).
+ * Equal weights give the same answer as percentile().
+ */
+export function weightedPercentile(items: Array<{ value: number; weight: number }>, p: number): number {
+  const s = items.filter(i => i.weight > 0).sort((a, b) => a.value - b.value);
+  if (s.length === 0) return 0;
+  if (s.length === 1) return s[0].value;
+  // Position of each value on 0..1 at the centre of its weight band, then
+  // interpolate — the weighted analogue of the linear percentile.
+  const total = s.reduce((t, i) => t + i.weight, 0);
+  let acc = 0;
+  const pos = s.map(i => { const c = (acc + i.weight / 2) / total; acc += i.weight; return c; });
+  const target = Math.min(1, Math.max(0, p));
+  if (target <= pos[0]) return s[0].value;
+  if (target >= pos[pos.length - 1]) return s[s.length - 1].value;
+  for (let k = 1; k < s.length; k++) {
+    if (target <= pos[k]) {
+      const f = (target - pos[k - 1]) / (pos[k] - pos[k - 1]);
+      return s[k - 1].value + (s[k].value - s[k - 1].value) * f;
+    }
+  }
+  return s[s.length - 1].value;
 }
 
 /** Is this tray a real cook, or a tap-through / a tray left open? */
@@ -214,6 +254,8 @@ export function learnMeatTiming(
   runs: MeatRun[],
   configured: ConfiguredMeatTiming,
   rules: LearningRules = LEARNING_RULES,
+  /** `${planId}:${recipeId}` runs the daily review says to leave out. */
+  exclude: Set<string> = new Set(),
 ): MeatLearning {
   const dropped = emptyDrops();
   const base = {
@@ -231,6 +273,7 @@ export function learnMeatTiming(
   const ordered = [...runs].sort((a, b) => (a.planDate < b.planDate ? 1 : a.planDate > b.planDate ? -1 : 0));
   const leads: number[] = [];
   for (const run of ordered) {
+    if (exclude.has(`${run.planId}:${run.recipeId}`)) { dropped.not_followed += 1; continue; }
     const r = runLeadMinutes(run, cook, rules);
     if ("drop" in r) { dropped[r.drop] += 1; continue; }
     if (leads.length < rules.windowRuns) leads.push(r.lead);
@@ -249,9 +292,11 @@ export function learnMeatTiming(
     return { ...base, status: "not_enough_data", runsUsed: kept.length, dropped, lead: null, learned: null, proposed: null, changes: [] };
   }
 
+  // `kept` is newest first: weight 1, decay, decay², …
+  const weighted = kept.map((value, i) => ({ value, weight: Math.pow(rules.recencyDecay, i) }));
   const lead: LeadStats = {
-    median: median(kept),
-    slow: percentile(kept, rules.gracePercentile),
+    median: weightedPercentile(weighted, 0.5),
+    slow: weightedPercentile(weighted, rules.gracePercentile),
     min: Math.min(...kept),
     max: Math.max(...kept),
   };
@@ -259,9 +304,10 @@ export function learnMeatTiming(
     processMinutes: Math.round(clamp(lead.median - cook, 0, rules.processMax)),
     graceMinutes: Math.round(clamp(lead.slow - lead.median, rules.graceMin, rules.graceMax)),
   };
+  const step = kept.length < rules.fullStepRuns ? Math.max(1, Math.floor(rules.maxStepMinutes / 2)) : rules.maxStepMinutes;
   const proposed = {
-    processMinutes: Math.round(clamp(stepTowards(configured.processMinutes, learned.processMinutes, rules.maxStepMinutes), 0, rules.processMax)),
-    graceMinutes: Math.round(clamp(stepTowards(configured.graceMinutes, learned.graceMinutes, rules.maxStepMinutes), rules.graceMin, rules.graceMax)),
+    processMinutes: Math.round(clamp(stepTowards(configured.processMinutes, learned.processMinutes, step), 0, rules.processMax)),
+    graceMinutes: Math.round(clamp(stepTowards(configured.graceMinutes, learned.graceMinutes, step), rules.graceMin, rules.graceMax)),
   };
 
   const changes: TimingChange[] = [];
@@ -270,16 +316,16 @@ export function learnMeatTiming(
   const slow = Math.round(lead.slow);
   const worth = (from: number | null, to: number) => from == null || Math.abs(to - from) >= rules.minChangeMinutes;
   if (worth(configured.processMinutes, proposed.processMinutes) && proposed.processMinutes !== configured.processMinutes) {
-    const capped = proposed.processMinutes !== learned.processMinutes ? ` (moving ${rules.maxStepMinutes} min at a time towards ${learned.processMinutes})` : "";
+    const capped = proposed.processMinutes !== learned.processMinutes ? ` (moving ${step} min at a time towards ${learned.processMinutes})` : "";
     changes.push({
       field: "process",
       from: configured.processMinutes,
       to: proposed.processMinutes,
-      reason: `Last ${n} runs: in the oven → first tin mixed took ${med} min (typical). Cook is set at ${cook} min, so processing is about ${learned.processMinutes} min${capped}.`,
+      reason: `Last ${n} runs (recent days count most): in the oven → first tin mixed took ${med} min (typical). Cook is set at ${cook} min, so processing is about ${learned.processMinutes} min${capped}.`,
     });
   }
   if (worth(configured.graceMinutes, proposed.graceMinutes) && proposed.graceMinutes !== configured.graceMinutes) {
-    const capped = proposed.graceMinutes !== learned.graceMinutes ? ` (moving ${rules.maxStepMinutes} min at a time towards ${learned.graceMinutes})` : "";
+    const capped = proposed.graceMinutes !== learned.graceMinutes ? ` (moving ${step} min at a time towards ${learned.graceMinutes})` : "";
     changes.push({
       field: "grace",
       from: configured.graceMinutes,
