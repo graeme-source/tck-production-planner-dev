@@ -125,6 +125,7 @@ import labelStockRouter from "./label-stock";
 import printJobsRouter from "./print-jobs";
 import { isPrintBridgePath } from "../lib/print-bridge-paths";
 import prepLinkedCompletionsRouter from "./prep-linked-completions";
+import prepSessionsRouter from "./prep-sessions";
 import planMoveRouter from "./plan-move";
 import dictationRouter from "./dictation";
 import icePacksRouter from "./ice-packs";
@@ -564,6 +565,10 @@ router.use("/label-stock", labelStockRouter);
 // own token auth.
 router.use("/print-jobs", printJobsRouter);
 router.use("/prep-linked-completions", prepLinkedCompletionsRouter);
+// Prep sessions — when a prep item is opened, completed and closed, written
+// in the background by the prep screens (Analytics → Prep times reads them).
+// Any signed-in station user; open/complete sit in the daily PIN lock.
+router.use("/prep-sessions", prepSessionsRouter);
 router.use("/plan-move", planMoveRouter);
 router.use("/dictation", dictationRouter);
 router.use("/ice-packs", icePacksRouter);

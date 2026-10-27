@@ -64,6 +64,8 @@ describe("matchAttributingWrite", () => {
     ["POST", "/messages"], // a team message goes out under a name
     ["POST", "/messages/42/ack"], // "I understand and will action this"
     ["PUT", "/dough-mix-progress/180"], // dough mix tick / "Mix complete", saved under a name
+    ["POST", "/prep-sessions/open"], // prep timing, under the person who opened the item
+    ["POST", "/prep-sessions/complete"], // a tick's time, under the person who ticked
   ])("guards %s %s", (method, path) => {
     expect(matchAttributingWrite(method, path)).not.toBeNull();
   });
@@ -85,6 +87,8 @@ describe("matchAttributingWrite", () => {
     ["POST", "/production-plans/180/items/9/fridge-extra"], // not an exact match
     ["PUT", "/staff-emergency-contacts/team/12"], // a manager's correction, attributed by account
     ["POST", "/messages/conversations/u:1,u:2/read"], // reading a chat records nothing
+    ["POST", "/prep-sessions/12/close"], // moving off an item records nothing against anyone
+    ["POST", "/prep-sessions/untick"], // re-totals after an undo
   ])("leaves %s %s alone", (method, path) => {
     expect(matchAttributingWrite(method, path)).toBeNull();
   });
