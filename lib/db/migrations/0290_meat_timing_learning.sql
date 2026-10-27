@@ -30,18 +30,15 @@
 --       ready_at_minutes       first tin of the filling mixed;
 --       needed_at_minutes      when the builders were free for the recipe;
 --       sat_minutes / wait_minutes / cost_minutes (sat + 4 × wait);
---       last_built_minutes, safety_minutes, safety_breach  — the 4-hour rule:
---           out → last batch built + baked + chilled to 8 °C ≤ 240;
+--       last_built_minutes, safety_minutes, safety_breach, chill_source —
+--           HACCP evidence only when the chill was MEASURED (probe, or a
+--           plausible "mark as chilled" tap): out of the oven → last batch
+--           at 8 °C, within 240 min or not. Never an assumed chill time;
 --       outcome 'perfect' | 'builders_waited' | 'too_early' | 'unknown';
 --       cause   'none' | 'model' | 'human' | 'capacity' | 'unknown'.
 --
 -- Settings (app_settings), only if not already set:
 --   meat_timing_learning_enabled  'true'
---   meat_safe_total_minutes       240 — out of the prep oven → last batch
---                                 chilled to 8 °C
---   calzone_chill_minutes         120 — baked calzones to 8 °C, used when
---                                 there's no probe reading or plausible tap
---   (calzone_bake_minutes         optional; unset = learned from the ovens)
 --   builder_wait_weight           4 — a minute of builder wait costs 4 of sitting
 --   meat_buffer_max_minutes       25 — cap on the learned buffer
 --   meat_put_in_reason_minutes    10 — ask why beyond this (+ loading time)
@@ -108,8 +105,8 @@ CREATE TABLE IF NOT EXISTS meat_put_in_records (
   last_built_minutes INTEGER,
   safety_minutes INTEGER,
   safety_breach BOOLEAN,
-  -- Where the chill time came from: 'probe' (measured), 'tap' (a plausible
-  -- "mark as chilled"), or 'default' (Settings). Probe/tap = measured.
+  -- Where the measured chill came from: 'probe', or 'tap' (a plausible
+  -- "mark as chilled"). NULL = not measured (no evidence recorded).
   chill_source TEXT,
   chill_minutes INTEGER,
   reviewed_at TIMESTAMPTZ,
@@ -153,8 +150,6 @@ CREATE INDEX IF NOT EXISTS probe_assignments_plan_recipe_idx ON probe_assignment
 
 INSERT INTO app_settings (key, value) VALUES
   ('meat_timing_learning_enabled', 'true'),
-  ('meat_safe_total_minutes', '240'),
-  ('calzone_chill_minutes', '120'),
   ('builder_wait_weight', '4'),
   ('meat_buffer_max_minutes', '25'),
   ('meat_put_in_reason_minutes', '10')

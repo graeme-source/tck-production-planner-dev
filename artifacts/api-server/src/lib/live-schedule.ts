@@ -7,10 +7,9 @@
  */
 import { db, productionPlanItemsTable, batchCompletionsTable, ovenEventsTable } from "@workspace/db";
 import { and, eq, inArray, isNotNull } from "drizzle-orm";
-import { replanLive, measurePace, meatKey, maxOutToLastBuiltMinutes, type BuildTick, type LiveSchedule } from "@workspace/production-schedule";
+import { replanLive, measurePace, meatKey, type BuildTick, type LiveSchedule } from "@workspace/production-schedule";
 import { buildPlanSchedule } from "./day-schedule";
 import { londonDateString, londonMinuteOfDay } from "./london-time";
-import { loadMeatTimingSettings, loadSafetyRule } from "./meat-timing-learner";
 
 export const BUILDING_STATIONS = ["building_1", "building_2"];
 
@@ -18,8 +17,6 @@ export interface LiveScheduleResult extends LiveSchedule {
   planId: number;
   planDate: string;
   isToday: boolean;
-  /** The 4-hour rule as applied: longest the meat may be out before the last batch is built. */
-  safety: { totalMinutes: number; chillMinutes: number; bakeMinutes: number; maxSpanMinutes: number };
 }
 
 /** Null when the plan doesn't exist. */
@@ -45,7 +42,7 @@ export async function buildLiveSchedule(planId: number, now: Date = new Date()):
     : [];
   const completions = completionsAll.filter(c => new Date(c.completedAt).getTime() <= now.getTime());
   const oven = await db
-    .select({ recipeId: ovenEventsTable.recipeId, ingredientId: ovenEventsTable.ingredientId, inAt: ovenEventsTable.ovenInAt, outAt: ovenEventsTable.ovenOutAt })
+    .select({ recipeId: ovenEventsTable.recipeId, ingredientId: ovenEventsTable.ingredientId, inAt: ovenEventsTable.ovenInAt })
     .from(ovenEventsTable)
     .where(and(eq(ovenEventsTable.planId, planId), isNotNull(ovenEventsTable.recipeId), isNotNull(ovenEventsTable.ingredientId)));
 
@@ -57,18 +54,7 @@ export async function buildLiveSchedule(planId: number, now: Date = new Date()):
     ? completions.map(c => ({ planItemId: c.planItemId, atMinutes: londonMinuteOfDay(new Date(c.completedAt)) }))
     : [];
   const pace = measurePace(ticks, new Map(base.recipes.map(r => [r.planItemId, r.minutesPerBatch])), base.options.buildersCount);
-  const settings = await loadMeatTimingSettings();
-  const rule = await loadSafetyRule(settings);
-  const maxSpanMinutes = maxOutToLastBuiltMinutes(rule);
   const { coldMixBufferMinutes } = await import("./meat-daily-review-job");
-  // When each started meat first came OUT (the clock for the 4-hour rule).
-  const outAtByKey = new Map<string, number>();
-  for (const o of oven) {
-    if (!o.outAt || new Date(o.outAt).getTime() > now.getTime()) continue;
-    const k = meatKey(o.recipeId!, o.ingredientId!);
-    const m = londonMinuteOfDay(new Date(o.outAt));
-    outAtByKey.set(k, Math.min(outAtByKey.get(k) ?? Infinity, m));
-  }
 
   const live = replanLive({
     recipes: base.recipes,
@@ -78,10 +64,8 @@ export async function buildLiveSchedule(planId: number, now: Date = new Date()):
     nowMinutes: isToday ? londonMinuteOfDay(now) : 0,
     pace,
     meatsStarted: new Set(oven.filter(o => new Date(o.inAt).getTime() <= now.getTime()).map(o => meatKey(o.recipeId!, o.ingredientId!))),
-    meatsOutAt: isToday ? outAtByKey : new Map(),
-    maxSpanMinutes,
     coldMixBufferMinutes: await coldMixBufferMinutes(),
   });
 
-  return { planId, planDate: String(base.planDate).slice(0, 10), isToday, safety: { totalMinutes: rule.totalMinutes, chillMinutes: rule.chillMinutes, bakeMinutes: rule.bakeMinutes, maxSpanMinutes }, ...live };
+  return { planId, planDate: String(base.planDate).slice(0, 10), isToday, ...live };
 }

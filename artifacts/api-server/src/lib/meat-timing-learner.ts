@@ -20,8 +20,8 @@
 import { db, ingredientsTable, meatTimingAdjustmentsTable, appSettingsTable } from "@workspace/db";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  learnMeatTiming, configuredLead, LEARNING_RULES, DEFAULT_SAFETY_RULE,
-  type MeatRun, type MeatLearning, type MeatTrayEvent, type TrustSignal, type LearningRules, type SafetyRule,
+  learnMeatTiming, configuredLead, LEARNING_RULES,
+  type MeatRun, type MeatLearning, type MeatTrayEvent, type TrustSignal, type LearningRules,
 } from "@workspace/production-schedule";
 
 type ReviewStats = Awaited<ReturnType<typeof import("./meat-daily-review-job").reviewStatsByIngredient>> extends Map<number, infer V> ? V : never;
@@ -30,22 +30,12 @@ type ReviewStats = Awaited<ReturnType<typeof import("./meat-daily-review-job").r
 export const HISTORY_DAYS = 120;
 export const LEARNING_ENABLED_SETTING = "meat_timing_learning_enabled";
 export const LAST_AUTO_RUN_SETTING = "meat_timing_last_auto_run";
-export const SAFE_TOTAL_SETTING = "meat_safe_total_minutes";
-export const CHILL_SETTING = "calzone_chill_minutes";
-/** Optional override; unset = learned from the ovens station. */
-export const BAKE_SETTING = "calzone_bake_minutes";
 export const WAIT_WEIGHT_SETTING = "builder_wait_weight";
 export const BUFFER_MAX_SETTING = "meat_buffer_max_minutes";
 
 export interface MeatTimingSettings {
   learningEnabled: boolean;
   lastAutoRun: string | null;
-  /** Out of the prep oven → last batch chilled to 8 °C. 240. */
-  safeTotalMinutes: number;
-  /** Baked calzones chilling to 8 °C. 120. */
-  chillMinutes: number;
-  /** Set by hand, else null (learned from the ovens station). */
-  bakeMinutesOverride: number | null;
   /** A minute of builder wait costs this many minutes of sitting. 4. */
   waitWeight: number;
   bufferMaxMinutes: number;
@@ -56,8 +46,7 @@ export async function loadMeatTimingSettings(): Promise<MeatTimingSettings> {
     .select({ key: appSettingsTable.key, value: appSettingsTable.value })
     .from(appSettingsTable)
     .where(inArray(appSettingsTable.key, [
-      LEARNING_ENABLED_SETTING, LAST_AUTO_RUN_SETTING, SAFE_TOTAL_SETTING, CHILL_SETTING,
-      BAKE_SETTING, WAIT_WEIGHT_SETTING, BUFFER_MAX_SETTING,
+      LEARNING_ENABLED_SETTING, LAST_AUTO_RUN_SETTING, WAIT_WEIGHT_SETTING, BUFFER_MAX_SETTING,
     ]));
   const m = new Map(rows.map(r => [r.key, r.value]));
   const num = (key: string, dflt: number) => {
@@ -67,9 +56,6 @@ export async function loadMeatTimingSettings(): Promise<MeatTimingSettings> {
   return {
     learningEnabled: (m.get(LEARNING_ENABLED_SETTING) ?? "true") !== "false",
     lastAutoRun: m.get(LAST_AUTO_RUN_SETTING) ?? null,
-    safeTotalMinutes: num(SAFE_TOTAL_SETTING, DEFAULT_SAFETY_RULE.totalMinutes),
-    chillMinutes: num(CHILL_SETTING, DEFAULT_SAFETY_RULE.chillMinutes),
-    bakeMinutesOverride: m.has(BAKE_SETTING) && m.get(BAKE_SETTING) !== "" ? num(BAKE_SETTING, DEFAULT_SAFETY_RULE.bakeMinutes) : null,
     waitWeight: num(WAIT_WEIGHT_SETTING, LEARNING_RULES.waitWeight),
     bufferMaxMinutes: num(BUFFER_MAX_SETTING, LEARNING_RULES.bufferMax),
   };
@@ -77,75 +63,6 @@ export async function loadMeatTimingSettings(): Promise<MeatTimingSettings> {
 
 export function rulesFromSettings(s: MeatTimingSettings): LearningRules {
   return { ...LEARNING_RULES, waitWeight: s.waitWeight, bufferMax: Math.max(LEARNING_RULES.bufferMin, s.bufferMaxMinutes) };
-}
-
-/**
- * Last calzone batch built → out of the calzone oven, minutes: the 90th
- * percentile over the last 60 days of the ovens station's last batch of each
- * recipe after the builders' last batch. Null with too little data.
- */
-export async function learnedBakeMinutes(): Promise<{ minutes: number | null; samples: number }> {
-  const res = await db.execute<{ p90: number | null; n: number }>(sql`
-    WITH b AS (
-      SELECT pi.plan_id, pi.recipe_id,
-        max(bc.completed_at) FILTER (WHERE bc.station_type IN ('building_1','building_2')) AS last_build,
-        max(bc.completed_at) FILTER (WHERE bc.station_type = 'ovens') AS last_oven
-      FROM batch_completions bc
-      JOIN production_plan_items pi ON pi.id = bc.plan_item_id
-      JOIN production_plans p ON p.id = pi.plan_id
-      WHERE p.plan_date >= (CURRENT_DATE - 60)
-      GROUP BY 1, 2
-    )
-    SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM last_oven - last_build) / 60) AS p90,
-           count(*)::int AS n
-      FROM b WHERE last_build IS NOT NULL AND last_oven > last_build
-       AND last_oven - last_build < interval '2 hours'
-  `);
-  const row = res.rows[0];
-  const n = Number(row?.n ?? 0);
-  return { minutes: n >= 10 && row?.p90 != null ? Math.round(Number(row.p90)) : null, samples: n };
-}
-
-/**
- * Chill time as RECORDED (calzone chill timer, batch_weight_records): the
- * last batch's chill end after its last oven pass, median over 60 days. For
- * information — "chilling finished" is a tap (and is auto-stamped at wrapping
- * on some days), so it runs late; planning uses the Settings chill time.
- */
-export async function recordedChillMinutes(): Promise<{ median: number | null; samples: number }> {
-  const res = await db.execute<{ med: number | null; n: number }>(sql`
-    WITH b AS (
-      SELECT pi.plan_id, pi.recipe_id, max(bc.completed_at) FILTER (WHERE bc.station_type = 'ovens') AS last_oven
-      FROM batch_completions bc JOIN production_plan_items pi ON pi.id = bc.plan_item_id
-      GROUP BY 1, 2
-    ), c AS (
-      SELECT plan_id, recipe_id, max(chill_end_at) AS last_chill
-      FROM batch_weight_records
-      WHERE chill_end_at IS NOT NULL AND chilled_via <> 'wrapping_complete_auto'
-        AND recorded_at >= now() - interval '60 days'
-      GROUP BY 1, 2
-    )
-    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM c.last_chill - b.last_oven) / 60) AS med,
-           count(*)::int AS n
-      FROM b JOIN c USING (plan_id, recipe_id) WHERE c.last_chill > b.last_oven
-  `);
-  const row = res.rows[0];
-  return { median: row?.med != null ? Math.round(Number(row.med)) : null, samples: Number(row?.n ?? 0) };
-}
-
-/** The 4-hour rule as configured now: total, chill, and bake (override, else learned, else 15). */
-export async function loadSafetyRule(settings?: MeatTimingSettings): Promise<SafetyRule & { bakeSource: "setting" | "learned" | "default" }> {
-  const s = settings ?? await loadMeatTimingSettings();
-  if (s.bakeMinutesOverride != null) {
-    return { totalMinutes: s.safeTotalMinutes, chillMinutes: s.chillMinutes, bakeMinutes: s.bakeMinutesOverride, bakeSource: "setting" };
-  }
-  const learned = await learnedBakeMinutes();
-  return {
-    totalMinutes: s.safeTotalMinutes,
-    chillMinutes: s.chillMinutes,
-    bakeMinutes: learned.minutes ?? DEFAULT_SAFETY_RULE.bakeMinutes,
-    bakeSource: learned.minutes != null ? "learned" : "default",
-  };
 }
 
 export async function saveSetting(key: string, value: string): Promise<void> {

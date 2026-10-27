@@ -8,10 +8,10 @@
  *   ready   first tin of that recipe's filling mixed (Mixing station tick)
  *   needed  when the builders were free for that recipe (the last batch of
  *           the recipe they built before it, or the building start)
- *   safety  the 4-hour rule: out → last batch built + baked + chilled to
- *           8 °C, with the chill from a registered probe, else a plausible
- *           "mark as chilled" tap, else the Settings chill time — and which
- *           source was used, so measured days are HACCP evidence
+ *   safety  HACCP evidence, only when the chill was MEASURED (a registered
+ *           probe, else a plausible "mark as chilled" tap): out of the oven →
+ *           last batch at 8 °C, and whether that was within 240 min. Never
+ *           an assumed chill time.
  * then stores: put in on time / early / late, minutes sat, builders' wait,
  * the cost (sat + 4 × wait), whose fault (model / human / capacity), and
  * whether the 4-hour rule was met.
@@ -29,7 +29,7 @@ import {
 } from "@workspace/production-schedule";
 import { londonDateString, londonMinuteOfDay } from "./london-time";
 import { reasonThresholdMinutes } from "./meat-put-in";
-import { loadMeatTimingSettings, loadSafetyRule } from "./meat-timing-learner";
+import { loadMeatTimingSettings } from "./meat-timing-learner";
 import { buildLiveSchedule } from "./live-schedule";
 
 /** Backfill and trust look back this far. */
@@ -92,7 +92,6 @@ export async function reviewDueRecords(includeToday: boolean): Promise<number> {
   const startMinutes = await buildingStartMinutes();
   const threshold = await reasonThresholdMinutes();
   const settings = await loadMeatTimingSettings();
-  const rule = await loadSafetyRule(settings);
   const planIds = [...new Set(due.map(d => d.planId))];
 
   // Per meat run: trays, and the first time it came out cooked (probe reading
@@ -195,17 +194,14 @@ export async function reviewDueRecords(includeToday: boolean): Promise<number> {
       }
     }
 
-    // Chill: probe → plausible tap → default (meat-safety.ts).
+    // Chill, measured only: probe → plausible tap (meat-safety.ts).
     const lastBake = lastBakeMs.length ? Math.max(...lastBakeMs) : null;
     const chill = resolveChillMinutes({
       lastBakeAtMs: lastBake,
       probeReadings: probesOf.get(`${rec.planId}:${rec.recipeId}`) ?? null,
       chilledTapAtMs: tapOf.get(`${rec.planId}:${rec.recipeId}`) ?? null,
-      defaultMinutes: rule.chillMinutes,
     });
-    const chilledAt = chill.source !== "default" && lastBake != null
-      ? londonMinuteOfDay(new Date(lastBake)) + chill.minutes
-      : null;
+    const chilledAt = chill && lastBake != null ? londonMinuteOfDay(new Date(lastBake)) + chill.minutes : null;
     const buffer = rec.bufferMinutes ?? bufferOf.get(rec.ingredientId) ?? LEARNING_RULES.bufferStart;
 
     const review = reviewRun({
@@ -217,9 +213,7 @@ export async function reviewDueRecords(includeToday: boolean): Promise<number> {
       trayCount: trays,
       bufferMinutes: buffer,
       outAtMinutes: outAt,
-      lastBuiltAtMinutes: lastBuilt.length ? Math.max(...lastBuilt) : null,
       chilledAtMinutes: chilledAt,
-      safety: { ...rule, chillMinutes: chill.minutes },
     }, { ...REVIEW_RULES, followToleranceMinutes: threshold, waitWeight: settings.waitWeight });
 
     await db.update(meatPutInRecordsTable).set({
@@ -238,8 +232,8 @@ export async function reviewDueRecords(includeToday: boolean): Promise<number> {
       lastBuiltMinutes: lastBuilt.length ? Math.max(...lastBuilt) : null,
       safetyMinutes: review.safetyMinutes,
       safetyBreach: review.safetyMinutes == null ? null : review.safetyBreach,
-      chillSource: review.safetyMinutes == null ? null : chill.source,
-      chillMinutes: review.safetyMinutes == null ? null : chill.minutes,
+      chillSource: review.safetyMinutes == null ? null : chill?.source ?? null,
+      chillMinutes: review.safetyMinutes == null ? null : chill?.minutes ?? null,
       reviewedAt: new Date(),
     }).where(eq(meatPutInRecordsTable.id, rec.id));
     n += 1;
@@ -312,7 +306,7 @@ export async function reviewStatsByIngredient(ingredientIds: number[]) {
   const rows = await reviewedFor(ingredientIds);
   const out = new Map<number, {
     reviewed: number; followed: number; notFollowed: number; perfect: number; waited: number; tooEarly: number;
-    totalSat: number; totalWait: number; safetyChecked: number; safetyMeasured: number; safetyBreaches: number; worstSafetyMinutes: number | null;
+    totalSat: number; totalWait: number; safetyChecked: number; safetyBreaches: number; worstSafetyMinutes: number | null;
     model: number; human: number; capacity: number; avgWait: number | null; avgSat: number | null;
   }>();
   for (const id of ingredientIds) {
@@ -329,7 +323,6 @@ export async function reviewStatsByIngredient(ingredientIds: number[]) {
       totalSat: mine.reduce((t, r) => t + (r.satMinutes ?? 0), 0),
       totalWait: mine.reduce((t, r) => t + (r.waitMinutes ?? 0), 0),
       safetyChecked: mine.filter(r => r.safetyMinutes != null).length,
-      safetyMeasured: mine.filter(r => r.chillSource === "probe" || r.chillSource === "tap").length,
       safetyBreaches: mine.filter(r => r.safetyBreach === true).length,
       worstSafetyMinutes: mine.reduce<number | null>((m, r) => r.safetyMinutes == null ? m : Math.max(m ?? 0, r.safetyMinutes), null),
       model: mine.filter(r => r.cause === "model").length,
@@ -364,5 +357,32 @@ export async function weeklyReasonSummary() {
       suggestedAtMinutes: r.suggestedAtMinutes, putInMinutes: r.putInMinutes, deviationMinutes: r.deviationMinutes,
       reasonCode: r.reasonCode, reasonNote: r.reasonNote, outcome: r.outcome,
     })),
+  };
+}
+
+/**
+ * The two plain numbers the managers' card leads with (Graeme, 2026-10-27):
+ * how long meat sat ready waiting, and how many times the builders waited,
+ * over the last `days` days. Plus the measured 4-hour evidence count.
+ */
+export async function headlineNumbers(days = 14) {
+  const rows = await db
+    .select({
+      sat: meatPutInRecordsTable.satMinutes,
+      wait: meatPutInRecordsTable.waitMinutes,
+      outcome: meatPutInRecordsTable.outcome,
+      safety: meatPutInRecordsTable.safetyMinutes,
+      breach: meatPutInRecordsTable.safetyBreach,
+    })
+    .from(meatPutInRecordsTable)
+    .where(and(isNotNull(meatPutInRecordsTable.reviewedAt), gte(meatPutInRecordsTable.planDate, daysAgo(days))));
+  const sats = rows.map(r => r.sat).filter((v): v is number => v != null);
+  return {
+    days,
+    runs: rows.length,
+    avgSatMinutes: sats.length ? Math.round(sats.reduce((a, b) => a + b, 0) / sats.length) : null,
+    builderWaits: rows.filter(r => r.outcome === "builders_waited").length,
+    measuredChillDays: rows.filter(r => r.safety != null).length,
+    measuredOverLimit: rows.filter(r => r.breach === true).length,
   };
 }
