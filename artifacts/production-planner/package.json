@@ -63,6 +63,7 @@
     "@workspace/revenue-targets": "workspace:*",
     "@workspace/plan-margin": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
+    "@workspace/station-changes": "workspace:*",
     "@workspace/people-reviews": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "class-variance-authority": "catalog:",

@@ -159,6 +159,9 @@ importers:
       '@workspace/slow-meat':
         specifier: workspace:*
         version: link:../../lib/slow-meat
+      '@workspace/station-changes':
+        specifier: workspace:*
+        version: link:../../lib/station-changes
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
@@ -665,6 +668,9 @@ importers:
       '@workspace/slow-meat':
         specifier: workspace:*
         version: link:../../lib/slow-meat
+      '@workspace/station-changes':
+        specifier: workspace:*
+        version: link:../../lib/station-changes
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
@@ -828,6 +834,8 @@ importers:
   lib/revenue-targets: {}
 
   lib/slow-meat: {}
+
+  lib/station-changes: {}
 
   lib/stock-prediction: {}
 
