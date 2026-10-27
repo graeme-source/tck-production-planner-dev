@@ -97,3 +97,4 @@ export * from "./order-quantity";
 export * from "./prep-weight";
 export * from "./length";
 export * from "./stock-check-unit";
+export * from "./recipe-pack-size";

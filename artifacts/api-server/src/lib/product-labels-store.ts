@@ -18,6 +18,7 @@ import { checkLabel, proofLabel, type LabelProof } from "@workspace/product-labe
 import { loadBundledFonts } from "@workspace/product-labels/node";
 import { buildRecipeIngredientDeck } from "./recipe-ingredient-deck";
 import { londonDateString } from "./london-time";
+import { effectivePackSize } from "@workspace/units";
 import { packBarcodeFor } from "./barcode-store";
 import { loadCookingData, recipeCookingSuggestion, type CookingData, type RecipeCookingSuggestion } from "./label-cooking-profile";
 
@@ -176,7 +177,7 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
   const settings = { ...settingsFromRow(settingsRow), barcode: pack.barcode ?? ownBarcode };
   const cooking = recipeCookingSuggestion(opts.cookingData ?? await loadCookingData(recipe.id), recipe.id, template.template.cookingTiers);
   const snapshot = buildSnapshot({
-    recipe: { name: recipe.name, packSize: recipe.packSize, shelfLifeDays: recipe.shelfLifeDays },
+    recipe: { name: recipe.name, packSize: effectivePackSize(recipe.packSize), shelfLifeDays: recipe.shelfLifeDays },
     deck: { deckText: deck.deckText, mayContainStatement: deck.mayContainStatement },
     settings,
     templateId: template.id,

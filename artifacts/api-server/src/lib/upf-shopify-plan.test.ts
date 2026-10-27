@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { planWebsiteSync, websiteUpfPercent, recipeFigures, nutritionPanelJson, type RecipeFacts, type ProductLink, type LedgerEntry, type NutritionValues } from "./upf-shopify-plan";
+import { planWebsiteSync, websiteUpfPercent, recipeFigures, nutritionPanelJson, isPer100gOnlyPanel, heldByDesign, NO_PACK_SIZE_REASON, type RecipeFacts, type ProductLink, type LedgerEntry, type NutritionValues } from "./upf-shopify-plan";
 
 const vals = (over: Partial<NutritionValues> = {}): NutritionValues => ({
   energyKj: 1046.4, energyKcal: 250.2, fat: 9.87, saturates: 4.04, carbohydrate: 28.66,
@@ -120,5 +120,71 @@ describe("nutrition table", () => {
     const f = recipeFigures(recipe(1, { missingNutrition: ["Basil"] }));
     expect(f.nutrition).toEqual({ value: null, heldBecause: "missing nutrition on: Basil" });
     expect(f.kcal.value).toBe(512);
+  });
+});
+
+describe("no pack size — per 100 g only (fried chicken, migration 0286)", () => {
+  // As upf-shopify-sync builds it when computeRecipeNutritionals says per100gOnly.
+  const byWeight = (over: Partial<RecipeFacts> = {}) => recipe(7, {
+    per100gOnly: true,
+    kcalPerPortion: null, proteinPerPortion: null,
+    nutrition: { portionWeightG: null, per100g: vals(), perPortion: null },
+    ...over,
+  });
+  const per100g = { energyKj: 1046, energyKcal: 250, fat: 9.9, saturates: 4, carbohydrate: 28.7, sugars: 3.2, fibre: 2.1, protein: 12.3, salt: 1.23 };
+
+  it("sends the table per 100 g only, with no per-portion column or portion weight", () => {
+    const f = recipeFigures(byWeight());
+    expect(f.nutrition.heldBecause).toBeNull();
+    expect(JSON.parse(f.nutrition.value as string)).toEqual({ per100gOnly: true, per100g });
+    expect(f.nutrition.value).not.toContain("perPortion");
+    expect(f.nutrition.value).not.toContain("portionWeightG");
+  });
+
+  it("holds back the per-portion calories and protein icons, saying why", () => {
+    const f = recipeFigures(byWeight());
+    expect(f.kcal).toEqual({ value: null, heldBecause: "no pack size — per 100 g only" });
+    expect(f.protein).toEqual({ value: null, heldBecause: NO_PACK_SIZE_REASON });
+  });
+
+  it("holds them back even if per-portion numbers were somehow supplied", () => {
+    const f = recipeFigures(byWeight({ kcalPerPortion: 4500, proteinPerPortion: 300 }));
+    expect(f.kcal.value).toBeNull();
+    expect(f.protein.value).toBeNull();
+  });
+
+  it("removes icons the website already shows, and writes the new table", () => {
+    const [d] = planWebsiteSync([byWeight()], [link("p7", 7)], [ledger("p7", 0, 4500, 300.1, '{"portionWeightG":1800}')]);
+    expect(d.metrics.kcal).toMatchObject({ value: null, needsWrite: true });
+    expect(d.metrics.protein).toMatchObject({ value: null, needsWrite: true });
+    expect(d.metrics.nutrition.needsWrite).toBe(true);
+    expect(JSON.parse(d.metrics.nutrition.value as string).perPortion).toBeUndefined();
+  });
+
+  it("still withholds the table when a per 100 g value is missing", () => {
+    expect(recipeFigures(byWeight({ nutrition: { portionWeightG: null, per100g: vals({ salt: null }), perPortion: null } })).nutrition.value).toBeNull();
+    expect(recipeFigures(byWeight({ missingNutrition: ["Flour"] })).nutrition.heldBecause).toBe("missing nutrition on: Flour");
+  });
+
+  it("UPF is unaffected", () => {
+    expect(recipeFigures(byWeight({ upfPercent: 3.84 })).upf.value).toBe(3.8);
+  });
+
+  it("the planner can tell the shape and the reason apart", () => {
+    expect(isPer100gOnlyPanel(recipeFigures(byWeight()).nutrition.value as string)).toBe(true);
+    expect(isPer100gOnlyPanel(recipeFigures(recipe(1)).nutrition.value as string)).toBe(false);
+    expect(isPer100gOnlyPanel("not json")).toBe(false);
+    expect(heldByDesign(NO_PACK_SIZE_REASON)).toBe(true);
+    expect(heldByDesign("no calories on: Cheddar")).toBe(false);
+  });
+
+  it("a recipe WITH a pack size is exactly as before", () => {
+    const withPack = recipe(1);
+    const f = recipeFigures(withPack);
+    expect(f).toEqual(recipeFigures({ ...withPack, per100gOnly: false }));
+    expect(f.kcal).toEqual({ value: 512, heldBecause: null });
+    expect(f.protein).toEqual({ value: 24.4, heldBecause: null });
+    expect(JSON.parse(f.nutrition.value as string)).toEqual({ portionWeightG: 205, per100g, perPortion: per100g });
+    expect(f.nutrition.value).toBe(nutritionPanelJson(withPack.nutrition!));
   });
 });

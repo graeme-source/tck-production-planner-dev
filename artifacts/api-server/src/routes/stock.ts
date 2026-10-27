@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { db, stockEntriesTable, recipesTable, ingredientsTable, stockItemsTable, usersTable, appSettingsTable, fridgeStockBatchesTable } from "@workspace/db";
+import { db, stockEntriesTable, recipesTable, ingredientsTable, stockItemsTable, usersTable, appSettingsTable, fridgeStockBatchesTable, recipePackSizeOrOne } from "@workspace/db";
 import { eq, and, desc, gt, asc, notInArray, sql } from "drizzle-orm";
 import { CreateStockEntryBody, UpdateStockEntryBody } from "@workspace/api-zod";
 import { validate } from "../middleware/validate";
@@ -79,7 +79,7 @@ router.get("/factory-numbers", async (_req, res) => {
       id: recipesTable.id,
       name: recipesTable.name,
       isCoreMenu: recipesTable.isCoreMenu,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(recipesTable)
     .where(eq(recipesTable.isCoreMenu, true))

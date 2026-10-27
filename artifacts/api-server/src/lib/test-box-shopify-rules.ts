@@ -172,14 +172,15 @@ export const NUTRIENT_ROWS: ReadonlyArray<{ key: string; label: string; unit: st
 
 /** The app's nutrition (GET /api/recipes/:id/nutritionals) as table rows —
  *  what the nutrition image has to show. Energy whole numbers, the rest to
- *  one decimal place (salt to two). */
-export function nutritionRows(per100g: Record<string, number | null>, perPortion: Record<string, number | null>): Array<{ label: string; per100g: string; perPortion: string }> {
+ *  one decimal place (salt to two). perPortion null (a recipe with no
+ *  portion size) gives perPortion null on every row: per 100 g only. */
+export function nutritionRows(per100g: Record<string, number | null>, perPortion: Record<string, number | null> | null): Array<{ label: string; per100g: string; perPortion: string | null }> {
   const fmt = (key: string, unit: string, v: number | null | undefined) => {
     if (v == null) return "—";
     const dp = key.startsWith("energy") ? 0 : key === "salt" ? 2 : 1;
     return `${v.toFixed(dp)}${unit === "g" ? "g" : ` ${unit}`}`;
   };
-  return NUTRIENT_ROWS.map(r => ({ label: r.unit === "kcal" ? "" : r.label, per100g: fmt(r.key, r.unit, per100g[r.key]), perPortion: fmt(r.key, r.unit, perPortion[r.key]) }));
+  return NUTRIENT_ROWS.map(r => ({ label: r.unit === "kcal" ? "" : r.label, per100g: fmt(r.key, r.unit, per100g[r.key]), perPortion: perPortion ? fmt(r.key, r.unit, perPortion[r.key]) : null }));
 }
 
 // ── Metafields ──────────────────────────────────────────────────────────────

@@ -72,6 +72,11 @@ describe("content", () => {
     expect(rows[3].per100g).toBe("—");
     expect(rows[8].per100g).toBe("1.23g");
   });
+  it("nutrition rows with no pack size: per 100 g only, no per-portion column", () => {
+    const rows = nutritionRows({ energyKj: 1000.4, energyKcal: 239.2 }, null);
+    expect(rows[0]).toEqual({ label: "Energy", per100g: "1000 kJ", perPortion: null });
+    expect(rows.every(r => r.perPortion === null)).toBe(true);
+  });
 });
 
 describe("metafield plan", () => {

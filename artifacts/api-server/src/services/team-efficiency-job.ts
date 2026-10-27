@@ -35,6 +35,7 @@ import { onCostMultiplier } from "../lib/team-efficiency";
 import { loadWasteByDay } from "./waste-by-day";
 import { pendingDaysToRecheck } from "../lib/team-efficiency-recheck";
 
+import { effectivePackSize } from "@workspace/units";
 const CHUNK_DAYS = 28;          // Planday payroll windows stay ≤ 28 days
 const RECENT_DAYS = 10;         // re-computed every night
 const STALE_AFTER_DAYS = 14;    // unapproved shifts older than this are left out
@@ -122,7 +123,7 @@ export async function planItems(from: string, to: string): Promise<Map<string, P
       batchesTarget: num(x.batches_target),
       batchesComplete: num(x.batches_complete),
       portionsPerBatch: num(x.portions_per_batch),
-      packSize: num(x.pack_size),
+      packSize: effectivePackSize(x.pack_size as string | null),
       rrp: num(x.rrp),
     });
     out.set(date, list);
@@ -155,7 +156,7 @@ export async function despatchInputs(from: string, to: string, lookbackDays = OR
     if (t && !byTitle.has(t)) byTitle.set(t, m.recipe_id);
   }
   const recipeMap = new Map<number, RecipeInput>(recipes.rows.map(r => [r.id, {
-    id: r.id, category: r.category || null, packSize: num(r.pack_size), rrp: num(r.rrp),
+    id: r.id, category: r.category || null, packSize: effectivePackSize(r.pack_size as string | null), rrp: num(r.rrp),
   }]));
   const orderInputs: OrderInput[] = orders.rows.map(o => {
     const li = (typeof o.li === "string" ? JSON.parse(o.li) : o.li) as Array<{ v: string | null; vt: string | null; t: string | null; q: string | null }>;

@@ -1,5 +1,5 @@
 import { Router, type IRouter } from "express";
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, productionPlanExtraDoughTable, queuedProductionTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, batchCompletionsTable, stationBreaksTable, stationChangeoversTable, recipeIngredientsTable, ingredientsTable, recipeSubRecipesTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, dispatchOrdersTable, appSettingsTable, prepCompletionsTable, prepDeferralsTable, prepTinOverridesTable, dailyStockChecksTable, usersTable, recipeMeatMarinadesTable, stockEntriesTable, fridgeStockBatchesTable, dptSettingsTable, purchaseOrdersTable, purchaseOrderLinesTable, suppliersTable, batchWeightRecordsTable, temperatureRecordsTable, productionPlanExtraDoughTable, queuedProductionTable, recipePackSizeOrOne } from "@workspace/db";
 import { eq, and, desc, sql, gt, gte, lte, asc, inArray, notInArray, sum as drizzleSum, ne, isNotNull, isNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { validate } from "../middleware/validate";
@@ -501,7 +501,7 @@ router.get("/packs-by-date", async (req, res) => {
       SELECT p.plan_date::text AS date,
              COALESCE(SUM(FLOOR(
                pi.batches_target * COALESCE(r.portions_per_batch, 10)
-               / COALESCE(NULLIF(r.pack_size, 0), 2)
+               / COALESCE(NULLIF(COALESCE(r.pack_size, 1), 0), 2)
              )), 0)::int AS calzone_packs
       FROM production_plans p
       JOIN production_plan_items pi ON pi.plan_id = p.id
@@ -1006,7 +1006,7 @@ export async function calculatePlanData(planDate: string) {
       shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
       isActive: dptSettingsTable.isActive,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
@@ -1024,7 +1024,7 @@ export async function calculatePlanData(planDate: string) {
       name: recipesTable.name,
       category: recipesTable.category,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
@@ -1066,7 +1066,7 @@ export async function calculatePlanData(planDate: string) {
       name: recipesTable.name,
       category: recipesTable.category,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
@@ -1545,7 +1545,7 @@ export async function calculatePlanData(planDate: string) {
         name: recipesTable.name,
         category: recipesTable.category,
         portionsPerBatch: recipesTable.portionsPerBatch,
-        packSize: recipesTable.packSize,
+        packSize: recipePackSizeOrOne,
         tinSize: recipesTable.tinSize,
         maxBatchesPerTin: recipesTable.maxBatchesPerTin,
         sopUrl: recipesTable.sopUrl,
@@ -1709,7 +1709,7 @@ export async function calculatePlanData(planDate: string) {
       color: recipesTable.color,
       recipeCategory: recipesTable.category,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
@@ -1939,7 +1939,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
       recipeId: recipesTable.id,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       tinSize: recipesTable.tinSize,
       maxBatchesPerTin: recipesTable.maxBatchesPerTin,
       sopUrl: recipesTable.sopUrl,
@@ -2215,7 +2215,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
   if (recipeIds.length === 0) { res.status(400).json({ error: "No items provided" }); return; }
 
   const recipeRows = await db
-    .select({ id: recipesTable.id, category: recipesTable.category, portionsPerBatch: recipesTable.portionsPerBatch, packSize: recipesTable.packSize, tinSize: recipesTable.tinSize, maxBatchesPerTin: recipesTable.maxBatchesPerTin, sopUrl: recipesTable.sopUrl })
+    .select({ id: recipesTable.id, category: recipesTable.category, portionsPerBatch: recipesTable.portionsPerBatch, packSize: recipePackSizeOrOne, tinSize: recipesTable.tinSize, maxBatchesPerTin: recipesTable.maxBatchesPerTin, sopUrl: recipesTable.sopUrl })
     .from(recipesTable)
     .where(inArray(recipesTable.id, recipeIds));
 
@@ -2327,7 +2327,7 @@ router.post("/:id/add-mac-cheese", validate(AddMacCheeseBody), async (req, res) 
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       targetBuildSeconds: recipesTable.targetBuildSeconds,
       notes: productionPlanItemsTable.notes,
       status: productionPlanItemsTable.status,
@@ -2845,7 +2845,7 @@ router.get("/:id", async (req, res) => {
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       targetBuildSeconds: recipesTable.targetBuildSeconds,
       notes: productionPlanItemsTable.notes,
       status: productionPlanItemsTable.status,
@@ -3262,7 +3262,7 @@ router.post("/:id/batch-completions", async (req, res) => {
     builderMarkedCompleteAt: productionPlanItemsTable.builderMarkedCompleteAt,
     leftoverFillingGrams: productionPlanItemsTable.leftoverFillingGrams,
     portionsPerBatch: recipesTable.portionsPerBatch,
-    packSize: recipesTable.packSize,
+    packSize: recipePackSizeOrOne,
     recipeCategory: recipesTable.category,
     skipOvens: recipesTable.skipOvens,
   })
@@ -3960,7 +3960,7 @@ router.get("/:id/weight-targets", async (req, res) => {
     itemId: productionPlanItemsTable.id,
     recipeId: productionPlanItemsTable.recipeId,
     recipeName: recipesTable.name,
-    packSize: recipesTable.packSize,
+    packSize: recipePackSizeOrOne,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -5649,7 +5649,7 @@ router.post("/:id/items/:itemId/manual-batch", async (req, res) => {
   const [planItem] = await db.select({
     id: productionPlanItemsTable.id,
     portionsPerBatch: recipesTable.portionsPerBatch,
-    packSize: recipesTable.packSize,
+    packSize: recipePackSizeOrOne,
   })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -6693,7 +6693,7 @@ router.get("/:id/packing", async (req, res) => {
       status: productionPlanItemsTable.status,
       orderPosition: productionPlanItemsTable.orderPosition,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))
@@ -8653,7 +8653,7 @@ router.get("/:id/validate", async (req, res) => {
       batchesTarget: productionPlanItemsTable.batchesTarget,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

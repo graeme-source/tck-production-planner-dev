@@ -24,7 +24,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db, recipesTable, productionPlansTable, productionPlanItemsTable,
-  appSettingsTable, allocateFriedChickenPacks, dptSharesFromSales,
+  appSettingsTable, allocateFriedChickenPacks, dptSharesFromSales, recipePackSizeOrOne
 } from "@workspace/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import * as z from "zod";
@@ -365,7 +365,7 @@ router.post("/plans/:planId/items", requireManagerOrAdmin, validate(ItemsBody), 
 
     const recipeIds = body.items.map(i => i.recipeId);
     const recipes = await db
-      .select({ id: recipesTable.id, category: recipesTable.category, portionsPerBatch: recipesTable.portionsPerBatch, packSize: recipesTable.packSize })
+      .select({ id: recipesTable.id, category: recipesTable.category, portionsPerBatch: recipesTable.portionsPerBatch, packSize: recipePackSizeOrOne })
       .from(recipesTable)
       .where(inArray(recipesTable.id, recipeIds));
     const byId = new Map(recipes.map(r => [r.id, r]));

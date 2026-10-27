@@ -4,7 +4,7 @@ import {
   recipesTable,
   recipeIngredientsTable,
   recipeSubRecipesTable,
-  subRecipesTable,
+  subRecipesTable, recipePackSizeOrOne
 } from "@workspace/db";
 import { eq, ilike, or, asc, inArray } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -135,7 +135,7 @@ async function listRecipes(input: { query?: string }): Promise<unknown> {
       name: recipesTable.name,
       category: recipesTable.category,
       rrp: recipesTable.rrp,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       portionsPerBatch: recipesTable.portionsPerBatch,
       isCoreMenu: recipesTable.isCoreMenu,
       isCurrentSpecial: recipesTable.isCurrentSpecial,

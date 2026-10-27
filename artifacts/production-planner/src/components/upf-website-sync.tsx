@@ -17,6 +17,10 @@ interface Figure {
   value: number | null;
   published: number | null;
   heldBecause: string | null;
+  /** Held back on purpose: the recipe has no pack size (per 100 g only). */
+  byDesign?: boolean;
+  /** Nutrition table: sent per 100 g only (no pack size). */
+  per100gOnly?: boolean;
 }
 
 interface SyncProduct {
@@ -62,6 +66,9 @@ function upfLabel(p: number): string {
 }
 
 function FigureCell({ figure, label }: { figure: Figure; label: (v: number) => string }) {
+  if (figure.value == null && figure.byDesign) {
+    return <span className="text-xs text-muted-foreground">Not shown — no pack size set, so no per-portion figure (the table shows per 100 g)</span>;
+  }
   if (figure.value == null) {
     return <span className="text-xs text-muted-foreground">Not shown — {figure.heldBecause}</span>;
   }
@@ -91,7 +98,9 @@ export function UpfWebsiteSync() {
 
   if (q.isLoading || q.error || !q.data) return null;
   const { products, writesBlocked } = q.data;
-  const complete = products.filter(p => p.upf.value != null && p.kcal.value != null && p.protein.value != null && p.nutrition.value != null);
+  // A per-portion figure held back on purpose (no pack size) isn't missing.
+  const shown = (f: Figure) => f.value != null || f.byDesign === true;
+  const complete = products.filter(p => p.upf.value != null && shown(p.kcal) && shown(p.protein) && p.nutrition.value != null);
   const incomplete = products.length - complete.length;
   const failing = products.filter(p => p.lastError);
   const lastCheck = products.reduce<string | null>((a, p) => (!a || p.checkedAt > a ? p.checkedAt : a), null);
@@ -158,7 +167,7 @@ export function UpfWebsiteSync() {
                       <FigureCell figure={p.protein} label={v => `${Math.round(v)} g`} />
                       {p.lastError && <p className="text-xs text-red-700 mt-1">Shopify: {p.lastError}</p>}
                     </td>
-                    <td className="px-4 py-2"><FigureCell figure={p.nutrition} label={() => "Per 100 g & per portion"} /></td>
+                    <td className="px-4 py-2"><FigureCell figure={p.nutrition} label={() => (p.nutrition.per100gOnly ? "Per 100 g only" : "Per 100 g & per portion")} /></td>
                     <td className="px-4 py-2 text-muted-foreground whitespace-nowrap">{ago(p.writtenAt)}</td>
                   </tr>
                 ))}

@@ -52,7 +52,7 @@ import {
   recipesTable,
   batchCompletionsTable,
   buildingStationProgressTable,
-  buildingCountEditsTable,
+  buildingCountEditsTable, recipePackSizeOrOne
 } from "@workspace/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import * as z from "zod";
@@ -104,7 +104,7 @@ export async function loadState(ex: typeof db | Tx, planId: number, itemId: numb
       recipeId: productionPlanItemsTable.recipeId,
       recipeName: recipesTable.name,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       fridgeQty: productionPlanItemsTable.fridgeQty,
       freezerQty: productionPlanItemsTable.freezerQty,
       fridgeEightPackQty: productionPlanItemsTable.fridgeEightPackQty,

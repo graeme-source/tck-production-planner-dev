@@ -39,7 +39,7 @@ interface RecipePreview {
   barcode: string;
   imagesCopied: boolean;
   metafields: MetafieldLine[];
-  nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string }> };
+  nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string | null }> };
   warnings: string[];
   blocking: string[];
 }
@@ -342,13 +342,15 @@ function MetafieldRow({ m }: { m: MetafieldLine }) {
 
 function NutritionTable({ n }: { n: RecipePreview["nutrition"] }) {
   if (!n.rows.length) return <p className="text-sm text-muted-foreground mt-1">No nutrition worked out for this recipe yet.</p>;
+  // A recipe with no pack size (sold by weight) has a per 100 g column only.
+  const hasPortion = n.rows[0]?.perPortion != null;
   return (
     <table className="mt-2 w-full max-w-md text-sm">
-      <thead><tr className="text-muted-foreground"><th className="text-left font-semibold py-1"></th><th className="text-right font-semibold">Per 100g</th><th className="text-right font-semibold">Per calzone{n.portionWeightG ? ` (${n.portionWeightG}g)` : ""}</th></tr></thead>
+      <thead><tr className="text-muted-foreground"><th className="text-left font-semibold py-1"></th><th className="text-right font-semibold">Per 100g</th>{hasPortion && <th className="text-right font-semibold">Per calzone{n.portionWeightG ? ` (${n.portionWeightG}g)` : ""}</th>}</tr></thead>
       <tbody>
         {n.rows.map((row, i) => (
           <tr key={i} className="border-t border-border">
-            <td className="py-1">{row.label}</td><td className="text-right tabular-nums">{row.per100g}</td><td className="text-right tabular-nums">{row.perPortion}</td>
+            <td className="py-1">{row.label}</td><td className="text-right tabular-nums">{row.per100g}</td>{hasPortion && <td className="text-right tabular-nums">{row.perPortion}</td>}
           </tr>
         ))}
       </tbody>

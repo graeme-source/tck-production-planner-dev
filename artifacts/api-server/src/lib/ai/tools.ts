@@ -9,7 +9,7 @@ import {
   stockEntriesTable,
   stockItemsTable,
   suppliersTable,
-  usersTable,
+  usersTable, recipePackSizeOrOne
 } from "@workspace/db";
 import { and, desc, eq, ilike, isNull, sql } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -120,7 +120,7 @@ async function getTodaysProductionPlan(): Promise<string> {
       batchesComplete: productionPlanItemsTable.batchesComplete,
       recipeName: recipesTable.name,
       recipeCategory: recipesTable.category,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(productionPlanItemsTable)
     .leftJoin(recipesTable, eq(productionPlanItemsTable.recipeId, recipesTable.id))

@@ -28,7 +28,8 @@ export const WEBSITE_METAFIELDS: Record<WebsiteMetric, { namespace: string; key:
   kcal: { namespace: "custom", key: "kcal_per_portion", type: "number_integer", format: v => String(Math.round(Number(v))) },
   protein: { namespace: "custom", key: "protein_per_portion", type: "number_decimal", format: v => Number(v).toFixed(1) },
   // The nutrition table (snippets/tck-nutrition-table.liquid): per 100 g and
-  // per portion, already JSON from nutritionPanelJson.
+  // per portion — or per 100 g only for a recipe with no pack size —
+  // already JSON from nutritionPanelJson.
   nutrition: { namespace: "custom", key: "nutrition_panel", type: "json", format: v => String(v) },
 };
 
@@ -100,16 +101,22 @@ async function loadRecipeFacts(recipeIds: number[]): Promise<RecipeFacts[]> {
     const lacking = (key: string) => n.completeness.missingNutritionalDetail.filter(d => (d.missing as string[]).includes(key)).map(d => d.name);
     const values = (src: Record<string, number | null>) =>
       Object.fromEntries(NUTRITION_KEYS.map(k => [k, src[k] ?? null])) as Record<(typeof NUTRITION_KEYS)[number], number | null>;
+    // No pack size (migration 0286): perPortion / portionWeightG come back
+    // null and the plan sends the table per 100 g only.
+    const hasPortion = n.perPortion != null && n.portionWeightG != null && n.portionWeightG > 0;
     facts.push({
       recipeId,
       name: u.name,
       upfPercent: u.upfPercent,
       unclassifiedIngredients: u.unclassifiedIngredients,
-      kcalPerPortion: n.portionWeightG > 0 ? n.perPortion.energyKcal : null,
-      proteinPerPortion: n.portionWeightG > 0 ? n.perPortion.protein : null,
+      per100gOnly: n.per100gOnly,
+      kcalPerPortion: hasPortion ? n.perPortion!.energyKcal : null,
+      proteinPerPortion: hasPortion ? n.perPortion!.protein : null,
       missingKcal: lacking("energyKcal"),
       missingProtein: lacking("protein"),
-      nutrition: n.portionWeightG > 0 ? { portionWeightG: n.portionWeightG, per100g: values(n.per100g), perPortion: values(n.perPortion) } : null,
+      nutrition: n.per100gOnly
+        ? { portionWeightG: null, per100g: values(n.per100g), perPortion: null }
+        : hasPortion ? { portionWeightG: n.portionWeightG, per100g: values(n.per100g), perPortion: values(n.perPortion!) } : null,
       missingNutrition: n.completeness.missingNutritionalDetail.map(d => d.name),
     });
   }

@@ -33,6 +33,7 @@ import { computeUpfSummary } from "../lib/upf";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { runUpfShopifySync, lastUpfSyncRun } from "../lib/upf-shopify-sync";
+import { heldByDesign, isPer100gOnlyPanel } from "../lib/upf-shopify-plan";
 import { shopifyWritesBlocked } from "../services/shopify";
 
 const router: IRouter = Router();
@@ -215,9 +216,11 @@ router.get("/shopify-sync", async (_req: Request, res: Response) => {
         recipeNames: x.recipe_names,
         status: x.status,
         upf: { value: num(x.upf_percent), published: num(x.upf_published), heldBecause: x.upf_held },
-        kcal: { value: num(x.kcal_per_portion), published: num(x.kcal_published), heldBecause: x.kcal_held },
-        protein: { value: num(x.protein_per_portion), published: num(x.protein_published), heldBecause: x.protein_held },
-        nutrition: { value: x.nutrition_panel == null ? null : 1, published: x.nutrition_published == null ? null : 1, heldBecause: x.nutrition_held },
+        // byDesign: held back because the recipe has no pack size (per
+        // 100 g only) — intended, so not counted as "a figure held back".
+        kcal: { value: num(x.kcal_per_portion), published: num(x.kcal_published), heldBecause: x.kcal_held, byDesign: heldByDesign(x.kcal_held) },
+        protein: { value: num(x.protein_per_portion), published: num(x.protein_published), heldBecause: x.protein_held, byDesign: heldByDesign(x.protein_held) },
+        nutrition: { value: x.nutrition_panel == null ? null : 1, published: x.nutrition_published == null ? null : 1, heldBecause: x.nutrition_held, per100gOnly: isPer100gOnlyPanel(x.nutrition_panel) },
         lastError: x.last_error,
         checkedAt: x.checked_at,
         writtenAt: x.written_at,
