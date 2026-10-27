@@ -76,13 +76,15 @@ export default function ProductLabelRecipePage() {
           >
             <Printer className="w-5 h-5" /> Print labels — today
           </button>
-          <button
-            type="button"
-            onClick={() => setPrintingFront(true)}
-            className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
-          >
-            <Printer className="w-5 h-5" /> Print front labels
-          </button>
+          {data.template.backLabel && (
+            <button
+              type="button"
+              onClick={() => setPrintingFront(true)}
+              className="inline-flex items-center gap-2 h-11 px-4 rounded-xl bg-primary text-primary-foreground font-bold hover:bg-primary/90"
+            >
+              <Printer className="w-5 h-5" /> Print front labels
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setTestPrinting(true)}
@@ -155,7 +157,8 @@ export default function ProductLabelRecipePage() {
         <div className="space-y-2">
           <h2 className="text-lg font-bold">{data.matchesLive ? "Current — same as live" : "Current — from the recipe as it is now"}</h2>
           <ProofImage proof={cur} highlight={data.matchesLive ? [] : highlight} />
-          <FitTable proof={cur} />
+          {/* The small label has no text fields to size — its fixed size instead. */}
+          {cur.backLabel ? <FitTable proof={cur} /> : <p className="text-sm text-muted-foreground">Small label, {cur.sizeText} — name, use-by, batch number and barcode.</p>}
         </div>
         <div className="space-y-2">
           <h2 className="text-lg font-bold">Live — what prints now</h2>
@@ -165,7 +168,8 @@ export default function ProductLabelRecipePage() {
         </div>
       </div>
 
-      <FrontLabelPreview recipeId={data.recipe.id} onPrint={() => setPrintingFront(true)} />
+      {/* Front name labels go with the back label; a small pot label is the only label. */}
+      {data.template.backLabel && <FrontLabelPreview recipeId={data.recipe.id} onPrint={() => setPrintingFront(true)} />}
 
       <RecipeLabelSettings key={data.recipe.id} data={data} canEdit={canEdit} />
       </>)}

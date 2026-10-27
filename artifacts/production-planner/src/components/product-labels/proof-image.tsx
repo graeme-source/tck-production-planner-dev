@@ -5,7 +5,7 @@
  * the bottom, below a red "label edge" line.
  */
 import { useState } from "react";
-import type { FieldKey, Rect } from "@workspace/product-labels";
+import { LABEL_FORMATS, type FieldKey, type Rect } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
 import type { Proof } from "./api";
 
@@ -35,9 +35,13 @@ export function ProofImage({ proof, highlight = [], showOverflow = true, classNa
     boxes.push({ rect: proof.barcode.box, tone: overflowFields.has("barcode") ? "overflow" : "change" });
   }
   const pct = (v: number, of: number) => `${(v / of) * 100}%`;
+  // A small label is shown at its size beside a back label: 102 mm of the
+  // 140 mm a back label fills, not stretched to the full width.
+  const backWidthMm = LABEL_FORMATS["back-140x94"].widthMm;
+  const maxWidth = proof.backLabel === false ? pct(Math.min(proof.widthMm, backWidthMm), backWidthMm) : undefined;
 
   return (
-    <figure className={cn("space-y-1.5", className)}>
+    <figure className={cn("space-y-1.5", className)} style={{ maxWidth }}>
       <div
         className={cn(
           "relative w-full bg-white rounded-lg overflow-hidden shadow-sm",
