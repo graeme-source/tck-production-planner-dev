@@ -182,11 +182,11 @@ describe("macaroni cheese template", () => {
     expect(text(macContent(macSnap()).title)).toEqual(["Big Nanny's Macaroni Cheese"]);
   });
   it("two oven-only steps from the cooking values (no air fryer, tray or turning); weight tiers off", () => {
-    expect(t.cooking).toMatchObject({ ovenTempC: 200, fanTempC: 180, ovenMinMinutes: 20, ovenMaxMinutes: 25, airFryerTempC: null });
+    expect(t.cooking).toMatchObject({ ovenTempC: 190, fanTempC: 170, ovenMinMinutes: 20, ovenMaxMinutes: 25, airFryerTempC: null });
     expect(t.cookingTiers).toMatchObject({ on: false, maxOvenMinutes: 30 });
     const steps = macContent(macSnap()).steps.map(ps => ps.map(p => p.map(r => r.text).join("")).join(" "));
     expect(steps).toEqual([
-      "Pre-heat the oven to 180°C fan (200°C) and remove the outer film.",
+      "Pre-heat the oven to 170°C fan (190°C) and remove the outer film.",
       "Cook in the centre of the oven for 20–25 minutes until piping hot.",
     ]);
     expect(steps.join(" ")).not.toMatch(/tray|TURN|AIR FRYER/i);

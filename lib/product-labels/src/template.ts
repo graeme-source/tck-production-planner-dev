@@ -590,9 +590,10 @@ export function macaroniCheeseTemplate(): LabelTemplate {
     "Pre-heat the oven to {ovenTemps} and remove the outer film.",
     "Cook in the centre of the oven for {ovenMin}–{ovenMax} minutes until piping hot.",
   ];
-  // Oven only. A recipe can set its own (Pigs & Blankets: 170 fan / 190).
+  // Oven only, 170 fan (190) for every mac cheese (Graeme, 2026-10-27);
+  // a recipe can still set its own.
   t.cooking = {
-    ovenTempC: 200, fanTempC: 180, ovenMinMinutes: 20, ovenMaxMinutes: 25,
+    ovenTempC: 190, fanTempC: 170, ovenMinMinutes: 20, ovenMaxMinutes: 25,
     airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
   };
   // Weight tiers are for calzones. Their "longest cook we print" guard
