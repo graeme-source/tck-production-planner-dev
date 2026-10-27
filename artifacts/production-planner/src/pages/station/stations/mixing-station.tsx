@@ -73,13 +73,13 @@ import { hasBuildingStarted } from "@/lib/building-stations";
 import { tinsCompleteFrom } from "../shared/tin-math";
 import { useMixingCookingRecipes } from "../shared/mixing-cooking-recipes";
 import { builderProgressLine } from "../shared/building-complete";
-import { LiveMixTimeline, MeatTimeLine, TrustedChip, driftNote } from "../shared/live-mix-timeline";
+import { NextUpCard, DayTimeline, MeatInOutLine, ReliableChip } from "../shared/live-mix-timeline";
 import { PutInReasonDialog } from "../shared/put-in-reason-dialog";
 import {
-  useLiveSchedule, usePendingPutInReasons, liveScheduleKey,
+  useLiveSchedule, usePendingPutInReasons, liveScheduleKey, useLondonMinute,
   type PendingPutIn, type PutInSnapshot,
 } from "@/hooks/use-live-schedule";
-import type { LiveRecipe, TrustSignal } from "@workspace/production-schedule";
+import { nextAction, type LiveRecipe, type TrustSignal } from "@workspace/production-schedule";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
 // Weight the cooked meat filling should come to once every tray is out of the
@@ -656,6 +656,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     if (!liveByRecipeId.has(r.recipeId) || liveByRecipeId.get(r.recipeId)!.state === "done") liveByRecipeId.set(r.recipeId, r);
   }
   const trustFor = (ingredientId: number): TrustSignal | undefined => live?.trust?.[ingredientId];
+  const nowMinute = useLondonMinute();
 
   // Hide-completed toggle, shared by both tabs. Deliberately NOT persisted —
   // every fresh load of the station starts with completed work hidden, and
@@ -1294,6 +1295,43 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
       })()}
 
+      {/* ── Next up + the day (Graeme, 2026-10-27): the one thing to do next,
+          huge, then every recipe in build order with its times. ── */}
+      {live && (() => {
+        const mixedIds = new Set(items.filter(isItemMixingComplete).map(i => i.id));
+        const action = nextAction(live, nowMinute, { mixedPlanItemIds: mixedIds });
+        let traysLeft: number | null = null;
+        let trayIng: PrepIngredientDetail | null = null;
+        let trayRecipe: PrepRecipeDetail | null = null;
+        if (action?.kind === "put_in") {
+          trayRecipe = cookingRecipes.find(r => r.recipeId === action.recipeId) ?? null;
+          trayIng = trayRecipe?.ingredients.find(i => i.ingredientId === action.ingredientId) ?? null;
+          if (trayIng?.trayCount) {
+            const states = trayStates[`${action.recipeId}-${trayIng.ingredientId}`] ?? {};
+            traysLeft = Array.from({ length: trayIng.trayCount }, (_, i) => i).filter(i => (states[i] ?? 0) === 0).length;
+          }
+        }
+        return (
+          <div className="space-y-3">
+            <NextUpCard
+              action={action}
+              traysLeft={traysLeft}
+              busy={trayPending != null || isOnBreak}
+              onPutAllIn={() => {
+                if (trayRecipe && trayIng?.trayCount) {
+                  void putAllTraysIn(trayRecipe.recipeId, trayRecipe.recipeName, trayIng.ingredientId, trayIng.ingredientName, trayIng.trayCount);
+                }
+              }}
+              onOpenTrays={() => {
+                setMixingTab("cooking");
+                if (action) setCookingRecipeId(action.recipeId);
+              }}
+            />
+            <DayTimeline live={live} mixedPlanItemIds={mixedIds} />
+          </div>
+        );
+      })()}
+
       {/* ── Tab switcher — half its old height; the saved band goes to the
           queue below, which is what actually needs the room. ── */}
       <div className="flex gap-2">
@@ -1408,13 +1446,13 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                         </p>
                         {!recipeAllDone && (cookMoved || recipeTrusted || cookOverdue) && (
                           <div className="flex items-center gap-2 flex-wrap mt-0.5 text-sm">
-                            {cookMoved && plannedCookStart != null && earliestCookStart != null && (
+                            {cookMoved && plannedCookStart != null && earliestCookStart != null && Math.abs(earliestCookStart - plannedCookStart) >= 3 && (
                               <span className="text-muted-foreground tabular-nums">
-                                was {formatClock(plannedCookStart)} — builders are {earliestCookStart < plannedCookStart ? "ahead" : "behind"}
+                                moved {Math.round(Math.abs(earliestCookStart - plannedCookStart))} min {earliestCookStart < plannedCookStart ? "earlier — builders are ahead" : "later — builders are behind"}
                               </span>
                             )}
                             {cookOverdue && <span className="font-semibold text-rose-600 dark:text-rose-400">put it in now</span>}
-                            {recipeTrusted && <TrustedChip trust={trustFor(rawMeatIngs[0].ingredientId)} />}
+                            {recipeTrusted && <ReliableChip trust={trustFor(rawMeatIngs[0].ingredientId)} />}
                           </div>
                         )}
                         <div className="flex items-baseline gap-2 mt-0.5">
@@ -1581,8 +1619,8 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                                 {(() => {
                                   const liveMeat = liveByRecipeId.get(recipe.recipeId)?.meats
                                     .find(m => m.rawMeatIngredientId === ing.ingredientId);
-                                  if (liveMeat && !allIngDone && (rawMeatIngs.length >= 2 || liveMeat.waves.length > 1 || liveMeat.safetyBreachComing || liveMeat.safetyImpossible)) {
-                                    return <MeatTimeLine m={liveMeat} trust={trustFor(ing.ingredientId)} trays={ing.trayCount} />;
+                                  if (liveMeat && !allIngDone && rawMeatIngs.length >= 2) {
+                                    return <MeatInOutLine m={liveMeat} trust={trustFor(ing.ingredientId)} />;
                                   }
                                   const schedMeat = schedByRecipeId.get(recipe.recipeId)?.meats
                                     .find(m => m.rawMeatIngredientId === ing.ingredientId);
@@ -1727,7 +1765,6 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 )}
               </div>
             )}
-            {live && <LiveMixTimeline live={live} />}
             {schedWarnings.length > 0 && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
@@ -1918,33 +1955,16 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             {live && live.state === "building" && live.nextFlavour && (
               <p className="mt-1 text-lg font-bold text-blue-700 dark:text-blue-300 tabular-nums">
                 {live.remaining} left · next flavour {live.nextFlavour.name} ~{formatClock(live.nextFlavour.atMinutes)}
-                {Math.abs(live.nextFlavour.atMinutes - live.nextFlavour.wasMinutes) >= 3 && (
-                  <span className="text-sm font-medium text-muted-foreground">
-                    {" "}(was {formatClock(live.nextFlavour.wasMinutes)} — builders are {live.nextFlavour.atMinutes < live.nextFlavour.wasMinutes ? "ahead" : "behind"})
-                  </span>
-                )}
               </p>
             )}
-            {live && live.state === "waiting" && live.kind === "cold" && (
-              <p className="mt-1 text-lg font-bold tabular-nums text-sky-700 dark:text-sky-300">
-                Chilled mix — any time before {formatClock(live.mixByMinutes)}
-              </p>
-            )}
-            {live && live.state === "waiting" && live.kind === "hot" && (
-              <p className={cn(
-                "mt-1 text-lg font-bold tabular-nums",
-                live.drift === "ahead" ? "text-emerald-700 dark:text-emerald-300" : live.drift === "behind" ? "text-amber-700 dark:text-amber-300" : "text-foreground",
-              )}>
-                Builders need this mix ~{formatClock(live.liveStartMinutes)}
-                {driftNote(live) && <span className="text-sm font-medium text-muted-foreground"> ({driftNote(live)})</span>}
+            {live && live.state === "waiting" && (
+              <p className="mt-1 text-lg font-bold tabular-nums">
+                {live.kind === "cold" ? `Mix any time before ${formatClock(live.mixByMinutes)}` : `Builders need it ~${formatClock(live.liveStartMinutes)}`}
               </p>
             )}
 
-            {live && live.state === "waiting" && live.meats.length > 0 ? (
-              <div className="mt-1.5 space-y-1">
-                {live.meats.map(m => <MeatTimeLine key={m.rawMeatIngredientId} m={m} trust={trustFor(m.rawMeatIngredientId)} />)}
-              </div>
-            ) : sched && live?.state !== "done" && live?.state !== "building" && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
+            {/* Without the live schedule, the plan's meat times (as before). */}
+            {!live && sched && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
               <div className="mt-1.5 space-y-0.5">
                 {sched.meats.map((m, i) => (
                   <div key={i} className="flex items-center gap-1.5 text-sm flex-wrap">

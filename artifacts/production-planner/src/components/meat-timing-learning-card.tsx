@@ -8,8 +8,10 @@
  *     capacity; the 4-hour rule as checked on reviewed days;
  *   - every automatic or hand change, with Revert;
  *   - the week's off-time put-ins and the reasons given;
- *   - the 4-hour rule as applied (total, chill, bake and where each came
- *     from), and the admin settings.
+ *   - leading with two plain numbers: how long meat sat waiting, and how
+ *     many times the builders waited (last 14 days);
+ *   - measured 4-hour evidence (probe or plausible tap only), and the
+ *     admin settings.
  *
  * Server: GET/POST/PUT /api/meat-timing (routes/meat-timing.ts).
  */
@@ -27,7 +29,7 @@ const KEY = ["meat-timing"];
 interface ReviewStats {
   reviewed: number; followed: number; notFollowed: number; perfect: number; waited: number; tooEarly: number;
   model: number; human: number; capacity: number; avgWait: number | null; avgSat: number | null;
-  totalSat: number; totalWait: number; safetyChecked: number; safetyMeasured: number; safetyBreaches: number; worstSafetyMinutes: number | null;
+  totalSat: number; totalWait: number; safetyChecked: number; safetyBreaches: number; worstSafetyMinutes: number | null;
 }
 interface MeatRow {
   ingredientId: number;
@@ -53,16 +55,11 @@ interface Weekly {
   items: Array<{ id: number; planDate: string; recipeName: string; ingredientName: string; suggestedAtMinutes: number | null; putInMinutes: number; deviationMinutes: number | null; reasonCode: string | null; reasonNote: string | null; outcome: string | null }>;
 }
 interface Data {
+  headline: { days: number; runs: number; avgSatMinutes: number | null; builderWaits: number; measuredChillDays: number; measuredOverLimit: number };
   meats: MeatRow[];
   adjustments: Adjustment[];
   settings: {
-    learningEnabled: boolean; lastAutoRun: string | null; reasonMinutes: number;
-    safeTotalMinutes: number; chillMinutes: number; bakeMinutesOverride: number | null; waitWeight: number; bufferMaxMinutes: number;
-  };
-  safety: {
-    totalMinutes: number; chillMinutes: number; bakeMinutes: number; bakeSource: "setting" | "learned" | "default"; maxSpanMinutes: number;
-    chillRecorded: { median: number | null; samples: number };
-    bakeLearned: { minutes: number | null; samples: number };
+    learningEnabled: boolean; lastAutoRun: string | null; reasonMinutes: number; waitWeight: number; bufferMaxMinutes: number;
   };
   weekly: Weekly;
   reasons: Array<{ code: string; label: string }>;
@@ -147,7 +144,7 @@ function MeatCard({ m, onToggle, busy }: { m: MeatRow; onToggle: (on: boolean) =
           {r.safetyChecked > 0 && (
             <p className={cn("text-sm flex items-center gap-1.5", r.safetyBreaches ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-muted-foreground")}>
               {r.safetyBreaches ? <AlertTriangle className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
-              4-hour rule: {r.safetyChecked} days checked ({r.safetyMeasured} with a measured chill), {r.safetyBreaches} over{r.worstSafetyMinutes != null ? ` · longest ${Math.floor(r.worstSafetyMinutes / 60)}h ${r.worstSafetyMinutes % 60}m` : ""}.
+              4-hour rule (measured chill only): {r.safetyChecked} days, {r.safetyBreaches} over{r.worstSafetyMinutes != null ? ` · longest ${Math.floor(r.worstSafetyMinutes / 60)}h ${r.worstSafetyMinutes % 60}m` : ""}.
             </p>
           )}
         </div>
@@ -211,7 +208,6 @@ export function MeatTimingLearningCard() {
   if (!canManage) return null;
   const reasonLabel = (code: string) => data?.reasons.find(r => r.code === code)?.label ?? (code === "not_answered" ? "Not answered yet" : code);
   const numbers: Array<[string, string]> = [
-    ["safeTotalMinutes", "safeTotalMinutes"], ["chillMinutes", "chillMinutes"], ["bakeMinutes", "bakeMinutes"],
     ["reasonMinutes", "reasonMinutes"], ["waitWeight", "waitWeight"], ["bufferMaxMinutes", "bufferMaxMinutes"],
   ];
   const dirty = numbers.some(([k]) => (draft[k] ?? "") !== "");
@@ -221,7 +217,7 @@ export function MeatTimingLearningCard() {
       <button className="w-full flex items-center justify-between gap-3 text-left" onClick={() => setOpen(o => !o)}>
         <div>
           <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-primary" /> Prep-oven timings — self-correcting</h2>
-          <p className="text-sm text-muted-foreground">How long each meat really takes after the oven, the buffer that keeps the builders from waiting, what changed and why, and the 4-hour rule.</p>
+          <p className="text-sm text-muted-foreground">How long meat sat waiting, how often the builders waited, what each meat really takes after the oven, and what the system changed and why.</p>
         </div>
         {open ? <ChevronUp className="w-6 h-6" /> : <ChevronDown className="w-6 h-6" />}
       </button>
@@ -245,18 +241,23 @@ export function MeatTimingLearningCard() {
             </button>
           </div>
 
-          <div className="rounded-xl border-2 border-emerald-300 dark:border-emerald-800 p-4 space-y-1">
-            <p className="font-bold flex items-center gap-2"><ShieldCheck className="w-5 h-5 text-emerald-600" /> The 4-hour rule</p>
-            <p className="text-sm">
-              Out of the prep oven → that recipe's last batch built, baked and chilled to 8 °C within <b>{data.safety.totalMinutes} min</b>.
-              {" "}Chill {data.safety.chillMinutes} min, bake {data.safety.bakeMinutes} min ({data.safety.bakeSource === "learned" ? `learned from ${data.safety.bakeLearned.samples} recipes at the ovens` : data.safety.bakeSource === "setting" ? "set by hand" : "default"})
-              {" "}→ cooked meat may be out at most <b>{data.safety.maxSpanMinutes} min</b> before the last batch is built. Longer builds are planned in waves.
-            </p>
-            <p className="text-xs text-muted-foreground">
-              Recorded "mark as chilled" taps say {data.safety.chillRecorded.median ?? "—"} min (median of {data.safety.chillRecorded.samples}) — taps are often late, so planning uses the setting;
-              {" "}the daily review uses a registered probe's reading first, then a plausible tap.
-            </p>
+          {/* The two numbers that matter (Graeme, 2026-10-27). */}
+          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+            <div className="rounded-xl bg-secondary/50 p-4">
+              <p className="text-4xl font-extrabold tabular-nums">{data.headline.avgSatMinutes ?? "—"}<span className="text-lg font-semibold"> min</span></p>
+              <p className="text-base">Meat sat waiting, on average (last {data.headline.days} days)</p>
+            </div>
+            <div className={cn("rounded-xl p-4", data.headline.builderWaits > 0 ? "bg-rose-50 dark:bg-rose-900/20" : "bg-secondary/50")}>
+              <p className="text-4xl font-extrabold tabular-nums">{data.headline.builderWaits}<span className="text-lg font-semibold"> times</span></p>
+              <p className="text-base">Builders waited for a mix (last {data.headline.days} days)</p>
+            </div>
           </div>
+          {data.headline.measuredChillDays > 0 && (
+            <p className={cn("text-sm flex items-center gap-1.5", data.headline.measuredOverLimit ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-muted-foreground")}>
+              <ShieldCheck className="w-4 h-4" />
+              4-hour rule, where the chill was measured (probe or a believable "chilled" tap): {data.headline.measuredChillDays} checks, {data.headline.measuredOverLimit} over 4 hours.
+            </p>
+          )}
 
           <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">
             {data.meats.map(m => (
@@ -309,9 +310,6 @@ export function MeatTimingLearningCard() {
 
           {isAdmin && (
             <div className="flex flex-wrap items-end gap-4 border-t border-border pt-4">
-              <NumberSetting label="4-hour rule total (min)" min={60} max={240} placeholder={String(data.settings.safeTotalMinutes)} value={draft.safeTotalMinutes ?? ""} onChange={set("safeTotalMinutes")} />
-              <NumberSetting label="Chill to 8 °C (min)" min={30} max={240} placeholder={String(data.settings.chillMinutes)} value={draft.chillMinutes ?? ""} onChange={set("chillMinutes")} />
-              <NumberSetting label="Bake (min, blank = learn)" min={0} max={120} placeholder={data.settings.bakeMinutesOverride != null ? String(data.settings.bakeMinutesOverride) : `learned ${data.safety.bakeMinutes}`} value={draft.bakeMinutes ?? ""} onChange={set("bakeMinutes")} />
               <NumberSetting label="Ask why beyond (min)" min={3} max={60} placeholder={String(data.settings.reasonMinutes)} value={draft.reasonMinutes ?? ""} onChange={set("reasonMinutes")} />
               <NumberSetting label="A wait minute counts as (× sitting)" min={1} max={20} placeholder={String(data.settings.waitWeight)} value={draft.waitWeight ?? ""} onChange={set("waitWeight")} />
               <NumberSetting label="Buffer cap (min)" min={2} max={60} placeholder={String(data.settings.bufferMaxMinutes)} value={draft.bufferMaxMinutes ?? ""} onChange={set("bufferMaxMinutes")} />

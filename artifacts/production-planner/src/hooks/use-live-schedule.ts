@@ -8,6 +8,7 @@
  * Also the station side of the daily review: off-time put-ins waiting for a
  * "why?", and saving a quick-pick reason.
  */
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { LiveSchedule, TrustSignal } from "@workspace/production-schedule";
 
@@ -84,4 +85,21 @@ export function useSavePutInReason(planId: number) {
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: pendingReasonsKey(planId) }),
   });
+}
+
+const LONDON_HM = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+
+function londonMinuteNow(): number {
+  const [h, m] = LONDON_HM.format(new Date()).split(":");
+  return Number(h) * 60 + Number(m);
+}
+
+/** Minutes since London midnight, ticking — drives the "in 12 min" countdown. */
+export function useLondonMinute(): number {
+  const [minute, setMinute] = useState(londonMinuteNow);
+  useEffect(() => {
+    const id = setInterval(() => setMinute(londonMinuteNow()), 15_000);
+    return () => clearInterval(id);
+  }, []);
+  return minute;
 }
