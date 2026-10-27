@@ -391,15 +391,16 @@ export default function Improvements() {
               (Graeme, 2026-09-10). */}
           <LeanerBoard />
 
-          {/* One timeline: the "Not seen yet" filter, and two kind FILTERS
-              that combine rather than exclude. Wraps on a phone. */}
-          <div className="flex flex-wrap gap-2">
+          {/* One timeline: the "Not seen yet" filter on its own row (three
+              across squeezed its words onto two lines on the iPad), then two
+              kind FILTERS that combine rather than exclude. */}
+          <div className="space-y-2">
             <button
               onClick={toggleUnseen}
               aria-pressed={unseenOnly}
               title="Show only the improvements you haven't seen yet — the same ones the blue number in the menu counts"
               className={cn(
-                "flex-1 min-w-[10rem] py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                "w-full py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
                 unseenOnly
                   ? "border-blue-500 text-blue-600 dark:text-blue-400"
                   : "border-border text-muted-foreground hover:text-foreground",
@@ -413,11 +414,12 @@ export default function Improvements() {
                 {toReview.length}
               </span>
             </button>
+            <div className="flex gap-2">
             <button
               onClick={() => toggleKind("improvements")}
               aria-pressed={!unseenOnly && showImprovements}
               className={cn(
-                "flex-1 min-w-[10rem] py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
                 !unseenOnly && showImprovements
                   ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
                   : "border-border text-muted-foreground hover:text-foreground",
@@ -429,7 +431,7 @@ export default function Improvements() {
               onClick={() => toggleKind("ideas")}
               aria-pressed={!unseenOnly && showIdeas}
               className={cn(
-                "flex-1 min-w-[10rem] py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
                 !unseenOnly && showIdeas
                   ? "border-amber-500 text-amber-600 dark:text-amber-400"
                   : "border-border text-muted-foreground hover:text-foreground",
@@ -437,6 +439,7 @@ export default function Improvements() {
             >
               <Lightbulb className="w-5 h-5" /> Ideas
             </button>
+            </div>
           </div>
 
           {!unseenOnly && isManager && waiting.length > 0 && (
