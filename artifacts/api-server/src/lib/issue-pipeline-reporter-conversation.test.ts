@@ -37,7 +37,8 @@ describe("messagePlan — Message <name> vs Send and close", () => {
     const p = messagePlan(true);
     expect(p).toEqual({ event: "answered", statusTo: "answered", resolveIssue: true, creditImprovement: true, awaitReporter: false });
     expect(queueTabFor(card({ status: "answered" }), now)).toBe("fixed");
-    expect(isImprovementDue({ lane: "improvement", status: "answered", issueResolvedAt: new Date(), improvementId: null })).toBe(true);
+    // …but no improvement is credited for it any more (Graeme, 27 Oct 2026).
+    expect(isImprovementDue({ lane: "improvement", status: "answered", issueResolvedAt: new Date(), improvementId: null })).toBe(false);
   });
 
   it("a message can go again and again, from any state", () => {

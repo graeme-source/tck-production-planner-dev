@@ -437,16 +437,18 @@ export function canSnooze(t: { status: TriageStatus; awaitingRetriage: boolean }
   return t.status === "proposed" && !t.awaitingRetriage;
 }
 
-// ── Crediting completed improvements (Graeme, 2026-09-24) ──────────────────
-// A report that was clearly an improvement to the system (lane
-// 'improvement'), once it's done, becomes a completed improvement credited
-// to the person who reported it — once only.
-export function isImprovementDue(t: {
+// ── Crediting completed improvements: SWITCHED OFF (Graeme, 2026-10-27) ────
+// From 24 Sep a closed improvement-lane report became a completed
+// improvement credited to whoever REPORTED it. Graeme, 27 Oct, after the Fix
+// queue's catch-up run credited 17 at once: reporting an issue or an idea is
+// not making an improvement — "you fix it immediately". So nothing from the
+// Fix queue is ever credited as an improvement now; people log the
+// improvements they make themselves (and the end-of-day question asks). The
+// signature stays so every caller keeps compiling and simply credits nothing.
+export function isImprovementDue(_t: {
   lane: string; status: TriageStatus; issueResolvedAt: Date | string | null; improvementId: number | null;
 }): boolean {
-  if (t.lane !== "improvement" || t.improvementId != null) return false;
-  if (t.status === "dismissed" || t.status === "answered") return true;
-  return t.status === "fixed" && t.issueResolvedAt != null;
+  return false;
 }
 
 /** When the credited improvement counts as done: the day it actually went
