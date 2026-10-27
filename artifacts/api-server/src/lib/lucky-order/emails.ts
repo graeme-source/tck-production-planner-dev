@@ -48,7 +48,13 @@ Here's your personal code:
 
 {code}
 
-Use it on a TCK subscription for up to £{amount} off each of your next {orders} deliveries. That's one every 8 weeks, a whole year of calzones on us. Just enter the code when you start or update your subscription.
+Use it on a TCK subscription for up to £{amount} off each of your next {orders} deliveries. That's one every 8 weeks, a whole year of calzones on us.
+
+How to use it:
+• Already subscribe? Open your subscription from the link in any subscription email (or My Account → Manage subscription), tap "Add code" and enter it. It comes off your next {orders} deliveries automatically.
+• New to TCK subscriptions? Choose "Subscribe" on any box and enter the code at checkout.
+
+It covers up to £{amount} of calzones on each delivery — if a delivery comes to less, those calzones are free (the rest doesn't carry over). Delivery charges aren't included.
 
 Huge congratulations from all of us!
 The Calzone Kitchen team`,
