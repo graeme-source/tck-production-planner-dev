@@ -20,6 +20,8 @@ import { sql, eq } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import type Anthropic from "@anthropic-ai/sdk";
 import { requireFeature } from "../lib/feature-access";
+import { guessAreas, sortAreaKeys, type ChangeArea } from "@workspace/station-changes";
+import { loadChangeAreas } from "../lib/change-areas";
 
 const execFileP = promisify(execFile);
 const router: IRouter = Router();
@@ -63,7 +65,15 @@ const SNAPSHOT_ID = 1;
 // interval refresh with no new deploy).
 /** One change, named so it can be scanned rather than read (Graeme,
  *  2026-08-28). teamFacing marks the ones worth meeting time. */
-export interface SummaryItem { title: string; detail: string; teamFacing: boolean }
+export interface SummaryItem {
+  title: string;
+  detail: string;
+  teamFacing: boolean;
+  /** Change areas (table change_areas) the item affects, so the meeting
+   *  slide can group station work by station and leave office work out.
+   *  Absent on snapshots written before areas existed. */
+  areas?: string[];
+}
 
 /** Kept alongside the structured items so anything still reading the old
  *  flat bullet list — persisted snapshots included — keeps working. */
@@ -364,7 +374,8 @@ async function summariseCommits(commits: Commit[]): Promise<SummaryItem[] | null
   if (commits.length === 0) return null;
   if (!isClaudeConfigured()) return null;
 
-  const key = commits.map(c => c.sha).sort().join(",");
+  const areaList = await loadChangeAreas();
+  const key = commits.map(c => c.sha).sort().join(",") + `|areas:${areaList.map(a => a.key).join(",")}`;
   const cached = summaryCache.get(key);
   if (cached) return cached;
 
@@ -391,7 +402,10 @@ Rules:
 - title: 2-5 words, the thing itself, no verb padding ("Kanban scanning", "Packing speed figures"). This gets read at a glance to decide what's worth talking about.
 - detail: ONE sentence, plain English, present tense ("Packing speed now matches the Analytics page").
 - Never invent detail. If a commit is unclear, leave it out.
-
+${areaList.length ? `- areas: the part(s) of the business each change affects, chosen ONLY from these keys:
+${areaList.map(a => `  ${a.key} = ${a.label} (${a.kind})`).join("\n")}
+  Use a station key when the change is on that station's screen; "office" for sales, marketing, finance, people and anything behind the scenes.
+` : ""}
 Return the changes by calling emit_updates.
 
 Commits to summarise:
@@ -417,6 +431,7 @@ ${bullets}`;
                   title: { type: "string", description: "2-5 words naming the thing that changed." },
                   detail: { type: "string", description: "One plain-English sentence." },
                   teamFacing: { type: "boolean", description: "True if someone using the app would notice it." },
+                  areas: { type: "array", items: { type: "string" }, description: "Change-area keys this affects." },
                 },
                 required: ["title", "detail", "teamFacing"],
               },
@@ -440,6 +455,7 @@ ${bullets}`;
         title: String(u.title ?? "").trim().slice(0, 60),
         detail: String(u.detail ?? "").trim().slice(0, 300),
         teamFacing: u.teamFacing === true,
+        areas: tagItem(u.areas, `${String(u.title ?? "")}\n${String(u.detail ?? "")}`, areaList),
       }))
       .filter(u => u.title && u.detail)
       // What the team would notice comes first: the host reads down the list
@@ -455,6 +471,13 @@ ${bullets}`;
     console.warn("[system-updates] summarise failed:", err instanceof Error ? err.message : err);
     return null;
   }
+}
+
+/** Claude's area keys when it gave valid ones, else a best guess from the
+ *  item's own words (lib/station-changes). */
+function tagItem(raw: unknown, text: string, areas: readonly ChangeArea[]): string[] {
+  const given = Array.isArray(raw) ? sortAreaKeys(raw.filter((k): k is string => typeof k === "string"), areas) : [];
+  return given.length > 0 ? given : guessAreas({ text }, areas);
 }
 
 async function findRepoRoot(): Promise<string | null> {
@@ -576,6 +599,22 @@ router.get("/", async (_req: Request, res: Response) => {
   }
 });
 
+// The automatic commit feed on its own (never the curated entries), for the
+// station-grouped meeting slide's fallback when no tagged entries exist in
+// the week (components/station-changes/meeting-slide.tsx). Pure DB read.
+router.get("/feed", async (_req: Request, res: Response) => {
+  try {
+    const snapshot = await readSnapshot();
+    res.json({
+      available: snapshot?.available ?? false,
+      summaryItems: snapshot?.summaryItems ?? null,
+    });
+  } catch (err) {
+    console.error("[system-updates] feed failed:", err);
+    res.status(500).json({ error: "Failed to load the change feed" });
+  }
+});
+
 // ── Automatic-feed validation (Settings card, NOT the meeting) ─────────
 // The slide burned trust by failing silently for months, so the feed gets
 // validated somewhere low-stakes first: an admin card showing exactly what
@@ -638,10 +677,16 @@ router.post("/", requireAdmin, async (req: Request, res: Response) => {
   const body = typeof req.body?.body === "string" ? req.body.body.trim() : "";
   const published = req.body?.published === false ? false : true;
   if (!body) { res.status(400).json({ error: "body (bullets) is required" }); return; }
+  // Every new entry is tagged with the area(s) it affects: a best guess from
+  // its words, corrected on the Station changes page (/station-changes), so
+  // it reaches the right station's "What's changed?" (27 Oct 2026).
+  const areas = guessAreas({ text: `${title ?? ""}\n${body}` }, await loadChangeAreas());
   const rows = toRows<{ id: number }>(await db.execute(sql`
-    INSERT INTO system_updates (title, body, published) VALUES (${title}, ${body}, ${published}) RETURNING id
+    INSERT INTO system_updates (title, body, published, areas)
+    VALUES (${title}, ${body}, ${published}, ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify(areas)}::jsonb))::text[])
+    RETURNING id
   `));
-  res.status(201).json({ id: rows[0]?.id });
+  res.status(201).json({ id: rows[0]?.id, areas });
 });
 
 router.put("/:id", requireAdmin, async (req: Request, res: Response) => {
