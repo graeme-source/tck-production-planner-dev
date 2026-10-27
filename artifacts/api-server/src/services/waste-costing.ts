@@ -26,6 +26,7 @@ import {
 } from "../lib/waste-cost";
 import { loadSettings } from "./team-efficiency-job";
 
+import { effectivePackSize } from "@workspace/units";
 const num = (x: unknown) => Number(x) || 0;
 
 // ── Hourly labour rate (cached — it moves once a night) ───────────────────
@@ -89,7 +90,7 @@ export async function loadWasteCatalogue(): Promise<WasteCatalogueItem[]> {
   ]);
   const out: WasteCatalogueItem[] = [];
   for (const r of recipes.rows) {
-    const packSize = num(r.pack_size);
+    const packSize = effectivePackSize(r.pack_size as string | null);
     const packKinds: WasteCatalogueItem["packKinds"] = [{ kind: "pack", label: packLabel(packSize) }];
     if (r.has_bags && packSize > 0 && packSize <= 8) packKinds.push({ kind: "eight_pack_bag", label: "8-pack bag" });
     out.push({ key: `product:${r.id}`, kind: "product", id: r.id, name: r.name, detail: r.category || null, units: [], packKinds, standardPrepMinutes: null });
@@ -188,7 +189,7 @@ export async function costWaste(input: WasteItemInput): Promise<WasteCosting> {
     if (!p) throw new WasteInputError("That product doesn't exist");
     packKind = input.packKind ?? "pack";
     if (!Number.isInteger(quantity)) throw new WasteInputError("Packs are whole numbers");
-    const packSize = num(p.pack_size);
+    const packSize = effectivePackSize(p.pack_size as string | null);
     const [raw, settings] = await Promise.all([computeCosts([itemId]), loadSettings()]);
     const basis = {
       packSize, rrp: num(p.rrp), category: p.category || null,

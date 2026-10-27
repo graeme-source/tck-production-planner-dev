@@ -8,7 +8,7 @@
  * working days between today and the plan date.
  */
 
-import { db, productionPlansTable, productionPlanItemsTable, recipesTable } from "@workspace/db";
+import { db, productionPlansTable, productionPlanItemsTable, recipesTable, recipePackSizeOrOne } from "@workspace/db";
 import { and, eq, inArray } from "drizzle-orm";
 import { plannedProductionPacks, plannedTwoPackPacks, remainingWrappingPacks } from "@workspace/stock-prediction";
 
@@ -35,7 +35,7 @@ export async function loadStillToWrapToday(today: string, recipeIds?: number[]):
       dogBinCount: productionPlanItemsTable.dogBinCount,
       wrappingComplete: productionPlanItemsTable.wrappingComplete,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(productionPlanItemsTable)
     .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
@@ -70,7 +70,7 @@ export async function loadPlannedProductionByDate(
       recipeId: productionPlanItemsTable.recipeId,
       batchesTarget: productionPlanItemsTable.batchesTarget,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(productionPlanItemsTable)
     .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))
@@ -104,7 +104,7 @@ export async function loadPlannedTwoPacksByDate(dates: string[], recipeIds: numb
       batchesTarget: productionPlanItemsTable.batchesTarget,
       eightPackBagCount: productionPlanItemsTable.eightPackBagCount,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(productionPlanItemsTable)
     .innerJoin(productionPlansTable, eq(productionPlanItemsTable.planId, productionPlansTable.id))

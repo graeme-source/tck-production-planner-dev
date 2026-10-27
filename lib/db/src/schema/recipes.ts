@@ -13,7 +13,11 @@ export const recipesTable = pgTable("recipes", {
   servingUnit: text("serving_unit").notNull(),
   category: text("category"),
   notes: text("notes"),
-  packSize: numeric("pack_size", { precision: 10, scale: 4 }).notNull().default("1"),
+  // Portions per pack. Blank (null) = sold by weight, e.g. fried chicken
+  // (migration 0286): the website then gets nutrition per 100 g only.
+  // Everywhere else blank behaves as 1 — select it with recipePackSizeOrOne
+  // or read it through effectivePackSize (@workspace/units).
+  packSize: numeric("pack_size", { precision: 10, scale: 4 }).default("1"),
   rrp: numeric("rrp", { precision: 10, scale: 4 }).notNull().default("0"),
   packagingCost: numeric("packaging_cost", { precision: 10, scale: 4 }).notNull().default("0"),
   labourCost: numeric("labour_cost", { precision: 10, scale: 4 }).notNull().default("0"),
@@ -100,6 +104,11 @@ export const recipesTable = pgTable("recipes", {
   billetWeightG: integer("billet_weight_g"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
+
+/** Pack size for the kitchen maths in a select: blank (null) counts as 1,
+ *  the same as effectivePackSize in @workspace/units. Same string type as
+ *  the column, so code that read recipesTable.packSize is unchanged. */
+export const recipePackSizeOrOne = sql<string>`COALESCE(${recipesTable.packSize}, 1::numeric(10,4))`;
 
 export const recipeIngredientsTable = pgTable("recipe_ingredients", {
   id: serial("id").primaryKey(),

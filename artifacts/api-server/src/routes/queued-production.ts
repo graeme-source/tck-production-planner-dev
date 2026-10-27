@@ -21,7 +21,7 @@ import {
   suppliersTable,
   kanbanItemsTable,
   purchaseOrdersTable,
-  purchaseOrderLinesTable,
+  purchaseOrderLinesTable, recipePackSizeOrOne
 } from "@workspace/db";
 import { eq, and, gte, asc, inArray, sql, ne } from "drizzle-orm";
 import * as z from "zod";
@@ -55,7 +55,7 @@ router.get("/", async (_req, res) => {
       recipeName: recipesTable.name,
       recipeColor: recipesTable.color,
       portionsPerBatch: recipesTable.portionsPerBatch,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
     })
     .from(queuedProductionTable)
     .innerJoin(recipesTable, eq(queuedProductionTable.recipeId, recipesTable.id))

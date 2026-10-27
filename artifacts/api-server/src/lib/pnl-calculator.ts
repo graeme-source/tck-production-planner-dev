@@ -1,4 +1,4 @@
-import { db, recipesTable } from "@workspace/db";
+import { db, recipesTable, recipePackSizeOrOne } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
@@ -85,7 +85,7 @@ async function loadRecipeCosts(recipeIds: number[]): Promise<Map<number, RecipeC
       id: recipesTable.id,
       name: recipesTable.name,
       servings: recipesTable.servings,
-      packSize: recipesTable.packSize,
+      packSize: recipePackSizeOrOne,
       packagingCost: recipesTable.packagingCost,
       labourCost: recipesTable.labourCost,
       rrp: recipesTable.rrp,

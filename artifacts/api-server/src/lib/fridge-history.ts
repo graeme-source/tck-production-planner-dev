@@ -15,7 +15,7 @@
  * Moved out of routes/week-end-stock.ts (its "finished week" figure) so the
  * plan screens read the same history.
  */
-import { db, recipesTable } from "@workspace/db";
+import { db, recipesTable, recipePackSizeOrOne } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { kitchenLine } from "@workspace/production-schedule";
 import { addDays, londonWallTimeMs, type FactoryHistoryDay } from "@workspace/stock-prediction";
@@ -24,7 +24,7 @@ import { addDays, londonWallTimeMs, type FactoryHistoryDay } from "@workspace/st
 export const FACTORY_PACK_SIZE = 2;
 
 export async function calzoneRecipeIds(): Promise<number[]> {
-  const rows = await db.select({ id: recipesTable.id, category: recipesTable.category, packSize: recipesTable.packSize }).from(recipesTable);
+  const rows = await db.select({ id: recipesTable.id, category: recipesTable.category, packSize: recipePackSizeOrOne }).from(recipesTable);
   return rows.filter(r => kitchenLine(r.category) === "calzone" && Number(r.packSize) === FACTORY_PACK_SIZE).map(r => r.id);
 }
 
