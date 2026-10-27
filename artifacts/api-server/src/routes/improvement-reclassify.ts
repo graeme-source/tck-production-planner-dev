@@ -13,9 +13,9 @@
  *
  *   kind "improvement" on an idea  — moves the photos, then sends it through
  *     submitForApproval: the SAME path as the after-photo upload and
- *     "I've done this". Credit, the approval step (if switched on) and the
- *     team celebration behave exactly as if it had been logged right first
- *     time. Nothing extra is awarded.
+ *     "I've done this". Credit and the approval step (if switched on)
+ *     behave exactly as if it had been logged right first time. Nothing
+ *     extra is awarded.
  *   kind "improvement" on an improvement — just re-sorts the photos.
  *   kind "idea" on an improvement  — the undo for a mistake: back to "to do",
  *     every photo back to before, done/approval stamps cleared. An approved
@@ -118,8 +118,7 @@ router.post("/:id/reclassify", requireManagerOrAdmin, validate(bodySchema), asyn
     });
 
     // Finished: the same path as the after-photo upload and "I've done
-    // this" — credit to whoever logged it, the approval step if it's on,
-    // and the team celebration for a first completion.
+    // this" — credit to whoever logged it and the approval step if it's on.
     if (plan.statusChange === "to_improvement") {
       await submitForApproval(row, userId);
     }

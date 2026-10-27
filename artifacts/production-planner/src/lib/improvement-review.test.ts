@@ -1,5 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { isIdea, needsReview, feedShownCount, FEED_PAGE_SIZE } from "./improvement-review";
+import { isIdea, needsReview, feedShownCount, FEED_PAGE_SIZE, unseenFilterIds } from "./improvement-review";
+
+// "Not seen yet" filter, back by request (27 Oct 2026).
+describe("the 'Not seen yet' filter", () => {
+  const item = (id: number, stage: string, seenByMe: boolean, submittedByMe = false) =>
+    ({ id, stage, seenByMe, submittedByMe, isMine: submittedByMe });
+
+  it("shows exactly what the nav badge counts: unseen finished improvements someone else logged", () => {
+    const ids = unseenFilterIds(new Set(), [
+      item(1, "approved", false),
+      item(2, "approved", true), // seen
+      item(3, "todo", false), // an idea
+      item(4, "waiting", false, true), // my own
+      item(5, "sent_back", false),
+    ]);
+    expect([...ids].sort()).toEqual([1, 5]);
+  });
+
+  it("keeps a card on the list once it's been seen, so it doesn't vanish under the reader", () => {
+    const kept = unseenFilterIds(new Set(), [item(1, "approved", false), item(2, "approved", false)]);
+    const after = unseenFilterIds(kept, [item(1, "approved", true), item(2, "approved", false)]);
+    expect([...after].sort()).toEqual([1, 2]);
+    expect(after).toBe(kept); // nothing new joined — same set back
+  });
+
+  it("adds a new unseen one that arrives while the filter is on", () => {
+    const kept = new Set([1]);
+    expect([...unseenFilterIds(kept, [item(1, "approved", true), item(9, "approved", false)])].sort())
+      .toEqual([1, 9]);
+  });
+});
 
 describe("needsReview", () => {
   it("ideas never need reviewing, seen or not", () => {

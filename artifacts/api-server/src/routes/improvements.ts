@@ -1,7 +1,6 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
   db, improvementSubmissionsTable, usersTable,
-  notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, shouldAutoSubmit,
   formatCreditNames, isCredited, withLead, MAX_CREDITED_PEOPLE, type CreditPerson,
   canEditImprovement, IMPROVEMENT_EDIT_REFUSED, managerOnlyFieldsIn, UNSEEN_COUNT_STATUSES,
@@ -19,7 +18,6 @@ import { stitchBeforeAfter } from "../lib/improvement-media";
 import { shouldAutoStitch } from "../lib/before-after-stitch";
 import { ffmpegAvailable } from "../lib/sop-video";
 import { singleFileUpload } from "../middleware/upload";
-import { sendPushToUsers } from "../services/push";
 import { queueReviewTodo } from "../lib/improvement-review-todo";
 import { loadLeanerBoard } from "../services/leaner-board";
 import { CREDIT_PAIRS, creditsFor, setImprovementCredits, pinLeadCredit } from "../lib/improvement-credits-data";
@@ -323,31 +321,6 @@ router.post("/:id/react", async (req: Request, res: Response) => {
 // POST /:id/done — "I've done this." The team's main action, and the point
 // where the media rule bites: no photo or video, no improvement. Anyone can
 // mark their own work done; a manager still has to approve it.
-/** The celebration: a finished improvement tells the whole team — a bell
- *  notification for everyone (the celebration popup and the badge both feed
- *  off it) and a phone push to every opted-in device. The WhatsApp-group
- *  buzz, in the app (Graeme, 2026-09-02). Fire-and-forget: a notification
- *  hiccup must never fail the person's "I've done this". */
-async function celebrateImprovement(improvementId: number, title: string, byUserId: number | null, byName: string | null) {
-  // byName is everyone credited, already joined — "Graeme & Bodan made an
-  // improvement" (migration 0125).
-  const message = byName
-    ? `Great news — ${byName} made an improvement: ${title}`
-    : `Great news — an improvement just landed: ${title}`;
-  const users = await db.select({ id: usersTable.id }).from(usersTable);
-  const recipients = users.map(u => u.id).filter(id => id !== byUserId);
-  if (recipients.length === 0) return;
-  await db.insert(notificationsTable).values(
-    recipients.map(userId => ({ userId, type: "improvement", message, improvementId })),
-  );
-  await sendPushToUsers(recipients, {
-    title: "Great news 🎉",
-    body: byName ? `${byName} made an improvement: ${title}` : `An improvement just landed: ${title}`,
-    url: "/improvements",
-    tag: `improvement-${improvementId}`,
-  });
-}
-
 /** The quiet review queue (Graeme, 2026-09-02): a finished improvement
  *  drops a task onto the founder's green to-do list instead of being
  *  approved in front of the room. One open task per improvement; closed
@@ -366,8 +339,8 @@ async function approvalRequired(): Promise<boolean> {
 }
 
 /**
- * Complete an improvement and set everything that goes with it — credit,
- * the celebration, and (only when the approval step is on) the "waiting
+ * Complete an improvement and set everything that goes with it — credit
+ * and (only when the approval step is on) the "waiting
  * for a manager" status plus the founder's review task. With approval off
  * it lands in the feed as complete straight away.
  *
@@ -379,7 +352,6 @@ async function approvalRequired(): Promise<boolean> {
 export async function submitForApproval(
   row: ImprovementSubmission,
   userId: number | null,
-  opts: { celebrate: boolean } = { celebrate: true },
 ): Promise<ImprovementSubmission> {
   let userName: string | null = null;
   if (userId) {
@@ -414,16 +386,12 @@ export async function submitForApproval(
   // "done with" people added when it was logged are already there.
   await pinLeadCredit(db, row.id);
 
-  // Celebrate only a FIRST completion — a send-back being re-done
-  // shouldn't ping the whole team twice. It names everyone credited.
-  if (opts.celebrate && row.progressStatus === "submitted_for_review") {
-    creditsFor([updated!])
-      .then(map => celebrateImprovement(
-        row.id, updated!.title, userId,
-        formatCreditNames((map.get(row.id) ?? []).map(c => c.name)) ?? userName,
-      ))
-      .catch(err => console.error("[Improvements] celebration notify failed:", err));
-  }
+  // No team-wide "Great news" any more (Graeme, 27 Oct 2026): a finished
+  // improvement puts nothing in anyone's notification centre and sends no
+  // push — the unseen count on the Improvements nav item is the signal.
+  // The feed, Leaner-board and meeting slides still celebrate it. Who an
+  // improvement does notify: lib/improvement-notify-policy.ts.
+
   // With the approval step on, every completion (first or re-done after a
   // send-back) queues the founder's quiet review task.
   if (needsReview) {

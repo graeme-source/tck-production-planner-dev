@@ -29,6 +29,7 @@ import { CREDIT_WEIGHTS, improvementTotals, scoreWindow } from "../lib/improveme
 import {
   RATING_NOTIFICATION_TYPE, ratingMessage, ratingOfNotificationType, ratingRecipients,
 } from "../lib/improvement-rating-notify";
+import { notificationCentreRecipients } from "../lib/improvement-notify-policy";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { londonDateString } from "../lib/london-time";
 import { sendPushToUsers } from "../services/push";
@@ -109,14 +110,16 @@ async function notifyRating(input: {
     alreadyTold,
   });
   if (!send) return;
+  const userIds = notificationCentreRecipients({ kind: "rating", recipientIds: send.userIds });
+  if (userIds.length === 0) return;
   const words = ratingMessage(send.weight, input.title);
-  await db.insert(notificationsTable).values(send.userIds.map(userId => ({
+  await db.insert(notificationsTable).values(userIds.map(userId => ({
     userId,
     type: RATING_NOTIFICATION_TYPE[send.weight],
     message: words.message,
     improvementId: input.improvementId,
   })));
-  await sendPushToUsers(send.userIds, {
+  await sendPushToUsers(userIds, {
     title: words.pushTitle,
     body: words.pushBody,
     url: `/improvements?open=${input.improvementId}`,
