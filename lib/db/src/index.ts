@@ -31,6 +31,7 @@ export * from "./schema";
 // to re-derive the rules (and can't drift from them).
 export * from "./improvement-stage";
 export * from "./improvement-credits";
+export * from "./improvement-reclassify";
 export * from "./employee-review-visibility";
 export * from "./probation";
 export * from "./fried-chicken-allocation";

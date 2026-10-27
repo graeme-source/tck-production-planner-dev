@@ -46,6 +46,7 @@ import { CreditBadge, CreditWeightControl, PremiumStrip, useIsFounder } from "@/
 import { premiumStyle } from "@/lib/improvement-premium";
 import { ImprovementPromptUptake } from "@/components/improvement-prompt-uptake";
 import { ImprovementThreadButton, ImprovementThreadPanel } from "@/components/improvement-thread";
+import { ImprovementReclassifyButton } from "@/components/improvement-reclassify";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -890,6 +891,9 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin, initialThreadOpen =
 
   const refresh =() => queryClient.invalidateQueries({ queryKey: ["improvements"] });
   const fadePair = pickFadePair(item?.media);
+  // Bumped when a manager re-sorts the photos (idea → improvement): the
+  // photo slots below hold their own list, so they re-mount to re-read it.
+  const [mediaVersion, setMediaVersion] = useState(0);
 
   // "Create SOP from this improvement" — the server copies title, text and
   // media in as draft steps; the editor opens on the result for the tidy.
@@ -1078,6 +1082,13 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin, initialThreadOpen =
         </div>
       )}
 
+      {/* An idea that was really an improvement — logged with two "before"
+          photos when one was the after (Graeme, 27 Oct 2026). Managers only,
+          matching the endpoint. */}
+      {isManager && (
+        <ImprovementReclassifyButton item={item} onSaved={() => setMediaVersion(v => v + 1)} />
+      )}
+
       {/* Before and after, side by side — the shape of the evidence, and the
           way an idea logged weeks ago becomes a finished improvement: come
           back, add the after shot, say what changed. */}
@@ -1110,11 +1121,11 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin, initialThreadOpen =
         <div className="space-y-6">
           <div>
             <p className="text-base font-bold mb-2">Before</p>
-            <ImprovementAttachments improvementId={id} editable canRemove={!!item.canEdit} phase="before" fullWidth onChanged={refresh} />
+            <ImprovementAttachments key={`before-${mediaVersion}`} improvementId={id} editable canRemove={!!item.canEdit} phase="before" fullWidth onChanged={refresh} />
           </div>
           <div>
             <p className="text-base font-bold mb-2">After</p>
-            <ImprovementAttachments improvementId={id} editable canRemove={!!item.canEdit} phase="after" fullWidth onChanged={refresh} />
+            <ImprovementAttachments key={`after-${mediaVersion}`} improvementId={id} editable canRemove={!!item.canEdit} phase="after" fullWidth onChanged={refresh} />
           </div>
         </div>
 
@@ -1130,7 +1141,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin, initialThreadOpen =
             {stitch.isPending ? "Joining them together…" : "Make one before & after clip"}
           </button>
           <div className="mt-3">
-            <ImprovementAttachments improvementId={id} phase="stitched" fullWidth />
+            <ImprovementAttachments key={`stitched-${mediaVersion}`} improvementId={id} phase="stitched" fullWidth />
           </div>
         </div>
       </div>

@@ -51,7 +51,7 @@ async function readError(res: Response): Promise<string> {
   return body?.error || `The server said no (HTTP ${res.status}).`;
 }
 
-const threadKey = (id: number) => ["improvement-thread", id] as const;
+export const threadKey = (id: number) => ["improvement-thread", id] as const;
 
 // ── The button on the card ──────────────────────────────────────────────────
 

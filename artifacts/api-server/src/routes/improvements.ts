@@ -376,7 +376,7 @@ async function approvalRequired(): Promise<boolean> {
  * Both must do the same thing, or an auto-submitted one arrives with no
  * credit and no review task.
  */
-async function submitForApproval(
+export async function submitForApproval(
   row: ImprovementSubmission,
   userId: number | null,
   opts: { celebrate: boolean } = { celebrate: true },
@@ -901,7 +901,7 @@ type StitchOutcome =
 
 /** The stitch itself — shared by the manual route below and the automatic
  *  trigger in the attachment upload, so both produce identical clips. */
-async function stitchImprovementClip(id: number): Promise<StitchOutcome> {
+export async function stitchImprovementClip(id: number): Promise<StitchOutcome> {
   if (!(await ffmpegAvailable())) {
     return { ok: false, status: 503, error: "Video joining isn't available on this server." };
   }
@@ -1329,23 +1329,32 @@ router.delete("/attachments/:attId", async (req: Request, res: Response) => {
   // story — rebuild it from what's left, or drop it when a half is gone.
   const removed = deleted[0];
   if (removed && (removed.phase === "before" || removed.phase === "after")) {
-    const halves = toRows<{ kind: string; phase: string | null }>(await db.execute(sql`
-      SELECT DISTINCT ON (phase) kind, phase
-        FROM improvement_attachments
-       WHERE improvement_id = ${removed.improvement_id} AND phase IN ('before', 'after')
-       ORDER BY phase, id DESC
-    `));
-    if (shouldAutoStitch(halves)) {
-      stitchImprovementClip(removed.improvement_id).then(
-        outcome => { if (!outcome.ok) console.warn(`[Improvements] re-stitch after delete skipped for ${removed.improvement_id}: ${outcome.error}`); },
-        err => console.error(`[Improvements] re-stitch after delete failed for ${removed.improvement_id}:`, err),
-      );
-    } else {
-      await db.execute(sql`DELETE FROM improvement_attachments WHERE improvement_id = ${removed.improvement_id} AND phase = 'stitched'`);
-    }
+    await refreshStitchedClip(removed.improvement_id, "after delete");
   }
 
   res.json({ ok: true });
 });
+
+/**
+ * The before/after halves changed (one deleted, or photos moved between
+ * before and after): rebuild the joined clip from what's there now in the
+ * background, or drop it when there's no longer a pair worth joining.
+ */
+export async function refreshStitchedClip(improvementId: number, why: string): Promise<void> {
+  const halves = toRows<{ kind: string; phase: string | null }>(await db.execute(sql`
+    SELECT DISTINCT ON (phase) kind, phase
+      FROM improvement_attachments
+     WHERE improvement_id = ${improvementId} AND phase IN ('before', 'after') AND comment_id IS NULL
+     ORDER BY phase, id DESC
+  `));
+  if (shouldAutoStitch(halves)) {
+    stitchImprovementClip(improvementId).then(
+      outcome => { if (!outcome.ok) console.warn(`[Improvements] re-stitch ${why} skipped for ${improvementId}: ${outcome.error}`); },
+      err => console.error(`[Improvements] re-stitch ${why} failed for ${improvementId}:`, err),
+    );
+  } else {
+    await db.execute(sql`DELETE FROM improvement_attachments WHERE improvement_id = ${improvementId} AND phase = 'stitched'`);
+  }
+}
 
 export default router;
