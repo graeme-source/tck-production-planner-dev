@@ -341,6 +341,21 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               )}
               <Toggle on={draft.chilledUseByOn} onChange={chilledUseByOn => update(t => ({ ...t, chilledUseByOn }))} label="Print the chilled use-by line (off = frozen use-by only)" />
               {!draft.chilledUseByOn && <p className="text-sm text-muted-foreground pl-2">Only the frozen use-by prints, labelled with the “Frozen use-by label” wording (e.g. “USE BY:”).</p>}
+              {/* Best before above the use-by, from the print (despatch) day —
+                  cinnamon buns: + 3 days (Graeme, 2026-10-27). */}
+              <div className="flex flex-wrap items-end gap-4">
+                <Toggle on={draft.bestBefore.on} onChange={on => update(t => ({ ...t, bestBefore: { ...t.bestBefore, on } }))} label="Best before line (from the despatch day)" />
+                {draft.bestBefore.on && (
+                  <>
+                    <label className="text-sm font-semibold space-y-1">
+                      <span className="block">Best before label</span>
+                      <input value={draft.bestBefore.label} onChange={e => { const label = e.target.value; update(t => ({ ...t, bestBefore: { ...t.bestBefore, label } })); }} className={inputCls} />
+                    </label>
+                    <Num label="Best before" unit="days after despatch" value={draft.bestBefore.period.amount} step={1} min={1} max={365}
+                      onChange={v => v != null && update(t => ({ ...t, bestBefore: { ...t.bestBefore, period: { amount: v, unit: "days" } } }))} />
+                  </>
+                )}
+              </div>
               <div className="flex flex-wrap items-end gap-4">
                 <Toggle on={draft.netQuantity.on} onChange={on => update(t => ({ ...t, netQuantity: { ...t.netQuantity, on } }))} label="Net quantity line above the barcode" />
                 {draft.netQuantity.on && (

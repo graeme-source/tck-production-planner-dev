@@ -19,6 +19,7 @@ const fake: TextMeasurer = {
 function content(deck: string): LabelContent {
   return {
     title: [parseBold("TEST - 2 PACK")],
+    subtitle: [],
     steps: [[parseBold("One.")], [parseBold("Two.")], [parseBold("Three.")]],
     storageHeading: [],
     ingredientsHeading: [],

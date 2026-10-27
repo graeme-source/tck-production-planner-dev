@@ -5,7 +5,7 @@
  * layout.ts.
  */
 import type { LabelDates } from "./dates";
-import { formatLabelDate } from "./dates";
+import { addPeriod, formatLabelDate } from "./dates";
 import { checkEan13 } from "./ean13";
 import { collapseEqualRanges, cookingPlaceholderValues } from "./cooking";
 import { cookingOverCap } from "./cooking-tiers";
@@ -114,6 +114,9 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
 
   const dateLine = (label: string, value: string): Paragraph => mergeRuns([...parseBold(label.trim()), { text: ` ${value}`, bold: false }]);
   const dateLines: Paragraph[] = [];
+  // Best before first, as on the printed label; from the print (despatch) day.
+  const bb = s.template.bestBefore;
+  if (bb?.on && bb.period.amount > 0) dateLines.push(dateLine(bb.label, formatLabelDate(addPeriod(dates.printDate, bb.period))));
   if (s.template.chilledUseByOn !== false) {
     if (dates.chilledUseBy) dateLines.push(dateLine(t.chilledLabel, formatLabelDate(dates.chilledUseBy)));
     else problems.push("No chilled use-by — set the recipe's shelf life or a chilled period on this label.");

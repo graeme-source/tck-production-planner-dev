@@ -310,19 +310,20 @@ describe("cinnamon buns template", () => {
     ]);
     expect(c.problems).toEqual([]);
   });
-  it("chilled storage; one USE BY line (5 days) and the batch; no frozen line, no bones warning", () => {
+  it("chilled storage; BEST BEFORE (despatch + 3), one USE BY line (5 days) and the batch; no frozen line, no bones warning", () => {
     const s = bunSnap();
     const c = bunContent(s);
     expect(text(c.storageHeading)).toEqual(["STORAGE INSTRUCTIONS:"]);
     expect(text(c.storage)).toEqual(["Keep me chilled below 5°C. Do not freeze."]);
-    expect(text(c.dates)).toEqual(["USE BY: 01/11/26", expect.stringMatching(/^BATCH NUMBER: /)]);
+    // Printed (= despatched) 27 Oct: best before 30/10, use by 01/11 (Graeme, 2026-10-27).
+    expect(text(c.dates)).toEqual(["BEST BEFORE: 30/10/26", "USE BY: 01/11/26", expect.stringMatching(/^BATCH NUMBER: /)]);
     expect(s.frozen).toBeNull();
     expect(s.warningOn).toBe(false);
     expect(text(c.allergenInfo).join(" ")).not.toContain("bones");
   });
   it("a recipe's own chilled period beats its shelf life (the buns' 180-day frozen shelf life must not print)", () => {
     const c = bunContent(bunSnap({ chilled: { amount: 5, unit: "days" } }, 180));
-    expect(text(c.dates)[0]).toBe("USE BY: 01/11/26");
+    expect(text(c.dates)[1]).toBe("USE BY: 01/11/26");
   });
   it("fits: three step circles, subtitle under the title, no problems", () => {
     const p = proofLabel(bunSnap(), bunWhen, fonts);
@@ -337,5 +338,11 @@ describe("cinnamon buns template", () => {
     expect(DEFAULT_TEMPLATE.text.subtitle).toBe("");
     expect(DEFAULT_TEMPLATE.cooking.ovenTempC).toBe(210);
     expect(DEFAULT_TEMPLATE.page.stepsBandMm).toBe(8);
+  });
+});
+
+describe("best before (2026-10-27)", () => {
+  it("is off on every other template", () => {
+    for (const p of TEMPLATE_PRESETS.filter(p => p.key !== "cinnamon-buns")) expect(p.build().bestBefore.on, p.key).toBe(false);
   });
 });

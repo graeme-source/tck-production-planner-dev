@@ -174,7 +174,15 @@ export function comparableSnapshot(s: LabelSnapshot): unknown {
   // shows as templateId), never what it prints.
   const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
-  return { ...rest, template: withoutBlankSubtitle(template) };
+  return { ...rest, template: withoutOffBestBefore(withoutBlankSubtitle(template)) };
+}
+
+/** A best-before that's off isn't drawn, so it's left out — labels
+ *  published before it existed still match (2026-10-27). */
+function withoutOffBestBefore<T extends { bestBefore?: { on?: boolean } }>(template: T): T {
+  if (template.bestBefore?.on) return template;
+  const { bestBefore: _bb, ...rest } = template;
+  return rest as T;
 }
 
 /** A blank subtitle isn't drawn, so its wording and style are left out —

@@ -179,6 +179,10 @@ export interface LabelTemplate {
   /** Print the chilled use-by line. Off = frozen use-by only (labelled by
    *  text.frozenLabel, e.g. "USE BY:"), for frozen-only products. */
   chilledUseByOn: boolean;
+  /** A BEST BEFORE line above the use-by, a set period from the print day
+   *  (= the despatch day) — cinnamon buns: despatch + 3 days (Graeme,
+   *  2026-10-27). Off on every other template. */
+  bestBefore: { on: boolean; label: string; period: ShelfPeriod };
   /** A big bold net-quantity line (e.g. "500g") above the barcode, from the
    *  recipe's label settings. Off on the standard label. */
   netQuantity: { on: boolean; sizePt: number };
@@ -338,6 +342,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   boneRiskWords: ["chicken", "turkey"],
   storageBanner: { on: false, text: "KEEP FROZEN", snowflake: true, heightMm: 6.5 },
   chilledUseByOn: true,
+  bestBefore: { on: false, label: "BEST BEFORE:", period: { amount: 3, unit: "days" } },
   netQuantity: { on: false, sizePt: 16 },
   warningPlacement: "allergens",
   defaultForCategories: [],
@@ -515,6 +520,11 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     // Templates saved before these existed get the standard behaviour.
     storageBanner: normaliseBanner(r.storageBanner, D.storageBanner),
     chilledUseByOn: bool(r.chilledUseByOn, D.chilledUseByOn),
+    bestBefore: {
+      on: bool(obj(r.bestBefore).on, D.bestBefore.on),
+      label: typeof obj(r.bestBefore).label === "string" ? String(obj(r.bestBefore).label) : D.bestBefore.label,
+      period: normalisePeriod(obj(r.bestBefore).period) ?? D.bestBefore.period,
+    },
     netQuantity: {
       on: bool(obj(r.netQuantity).on, D.netQuantity.on),
       sizePt: num(obj(r.netQuantity).sizePt, D.netQuantity.sizePt, 6.75, 40),
@@ -644,6 +654,9 @@ export function cinnamonBunsTemplate(): LabelTemplate {
   t.text.chilledLabel = "USE BY:";
   t.chilledDefault = { amount: 5, unit: "days" };
   t.frozenDefault = null;
+  // Best before = despatch day + 3 (Graeme, 2026-10-27); labels print on
+  // the despatch day, so it counts from the print day.
+  t.bestBefore = { on: true, label: "BEST BEFORE:", period: { amount: 3, unit: "days" } };
   t.boneRiskWords = [];
   t.defaultForCategories = ["Desserts"];
   return t;
