@@ -73,6 +73,13 @@ import { hasBuildingStarted } from "@/lib/building-stations";
 import { tinsCompleteFrom } from "../shared/tin-math";
 import { useMixingCookingRecipes } from "../shared/mixing-cooking-recipes";
 import { builderProgressLine } from "../shared/building-complete";
+import { LiveMixTimeline, MeatTimeLine, TrustedChip, driftNote } from "../shared/live-mix-timeline";
+import { PutInReasonDialog } from "../shared/put-in-reason-dialog";
+import {
+  useLiveSchedule, usePendingPutInReasons, liveScheduleKey,
+  type PendingPutIn, type PutInSnapshot,
+} from "@/hooks/use-live-schedule";
+import type { LiveRecipe, TrustSignal } from "@workspace/production-schedule";
 import type { PrepRecipeDetail, PrepMarinadeDetail, PrepIngredientDetail } from "./prep-hub";
 
 // Weight the cooked meat filling should come to once every tray is out of the
@@ -240,6 +247,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   }, [plan.id]);
 
   const [runTrayAction, trayBusy] = useGuardedAction();
+  // Daily review: the "why was it off-time?" prompt - straight after an
+  // off-time first tray, or for anything unanswered when the station opens.
+  const [reasonPrompt, setReasonPrompt] = useState<PendingPutIn | null>(null);
+  const [reasonSkipped, setReasonSkipped] = useState<Set<number>>(new Set());
+  const { data: pendingReasonData } = usePendingPutInReasons(plan.id);
   const [trayPending, setTrayPending] = useState<string | null>(null);
 
   // ── Add-at-cooking marinades (e.g. the Philly beef stock) ──────────
@@ -357,10 +369,17 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         const res = await guardedFetch(`${base}/api/oven-events/oven-in`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ planId, recipeId, recipeName, ingredientId, ingredientName, trayIndex: trayIdx }),
+          body: JSON.stringify({
+            planId, recipeId, recipeName, ingredientId, ingredientName, trayIndex: trayIdx,
+            // Loading time scales with trays — widens the put-in tolerance.
+            trayCount: cookingRecipes.find(r => r.recipeId === recipeId)?.ingredients.find(i => i.ingredientId === ingredientId)?.trayCount ?? undefined,
+          }),
         });
-        const ev: OvenEventRow = await res.json();
+        const ev: OvenEventRow & { putIn?: PutInSnapshot | null } = await res.json();
         setOvenEvents(prev => [ev, ...prev]);
+        // The meat's first tray: the server stored the suggested time with
+        // it. Way off it -> ask why there and then (daily review, 2026-10-27).
+        if (ev.putIn?.needsReason) setReasonPrompt(ev.putIn);
       } else if (next === 2) {
         const res = await guardedFetch(`${base}/api/oven-events/oven-out`, {
           method: "POST",
@@ -381,6 +400,26 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
       setTrayStates(prev => ({ ...prev, [key]: { ...prev[key], [trayIdx]: cur } }));
     } finally {
       setTrayPending(null);
+      queryClient.invalidateQueries({ queryKey: liveScheduleKey(plan.id) });
+    }
+  };
+
+  // "All trays in now" - one tap puts every empty tray of a meat in, so the
+  // put-in time is the real one (no tapping trays in after the fact). The
+  // add-at-cooking gate still applies: it prompts on the first tray and stops.
+  const putAllTraysIn = async (
+    recipeId: number, recipeName: string, ingredientId: number, ingredientName: string, trayCount: number,
+  ) => {
+    const key = `${recipeId}-${ingredientId}`;
+    const rec = cookingRecipes.find(r => r.recipeId === recipeId);
+    const empty = Array.from({ length: trayCount }, (_, i) => i).filter(i => (trayStates[key]?.[i] ?? 0) === 0);
+    if (empty.length === 0) return;
+    if (rec && unconfirmedCookingAdds(rec).length > 0) {
+      await advanceTray(recipeId, recipeName, ingredientId, ingredientName, empty[0], plan.id, plan.name ?? "");
+      return;
+    }
+    for (const idx of empty) {
+      await advanceTray(recipeId, recipeName, ingredientId, ingredientName, idx, plan.id, plan.name ?? "");
     }
   };
 
@@ -605,6 +644,19 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     (schedule?.recipes ?? []).map(r => [r.recipeId, r]),
   );
 
+  // -- Live schedule (Graeme, 2026-10-27) ------------------------------------
+  // The same day re-planned every minute from batches built and the pace the
+  // builders are actually going: "builders reach it ~HH:MM (was HH:MM)" and
+  // the meat "in the oven by" times that move with them. Uses the saved
+  // order; a drag saves it and invalidates this so it re-times.
+  const { data: live } = useLiveSchedule(plan.id);
+  const liveByItem = new Map<number, LiveRecipe>((live?.recipes ?? []).map(r => [r.planItemId, r]));
+  const liveByRecipeId = new Map<number, LiveRecipe>();
+  for (const r of live?.recipes ?? []) {
+    if (!liveByRecipeId.has(r.recipeId) || liveByRecipeId.get(r.recipeId)!.state === "done") liveByRecipeId.set(r.recipeId, r);
+  }
+  const trustFor = (ingredientId: number): TrustSignal | undefined => live?.trust?.[ingredientId];
+
   // Hide-completed toggle, shared by both tabs. Deliberately NOT persisted —
   // every fresh load of the station starts with completed work hidden, and
   // "Show completed" is a temporary peek for the current session only.
@@ -719,7 +771,10 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     updateOrder.mutate(
       { id: plan.id, data: { order } },
       {
-        onSuccess: () => toast({ title: "Order saved", description: "Recipe order has been updated for all stations." }),
+        onSuccess: () => {
+          toast({ title: "Order saved", description: "Recipe order has been updated for all stations." });
+          queryClient.invalidateQueries({ queryKey: liveScheduleKey(plan.id) });
+        },
         onError: () => toast({ title: "Reorder failed", description: "Could not save the new order. Please try again.", variant: "destructive" }),
       }
     );
@@ -947,6 +1002,8 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         completeFailed={isActive && completeFailed}
         onAutoComplete={() => handleAutoComplete(item)}
         sched={schedByItem.get(item.id) ?? null}
+        live={liveByItem.get(item.id) ?? null}
+        trustFor={trustFor}
       />
     );
   };
@@ -1199,6 +1256,21 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
     )}
     <div className="space-y-4">
       {sopViewer.dialog}
+      {(() => {
+        const next = reasonPrompt ?? (pendingReasonData?.pending ?? []).find(p => !reasonSkipped.has(p.recordId)) ?? null;
+        if (!next) return null;
+        return (
+          <PutInReasonDialog
+            planId={plan.id}
+            putIn={next}
+            reasons={pendingReasonData?.reasons}
+            onClose={() => {
+              setReasonSkipped(prev => new Set(prev).add(next.recordId));
+              setReasonPrompt(null);
+            }}
+          />
+        );
+      })()}
       {/* Daily progress — a slim strip portalled beside the Checklist/
           Production toggle so they share one line (Graeme, 2026-09-16);
           the old full-width card cost a whole band of height. Falls back
@@ -1297,9 +1369,19 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 // Headline cook-start for the panel: the earliest "in oven by"
                 // across this recipe's meats (they almost always have just one).
                 const schedMeats = schedByRecipeId.get(recipe.recipeId)?.meats ?? [];
-                const earliestCookStart = schedMeats.length > 0
-                  ? schedMeats.reduce((min, m) => Math.min(min, m.cookStartMinutes), Infinity)
+                // Live time first (moves with the builders), the plan's otherwise.
+                const liveMeats = (liveByRecipeId.get(recipe.recipeId)?.meats ?? []).filter(m => !m.started);
+                const earliestCookStart = liveMeats.length > 0
+                  ? liveMeats.reduce((min, m) => Math.min(min, m.liveCookStartMinutes), Infinity)
+                  : schedMeats.length > 0
+                    ? schedMeats.reduce((min, m) => Math.min(min, m.cookStartMinutes), Infinity)
+                    : null;
+                const plannedCookStart = liveMeats.length > 0
+                  ? liveMeats.reduce((min, m) => Math.min(min, m.plannedCookStartMinutes), Infinity)
                   : null;
+                const cookMoved = plannedCookStart != null && earliestCookStart != null && Math.round(plannedCookStart) !== Math.round(earliestCookStart);
+                const cookOverdue = liveMeats.some(m => m.overdue);
+                const recipeTrusted = rawMeatIngs.length > 0 && rawMeatIngs.every(i => trustFor(i.ingredientId)?.trusted);
                 // Any meat whose start time is a guess or impossible — flagged
                 // under the header so the cook knows the time can't be trusted.
                 const timingGaps = [
@@ -1318,12 +1400,23 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                         <p className="font-bold text-2xl">
                           {recipe.recipeName}
                           {earliestCookStart != null && !recipeAllDone && (
-                            <span className="text-orange-600 dark:text-orange-400">
+                            <span className={cookOverdue ? "text-rose-600 dark:text-rose-400" : "text-orange-600 dark:text-orange-400"}>
                               {" — Start cooking meat at "}
                               <span className="tabular-nums">{formatClock(earliestCookStart)}</span>
                             </span>
                           )}
                         </p>
+                        {!recipeAllDone && (cookMoved || recipeTrusted || cookOverdue) && (
+                          <div className="flex items-center gap-2 flex-wrap mt-0.5 text-sm">
+                            {cookMoved && plannedCookStart != null && earliestCookStart != null && (
+                              <span className="text-muted-foreground tabular-nums">
+                                was {formatClock(plannedCookStart)} — builders are {earliestCookStart < plannedCookStart ? "ahead" : "behind"}
+                              </span>
+                            )}
+                            {cookOverdue && <span className="font-semibold text-rose-600 dark:text-rose-400">put it in now</span>}
+                            {recipeTrusted && <TrustedChip trust={trustFor(rawMeatIngs[0].ingredientId)} />}
+                          </div>
+                        )}
                         <div className="flex items-baseline gap-2 mt-0.5">
                           <span className="text-sm text-muted-foreground">{formatBatches(recipe.batchesTarget)} batches</span>
                           <span className="text-xl font-extrabold tabular-nums leading-none">
@@ -1486,6 +1579,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                                   Target core temp: ≥{minTemp}°C
                                 </p>
                                 {(() => {
+                                  const liveMeat = liveByRecipeId.get(recipe.recipeId)?.meats
+                                    .find(m => m.rawMeatIngredientId === ing.ingredientId);
+                                  if (liveMeat && !allIngDone && (rawMeatIngs.length >= 2 || liveMeat.holdBreach)) {
+                                    return <MeatTimeLine m={liveMeat} trust={trustFor(ing.ingredientId)} />;
+                                  }
                                   const schedMeat = schedByRecipeId.get(recipe.recipeId)?.meats
                                     .find(m => m.rawMeatIngredientId === ing.ingredientId);
                                   // Single-meat recipes carry the time in the
@@ -1503,9 +1601,20 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                                   );
                                 })()}
                               </div>
-                              {inOvenCount > 0 && (
-                                <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
-                              )}
+                              <div className="flex flex-col items-end gap-1.5">
+                                {inOvenCount > 0 && (
+                                  <p className="text-sm font-semibold text-orange-600 dark:text-orange-400">{inOvenCount} in oven</p>
+                                )}
+                                {ingTrays - doneCount - inOvenCount >= 2 && !isOnBreak && (
+                                  <button
+                                    onClick={() => putAllTraysIn(recipe.recipeId, recipe.recipeName, ing.ingredientId, ing.ingredientName, ingTrays)}
+                                    disabled={trayPending != null}
+                                    className="min-h-[48px] px-4 rounded-xl bg-orange-500 text-white font-bold text-base hover:bg-orange-600 disabled:opacity-50 whitespace-nowrap"
+                                  >
+                                    All {ingTrays - doneCount - inOvenCount} trays in now
+                                  </button>
+                                )}
+                              </div>
                             </div>
 
                             {/* Tray grid with inline tray count label */}
@@ -1618,6 +1727,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 )}
               </div>
             )}
+            {live && <LiveMixTimeline live={live} />}
             {schedWarnings.length > 0 && (
               <p className="text-xs text-amber-600 dark:text-amber-400">
                 <AlertTriangle className="w-3.5 h-3.5 inline -mt-0.5 mr-1" />
@@ -1683,9 +1793,12 @@ interface MixingOverviewRowProps {
   sopLinks: SopLink[];
   onOpenSop: (sopId: number) => void;
   sopQueryKey: unknown[];
+  /** The live re-plan for this item (moves with the builders). */
+  live: LiveRecipe | null;
+  trustFor: (ingredientId: number) => TrustSignal | undefined;
 }
 
-function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched, sopLinks, onOpenSop, sopQueryKey }: MixingOverviewRowProps) {
+function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFillingItems, tinsComplete, tinsTarget, allTinsDone, progress, mixingCount, target, batchesPerTinEven, isOnBreak, isAdmin, onActivate, onAdd, onRemove, tinPending, filling, checkedIngredients, onToggleIngredient, completing, completeFailed, onAutoComplete, sched, sopLinks, onOpenSop, sopQueryKey, live, trustFor }: MixingOverviewRowProps) {
   const {
     attributes, listeners, setNodeRef,
     transform, transition, isDragging,
@@ -1800,7 +1913,38 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
               })}
             </p>
 
-            {sched && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
+            {/* The live time (Graeme, 2026-10-27): when the builders reach the
+                next flavour, or this one - so the mix is ready on time. */}
+            {live && live.state === "building" && live.nextFlavour && (
+              <p className="mt-1 text-lg font-bold text-blue-700 dark:text-blue-300 tabular-nums">
+                {live.remaining} left · next flavour {live.nextFlavour.name} ~{formatClock(live.nextFlavour.atMinutes)}
+                {Math.abs(live.nextFlavour.atMinutes - live.nextFlavour.wasMinutes) >= 3 && (
+                  <span className="text-sm font-medium text-muted-foreground">
+                    {" "}(was {formatClock(live.nextFlavour.wasMinutes)} — builders are {live.nextFlavour.atMinutes < live.nextFlavour.wasMinutes ? "ahead" : "behind"})
+                  </span>
+                )}
+              </p>
+            )}
+            {live && live.state === "waiting" && live.kind === "cold" && (
+              <p className="mt-1 text-lg font-bold tabular-nums text-sky-700 dark:text-sky-300">
+                Chilled mix — any time before {formatClock(live.mixByMinutes)}
+              </p>
+            )}
+            {live && live.state === "waiting" && live.kind === "hot" && (
+              <p className={cn(
+                "mt-1 text-lg font-bold tabular-nums",
+                live.drift === "ahead" ? "text-emerald-700 dark:text-emerald-300" : live.drift === "behind" ? "text-amber-700 dark:text-amber-300" : "text-foreground",
+              )}>
+                Builders need this mix ~{formatClock(live.liveStartMinutes)}
+                {driftNote(live) && <span className="text-sm font-medium text-muted-foreground"> ({driftNote(live)})</span>}
+              </p>
+            )}
+
+            {live && live.state === "waiting" && live.meats.length > 0 ? (
+              <div className="mt-1.5 space-y-1">
+                {live.meats.map(m => <MeatTimeLine key={m.rawMeatIngredientId} m={m} trust={trustFor(m.rawMeatIngredientId)} />)}
+              </div>
+            ) : sched && live?.state !== "done" && live?.state !== "building" && (sched.meats.length > 0 || sched.untimedMeats.length > 0) && (
               <div className="mt-1.5 space-y-0.5">
                 {sched.meats.map((m, i) => (
                   <div key={i} className="flex items-center gap-1.5 text-sm flex-wrap">
