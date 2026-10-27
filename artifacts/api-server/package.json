@@ -35,6 +35,7 @@
     "@workspace/station-changes": "workspace:*",
     "@workspace/people-reviews": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
+    "@workspace/uk-date": "workspace:*",
     "@workspace/units": "workspace:*",
     "bcryptjs": "^3.0.3",
     "connect-pg-simple": "^10.0.0",

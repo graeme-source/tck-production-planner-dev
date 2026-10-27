@@ -42,6 +42,20 @@ describe("missingRequiredFields", () => {
     expect(ok.some(m => m.startsWith("Email address for your payslips"))).toBe(false);
   });
 
+  it("a date of birth must be a real date in the past", () => {
+    const today = "2026-10-27";
+    const dob = (v: string) => missingRequiredFields(PAYROLL_DETAILS, { date_of_birth: v }, today).filter(m => m.startsWith("Date of birth"));
+    expect(dob("1990-05-14")).toEqual([]);
+    expect(dob("2000-02-29")).toEqual([]);
+    expect(dob("1990-02-31")).toEqual(["Date of birth (not a real date — use DD/MM/YYYY)"]);
+    expect(dob("14/05/1990")).toEqual(["Date of birth (not a real date — use DD/MM/YYYY)"]); // never stored un-converted
+    expect(dob("2027-01-01")).toEqual(["Date of birth (must be in the past)"]);
+    expect(dob("")).toEqual(["Date of birth"]);
+    // A start date may be in the future.
+    const start = missingRequiredFields(HMRC_STARTER, { start_date: "2027-01-04" }, today);
+    expect(start.some(m => m.startsWith("Employment start date"))).toBe(false);
+  });
+
   it("lists what's blank", () => {
     const missing = missingRequiredFields(PAYROLL_DETAILS, { full_name: "Jane Smith" });
     expect(missing).toContain("Sort code");
@@ -85,6 +99,16 @@ describe("renderStarterFormBody", () => {
     const answers: StarterFormAnswers = { q12_allergies: "yes", q12_allergies_detail: "Penicillin" };
     const body = renderStarterFormBody(HEALTH_QUESTIONNAIRE, answers, SIG);
     expect(body).toContain("Yes — Penicillin");
+  });
+
+  it("dates of birth (and other dates) read DD/MM/YYYY on the signed form; stored ISO is untouched", () => {
+    const answers: StarterFormAnswers = { date_of_birth: "1999-01-02", start_date: "2026-09-14" };
+    const body = renderStarterFormBody(HMRC_STARTER, answers, SIG);
+    expect(body).toContain("Date of birth: 02/01/1999");
+    expect(body).toContain("Employment start date: 14/09/2026");
+    expect(body).not.toContain("1999-01-02");
+    expect(answers.date_of_birth).toBe("1999-01-02");
+    expect(renderStarterFormBody(PAYROLL_DETAILS, { date_of_birth: "2000-02-29" }, SIG)).toContain("Date of birth: 29/02/2000");
   });
 
   it("the payroll details document (and so its PDF) carries the payslip email", () => {

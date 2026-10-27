@@ -16,13 +16,14 @@ import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { ContractPaper } from "@/components/contract-view";
 import { Check, ChevronRight, ClipboardList, FileDown, Loader2, PenLine, X } from "lucide-react";
+import { formatUkDate, isPastIsoDate, maskUkDateInput, parseUkDate } from "@workspace/uk-date";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Mirrors api-server/src/lib/starter-forms.ts types (served as JSON).
 type Field =
   | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email"; prefill?: "account_email" }
-  | { kind: "date"; key: string; label: string; required?: boolean; help?: string }
+  | { kind: "date"; key: string; label: string; required?: boolean; help?: string; past?: boolean }
   | { kind: "textarea"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "radio"; key: string; label: string; required?: boolean; help?: string; options: { value: string; label: string; help?: string }[] }
   | { kind: "checkboxes"; key: string; label: string; help?: string; options: { value: string; label: string; help?: string }[] }
@@ -68,6 +69,44 @@ function sectionActive(section: Section, answers: Answers): boolean {
   if (!section.showWhen) return true;
   const v = answers[section.showWhen.key];
   return typeof v === "string" && section.showWhen.equals.includes(v);
+}
+
+// ── Dates: typed DD/MM/YYYY, stored ISO ────────────────────────────────────
+
+const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+
+/** DD/MM/YYYY box (Graeme, 2026-10-27). Typing digits adds the slashes, so
+ *  "14051990" works on the iPad number pad. Only a real date (and, for a
+ *  date of birth, one in the past) reaches the answers — as ISO; anything
+ *  else saves as blank and says why, so a half-typed date can't be signed. */
+function UkDateInput({ value, past, onChange, className }: {
+  value: string; past: boolean; onChange: (iso: string) => void; className: string;
+}) {
+  const [text, setText] = useState(() => formatUkDate(value));
+  const iso = parseUkDate(text);
+  const problem =
+    text.trim() === "" ? null
+    : !iso ? (text.replace(/\D/g, "").length >= 8 ? "That date doesn't exist — check the day and month." : null)
+    : past && !isPastIsoDate(iso, londonToday()) ? "That has to be a date in the past."
+    : null;
+  return (
+    <>
+      <input
+        type="text" inputMode="numeric" autoComplete="off" placeholder="DD/MM/YYYY" maxLength={10}
+        value={text}
+        onChange={e => {
+          const next = maskUkDateInput(e.target.value);
+          setText(next);
+          const parsed = parseUkDate(next);
+          const ok = parsed != null && (!past || isPastIsoDate(parsed, londonToday()));
+          const out = ok ? parsed! : "";
+          if (out !== value) onChange(out);
+        }}
+        className={cn(className, problem && "border-destructive")}
+      />
+      {problem && <p className="text-sm font-medium text-destructive mt-1">{problem}</p>}
+    </>
+  );
 }
 
 // ── One form: fill + sign ──────────────────────────────────────────────────
@@ -159,12 +198,26 @@ function FormSheet({ def, submission, meId, onClose }: {
       ? <p className="text-xs text-muted-foreground mt-1 whitespace-pre-line">{field.help}</p>
       : null;
 
-    if (field.kind === "text" || field.kind === "date") {
+    if (field.kind === "date") {
+      return (
+        <label key={field.key} className="block">
+          {label}
+          <UkDateInput
+            value={typeof answers[field.key] === "string" ? (answers[field.key] as string) : ""}
+            past={field.past === true}
+            onChange={iso => setAnswer(field.key, iso)}
+            className={inputCls}
+          />
+          {help}
+        </label>
+      );
+    }
+    if (field.kind === "text") {
       return (
         <label key={field.key} className="block">
           {label}
           <input
-            type={field.kind === "date" ? "date" : "text"}
+            type="text"
             inputMode={"inputMode" in field ? field.inputMode : undefined}
             autoComplete={"inputMode" in field && field.inputMode === "email" ? "email" : undefined}
             autoCapitalize={"inputMode" in field && field.inputMode === "email" ? "none" : undefined}
