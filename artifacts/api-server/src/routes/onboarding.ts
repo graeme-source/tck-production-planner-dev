@@ -10,6 +10,7 @@ import { eq, and, asc } from "drizzle-orm";
 import { tickPreArrivalDetails, starterGateStatus } from "../lib/starter-paperwork";
 import { employmentRecordWrite, fromSession } from "../middleware/employment-record-write";
 import { canStreamOwnOnboardingUpload } from "../lib/onboarding-record-documents";
+import { maybeAutoSendStarterPayroll } from "../lib/payroll/starter-send";
 
 // Self-service on your OWN record only (lib/people-write-access.ts) — every
 // write here is keyed by the session, never by a user id in the request.
@@ -100,6 +101,12 @@ router.put("/me", ownOnboarding, async (req: Request, res: Response) => {
       return;
     }
 
+    // First submission only can complete the payroll paperwork; later edits
+    // of these details never re-send it (Graeme, 2026-10-27).
+    const [before] = await db.select({ submittedAt: onboardingSubmissionsTable.submittedAt })
+      .from(onboardingSubmissionsTable).where(eq(onboardingSubmissionsTable.userId, userId));
+    const firstSubmit = before?.submittedAt == null;
+
     await db
       .insert(onboardingSubmissionsTable)
       .values({ userId, ...values, submittedAt: new Date(), updatedAt: new Date() })
@@ -131,6 +138,7 @@ router.put("/me", ownOnboarding, async (req: Request, res: Response) => {
     // The emergency-contact matrix column ticks itself here.
     tickPreArrivalDetails(userId).catch(err =>
       console.warn("[onboarding] pre-arrival tick failed:", err instanceof Error ? err.message : err));
+    if (firstSubmit) void maybeAutoSendStarterPayroll(userId);
 
     res.json(await loadOnboarding(userId));
   } catch (err) {

@@ -18,6 +18,7 @@ import { PageHeader } from "@/components/page-header";
 import { toast } from "@/hooks/use-toast";
 import { printContract } from "@/components/contract-print";
 import { ContractPaper } from "@/components/contract-view";
+import { StarterPayrollSendStatus } from "@/components/starter-payroll-send-status";
 import {
   Check, ChevronLeft, ChevronRight, FileDown, FileSignature, Loader2, Pencil, Printer, Send, Trash2, X, AlertTriangle,
 } from "lucide-react";
@@ -553,6 +554,7 @@ function StarterFormsOverviewCard({ meId }: { meId: number }) {
                   );
                 })}
               </div>
+              <StarterPayrollSendStatus userId={p.id} meId={meId} />
             </li>
           ))}
         </ul>

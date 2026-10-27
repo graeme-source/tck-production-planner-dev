@@ -80,14 +80,20 @@ export async function sendPayrollEmail(input: PayrollEmailInput): Promise<{ ok: 
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
+  return deliverWithAttachments(payload, "sendPayrollEmail", "the payroll report");
+}
 
+/** Send a payroll email that carries attachments — the monthly report and
+ *  the new-starter paperwork (starter-send.ts) both go through here, so the
+ *  environment switch and the Resend check live in one place. */
+export async function deliverWithAttachments(payload: EmailPayload, operation: string, what: string): Promise<{ ok: boolean; error?: string }> {
   if (shouldSkipSideEffect()) {
-    logSkippedSideEffect("sendPayrollEmail", { to: payload.to, cc: payload.cc, subject: payload.subject });
-    return { ok: false, error: "Outbound email is switched off in this environment — the payroll report was not sent." };
+    logSkippedSideEffect(operation, { to: payload.to, cc: payload.cc, subject: payload.subject });
+    return { ok: false, error: `Outbound email is switched off in this environment — ${what} was not sent.` };
   }
   // Attachments only travel via Resend; without it sendEmail would just log.
   if (!process.env["RESEND_API_KEY"]) {
-    return { ok: false, error: "No email provider configured (RESEND_API_KEY) — the payroll report was not sent." };
+    return { ok: false, error: `No email provider configured (RESEND_API_KEY) — ${what} was not sent.` };
   }
 
   try {
@@ -95,7 +101,7 @@ export async function sendPayrollEmail(input: PayrollEmailInput): Promise<{ ok: 
     return { ok: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error("[payroll-email] send failed:", message);
+    console.error(`[payroll-email] ${operation} failed:`, message);
     return { ok: false, error: message };
   }
 }

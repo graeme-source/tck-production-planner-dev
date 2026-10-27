@@ -99,6 +99,7 @@
     "@tiptap/react": "^3.32.0",
     "@tiptap/starter-kit": "^3.32.0",
     "@workspace/product-labels": "workspace:*",
+    "@workspace/uk-date": "workspace:*",
     "@workspace/units": "workspace:*",
     "html5-qrcode": "^2.3.8",
     "jspdf": "^4.2.1",

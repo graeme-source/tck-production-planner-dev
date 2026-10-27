@@ -11,6 +11,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Briefcase, Download, FileText, Loader2, Mail, Plus, Thermometer, UserMinus, UserPlus, Users, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { PayrollAccountantEmail } from "@/components/payroll-accountant-email";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -77,6 +78,7 @@ export function PayrollPanel() {
 
   return (
     <div className="space-y-5">
+      <PayrollAccountantEmail />
       {/* Pay periods: 25th → 24th. */}
       <div className="flex flex-wrap gap-2">
         {(r?.periods ?? []).map(p => (

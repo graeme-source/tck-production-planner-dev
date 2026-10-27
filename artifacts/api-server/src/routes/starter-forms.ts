@@ -24,6 +24,8 @@ import {
   type StarterFormAnswers,
 } from "../lib/starter-forms";
 import { maybeTickStarterPaperwork, grantAppAccess } from "../lib/starter-paperwork";
+import { maybeAutoSendStarterPayroll } from "../lib/payroll/starter-send";
+import { isPayrollStarterForm } from "../lib/payroll/starter-docs-rules";
 import { renderContractPdf } from "../pdf/contract-pdf";
 import { ensureStarterFormPdf } from "../lib/starter-form-pdf";
 import { employmentRecordWrite, fromBody, fromSession } from "../middleware/employment-record-write";
@@ -162,6 +164,9 @@ router.post("/mine/:formType/sign", ownStarterForms, validate(SignBody), async (
   // on their first day; never let the tick fail the signing.
   maybeTickStarterPaperwork(userId).catch(err =>
     console.warn("[StarterForms] starter-paperwork tick failed:", err instanceof Error ? err.message : err));
+  // A payroll form's signature may finish what payroll needs — then it goes
+  // to the accountant, once (lib/payroll/starter-send.ts; never throws).
+  if (isPayrollStarterForm(formType)) void maybeAutoSendStarterPayroll(userId);
 
   res.json(row);
 });

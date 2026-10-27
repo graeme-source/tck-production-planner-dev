@@ -165,6 +165,9 @@ importers:
       '@workspace/stock-prediction':
         specifier: workspace:*
         version: link:../../lib/stock-prediction
+      '@workspace/uk-date':
+        specifier: workspace:*
+        version: link:../../lib/uk-date
       '@workspace/units':
         specifier: workspace:*
         version: link:../../lib/units
@@ -493,6 +496,9 @@ importers:
       '@workspace/product-labels':
         specifier: workspace:*
         version: link:../../lib/product-labels
+      '@workspace/uk-date':
+        specifier: workspace:*
+        version: link:../../lib/uk-date
       '@workspace/units':
         specifier: workspace:*
         version: link:../../lib/units
@@ -838,6 +844,8 @@ importers:
   lib/station-changes: {}
 
   lib/stock-prediction: {}
+
+  lib/uk-date: {}
 
   lib/units: {}
 

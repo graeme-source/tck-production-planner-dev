@@ -16,9 +16,17 @@
  * unchanged.
  */
 
+import * as z from "zod";
+import { formatUkDate, isIsoDate, isPastIsoDate } from "@workspace/uk-date";
+import { londonDateString } from "./london-time";
+
 export type StarterFormField =
-  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email" }
-  | { kind: "date"; key: string; label: string; required?: boolean; help?: string }
+  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email";
+      /** Start the box with the person's app sign-in email (they can change it). */
+      prefill?: "account_email" }
+  /** Stored ISO (YYYY-MM-DD); typed and shown DD/MM/YYYY (Graeme,
+   *  2026-10-27). `past`: a real date before today — dates of birth. */
+  | { kind: "date"; key: string; label: string; required?: boolean; help?: string; past?: boolean }
   | { kind: "textarea"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "radio"; key: string; label: string; required?: boolean; help?: string; options: { value: string; label: string; help?: string }[] }
   | { kind: "checkboxes"; key: string; label: string; help?: string; options: { value: string; label: string; help?: string }[] }
@@ -55,7 +63,7 @@ export const HMRC_STARTER: StarterFormDefinition = {
         { kind: "radio", key: "sex", label: "What is your sex? (required for payroll/HMRC reporting)", required: true, help: "Asked only because HMRC requires it for payroll. Answer as shown on your birth certificate or gender recognition certificate.", options: [
           { value: "male", label: "Male" }, { value: "female", label: "Female" },
         ] },
-        { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
+        { kind: "date", key: "date_of_birth", label: "Date of birth", required: true, past: true, help: "DD/MM/YYYY — e.g. 14/05/1990." },
         { kind: "textarea", key: "home_address", label: "Home address (including postcode)", required: true },
         { kind: "text", key: "country", label: "Country", required: true },
         { kind: "text", key: "ni_number", label: "National Insurance number (if known)", help: "For example QQ 12 34 56 C — it's on payslips, P60s and HMRC letters." },
@@ -129,10 +137,10 @@ export const PAYROLL_DETAILS: StarterFormDefinition = {
         { kind: "text", key: "full_name", label: "Full name", required: true },
         { kind: "textarea", key: "address", label: "Address (including postcode)", required: true },
         { kind: "text", key: "marital_status", label: "Marital status", required: true },
-        { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
+        { kind: "date", key: "date_of_birth", label: "Date of birth", required: true, past: true, help: "DD/MM/YYYY — e.g. 14/05/1990." },
         { kind: "text", key: "ni_number", label: "National Insurance number", required: true },
         // Where the payroll accountant sends each payslip (Graeme, 2026-09-28).
-        { kind: "text", key: "payslip_email", label: "Email address for your payslips", required: true, inputMode: "email",
+        { kind: "text", key: "payslip_email", label: "Email address for your payslips", required: true, inputMode: "email", prefill: "account_email",
           help: "Your payslips will be emailed here each pay day. Use an address only you can read." },
       ],
     },
@@ -186,7 +194,7 @@ export const HEALTH_QUESTIONNAIRE: StarterFormDefinition = {
         { kind: "text", key: "surname", label: "Surname", required: true },
         { kind: "textarea", key: "address", label: "Address (including postcode)", required: true },
         { kind: "text", key: "telephone", label: "Telephone", required: true },
-        { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
+        { kind: "date", key: "date_of_birth", label: "Date of birth", required: true, past: true, help: "DD/MM/YYYY — e.g. 14/05/1990." },
         // The paper form asked for sex here; dropped 2026-09-07 — a health
         // screen doesn't need it, and where it IS needed (payroll) the HMRC
         // form already asks with the reason stated.
@@ -222,19 +230,26 @@ function sectionActive(section: StarterFormSection, answers: StarterFormAnswers)
   return typeof v === "string" && section.showWhen.equals.includes(v);
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The same zod check the server uses for every other email address.
+const isEmail = (v: string) => z.string().email().safeParse(v).success;
 
 /** Blank-check for signing. Drafts may be as partial as they like; a
  *  SIGNATURE requires every required field of every active section. */
-export function missingRequiredFields(def: StarterFormDefinition, answers: StarterFormAnswers): string[] {
+export function missingRequiredFields(def: StarterFormDefinition, answers: StarterFormAnswers, todayIso: string = londonDateString()): string[] {
   const missing: string[] = [];
   for (const section of def.sections) {
     if (!sectionActive(section, answers)) continue;
     for (const field of section.fields) {
       if (field.kind === "info" || field.kind === "checkboxes") continue;
       const v = answers[field.key];
+      // A filled-in date must be a real one (stored ISO); a date of birth
+      // must also be in the past.
+      if (field.kind === "date" && typeof v === "string" && v.trim() !== "") {
+        if (!isIsoDate(v)) { missing.push(`${field.label} (not a real date — use DD/MM/YYYY)`); continue; }
+        if (field.past && !isPastIsoDate(v, todayIso)) { missing.push(`${field.label} (must be in the past)`); continue; }
+      }
       // An email box must hold an email address whenever it's filled in.
-      if (field.kind === "text" && field.inputMode === "email" && typeof v === "string" && v.trim() !== "" && !EMAIL_RE.test(v.trim())) {
+      if (field.kind === "text" && field.inputMode === "email" && typeof v === "string" && v.trim() !== "" && !isEmail(v.trim())) {
         missing.push(`${field.label} (that doesn't look like an email address)`);
         continue;
       }
@@ -268,6 +283,8 @@ function answerText(field: StarterFormField, answers: StarterFormAnswers): strin
     const opt = field.options.find(o => o.value === v);
     return opt ? opt.label : "—";
   }
+  // Dates read DD/MM/YYYY on the signed form and its PDF.
+  if (field.kind === "date" && typeof v === "string" && v.trim() !== "") return formatUkDate(v.trim());
   return typeof v === "string" && v.trim() !== "" ? v.trim() : "—";
 }
 
