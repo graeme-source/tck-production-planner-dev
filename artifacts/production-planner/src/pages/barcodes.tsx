@@ -321,7 +321,7 @@ export default function BarcodesPage() {
   const o = overview.data;
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 max-w-5xl mx-auto">
+    <div className="space-y-6 p-4 sm:p-6">
       <PageHeader title="Barcodes" description="One barcode per product, set in the app (on its label page or recipe page) — the packing scanner, the pack label and Shopify all get the same number." />
       {overview.isLoading && <p className="text-muted-foreground">Loading…</p>}
       {overview.error && <p className="text-destructive">Couldn't load barcodes: {(overview.error as Error).message}</p>}
