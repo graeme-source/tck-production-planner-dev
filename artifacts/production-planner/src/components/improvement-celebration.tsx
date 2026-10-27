@@ -17,6 +17,11 @@
  * time, only for notifications younger than ten minutes, and each is
  * celebrated once per device (localStorage guard, best effort — an
  * auto-dismissing toast makes a re-show an annoyance, not a trap).
+ *
+ * Quiet since 27 Oct 2026: the server no longer writes the team-wide
+ * "improvement" notification this listens for (Graeme: the nav badge does
+ * that job), so it has nothing to show. Left in place so turning the
+ * celebration back on is a server-only change.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";

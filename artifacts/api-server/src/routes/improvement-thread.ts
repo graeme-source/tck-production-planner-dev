@@ -34,6 +34,7 @@ import {
   COMMENT_NOTIFICATION_TYPE, type CommentRecipientReason,
 } from "../lib/improvement-thread";
 import { sendPushToUsers } from "../services/push";
+import { notificationCentreRecipients } from "../lib/improvement-notify-policy";
 
 const router: IRouter = Router();
 
@@ -90,10 +91,13 @@ async function notifyComment(opts: {
     issueReporterIds: reporters,
     earlierCommenterIds: earlier,
   });
-  if (recipients.length === 0) return;
+  const told = new Set(notificationCentreRecipients({ kind: "comment", recipientIds: recipients.map(r => r.userId) }));
+  if (told.size === 0) return;
 
   const byReason = new Map<CommentRecipientReason, number[]>();
-  for (const r of recipients) byReason.set(r.reason, [...(byReason.get(r.reason) ?? []), r.userId]);
+  for (const r of recipients) {
+    if (told.has(r.userId)) byReason.set(r.reason, [...(byReason.get(r.reason) ?? []), r.userId]);
+  }
 
   for (const [reason, userIds] of byReason) {
     const words = commentNotification({
