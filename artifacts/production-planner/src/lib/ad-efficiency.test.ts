@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   adWindows, earliestDayNeeded, measureWindow, monthToDateSeries, recommend, roasBand, summariseRoasHistory, roasShade, roasVerdict, shadeAtRatio, ROAS_SHADE_STEPS, rollingSeries,
-  spendSourceLine, windowOf, zeroSpendDays, type AdDay, type AdEfficiencySettings,
-} from "./ad-efficiency";
+  spendSourceLine, windowOf, zeroSpendDays, type AdDay, type AdEfficiencySettings, todayNcRoasPercent, ROAS_FIGURE_CLASS } from "./ad-efficiency";
 import { addDays } from "./roas";
 
 // Graeme's sheet ("The Calzone Kitchen Numbers"), 4–10 Oct 2026:
@@ -317,5 +316,20 @@ describe("summariseRoasHistory", () => {
   });
   it("exactly on target counts as on target", () => {
     expect(summariseRoasHistory(pts([210]), pts([210]), 210)).toMatchObject({ avgOnTarget: 1, dayOnTarget: 1 });
+  });
+});
+
+describe("todayNcRoasPercent (New customers today tile)", () => {
+  it("is today's new-customer sales over today's spend so far", () => {
+    expect(todayNcRoasPercent(419.48, 300)).toBeCloseTo(139.83, 1);
+  });
+  it("is blank until there's spend for today", () => {
+    expect(todayNcRoasPercent(419.48, null)).toBeNull();
+    expect(todayNcRoasPercent(419.48, 0)).toBeNull();
+  });
+  it("colours by the same bands as the ROAS cards", () => {
+    expect(ROAS_FIGURE_CLASS[roasBand(todayNcRoasPercent(420, 300), 120, 15)]).toContain("7cb342");
+    expect(ROAS_FIGURE_CLASS[roasBand(todayNcRoasPercent(330, 300), 120, 15)]).toContain("amber");
+    expect(ROAS_FIGURE_CLASS[roasBand(todayNcRoasPercent(200, 300), 120, 15)]).toContain("rose");
   });
 });

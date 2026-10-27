@@ -1,5 +1,6 @@
 import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useFounderArea } from "@/hooks/use-founder-area";
+import { TodayNcRoas } from "@/components/ad-efficiency/today-nc-roas";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient, useIsFetching } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
@@ -424,6 +425,7 @@ function KpiCard({
   error,
   trend,
   extra,
+  belowValue,
   className,
 }: {
   title: string;
@@ -432,6 +434,9 @@ function KpiCard({
   qualifier?: string;
   /** More below the figure (e.g. progress against the monthly targets). */
   extra?: React.ReactNode;
+  /** A second figure straight under the main one, as big (e.g. today's
+   *  new-customer ROAS under the new-customer sales). */
+  belowValue?: React.ReactNode;
   /** Extra grid classes, e.g. a wider tile. */
   className?: string;
   value: string;
@@ -466,6 +471,7 @@ function KpiCard({
         <>
           <p className="text-3xl font-display font-bold">{value}</p>
           {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
+          {belowValue}
           {extra}
         </>
       )}
@@ -1286,6 +1292,7 @@ function FounderDashboard() {
             value={monthSummary ? formatGBP(monthSummary.todayNewCustomerRevenue) : "—"}
             sub={monthSummary ? `${monthSummary.todayNewCustomerOrderCount} new-customer order${monthSummary.todayNewCustomerOrderCount !== 1 ? "s" : ""}` : undefined}
             extra={newCustomerLine ? <p className="text-xs text-muted-foreground">{newCustomerLine}</p> : undefined}
+            belowValue={monthSummary ? <TodayNcRoas date={todayStr} newCustomerRevenue={monthSummary.todayNewCustomerRevenue} /> : undefined}
             icon={UserPlus}
             color="text-sky-500"
             bg="bg-sky-500/10"

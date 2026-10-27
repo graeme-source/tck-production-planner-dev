@@ -443,3 +443,24 @@ export function summariseRoasHistory(avg7: SparkPoint[], daily: SparkPoint[], ta
     currentBelow,
   };
 }
+
+// ── Today's new-customer ROAS (Graeme, 2026-10-27) ──────────────────────────
+// On the "New customers today" tile, under the sales, as big as them:
+// today's new-customer sales ÷ today's ad spend so far (Meta syncs through
+// the day; both are partial until the day ends), coloured green / yellow /
+// red against the new-customer ROAS target.
+
+/** % — null when there's no spend recorded for today yet. */
+export function todayNcRoasPercent(newCustomerRevenue: number, spend: number | null | undefined): number | null {
+  if (spend == null || !(spend > 0) || !Number.isFinite(newCustomerRevenue)) return null;
+  return (newCustomerRevenue / spend) * 100;
+}
+
+/** The figure's text colour per band — readable on the white tile. */
+export const ROAS_FIGURE_CLASS: Record<KpiBand, string> = {
+  platinum: "text-teal-600",
+  green: "text-[#7cb342]",
+  amber: "text-amber-500",
+  red: "text-rose-600",
+  neutral: "text-muted-foreground",
+};
