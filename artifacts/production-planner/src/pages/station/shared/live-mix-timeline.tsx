@@ -34,8 +34,16 @@ export function TrustedChip({ trust }: { trust: TrustSignal | undefined }) {
   );
 }
 
-export function MeatTimeLine({ m, trust, large = false }: { m: LiveMeat; trust?: TrustSignal; large?: boolean }) {
+/**
+ * One hot meat's times: in the oven by, out by (= builders need it − learned
+ * processing − learned buffer), and — inside the 4-hour rule — the waves when
+ * one cook can't cover the whole build. Red when a breach is coming.
+ */
+export function MeatTimeLine({ m, trust, large = false, trays }: { m: LiveMeat; trust?: TrustSignal; large?: boolean; trays?: number | null }) {
   const moved = Math.round(m.liveCookStartMinutes) !== Math.round(m.plannedCookStartMinutes);
+  const multi = m.waves.length > 1;
+  const totalBatches = m.waves.reduce((s, w) => s + w.batches, 0);
+  const traysFor = (b: number) => (trays && totalBatches > 0 ? Math.max(1, Math.round((trays * b) / totalBatches)) : null);
   return (
     <div className="space-y-1">
       <div className={cn("flex items-center gap-2 flex-wrap", large ? "text-base" : "text-sm")}>
@@ -51,19 +59,38 @@ export function MeatTimeLine({ m, trust, large = false }: { m: LiveMeat; trust?:
             <span className={cn("font-bold tabular-nums", m.overdue ? "text-rose-600 dark:text-rose-400" : "text-foreground")}>
               {formatClock(m.liveCookStartMinutes)}
             </span>
+            {m.outMinutes != null && (
+              <span className="text-muted-foreground tabular-nums">· out by {formatClock(m.outMinutes)}</span>
+            )}
             {moved && <span className="text-xs text-muted-foreground tabular-nums">(was {formatClock(m.plannedCookStartMinutes)})</span>}
             {m.overdue && <span className="text-xs font-semibold text-rose-600 dark:text-rose-400">put it in now</span>}
           </>
         )}
         <TrustedChip trust={trust} />
       </div>
-      {m.holdBreach && m.holdMinutes != null && (
-        <p className="text-sm text-rose-700 dark:text-rose-300 flex items-start gap-1.5">
+      {multi && (
+        <div className="rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50/60 dark:bg-amber-900/15 px-3 py-2 text-sm space-y-0.5">
+          <p className="font-semibold">Cook in {m.waves.length} waves — the 4-hour rule (cooked → built, baked and chilled to 8 °C)</p>
+          {m.waves.map(w => {
+            const t = traysFor(w.batches);
+            return (
+              <p key={w.wave} className="tabular-nums">
+                Wave {w.wave}: in {formatClock(w.putInMinutes)}, out {formatClock(w.outMinutes)} — {w.batches} batch{w.batches === 1 ? "" : "es"}{t ? ` (~${t} tray${t === 1 ? "" : "s"})` : ""}
+              </p>
+            );
+          })}
+        </div>
+      )}
+      {m.safetyImpossible && (
+        <p className="text-sm font-semibold text-rose-700 dark:text-rose-300 flex items-start gap-1.5">
           <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-          <span>
-            Cooked meat would be out {Math.floor(m.holdMinutes / 60)}h {m.holdMinutes % 60}m before the last batch — over the limit.
-            Cook in two waves{m.secondWaveNotBeforeMinutes != null ? `: second wave in the oven no earlier than ${formatClock(m.secondWaveNotBeforeMinutes)}` : ""}.
-          </span>
+          Processing alone uses up the 4-hour limit for this build — split the recipe or speak to a manager.
+        </p>
+      )}
+      {m.safetyBreachComing && m.safetyOverMinutes != null && (
+        <p className="text-base font-bold text-rose-700 dark:text-rose-300 flex items-start gap-1.5 rounded-lg bg-rose-50 dark:bg-rose-900/20 px-3 py-2">
+          <AlertTriangle className="w-5 h-5 flex-shrink-0 mt-0.5" />
+          4-hour rule: at this pace the last batch will be built {m.safetyOverMinutes} min too late for this {m.rawMeatName}. Cook a fresh batch for the rest, or build it sooner.
         </p>
       )}
     </div>
@@ -136,7 +163,7 @@ export function LiveMixTimeline({ live }: { live: LiveScheduleData }) {
                 </p>
               ) : (
                 <p className={cn("text-sm", r.drift === "ahead" ? "text-emerald-700 dark:text-emerald-300 font-medium" : r.drift === "behind" ? "text-amber-700 dark:text-amber-300 font-medium" : "text-muted-foreground")}>
-                  Builders ~{formatClock(r.liveStartMinutes)}{note ? ` (${note})` : ""} · mix ready by {formatClock(r.mixByMinutes)}
+                  Builders ~{formatClock(r.liveStartMinutes)}{note ? ` (${note})` : ""}
                   {r.buildTimeGuessed ? " · build time is a guess" : ""}
                 </p>
               )}

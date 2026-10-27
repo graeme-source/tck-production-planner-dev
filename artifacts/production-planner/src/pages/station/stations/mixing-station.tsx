@@ -1581,8 +1581,8 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                                 {(() => {
                                   const liveMeat = liveByRecipeId.get(recipe.recipeId)?.meats
                                     .find(m => m.rawMeatIngredientId === ing.ingredientId);
-                                  if (liveMeat && !allIngDone && (rawMeatIngs.length >= 2 || liveMeat.holdBreach)) {
-                                    return <MeatTimeLine m={liveMeat} trust={trustFor(ing.ingredientId)} />;
+                                  if (liveMeat && !allIngDone && (rawMeatIngs.length >= 2 || liveMeat.waves.length > 1 || liveMeat.safetyBreachComing || liveMeat.safetyImpossible)) {
+                                    return <MeatTimeLine m={liveMeat} trust={trustFor(ing.ingredientId)} trays={ing.trayCount} />;
                                   }
                                   const schedMeat = schedByRecipeId.get(recipe.recipeId)?.meats
                                     .find(m => m.rawMeatIngredientId === ing.ingredientId);
