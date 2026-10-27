@@ -6,7 +6,7 @@ import { loadBundledFonts } from "./node-fonts";
 import { proofLabel } from "./render";
 import { buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, snapshotKey, type RecipeLabelSettings } from "./snapshot";
 import { snowflakeContours } from "./snowflake";
-import { DEFAULT_TEMPLATE, friedChickenTemplate, normaliseTemplate, TEMPLATE_PRESETS, type LabelTemplate } from "./template";
+import { DEFAULT_TEMPLATE, friedChickenTemplate, macaroniCheeseTemplate, normaliseTemplate, TEMPLATE_PRESETS, type LabelTemplate } from "./template";
 
 const fonts = loadBundledFonts();
 const when = { printDate: "2026-10-12", productionDate: "2026-10-12" };
@@ -153,5 +153,84 @@ describe("template changes are named in the change list", () => {
   it("switching to the fried chicken options lists each one", () => {
     const keys = diffSnapshots(snap(normaliseTemplate(DEFAULT_TEMPLATE)), snap(friedChickenTemplate(), { netQuantity: "500g" })).map(c => c.key);
     for (const k of ["template.storageBanner", "template.chilledUseByOn", "template.netQuantity", "template.warningPlacement", "netQuantity"]) expect(keys).toContain(k);
+  });
+});
+
+describe("macaroni cheese template", () => {
+  const t = macaroniCheeseTemplate();
+  const MAC_DECK =
+    "Cooked Macaroni (Durum **Wheat** Semolina, Water), Sauce (Whole **Milk**, Mature Cheddar Cheese (**Milk**), Red Leicester Cheese (**Milk**), " +
+    "Mozzarella Cheese (**Milk**), Unsalted **Butter** (**Milk**), **Wheat** Flour (**Wheat** Flour, Calcium Carbonate, Iron, Niacin, Thiamin), " +
+    "Double Cream (**Milk**), English **Mustard** (Water, **Mustard** Flour, Sugar, Salt, Turmeric), Garlic, Salt, White Pepper, Nutmeg), " +
+    "Topping (Breadcrumbs (**Wheat** Flour, Yeast, Salt), Parmigiano Reggiano (**Milk**, **Egg** Lysozyme), Smoked Paprika), " +
+    "Pigs in Blankets (Pork Sausage (Pork, Water, Rusk (**Wheat**), Salt, Spices, Dextrose, Stabiliser: Diphosphates, Preservative: Sodium Metabisulphite (**Sulphites**)), " +
+    "Smoked Streaky Bacon (Pork Belly, Salt, Preservatives: Sodium Nitrite, Potassium Nitrate)), Crispy Onions (Onion, Sunflower Oil, **Wheat** Flour, Salt).";
+  const macSnap = (settings: Partial<RecipeLabelSettings> = {}, deckText = MAC_DECK) => buildSnapshot({
+    recipe: { name: "Big Nanny's Macaroni Cheese", packSize: "2", shelfLifeDays: 8 },
+    deck: { deckText, mayContainStatement: "May also contain traces of nuts, peanuts, egg, soya, celery, sulphites, mustard, wheat and milk" },
+    settings: { ...DEFAULT_RECIPE_LABEL_SETTINGS, barcode: "5065018206948", ...settings },
+    templateId: 3,
+    template: t,
+  });
+  const macWhen = { printDate: "2026-10-27", productionDate: "2026-10-27" };
+  const macContent = (s: ReturnType<typeof macSnap>) =>
+    buildLabelContent(s, labelDates({ ...macWhen, chilled: s.chilled, frozen: s.frozen, batchBasis: s.template.batchBasis }));
+  const text = (ps: { text: string }[][]) => ps.map(p => p.map(r => r.text).join(""));
+
+  it("title is the product name, no pack size", () => {
+    expect(t.text.title).toBe("{name}");
+    expect(text(macContent(macSnap()).title)).toEqual(["Big Nanny's Macaroni Cheese"]);
+  });
+  it("two oven-only steps from the cooking values (no air fryer, tray or turning); weight tiers off", () => {
+    expect(t.cooking).toMatchObject({ ovenTempC: 200, fanTempC: 180, ovenMinMinutes: 20, ovenMaxMinutes: 25, airFryerTempC: null });
+    expect(t.cookingTiers).toMatchObject({ on: false, maxOvenMinutes: 30 });
+    const steps = macContent(macSnap()).steps.map(ps => ps.map(p => p.map(r => r.text).join("")).join(" "));
+    expect(steps).toEqual([
+      "Pre-heat the oven to 180°C fan (200°C) and remove the outer film.",
+      "Cook in the centre of the oven for 20–25 minutes until piping hot.",
+    ]);
+    expect(steps.join(" ")).not.toMatch(/tray|TURN|AIR FRYER/i);
+  });
+  it("a recipe's own temperatures flow in (Pigs & Blankets: 170 fan / 190)", () => {
+    const c = macContent(macSnap({ cookingMode: "manual", cooking: { ...DEFAULT_RECIPE_LABEL_SETTINGS.cooking, ovenTempC: 190, fanTempC: 170, ovenMinMinutes: 20, ovenMaxMinutes: 25 } }));
+    expect(c.steps[0][0].map(r => r.text).join("")).toContain("170°C fan (190°C)");
+  });
+  it("storage wording and heading", () => {
+    const c = macContent(macSnap());
+    expect(text(c.storageHeading)).toEqual(["STORAGE INSTRUCTIONS:"]);
+    expect(text(c.storage)).toEqual([
+      "If chilled, keep me below 5°C. If frozen, keep below -18°C. If you decide to freeze me, please do so immediately, fully defrost in a fridge before cooking and eat within 24 hours of defrosting.",
+    ]);
+    expect(c.storageBanner).toBeNull();
+  });
+  it("both use-bys: chilled from the shelf life (8 days), frozen 3 months, then the batch", () => {
+    expect(t.chilledUseByOn).toBe(true);
+    expect(t.frozenDefault).toEqual({ amount: 3, unit: "months" });
+    const c = macContent(macSnap());
+    expect(text(c.dates)).toEqual(["IF CHILLED USE BY: 04/11/26", "IF FROZEN USE BY: 27/01/27", expect.stringMatching(/^BATCH NUMBER: /)]);
+    expect(c.problems).toEqual([]);
+  });
+  it("no bones warning, allergen note and may-contain as standard, no net quantity", () => {
+    const s = macSnap();
+    expect(s.warningOn).toBe(false);
+    const c = macContent(s);
+    expect(text(c.allergenInfo).join(" ")).not.toContain("bones");
+    expect(text(c.allergenInfo)[0]).toBe("Allergens are shown in Bold.");
+    expect(text(c.allergenInfo)[1]).toContain("May also contain");
+    expect(c.netQuantity).toEqual([]);
+  });
+  it("fits with a long ingredient deck: two step circles, no problems", () => {
+    const p = proofLabel(macSnap({ cookingMode: "manual", cooking: { ...DEFAULT_RECIPE_LABEL_SETTINGS.cooking, ovenTempC: 190, fanTempC: 170 } }), macWhen, fonts);
+    expect(p.layout.problems).toEqual([]);
+    expect(p.content.problems).toEqual([]);
+    expect(p.layout.circles).toHaveLength(2);
+    // The fried chicken test's long Korean deck fits too.
+    expect(proofLabel(macSnap({}, KOREAN_DECK), macWhen, fonts).layout.problems).toEqual([]);
+  });
+  it("building it never changes the standard template", () => {
+    macaroniCheeseTemplate();
+    expect(DEFAULT_TEMPLATE.text.title).toBe("{name} - {packSize} PACK");
+    expect(DEFAULT_TEMPLATE.text.steps).toHaveLength(2);
+    expect(DEFAULT_TEMPLATE.boneRiskWords).toEqual(["chicken", "turkey"]);
   });
 });

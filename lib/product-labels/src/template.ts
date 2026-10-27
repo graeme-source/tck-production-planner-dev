@@ -561,6 +561,39 @@ export function friedChickenTemplate(): LabelTemplate {
   return t;
 }
 
+/** Macaroni cheese — Graeme's Label LIVE mac cheese label (2026-10-27):
+ *  the title as the recipe name (no pack size), two oven-only steps (no
+ *  wooden tray, no turning, no air fryer), BOTH a chilled and a frozen
+ *  use-by, the usual ingredients / allergens, no bones warning. */
+export function macaroniCheeseTemplate(): LabelTemplate {
+  const t = normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
+  t.text.title = "{name}";
+  t.text.steps = [
+    "Pre-heat the oven to {ovenTemps} and remove the outer film.",
+    "Cook in the centre of the oven for {ovenMin}–{ovenMax} minutes until piping hot.",
+  ];
+  // Oven only. A recipe can set its own (Pigs & Blankets: 170 fan / 190).
+  t.cooking = {
+    ovenTempC: 200, fanTempC: 180, ovenMinMinutes: 20, ovenMaxMinutes: 25,
+    airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
+  };
+  // Weight tiers are for calzones. Their "longest cook we print" guard
+  // (22 min, a calzone number) would block 20–25 min; mac cheese keeps a
+  // guard of its own at 30 min, and has no air fryer.
+  t.cookingTiers = { ...t.cookingTiers, on: false, maxOvenMinutes: 30, maxAirFryerMinutes: null };
+  t.text.storageHeading = "STORAGE INSTRUCTIONS:";
+  t.text.storage = "If chilled, keep me below 5°C. If frozen, keep below -18°C. If you decide to freeze me, please do so immediately, fully defrost in a fridge before cooking and eat within 24 hours of defrosting.";
+  // Both use-bys: chilled from the recipe's shelf life (8 days), frozen
+  // 3 months (Graeme's printed label: 27 Oct → 27 Jan).
+  t.chilledUseByOn = true;
+  t.text.chilledLabel = "IF CHILLED USE BY:";
+  t.text.frozenLabel = "IF FROZEN USE BY:";
+  t.frozenDefault = { amount: 3, unit: "months" };
+  // No bones in macaroni cheese: Automatic never switches the warning on.
+  t.boneRiskWords = [];
+  return t;
+}
+
 export const TEMPLATE_PRESETS: TemplatePreset[] = [
   {
     key: "standard",
@@ -573,5 +606,11 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     name: "Fried chicken",
     description: "Frozen products: KEEP FROZEN band, frozen use-by only, three oven steps, net quantity above the barcode, room for long ingredient lists.",
     build: friedChickenTemplate,
+  },
+  {
+    key: "macaroni-cheese",
+    name: "Macaroni cheese",
+    description: "Macaroni cheese: the product name as the title, two oven steps, chilled and frozen use-by dates, storage, ingredients and barcode.",
+    build: macaroniCheeseTemplate,
   },
 ];
