@@ -14,6 +14,8 @@ const TYPE_ICONS: Record<string, typeof MessageSquare> = {
   // Your improvement was rated ×2 / ×3 (2026-10-21).
   improvement_great: Star,
   improvement_substantial: Crown,
+  // Someone commented on your improvement — opens its timeline (27 Oct 2026).
+  improvement_comment: MessageSquare,
   todo: ListTodo,
   contract: FileSignature,
 };
@@ -78,7 +80,9 @@ export function NotificationList({ active, onNavigated, large = false }: {
     } else if (n.andonIssueId) {
       navigate(`/reports?tab=issues&issueId=${n.andonIssueId}`);
     } else if (n.improvementId) {
-      navigate(`/improvements?open=${n.improvementId}`);
+      navigate(n.type === "improvement_comment"
+        ? `/improvements?open=${n.improvementId}&thread=1`
+        : `/improvements?open=${n.improvementId}`);
     } else if (n.type === "todo") {
       navigate("/hub?section=todos");
     } else if (n.type === "contract") {

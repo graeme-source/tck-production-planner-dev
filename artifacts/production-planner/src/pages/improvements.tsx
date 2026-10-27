@@ -45,6 +45,7 @@ import { LeanerBoard } from "@/components/leaner-board";
 import { CreditBadge, CreditWeightControl, PremiumStrip, useIsFounder } from "@/components/improvement-credit-weight";
 import { premiumStyle } from "@/lib/improvement-premium";
 import { ImprovementPromptUptake } from "@/components/improvement-prompt-uptake";
+import { ImprovementThreadButton, ImprovementThreadPanel } from "@/components/improvement-thread";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -113,6 +114,10 @@ type Improvement = {
   creditWeight?: number;
   /** Emoji applause, aggregated: [{emoji, count, mine}]. */
   reactions?: Array<{ emoji: string; count: number; mine: boolean }>;
+  /** The Comments & photos timeline (27 Oct 2026): comments with words in,
+   *  and photos posted in the conversation. */
+  commentCount?: number;
+  commentPhotoCount?: number;
 };
 
 /** The reaction palette — mirrored by the server's allow-list. */
@@ -211,12 +216,20 @@ export default function Improvements() {
 
   // Deep link from the notification bell: /improvements?open=123 lands on
   // that improvement's detail, not the top of the feed (Graeme, 2026-09-07).
+  // A comment notification adds &thread=1 and lands on its timeline.
   const search = useSearch();
+  const [threadOnOpen, setThreadOnOpen] = useState(false);
   useEffect(() => {
-    const raw = new URLSearchParams(search).get("open");
+    const params = new URLSearchParams(search);
+    const raw = params.get("open");
     const id = raw != null ? parseInt(raw, 10) : NaN;
-    if (Number.isInteger(id)) setOpenId(id);
+    if (Number.isInteger(id)) {
+      setOpenId(id);
+      setThreadOnOpen(params.get("thread") === "1");
+    }
   }, [search]);
+  // The Comments & photos timeline opened straight from a feed card.
+  const [threadFor, setThreadFor] = useState<Improvement | null>(null);
 
   // Kept fresh (2026-10-02): the nav badge refetches on its own, and a feed
   // loaded earlier in the day missed an improvement the badge was counting
@@ -271,8 +284,10 @@ export default function Improvements() {
     return (
       <ImprovementDetail
         id={openId}
+        initialThreadOpen={threadOnOpen}
         onBack={() => {
           setOpenId(null);
+          setThreadOnOpen(false);
           // The detail marked itself seen — refresh so the To-review tab
           // and NEW markers move on without waiting for a stale cache.
           queryClient.invalidateQueries({ queryKey: ["improvements"] });
@@ -380,7 +395,7 @@ export default function Improvements() {
 
           {isManager && waiting.length > 0 && (
             <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
-              {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+              {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} onOpenThread={() => setThreadFor(i)} />)}
             </Section>
           )}
           <Section
@@ -388,7 +403,7 @@ export default function Improvements() {
             icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
             empty="Nothing here yet — the feed starts with the first one logged."
           >
-            {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} />)}
+            {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} onOpenThread={() => setThreadFor(i)} />)}
             {olderCount > 0 && (
               <LoadOlder
                 remaining={olderCount}
@@ -408,6 +423,15 @@ export default function Improvements() {
         </>
         );
       })()}
+
+      {threadFor && (
+        <ImprovementThreadPanel
+          improvementId={threadFor.id}
+          title={threadFor.title}
+          open
+          onClose={() => setThreadFor(null)}
+        />
+      )}
 
       {userRole === "admin" && (
         <div className="pt-4 border-t border-border">
@@ -569,7 +593,7 @@ function LoadOlder({ remaining, onLoad }: { remaining: number; onLoad: () => voi
   );
 }
 
-function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
+function Card({ item, onOpen, onOpenThread }: { item: Improvement; onOpen: () => void; onOpenThread: () => void }) {
   const isFounder = useIsFounder();
   const premium = premiumStyle(item.creditWeight);
   // Read it and scroll past it = seen (Graeme, 2026-10-01; 24 Oct). Recorded
@@ -658,6 +682,11 @@ function Card({ item, onOpen }: { item: Improvement; onOpen: () => void }) {
           open-it button so a tap reacts instead of navigating away. */}
       <div className="mt-3">
         <ReactionBar item={item} />
+      </div>
+      {/* Comments & photos — the counts show at a glance whether there's
+          anything there; the timeline opens over the feed (27 Oct 2026). */}
+      <div className="mt-3">
+        <ImprovementThreadButton counts={item} onOpen={onOpenThread} />
       </div>
       {/* The founder's ×1 / ×2 / ×3, right where he reads the feed
           (Graeme, 2026-10-12). Done work only — an idea earns nothing yet. */}
@@ -805,14 +834,18 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
 
 // ─── One improvement ──────────────────────────────────────────────────────────
 
-function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
+function ImprovementDetail({ id, onBack, isManager, isAdmin, initialThreadOpen = false }: {
   id: number; onBack: () => void; isManager: boolean; isAdmin: boolean;
+  /** Opened from a comment notification: show the timeline straight away. */
+  initialThreadOpen?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { state } = useAuth();
   const currentUserId = state.status === "authenticated" ? state.user.id : null;
   const isFounder = useIsFounder();
   const [sendBackNote, setSendBackNote] = useState("");
+  const [threadOpen, setThreadOpen] = useState(initialThreadOpen);
+  useEffect(() => { if (initialThreadOpen) setThreadOpen(true); }, [initialThreadOpen, id]);
 
   // Opening one counts as having looked at it, and takes it off the nav
   // badge. Fires once per improvement opened; the server ignores repeats.
@@ -968,6 +1001,10 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin }: {
             : "Up for grabs — nobody has picked this up"}
         </p>
       </div>
+
+      {/* Comments & photos — reply to whoever logged it (27 Oct 2026). */}
+      <ImprovementThreadButton counts={item} onOpen={() => setThreadOpen(true)} size="detail" />
+      <ImprovementThreadPanel improvementId={item.id} title={item.title} open={threadOpen} onClose={() => setThreadOpen(false)} />
 
       {item.canEdit && (
         <ImprovementEditText id={item.id} title={item.title} description={item.description ?? ""} />
