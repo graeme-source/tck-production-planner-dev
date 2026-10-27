@@ -12,6 +12,7 @@ import { STATIONS } from "@/pages/station/shared/constants";
 import { youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
 import { rankSops } from "@/lib/sop-search";
 import { SopDetachFooter, type SopPlace } from "@/components/sop-detach";
+import { splitStepWithAmounts, type SopAmount, type SopAmountsContext } from "@/lib/sop-amounts";
 
 interface SopSummary {
   id: number;
@@ -350,6 +351,7 @@ export function StandardsSopsDialog({
   initialSopId,
   initialEditSopId,
   detachFrom,
+  amounts,
 }: {
   open: boolean;
   onClose: () => void;
@@ -366,6 +368,10 @@ export function StandardsSopsDialog({
    *  offers "Wrong place for this SOP?" → confirm → remove (sop-detach.tsx).
    *  The only way to take an SOP off a place (Graeme, 2026-09-28). */
   detachFrom?: SopPlace;
+  /** The day's amounts from the prep row that opened this SOP (issue #340).
+   *  Shown only on that SOP — not on another one browsed to from the
+   *  library, whose ingredients these aren't. */
+  amounts?: SopAmountsContext;
 }) {
   type View = { kind: "library" } | { kind: "viewer"; sopId: number } | { kind: "editor"; sopId: number };
   const [view, setView] = useState<View>({ kind: "library" });
@@ -409,6 +415,7 @@ export function StandardsSopsDialog({
               footer={detachFrom && detachFrom.sopId === view.sopId
                 ? <SopDetachFooter place={detachFrom} onRemoved={onClose} />
                 : undefined}
+              amounts={view.sopId === initialSopId ? amounts : undefined}
             />
           )}
           {view.kind === "editor" && (
@@ -1011,6 +1018,55 @@ function summariseStep(description: string): string {
   return text || "(no description)";
 }
 
+/** Amount chip placed right after an ingredient's name in a step. */
+function AmountChip({ amount }: { amount: SopAmount }) {
+  return (
+    <span
+      className="inline-block mx-1 px-2 py-0.5 rounded-md bg-primary text-primary-foreground font-bold text-[0.8em] leading-tight tabular-nums whitespace-nowrap align-baseline"
+      title={`${amount.name}: ${amount.amountText}`}
+    >
+      {amount.amountText}
+    </span>
+  );
+}
+
+/** Step text with today's amounts placed where each ingredient is named. */
+function StepTextWithAmounts({ text, amounts }: { text: string; amounts: SopAmount[] }) {
+  const { segments } = useMemo(() => splitStepWithAmounts(text, amounts), [text, amounts]);
+  return (
+    <>
+      {segments.map((seg, i) => seg.kind === "text"
+        ? <React.Fragment key={i}>{seg.text}</React.Fragment>
+        : <React.Fragment key={i}>{seg.text}<AmountChip amount={seg.amount} /></React.Fragment>)}
+    </>
+  );
+}
+
+function AmountsList({ amounts, className }: { amounts: SopAmount[]; className?: string }) {
+  return (
+    <ul className={cn("grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1.5", className)}>
+      {amounts.map((a, i) => (
+        <li key={`${a.name}-${i}`} className="flex items-baseline justify-between gap-3 border-b border-border/60 py-1.5">
+          <span className="text-base md:text-lg font-medium">{a.name}</span>
+          <span className="text-base md:text-lg font-bold tabular-nums whitespace-nowrap">{a.amountText}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** "Today's amounts" — every ingredient and amount the row handed over,
+ *  so the recipe never has to be opened beside the SOP (issue #340). */
+function TodaysAmountsCard({ context, className }: { context: SopAmountsContext; className?: string }) {
+  return (
+    <div className={cn("rounded-2xl border-2 border-primary/40 bg-primary/5 p-4 md:p-5", className)}>
+      <div className="text-xs uppercase tracking-wider text-primary font-semibold">Today's amounts</div>
+      <p className="font-display text-lg md:text-xl font-bold mt-0.5">{context.title}</p>
+      <AmountsList amounts={context.amounts} className="mt-3" />
+    </div>
+  );
+}
+
 /** Exported as SopViewer for the attach picker's preview, which passes no
  *  onEdit (no Edit button), its own back label, a footer with the Attach
  *  buttons, and a higher layer so it sits above the modal it opens from. */
@@ -1025,6 +1081,7 @@ function Viewer({
   backLabel = "Library",
   footer,
   layerClass = "z-50",
+  amounts,
 }: {
   sopId: number;
   onBack: () => void;
@@ -1035,8 +1092,13 @@ function Viewer({
   /** Unused in page mode (no overlay to close). */
   onClose?: () => void;
   mode?: FrameMode;
+  /** Today's amounts from the row that opened the SOP (issue #340): a
+   *  summary card up top, and each amount inline where a step names the
+   *  ingredient. Absent = the viewer is exactly as before. */
+  amounts?: SopAmountsContext;
 }) {
   const { state } = useAuth();
+  const amountList = amounts && amounts.amounts.length > 0 ? amounts.amounts : null;
   const canEdit = state.status === "authenticated";
   void onClose; // kept for backwards-compatible prop signature
 
@@ -1153,6 +1215,7 @@ function Viewer({
         {!loading && onOverview && (
           <div className="flex-1 overflow-y-auto p-6 md:p-10">
             <div className="max-w-2xl mx-auto">
+              {amounts && amountList && <TodaysAmountsCard context={amounts} className="mb-6" />}
               <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-4">
                 At a glance — swipe for the detail
               </div>
@@ -1167,7 +1230,9 @@ function Viewer({
                         {i + 1}
                       </span>
                       <span className="text-lg md:text-xl font-medium leading-snug">
-                        {summariseStep(st.description)}
+                        {amountList
+                          ? <StepTextWithAmounts text={summariseStep(st.description)} amounts={amountList} />
+                          : summariseStep(st.description)}
                       </span>
                     </button>
                   </li>
@@ -1230,18 +1295,36 @@ function Viewer({
                 </div>
               )}
               <div className={cn(
-                "flex-1 flex flex-col items-center justify-center p-8 overflow-y-auto",
+                // With amounts the pane can outgrow the screen; my-auto
+                // centres it without clipping the top off when it scrolls.
+                "flex-1 flex flex-col items-center p-8 overflow-y-auto",
+                !amountList && "justify-center",
                 !hasMedia && "lg:items-center",
               )}>
-                <div className="max-w-3xl w-full">
+                <div className={cn("max-w-3xl w-full", amountList && "my-auto")}>
+                  {/* A one-step SOP has no overview page, so the summary
+                      card sits above its only step instead. */}
+                  {amounts && amountList && !hasOverview && <TodaysAmountsCard context={amounts} className="mb-6" />}
                   <div className="text-xs uppercase tracking-wider text-muted-foreground font-semibold mb-3">
                     Step {stepNumber}
                   </div>
                   <p className="text-2xl md:text-3xl lg:text-4xl leading-relaxed font-medium whitespace-pre-wrap">
                     {embeddedFromDescription
                       ? <span className="text-muted-foreground italic">Video step — see player.</span>
-                      : (step.description || <span className="text-muted-foreground italic">No description.</span>)}
+                      : !step.description
+                        ? <span className="text-muted-foreground italic">No description.</span>
+                        : amountList
+                          ? <StepTextWithAmounts text={step.description} amounts={amountList} />
+                          : step.description}
                   </p>
+                  {amounts && amountList && hasOverview && (
+                    <details className="mt-6 rounded-xl border border-primary/30 bg-primary/5 px-4 py-3">
+                      <summary className="cursor-pointer text-base font-semibold text-primary select-none">
+                        All of today's amounts ({amountList.length})
+                      </summary>
+                      <AmountsList amounts={amountList} className="mt-3" />
+                    </details>
+                  )}
                 </div>
               </div>
             </div>

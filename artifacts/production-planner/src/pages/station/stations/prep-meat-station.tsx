@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
+import type { SopAmountsContext } from "@/lib/sop-amounts";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
 import { useSearch } from "wouter";
@@ -523,6 +524,28 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 const ingMarinadeG = meatMarinades.reduce((s, m) => s + m.totalGrams, 0);
                 const trayNums = ingTrays ? Array.from({ length: ingTrays }, (_, i) => i + 1) : [];
                 const ingDone = trayNums.filter(tn => isCompleted(ing.ingredientId, selected.recipeId, tn)).length;
+                // The SOP for this meat opens with this panel's numbers in it
+                // (issue #340: "if we're doing diced beef and we open the SOP
+                // for it…"). Same figures as the panel; add-at-cooking items
+                // are left out — they don't go in today.
+                const meatTotalText = usePieces ? `${ing.pieceCount} pieces` : formatPrepWeight(ingKgTotal, "kg");
+                const meatPerTrayText = usePieces
+                  ? (perTrayPieces != null ? `${perTrayPieces} pieces` : null)
+                  : (perTrayKg != null ? formatPrepWeight(perTrayKg, "kg") : null);
+                const meatSopAmounts: SopAmountsContext = {
+                  title: `For today: ${meatTotalText} ${ing.ingredientName}${ingTrays ? ` · ${ingTrays} tray${ingTrays !== 1 ? "s" : ""}` : ""}`,
+                  amounts: [
+                    { name: ing.ingredientName, amountText: meatPerTrayText ? `${meatTotalText} total · ${meatPerTrayText} per tray` : meatTotalText },
+                    ...meatMarinades.filter(m => !m.addAtCooking).map(m => {
+                      const total = formatPrepWeight(m.totalGrams, "g");
+                      const perTray = ingTrays && ingTrays > 0 ? formatPrepWeight(m.totalGrams / ingTrays, "g") : null;
+                      return {
+                        name: m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown",
+                        amountText: perTray ? `${total} total · ${perTray} per tray` : total,
+                      };
+                    }),
+                  ],
+                };
                 const ingAllDone = trayNums.length > 0 && ingDone >= trayNums.length;
 
                 return (
@@ -595,7 +618,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                     <div className="px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 bg-white dark:bg-background/50 flex items-start justify-between gap-2">
                       <SopChips
                         links={(sopLinksByIngredient?.[ing.ingredientId] ?? []).filter(l => l.scope === "ingredient" || l.recipeId === selected.recipeId)}
-                        onOpen={sopViewer.open}
+                        onOpen={(id, where) => sopViewer.open(id, where, meatSopAmounts)}
                         attach={[
                           { targetType: "ingredient", a: ing.ingredientId, text: "prep_meat", label: "Everywhere", subject: ing.ingredientName },
                           { targetType: "recipe_ingredient", a: selected.recipeId, b: ing.ingredientId, text: "prep_meat", label: `Only ${selected.recipeName}` },
