@@ -7,20 +7,19 @@
  *             "Put BEEF MINCE in the oven at 08:15 · in 12 min", turning into
  *             "Put it in now" when due and red when late, with the one-tap
  *             "All N trays in now" button.
- *   THE DAY   one line per recipe in the order the builders will build them:
- *             when the builders need it, and for hot meat "in at / out at";
- *             cold and veg mixes "mix any time before"; done ones ticked and
- *             greyed; the flavour being built shows its batches left. A small
- *             "moved 10 min earlier — builders are ahead" note only on rows
- *             whose time moved.
+ *
+ * The rest of the day's times live in the two lists underneath, not in a
+ * third list of their own (Graeme, 2026-10-27: "we certainly don't want to
+ * display all this information twice"): each meat in Meat Cooking shows
+ * start / out / when the builders need it; each mix in Mixing Tins shows
+ * "mix any time before".
  *
  * No jargon here (no "buffer", "lead"): the details live on the managers'
  * card. Times: @workspace/production-schedule live-replan.ts + next-action.ts.
  */
-import { Beef, CheckCircle2, Flame, Snowflake, Clock, AlertTriangle } from "lucide-react";
-import { formatClock, countdownText, type LiveRecipe, type LiveMeat, type NextAction, type TrustSignal } from "@workspace/production-schedule";
+import { Beef, CheckCircle2, Flame, AlertTriangle } from "lucide-react";
+import { formatClock, countdownText, type LiveMeat, type NextAction, type TrustSignal } from "@workspace/production-schedule";
 import { cn } from "@/lib/utils";
-import type { LiveScheduleData } from "@/hooks/use-live-schedule";
 
 /** "✓ reliable" — only once the times have been right day after day. */
 export function ReliableChip({ trust }: { trust: TrustSignal | undefined }) {
@@ -30,13 +29,6 @@ export function ReliableChip({ trust }: { trust: TrustSignal | undefined }) {
       <CheckCircle2 className="w-4 h-4" /> reliable
     </span>
   );
-}
-
-/** "moved 10 min earlier — builders are ahead"; empty within a few minutes. */
-export function movedNote(r: Pick<LiveRecipe, "drift" | "driftMinutes">): string {
-  if (r.drift === "on_time") return "";
-  const m = Math.abs(Math.round(r.driftMinutes));
-  return r.drift === "ahead" ? `moved ${m} min earlier — builders are ahead` : `moved ${m} min later — builders are behind`;
 }
 
 /** One hot meat: "Beef Mince in at 08:15 · out at 08:45". */
@@ -61,8 +53,11 @@ export function MeatInOutLine({ m, trust, large = false }: { m: LiveMeat; trust?
   );
 }
 
-export function NextUpCard({ action, traysLeft, onPutAllIn, onOpenTrays, busy }: {
+export function NextUpCard({ action, traysLeft, onPutAllIn, onOpenTrays, busy, dayLabel = null }: {
   action: NextAction | null;
+  /** Set when the plan on screen isn't today's ("Wed 28 Oct"): the times
+   *  are for that day, so no countdown and never "late". */
+  dayLabel?: string | null;
   /** Trays of this meat not yet in the oven (null = not known). */
   traysLeft: number | null;
   onPutAllIn: () => void;
@@ -76,8 +71,8 @@ export function NextUpCard({ action, traysLeft, onPutAllIn, onOpenTrays, busy }:
       </section>
     );
   }
-  const late = action.status === "overdue";
-  const due = action.status === "due";
+  const late = !dayLabel && action.status === "overdue";
+  const due = !dayLabel && action.status === "due";
   const tone = late
     ? "border-rose-500 bg-rose-50 dark:bg-rose-900/25"
     : due ? "border-orange-500 bg-orange-50 dark:bg-orange-900/25" : "border-primary/40 bg-card";
@@ -91,7 +86,7 @@ export function NextUpCard({ action, traysLeft, onPutAllIn, onOpenTrays, busy }:
             <span className="tabular-nums"> at {formatClock(action.atMinutes)}</span>
           </p>
           <p className={cn("text-2xl font-bold tabular-nums", late ? "text-rose-600 dark:text-rose-400" : due ? "text-orange-600 dark:text-orange-400" : "text-foreground")}>
-            {late ? <><AlertTriangle className="inline w-6 h-6 -mt-1 mr-1" />{countdownText(action.minutesUntil)} — put it in now</> : due ? "Put it in now" : countdownText(action.minutesUntil)}
+            {dayLabel ? `First thing on ${dayLabel}` : late ? <><AlertTriangle className="inline w-6 h-6 -mt-1 mr-1" />{countdownText(action.minutesUntil)} — put it in now</> : due ? "Put it in now" : countdownText(action.minutesUntil)}
           </p>
           <p className="text-lg text-muted-foreground">
             For {action.recipeName}{action.outMinutes != null ? ` · out at ${formatClock(action.outMinutes)}` : ""}
@@ -118,53 +113,10 @@ export function NextUpCard({ action, traysLeft, onPutAllIn, onOpenTrays, busy }:
           <p className="text-3xl md:text-4xl font-extrabold leading-tight">Mix {action.recipeName.toUpperCase()}</p>
           <p className={cn("text-2xl font-bold tabular-nums", late && "text-rose-600 dark:text-rose-400")}>
             {action.anyTimeBefore ? `any time before ${formatClock(action.atMinutes)}` : `builders need it ~${formatClock(action.atMinutes)}`}
-            {!action.anyTimeBefore && <span className="text-muted-foreground font-semibold"> · {countdownText(action.minutesUntil)}</span>}
+            {!action.anyTimeBefore && !dayLabel && <span className="text-muted-foreground font-semibold"> · {countdownText(action.minutesUntil)}</span>}
           </p>
         </>
       )}
-    </section>
-  );
-}
-
-export function DayTimeline({ live, mixedPlanItemIds }: { live: LiveScheduleData; mixedPlanItemIds: Set<number> }) {
-  if (live.recipes.length === 0) return null;
-  return (
-    <section className="bg-card border border-border rounded-2xl p-4 space-y-1">
-      <h2 className="text-xl font-bold flex items-center gap-2 pb-1"><Clock className="w-5 h-5 text-primary" /> Today, in build order</h2>
-      <ol className="divide-y divide-border">
-        {live.recipes.map(r => {
-          const done = r.state === "done";
-          const mixed = mixedPlanItemIds.has(r.planItemId);
-          const note = r.state === "waiting" ? movedNote(r) : "";
-          return (
-            <li key={r.planItemId} className={cn("py-3 flex flex-col gap-1", done && "opacity-50")}>
-              <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <p className={cn("text-xl font-bold flex items-center gap-2", done && "line-through")}>
-                  {done && <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
-                  {r.kind === "cold" && !done && <Snowflake className="w-5 h-5 text-sky-500" />}
-                  {r.name}
-                </p>
-                <p className="text-lg tabular-nums">
-                  {done ? "done"
-                    : r.state === "building" ? <b className="text-blue-700 dark:text-blue-300">Building now</b>
-                    : r.kind === "cold" ? <>{mixed ? "✓ mixed · " : ""}mix any time before <b>{formatClock(r.mixByMinutes)}</b></>
-                    : <>builders need it <b>~{formatClock(r.liveStartMinutes)}</b></>}
-                </p>
-              </div>
-              {r.state === "building" && (
-                <p className="text-lg font-semibold text-blue-700 dark:text-blue-300 tabular-nums">
-                  {r.remaining} batch{r.remaining === 1 ? "" : "es"} left
-                  {r.nextFlavour ? ` · next: ${r.nextFlavour.name} ~${formatClock(r.nextFlavour.atMinutes)}` : ""}
-                </p>
-              )}
-              {!done && r.state !== "building" && r.kind === "hot" && r.meats.map(m => (
-                <MeatInOutLine key={m.rawMeatIngredientId} m={m} trust={live.trust[m.rawMeatIngredientId]} />
-              ))}
-              {note && <p className={cn("text-sm font-medium", r.drift === "ahead" ? "text-emerald-700 dark:text-emerald-300" : "text-amber-700 dark:text-amber-300")}>{note}</p>}
-            </li>
-          );
-        })}
-      </ol>
     </section>
   );
 }

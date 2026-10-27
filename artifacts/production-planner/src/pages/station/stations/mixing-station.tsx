@@ -75,7 +75,7 @@ import { hasBuildingStarted } from "@/lib/building-stations";
 import { tinsCompleteFrom } from "../shared/tin-math";
 import { useMixingCookingRecipes } from "../shared/mixing-cooking-recipes";
 import { builderProgressLine } from "../shared/building-complete";
-import { NextUpCard, DayTimeline, MeatInOutLine, ReliableChip } from "../shared/live-mix-timeline";
+import { NextUpCard, MeatInOutLine, ReliableChip } from "../shared/live-mix-timeline";
 import { PutInReasonDialog } from "../shared/put-in-reason-dialog";
 import {
   useLiveSchedule, usePendingPutInReasons, liveScheduleKey, useLondonMinute,
@@ -1297,11 +1297,14 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         return viewRowSlot ? createPortal(strip, viewRowSlot) : strip;
       })()}
 
-      {/* ── Next up + the day (Graeme, 2026-10-27): the one thing to do next,
-          huge, then every recipe in build order with its times. ── */}
+      {/* ── Next up (Graeme, 2026-10-27): the one thing to do next, huge. The
+          day's other times are in Meat Cooking and Mixing Tins below — no
+          separate build-order list repeating them. ── */}
       {live && (() => {
         const mixedIds = new Set(items.filter(isItemMixingComplete).map(i => i.id));
-        const action = nextAction(live, nowMinute, { mixedPlanItemIds: mixedIds });
+        // Not today's plan: its times are for that day, so nothing is "late".
+        const action = nextAction(live, live.isToday ? nowMinute : 0, { mixedPlanItemIds: mixedIds });
+        const dayLabel = live.isToday ? null : new Date(`${live.planDate}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "Europe/London" });
         let traysLeft: number | null = null;
         let trayIng: PrepIngredientDetail | null = null;
         let trayRecipe: PrepRecipeDetail | null = null;
@@ -1317,6 +1320,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
           <div className="space-y-3">
             <NextUpCard
               action={action}
+              dayLabel={dayLabel}
               traysLeft={traysLeft}
               busy={trayPending != null || isOnBreak}
               onPutAllIn={() => {
@@ -1329,7 +1333,6 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                 if (action) setCookingRecipeId(action.recipeId);
               }}
             />
-            <DayTimeline live={live} mixedPlanItemIds={mixedIds} />
           </div>
         );
       })()}
@@ -1421,6 +1424,13 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                   : null;
                 const cookMoved = plannedCookStart != null && earliestCookStart != null && Math.round(plannedCookStart) !== Math.round(earliestCookStart);
                 const cookOverdue = liveMeats.some(m => m.overdue);
+                // What the old "Today, in build order" list showed, here
+                // instead (Graeme, 2026-10-27): when it comes out and when the
+                // builders need it. Several meats each carry their own out time.
+                const liveRecipe = liveByRecipeId.get(recipe.recipeId);
+                const firstLiveMeat = liveMeats.length > 0 ? liveMeats.reduce((a, b) => (b.liveCookStartMinutes < a.liveCookStartMinutes ? b : a)) : null;
+                const outAt = rawMeatIngs.length < 2 ? firstLiveMeat?.outMinutes ?? null : null;
+                const needAt = liveRecipe?.state === "waiting" ? liveRecipe.liveStartMinutes : null;
                 const recipeTrusted = rawMeatIngs.length > 0 && rawMeatIngs.every(i => trustFor(i.ingredientId)?.trusted);
                 // Any meat whose start time is a guess or impossible — flagged
                 // under the header so the cook knows the time can't be trusted.
@@ -1446,6 +1456,15 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
                             </span>
                           )}
                         </p>
+                        {!recipeAllDone && (outAt != null || needAt != null || liveRecipe?.state === "building") && (
+                          <p className="text-lg tabular-nums text-muted-foreground">
+                            {outAt != null && <>out at <b className="text-foreground">{formatClock(outAt)}</b></>}
+                            {outAt != null && (needAt != null || liveRecipe?.state === "building") && " · "}
+                            {liveRecipe?.state === "building"
+                              ? <b className="text-blue-700 dark:text-blue-300">builders are on it now</b>
+                              : needAt != null && <>builders need it <b className="text-foreground">~{formatClock(needAt)}</b></>}
+                          </p>
+                        )}
                         {!recipeAllDone && (cookMoved || recipeTrusted || cookOverdue) && (
                           <div className="flex items-center gap-2 flex-wrap mt-0.5 text-sm">
                             {cookMoved && plannedCookStart != null && earliestCookStart != null && Math.abs(earliestCookStart - plannedCookStart) >= 3 && (
