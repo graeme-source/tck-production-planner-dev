@@ -1,12 +1,12 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import {
-  db, improvementSubmissionsTable, improvementCommentsTable, usersTable,
+  db, improvementSubmissionsTable, usersTable,
   notificationsTable,
   stageOf, STAGE_LABEL, canMarkDone, markDoneBlocker, canReview, shouldAutoSubmit,
   formatCreditNames, isCredited, withLead, MAX_CREDITED_PEOPLE, type CreditPerson,
   canEditImprovement, IMPROVEMENT_EDIT_REFUSED, managerOnlyFieldsIn, UNSEEN_COUNT_STATUSES,
 } from "@workspace/db";
-import { eq, desc, asc, sql, inArray } from "drizzle-orm";
+import { eq, desc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { ImprovementSubmission } from "@workspace/db";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -34,13 +34,16 @@ const IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp", "image/gif"];
 const VIDEO_MIMES = ["video/mp4", "video/webm", "video/quicktime", "video/ogg"];
 
 /** Attachment counts for a set of improvements, in one query — the media
- *  rule needs them on every list, and N+1 on a kitchen iPad is not free. */
+ *  rule needs them on every list, and N+1 on a kitchen iPad is not free.
+ *  The improvement's own evidence only: a photo posted in its comments
+ *  (comment_id set, migration 0331) never makes it "done". */
 async function attachmentCounts(ids: number[]): Promise<Map<number, number>> {
   if (ids.length === 0) return new Map();
   const result = await db.execute<{ improvement_id: number; n: number }>(sql`
     SELECT improvement_id, COUNT(*)::int AS n
       FROM improvement_attachments
      WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+       AND comment_id IS NULL
      GROUP BY improvement_id
   `);
   return new Map((result.rows ?? []).map(r => [Number(r.improvement_id), Number(r.n)]));
@@ -196,6 +199,7 @@ router.get("/", async (req: Request, res: Response) => {
       SELECT id, improvement_id, kind, phase
         FROM improvement_attachments
        WHERE improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+         AND comment_id IS NULL
        ORDER BY (phase = 'stitched') DESC NULLS LAST, id ASC
     `);
     const mediaById = new Map<number, Array<{ id: number; kind: string; phase: string | null }>>();
@@ -237,6 +241,28 @@ router.get("/", async (req: Request, res: Response) => {
       reactionsById.set(Number(r.improvement_id), list);
     }
 
+    // The "Comments & photos" button on every card: how many comments with
+    // words in, and how many photos posted in the conversation (27 Oct 2026).
+    // One query for the whole list.
+    const threadRows = ids.length === 0 ? { rows: [] } : await db.execute<{ improvement_id: number; comments: number; photos: number; last_at: string | null }>(sql`
+      SELECT c.improvement_id,
+             COUNT(*) FILTER (WHERE btrim(c.comment) <> '')::int AS comments,
+             COALESCE(SUM(p.n), 0)::int AS photos,
+             MAX(c.created_at) AS last_at
+        FROM improvement_comments c
+        LEFT JOIN (
+          SELECT comment_id, COUNT(*)::int AS n FROM improvement_attachments
+           WHERE comment_id IS NOT NULL AND improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+           GROUP BY comment_id
+        ) p ON p.comment_id = c.id
+       WHERE c.improvement_id = ANY(${intArrayLiteral(ids)}::int[])
+       GROUP BY c.improvement_id
+    `);
+    const threadById = new Map((threadRows.rows ?? []).map(t => [Number(t.improvement_id), {
+      commentCount: Number(t.comments), commentPhotoCount: Number(t.photos),
+      lastCommentAt: t.last_at == null ? null : new Date(t.last_at).toISOString(),
+    }]));
+
     res.json(rows.map(r => ({
       ...decorate(
         r,
@@ -254,6 +280,7 @@ router.get("/", async (req: Request, res: Response) => {
       // them from the feed (Graeme, 24 Oct).
       submittedByMe: viewer.id != null && r.submittedBy === viewer.id,
       reactions: reactionsById.get(r.id) ?? [],
+      ...(threadById.get(r.id) ?? { commentCount: 0, commentPhotoCount: 0, lastCommentAt: null }),
     })));
   } catch (err) {
     console.error("Error fetching improvement submissions:", err);
@@ -553,7 +580,7 @@ router.post("/:id/create-sop", async (req: Request, res: Response) => {
              CASE WHEN mime LIKE 'video/%' THEN mime END,
              CASE WHEN mime LIKE 'video/%' THEN data END
       FROM improvement_attachments
-      WHERE improvement_id = ${id} AND (mime LIKE 'image/%' OR mime LIKE 'video/%')
+      WHERE improvement_id = ${id} AND comment_id IS NULL AND (mime LIKE 'image/%' OR mime LIKE 'video/%')
     `);
 
     res.status(201).json({ sopId });
@@ -1168,47 +1195,7 @@ router.delete("/:id", requireAdmin, async (req: Request, res: Response) => {
   }
 });
 
-// Comments
-router.get("/:id/comments", async (req: Request, res: Response) => {
-  try {
-    const id = parseInt(String(req.params.id), 10);
-    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-    const rows = await db
-      .select()
-      .from(improvementCommentsTable)
-      .where(eq(improvementCommentsTable.improvementId, id))
-      .orderBy(asc(improvementCommentsTable.createdAt));
-    res.json(rows);
-  } catch (err) {
-    console.error("Error fetching comments:", err);
-    res.status(500).json({ error: "Failed to fetch comments" });
-  }
-});
-
-router.post("/:id/comments", async (req: Request, res: Response) => {
-  try {
-    const id = parseInt(String(req.params.id), 10);
-    if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-    const { comment } = req.body;
-    if (!comment || !comment.trim()) { res.status(400).json({ error: "comment is required" }); return; }
-
-    const userId = req.session.userId;
-    let userName: string | null = null;
-    if (userId) {
-      const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId));
-      userName = user?.name ?? null;
-    }
-
-    const [row] = await db
-      .insert(improvementCommentsTable)
-      .values({ improvementId: id, userId: userId ?? null, userName, comment: comment.trim() })
-      .returning();
-    res.status(201).json(row);
-  } catch (err) {
-    console.error("Error creating comment:", err);
-    res.status(500).json({ error: "Failed to create comment" });
-  }
-});
+// Comments live in routes/improvement-thread.ts (the timeline, 27 Oct 2026).
 
 // ── Attachments (photos & videos) ────────────────────────────────────────
 
@@ -1221,7 +1208,7 @@ router.get("/:id/attachments", async (req: Request, res: Response) => {
   if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   const rows = toRows<AttachmentRow & { phase: string | null }>(await db.execute(sql`
     SELECT id, kind, mime, file_name, created_at, phase
-    FROM improvement_attachments WHERE improvement_id = ${id} ORDER BY created_at ASC
+    FROM improvement_attachments WHERE improvement_id = ${id} AND comment_id IS NULL ORDER BY created_at ASC
   `));
   res.json(rows.map(a => ({
     id: a.id, kind: a.kind, mime: a.mime, fileName: a.file_name, phase: a.phase,
@@ -1315,13 +1302,19 @@ router.delete("/attachments/:attId", async (req: Request, res: Response) => {
   const attId = parseInt(String(req.params.attId), 10);
   if (isNaN(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
   const viewer = await viewerOf(req);
-  const owner = toRows<{ submitted_by: number | null }>(await db.execute(sql`
-    SELECT i.submitted_by
+  const owner = toRows<{ submitted_by: number | null; comment_id: number | null }>(await db.execute(sql`
+    SELECT i.submitted_by, a.comment_id
       FROM improvement_attachments a
       JOIN improvement_submissions i ON i.id = a.improvement_id
      WHERE a.id = ${attId}
   `))[0];
   if (!owner) { res.status(404).json({ error: "That photo or video has already gone." }); return; }
+  // A photo posted in the comments goes with its comment, under the
+  // comment's own rule (routes/improvement-thread.ts).
+  if (owner.comment_id != null) {
+    res.status(409).json({ error: "That photo is part of a comment — delete the comment instead." });
+    return;
+  }
   const role = viewer.isAdmin ? "admin" : viewer.isManager ? "manager" : "viewer";
   if (!canEditImprovement({ role, userId: viewer.id }, owner.submitted_by)) {
     res.status(403).json({ error: IMPROVEMENT_EDIT_REFUSED });
