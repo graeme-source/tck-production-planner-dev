@@ -111,6 +111,8 @@ import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
 import slowMeatRouter, { slowMeatPlanGuard } from "./slow-meat";
+import liveScheduleRouter from "./live-schedule";
+import meatTimingRouter from "./meat-timing";
 import planMarginRouter from "./plan-margin";
 import factoryForecastRouter from "./factory-forecast";
 import weekEndStockRouter from "./week-end-stock";
@@ -306,6 +308,11 @@ router.use("/production-plans", extraPacksRouter);
 // router, so no new code goes in production-plans.ts.
 router.use("/production-plans", slowMeatPlanGuard);
 router.use("/slow-meat", slowMeatRouter);
+// The day schedule re-planned from the builders' real progress (Mixing
+// station timeline) — ahead of the frozen router, read-only.
+router.use("/production-plans", liveScheduleRouter);
+// Self-correcting prep-oven timings: learned vs configured, log, revert.
+router.use("/meat-timing", meatTimingRouter);
 // Production safety margin (orders + 2/4 packs) — settings for the plan screens.
 router.use("/plan-margin", planMarginRouter);
 // Predicted factory number after a plan (late orders + thresholds) — the upper limit.

@@ -14,6 +14,12 @@ describe("meatLeadMinutes — cook + process", () => {
     expect(meatLeadMinutes(null, 40)).toEqual({ minutes: 40, missing: "cook" });
     expect(meatLeadMinutes(null, null)).toEqual({ minutes: null, missing: "both" });
   });
+  it("adds grace on top; unset or nonsense grace is 0, never 'missing'", () => {
+    expect(meatLeadMinutes(25, 15, 10)).toEqual({ minutes: 50, missing: null });
+    expect(meatLeadMinutes(25, 15, null)).toEqual({ minutes: 40, missing: null });
+    expect(meatLeadMinutes(25, 15, -5)).toEqual({ minutes: 40, missing: null });
+    expect(meatLeadMinutes(null, null, 10)).toEqual({ minutes: null, missing: "both" });
+  });
   it("ignores nonsense values", () => {
     expect(meatLeadMinutes(-5, Number.NaN)).toEqual({ minutes: null, missing: "both" });
   });

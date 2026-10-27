@@ -71,12 +71,19 @@ export async function buildPlanSchedule(planId: number) {
   }
   const meatInfoRows = allMeatIds.size
     ? await db
-        .select({ id: ingredientsTable.id, cook: ingredientsTable.estimatedCookTimeMin, process: ingredientsTable.meatProcessMinutes })
+        .select({
+          id: ingredientsTable.id,
+          cook: ingredientsTable.estimatedCookTimeMin,
+          process: ingredientsTable.meatProcessMinutes,
+          grace: ingredientsTable.meatGraceMinutes,
+        })
         .from(ingredientsTable)
         .where(inArray(ingredientsTable.id, [...allMeatIds]))
     : [];
-  // Lead time = cook + process (lib/meat-lead-time.ts, migration 0124).
-  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process)]));
+  // Lead time = cook + process + grace (lib/meat-lead-time.ts; grace from
+  // migration 0290, learned daily by lib/meat-timing-learner.ts).
+  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process, r.grace)]));
+  const meatInfoById = new Map(meatInfoRows.map(r => [r.id, r]));
 
   // Settings.
   const settingRows = await db
@@ -118,7 +125,13 @@ export async function buildPlanSchedule(planId: number) {
       name: i.name,
       batches: i.batchesTarget,
       minutesPerBatch: timing.minutesPerBatch,
-      meats: split.timed,
+      // Cook and grace ride along so the live schedule can check the 4-hour
+      // hold (oven-out → last batch) — lib/production-schedule live-replan.
+      meats: split.timed.map(m => ({
+        ...m,
+        cookMinutes: meatInfoById.get(m.rawMeatIngredientId)?.cook ?? null,
+        graceMinutes: meatInfoById.get(m.rawMeatIngredientId)?.grace ?? null,
+      })),
       buildTimeGuessed: timing.guessed,
       untimedMeats: split.untimed,
     };

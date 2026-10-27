@@ -3423,6 +3423,10 @@ async function startup() {
     // form is signed (Graeme, 2026-09-14).
     const { startRtwScheduler } = await import("./lib/rtw-scheduler");
     startRtwScheduler();
+    // Self-correcting prep-oven timings: once a day after production, learn
+    // each raw meat's processing + grace from the floor (Graeme, 2026-10-27).
+    const { startMeatTimingScheduler } = await import("./lib/meat-timing-scheduler");
+    startMeatTimingScheduler();
     // People → Needs attention: one generic HR to-do per record-writer (lib/hr-attention.ts).
     const { startHrAttentionScheduler } = await import("./lib/hr-attention");
     startHrAttentionScheduler();

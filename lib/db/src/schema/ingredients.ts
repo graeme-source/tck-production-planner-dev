@@ -44,6 +44,12 @@ export const ingredientsTable = pgTable("ingredients", {
   // Until migration 0124 (2026-09-24) this was a hand-typed cook+process
   // total; existing values were converted to their processing part.
   meatProcessMinutes: integer("meat_process_minutes"),
+  // GRACE minutes: how long the cooked meat may sit ready before the
+  // builders need it (cover for slower days). Lead = cook + process + grace.
+  // NULL = 0. Learned daily with processing unless meatTimingAutoLearn is
+  // off (lib/production-schedule meat-timing-learning.ts). Migration 0290.
+  meatGraceMinutes: integer("meat_grace_minutes"),
+  meatTimingAutoLearn: boolean("meat_timing_auto_learn").notNull().default(true),
   ovenTempC: integer("oven_temp_c"),
   steamPct: integer("steam_pct"),
   stockCheckEnabled: boolean("stock_check_enabled").notNull().default(false),
