@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildLabelContent } from "./content";
+import { buildLabelContent, weightFirstName } from "./content";
 import { labelDates } from "./dates";
 import { buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, type RecipeLabelSettings } from "./snapshot";
 import { DEFAULT_TEMPLATE, normaliseTemplate } from "./template";
@@ -86,5 +86,22 @@ describe("label content", () => {
   it("flags minutes that run backwards", () => {
     const c = content({ cooking: { ...DEFAULT_RECIPE_LABEL_SETTINGS.cooking, ovenMinMinutes: 25 } });
     expect(c.problems.some(p => p.includes("Oven minutes run backwards"))).toBe(true);
+  });
+});
+
+describe("weightFirstName (Graeme, 2026-10-27: lead with the weight)", () => {
+  it("moves the weight from the end of the name to the front", () => {
+    expect(weightFirstName("Korean Fried Chicken 500g", "500g")).toBe("500g - Korean Fried Chicken");
+    expect(weightFirstName("Korean Fried Chicken 1.2kg", null)).toBe("1.2kg - Korean Fried Chicken");
+    expect(weightFirstName("Buttermilk Fried Chicken 1KG", "1kg")).toBe("1kg - Buttermilk Fried Chicken");
+  });
+  it("uses the net quantity when the name has no weight", () => {
+    expect(weightFirstName("Yangnyeom Fried Chicken Strips", "500g")).toBe("500g - Yangnyeom Fried Chicken Strips");
+  });
+  it("leaves the name alone with no weight anywhere", () => {
+    expect(weightFirstName("Garlic Korma", null)).toBe("Garlic Korma");
+  });
+  it("doesn't take digits that aren't a weight", () => {
+    expect(weightFirstName("Chicken 65 Strips", "400g")).toBe("400g - Chicken 65 Strips");
   });
 });

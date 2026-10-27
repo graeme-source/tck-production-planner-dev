@@ -50,6 +50,21 @@ export function stepLines(text: string): Paragraph[] {
   });
 }
 
+const WEIGHT_IN_NAME = /(?:^|[\s(\-–])(\d+(?:\.\d+)?\s?(?:kg|g))\b\)?/i;
+
+/** "Korean Fried Chicken 500g" → "500g - Korean Fried Chicken": the weight
+ *  first so sizes of one flavour are easy to tell apart when picking
+ *  (Graeme, 2026-10-27). The weight is the label's net quantity, else the
+ *  weight written in the name; any weight in the name is taken out so it
+ *  isn't said twice. No weight anywhere → just the name. */
+export function weightFirstName(name: string, netQuantity: string | null | undefined): string {
+  const clean = name.replace(/\s+/g, " ").trim();
+  const m = WEIGHT_IN_NAME.exec(clean);
+  const rest = m ? clean.replace(m[0], " ").replace(/\s+/g, " ").replace(/^[\s\-–]+|[\s\-–]+$/g, "").trim() : clean;
+  const weight = netQuantity?.trim() || m?.[1]?.replace(/\s+/g, "") || "";
+  return weight && rest ? `${weight} - ${rest}` : clean;
+}
+
 const heading = (text: string): Paragraph => (text.trim() ? [{ text: text.trim(), bold: true }] : []);
 const nonEmpty = (ps: Paragraph[]) => ps.filter(p => p.length > 0);
 
@@ -59,6 +74,7 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   const c = s.cooking;
   const values: Record<string, string | number | null> = {
     name: s.labelName,
+    weightFirstName: weightFirstName(s.labelName, s.netQuantity),
     packSize: s.packSize,
     // Temperatures, totals and the halves either side of TURN OVER.
     ...cookingPlaceholderValues(c),

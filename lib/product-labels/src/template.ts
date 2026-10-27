@@ -193,6 +193,7 @@ export interface StorageBanner {
 
 export const TEMPLATE_PLACEHOLDERS: Record<string, string> = {
   "{name}": "Label name (the recipe name unless the recipe sets its own)",
+  "{weightFirstName}": "The weight, then the name — e.g. 500g - Korean Fried Chicken (the net quantity, else the weight in the name; just the name if neither)",
   "{packSize}": "Pack size, e.g. 2",
   "{ovenTemp}": "Oven °C",
   "{fanTemp}": "Fan oven °C",
@@ -529,7 +530,9 @@ export interface TemplatePreset {
  *  the longest decks. */
 export function friedChickenTemplate(): LabelTemplate {
   const t = normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
-  t.text.title = "{name}";
+  // The weight leads, so 500g and 1.2kg of the same flavour are easy to tell
+  // apart when picking (Graeme, 2026-10-27).
+  t.text.title = "{weightFirstName}";
   // Graeme's current fried chicken label (Label LIVE), tidied; the numbers
   // are the template's cooking values, so a recipe can override them.
   t.text.steps = [
