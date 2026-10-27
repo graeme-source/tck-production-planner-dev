@@ -17,6 +17,7 @@ import { PullToRefresh } from "@/components/pull-to-refresh";
 import Dashboard from "@/pages/dashboard";
 import TeamListsPage from "@/pages/team-lists";
 import WishListPage from "@/pages/wish-list";
+import StationChangesPage from "@/pages/station-changes";
 import MeetingPage from "@/pages/meeting";
 import VisitorCheckIn from "@/pages/visitor-check-in";
 import PackReport from "@/pages/pack-report";
@@ -239,6 +240,9 @@ function Router() {
               <Route path="/lists/:id" component={TeamListsPage} />
               {/* Wish List — equipment & things we need (Graeme, 23 Oct 2026). Everyone signed in. */}
               <Route path="/wish-list" component={WishListPage} />
+              {/* Station changes — tag System Updates by station and attach walkthroughs
+                  (27 Oct 2026). System Updates managers; the API enforces it. */}
+              <Route path="/station-changes" component={StationChangesPage} />
               <Route path="/finance/cash-flow" component={FinancePage} />
               <Route path="/finance/payroll" component={FinancePage} />
               <Route path="/finance" component={FinancePage} />

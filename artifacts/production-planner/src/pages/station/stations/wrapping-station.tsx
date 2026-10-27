@@ -936,6 +936,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                   {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId, wrappingLabelRecipes) === "print" && (
                     <button
                       type="button"
+                      data-tour="wrapping-print-back-labels"
                       onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net })}
                       className="ml-auto h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/90 active:scale-[0.98]"
                     >
@@ -961,6 +962,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                   {canPrintBackLabels && (
                     <button
                       type="button"
+                      data-tour="wrapping-print-front-labels"
                       onClick={() => setFrontLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, net })}
                       className={cn(wrappingLabelAction(liveLabelRecipeIds, item.recipeId, wrappingLabelRecipes) ? "" : "ml-auto","h-11 px-4 rounded-xl border-2 border-primary text-sm font-bold flex items-center gap-2 shrink-0 active:scale-[0.98]",
                         frontLabelDefaultIds.has(item.recipeId) ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-primary hover:bg-primary/10")}

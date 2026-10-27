@@ -123,6 +123,7 @@ import ingredientScrapeRouter from "./ingredient-scrape";
 import upfRouter from "./upf";
 import formsRouter from "./forms";
 import systemUpdatesRouter from "./system-updates";
+import stationChangesRouter from "./station-changes";
 import labelStockRouter from "./label-stock";
 import printJobsRouter from "./print-jobs";
 import { isPrintBridgePath } from "../lib/print-bridge-paths";
@@ -571,6 +572,10 @@ router.use("/lean-reviews", leanReviewsRouter);
 router.use("/lean-curriculum", requireAdminOrManager, leanCurriculumRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
+// "What's changed in this station?" — System Updates tagged by area, with
+// walkthroughs and per-person seen marks. Anyone signed in reads; editing
+// is guarded inside (routes/station-changes.ts).
+router.use("/station-changes", stationChangesRouter);
 router.use("/label-stock", labelStockRouter);
 // Prep-room label printing. Open to all logged-in staff — anyone opening a
 // bag of chicken prints the label; the bridge endpoints inside carry their

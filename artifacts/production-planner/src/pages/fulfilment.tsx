@@ -7,6 +7,7 @@ import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
 import { DessertsReportCard } from "@/components/desserts-report-card";
+import { WhatsChangedButton } from "@/components/station-changes/station-menu";
 import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
@@ -4197,6 +4198,9 @@ export default function Fulfilment() {
           <Refrigerator className="w-4 h-4 text-indigo-500" />
           Check Factory Number
         </button>
+        {/* This screen IS the packing station: its "What's changed?" lives
+            here, as it does in every other station's Station menu. */}
+        <WhatsChangedButton stationType="packing" stationLabel="Packing" />
       </div>
 
       {stationPlanId && (

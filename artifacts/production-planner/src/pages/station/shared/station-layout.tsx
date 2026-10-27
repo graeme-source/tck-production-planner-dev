@@ -2,8 +2,9 @@ import React, { useState, useEffect } from "react";
 import { useLocation, useSearch } from "wouter";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, MoreVertical, BookPlus, BookUser,
+  ChevronLeft, BarChart2, ClipboardList, Layers, Beef, Menu, X, BookOpen, BookPlus, BookUser,
 } from "lucide-react";
+import { StationMenu } from "@/components/station-changes/station-menu";
 import { StationPinnedContacts, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -100,10 +101,10 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
   const fromSuffix = fromDashboard ? "?from=dashboard" : "";
   const [navOpen, setNavOpen] = useState(false);
   const [standardsOpen, setStandardsOpen] = useState(false);
-  // The ⋯ menu next to Exit Station: contacts, the SOP library, attach an
-  // SOP to this station. Folded away so the top bar fits one line on iPad
-  // landscape (Graeme, 2026-09-16). Messaging is its own button now.
-  const [moreOpen, setMoreOpen] = useState(false);
+  // The Station menu next to Exit Station (was the ⋯ menu): contacts, the
+  // SOP library, attach an SOP to this station, and "What's changed in this
+  // station?". Folded away so the top bar fits one line on iPad landscape
+  // (Graeme, 2026-09-16 / 27 Oct 2026). Messaging is its own button.
   const [manageSopsOpen, setManageSopsOpen] = useState(false);
   const [contactsOpen, setContactsOpen] = useState(false);
   const { state, logout, lockStation } = useAuth();
@@ -212,7 +213,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
           always renders at the current viewport top instead of the original
           top of the document) */}
       <div className="border-b border-border bg-card sticky top-0 z-20">
-        <div className="max-w-7xl mx-auto px-4 py-3">
+        <div className="px-4 py-3">
           <div className="flex items-center justify-between gap-x-4 gap-y-2 flex-wrap">
             <div className="flex items-center gap-3 min-w-0">
               {/* Hamburger — opens the real app nav */}
@@ -260,50 +261,18 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                   sub-section) show to whoever is signed in here. */}
               <MessagesButton at={messageStationKeys(stationType)} />
 
-              {/* ⋯ menu — contacts and SOPs live here so the bar stays one line. */}
-              <div className="relative">
-                <button
-                  onClick={() => setMoreOpen(v => !v)}
-                  className={cn(
-                    "flex items-center justify-center w-9 h-9 rounded-lg transition-colors",
-                    moreOpen
-                      ? "bg-primary text-primary-foreground"
-                      : "border border-border text-muted-foreground hover:text-foreground hover:bg-secondary/60"
-                  )}
-                  title="More"
-                  aria-label="More station actions"
-                >
-                  <MoreVertical className="w-4 h-4" />
-                </button>
-                {moreOpen && (
-                  <>
-                    <div className="fixed inset-0 z-30" onClick={() => setMoreOpen(false)} />
-                    <div className="absolute right-0 top-full mt-1.5 z-40 w-60 rounded-xl border border-border bg-card shadow-xl overflow-hidden py-1">
-                      <button
-                        onClick={() => { setMoreOpen(false); setContactsOpen(true); }}
-                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
-                      >
-                        <BookUser className="w-4 h-4 text-indigo-600 flex-shrink-0" />
-                        Contacts for this station
-                      </button>
-                      <button
-                        onClick={() => { setMoreOpen(false); setStandardsOpen(true); }}
-                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
-                      >
-                        <BookOpen className="w-4 h-4 text-primary flex-shrink-0" />
-                        View SOP library
-                      </button>
-                      <button
-                        onClick={() => { setMoreOpen(false); setManageSopsOpen(true); }}
-                        className="w-full flex items-center gap-2.5 px-4 py-3 text-sm font-medium text-left hover:bg-secondary/60 transition-colors"
-                      >
-                        <BookPlus className="w-4 h-4 text-primary flex-shrink-0" />
-                        Add SOP to this station
-                      </button>
-                    </div>
-                  </>
-                )}
-              </div>
+              {/* Station menu — the now-and-then actions (contacts, SOPs)
+                  plus "What's changed in this station?", with a dot while
+                  this person has unseen changes here (Graeme, 27 Oct 2026). */}
+              <StationMenu
+                stationType={stationType}
+                stationLabel={meta.label}
+                items={[
+                  { key: "contacts", label: "Contacts for this station", icon: BookUser, iconClass: "text-indigo-600", onSelect: () => setContactsOpen(true) },
+                  { key: "sop-library", label: "View SOP library", icon: BookOpen, iconClass: "text-primary", onSelect: () => setStandardsOpen(true) },
+                  { key: "add-sop", label: "Add SOP to this station", icon: BookPlus, iconClass: "text-primary", onSelect: () => setManageSopsOpen(true) },
+                ]}
+              />
 
               {(() => {
                 const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
@@ -327,7 +296,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
           recipe panel can't have on a 10.2" iPad (Graeme, 2026-09-16). The
           banner wrappers use empty:hidden so a banner that renders nothing
           costs no margin either. */}
-      <div className="max-w-7xl mx-auto px-4 pt-3 pb-20">
+      <div className="px-4 pt-3 pb-20">
         {/* Station-scoped SOPs — the "any process on this station" anchor.
             Attach here for anything that isn't a specific recipe or
             ingredient; the linked SOPs render as "Show me how" buttons. */}

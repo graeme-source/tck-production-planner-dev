@@ -56,6 +56,7 @@ import { WhosOnTodayBoard } from "@/components/whos-on-today-board";
 import { fallbackGratitudePhotoUrl, gratitudeImageMode } from "@/lib/gratitude-photo";
 import { withStandingRemindersSlide, reminderLinesFromNote, STANDING_REMINDERS_KIND, STANDING_REMINDERS_SLIDE_ID } from "@/lib/meeting-reminders";
 import { StandingRemindersCard, StandingRemindersSlide, useCanEditReminders, useReminderActions } from "@/components/meeting-reminders";
+import { StationUpdatesSlide, useStationUpdatesSlideEmpty } from "@/components/station-changes/meeting-slide";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -359,7 +360,14 @@ export default function MeetingPage() {
   // meeting mode.
   // Every meeting also gets the standing Reminders slide (lib/meeting-reminders):
   // it isn't in the template — like Safety, it's always there.
-  const slides = useMemo<MeetingSlide[]>(() => withStandingRemindersSlide(data?.slides ?? [], toMeetingSlide), [data?.slides]);
+  // System Updates is left out when no station work changed this week
+  // (Graeme, 27 Oct 2026: hidden when empty).
+  const stationUpdatesEmpty = useStationUpdatesSlideEmpty();
+  const slides = useMemo<MeetingSlide[]>(
+    () => withStandingRemindersSlide(data?.slides ?? [], toMeetingSlide)
+      .filter(s => !(s.kind === "system_updates" && stationUpdatesEmpty === true)),
+    [data?.slides, stationUpdatesEmpty],
+  );
   // The runner always shows the live day. "Preview tomorrow's meeting" used
   // to set this, but it could only ever borrow tomorrow's slide list — the
   // numbers stayed today's — so it read as broken and was removed. The prop
@@ -1986,7 +1994,8 @@ function SlideBodyInner({ slide, data, onRefresh, isPreviewing, subIndex, report
     case "bag_orders": return <BagOrdersSlide data={data} slide={slide} />;
     case "short_on_pack": return <ProductionPlanSlide data={data} slide={slide} isPreviewing={isPreviewing} stickyTotals compact mainKitchenOnly />;
     case "safety_issues": return <SafetyIssuesSlide data={data} onRefresh={onRefresh} slide={slide} />;
-    case "system_updates": return <SystemUpdatesSlide slide={slide} subIndex={subIndex} reportSubCount={reportSubCount} />;
+    // Station work only, one headline per station (components/station-changes).
+    case "system_updates": return <StationUpdatesSlide title={slide.title} subIndex={subIndex} reportSubCount={reportSubCount} />;
     case "new_sops": return <NewSopsSlide data={data} slide={slide} />;
     case "struggles": return <ImprovementsPage />;
     case "recent_improvements": return <RecentImprovementsSlide data={data} slide={slide} />;
@@ -3031,245 +3040,6 @@ function SafetyIssuesSlide({ data, onRefresh, slide }: { data: DashboardData; on
           </button>
         </div>
       </div>
-    </div>
-  );
-}
-
-interface SystemCommit {
-  sha: string;
-  shortSha: string;
-  date: string;
-  author: string;
-  subject: string;
-  body: string;
-}
-
-interface SystemUpdateCard {
-  id: number;
-  title: string | null;
-  bullets: string[];
-  hasImage: boolean;
-  createdAt: string;
-}
-
-function SystemUpdatesSlide({ slide, subIndex, reportSubCount }: {
-  slide: MeetingSlide;
-  subIndex: number;
-  reportSubCount: (n: number) => void;
-}) {
-  const [show7Days, setShow7Days] = useState(false);
-
-  const { data, isLoading } = useQuery<{
-    available: boolean;
-    updates?: SystemUpdateCard[];
-    last24h: SystemCommit[];
-    last7Days: SystemCommit[];
-    summary: string[] | null;
-    /** Titled and prioritised — what the team would notice, first. Absent
-     *  on snapshots written before titles existed, which fall back to the
-     *  flat `summary` lines. */
-    summaryItems?: Array<{ title: string; detail: string; teamFacing: boolean }> | null;
-    updateTitle?: string | null;
-    updateDate?: string | null;
-  }>({
-    queryKey: ["system-updates"],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/system-updates`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
-    },
-    staleTime: 5 * 60_000,
-  });
-
-  const summary = data?.summary ?? null;
-  const summaryItems = data?.summaryItems ?? null;
-  const last7 = data?.last7Days ?? [];
-  const updateTitle = data?.updateTitle ?? null;
-  const updateDate = data?.updateDate ?? null;
-  const cards = data?.updates ?? [];
-
-  // One card per step, so the deck walks the changes one at a time. Told to
-  // the parent because only this slide knows how many updates it fetched.
-  useEffect(() => { reportSubCount(Math.max(1, cards.length)); }, [cards.length, reportSubCount]);
-
-  if (cards.length > 0) {
-    const card = cards[Math.min(subIndex, cards.length - 1)];
-    return (
-      <div>
-        <div className="flex items-baseline justify-between gap-4 mb-1">
-          <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
-          {cards.length > 1 && (
-            <span className="text-lg font-semibold text-muted-foreground tabular-nums shrink-0">
-              {Math.min(subIndex, cards.length - 1) + 1} of {cards.length}
-            </span>
-          )}
-        </div>
-
-        {/* Headline first and big — this is the whole point of the slide. */}
-        <h3 className="text-4xl font-display font-bold leading-tight mt-4 mb-1">
-          {card.title || "What changed"}
-        </h3>
-        <p className="text-base text-muted-foreground mb-4">
-          {format(new Date(card.createdAt), "EEE d MMM")}
-        </p>
-
-        {/* The screenshot carries the explanation — people recognise a screen
-            far quicker than they parse a sentence describing it. */}
-        {card.hasImage && (
-          <div className="rounded-2xl overflow-hidden border-2 border-border bg-card mb-4">
-            <img
-              src={`${BASE}/api/system-updates/${card.id}/image`}
-              alt={card.title ?? "Screenshot of the update"}
-              className="w-full max-h-[46vh] object-contain bg-secondary/30"
-              onError={e => { (e.currentTarget.closest("div") as HTMLElement).style.display = "none"; }}
-            />
-          </div>
-        )}
-
-        {card.bullets.length > 0 && (
-          <ul className={cn("space-y-2", card.hasImage ? "text-xl" : "text-3xl space-y-4 mt-6")}>
-            {card.bullets.map((line, i) => (
-              <li key={i} className="flex items-start gap-3 leading-snug">
-                <span className="text-primary font-bold shrink-0">•</span>
-                <span>{line}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        {cards.length > 1 && (
-          <div className="flex items-center gap-2 mt-6" aria-hidden>
-            {cards.map((c, i) => (
-              <span
-                key={c.id}
-                className={cn(
-                  "h-1.5 rounded-full transition-all",
-                  i === Math.min(subIndex, cards.length - 1)
-                    ? "w-8 bg-primary"
-                    : "w-4 bg-border",
-                )}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return (
-    <div>
-      <SectionTitle>{slide.title || "System Updates"}</SectionTitle>
-      <SectionLead>Recent updates to the planner — run through these with the team.</SectionLead>
-
-      {isLoading ? (
-        <div className="glass-panel rounded-2xl p-6 flex justify-center">
-          <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-        </div>
-      ) : (summaryItems && summaryItems.length > 0) || (summary && summary.length > 0) ? (
-        // Primary focus — the plain-English bullets (curated entry, or AI
-        // summary of recent commits). Big and unembellished so the host can
-        // read them out from across the kitchen.
-        <div className="glass-panel rounded-2xl p-6 border-2 border-primary/30 bg-primary/5">
-          {(updateTitle || updateDate) && (
-            <p className="text-base text-muted-foreground mb-3">
-              {updateTitle ?? "Latest update"}
-              {updateDate ? ` · ${format(new Date(updateDate), "EEE d MMM")}` : ""}
-            </p>
-          )}
-          {/* Titled and prioritised: the host scans the bold titles to
-              decide what's worth the team's time, and the ones nobody
-              would notice sit quietly at the bottom marked as such
-              (Graeme, 2026-08-28). Falls back to the old flat lines for
-              snapshots written before titles existed. */}
-          {summaryItems && summaryItems.length > 0 ? (
-            <ul className="space-y-4">
-              {summaryItems.map((item, i) => (
-                <li key={i} className={cn("leading-snug", !item.teamFacing && "opacity-60")}>
-                  <div className="flex items-start gap-4">
-                    <span className={cn("font-bold shrink-0 mt-1", item.teamFacing ? "text-primary" : "text-muted-foreground")}>•</span>
-                    <div className="min-w-0">
-                      <p className="text-2xl font-bold">
-                        {item.title}
-                        {!item.teamFacing && (
-                          <span className="ml-3 align-middle text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                            behind the scenes
-                          </span>
-                        )}
-                      </p>
-                      <p className="text-xl text-muted-foreground mt-0.5">{item.detail}</p>
-                    </div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <ul className="space-y-3">
-              {summary!.map((line, i) => (
-                <li key={i} className="flex items-start gap-4 text-2xl leading-snug">
-                  <span className="text-primary font-bold shrink-0 mt-1">•</span>
-                  <span>{line}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ) : !data?.available ? (
-        <div className="glass-panel rounded-2xl p-6 text-2xl text-muted-foreground">
-          No system updates to show right now.
-        </div>
-      ) : last7.length === 0 ? (
-        <div className="glass-panel rounded-2xl p-8 text-3xl text-muted-foreground italic text-center">
-          No changes shipped in the last 7 days.
-        </div>
-      ) : (
-        // Fallback: raw commit subjects for the week when Claude isn't
-        // configured to write the plain-English summary.
-        <div className="glass-panel rounded-2xl overflow-hidden">
-          {last7.map((c, i) => (
-            <div key={c.sha} className={cn("px-6 py-4 text-2xl leading-snug", i > 0 && "border-t border-border/50")}>
-              {c.subject}
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Last 7 days — collapsible detail behind the plain-English summary.
-          Hidden when the summary is absent, since the fallback above already
-          lists the week's commits (no point showing them twice). */}
-      {!isLoading && summary && summary.length > 0 && last7.length > 0 && (
-        <div className="mt-6">
-          <button
-            type="button"
-            onClick={() => setShow7Days(s => !s)}
-            className="flex items-center gap-2 text-base font-medium text-muted-foreground hover:text-foreground"
-          >
-            <ChevronRight className={cn("w-4 h-4 transition-transform", show7Days && "rotate-90")} />
-            {show7Days ? "Hide" : "Show"} all changes this week ({last7.length})
-          </button>
-          {show7Days && (
-            <div className="glass-panel rounded-xl overflow-hidden mt-2">
-              <table className="w-full text-base">
-                <thead>
-                  <tr className="bg-secondary/40 border-b border-border/50">
-                    <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">When</th>
-                    <th className="text-left px-4 py-2 text-sm font-medium text-muted-foreground">Change</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {last7.map((c, i) => (
-                    <tr key={c.sha} className={cn(i > 0 && "border-t border-border/50")}>
-                      <td className="px-4 py-2 text-sm text-muted-foreground tabular-nums whitespace-nowrap align-top">
-                        {format(new Date(c.date), "EEE d MMM HH:mm")}
-                      </td>
-                      <td className="px-4 py-2">{c.subject}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }
