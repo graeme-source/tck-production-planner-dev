@@ -5,14 +5,15 @@
  *
  * Reading is Sales & Marketing (founder.sales). Anything that changes what
  * happens to customers' orders or money — switching it on, practice mode,
- * the gift, the refund limit, approving a refund — is the founder's alone.
+ * the gift, the refund limit, the winner emails' wording, approving a
+ * refund — is the founder's alone.
  *
  *   GET  /                               offer, winners, status
  *   GET  /gift-options?q=                 product variants to pick the gift from
  *   PATCH /lucky-order                    change the offer (founder)
  *   POST /lucky-order/refund-decision     approve / decline a refund over the limit (founder)
  *   POST /lucky-order/retry               try a stuck winner again (founder)
- *   POST /lucky-order/test-email          send a test winner event to the founder (founder)
+ *   POST /lucky-order/test-email          send the founder a test winner email (founder)
  *   POST /lucky-order/run                 check for winners now (founder)
  */
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -23,9 +24,8 @@ import { validate } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { requireFounder, FOUNDER_EMAIL } from "../middleware/founder-access";
 import { shopifyWritesBlocked } from "../services/shopify";
-import { getKlaviyoKey } from "../lib/klaviyo-campaign-calendar";
 import {
-  OFFER_KEY, KLAVIYO_METRIC, loadOffer, runLuckyOrderPass, decideRefund, retryWinner, sendWinnerEvent,
+  OFFER_KEY, loadOffer, runLuckyOrderPass, decideRefund, retryWinner, sendWinnerEmail,
 } from "../lib/lucky-order/engine";
 import { offerLiveAt } from "../lib/lucky-order/rules";
 
@@ -55,8 +55,7 @@ router.get("/", async (_req: Request, res: Response) => {
     res.json({
       offer: offer && { ...offer, liveNow: offerLiveAt(offer, new Date()) },
       writesBlocked: shopifyWritesBlocked(),
-      klaviyoConnected: !!(await getKlaviyoKey()),
-      klaviyoMetric: KLAVIYO_METRIC,
+      emailReady: !!process.env["RESEND_API_KEY"],
       founderEmail: FOUNDER_EMAIL,
       winners: winners.rows.map(w => ({
         orderId: w.order_id,
@@ -117,6 +116,13 @@ const offerPatch = z.object({
   giftVariantId: z.string().trim().min(1).max(64).nullable().optional(),
   giftTitle: z.string().trim().max(200).nullable().optional(),
   refundAutoLimit: z.number().min(0).max(1000).optional(),
+  emails: z.object({
+    gift: z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(5000) }).optional(),
+    gift_refund: z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(5000) }).optional(),
+    subscription: z.object({ subject: z.string().trim().min(1).max(200), body: z.string().trim().min(1).max(5000) }).optional(),
+  }).optional(),
+  terms: z.string().trim().max(3000).optional(),
+  replyTo: z.string().trim().email().optional(),
 });
 
 router.patch("/lucky-order", requireFounder, validate(offerPatch), async (req: Request, res: Response) => {
@@ -141,6 +147,9 @@ router.patch("/lucky-order", requireFounder, validate(offerPatch), async (req: R
       ...(b.giftVariantId !== undefined ? { giftVariantId: b.giftVariantId } : {}),
       ...(b.giftTitle !== undefined ? { giftTitle: b.giftTitle } : {}),
       ...(b.refundAutoLimit !== undefined ? { refundAutoLimit: b.refundAutoLimit } : {}),
+      ...(b.emails ? { emails: { ...current.settings.emails, ...b.emails } } : {}),
+      ...(b.terms !== undefined ? { terms: b.terms } : {}),
+      ...(b.replyTo !== undefined ? { replyTo: b.replyTo } : {}),
     };
     // Switching on starts the clock: nothing placed before now can win.
     const switchingOn = b.enabled === true && !current.enabled;
@@ -189,23 +198,20 @@ router.post("/lucky-order/retry", requireFounder, validate(orderRef), async (req
 
 const testEmail = z.object({ tier: z.enum(["gift", "gift_refund", "subscription"]) });
 
-// Sends the founder a test "Lucky Order Winner" event, so the Klaviyo flow
-// can be built and previewed before any real winner (the metric only
-// appears in Klaviyo once an event exists).
+// Sends the founder the real email for a prize, with sample details, so
+// the wording can be checked in an inbox before any customer wins.
 router.post("/lucky-order/test-email", requireFounder, validate(testEmail), async (req: Request, res: Response) => {
   const { tier } = req.body as z.infer<typeof testEmail>;
   try {
     const offer = await loadOffer();
     if (!offer) { res.status(404).json({ error: "Offer not set up" }); return; }
-    await sendWinnerEvent({
-      email: FOUNDER_EMAIL,
+    await sendWinnerEmail({
+      to: FOUNDER_EMAIL,
       firstName: "Graeme",
       tier,
       orderName: tier === "subscription" ? "#999000" : tier === "gift_refund" ? "#999100" : "#999110",
-      orderId: `test-${tier}`,
       giftTitle: tier === "subscription" ? null : offer.settings.giftTitle ?? "Cinnamon Buns – 6 Pack",
       refundAmount: tier === "gift_refund" ? 54.95 : null,
-      refundPendingApproval: false,
       discountCode: tier === "subscription" ? "LUCKYYEAR-999000-TEST00" : null,
       settings: offer.settings,
       test: true,

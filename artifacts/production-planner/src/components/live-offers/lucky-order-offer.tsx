@@ -7,7 +7,7 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Gift, Loader2, Mail, RefreshCw, Search, AlertTriangle, PartyPopper } from "lucide-react";
+import { Check, Gift, Loader2, Mail, RefreshCw, Search, AlertTriangle, PartyPopper, Send } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
@@ -37,7 +37,12 @@ interface Offer {
   endsAt: string | null;
   activatedAt: string | null;
   liveNow: boolean;
-  settings: { giftVariantId?: string | null; giftTitle?: string | null; refundAutoLimit: number; subscriptionAmount: number; subscriptionCycles: number };
+  settings: {
+    giftVariantId?: string | null; giftTitle?: string | null; refundAutoLimit: number; subscriptionAmount: number; subscriptionCycles: number;
+    emails: Record<Tier, { subject: string; body: string }>;
+    terms: string;
+    replyTo: string;
+  };
   updatedBy: string | null;
   updatedAt: string;
 }
@@ -52,13 +57,16 @@ interface Winner {
 interface Data {
   offer: Offer | null;
   writesBlocked: boolean;
-  klaviyoConnected: boolean;
-  klaviyoMetric: string;
+  emailReady: boolean;
   founderEmail: string;
   winners: Winner[];
 }
 
-type Patch = Partial<{ enabled: boolean; practiceMode: boolean; startsAt: string | null; endsAt: string | null; giftVariantId: string | null; giftTitle: string | null; refundAutoLimit: number }>;
+type Patch = Partial<{
+  enabled: boolean; practiceMode: boolean; startsAt: string | null; endsAt: string | null;
+  giftVariantId: string | null; giftTitle: string | null; refundAutoLimit: number;
+  emails: Partial<Record<Tier, { subject: string; body: string }>>; terms: string; replyTo: string;
+}>;
 
 /** ISO -> value for <input type="datetime-local"> in the viewer's time. */
 function toLocalInput(iso: string | null): string {
@@ -180,7 +188,7 @@ export function LuckyOrderOffer({ isFounder }: { isFounder: boolean }) {
           </label>
         </div>
 
-        <KlaviyoBox data={q.data} isFounder={isFounder} />
+        <WinnerEmails data={q.data} offer={offer} isFounder={isFounder} onSave={patch => save.mutate(patch)} />
 
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span>Checks for winners every minute{offer.activatedAt ? ` · switched on ${when(offer.activatedAt)}` : ""} · last changed by {offer.updatedBy ?? "—"} {when(offer.updatedAt)}</span>
@@ -313,31 +321,69 @@ function GiftPicker({ current, disabled, onPick }: { current: string | null; dis
   );
 }
 
-function KlaviyoBox({ data, isFounder }: { data: Data; isFounder: boolean }) {
-  const qc = useQueryClient();
+const PLACEHOLDERS = ["{first_name}", "{order_number}", "{gift}", "{refund_amount}", "{code}", "{amount}", "{orders}"];
+
+/**
+ * The winner emails: a transactional "you've won" email through Resend to
+ * every winner. Subject and body per prize, autosaved when you click away;
+ * "Send me a test" mails the real thing (sample details) to the founder.
+ */
+function WinnerEmails({ data, offer, isFounder, onSave }: { data: Data; offer: Offer; isFounder: boolean; onSave: (p: Patch) => void }) {
   const send = useMutation({
     mutationFn: (tier: Tier) => api<{ sentTo: string }>("/lucky-order/test-email", { method: "POST", body: JSON.stringify({ tier }) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
+  const [sentTier, setSentTier] = useState<Tier | null>(null);
+  const tiers: Tier[] = ["gift", "gift_refund", "subscription"];
   return (
-    <div className="rounded-xl border border-border p-3 space-y-2">
-      <div className="text-sm font-medium flex items-center gap-2"><Mail className="w-4 h-4 text-primary" /> Winner emails (Klaviyo)</div>
-      <p className="text-sm text-muted-foreground max-w-prose">
-        Each winner sends a <strong>“{data.klaviyoMetric}”</strong> event to Klaviyo, with <code>tier</code> (gift / gift_refund / subscription),
-        the gift, refund amount and subscription code. Build one Klaviyo flow on that event and split it by <code>tier</code> for the three emails.
-        {!data.klaviyoConnected && <span className="block text-red-700 mt-1">Klaviyo isn't connected — connect it in the email cadence card on the Overview tab.</span>}
-      </p>
-      {isFounder && data.klaviyoConnected && (
-        <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Send a test event to {data.founderEmail}:</span>
-          {(["gift", "gift_refund", "subscription"] as Tier[]).map(t => (
-            <button key={t} type="button" disabled={send.isPending} onClick={() => send.mutate(t)}
-              className="px-3 min-h-9 rounded-lg border border-border hover:bg-muted">{TIER_LABEL[t]}</button>
-          ))}
-          {send.isSuccess && <span className="text-green-700">Sent — the event is in Klaviyo.</span>}
-          {send.error && <span className="text-red-700">{(send.error as Error).message}</span>}
-        </div>
-      )}
+    <div className="rounded-xl border border-border p-4 space-y-4">
+      <div>
+        <div className="text-sm font-medium flex items-center gap-2"><Mail className="w-4 h-4 text-primary" /> Winner emails</div>
+        <p className="text-sm text-muted-foreground mt-1 max-w-prose">
+          Sent to every winner straight away (a transactional email, so it goes whatever their marketing settings). Write the
+          subject and message for each prize; it saves when you click away. Blank lines start a new paragraph, and a line that's just
+          <code className="mx-1">{"{code}"}</code> shows the subscription code big. You can use: {PLACEHOLDERS.map(p => <code key={p} className="mx-0.5 text-xs">{p}</code>)}
+        </p>
+        {!data.emailReady && <p className="text-sm text-red-700 mt-1">Email sending (Resend) isn't set up on this server — winner emails can't go.</p>}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-3">
+        {tiers.map(t => (
+          <div key={t} className="rounded-lg border border-border p-3 space-y-2">
+            <div className="text-sm font-semibold">{TIER_LABEL[t]}</div>
+            <label className="block text-xs text-muted-foreground">Subject
+              <input className="mt-1 w-full rounded-md border border-border bg-transparent px-2 min-h-9 text-sm text-foreground" disabled={!isFounder}
+                defaultValue={offer.settings.emails[t].subject} key={`subj-${t}-${offer.updatedAt}`}
+                onBlur={e => { const v = e.target.value.trim(); if (v && v !== offer.settings.emails[t].subject) onSave({ emails: { [t]: { subject: v, body: offer.settings.emails[t].body } } }); }} />
+            </label>
+            <label className="block text-xs text-muted-foreground">Message
+              <textarea rows={12} className="mt-1 w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-foreground leading-relaxed" disabled={!isFounder}
+                defaultValue={offer.settings.emails[t].body} key={`body-${t}-${offer.updatedAt}`}
+                onBlur={e => { const v = e.target.value.trim(); if (v && v !== offer.settings.emails[t].body) onSave({ emails: { [t]: { subject: offer.settings.emails[t].subject, body: v } } }); }} />
+            </label>
+            {isFounder && data.emailReady && (
+              <button type="button" disabled={send.isPending} onClick={() => { setSentTier(t); send.mutate(t); }}
+                className="inline-flex items-center gap-1.5 px-3 min-h-9 rounded-lg border border-border text-sm hover:bg-muted">
+                {send.isPending && sentTier === t ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send me a test
+              </button>
+            )}
+            {sentTier === t && send.isSuccess && <p className="text-xs text-green-700">Sent to {data.founderEmail}.</p>}
+            {sentTier === t && send.error && <p className="text-xs text-red-700">{(send.error as Error).message}</p>}
+          </div>
+        ))}
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-[minmax(0,3fr)_minmax(0,1fr)]">
+        <label className="block text-xs text-muted-foreground">Small print under every email (terms)
+          <textarea rows={3} className="mt-1 w-full rounded-md border border-border bg-transparent px-2 py-1.5 text-sm text-foreground" disabled={!isFounder}
+            defaultValue={offer.settings.terms} key={`terms-${offer.updatedAt}`}
+            onBlur={e => { const v = e.target.value.trim(); if (v !== offer.settings.terms) onSave({ terms: v }); }} />
+        </label>
+        <label className="block text-xs text-muted-foreground">Replies go to
+          <input type="email" className="mt-1 w-full rounded-md border border-border bg-transparent px-2 min-h-9 text-sm text-foreground" disabled={!isFounder}
+            defaultValue={offer.settings.replyTo} key={`reply-${offer.updatedAt}`}
+            onBlur={e => { const v = e.target.value.trim(); if (v && v !== offer.settings.replyTo) onSave({ replyTo: v }); }} />
+        </label>
+      </div>
     </div>
   );
 }

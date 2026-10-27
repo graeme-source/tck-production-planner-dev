@@ -1,6 +1,6 @@
 /**
  * Lucky Order Number — the rules, as pure functions (Graeme, 27 Oct 2026).
- * Objective I. The engine (engine.ts) does the Shopify / Klaviyo work; this
+ * Objective I. The engine (engine.ts) does the Shopify and email work; this
  * file only decides.
  *
  *   order number ends in 000 -> "subscription": a year of free subscription

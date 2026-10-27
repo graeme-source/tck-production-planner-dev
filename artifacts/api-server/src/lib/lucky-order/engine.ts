@@ -12,8 +12,9 @@
  *        refund — full refund to the original payment once it's paid;
  *                 above the auto limit it waits for the founder's approval
  *        code   — single-use subscription discount for that customer
- *        email  — a Klaviyo "Lucky Order Winner" event; Tommy's Klaviyo
- *                 flow sends the email for each tier
+ *        email  — a transactional "you've won" email through Resend, to
+ *                 every winner whatever their marketing consent; wording
+ *                 per prize is written on the Live offers tab
  *
  * Practice mode logs winners and touches nothing. Shopify writes go through
  * shopifyGraphQLWrite, so staging / BLOCK_SHOPIFY_WRITES never touch the
@@ -25,19 +26,20 @@ import { sql } from "drizzle-orm";
 import { schedule } from "node-cron";
 import { isStaging } from "../app-env";
 import { FOUNDER_EMAIL } from "../founder-email";
-import { getKlaviyoKey } from "../klaviyo-campaign-calendar";
-import { KLAVIYO_REVISION } from "../klaviyo";
+import { sendEmail } from "../email";
 import { shopifyGraphQL, shopifyGraphQLWrite, ShopifyWritesBlockedError } from "../../services/shopify";
 import {
   winningTier, orderNumberFromName, windowStart, refundNeedsApproval, subscriptionCodeFor,
   initialStatuses, TIER_LABEL, type LuckyTier, type OfferWindow,
 } from "./rules";
+import { buildWinnerEmail, DEFAULT_TEMPLATES, DEFAULT_TERMS, type WinnerEmailTemplates } from "./emails";
 
 export const OFFER_KEY = "lucky_order_number";
 const MAX_ATTEMPTS = 5;
 /** Never look further back than this, even for a long-running offer. */
 const LOOKBACK_MS = 6 * 3_600_000;
-export const KLAVIYO_METRIC = "Lucky Order Winner";
+/** Replies to the winner emails land here unless changed on the tab. */
+export const DEFAULT_REPLY_TO = "hello@thecalzonekitchen.co.uk";
 
 export interface LuckySettings {
   giftVariantId?: string | null;
@@ -45,6 +47,11 @@ export interface LuckySettings {
   refundAutoLimit: number;
   subscriptionAmount: number;
   subscriptionCycles: number;
+  /** Subject + body per prize, written on the Live offers tab. */
+  emails: WinnerEmailTemplates;
+  /** Small-print block under every winner email. */
+  terms: string;
+  replyTo: string;
 }
 
 export interface LuckyOffer extends OfferWindow {
@@ -54,10 +61,29 @@ export interface LuckyOffer extends OfferWindow {
   updatedAt: string;
 }
 
+type StoredSettings = Partial<Omit<LuckySettings, "emails">> & { emails?: Partial<WinnerEmailTemplates> };
+
+function withDefaults(stored: StoredSettings | null): LuckySettings {
+  const x = stored ?? {};
+  return {
+    refundAutoLimit: 100,
+    subscriptionAmount: 75,
+    subscriptionCycles: 6,
+    ...x,
+    emails: {
+      gift: { ...DEFAULT_TEMPLATES.gift, ...(x.emails?.gift ?? {}) },
+      gift_refund: { ...DEFAULT_TEMPLATES.gift_refund, ...(x.emails?.gift_refund ?? {}) },
+      subscription: { ...DEFAULT_TEMPLATES.subscription, ...(x.emails?.subscription ?? {}) },
+    },
+    terms: x.terms ?? DEFAULT_TERMS,
+    replyTo: x.replyTo || DEFAULT_REPLY_TO,
+  };
+}
+
 export async function loadOffer(): Promise<LuckyOffer | null> {
   const r = await db.execute<{
     enabled: boolean; practice_mode: boolean; starts_at: string | null; ends_at: string | null;
-    activated_at: string | null; settings: Partial<LuckySettings> | null; updated_by: string | null; updated_at: string;
+    activated_at: string | null; settings: StoredSettings | null; updated_by: string | null; updated_at: string;
   }>(sql`SELECT enabled, practice_mode, starts_at, ends_at, activated_at, settings, updated_by, updated_at FROM live_offers WHERE key = ${OFFER_KEY}`);
   const x = r.rows[0];
   if (!x) return null;
@@ -68,7 +94,7 @@ export async function loadOffer(): Promise<LuckyOffer | null> {
     startsAt: iso(x.starts_at),
     endsAt: iso(x.ends_at),
     activatedAt: iso(x.activated_at),
-    settings: { refundAutoLimit: 100, subscriptionAmount: 75, subscriptionCycles: 6, ...(x.settings ?? {}) },
+    settings: withDefaults(x.settings),
     updatedBy: x.updated_by,
     updatedAt: new Date(x.updated_at).toISOString(),
   };
@@ -248,43 +274,34 @@ async function createSubscriptionCode(w: WinnerRow, s: LuckySettings): Promise<s
   return code;
 }
 
-// ── Klaviyo ────────────────────────────────────────────────────────────────
+// ── Winner email (Resend) ───────────────────────────────────────────────────
 
-export async function sendWinnerEvent(p: {
-  email: string; firstName: string | null; tier: LuckyTier; orderName: string; orderId: string;
-  giftTitle: string | null; refundAmount: number | null; refundPendingApproval: boolean;
-  discountCode: string | null; settings: LuckySettings; test?: boolean;
+export async function sendWinnerEmail(p: {
+  to: string; firstName: string | null; tier: LuckyTier; orderName: string;
+  giftTitle: string | null; refundAmount: number | null; discountCode: string | null;
+  settings: LuckySettings; test?: boolean;
 }): Promise<void> {
-  const key = await getKlaviyoKey();
-  if (!key) throw new Error("Klaviyo isn't connected (Sales & Marketing → email cadence)");
-  const res = await fetch("https://a.klaviyo.com/api/events", {
-    method: "POST",
-    headers: {
-      Authorization: `Klaviyo-API-Key ${key}`,
-      revision: KLAVIYO_REVISION,
-      Accept: "application/vnd.api+json",
-      "Content-Type": "application/vnd.api+json",
-    },
-    body: JSON.stringify({ data: { type: "event", attributes: {
-      properties: {
-        tier: p.tier,
-        tier_label: TIER_LABEL[p.tier],
-        order_name: p.orderName,
-        gift: p.giftTitle,
-        full_refund: p.tier === "gift_refund",
-        refund_amount: p.refundAmount,
-        refund_pending_approval: p.refundPendingApproval,
-        discount_code: p.discountCode,
-        subscription_amount_per_order: p.tier === "subscription" ? p.settings.subscriptionAmount : null,
-        subscription_orders: p.tier === "subscription" ? p.settings.subscriptionCycles : null,
-        test: p.test ?? false,
-      },
-      unique_id: `lucky-${p.orderId}${p.test ? `-test-${Date.now()}` : ""}`,
-      metric: { data: { type: "metric", attributes: { name: KLAVIYO_METRIC } } },
-      profile: { data: { type: "profile", attributes: { email: p.email, ...(p.firstName ? { first_name: p.firstName } : {}) } } },
-    } } }),
+  if (!process.env["RESEND_API_KEY"]) throw new Error("Resend isn't set up on this server (RESEND_API_KEY), so the email can't go");
+  const s = p.settings;
+  const email = buildWinnerEmail(s.emails[p.tier], {
+    firstName: p.firstName,
+    orderName: p.orderName,
+    gift: p.giftTitle ?? s.giftTitle ?? null,
+    refundAmount: p.refundAmount,
+    code: p.discountCode,
+    amount: s.subscriptionAmount,
+    orders: s.subscriptionCycles,
+  }, s.terms);
+  // fromName / replyTo force the Resend path in sendEmail (transactional,
+  // so every winner gets it, whatever their marketing consent).
+  await sendEmail({
+    to: p.to,
+    subject: p.test ? `[TEST] ${email.subject}` : email.subject,
+    html: email.html,
+    text: email.text,
+    fromName: "The Calzone Kitchen",
+    replyTo: s.replyTo,
   });
-  if (!res.ok) throw new Error(`Klaviyo ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
 // ── Founder alerts ─────────────────────────────────────────────────────────
@@ -401,15 +418,13 @@ async function workWinner(w: WinnerRow, offer: LuckyOffer): Promise<void> {
     && w.refund_status !== "pending" && w.refund_status !== "approved";
   if (w.email_status === "pending" && ready) {
     if (!w.customer_email) throw new Error("the order has no email address");
-    await sendWinnerEvent({
-      email: w.customer_email,
+    await sendWinnerEmail({
+      to: w.customer_email,
       firstName: w.customer_name?.split(" ")[0] ?? null,
       tier: w.tier,
       orderName: w.order_name,
-      orderId: w.order_id,
-      giftTitle: w.gift_status === "done" ? s.giftTitle ?? null : null,
+      giftTitle: w.gift_status === "done" ? w.gift_title ?? s.giftTitle ?? null : null,
       refundAmount: w.refund_amount != null ? Number(w.refund_amount) : null,
-      refundPendingApproval: w.refund_status === "awaiting_approval",
       discountCode: w.discount_code,
       settings: s,
     });
