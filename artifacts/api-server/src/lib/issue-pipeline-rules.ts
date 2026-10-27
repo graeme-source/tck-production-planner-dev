@@ -453,6 +453,15 @@ export function isImprovementDue(t: {
   return t.status === "fixed" && t.issueResolvedAt != null;
 }
 
+/** A repeat of an earlier request (Graeme, 27 Oct 2026): when a related,
+ *  EARLIER report of the same thing is also an improvement that was
+ *  approved or built, only that first report earns the credit — one build,
+ *  one credit (e.g. #328 repeating #248). */
+export function isRepeatOfEarlierRequest(andonIssueId: number, related: ReadonlyArray<{ andonIssueId: number; lane: string; status: string }>): boolean {
+  return related.some(r => r.andonIssueId < andonIssueId && r.lane === "improvement"
+    && (r.status === "approved" || r.status === "in_progress" || r.status === "fixed"));
+}
+
 /** When the credited improvement counts as done: the day it actually went
  *  live (midday, so it lands on that London day), else now. Keeps old
  *  reports from piling onto today's "improvements completed". */

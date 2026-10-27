@@ -17,7 +17,7 @@ import {
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  classifyIssueArea, improvementDoneAt, isImprovementDue, noticeQuote, reporterConversation, reporterResponsePlan,
+  classifyIssueArea, improvementDoneAt, isImprovementDue, isRepeatOfEarlierRequest, noticeQuote, reporterConversation, reporterResponsePlan,
   type IssueAreaClass, type NoticeAckAction, type TriageStatus,
 } from "./issue-pipeline-rules";
 import { pinLeadCredit } from "./improvement-credits-data";
@@ -295,6 +295,13 @@ export async function messageReporter(
  */
 export async function creditImprovementIfDue(tx: Tx, triage: IssueTriage, approverName: string): Promise<number | null> {
   if (!isImprovementDue({ ...triage, status: triage.status as TriageStatus })) return null;
+  // One build, one credit: a repeat of an earlier approved/built request isn't credited.
+  const relatedIds = (triage.relatedIssueIds ?? []).filter(id => id < triage.andonIssueId);
+  if (relatedIds.length) {
+    const related = await tx.select({ andonIssueId: issueTriageTable.andonIssueId, lane: issueTriageTable.lane, status: issueTriageTable.status })
+      .from(issueTriageTable).where(inArray(issueTriageTable.andonIssueId, relatedIds));
+    if (isRepeatOfEarlierRequest(triage.andonIssueId, related)) return null;
+  }
   const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, triage.andonIssueId));
   if (!issue) return null;
   const now = new Date();
