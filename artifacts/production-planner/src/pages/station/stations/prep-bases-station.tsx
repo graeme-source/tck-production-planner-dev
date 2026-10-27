@@ -733,6 +733,11 @@ export function SubRecipeMakeFlow({
           undone here. */}
       <div className="space-y-2">
         {filteredList.map(sr => {
+          // Not shown on the row (amounts live inside the opened item), but an
+          // SOP opened from the row still gets the day's amounts (issue #340).
+          const batchsNeeded = mode === "plan" && sr.totalRequired > 0 && sr.yield > 0
+            ? Math.ceil(sr.totalRequired / sr.yield)
+            : null;
           const isDone = completedIds?.has(sr.subRecipeId) ?? false;
           return (
             <div
