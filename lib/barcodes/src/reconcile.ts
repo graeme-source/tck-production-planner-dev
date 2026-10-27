@@ -1,11 +1,16 @@
 /**
  * Comparing our barcode for a variant with Shopify's — the rule behind the
- * one-time pull, the hourly check and the "Check Shopify now" button.
- * Shopify is only ever READ. Our database is the source of truth for
- * scanning: a barcode the app owns is never overwritten by a check — a
- * difference is LISTED ("Different in Shopify") for a person, whose only
- * action is "Use Shopify's". (Shopify's barcode also feeds Google Shopping
- * GTINs, which is why a difference is worth seeing.)
+ * one-time pull, the hourly check and the "Check Shopify now" button. This
+ * is the Shopify → app direction (app → Shopify is push.ts). Our database is
+ * the source of truth for scanning: a barcode the app owns is never
+ * overwritten by a check — a difference is LISTED ("Different in Shopify")
+ * for a person, who picks "Use Shopify's" or "Send ours to Shopify".
+ * (Shopify's barcode also feeds Google Shopping GTINs.)
+ *
+ * ADOPT (12 Oct 2026): where the app has NO barcode and Shopify has one,
+ * the hourly check takes Shopify's (logged) — unless a person cleared ours
+ * on purpose (a barcode moved away: source 'app', barcode empty), or
+ * Shopify's number already belongs to another current product here.
  *
  * Who owns a variant's barcode:
  *   - a variant LINKED to a recipe (lib links.ts) — set in the app.
@@ -39,7 +44,8 @@ export type PullOutcome =
 
 export interface PullInput {
   /** "pull" fills an empty barcode of ours from Shopify; "check" (hourly)
-   *  only reports it. Neither ever overwrites a barcode we hold. */
+   *  adopts it too, except where a person cleared ours on purpose or the
+   *  number is another product's. Neither ever overwrites a barcode we hold. */
   mode?: "pull" | "check";
   linked: boolean;
   /** Linked to an active recipe or an active Shopify product (identity.ts).
@@ -50,6 +56,9 @@ export interface PullInput {
   ours: string | null;
   /** null = the variant was not found in Shopify at all. */
   shopify: { barcode: string | null } | null;
+  /** Shopify's number is held by another CURRENT product in our table —
+   *  adopting it would make a clash, so the check leaves it for a person. */
+  heldElsewhere?: boolean;
 }
 
 export interface PullDecision {
@@ -90,7 +99,9 @@ export function decidePull(input: PullInput): PullDecision {
     return { outcome: "unchanged", invalid: isInvalid(ours) };
   }
   if (ours == null) {
-    return input.mode === "check"
+    // Empty AND app-set = a person moved the barcode away on purpose.
+    const clearedByPerson = !!input.setInApp;
+    return input.mode === "check" && (clearedByPerson || input.heldElsewhere)
       ? { outcome: "shopify-only", invalid: isInvalid(theirs) }
       : { outcome: "filled", setOurs: theirs, invalid: isInvalid(theirs) };
   }
@@ -131,7 +142,7 @@ export function countOutcomes(decisions: Array<Pick<PullDecision, "outcome" | "i
 
 /** "Different in Shopify" on screen: Shopify had a barcode at the last check
  *  and it isn't ours (including Shopify having one where we have none).
- *  Informational — the one action is "Use Shopify's". */
+ *  A person picks "Use Shopify's" or "Send ours to Shopify". */
 export function isDifferentInShopify(row: { ours: string | null; shopifyBarcode: string | null; shopifyCheckedAt: unknown; notInShopify?: boolean }): boolean {
   if (row.shopifyCheckedAt == null || row.notInShopify) return false;
   const ours = val(row.ours);
