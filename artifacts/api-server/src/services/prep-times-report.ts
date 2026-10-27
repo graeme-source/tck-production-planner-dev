@@ -53,9 +53,10 @@ export interface PrepTimesItem {
   id: number;
   name: string;
   sessions: number;
-  medianMinutes: number;
-  q1Minutes: number;
-  q3Minutes: number;
+  /** Null when the item has no timed session (only quick or unopened completions). */
+  medianMinutes: number | null;
+  q1Minutes: number | null;
+  q3Minutes: number | null;
   minutesPerKg: number | null;
   minutesPerCount: number | null;
   countUnit: string | null;
@@ -65,6 +66,10 @@ export interface PrepTimesItem {
   days: number;
   people: number;
   usedByRecipes: number;
+  /** Completions inside 30 s — kept as ticks, never averaged (likely ready-made or check-only). */
+  quickCompletions: number;
+  /** Completions made with nothing opened (flag-and-allow). */
+  unopenedCompletions: number;
 }
 
 export interface PrepTimesRecipeLine {
@@ -150,9 +155,10 @@ export async function loadLabourSettings(): Promise<{ settings: LabourSettings; 
 async function loadSessions(): Promise<{ sessions: TimingSession[]; breaks: TimingBreak[] }> {
   const window = sql`NOW() - make_interval(days => ${REPORT_WINDOW_DAYS})`;
   const [sessionRows, completionRows, breakRows] = await Promise.all([
-    db.execute<{ id: number; user_id: number | null; ingredient_id: number | null; sub_recipe_id: number | null; opened_ms: number; pauses: Array<{ from: number; to: number }> | null }>(sql`
+    db.execute<{ id: number; user_id: number | null; ingredient_id: number | null; sub_recipe_id: number | null; opened_ms: number; closed_ms: number | null; flag: string | null; pauses: Array<{ from: number; to: number }> | null }>(sql`
       SELECT id, user_id, ingredient_id, sub_recipe_id,
-             (EXTRACT(EPOCH FROM opened_at) * 1000)::float8 AS opened_ms, pauses
+             (EXTRACT(EPOCH FROM opened_at) * 1000)::float8 AS opened_ms,
+             (EXTRACT(EPOCH FROM closed_at) * 1000)::float8 AS closed_ms, flag, pauses
         FROM prep_sessions
        WHERE opened_at >= ${window}
     `),
@@ -186,6 +192,8 @@ async function loadSessions(): Promise<{ sessions: TimingSession[]; breaks: Timi
       userId: s.user_id,
       itemKey: s.ingredient_id != null ? prepItemKey("ingredient", s.ingredient_id) : prepItemKey("sub_recipe", s.sub_recipe_id!),
       openedAt: Number(s.opened_ms),
+      closedAt: s.closed_ms == null ? null : Number(s.closed_ms),
+      flag: s.flag,
       completedAt: done.length > 0 ? Math.max(...done.map(d => d.at)) : null,
       pauses: Array.isArray(s.pauses) ? s.pauses.map(p => ({ from: Number(p.from), to: Number(p.to) })) : [],
       amounts: done.map(d => ({ quantity: d.quantity, unit: d.unit })),
@@ -266,7 +274,7 @@ export async function buildPrepTimesReport(): Promise<PrepTimesReport> {
     loadBuildSuggestions(new Date(Date.now() - BUILD_HISTORY_DAYS * 86_400_000)),
   ]);
   const settings = labour.settings;
-  const { clean, excluded } = cleanSessions(sessions, breaks);
+  const { clean, excluded, quickCompletionsByItem, unopenedByItem } = cleanSessions(sessions, breaks);
 
   const byItem = new Map<string, CleanSession[]>();
   for (const c of clean) {
@@ -275,8 +283,13 @@ export async function buildPrepTimesReport(): Promise<PrepTimesReport> {
     byItem.set(c.itemKey, list);
   }
   const timings = new Map<string, ItemTiming>();
+  // Items with only quick or unopened completions still get an entry.
+  for (const key of [...quickCompletionsByItem.keys(), ...unopenedByItem.keys()]) if (!byItem.has(key)) byItem.set(key, []);
   for (const [key, list] of byItem) {
-    const t = summariseItem(key, list, londonDay);
+    const t = summariseItem(key, list, londonDay, {
+      quickCompletions: quickCompletionsByItem.get(key) ?? 0,
+      unopenedCompletions: unopenedByItem.get(key) ?? 0,
+    });
     if (t) timings.set(key, t);
   }
 
@@ -363,9 +376,9 @@ export async function buildPrepTimesReport(): Promise<PrepTimesReport> {
       id: Number(idText),
       name: nameOf(t.itemKey),
       sessions: t.sessions,
-      medianMinutes: t.minutes.median,
-      q1Minutes: t.minutes.q1,
-      q3Minutes: t.minutes.q3,
+      medianMinutes: t.minutes?.median ?? null,
+      q1Minutes: t.minutes?.q1 ?? null,
+      q3Minutes: t.minutes?.q3 ?? null,
       minutesPerKg: t.rate.minutesPerKg,
       minutesPerCount: t.rate.minutesPerCount,
       countUnit: t.rate.countUnit,
@@ -375,8 +388,10 @@ export async function buildPrepTimesReport(): Promise<PrepTimesReport> {
       days: t.days,
       people: t.people,
       usedByRecipes: usedBy.get(t.itemKey) ?? 0,
+      quickCompletions: t.quickCompletions,
+      unopenedCompletions: t.unopenedCompletions,
     };
-  }).sort((a, b) => b.medianMinutes - a.medianMinutes);
+  }).sort((a, b) => (b.medianMinutes ?? -1) - (a.medianMinutes ?? -1) || a.name.localeCompare(b.name));
 
   const days = [...new Set(clean.map(c => londonDay(c.completedAt)))].sort();
   return {

@@ -94,7 +94,13 @@ export function labourCost(minutes: number, crew: number, ratePerHour: number): 
   return (minutes / 60) * crew * ratePerHour;
 }
 
-export type LineStatus = "timed" | "not_measured" | "no_matching_amount";
+/** timed: a measured rate × the amount.
+ *  quick_only: only ever completed inside 30 s (ready-made or check-only) —
+ *    counts as no prep time, and as covered.
+ *  not_measured: no timing yet (or only completions made without opening).
+ *  no_matching_amount: timed, but in a different measure from the recipe's
+ *    amount (pieces vs kg), so it can't be priced. */
+export type LineStatus = "timed" | "quick_only" | "not_measured" | "no_matching_amount";
 
 export interface RecipePrepLine {
   itemKey: string;
@@ -117,7 +123,10 @@ const RANK: Record<Confidence, number> = { needs_more_data: 0, settling: 1, conf
 export function recipePrepMinutes(usage: ReadonlyArray<PrepUsage>, timings: ReadonlyMap<string, ItemTiming>): RecipePrepMinutes {
   const lines: RecipePrepLine[] = usage.map(u => {
     const t = timings.get(u.itemKey);
-    if (!t) return { itemKey: u.itemKey, minutes: null, status: "not_measured", confidence: null };
+    if (!t || (t.sessions === 0 && t.quickCompletions === 0)) {
+      return { itemKey: u.itemKey, minutes: null, status: "not_measured", confidence: null };
+    }
+    if (t.sessions === 0) return { itemKey: u.itemKey, minutes: 0, status: "quick_only", confidence: null };
     if (u.grams != null && t.rate.minutesPerKg != null) {
       return { itemKey: u.itemKey, minutes: (u.grams / 1000) * t.rate.minutesPerKg, status: "timed", confidence: t.confidence };
     }
@@ -136,7 +145,7 @@ export function recipePrepMinutes(usage: ReadonlyArray<PrepUsage>, timings: Read
   return {
     minutes,
     lines,
-    timedItems: lines.filter(l => l.status === "timed").length,
+    timedItems: lines.filter(l => l.status === "timed" || l.status === "quick_only").length,
     totalItems: lines.length,
     confidence,
   };

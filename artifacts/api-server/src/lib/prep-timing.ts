@@ -11,9 +11,15 @@
  *      back within 15 minutes) and the person's recorded breaks (Snack /
  *      Lunch on any station; a break nobody ended counts at most
  *      UNENDED_BREAK_MS).
- *   3. What's left under MIN_SESSION_MS was ticked without being timed
- *      (prepped off-screen, or ticking someone else's tin) and is ignored;
- *      over MAX_SESSION_MS it was left open, and is ignored.
+ *   3. The 30-second rule (Graeme, 27 Oct 2026), on what's left:
+ *        - opened and closed again inside MIN_SESSION_MS without completing:
+ *          a QUICK LOOK (someone checking the numbers) — ignored entirely;
+ *        - completed inside MIN_SESSION_MS: a QUICK COMPLETION — the tick
+ *          stands, but it's left out of every average and counted per item
+ *          instead (likely a ready-made or check-only item);
+ *        - over MAX_SESSION_MS it was left open, and is ignored.
+ *      A completion with nothing opened (flagged completed_without_open,
+ *      lib/prep-session-rules.ts) is never timed, only counted per item.
  *   4. Where the same person had two sessions running at once (two items,
  *      or two iPads), the overlapping time is split evenly between them —
  *      never counted twice.
@@ -27,13 +33,14 @@
  * make a kilo look dearer than it is.
  */
 import { gramsOrNull } from "@workspace/units";
-import { MAX_SESSION_MS } from "./prep-session-rules";
+import { COMPLETED_WITHOUT_OPEN, MAX_SESSION_MS } from "./prep-session-rules";
 import { countUnitOf } from "./prep-usage";
 
-export { MAX_SESSION_MS };
+export { COMPLETED_WITHOUT_OPEN, MAX_SESSION_MS };
 
-/** Shorter than this, the item was ticked without being timed. */
-export const MIN_SESSION_MS = 15_000;
+/** Under this, a session isn't timed prep: a quick look when nothing was
+ *  completed, a quick completion when something was (step 3 above). */
+export const MIN_SESSION_MS = 30_000;
 /** A break with no end counts as at most this long. */
 export const UNENDED_BREAK_MS = 45 * 60_000;
 /** Fewer sessions than this: "needs more data". */
@@ -51,9 +58,14 @@ export interface TimingSession {
   openedAt: number;
   /** Latest completion, epoch ms; null = nothing completed. */
   completedAt: number | null;
+  /** When the person last moved off it, epoch ms; null = still open (or
+   *  the screen went away without saying). */
+  closedAt: number | null;
   pauses: ReadonlyArray<{ from: number; to: number }>;
   /** One entry per completion: what it prepared (quantity may be unknown). */
   amounts: ReadonlyArray<{ quantity: number | null; unit: string | null }>;
+  /** COMPLETED_WITHOUT_OPEN for a completion made with nothing opened. */
+  flag?: string | null;
 }
 
 export interface TimingBreak {
@@ -63,7 +75,17 @@ export interface TimingBreak {
   to: number | null;
 }
 
-export type ExcludedReason = "not_completed" | "too_quick" | "too_long";
+export type ExcludedReason =
+  /** Opened and closed again inside 30 s without completing — ignored. */
+  | "quick_look"
+  /** Opened for 30 s or more (or never closed) without completing. */
+  | "not_completed"
+  /** Completed inside 30 s — the tick stands, the time isn't averaged. */
+  | "quick_completion"
+  /** Over two hours — left open. */
+  | "too_long"
+  /** A completion with nothing opened (flag-and-allow). */
+  | "completed_without_open";
 
 export interface CleanSession {
   id: number;
@@ -157,26 +179,57 @@ export function sessionAmount(amounts: TimingSession["amounts"]): { grams: numbe
   return weighed ? { grams, count: null, countUnit: null } : { grams: null, count, countUnit };
 }
 
+export interface CleanResult {
+  clean: CleanSession[];
+  excluded: Record<ExcludedReason, number>;
+  /** Per item: completions made inside 30 s — kept as ticks, never averaged. */
+  quickCompletionsByItem: Map<string, number>;
+  /** Per item: completions made with nothing opened (flagged). */
+  unopenedByItem: Map<string, number>;
+}
+
 export function cleanSessions(
   sessions: ReadonlyArray<TimingSession>,
   breaks: ReadonlyArray<TimingBreak>,
-): { clean: CleanSession[]; excluded: Record<ExcludedReason, number> } {
-  const excluded: Record<ExcludedReason, number> = { not_completed: 0, too_quick: 0, too_long: 0 };
+): CleanResult {
+  const excluded: Record<ExcludedReason, number> = {
+    quick_look: 0, not_completed: 0, quick_completion: 0, too_long: 0, completed_without_open: 0,
+  };
+  const quickCompletionsByItem = new Map<string, number>();
+  const unopenedByItem = new Map<string, number>();
+  const bump = (m: Map<string, number>, key: string) => m.set(key, (m.get(key) ?? 0) + 1);
   const breaksByUser = new Map<number, Interval[]>();
   for (const b of breaks) {
     const list = breaksByUser.get(b.userId) ?? [];
     list.push([b.from, b.to ?? b.from + UNENDED_BREAK_MS]);
     breaksByUser.set(b.userId, list);
   }
+  /** [start, end] less the session's pauses and the person's breaks. */
+  const activeIntervals = (s: TimingSession, end: number) => subtractIntervals(
+    [s.openedAt, end],
+    [...s.pauses.map(p => [p.from, p.to] as Interval), ...(s.userId != null ? breaksByUser.get(s.userId) ?? [] : [])],
+  );
 
   const kept: Array<{ s: TimingSession; intervals: Interval[]; activeMs: number; hadIdleGap: boolean }> = [];
   for (const s of sessions) {
-    if (s.completedAt == null || s.amounts.length === 0) { excluded.not_completed++; continue; }
-    const pauses: Interval[] = s.pauses.map(p => [p.from, p.to]);
-    const userBreaks = s.userId != null ? breaksByUser.get(s.userId) ?? [] : [];
-    const intervals = subtractIntervals([s.openedAt, s.completedAt], [...pauses, ...userBreaks]);
+    if (s.flag === COMPLETED_WITHOUT_OPEN) {
+      excluded.completed_without_open++;
+      bump(unopenedByItem, s.itemKey);
+      continue;
+    }
+    if (s.completedAt == null || s.amounts.length === 0) {
+      // Opened, nothing completed: a quick look if closed again inside 30 s.
+      const quickLook = s.closedAt != null && span(activeIntervals(s, s.closedAt)) < MIN_SESSION_MS;
+      excluded[quickLook ? "quick_look" : "not_completed"]++;
+      continue;
+    }
+    const intervals = activeIntervals(s, s.completedAt);
     const activeMs = span(intervals);
-    if (activeMs < MIN_SESSION_MS) { excluded.too_quick++; continue; }
+    if (activeMs < MIN_SESSION_MS) {
+      excluded.quick_completion++;
+      bump(quickCompletionsByItem, s.itemKey);
+      continue;
+    }
     if (activeMs > MAX_SESSION_MS) { excluded.too_long++; continue; }
     const wall = Math.max(0, s.completedAt - s.openedAt);
     kept.push({ s, intervals, activeMs, hadIdleGap: activeMs < wall });
@@ -207,7 +260,7 @@ export function cleanSessions(
       shared: share.shared,
     };
   });
-  return { clean, excluded };
+  return { clean, excluded, quickCompletionsByItem, unopenedByItem };
 }
 
 /** Linear-interpolated quantile of an ascending list (p in 0…1). */
@@ -262,15 +315,25 @@ export interface ItemRate {
 
 export interface ItemTiming {
   itemKey: string;
+  /** Timed sessions (30 s or more, under two hours). */
   sessions: number;
-  minutes: Spread;
+  /** Their minutes — null when the item has no timed session yet. */
+  minutes: Spread | null;
   rate: ItemRate;
   confidence: Confidence;
-  /** London days with a counted session for this item. */
+  /** Completions inside 30 s: kept as ticks, never averaged — likely a
+   *  ready-made or check-only item. */
+  quickCompletions: number;
+  /** Completions made with nothing opened (flag-and-allow). */
+  unopenedCompletions: number;
+  /** London days with a timed session for this item. */
   days: number;
   people: number;
-  lastAt: number;
+  /** Latest timed session, epoch ms; null when none. */
+  lastAt: number | null;
 }
+
+const NO_RATE: ItemRate = { minutesPerKg: null, minutesPerCount: null, countUnit: null, rateSessions: 0, trimmed: 0, rateSpread: null };
 
 /** Total ÷ total over the sessions whose own rate isn't an outlier. */
 export function rateFrom(points: ReadonlyArray<{ minutes: number; amount: number }>): { rate: number | null; used: number; trimmed: number; spread: Spread | null } {
@@ -285,8 +348,25 @@ export function rateFrom(points: ReadonlyArray<{ minutes: number; amount: number
   return { rate: amt > 0 ? mins / amt : null, used, trimmed: usable.length - used, spread: spreadOf(rates) };
 }
 
-export function summariseItem(itemKey: string, sessions: ReadonlyArray<CleanSession>, dayOf: (ms: number) => string): ItemTiming | null {
-  if (sessions.length === 0) return null;
+/** An item's timing. `counts` are its quick and unopened completions
+ *  (cleanSessions' per-item maps); an item with only those still gets an
+ *  entry — no minutes, but the counts say what's going on. Null when there
+ *  is nothing at all. */
+export function summariseItem(
+  itemKey: string,
+  sessions: ReadonlyArray<CleanSession>,
+  dayOf: (ms: number) => string,
+  counts: { quickCompletions?: number; unopenedCompletions?: number } = {},
+): ItemTiming | null {
+  const quickCompletions = counts.quickCompletions ?? 0;
+  const unopenedCompletions = counts.unopenedCompletions ?? 0;
+  if (sessions.length === 0) {
+    if (quickCompletions === 0 && unopenedCompletions === 0) return null;
+    return {
+      itemKey, sessions: 0, minutes: null, rate: NO_RATE, confidence: "needs_more_data",
+      quickCompletions, unopenedCompletions, days: 0, people: 0, lastAt: null,
+    };
+  }
   const minutes = spreadOf(sessions.map(s => s.minutes))!;
   const weighed = rateFrom(sessions.filter(s => s.grams != null).map(s => ({ minutes: s.minutes, amount: s.grams! / 1000 })));
   // Counted items: the most common count unit wins (normally the only one).
@@ -314,6 +394,8 @@ export function summariseItem(itemKey: string, sessions: ReadonlyArray<CleanSess
     minutes,
     rate,
     confidence,
+    quickCompletions,
+    unopenedCompletions,
     days: new Set(sessions.map(s => dayOf(s.completedAt))).size,
     people: new Set(sessions.map(s => s.userId).filter(u => u != null)).size,
     lastAt: Math.max(...sessions.map(s => s.completedAt)),

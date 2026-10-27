@@ -5,18 +5,24 @@ import {
 import type { ItemTiming, Confidence } from "./prep-timing";
 import type { PrepUsage } from "./prep-usage";
 
-function timing(itemKey: string, over: { perKg?: number | null; perCount?: number | null; countUnit?: string | null; confidence?: Confidence }): ItemTiming {
+function timing(itemKey: string, over: {
+  perKg?: number | null; perCount?: number | null; countUnit?: string | null; confidence?: Confidence;
+  sessions?: number; quickCompletions?: number; unopenedCompletions?: number;
+}): ItemTiming {
+  const sessions = over.sessions ?? 10;
   return {
     itemKey,
-    sessions: 10,
-    minutes: { median: 5, q1: 4, q3: 6 },
+    sessions,
+    minutes: sessions > 0 ? { median: 5, q1: 4, q3: 6 } : null,
     rate: {
       minutesPerKg: over.perKg ?? null,
       minutesPerCount: over.perCount ?? null,
       countUnit: over.countUnit ?? null,
-      rateSessions: 10, trimmed: 0, rateSpread: null,
+      rateSessions: sessions, trimmed: 0, rateSpread: null,
     },
     confidence: over.confidence ?? "confident",
+    quickCompletions: over.quickCompletions ?? 0,
+    unopenedCompletions: over.unopenedCompletions ?? 0,
     days: 5, people: 2, lastAt: 0,
   };
 }
@@ -61,6 +67,25 @@ describe("recipePrepMinutes", () => {
 
   it("has no confidence when nothing is timed", () => {
     expect(recipePrepMinutes([use("ingredient:1", 100)], new Map()).confidence).toBeNull();
+  });
+
+  it("an item only ever completed inside 30 s (ready-made) counts as no prep time, and as covered", () => {
+    const timings = new Map([
+      ["ingredient:1", timing("ingredient:1", { perKg: 3 })],
+      ["sub_recipe:43", timing("sub_recipe:43", { sessions: 0, quickCompletions: 6 })],
+    ]);
+    const r = recipePrepMinutes([use("ingredient:1", 2000), use("sub_recipe:43", 70)], timings);
+    expect(r.lines.find(l => l.itemKey === "sub_recipe:43")).toEqual({ itemKey: "sub_recipe:43", minutes: 0, status: "quick_only", confidence: null });
+    expect(r.minutes).toBeCloseTo(6);
+    expect(r.timedItems).toBe(2);
+    expect(r.confidence).toBe("confident");
+  });
+
+  it("an item only ever completed without being opened is not measured", () => {
+    const timings = new Map([["ingredient:5", timing("ingredient:5", { sessions: 0, unopenedCompletions: 3 })]]);
+    const r = recipePrepMinutes([use("ingredient:5", 500)], timings);
+    expect(r.lines[0]!.status).toBe("not_measured");
+    expect(r.timedItems).toBe(0);
   });
 });
 
