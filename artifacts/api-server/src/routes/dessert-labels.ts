@@ -28,6 +28,7 @@ import { buildDessertReport, type FivePackLabelLine } from "../lib/desserts-repo
 import { getOrdersByTag, getProductsByTag } from "../services/shopify";
 import { scanQueueBarcodes } from "../lib/barcode-store";
 import { fonts } from "../lib/product-labels-store";
+import { shortError } from "../lib/finance/cash-flow";
 
 const router: IRouter = Router();
 router.use(requireFulfilmentAccess);
@@ -76,7 +77,7 @@ router.get("/", validateQuery(TagQuery), async (_req: Request, res: Response) =>
     });
   } catch (err) {
     console.error("[dessert-labels] list:", err);
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(502).json({ error: shortError(err instanceof Error ? err.message : String(err)) });
   }
 });
 
@@ -94,7 +95,7 @@ router.post("/print", validate(TagQuery), async (req: Request, res: Response) =>
     res.send(Buffer.from(pdf));
   } catch (err) {
     console.error("[dessert-labels] print:", err);
-    res.status(502).json({ error: err instanceof Error ? err.message : String(err) });
+    res.status(502).json({ error: shortError(err instanceof Error ? err.message : String(err)) });
   }
 });
 
