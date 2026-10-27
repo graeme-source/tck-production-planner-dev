@@ -184,7 +184,21 @@ export function comparableSnapshot(s: LabelSnapshot): unknown {
   // barcode), so it never matters here.
   const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, format: _fm, barcodeOn: _bo, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
-  return { ...rest, template: withoutDefaultUseBy(withoutOffBestBefore(withoutBlankSubtitle(template))) };
+  return { ...rest, template: withoutDefaultUseBy(withoutOffBestBefore(withoutBlankSubtitle(withoutDefaultIngredientsRoom(template)))) };
+}
+
+/** The ingredients column's own gap and the run-on allergen note
+ *  (2026-10-27) only go into the comparison when they're set — every label
+ *  published before they existed has neither, and keeps its hash. */
+function withoutDefaultIngredientsRoom<T extends { page?: unknown; allergenNoteAfterMayContain?: boolean }>(template: T): T {
+  const { allergenNoteAfterMayContain: after, ...rest } = template;
+  const out = (after === true ? template : rest) as T & { page?: Record<string, unknown> };
+  const page = out.page;
+  if (page && typeof page === "object" && page.ingredientsGapMm == null && "ingredientsGapMm" in page) {
+    const { ingredientsGapMm: _g, ...restPage } = page;
+    return { ...out, page: restPage };
+  }
+  return out;
 }
 
 /** The use-by rule only goes into the comparison when it is NOT the
@@ -257,7 +271,7 @@ export interface SnapshotChange {
 export function areasForChange(key: string): Array<FieldKey | "barcode" | "all"> {
   if (key === "labelName" || key === "packSize") return ["title", "subtitle"];
   if (key === "deckText") return ["ingredients"];
-  if (key === "mayContain" || key === "warningOn" || key === "template.mayContainBoldList") return ["allergenInfo"];
+  if (key === "mayContain" || key === "warningOn" || key === "template.mayContainBoldList" || key === "template.allergenNoteAfterMayContain") return ["allergenInfo"];
   if (key.startsWith("cooking.")) return ["steps"];
   if (key === "chilled" || key === "frozen" || key === "template.batchBasis" || key === "template.chilledUseByOn" || key === "template.useBy") return ["dates"];
   if (key === "template.barcodeOn") return ["barcode"];
@@ -392,6 +406,10 @@ export function diffTemplates(rawA: LabelTemplate, rawB: LabelTemplate): Snapsho
     out.push({ key: "template.netQuantity", label: "Net quantity line", before: nq(a), after: nq(b) });
   }
   if (a.warningPlacement !== b.warningPlacement) out.push({ key: "template.warningPlacement", label: "Bones warning placed", before: a.warningPlacement === "storage" ? "Under storage" : "With allergens", after: b.warningPlacement === "storage" ? "Under storage" : "With allergens" });
+  if (a.allergenNoteAfterMayContain !== b.allergenNoteAfterMayContain) {
+    const where = (t: LabelTemplate) => (t.allergenNoteAfterMayContain ? "After the may-contain sentence" : "On its own line");
+    out.push({ key: "template.allergenNoteAfterMayContain", label: "Allergen note placed", before: where(a), after: where(b) });
+  }
   if (a.mayContainBoldList !== b.mayContainBoldList) out.push({ key: "template.mayContainBoldList", label: "May-contain list in bold", before: a.mayContainBoldList ? "Yes" : "No", after: b.mayContainBoldList ? "Yes" : "No" });
   // template.cooking / chilledDefault / frozenDefault only matter through the resolved values
   // above, which already list them when they change what prints.
@@ -407,7 +425,7 @@ const TEXT_LABEL: Record<string, string> = {
 
 function pageSummary(t: LabelTemplate): string {
   const p = t.page;
-  return `${p.widthMm}×${p.heightMm} mm, ${p.dpi} dpi, margin ${p.marginMm} mm, left column ${p.columnSplitPct}%, gaps ${p.bandGapMm}/${p.fieldGapMm} mm, ${p.dividerOn ? `divider ${p.dividerMm} mm` : "no divider"}${p.smallPack ? ", small pack" : ""}`;
+  return `${p.widthMm}×${p.heightMm} mm, ${p.dpi} dpi, margin ${p.marginMm} mm, left column ${p.columnSplitPct}%, gaps ${p.bandGapMm}/${p.fieldGapMm}${p.ingredientsGapMm != null && p.ingredientsGapMm !== p.fieldGapMm ? ` (ingredients ${p.ingredientsGapMm})` : ""} mm, ${p.dividerOn ? `divider ${p.dividerMm} mm` : "no divider"}${p.smallPack ? ", small pack" : ""}`;
 }
 function styleSummary(t: LabelTemplate, f: (typeof FIELD_KEYS)[number]): string {
   const s = t.fields[f];

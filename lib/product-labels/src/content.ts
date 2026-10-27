@@ -126,8 +126,7 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   dateLines.push(dateLine(t.batchLabel, dates.batchCode));
 
   if (!s.deckText.trim()) problems.push("The ingredient deck is empty.");
-  const allergenInfo: Paragraph[] = [parseBold(t.allergenNote)];
-  if (s.mayContain) allergenInfo.push(mayContainParagraph(s.mayContain, s.template.mayContainBoldList));
+  const allergenInfo: Paragraph[] = allergenParagraphs(t.allergenNote, s.mayContain, s.template.mayContainBoldList, s.template.allergenNoteAfterMayContain === true);
   const storage: Paragraph[] = [parseBold(t.storage.trim())];
   if (s.warningOn && t.warning.trim()) {
     (s.template.warningPlacement === "storage" ? storage : allergenInfo).push(parseBold(t.warning.trim()));
@@ -157,6 +156,18 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
     barcode: s.barcode && checkEan13(s.barcode).ok ? s.barcode : null,
     problems,
   };
+}
+
+/** The allergen note and the may-contain statement. Normally the note is
+ *  its own line above the statement; `noteAfter` (fried chicken, 2026-10-27)
+ *  runs it on after the statement's full stop, saving a line under a long
+ *  deck. No statement → the note alone either way. */
+export function allergenParagraphs(note: string, mayContain: string | null | undefined, boldList: boolean, noteAfter: boolean): Paragraph[] {
+  const notePara = parseBold(note);
+  const may = mayContain ? mayContainParagraph(mayContain, boldList) : [];
+  if (may.length === 0) return [notePara];
+  if (!noteAfter || notePara.length === 0) return [notePara, may];
+  return [mergeRuns([...may, { text: " ", bold: false }, ...notePara])];
 }
 
 /** Field → its paragraphs (steps flattened), for the layout. */
