@@ -16,9 +16,9 @@
 //            Outcome: WAITED when wait > tapNoise (a few minutes is tap noise);
 //            TOO EARLY when it sat longer than the meat's buffer +
 //            tooEarlyBeyondBufferMinutes; otherwise PERFECT.
-//   SAFETY   the 4-hour rule (meat-safety.ts): out of the oven → that recipe's
-//            last batch built + baked + chilled to 8 °C. Over the limit = a
-//            breach, flagged whatever else happened.
+//   SAFETY   evidence only (meat-safety.ts): when the chill was MEASURED
+//            (probe or a plausible tap), out of the oven → chilled to 8 °C,
+//            and whether it was within 240 minutes. Never assumed.
 //   CAUSE    a bad outcome when the time WAS followed is the model's fault —
 //            the learning must fix it. Not followed = human, or capacity if
 //            the reason given is one (oven busy, not defrosted, short-staffed);
@@ -29,7 +29,7 @@
 //
 // Wall-clock minutes since London midnight; pure.
 
-import { minutesToChilled, type SafetyRule } from "./meat-safety";
+import { COOKED_TO_CHILLED_LIMIT_MINUTES } from "./meat-safety";
 
 export interface ReviewRules {
   /** Put in within this many minutes of the suggested time = followed. Also the "ask why" threshold. */
@@ -96,11 +96,9 @@ export interface PutInRunInput {
   trayCount?: number | null;
   /** The meat's buffer at the time (sitting up to buffer + allowance is fine). */
   bufferMinutes?: number | null;
-  /** First tray out cooked (probe preferred) and the recipe's last batch built — for the 4-hour rule. */
+  /** First tray out cooked (probe preferred) — the start of the 4-hour clock. */
   outAtMinutes?: number | null;
-  lastBuiltAtMinutes?: number | null;
-  safety?: SafetyRule | null;
-  /** When the last batch actually reached 8 °C (probe or a plausible tap). Measured beats predicted. */
+  /** When the last batch was MEASURED at 8 °C (probe or a plausible tap). Null = not measured. */
   chilledAtMinutes?: number | null;
 }
 
@@ -122,7 +120,7 @@ export interface RunReview {
   /** sat + waitWeight × wait. */
   costMinutes: number | null;
   cause: Cause;
-  /** Out of the oven → last batch chilled to 8 °C (predicted from bake + chill). */
+  /** Out of the oven → last batch chilled to 8 °C, measured. Null = not measured. */
   safetyMinutes: number | null;
   safetyBreach: boolean;
 }
@@ -155,13 +153,11 @@ export function reviewRun(input: PutInRunInput, rules: ReviewRules = REVIEW_RULE
   let safetyMinutes: number | null = null;
   if (input.outAtMinutes != null && input.chilledAtMinutes != null) {
     safetyMinutes = Math.round(input.chilledAtMinutes - input.outAtMinutes);
-  } else if (input.safety && input.outAtMinutes != null && input.lastBuiltAtMinutes != null) {
-    safetyMinutes = Math.round(minutesToChilled(input.outAtMinutes, input.lastBuiltAtMinutes, input.safety));
   }
   // Negative = the taps don't add up (meat "out" after its last batch was
   // built): not measurable, never a pass.
   if (safetyMinutes != null && safetyMinutes < 0) safetyMinutes = null;
-  const limit = input.safety?.totalMinutes ?? 240;
+  const limit = COOKED_TO_CHILLED_LIMIT_MINUTES;
   const safetyBreach = safetyMinutes != null && safetyMinutes > limit;
 
   return { deviationMinutes: deviation, putIn, followed, outcome, readyInTime, waitMinutes: wait, satMinutes: sat, costMinutes: cost, cause, safetyMinutes, safetyBreach };

@@ -44,7 +44,7 @@ describe("measurePace", () => {
 
 describe("replanLive", () => {
   it("before the day starts, live = the morning plan", () => {
-    const live = replanLive({ recipes, options, progress: [], ticks: [], nowMinutes: 400, pace: null, maxSpanMinutes: 107 });
+    const live = replanLive({ recipes, options, progress: [], ticks: [], nowMinutes: 400, pace: null });
     expect(live.started).toBe(false);
     const g = live.recipes[1];
     expect(g.plannedStartMinutes).toBe(440);
@@ -59,7 +59,7 @@ describe("replanLive", () => {
       recipes, options, nowMinutes: 450,
       progress: [{ planItemId: 1, built: 8, markedComplete: false }],
       ticks: ticks(1, 422, 8, 4),
-      pace: null, maxSpanMinutes: 107,
+      pace: null,
     });
     const g = live.recipes[1];
     expect(live.recipes[0].state).toBe("done");
@@ -77,7 +77,6 @@ describe("replanLive", () => {
       progress: [{ planItemId: 1, built: 4, markedComplete: false }],
       ticks: ticks(1, 438, 4, 3),
       pace: { factor: 1.2, gapsUsed: 10, plannedMinutesPerBatch: 2.5, actualMinutesPerBatch: 3 },
-      maxSpanMinutes: 107,
     });
     const c = live.recipes[0];
     expect(c.state).toBe("building");
@@ -98,7 +97,6 @@ describe("replanLive", () => {
       progress: [{ planItemId: 1, built: 4, markedComplete: false }],
       ticks: ticks(1, 422, 4, 2),
       pace: { factor: 0.8, gapsUsed: 10, plannedMinutesPerBatch: 2.5, actualMinutesPerBatch: 2 },
-      maxSpanMinutes: 107,
     });
     // 4 left × 2.5 × 0.8 = 8 → Godfather 07:18 (was 07:20).
     const g = live.recipes[1];
@@ -114,7 +112,7 @@ describe("replanLive", () => {
     const base = {
       recipes, options, nowMinutes: 430,
       progress: [{ planItemId: 1, built: 7, markedComplete: false }],
-      ticks: ticks(1, 412, 7, 2.5), pace: null, maxSpanMinutes: 107,
+      ticks: ticks(1, 412, 7, 2.5), pace: null,
     };
     const late = replanLive(base);
     expect(late.recipes[1].meats[0].overdue).toBe(true);
@@ -123,37 +121,19 @@ describe("replanLive", () => {
     expect(inOven.recipes[1].meats[0].started).toBe(true);
   });
 
-  it("4-hour rule: a long build is planned in waves; a meat already out warns of a coming breach", () => {
-    const long: ScheduleRecipeInput[] = [
-      { planItemId: 9, recipeId: 109, name: "Pulled Pork", batches: 72, minutesPerBatch: 5,
-        meats: [{ rawMeatIngredientId: 22, rawMeatName: "Pork", processMinutes: 180 + 20 + 5, cookMinutes: 180, bufferMinutes: 5 }] },
-    ];
-    // Builds 07:00 → 10:00 (72 x 2.5).
-    const live = replanLive({ recipes: long, options, progress: [], ticks: [], nowMinutes: 300, pace: null, maxSpanMinutes: 107 });
-    const m = live.recipes[0].meats[0];
-    expect(m.outMinutes).toBe(395);
-    // 180 min of building, one cook covers 107 − 25 = 82 → 3 balanced waves.
-    expect(m.waves.length).toBe(3);
-    expect(m.waves[0]).toMatchObject({ putInMinutes: 215, outMinutes: 395, neededToMinutes: 480, batches: 24 });
-    expect(m.waves.reduce((s, w) => s + w.batches, 0)).toBe(72);
-    expect(m.safetyBreachComing).toBe(false);
-
-    // Same day, the pork is already out (06:35) and in: the finish is past its limit.
-    const started = replanLive({
-      recipes: long, options, progress: [], ticks: [], nowMinutes: 400, pace: null, maxSpanMinutes: 107,
-      meatsStarted: new Set([meatKey(109, 22)]), meatsOutAt: new Map([[meatKey(109, 22), 395]]),
-    });
-    const sm = started.recipes[0].meats[0];
-    expect(sm.waves).toEqual([]);
-    expect(sm.safetyBreachComing).toBe(true);
-    expect(sm.safetyOverMinutes).toBe(Math.round(started.recipes[0].liveFinishMinutes - (395 + 107)));
+  it("each hot meat: out of the oven = builders need it − processing − buffer, in = out − cook", () => {
+    const live = replanLive({ recipes, options, progress: [], ticks: [], nowMinutes: 300, pace: null });
+    const m = live.recipes[1].meats[0];
+    // Godfather at 07:20; lead 40 = cook 25 + processing 10 + buffer 5.
+    expect(m.liveCookStartMinutes).toBe(400);
+    expect(m.outMinutes).toBe(425);
   });
 
   it("marked-complete items drop out even if short", () => {
     const live = replanLive({
       recipes, options, nowMinutes: 445,
       progress: [{ planItemId: 1, built: 5, markedComplete: true }],
-      ticks: ticks(1, 422, 5, 2.5), pace: null, maxSpanMinutes: 107,
+      ticks: ticks(1, 422, 5, 2.5), pace: null,
     });
     expect(live.recipes[0].state).toBe("done");
     expect(live.recipes[1].liveStartMinutes).toBe(445);
@@ -166,7 +146,7 @@ describe("replanLive — the order actually built, and hot vs cold", () => {
       recipes, options, nowMinutes: 450,
       progress: [{ planItemId: 1, built: 8, markedComplete: false }, { planItemId: 3, built: 2, markedComplete: false }],
       ticks: [...ticks(1, 422, 8, 2.5), ...ticks(3, 445, 2, 2.5)],
-      pace: null, maxSpanMinutes: 107,
+      pace: null,
     });
     expect(live.recipes.map(r => [r.name, r.state])).toEqual([["Carnizone", "done"], ["Philly", "building"], ["Godfather", "waiting"]]);
     const philly = live.recipes[1];
@@ -179,12 +159,12 @@ describe("replanLive — the order actually built, and hot vs cold", () => {
       recipes, options, nowMinutes: 450,
       progress: [{ planItemId: 1, built: 3, markedComplete: false }, { planItemId: 2, built: 2, markedComplete: false }],
       ticks: [...ticks(1, 422, 3, 2.5), ...ticks(2, 445, 2, 2.5)],
-      pace: null, maxSpanMinutes: 107,
+      pace: null,
     });
     expect(live.recipes.map(r => [r.name, r.state])).toEqual([["Godfather", "building"], ["Carnizone", "waiting"], ["Philly", "waiting"]]);
   });
   it("recipes with a prep-oven meat are hot; the rest are cold mixes with a mix-by time", () => {
-    const live = replanLive({ recipes, options, progress: [], ticks: [], nowMinutes: 400, pace: null, maxSpanMinutes: 107, coldMixBufferMinutes: 10 });
+    const live = replanLive({ recipes, options, progress: [], ticks: [], nowMinutes: 400, pace: null, coldMixBufferMinutes: 10 });
     expect(live.recipes.map(r => r.kind)).toEqual(["cold", "hot", "hot"]);
     expect(live.recipes[0].mixByMinutes).toBe(410);
     expect(live.recipes[1].mixByMinutes).toBe(430);

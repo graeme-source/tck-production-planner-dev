@@ -53,15 +53,13 @@ describe("reviewRun", () => {
     expect(r.cause).toBe("capacity");
     expect(reasonCategory("oven_busy")).toBe("capacity");
   });
-  it("flags a 4-hour breach: out → last batch built + bake + chill over 240", () => {
-    const safety = { totalMinutes: 240, chillMinutes: 120, bakeMinutes: 13 };
-    const ok = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, lastBuiltAtMinutes: 520, safety });
-    expect(ok).toMatchObject({ safetyMinutes: 228, safetyBreach: false });
-    const bad = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, lastBuiltAtMinutes: 560, safety });
-    expect(bad).toMatchObject({ safetyMinutes: 268, safetyBreach: true });
-    // Measured chill (probe) beats the prediction.
-    const measured = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, lastBuiltAtMinutes: 560, chilledAtMinutes: 650, safety });
-    expect(measured).toMatchObject({ safetyMinutes: 225, safetyBreach: false });
+  it("4-hour evidence only when the chill was measured", () => {
+    const ok = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, chilledAtMinutes: 650 });
+    expect(ok).toMatchObject({ safetyMinutes: 225, safetyBreach: false });
+    const bad = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, chilledAtMinutes: 690 });
+    expect(bad).toMatchObject({ safetyMinutes: 265, safetyBreach: true });
+    const none = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425 });
+    expect(none).toMatchObject({ safetyMinutes: null, safetyBreach: false });
   });
   it("no suggestion recorded or never built → unknown, never guessed", () => {
     expect(reviewRun({ suggestedAtMinutes: null, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440 })).toMatchObject({ putIn: "unknown", followed: null, outcome: "perfect" });
