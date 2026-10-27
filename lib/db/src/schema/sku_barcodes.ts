@@ -1,4 +1,4 @@
-import { pgTable, text, timestamp, boolean, integer, serial, index } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, integer, serial, index, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 import { usersTable } from "./users";
@@ -46,7 +46,33 @@ export const skuBarcodesTable = pgTable("sku_barcodes", {
   /** Variant id this listing is the same physical product as (a person said
    *  so) — it may share that product's barcode. */
   sameProductAs: text("same_product_as"),
+  /** The last send of ours to Shopify (migration 0326): 'sending' | 'sent' |
+   *  'waiting' | 'failed' | 'conflict' | 'skipped'; NULL = never sent. */
+  shopifyPushState: text("shopify_push_state"),
+  /** The number that state is about. */
+  shopifyPushBarcode: text("shopify_push_barcode"),
+  /** What Shopify had when the send was decided — a Retry may replace only that. */
+  shopifyPushFrom: text("shopify_push_from"),
+  shopifyPushAt: timestamp("shopify_push_at", { withTimezone: true }),
+  shopifyPushMessage: text("shopify_push_message"),
 });
+
+/** A barcode set for a recipe BEFORE it has a Shopify listing of that kind
+ *  (migration 0326). Held against the product identity (recipe + kind) and
+ *  printed on the label straight away; moved onto sku_barcodes — and sent to
+ *  Shopify — when a listing is linked, then deleted. Never exists alongside
+ *  a linked listing, so there is one value per product. */
+export const recipePendingBarcodesTable = pgTable("recipe_pending_barcodes", {
+  recipeId: integer("recipe_id").notNull().references(() => recipesTable.id, { onDelete: "cascade" }),
+  /** 'pack' | 'bag' | 'wonky' */
+  kind: text("kind").notNull(),
+  barcode: text("barcode").notNull(),
+  setById: integer("set_by_id").references(() => usersTable.id, { onDelete: "set null" }),
+  setByName: text("set_by_name"),
+  setAt: timestamp("set_at", { withTimezone: true }).notNull().defaultNow(),
+}, t => [primaryKey({ columns: [t.recipeId, t.kind] })]);
+
+export type RecipePendingBarcode = typeof recipePendingBarcodesTable.$inferSelect;
 
 export const insertSkuBarcodeSchema = createInsertSchema(skuBarcodesTable);
 export type InsertSkuBarcode = z.infer<typeof insertSkuBarcodeSchema>;
@@ -58,11 +84,14 @@ export const barcodeEventsTable = pgTable("barcode_events", {
   variantId: text("variant_id").notNull(),
   recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
   productName: text("product_name"),
-  /** 'set' | 'move' | 'use-shopify' | 'same-product' | 'pull-fill' | 'follow' | 'scan-fill' */
+  /** 'set' | 'move' | 'use-shopify' | 'same-product' | 'pull-fill' | 'follow' | 'scan-fill'
+   *  | 'push' (ours sent to Shopify: old = Shopify's, new = ours) | 'adopt'
+   *  | 'pending-set' | 'pending-apply' (0326).
+   *  variant_id is 'recipe:<id>' for a barcode held before a listing exists. */
   action: text("action").notNull(),
   oldBarcode: text("old_barcode"),
   newBarcode: text("new_barcode"),
-  /** 'ok' | 'refused' */
+  /** 'ok' | 'refused' | 'failed' | 'waiting' | 'skipped' | 'conflict' */
   result: text("result").notNull(),
   message: text("message"),
   userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),

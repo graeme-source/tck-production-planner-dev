@@ -9,7 +9,7 @@
  *   GET  /recipes                     every recipe's label status
  *   GET  /recipes/:id                 live + current proof, status, changes
  *   PUT  /recipes/:id/settings        label name, overrides (manager/admin; autosaved) —
- *                                     the barcode is set on the recipe page (routes/barcodes.ts)
+ *                                     the barcode is set through routes/barcodes.ts (same box on both pages)
  *   POST /recipes/:id/publish         "I've checked it — update live"
  *
  * The live (published) label is a frozen snapshot; recipe edits never touch
@@ -394,8 +394,8 @@ router.get("/recipes/:id", async (req, res) => {
       deckIssues: back ? current.deck.declarationIssues : [],
       warnings: [
         ...deckWarnings(current.deck, current.template.template),
-        ...(current.barcodeMixed ? ["This recipe's Shopify listings have different barcodes, so no barcode is printed — set one on the recipe page."] : []),
-        ...(!current.snapshot.barcode && !current.barcodeMixed ? ["No barcode — set the pack barcode on the recipe page (it is the one the packing scanner uses)."] : []),
+        ...(current.barcodeMixed ? ["This recipe's Shopify listings have different barcodes, so no barcode is printed — set one in the Barcode box on this page."] : []),
+        ...(!current.snapshot.barcode && !current.barcodeMixed ? ["No barcode — type it in the Barcode box on this page (the packing scanner and Shopify use the same number)."] : []),
       ],
       sample: sampleDates(),
       current: { hash: current.hash, snapshot: current.snapshot, proof: proofPayload(currentProof) },
@@ -410,7 +410,8 @@ router.get("/recipes/:id", async (req, res) => {
 const nullableInt = (max: number) => z.number().int().min(0).max(max).nullable().optional();
 const Period = z.object({ amount: z.number().int().min(1).max(999), unit: z.enum(["days", "weeks", "months", "years"]) }).nullable().optional();
 
-// The barcode is set on the recipe page (routes/barcodes.ts) — one number
+// The barcode is set through routes/barcodes.ts (the Barcode box on the label
+// and recipe pages) — one number
 // for the label and the packing scanner. A "barcode" sent here is ignored.
 const SettingsBody = z.object({
   labelName: z.string().max(200).nullable().optional(),

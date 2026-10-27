@@ -1,21 +1,26 @@
 /**
- * Barcodes (Graeme, 2026-10-10) — every recipe's barcodes in one place, the
- * one-time pull from Shopify (with a dry run), products that share a code,
- * old products still holding a reused code, and refused packing scans.
+ * Barcodes (Graeme, 2026-10-10; two-way with Shopify 2026-10-12) — every
+ * recipe's barcodes in one place, disagreements with Shopify to clear, the
+ * one-time preview + bulk sync to Shopify, the one-time pull (with a dry
+ * run), products that share a code, old products still holding a reused
+ * code, and refused packing scans.
  *
- * Our table is the source of truth for scanning; Shopify is only READ.
- * Barcodes are set on each recipe's page (components/barcodes).
+ * Our table is the single source of truth. Barcodes are set on each
+ * product's label page or recipe page (components/barcodes) and sent to
+ * Shopify from there; the hourly check adopts Shopify's where we have none.
  */
 import { useState } from "react";
 import { Link } from "wouter";
 import { useMutation } from "@tanstack/react-query";
-import { AlertTriangle, Barcode, ChevronRight, CloudDownload, Copy, Eye, Info, Loader2, RefreshCw, ScanLine, Star } from "lucide-react";
+import { AlertTriangle, Barcode, ChevronRight, CloudDownload, CloudUpload, Copy, Eye, Info, Loader2, RefreshCw, ScanLine, Star, X } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import {
-  barcodesApi, useBarcodeOverview, useInvalidateBarcodes, useScanRejections, type ClashView, type ClubSpecialView, type PullReport,
+  barcodesApi, useBarcodeOverview, useInvalidateBarcodes, useScanRejections, type ClashView, type ClubSpecialView, type GroupView, type PullReport,
+  type SyncAction, type SyncItem, type SyncPreview, type SyncResult,
 } from "@/components/barcodes/api";
+import { BarcodeGroupCard } from "@/components/barcodes/recipe-barcodes";
 import type { CopyLink } from "@workspace/barcodes";
 
 const when = (iso: string | null) => (iso ? new Date(iso).toLocaleString("en-GB", { dateStyle: "medium", timeStyle: "short" }) : "never");
@@ -51,8 +56,8 @@ function PullCard({ isAdmin, firstPullAt }: { isAdmin: boolean; firstPullAt: str
     <Card title="Pull barcodes from Shopify" icon={<CloudDownload className="w-5 h-5 text-primary" />}>
       <p className="text-sm text-muted-foreground">
         Reads every Shopify listing and fills the app's barcode for each listing linked to a recipe — 2-packs, 8-pack bags, wonky packs — where the app has none.
-        A barcode the app already holds is never overwritten: a difference is listed. Nothing in Shopify is changed. One-time pull last run: <b>{when(firstPullAt)}</b>.
-        After that, an hourly check keeps everything else in step.
+        A barcode the app already holds is never overwritten: a difference is listed. This pull changes nothing in Shopify. One-time pull last run: <b>{when(firstPullAt)}</b>.
+        After that, an hourly check adopts Shopify's barcode wherever the app has none and keeps everything else in step.
       </p>
       {isAdmin ? (
         <div className="flex flex-wrap gap-2">
@@ -75,6 +80,141 @@ function PullCard({ isAdmin, firstPullAt }: { isAdmin: boolean; firstPullAt: str
               </li>
             ))}
           </ul>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+const ACTION_LABEL: Record<SyncAction, string> = {
+  overwrite: "Shopify's number replaced by ours",
+  fill: "Ours filled in (Shopify has none)",
+  adopt: "Shopify's adopted (the app has none)",
+  same: "Same both sides",
+  skip: "Left alone",
+};
+
+function SyncRow({ i }: { i: SyncItem }) {
+  return (
+    <li className="py-2 text-sm">
+      {i.recipeId ? <Link href={`/labels/${i.recipeId}`} className="font-semibold text-primary">{i.recipeName}</Link> : <b>{i.name}</b>}
+      {i.recipeId && <span className="text-muted-foreground"> · {i.name}</span>}
+      <span className="block font-mono text-xs">
+        app {i.ours ?? "—"} · Shopify {i.shopify ?? "—"}{i.action === "skip" ? ` · ${i.reason}` : ""}
+      </span>
+    </li>
+  );
+}
+
+/**
+ * The one-time "Preview what would change in Shopify" (sends nothing), then a
+ * separate, deliberate "Send to Shopify" for exactly what was previewed.
+ * After that every save in the app is sent automatically.
+ */
+function ShopifySyncCard({ isAdmin, writesBlocked }: { isAdmin: boolean; writesBlocked: string | null }) {
+  const invalidate = useInvalidateBarcodes();
+  const [preview, setPreview] = useState<SyncPreview | null>(null);
+  const [result, setResult] = useState<SyncResult | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const look = useMutation({
+    mutationFn: () => barcodesApi<SyncPreview>("/shopify-sync/preview", { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: p => { setPreview(p); setResult(null); },
+  });
+  const apply = useMutation({
+    mutationFn: (items: Array<{ variantId: string; action: SyncAction }>) => barcodesApi<SyncResult>("/shopify-sync/apply", { method: "POST", body: JSON.stringify({ items }) }),
+    onSuccess: async r => { setResult(r); setPreview(null); setConfirming(false); await invalidate(); },
+  });
+  const by = (a: SyncAction) => preview?.changes.filter(c => c.action === a) ?? [];
+  const sections: Array<[SyncAction, SyncItem[]]> = [["overwrite", by("overwrite")], ["fill", by("fill")], ["adopt", by("adopt")]];
+  const total = preview?.changes.length ?? 0;
+  return (
+    <Card title="Sync with Shopify" icon={<CloudUpload className="w-5 h-5 text-primary" />}>
+      <p className="text-sm text-muted-foreground">
+        Every barcode saved in the app is sent to Shopify straight away. Barcodes that already differ are left alone until you choose — one at a time below,
+        or all at once here: preview first (nothing is sent), then send exactly what you saw. The Calzone Club Special and archived products are never changed.
+      </p>
+      {writesBlocked && <p className="text-sm font-semibold text-amber-700 dark:text-amber-400 flex items-start gap-1"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {writesBlocked}. Saves still work; sends wait until this is fixed.</p>}
+      {isAdmin ? (
+        <button type="button" disabled={look.isPending} onClick={() => look.mutate()} className="h-12 px-4 rounded-xl border-2 border-border font-semibold flex items-center gap-2 disabled:opacity-50">
+          {look.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Eye className="w-4 h-4" />} Preview what would change in Shopify
+        </button>
+      ) : <p className="text-sm text-muted-foreground">An admin runs the bulk sync.</p>}
+      {look.error && <p className="text-sm text-destructive font-semibold">Couldn't preview: {(look.error as Error).message}</p>}
+      {preview && (
+        <div className="rounded-xl bg-muted/40 p-4 space-y-3">
+          <p className="font-bold">Preview — nothing has been sent or saved</p>
+          <p className="text-sm">
+            Overwrite in Shopify <b>{preview.counts.overwrite}</b> · fill in Shopify <b>{preview.counts.fill}</b> · adopt from Shopify <b>{preview.counts.adopt}</b> ·
+            already the same {preview.counts.same} · left alone {preview.counts.skip}
+          </p>
+          {preview.writesBlocked && <p className="text-sm text-amber-700 dark:text-amber-400">{preview.writesBlocked} — sending now would leave them waiting.</p>}
+          {sections.map(([a, items]) => items.length > 0 && (
+            <div key={a}>
+              <p className="font-semibold">{ACTION_LABEL[a]} ({items.length})</p>
+              <ul className="divide-y divide-border">{items.map(i => <SyncRow key={i.variantId} i={i} />)}</ul>
+            </div>
+          ))}
+          {preview.skipped.length > 0 && (
+            <details>
+              <summary className="cursor-pointer text-sm font-semibold">Left alone on purpose ({preview.skipped.length})</summary>
+              <ul className="divide-y divide-border">{preview.skipped.map(i => <SyncRow key={i.variantId} i={i} />)}</ul>
+            </details>
+          )}
+          {isAdmin && total > 0 && !confirming && (
+            <button type="button" onClick={() => setConfirming(true)} className="h-12 px-4 rounded-xl bg-primary text-primary-foreground font-bold flex items-center gap-2">
+              <CloudUpload className="w-4 h-4" /> Send these {total} to Shopify…
+            </button>
+          )}
+          {confirming && (
+            <div className="rounded-xl border-2 border-destructive/60 bg-card p-3 space-y-2">
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-sm font-semibold">
+                  This changes {preview.counts.overwrite + preview.counts.fill} barcode{preview.counts.overwrite + preview.counts.fill === 1 ? "" : "s"} in Shopify
+                  {preview.counts.overwrite ? ` (${preview.counts.overwrite} replacing a number Shopify has now)` : ""} and adopts {preview.counts.adopt} into the app. Anything that changed since the preview is left alone.
+                </p>
+                <button type="button" aria-label="Cancel" onClick={() => setConfirming(false)} className="h-9 w-9 shrink-0 rounded-lg border-2 border-border flex items-center justify-center"><X className="w-4 h-4" /></button>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button type="button" onClick={() => setConfirming(false)} className="h-12 px-4 rounded-xl border-2 border-border font-semibold">Cancel</button>
+                <button
+                  type="button"
+                  disabled={apply.isPending}
+                  onClick={() => apply.mutate(preview.changes.map(c => ({ variantId: c.variantId, action: c.action })))}
+                  className="h-12 px-4 rounded-xl bg-destructive text-white font-bold flex items-center gap-2 disabled:opacity-50"
+                >
+                  {apply.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CloudUpload className="w-4 h-4" />} Yes — send to Shopify
+                </button>
+              </div>
+            </div>
+          )}
+          {apply.error && <p className="text-sm text-destructive font-semibold">Didn't run: {(apply.error as Error).message}</p>}
+        </div>
+      )}
+      {result && (
+        <p className="text-sm rounded-xl bg-muted/40 p-3">
+          Sent {result.sent} · waiting to send {result.waiting} · failed {result.failed} · adopted {result.adopted}
+          {result.changedSincePreview ? ` · ${result.changedSincePreview} changed since the preview, left alone` : ""}. Each product's card shows how its send went.
+        </p>
+      )}
+    </Card>
+  );
+}
+
+/** Every product where Shopify and the app hold different numbers — the
+ *  same cards as the label page, so each can be cleared here. */
+function DisagreementsCard({ groups, canEdit }: { groups: GroupView[]; canEdit: boolean }) {
+  const differing = groups.filter(g => g.variants.some(v => v.differentInShopify));
+  return (
+    <Card title={`Shopify and the app disagree (${differing.length})`} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} tone={differing.length ? "warn" : undefined}>
+      <p className="text-sm text-muted-foreground">Neither side is changed automatically. For each, pick "Use Shopify's" or "Send ours to Shopify".</p>
+      {differing.length === 0 ? <p className="text-sm">None.</p> : (
+        <div className="space-y-3">
+          {differing.map(g => (
+            <div key={`${g.recipeId}:${g.kind}`} className="space-y-1">
+              <Link href={`/labels/${g.recipeId}`} className="text-sm font-semibold text-primary">{g.recipeName}</Link>
+              <BarcodeGroupCard group={g} canEdit={canEdit} />
+            </div>
+          ))}
         </div>
       )}
     </Card>
@@ -153,7 +293,7 @@ function ClubSpecialCard({ rows }: { rows: ClubSpecialView[] }) {
   return (
     <Card title="Calzone Club Special" icon={<Star className="w-5 h-5 text-amber-500" />}>
       <p className="text-sm text-muted-foreground">
-        It always scans as the recipe ticked "Calzone Club Special" on its recipe page, with that recipe's barcode — never its own, so it never clashes.
+        It always scans as the recipe ticked "Calzone Club Special" on its recipe page, with that recipe's barcode — never its own, so it never clashes. <b>Managed by hand in Shopify</b>: the app never sends it a barcode and never adopts its one.
         When you switch its barcode in Shopify ahead of the next special, the packing screen also accepts the incoming special until the recipe is switched here.
       </p>
       <ul className="space-y-2 text-sm">
@@ -181,11 +321,13 @@ export default function BarcodesPage() {
   const o = overview.data;
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 max-w-5xl mx-auto">
-      <PageHeader title="Barcodes" description="One barcode per product, set in the app — the packing scanner and the pack label use it. Shopify is only read." />
+    <div className="space-y-6 p-4 sm:p-6">
+      <PageHeader title="Barcodes" description="One barcode per product, set in the app (on its label page or recipe page) — the packing scanner, the pack label and Shopify all get the same number." />
       {overview.isLoading && <p className="text-muted-foreground">Loading…</p>}
       {overview.error && <p className="text-destructive">Couldn't load barcodes: {(overview.error as Error).message}</p>}
 
+      {o && <DisagreementsCard groups={o.groups} canEdit={role === "admin" || role === "manager"} />}
+      <ShopifySyncCard isAdmin={isAdmin} writesBlocked={o?.shopifyWritesBlocked ?? null} />
       <PullCard isAdmin={isAdmin} firstPullAt={o?.firstPullAt ?? null} />
 
       {o && (
@@ -207,7 +349,7 @@ export default function BarcodesPage() {
           </Card>
 
           <Card title="Every recipe's barcodes" icon={<Barcode className="w-5 h-5 text-[#7cb342]" />}>
-            <p className="text-sm text-muted-foreground">Last checked against Shopify: {when(o.lastCheckedAt)}. Tap a recipe to set its barcodes.</p>
+            <p className="text-sm text-muted-foreground">Last checked against Shopify: {when(o.lastCheckedAt)}. Tap a product to set its barcode on its label page.</p>
             <ul className="divide-y divide-border">
               {o.groups.map(g => {
                 const flags = [
@@ -216,10 +358,12 @@ export default function BarcodesPage() {
                   g.variants.some(v => v.differentInShopify) && "different in Shopify",
                   g.variants.some(v => v.invalid) && "check digit wrong",
                   g.variants.some(v => v.heldBack) && "shares a code",
+                  g.pending && "no Shopify listing yet",
+                  g.variants.some(v => v.push?.state === "waiting" || v.push?.state === "failed") && "not sent to Shopify",
                 ].filter(Boolean) as string[];
                 return (
                   <li key={`${g.recipeId}:${g.kind}`}>
-                    <Link href={`/recipes?edit=${g.recipeId}`} className="flex items-center gap-3 py-3">
+                    <Link href={`/labels/${g.recipeId}`} className="flex items-center gap-3 py-3">
                       <span className="flex-1 min-w-0">
                         <span className="font-semibold">{g.recipeName}</span> <span className="text-muted-foreground">· {g.label}</span>
                         {flags.length > 0 && <span className="block text-xs text-amber-700 dark:text-amber-400">{flags.join(" · ")}</span>}

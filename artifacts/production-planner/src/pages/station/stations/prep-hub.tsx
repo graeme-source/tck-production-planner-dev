@@ -417,6 +417,7 @@ export function PrepHub({ planId, planDate, planName, planStatus, planPrepDate }
             planRequirements={[]}
             allSubRecipes={allSubRecipes}
             onClose={() => setShowReplenish(false)}
+            timing={isDraft ? undefined : { planId: nextPlan?.planId ?? planId, station: "prep" }}
           />
         </div>
       </div>

@@ -32,6 +32,7 @@ import stockCheckExpectedRouter from "./stock-check-expected";
 import stockCheckUseByRouter from "./stock-check-use-by";
 import stockAccuracyRouter from "./stock-accuracy";
 import teamEfficiencyRouter from "./team-efficiency";
+import prepTimesRouter from "./prep-times";
 import dptCalculatorRouter from "./dpt-calculator";
 import stockRouter from "./stock";
 import stockItemsRouter from "./stock-items";
@@ -105,6 +106,7 @@ import meetingRemindersRouter from "./meeting-reminders";
 import wishListRouter from "./wish-list";
 import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
+import prepCompletionsRouter from "./prep-completions";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
 import wrappingFreezerRouter from "./wrapping-freezer";
 import shopifyWrapPushesRouter from "./shopify-wrap-pushes";
@@ -130,6 +132,7 @@ import labelStockRouter from "./label-stock";
 import printJobsRouter from "./print-jobs";
 import { isPrintBridgePath } from "../lib/print-bridge-paths";
 import prepLinkedCompletionsRouter from "./prep-linked-completions";
+import prepSessionsRouter from "./prep-sessions";
 import planMoveRouter from "./plan-move";
 import dictationRouter from "./dictation";
 import icePacksRouter from "./ice-packs";
@@ -300,6 +303,9 @@ router.use("/queued-production", queuedProductionRouter);
 // production-plans router so its paths (including the wonky ones moved out
 // of it) are answered here.
 router.use("/production-plans", qualityRejectsRouter);
+// A prep tick (POST /:id/prep-completions) — moved out of the frozen router
+// 2026-10-27; also records the tick for prep timing (flag-and-allow).
+router.use("/production-plans", prepCompletionsRouter);
 // Taking wrapped packs back out of the fridge/freezer (the wrapping undo) —
 // moved out of the frozen router 2026-10-08; refuses unconfirmed requests.
 router.use("/production-plans", wrappingStorageUndoRouter);
@@ -361,6 +367,9 @@ router.use("/stock-check-use-by", stockCheckUseByRouter);
 // stations or on count screens (docs/RUNNING_STOCK.md).
 router.use("/stock-accuracy", stockAccuracyRouter);
 router.use("/team-efficiency", teamEfficiencyRouter);
+// Prep times and batch profit after line + prep labour — a founder-only
+// read endpoint, no screen (checked inside).
+router.use("/prep-times", prepTimesRouter);
 router.use("/dpt-calculator", dptCalculatorRouter);
 router.use("/stock-entries", stockRouter);
 router.use("/eight-pack-stock", eightPackStockRouter);
@@ -588,6 +597,10 @@ router.use("/label-stock", labelStockRouter);
 // own token auth.
 router.use("/print-jobs", printJobsRouter);
 router.use("/prep-linked-completions", prepLinkedCompletionsRouter);
+// Prep sessions — when a prep item is opened, completed and closed, written
+// in the background by the prep screens (the founder-only /prep-times report reads them).
+// Any signed-in station user; open/complete sit in the daily PIN lock.
+router.use("/prep-sessions", prepSessionsRouter);
 router.use("/plan-move", planMoveRouter);
 router.use("/dictation", dictationRouter);
 router.use("/ice-packs", icePacksRouter);

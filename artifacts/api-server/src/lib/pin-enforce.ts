@@ -70,6 +70,9 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   { method: "POST", pattern: new RegExp(`^/cook-chill/records/${ID}/(chill-start|chill-end)/?$`), what: "cook and chill record" },
   { method: "POST", pattern: /^\/oven-events\/oven-in\/?$/, what: "oven in" },
   { method: "POST", pattern: new RegExp(`^/prep-linked-completions/${ID}/?$`), what: "prep tick" },
+  // Prep timing (routes/prep-sessions.ts): opening an item and its
+  // completions are timed under the person. Close/untick are undo-like.
+  { method: "POST", pattern: /^\/prep-sessions\/(open|complete)\/?$/, what: "prep timing" },
   { method: "POST", pattern: new RegExp(`^/fried-chicken/plans/${ID}/(count|prep-tick)/?$`), what: "fried chicken record" },
   { method: "POST", pattern: new RegExp(`^/compliance-actions/${ID}/complete/?$`), what: "compliance action" },
   // Wrapping / packing / goods-in / stock
