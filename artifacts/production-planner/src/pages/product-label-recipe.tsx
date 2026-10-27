@@ -17,6 +17,7 @@ import { fmtDateTime, fmtDay, STATUS_TONE, useRecipeLabel, type Proof } from "@/
 import { ProofImage, type Area } from "@/components/product-labels/proof-image";
 import { PublishDialog, ChangeRow } from "@/components/product-labels/publish-dialog";
 import { RecipeLabelSettings } from "@/components/product-labels/recipe-label-settings";
+import { RecipeBarcodes } from "@/components/barcodes/recipe-barcodes";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
 import { FrontLabelPreview, FrontLabelsDialog } from "@/components/product-labels/front-labels-dialog";
 import { DeclarationFixButtons } from "@/components/declaration-fix";
@@ -183,6 +184,10 @@ export default function ProductLabelRecipePage() {
           <ul className="list-disc pl-6 space-y-1 text-foreground">{data.warnings.map(w => <li key={w}>{w}</li>)}</ul>
         )}
       </section>
+
+      {/* The barcode — set here while making the label (the main place to
+          set it); the proof below updates as soon as it saves. */}
+      <RecipeBarcodes recipeId={data.recipe.id} active canEdit={canEdit} prominent />
 
       <p className="flex items-start gap-2 text-sm text-muted-foreground max-w-prose">
         <Info className="w-4 h-4 mt-0.5 shrink-0" />

@@ -1,6 +1,6 @@
 /**
- * Barcodes — data from /api/barcodes (React Query). Our table is the source
- * of truth for scanning; nothing here writes to Shopify.
+ * Barcodes — data from /api/barcodes (React Query). Our table is the single source
+ * of truth; a save is sent to Shopify by the server (lib/barcode-push.ts).
  */
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { AlsoAccepts, BarcodeMap, Clash, CopyLink, KnownCodes, LinkKind, PullCounts, Reuse } from "@workspace/barcodes";
@@ -42,7 +42,15 @@ export interface VariantView {
   notInShopify: boolean;
   differentInShopify: boolean;
   sameProductAs: string | null;
+  /** The last send of ours to Shopify (null = never sent). */
+  push: { state: PushState; barcode: string | null; at: string | null; message: string | null } | null;
+  /** The Calzone Club Special — never synced either way. */
+  managedByHand: boolean;
+  /** Archived in Shopify — never written to. */
+  archived: boolean;
 }
+
+export type PushState = "sending" | "sent" | "waiting" | "failed" | "conflict" | "skipped";
 
 export interface GroupView {
   recipeId: number;
@@ -53,7 +61,15 @@ export interface GroupView {
   barcode: string | null;
   mixed: boolean;
   variants: VariantView[];
+  /** No Shopify listing yet — `barcode` is HELD for the product: printed on
+   *  the label now, sent to Shopify when a listing is linked. */
+  pending: boolean;
+  heldSetByName: string | null;
+  heldSetAt: string | null;
+  heldProblem: string | null;
 }
+
+const anySending = (groups: GroupView[] | undefined) => !!groups?.some(g => g.variants.some(v => v.push?.state === "sending"));
 
 export interface BarcodeEvent {
   id: number;
@@ -75,6 +91,8 @@ export function useRecipeBarcodes(recipeId: number | null) {
     queryKey: recipeBarcodesKey(recipeId ?? 0),
     queryFn: () => barcodesApi<{ groups: GroupView[]; events: BarcodeEvent[] }>(`/recipes/${recipeId}`),
     enabled: recipeId != null,
+    // While a send to Shopify is in flight, watch it land.
+    refetchInterval: q => (anySending(q.state.data?.groups) ? 1500 : false),
   });
 }
 
@@ -89,6 +107,39 @@ export interface Overview {
   ambiguousBags: Array<{ variantId: string; name: string }>;
   clubSpecial: ClubSpecialView[];
   f2fSuggestions: CopyLink[];
+  /** Why barcodes can't be sent to Shopify right now (null = they can). */
+  shopifyWritesBlocked: string | null;
+}
+
+export type SyncAction = "overwrite" | "fill" | "adopt" | "same" | "skip";
+
+export interface SyncItem {
+  variantId: string;
+  name: string;
+  recipeId: number | null;
+  recipeName: string | null;
+  kind: LinkKind | null;
+  action: SyncAction;
+  reason: string;
+  ours: string | null;
+  shopify: string | null;
+}
+
+export interface SyncPreview {
+  at: string;
+  counts: Record<SyncAction, number>;
+  changes: SyncItem[];
+  skipped: SyncItem[];
+  writesBlocked: string | null;
+}
+
+export interface SyncResult {
+  adopted: number;
+  sent: number;
+  waiting: number;
+  failed: number;
+  changedSincePreview: number;
+  results: Array<{ variantId: string; outcome: string; message: string }>;
 }
 
 export interface ClubSpecialView {
@@ -104,7 +155,11 @@ export interface ClubSpecialView {
 }
 
 export function useBarcodeOverview() {
-  return useQuery({ queryKey: ["barcodes", "overview"], queryFn: () => barcodesApi<Overview>("/overview") });
+  return useQuery({
+    queryKey: ["barcodes", "overview"],
+    queryFn: () => barcodesApi<Overview>("/overview"),
+    refetchInterval: q => (anySending(q.state.data?.groups) ? 2000 : false),
+  });
 }
 
 export interface PullItem {
