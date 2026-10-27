@@ -437,18 +437,20 @@ export function canSnooze(t: { status: TriageStatus; awaitingRetriage: boolean }
   return t.status === "proposed" && !t.awaitingRetriage;
 }
 
-// ── Crediting completed improvements: SWITCHED OFF (Graeme, 2026-10-27) ────
-// From 24 Sep a closed improvement-lane report became a completed
-// improvement credited to whoever REPORTED it. Graeme, 27 Oct, after the Fix
-// queue's catch-up run credited 17 at once: reporting an issue or an idea is
-// not making an improvement — "you fix it immediately". So nothing from the
-// Fix queue is ever credited as an improvement now; people log the
-// improvements they make themselves (and the end-of-day question asks). The
-// signature stays so every caller keeps compiling and simply credits nothing.
-export function isImprovementDue(_t: {
+// ── Crediting a reporter (Graeme, 27 Oct 2026) ────────────────────────────
+// A credit only when a report Graeme APPROVED was genuinely FIXED and is
+// live: "they don't get a credit just for reporting things... we want that
+// to be credited once it is fixed and deemed to be working." So: the
+// improvement lane, status 'fixed' (only an approved item can become fixed),
+// the report closed as live, not already credited, and never one closed as
+// "nothing to do" (already built, a duplicate, not a problem). Dismissed or
+// answered reports — the idea alone — earn nothing.
+export function isImprovementDue(t: {
   lane: string; status: TriageStatus; issueResolvedAt: Date | string | null; improvementId: number | null;
+  noActionAt?: Date | string | null;
 }): boolean {
-  return false;
+  if (t.lane !== "improvement" || t.improvementId != null || t.noActionAt != null) return false;
+  return t.status === "fixed" && t.issueResolvedAt != null;
 }
 
 /** When the credited improvement counts as done: the day it actually went

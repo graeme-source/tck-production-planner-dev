@@ -345,14 +345,20 @@ describe("canSnooze", () => {
   });
 });
 
-// Regression (Graeme, 27 Oct 2026): the Fix queue's catch-up run credited 17
-// reporters with "improvements" for reporting issues. Never again.
-describe("isImprovementDue — the Fix queue never credits an improvement", () => {
+// Regression (Graeme, 27 Oct 2026): credit only an approved report that was
+// genuinely fixed and is live — never the idea alone, never "already built".
+describe("isImprovementDue — credit only a genuine, live fix", () => {
   const t = { lane: "improvement", status: "dismissed" as const, issueResolvedAt: null, improvementId: null };
-  it("not for a dismissed, answered or fixed-and-closed improvement report", () => {
+  it("never for a dismissed or answered report (the idea alone)", () => {
     expect(isImprovementDue(t)).toBe(false);
-    expect(isImprovementDue({ ...t, status: "answered" })).toBe(false);
-    expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z" })).toBe(false);
+    expect(isImprovementDue({ ...t, status: "answered", issueResolvedAt: "2026-09-24T10:00:00Z" })).toBe(false);
+  });
+  it("credits a fix once its report is closed as live", () => {
+    expect(isImprovementDue({ ...t, status: "fixed" })).toBe(false);
+    expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z" })).toBe(true);
+  });
+  it("never when it was closed as nothing to do (already built, a duplicate)", () => {
+    expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z", noActionAt: "2026-09-24T10:00:00Z" })).toBe(false);
   });
   it("never for defects, open items, or twice", () => {
     expect(isImprovementDue({ ...t, lane: "defect" })).toBe(false);
