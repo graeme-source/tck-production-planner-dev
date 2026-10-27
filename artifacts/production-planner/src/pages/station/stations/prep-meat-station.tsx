@@ -188,18 +188,25 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     />
   );
 
-  // Auto-select first recipe
+  // The opened recipe's panel — under the list on an upright iPad, so
+  // opening a recipe brings it into view.
+  const detailRef = useRef<HTMLDivElement>(null);
+  const showOpenedRecipe = () => requestAnimationFrame(() => {
+    const el = detailRef.current;
+    if (el && el.getBoundingClientRect().top > window.innerHeight - 120) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+
+  // Nothing opens by itself: a recipe's meat amounts and trays show once
+  // someone taps it (Graeme, 27 Oct 2026). One that drops off the list closes.
   useEffect(() => {
-    if (recipes.length > 0 && (selectedRecipeId === null || !recipes.some(r => r.recipeId === selectedRecipeId))) {
-      setSelectedRecipeId(recipes[0].recipeId);
-    }
+    if (selectedRecipeId != null && !recipes.some(r => r.recipeId === selectedRecipeId)) setSelectedRecipeId(null);
   }, [recipes, selectedRecipeId]);
 
   // Prep timing: the selected recipe's meats that still have trays to fill,
   // each timed for this recipe. A finished recipe being looked at isn't prep.
   const timedMeats = useMemo<PrepSessionItem[]>(() => {
     if (stockTabOpen) return [];
-    const sel = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
+    const sel = recipes.find(r => r.recipeId === selectedRecipeId);
     if (!sel) return [];
     return sel.ingredients
       .filter(i => i.isRawMeat && (i.trayCount ?? 0) > 0)
@@ -298,9 +305,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     );
   }
 
-  const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
-  const selRawMeat = selected.ingredients.filter(i => i.isRawMeat);
-  const selMarinades = selected.marinades ?? [];
+  // The opened recipe — null until someone taps one.
+  const selected = recipes.find(r => r.recipeId === selectedRecipeId) ?? null;
+  const selRawMeat = selected ? selected.ingredients.filter(i => i.isRawMeat) : [];
+  const selMarinades = selected?.marinades ?? [];
   // Linked-ingredient stock checks belong to THIS recipe's meat panels only —
   // another recipe's links never render here (Graeme, 2026-09-24).
   const selLinkedChecks = linkedStockChecksForRecipe(selRawMeat.map(i => i.ingredientId), selMarinades);
@@ -320,8 +328,8 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const recipeTrays = (r: PrepRecipeDetail) =>
     r.ingredients.filter(i => i.isRawMeat).reduce((s, i) => s + (i.trayCount ?? 0), 0);
 
-  const selCompletedTrays = recipeCompletedTrays(selected);
-  const selTotalTrays = recipeTrays(selected);
+  const selCompletedTrays = selected ? recipeCompletedTrays(selected) : 0;
+  const selTotalTrays = selected ? recipeTrays(selected) : 0;
   const selAllDone = selTotalTrays > 0 && selCompletedTrays >= selTotalTrays;
 
   return (
@@ -394,12 +402,12 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                 const rTotal = recipeTrays(recipe);
                 const rDone = recipeCompletedTrays(recipe);
                 const rAllDone = rTotal > 0 && rDone >= rTotal;
-                const isSelected = recipe.recipeId === selected.recipeId;
+                const isSelected = recipe.recipeId === selected?.recipeId;
                 if (hideCompleted && rAllDone && !isSelected) return null;
                 return (
                   <button
                     key={recipe.recipeId}
-                    onClick={() => setSelectedRecipeId(recipe.recipeId)}
+                    onClick={() => { setSelectedRecipeId(recipe.recipeId); showOpenedRecipe(); }}
                     className={cn(
                       "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-l-4",
                       isSelected
@@ -439,16 +447,8 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         )}
                       </p>
                     </div>
-                    <div className="flex items-center gap-1.5 flex-shrink-0">
-                      {rTotal > 0 && (
-                        <span className={cn(
-                          "text-sm tabular-nums",
-                          rAllDone ? "text-rose-600 font-semibold" : "text-muted-foreground"
-                        )}>
-                          {rDone}/{rTotal}
-                        </span>
-                      )}
-                    </div>
+                    {/* Status only (the ring) — tray counts and weights
+                        show once the recipe is opened. */}
                   </button>
                 );
               })}
@@ -456,8 +456,15 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
           </div>
         </div>
 
-        {/* Right: selected recipe detail */}
-        <div className="flex-1 min-w-0">
+        {/* Right: the opened recipe — its meat amounts and tray ticks (only here) */}
+        <div ref={detailRef} className="flex-1 min-w-0 scroll-mt-4">
+          {!selected ? (
+            <div className="bg-card border-2 border-dashed border-border rounded-2xl p-12 flex flex-col items-center justify-center text-center text-muted-foreground">
+              <Beef className="w-12 h-12 mb-3 opacity-40" />
+              <p className="text-xl font-semibold text-foreground">Tap a recipe to open it</p>
+              <p className="text-base mt-1">Its meat, the weights and the trays to tick show here.</p>
+            </div>
+          ) : (
           <div className={cn(
             "bg-card border-2 rounded-2xl p-6 transition-colors",
             selAllDone
@@ -846,6 +853,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
               />
             </div>
           </div>
+          )}
         </div>
       </div>
     </div>
