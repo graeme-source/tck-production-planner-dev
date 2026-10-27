@@ -12,6 +12,9 @@ const ovenInSchema = z.object({
   ingredientId: z.number().int().optional(),
   ingredientName: z.string().optional(),
   trayIndex: z.number().int().min(0),
+  // Trays of this meat for this recipe: widens the put-in tolerance for
+  // loading time (daily review). Optional.
+  trayCount: z.number().int().min(0).max(100).optional(),
 });
 
 router.post("/oven-in", async (req, res) => {
@@ -40,7 +43,20 @@ router.post("/oven-in", async (req, res) => {
     userName,
   }).returning();
 
-  res.json(record);
+  // The daily review's put-in snapshot (lib/meat-put-in.ts): on the first
+  // tray of a meat for a recipe, store the time the station was suggesting.
+  // `putIn.needsReason` makes the station ask why. Never blocks the tray.
+  let putIn = null;
+  if (d.recipeId != null && d.ingredientId != null) {
+    try {
+      const { recordPutIn } = await import("../lib/meat-put-in");
+      putIn = await recordPutIn(d.planId, d.recipeId, d.ingredientId, record.ovenInAt ? new Date(record.ovenInAt) : new Date(), d.trayCount ?? null);
+    } catch (err) {
+      console.error("[oven-in] put-in snapshot failed; tray recorded anyway:", err);
+    }
+  }
+
+  res.json({ ...record, putIn });
 });
 
 const ovenOutSchema = z.object({

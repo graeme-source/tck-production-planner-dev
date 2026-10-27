@@ -15,7 +15,7 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, ingre
 import { eq, asc, inArray } from "drizzle-orm";
 import {
   computeDaySchedule, parseClock, formatClock, applySavedBreakAnchors,
-  DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS,
+  DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS, LEARNING_RULES,
   type ScheduleRecipeInput,
 } from "@workspace/production-schedule";
 import { resolveRecipeIngredients, aggregateIngredients } from "./ingredient-resolver";
@@ -71,12 +71,23 @@ export async function buildPlanSchedule(planId: number) {
   }
   const meatInfoRows = allMeatIds.size
     ? await db
-        .select({ id: ingredientsTable.id, cook: ingredientsTable.estimatedCookTimeMin, process: ingredientsTable.meatProcessMinutes })
+        .select({
+          id: ingredientsTable.id,
+          cook: ingredientsTable.estimatedCookTimeMin,
+          process: ingredientsTable.meatProcessMinutes,
+          buffer: ingredientsTable.meatBufferMinutes,
+        })
         .from(ingredientsTable)
         .where(inArray(ingredientsTable.id, [...allMeatIds]))
     : [];
-  // Lead time = cook + process (lib/meat-lead-time.ts, migration 0124).
-  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process)]));
+  // Lead time = cook + processing + buffer (lib/meat-lead-time.ts), so the
+  // meat comes OUT of the oven processing + buffer before the builders need
+  // it and goes in cook before that. Processing and buffer are learned per
+  // meat (migration 0290, lib/meat-timing-learner.ts); an unset buffer starts
+  // small at 5.
+  const bufferOf = (b: number | null) => b ?? LEARNING_RULES.bufferStart;
+  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process, bufferOf(r.buffer))]));
+  const meatInfoById = new Map(meatInfoRows.map(r => [r.id, { ...r, buffer: bufferOf(r.buffer) }]));
 
   // Settings.
   const settingRows = await db
@@ -118,7 +129,13 @@ export async function buildPlanSchedule(planId: number) {
       name: i.name,
       batches: i.batchesTarget,
       minutesPerBatch: timing.minutesPerBatch,
-      meats: split.timed,
+      // Cook and buffer ride along so the live schedule can time the out-of-
+      // oven moment and plan waves inside the 4-hour rule (live-replan.ts).
+      meats: split.timed.map(m => ({
+        ...m,
+        cookMinutes: meatInfoById.get(m.rawMeatIngredientId)?.cook ?? null,
+        bufferMinutes: meatInfoById.get(m.rawMeatIngredientId)?.buffer ?? null,
+      })),
       buildTimeGuessed: timing.guessed,
       untimedMeats: split.untimed,
     };

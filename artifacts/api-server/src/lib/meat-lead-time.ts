@@ -14,12 +14,22 @@ export interface MeatLead {
   missing: "cook" | "process" | "both" | null;
 }
 
-export function meatLeadMinutes(cookMinutes: number | null | undefined, processMinutes: number | null | undefined): MeatLead {
+/**
+ * Grace (migration 0290, 2026-10-27) is the cover added on top — how long the
+ * cooked meat may sit ready before it's needed. Unset grace is 0, never
+ * "missing": it's optional cover, not part of getting the meat cooked.
+ */
+export function meatLeadMinutes(
+  cookMinutes: number | null | undefined,
+  processMinutes: number | null | undefined,
+  graceMinutes?: number | null,
+): MeatLead {
   const cook = cookMinutes != null && Number.isFinite(cookMinutes) && cookMinutes >= 0 ? cookMinutes : null;
   const process = processMinutes != null && Number.isFinite(processMinutes) && processMinutes >= 0 ? processMinutes : null;
+  const grace = graceMinutes != null && Number.isFinite(graceMinutes) && graceMinutes > 0 ? graceMinutes : 0;
   if (cook == null && process == null) return { minutes: null, missing: "both" };
   return {
-    minutes: (cook ?? 0) + (process ?? 0),
+    minutes: (cook ?? 0) + (process ?? 0) + grace,
     missing: cook == null ? "cook" : process == null ? "process" : null,
   };
 }

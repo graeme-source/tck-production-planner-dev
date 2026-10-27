@@ -111,6 +111,9 @@ import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
 import slowMeatRouter, { slowMeatPlanGuard } from "./slow-meat";
+import liveScheduleRouter from "./live-schedule";
+import meatTimingRouter from "./meat-timing";
+import probeReadingsRouter, { probeBridgeRouter } from "./probe-readings";
 import planMarginRouter from "./plan-margin";
 import factoryForecastRouter from "./factory-forecast";
 import weekEndStockRouter from "./week-end-stock";
@@ -204,6 +207,11 @@ router.use("/ad-spend/google-ads", googleAdsIngestRouter);
 // /print-jobs fall through to the guarded mount further down.
 router.use("/print-jobs", (req: Request, res: Response, next: NextFunction) =>
   isPrintBridgePath(req.path) ? printJobsRouter(req, res, next) : next());
+// Temperature-probe bridge (no cookie): POST /probe-readings only. NOT
+// public — demands the PROBE_BRIDGE_TOKEN bearer (503 when unset). The
+// managers' probe assignments sit behind the session guard further down.
+router.use("/probe-readings", (req: Request, res: Response, next: NextFunction) =>
+  req.method === "POST" && (req.path === "/" || req.path === "") ? probeBridgeRouter(req, res, next) : next());
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
@@ -306,6 +314,13 @@ router.use("/production-plans", extraPacksRouter);
 // router, so no new code goes in production-plans.ts.
 router.use("/production-plans", slowMeatPlanGuard);
 router.use("/slow-meat", slowMeatRouter);
+// The day schedule re-planned from the builders' real progress (Mixing
+// station timeline) — ahead of the frozen router, read-only.
+router.use("/production-plans", liveScheduleRouter);
+// Self-correcting prep-oven timings: learned vs configured, log, revert.
+router.use("/meat-timing", meatTimingRouter);
+// Which temperature probe is on which recipe on which plan (managers).
+router.use("/probe-readings", probeReadingsRouter);
 // Production safety margin (orders + 2/4 packs) — settings for the plan screens.
 router.use("/plan-margin", planMarginRouter);
 // Predicted factory number after a plan (late orders + thresholds) — the upper limit.

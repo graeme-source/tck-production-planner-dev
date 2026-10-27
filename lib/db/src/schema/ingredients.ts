@@ -44,6 +44,13 @@ export const ingredientsTable = pgTable("ingredients", {
   // Until migration 0124 (2026-09-24) this was a hand-typed cook+process
   // total; existing values were converted to their processing part.
   meatProcessMinutes: integer("meat_process_minutes"),
+  // BUFFER minutes: learned cover so builder waits are rare. The schedule
+  // targets out-of-oven = builders need it − processing − buffer; in = out −
+  // cook. NULL = 5 (start small). Learned daily with processing unless
+  // meatTimingAutoLearn is off (lib/production-schedule
+  // meat-timing-learning.ts). Migration 0290.
+  meatBufferMinutes: integer("meat_buffer_minutes"),
+  meatTimingAutoLearn: boolean("meat_timing_auto_learn").notNull().default(true),
   ovenTempC: integer("oven_temp_c"),
   steamPct: integer("steam_pct"),
   stockCheckEnabled: boolean("stock_check_enabled").notNull().default(false),

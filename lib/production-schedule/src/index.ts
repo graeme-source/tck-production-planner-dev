@@ -40,6 +40,14 @@ export interface ScheduleMeatInput {
    * time is later than it should be — the UI flags it rather than hiding it.
    */
   missing?: "cook" | "process" | null;
+  /**
+   * The cook part of processMinutes, when known — lets the live schedule
+   * check how long the cooked meat sits out before the recipe's last batch
+   * (the 4-hour rule). Optional: older callers leave it off.
+   */
+  cookMinutes?: number | null;
+  /** The buffer part of processMinutes (learned cover so the builders rarely wait). */
+  bufferMinutes?: number | null;
 }
 
 /** A raw meat the recipe needs but whose cook AND process times are both unset. */
@@ -101,6 +109,9 @@ export interface ScheduledMeat {
   beforeShiftStart: boolean;
   /** Passed through from the input: which half of the lead time is unknown. */
   missing: "cook" | "process" | null;
+  /** Passed through from the input (null when not given). */
+  cookMinutes: number | null;
+  bufferMinutes: number | null;
 }
 
 export interface ScheduledRecipe {
@@ -159,6 +170,8 @@ function scheduleRecipeAt(
     cookStartMinutes: startMinutes - m.processMinutes,
     beforeShiftStart: startMinutes - m.processMinutes < options.startMinutes,
     missing: m.missing ?? null,
+    cookMinutes: m.cookMinutes ?? null,
+    bufferMinutes: m.bufferMinutes ?? null,
   }));
   return {
     planItemId: recipe.planItemId,
@@ -299,3 +312,8 @@ export function formatClock(totalMinutes: number): string {
 export * from "./target-finish";
 export * from "./kitchen-scope";
 export * from "./recipe-route";
+export * from "./meat-timing-learning";
+export * from "./meat-daily-review";
+export * from "./meat-safety";
+export * from "./next-action";
+export * from "./live-replan";
