@@ -21,7 +21,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Mirrors api-server/src/lib/starter-forms.ts types (served as JSON).
 type Field =
-  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email" }
+  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email"; prefill?: "account_email" }
   | { kind: "date"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "textarea"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "radio"; key: string; label: string; required?: boolean; help?: string; options: { value: string; label: string; help?: string }[] }
@@ -80,7 +80,20 @@ function FormSheet({ def, submission, meId, onClose }: {
 }) {
   const queryClient = useQueryClient();
   const signed = submission?.signedAt != null;
-  const [answers, setAnswers] = useState<Answers>(submission?.answers ?? {});
+  const { state } = useAuth();
+  const accountEmail = state.status === "authenticated" ? state.user.email : "";
+  // Boxes marked prefill: "account_email" (the payslip email) start with the
+  // person's app email when still empty — saved with the next autosave or
+  // the signature, and theirs to change (Graeme, 2026-10-27).
+  const [answers, setAnswers] = useState<Answers>(() => {
+    const start: Answers = { ...(submission?.answers ?? {}) };
+    if (!signed && accountEmail) {
+      for (const f of def.sections.flatMap(s => s.fields)) {
+        if (f.kind === "text" && f.prefill === "account_email" && !start[f.key]) start[f.key] = accountEmail;
+      }
+    }
+    return start;
+  });
   const [saveState, setSaveState] = useState<"idle" | "dirty" | "saving" | "saved" | "error">("idle");
   const [confirming, setConfirming] = useState(false);
   const [initials, setInitials] = useState("");
@@ -159,6 +172,10 @@ function FormSheet({ def, submission, meId, onClose }: {
             onChange={e => setAnswer(field.key, e.target.value)}
             className={inputCls}
           />
+          {"inputMode" in field && field.inputMode === "email" && typeof answers[field.key] === "string"
+            && (answers[field.key] as string).trim() !== "" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test((answers[field.key] as string).trim()) && (
+            <p className="text-sm font-medium text-destructive mt-1">That doesn't look like an email address yet.</p>
+          )}
           {help}
         </label>
       );
