@@ -573,10 +573,12 @@ export function friedChickenTemplate(): LabelTemplate {
   t.cookingTiers = { ...t.cookingTiers, on: false };
   // Three wrapping steps need a taller band than the calzone's two.
   t.page.stepsBandMm = 11;
-  // Stored frozen — said unmistakably, without mentioning how it arrives.
-  t.storageBanner = { ...t.storageBanner, on: true, text: "KEEP FROZEN", snowflake: true };
+  // It ARRIVES CHILLED and is frozen by the customer (Graeme, 2026-10-27):
+  // "KEEP FROZEN" made customers think a chilled delivery was a fault, so
+  // the band says what to do and the text says chilled is expected.
+  t.storageBanner = { ...t.storageBanner, on: true, text: "FREEZE ON ARRIVAL", snowflake: true };
   t.text.storageHeading = "";
-  t.text.storage = "Store at -18°C or below. Cook from frozen.";
+  t.text.storage = "**Delivered chilled** — that's how it should arrive. Freeze it as soon as it arrives and store at -18°C or below. Cook from frozen.";
   t.chilledUseByOn = false;
   t.text.frozenLabel = "USE BY:";
   t.frozenDefault = { amount: 5, unit: "months" };

@@ -94,12 +94,12 @@ describe("fried chicken template", () => {
     expect(lines).toEqual(["USE BY: 12/03/27", expect.stringMatching(/^BATCH NUMBER: /)]);
     expect(c.problems).toEqual([]);
   });
-  it("KEEP FROZEN band; bones warning (automatic, chicken) at the end of the storage text", () => {
+  it("FREEZE ON ARRIVAL band, says it arrives chilled; bones warning (automatic, chicken) at the end of the storage text", () => {
     const c = content(snap(t, { netQuantity: "500g" }));
-    expect(c.storageBanner).toBe("KEEP FROZEN");
+    expect(c.storageBanner).toBe("FREEZE ON ARRIVAL");
     expect(c.storageHeading).toEqual([]);
     expect(c.storage.map(p => p.map(r => r.text).join(""))).toEqual([
-      "Store at -18°C or below. Cook from frozen.",
+      "Delivered chilled — that's how it should arrive. Freeze it as soon as it arrives and store at -18°C or below. Cook from frozen.",
       "WARNING: Whilst every effort has been made to remove all bones, some may remain.",
     ]);
     expect(c.allergenInfo.some(p => p.some(r => r.text.includes("bones")))).toBe(false);
