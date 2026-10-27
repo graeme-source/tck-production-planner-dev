@@ -12,7 +12,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import {
   db, recipesTable, ingredientsTable, productionPlansTable, productionPlanItemsTable,
-  batchCompletionsTable, stationBreaksTable, ovenEventsTable, timingSuggestionReviewsTable, usersTable,
+  ovenEventsTable, timingSuggestionReviewsTable, usersTable,
 } from "@workspace/db";
 import { and, desc, eq, gte, inArray, isNull, isNotNull, sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
@@ -20,17 +20,18 @@ import { dismissalStillHolds, reviewTodoTitle, type TimingKind } from "../lib/ti
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { rawMeatsForRecipe } from "../lib/day-schedule";
 import { assembleTimingHealth, isOnDayTimeline, type HealthMeatInput } from "../lib/timing-health";
-import { suggestBuildSeconds, suggestCookMinutes } from "../lib/timing-suggestions";
+import { suggestCookMinutes } from "../lib/timing-suggestions";
+import { BUILD_HISTORY_DAYS, loadBuildSuggestions } from "../services/build-time-history";
 import { isOnMenu } from "../lib/recipe-archive-rules";
 
 const router: IRouter = Router();
 
-/** Build-time history window: recent enough to reflect today's team and recipes. */
-export const BUILD_WINDOW_DAYS = 56;
+/** Build-time history window: recent enough to reflect today's team and recipes
+ *  (one figure, shared with the batch-profit report). */
+export const BUILD_WINDOW_DAYS = BUILD_HISTORY_DAYS;
 /** Meat cooks are fewer per day, so look back further for enough trays. */
 export const COOK_WINDOW_DAYS = 84;
 
-const BUILDING_STATIONS = ["building_1", "building_2"];
 
 router.get("/", requireManagerOrAdmin, async (_req, res) => {
   const buildSince = new Date(Date.now() - BUILD_WINDOW_DAYS * 86_400_000);
@@ -62,48 +63,9 @@ router.get("/", requireManagerOrAdmin, async (_req, res) => {
   const liveRecipes = recipes.filter(r => isOnMenu(r) || timesPlanned.has(r.id));
   const timelineRecipes = liveRecipes.filter(r => isOnDayTimeline(r.category));
 
-  const completions = await db
-    .select({
-      recipeId: productionPlanItemsTable.recipeId,
-      planId: productionPlanItemsTable.planId,
-      planItemId: batchCompletionsTable.planItemId,
-      stationType: batchCompletionsTable.stationType,
-      completedAt: batchCompletionsTable.completedAt,
-    })
-    .from(batchCompletionsTable)
-    .innerJoin(productionPlanItemsTable, eq(productionPlanItemsTable.id, batchCompletionsTable.planItemId))
-    .where(and(
-      inArray(batchCompletionsTable.stationType, BUILDING_STATIONS),
-      gte(batchCompletionsTable.completedAt, buildSince),
-      isNull(batchCompletionsTable.correctionByUserId),
-    ));
-  const breaks = await db
-    .select({
-      planId: stationBreaksTable.planId,
-      stationType: stationBreaksTable.stationType,
-      startedAt: stationBreaksTable.startedAt,
-      endedAt: stationBreaksTable.endedAt,
-    })
-    .from(stationBreaksTable)
-    .where(and(
-      inArray(stationBreaksTable.stationType, BUILDING_STATIONS),
-      gte(stationBreaksTable.startedAt, new Date(buildSince.getTime() - 86_400_000)),
-    ));
-  const buildSuggestions = suggestBuildSeconds(
-    completions.map(c => ({
-      recipeId: c.recipeId,
-      planId: c.planId,
-      planItemId: c.planItemId,
-      stationType: c.stationType,
-      completedAtMs: c.completedAt.getTime(),
-    })),
-    breaks.map(b => ({
-      planId: b.planId,
-      stationType: b.stationType,
-      startMs: b.startedAt.getTime(),
-      endMs: b.endedAt ? b.endedAt.getTime() : null,
-    })),
-  );
+  // Measured build pace (services/build-time-history.ts — shared with the
+  // batch-profit report so both read the floor's history the same way).
+  const buildSuggestions = await loadBuildSuggestions(buildSince);
 
   // Raw meats the timeline depends on, from each timeline recipe's full tree.
   const usedBy = new Map<number, string[]>();
