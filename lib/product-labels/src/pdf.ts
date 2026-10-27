@@ -96,3 +96,71 @@ export function labelsPdf(input: LabelsPdfInput): Uint8Array {
   for (const p of parts) { out.set(p, o); o += p.length; }
   return out;
 }
+
+export interface LabelRunsPdfInput {
+  /** Several different labels, each printed `copies` times, in order (the
+   *  brownie 5-packs: one design per flavour — 2026-10-27). All the same size. */
+  runs: Array<{ bitmap: Bitmap; copies: number }>;
+  dpi: number;
+  title?: string;
+}
+
+/** Like labelsPdf, but for several different labels in one PDF — each image
+ *  stored once, every copy a page that shows it. */
+export function labelRunsPdf(input: LabelRunsPdfInput): Uint8Array {
+  const runs = input.runs.filter(r => r.copies > 0);
+  if (!runs.length || runs.some(r => !Number.isInteger(r.copies))) throw new Error("At least one label");
+  const size = labelPageSizeMm(runs[0]!.bitmap, input.dpi);
+  const wPt = mmToPt(size.widthMm);
+  const hPt = mmToPt(size.heightMm);
+
+  const parts: Uint8Array[] = [];
+  const offsets: number[] = [];
+  let length = 0;
+  const push = (b: Uint8Array) => { parts.push(b); length += b.length; };
+  const text = (s: string) => push(enc.encode(s));
+  const obj = (id: number, body: () => void) => {
+    offsets[id] = length;
+    text(`${id} 0 obj\n`);
+    body();
+    text(`\nendobj\n`);
+  };
+
+  // 1 catalog, 2 pages, 3 info, then per run an image and a content stream, then the pages.
+  const imageId = (k: number) => 4 + k * 2;
+  const contentId = (k: number) => 5 + k * 2;
+  let nextId = 4 + runs.length * 2;
+  const pages: Array<{ id: number; run: number }> = [];
+  runs.forEach((r, k) => { for (let c = 0; c < r.copies; c++) pages.push({ id: nextId++, run: k }); });
+
+  text("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n");
+  obj(1, () => text("<< /Type /Catalog /Pages 2 0 R >>"));
+  obj(2, () => text(`<< /Type /Pages /Count ${pages.length} /Kids [${pages.map(p => `${p.id} 0 R`).join(" ")}] >>`));
+  const title = (input.title ?? "Labels").replace(/[()\\]/g, "").replace(/[^\x20-\x7E]/g, "-");
+  obj(3, () => text(`<< /Title (${title}) /Producer (TCK Production Planner) >>`));
+  const content = `q ${n(wPt)} 0 0 ${n(hPt)} 0 0 cm /Im0 Do Q`;
+  runs.forEach((r, k) => {
+    const { bytes } = r.bitmap.packedRows();
+    obj(imageId(k), () => {
+      text(`<< /Type /XObject /Subtype /Image /Width ${r.bitmap.width} /Height ${r.bitmap.height} /ColorSpace /DeviceGray /BitsPerComponent 1 /Decode [1 0] /Interpolate false /Length ${bytes.length} >>\nstream\n`);
+      push(bytes);
+      text("\nendstream");
+    });
+    obj(contentId(k), () => text(`<< /Length ${content.length} >>\nstream\n${content}\nendstream`));
+  });
+  for (const p of pages) {
+    obj(p.id, () => text(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${n(wPt)} ${n(hPt)}] /Resources << /XObject << /Im0 ${imageId(p.run)} 0 R >> >> /Contents ${contentId(p.run)} 0 R >>`));
+  }
+
+  const xrefAt = length;
+  const count = nextId;
+  let xref = `xref\n0 ${count}\n0000000000 65535 f \n`;
+  for (let id = 1; id < count; id++) xref += `${String(offsets[id]).padStart(10, "0")} 00000 n \n`;
+  text(xref);
+  text(`trailer\n<< /Size ${count} /Root 1 0 R /Info 3 0 R >>\nstartxref\n${xrefAt}\n%%EOF\n`);
+
+  const out = new Uint8Array(length);
+  let o = 0;
+  for (const p of parts) { out.set(p, o); o += p.length; }
+  return out;
+}

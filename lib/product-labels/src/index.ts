@@ -21,4 +21,6 @@ export { decodeLabelPng } from "./png-decode";
 export { enforceLegalMinimums, legalMinimums, layoutLabel } from "./layout";
 export type { TextMeasurer, Face, FaceMetrics, FieldLayout, FitProblem, LabelLayout, PlacedRun, Rect, BarcodeLayout } from "./layout";
 export * from "./front-label";
+export * from "./small-label";
+export * from "./code128";
 export * from "./ingredient-gaps";

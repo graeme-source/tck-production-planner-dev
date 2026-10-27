@@ -49,10 +49,10 @@ export function cleanFrontText(input: FrontLabelInput): { name: string; second: 
   return { name, second: second || null };
 }
 
-interface Fit { face: Face; size: number; inkW: number; inkTop: number; inkBottom: number; inkLeft: number }
+export interface Fit { face: Face; size: number; inkW: number; inkTop: number; inkBottom: number; inkLeft: number }
 
 /** The biggest single line of `text` that fits w × h, no bigger than maxSize. */
-function fitLine(m: TextMeasurer, text: string, weight: 700 | 500, w: number, h: number, maxSize = Infinity): Fit {
+export function fitLine(m: TextMeasurer, text: string, weight: 700 | 500, w: number, h: number, maxSize = Infinity): Fit {
   let best: { face: Face; size: number } | null = null;
   const probe = 100;
   for (const width of WIDTHS) {

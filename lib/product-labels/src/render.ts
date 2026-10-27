@@ -14,6 +14,7 @@ import { LabelFontSet } from "./fonts";
 import { layoutLabel, type LabelLayout, type PlacedRun } from "./layout";
 import { pngDataUrl } from "./png";
 import { layoutFrontLabel, type FrontLabelInput, type FrontLabelLayout } from "./front-label";
+import { layoutSmallLabel, type SmallLabelInput, type SmallLabelLayout } from "./small-label";
 import { Bitmap, fillCircle, fillContours, fillRect, flattenPath, type PathCmd } from "./raster";
 import type { LabelSnapshot } from "./snapshot";
 import { snowflakeContours } from "./snowflake";
@@ -22,7 +23,7 @@ import { normaliseTemplate } from "./template";
 export { LabelFontSet, FONT_FILES } from "./fonts";
 export { Bitmap } from "./raster";
 export { encodePng, pngDataUrl } from "./png";
-export { labelsPdf } from "./pdf";
+export { labelsPdf, labelRunsPdf } from "./pdf";
 
 function drawRun(bm: Bitmap, fonts: LabelFontSet, run: PlacedRun): void {
   const shaped = fonts.shapeText(run.text, run.face, run.sizeDots, run.letterSpacingEm);
@@ -151,5 +152,16 @@ export function renderFrontLabel(input: FrontLabelInput, fonts: LabelFontSet): {
   const layout = layoutFrontLabel(fonts, input);
   const bitmap = new Bitmap(layout.widthDots, layout.heightDots);
   for (const run of layout.runs) drawRun(bitmap, fonts, run);
+  return { bitmap, png: pngDataUrl(bitmap), layout };
+}
+
+/** The small product label (brownie 5-packs, garlic mayo — 2026-10-27) at
+ *  printer resolution, plus its PNG proof. Whole-dot barcode modules. */
+export function renderSmallLabel(input: SmallLabelInput, fonts: LabelFontSet): { bitmap: Bitmap; png: string; layout: SmallLabelLayout } {
+  const layout = layoutSmallLabel(fonts, input);
+  const bitmap = new Bitmap(layout.widthDots, layout.heightDots);
+  for (const run of layout.runs) drawRun(bitmap, fonts, run);
+  const b = layout.barcode;
+  if (b) b.modules.forEach((bar, i) => { if (bar) fillRect(bitmap, b.x + i * b.moduleDots, b.top, b.moduleDots, b.bottom - b.top, 1); });
   return { bitmap, png: pngDataUrl(bitmap), layout };
 }
