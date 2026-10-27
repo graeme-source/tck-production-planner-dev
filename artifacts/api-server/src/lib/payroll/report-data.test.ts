@@ -146,7 +146,7 @@ describe("assemblePayroll — people, hours and pay", () => {
   it("an empty month is zero, not an error", () => {
     const d = assemblePayroll(baseInput({ payrollRows: [] }));
     expect(d.people).toEqual([]);
-    expect(d.totals).toEqual({ hours: 0, grossPay: 0, productionHours: 0, productionPay: 0, officeHours: 0, officePay: 0, holidayHours: 0, holidayPay: 0 });
+    expect(d.totals).toEqual({ hours: 0, grossPay: 0, productionHours: 0, productionPay: 0, officeHours: 0, officePay: 0, holidayHours: 0, holidayPay: 0, sspEstimate: 0 });
   });
 });
 
@@ -408,5 +408,36 @@ describe("assemblePayroll — office work below the line (Graeme, 2026-10-27)", 
     const d = assemblePayroll(baseInput());
     expect(d.totals.officeHours).toBe(0);
     expect(d.totals.productionHours).toBe(d.totals.hours);
+  });
+});
+
+describe("assemblePayroll — SSP estimate (Graeme, 2026-10-27)", () => {
+  it("puts an estimate on each sick day and a summary per person, not added to gross pay", () => {
+    // Chris: worked Mon–Fri £100 a day in the 8 weeks before; sick one day.
+    const history: PayrollShiftInput[] = [];
+    for (let d = new Date("2026-08-03T00:00:00Z"); d < new Date("2026-09-25T00:00:00Z"); d.setUTCDate(d.getUTCDate() + 1)) {
+      const dow = d.getUTCDay();
+      if (dow >= 1 && dow <= 5) history.push(shift(101, d.toISOString().slice(0, 10), "08:00", "16:00", 12.5));
+    }
+    const input = baseInput({
+      absenceRecords: [{ id: 30, employeeId: 101, status: "Approved", registrations: [reg("2026-10-06", ACC_SICK, 8.25)] }],
+      history: { from: "2026-03-27", payrollRows: history, absenceRecords: [] },
+    });
+    const d = assemblePayroll(input);
+    expect(d.sick[0].ssp).toBe(24.65); // £123.25 ÷ 5 (contract says 5 days)
+    // AWE over 11 Aug – 5 Oct: 33 weekdays × £100 before the period, plus
+    // the two shifts Chris worked in the period before going sick.
+    const twoShifts = 2 * (9.5 - 50 / 60) * 12.75;
+    expect(d.ssp).toEqual([expect.objectContaining({ name: "Chris Coles", sickDays: 1, total: 24.65, byHandDays: 0, weeklySsp: 123.25, qualifyingDaysPerWeek: 5, notes: [] })]);
+    expect(d.ssp[0].awe).toBeCloseTo((3300 + twoShifts) / 8, 2);
+    expect(d.totals.sspEstimate).toBe(24.65);
+    const without = assemblePayroll({ ...input, absenceRecords: [] });
+    expect(d.totals.grossPay).toBe(without.totals.grossPay);
+  });
+
+  it("no sickness → no SSP", () => {
+    const d = assemblePayroll(baseInput());
+    expect(d.ssp).toEqual([]);
+    expect(d.totals.sspEstimate).toBe(0);
   });
 });

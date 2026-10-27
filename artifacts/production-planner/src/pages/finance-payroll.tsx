@@ -22,13 +22,14 @@ interface Person {
   holidayHours: number; holidayPay: number | null;
   contractHoursPerWeek: number | null; contractDaysPerWeek: number | null;
 }
-interface Sick { plandayEmployeeId: number; name: string; date: string; hours: number | null; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
+interface Sick { plandayEmployeeId: number; name: string; date: string; hours: number | null; ssp: number | null; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
+interface Ssp { plandayEmployeeId: number; name: string; sickDays: number; total: number; byHandDays: number; awe: number | null; weeklySsp: number | null; qualifyingDaysPerWeek: number | null; notes: string[] }
 interface Change { plandayEmployeeId: number; name: string; date: string; documents?: string[] }
 interface Leaver { id: number; name: string; date: string; note: string | null; addedBy: string | null }
 interface Report {
   period: Period; periods: Period[]; current: Period;
-  people: Person[]; sick: Sick[]; joiners: Change[]; leavers: Leaver[];
-  totals: { hours: number; grossPay: number; productionHours: number; productionPay: number; officeHours: number; officePay: number; holidayHours: number; holidayPay: number };
+  people: Person[]; sick: Sick[]; ssp: Ssp[]; joiners: Change[]; leavers: Leaver[];
+  totals: { hours: number; grossPay: number; productionHours: number; productionPay: number; officeHours: number; officePay: number; holidayHours: number; holidayPay: number; sspEstimate: number };
   warnings: string[];
   demo?: boolean; demoAllowed?: boolean;
 }
@@ -174,6 +175,26 @@ export function PayrollPanel() {
                         <span className="font-semibold">{s.name}</span>
                         <span>{day(s.date)}{s.hours != null ? ` · ${hrs(s.hours)}` : ""}</span>
                         <span className="text-muted-foreground">{normalWeek(s.contractDaysPerWeek, s.contractHoursPerWeek)}</span>
+                        <span className="ml-auto tabular-nums">{s.ssp != null ? <>SSP est. <b>{gbp(s.ssp)}</b></> : <span className="text-amber-700 dark:text-amber-300 font-semibold">SSP by hand</span>}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {r.ssp.length > 0 && (
+                  <div className="mt-3 rounded-2xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-3 space-y-2">
+                    <p className="font-bold">Statutory Sick Pay — estimate for the accountant to check · {gbp(r.totals.sspEstimate)}</p>
+                    <p className="text-xs text-muted-foreground max-w-prose">
+                      Rules from 6 April 2026: paid from the first day off, the lower of £123.25 a week or 80% of average weekly earnings
+                      (pay earned in the 8 weeks before the sickness began), shared over their usual working days. Linked spells and the
+                      28-week limit are counted. Not added to gross pay.
+                    </p>
+                    {r.ssp.map(x => (
+                      <div key={x.plandayEmployeeId} className="rounded-xl bg-background px-3 py-2">
+                        <p className="flex flex-wrap gap-x-3"><span className="font-semibold">{x.name}</span><span>{x.sickDays} day{x.sickDays === 1 ? "" : "s"}</span><span className="ml-auto font-bold tabular-nums">{x.byHandDays >= x.sickDays ? <span className="text-amber-700 dark:text-amber-300">by hand</span> : <>{gbp(x.total)}{x.byHandDays > 0 ? ` + ${x.byHandDays} by hand` : ""}</>}</span></p>
+                        <p className="text-xs text-muted-foreground tabular-nums">
+                          {[x.awe != null ? `avg weekly earnings ${gbp(x.awe)}` : null, x.weeklySsp != null ? `weekly SSP ${gbp(x.weeklySsp)}` : null, x.qualifyingDaysPerWeek != null ? `${x.qualifyingDaysPerWeek} working day${x.qualifyingDaysPerWeek === 1 ? "" : "s"} a week` : null].filter(Boolean).join(" · ")}
+                        </p>
+                        {x.notes.map((n, i) => <p key={i} className="text-xs font-semibold text-amber-700 dark:text-amber-300">{n}</p>)}
                       </div>
                     ))}
                   </div>

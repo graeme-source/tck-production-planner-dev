@@ -68,7 +68,8 @@ function demoPayroll(from: string, to: string): PayrollData {
   return {
     period: { from, to, label: `${payPeriodFor(to).label} (SAMPLE DATA)` },
     people,
-    sick: [{ plandayEmployeeId: 2, name: "Sample Person B", date: to.slice(0, 8) + "14", hours: 7.5, contractHoursPerWeek: 22.5, contractDaysPerWeek: 3 }],
+    sick: [{ plandayEmployeeId: 2, name: "Sample Person B", date: to.slice(0, 8) + "14", hours: 7.5, ssp: 41.08, contractHoursPerWeek: 22.5, contractDaysPerWeek: 3 }],
+    ssp: [{ plandayEmployeeId: 2, name: "Sample Person B", sickDays: 1, total: 41.08, byHandDays: 0, awe: 219.78, weeklySsp: 123.25, qualifyingDaysPerWeek: 3, notes: [] }],
     joiners: [{ plandayEmployeeId: 4, appUserId: null, name: "Sample Person D", date: to.slice(0, 8) + "06" }],
     leavers: [],
     totals: {
@@ -76,6 +77,7 @@ function demoPayroll(from: string, to: string): PayrollData {
       productionHours: sum(p => p.productionHours), productionPay: sum(p => p.productionPay),
       officeHours: sum(p => p.officeHours), officePay: sum(p => p.officePay),
       holidayHours: sum(p => p.holidayHours), holidayPay: sum(p => p.holidayPay),
+      sspEstimate: 41.08,
     },
     warnings: ["Sample data — made-up people so the report can be looked at. Test server only."],
   };
@@ -114,7 +116,8 @@ function pdfInput(r: Awaited<ReturnType<typeof buildReport>>): PayrollPdfInput {
       office: p.office,
     })),
     totals: r.totals,
-    sick: r.sick.map(s => ({ name: s.name, date: ukDay(s.date), hours: s.hours, contractDaysPerWeek: s.contractDaysPerWeek, contractHoursPerWeek: s.contractHoursPerWeek })),
+    sick: r.sick.map(s => ({ name: s.name, date: ukDay(s.date), hours: s.hours, ssp: s.ssp, contractDaysPerWeek: s.contractDaysPerWeek, contractHoursPerWeek: s.contractHoursPerWeek })),
+    ssp: r.ssp,
     joiners: r.joiners.map(j => ({ name: j.name, date: ukDay(j.date), documents: j.documents })),
     leavers: r.leavers.map(l => ({ name: l.name, date: ukDay(l.date), note: l.note })),
   };

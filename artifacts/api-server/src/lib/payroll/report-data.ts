@@ -55,6 +55,7 @@ import { chooseContractedHours, type ContractHoursCandidates } from "../contract
 import { isAbsenceReasonName, isSickName } from "../../services/attendance-classify";
 import type { PlandayPayrollBreak } from "../team-efficiency";
 import type { PayPeriod } from "./period";
+import { addDaysIso, estimateSsp } from "./ssp";
 
 // ── Output ────────────────────────────────────────────────────────────────
 
@@ -94,6 +95,8 @@ export interface SickDay {
   name: string;
   date: string;
   hours: number | null;
+  /** Estimated SSP for the day (ssp.ts); null = couldn't be estimated. */
+  ssp: number | null;
   contractHoursPerWeek: number | null;
   contractDaysPerWeek: number | null;
 }
@@ -105,10 +108,25 @@ export interface StaffChange {
   date: string;
 }
 
+/** One person's SSP estimate for the period — for the accountant to check. */
+export interface SspSummary {
+  plandayEmployeeId: number;
+  name: string;
+  sickDays: number;
+  total: number;
+  /** Sick days it couldn't estimate — the accountant works these out. */
+  byHandDays: number;
+  awe: number | null;
+  weeklySsp: number | null;
+  qualifyingDaysPerWeek: number | null;
+  notes: string[];
+}
+
 export interface PayrollData {
   period: { from: string; to: string; label: string };
   people: PayrollPerson[];
   sick: SickDay[];
+  ssp: SspSummary[];
   joiners: StaffChange[];
   leavers: StaffChange[];
   totals: {
@@ -116,6 +134,8 @@ export interface PayrollData {
     productionHours: number; productionPay: number;
     officeHours: number; officePay: number;
     holidayHours: number; holidayPay: number;
+    /** Σ estimated SSP — NOT in grossPay; the accountant confirms it. */
+    sspEstimate: number;
   };
   warnings: string[];
 }
@@ -209,6 +229,42 @@ export interface PayrollInput {
    *  Optional: absent = everything is production. */
   positions?: ReadonlyArray<{ id: number; name: string; sectionId?: number | null }>;
   sections?: ReadonlyArray<{ id: number; name: string }>;
+  /** Before the period, for the SSP estimate: sickness back to `from` (for
+   *  linked spells and the 28-week limit) and approved shifts' pay (for
+   *  average weekly earnings). Absent = only the period itself is used. */
+  history?: {
+    from: string;
+    payrollRows: PayrollShiftInput[];
+    absenceRecords: PayrollAbsenceRecordInput[];
+    rotaShifts?: PayrollInput["rotaShifts"];
+  };
+}
+
+/** Sick dates per Planday employee in [from, to], by the same rules as the
+ *  report's sick days (sick-named absence accounts, sick-typed rota shifts;
+ *  declined records left out). */
+export function sickDatesByEmployee(
+  records: readonly PayrollAbsenceRecordInput[],
+  accountName: ReadonlyMap<number, string>,
+  rotaShifts: PayrollInput["rotaShifts"],
+  shiftTypeName: ReadonlyMap<number, string>,
+  from: string, to: string,
+): Map<number, Set<string>> {
+  const out = new Map<number, Set<string>>();
+  const add = (id: number, d: string) => { const s = out.get(id) ?? new Set<string>(); s.add(d); out.set(id, s); };
+  for (const rec of records) {
+    if (rec.status === "Declined") continue;
+    for (const reg of rec.registrations ?? []) {
+      const d = day(reg.date);
+      const acc = reg.account?.id;
+      if (d && d >= from && d <= to && acc != null && isSickName(accountName.get(acc))) add(rec.employeeId, d);
+    }
+  }
+  for (const sh of rotaShifts ?? []) {
+    const d = day(sh.date);
+    if (d && d >= from && d <= to && sh.employeeId != null && sh.shiftTypeId != null && isSickName(shiftTypeName.get(sh.shiftTypeId))) add(sh.employeeId, d);
+  }
+  return out;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -484,6 +540,7 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
         name: nameOf(rec.employeeId),
         date: date!,
         hours,
+        ssp: null,
         contractHoursPerWeek: c.hours,
         contractDaysPerWeek: c.days,
       });
@@ -503,6 +560,7 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
       name: nameOf(s.employeeId),
       date: date!,
       hours: Number.isFinite(ms) && ms > 0 ? round2(ms / 3_600_000) : null,
+      ssp: null,
       contractHoursPerWeek: c.hours,
       contractDaysPerWeek: c.days,
     });
@@ -514,6 +572,38 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
   if (unknownAccounts.size > 0) {
     warnings.push(`Absence records use account${unknownAccounts.size === 1 ? "" : "s"} ${[...unknownAccounts].join(", ")} that Planday didn't list — not counted.`);
   }
+
+  // ── Statutory Sick Pay: an estimate per person (ssp.ts) ──
+  const ssp: SspSummary[] = [];
+  const h = input.history;
+  const lookbackFrom = h?.from ?? period.from;
+  const earlierSick = h
+    ? sickDatesByEmployee(h.absenceRecords, accountName, h.rotaShifts, shiftTypeName, h.from, addDaysIso(period.from, -1))
+    : new Map<number, Set<string>>();
+  const payRows = new Map<number, PayrollShiftInput>();
+  for (const r of [...(h?.payrollRows ?? []), ...input.payrollRows]) payRows.set(r.id, r);
+  const sickByEmployee = new Map<number, SickDay[]>();
+  for (const sd of sick) sickByEmployee.set(sd.plandayEmployeeId, [...(sickByEmployee.get(sd.plandayEmployeeId) ?? []), sd]);
+  for (const [pdId, sds] of sickByEmployee) {
+    const pay = [...payRows.values()]
+      .filter(r => r.employeeId === pdId)
+      .map(r => ({ date: day(r.date)!, pay: payrollTotals([{ ...r, breaks: r.breaks ?? [] }]).grossWages }));
+    const e = estimateSsp({
+      sickDates: sds.map(x => x.date),
+      earlierSickDates: [...(earlierSick.get(pdId) ?? [])],
+      lookbackFrom,
+      pay,
+      contractDaysPerWeek: contractOf(pdId).days,
+    });
+    const byDate = new Map(e.days.map(x => [x.date, x.amount]));
+    for (const sd of sds) sd.ssp = byDate.get(sd.date) ?? null;
+    ssp.push({
+      plandayEmployeeId: pdId, name: sds[0].name, sickDays: sds.length, total: e.total,
+      byHandDays: e.days.filter(x => x.amount == null).length,
+      awe: e.awe, weeklySsp: e.weeklySsp, qualifyingDaysPerWeek: e.qualifyingDaysPerWeek, notes: e.notes,
+    });
+  }
+  ssp.sort((a, b) => a.name.localeCompare(b.name));
 
   // ── Joiners and leavers ──
   const change = (e: PayrollEmployeeInput, date: string): StaffChange => ({
@@ -556,6 +646,7 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
     period: { from: period.from, to: period.to, label: period.label },
     people,
     sick,
+    ssp,
     joiners,
     leavers,
     totals: {
@@ -563,6 +654,7 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
       productionHours: round2(tot.productionHours), productionPay: round2(tot.productionPay),
       officeHours: round2(tot.officeHours), officePay: round2(tot.officePay),
       holidayHours: round2(tot.holidayHours), holidayPay: round2(tot.holidayPay),
+      sspEstimate: round2(ssp.reduce((n, x) => n + x.total, 0)),
     },
     warnings,
   };

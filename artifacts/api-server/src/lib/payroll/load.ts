@@ -21,8 +21,9 @@ import { getAttendanceFromCache } from "../../services/planday-attendance-cache"
 import { isSickName } from "../../services/attendance-classify";
 import { getContractRuleFacts } from "../../services/planday-employment";
 import { payPeriodLabel } from "./period";
+import { addDaysIso, linkedRunStart } from "./ssp";
 import {
-  assemblePayroll, type PayrollData, type PayrollAppUserInput, type PayrollContractInput,
+  assemblePayroll, sickDatesByEmployee, type PayrollData, type PayrollAppUserInput, type PayrollContractInput,
   type PayrollEmployeeInput, type PayrollShiftInput,
 } from "./report-data";
 
@@ -153,6 +154,11 @@ export async function loadPayrollData(from: string, to: string): Promise<Payroll
   for (const u of users) if (u.isActive && u.plandayEmployeeId != null) ids.add(u.plandayEmployeeId);
   const contracts = await contractsFor([...ids]);
 
+  // SSP estimate: sickness over the 26 weeks before (linked spells, the
+  // 28-week limit) and — only if anyone was off sick — pay for the 8 weeks
+  // before each spell began (average weekly earnings).
+  const history = await sspHistory(from, absenceRecords, absenceAccounts, attendance.shifts, shiftTypes);
+
   return assemblePayroll({
     period: { from, to, label: payPeriodLabel(from, to) },
     payrollRows,
@@ -167,5 +173,38 @@ export async function loadPayrollData(from: string, to: string): Promise<Payroll
     appUsers: users,
     positions,
     sections,
+    history,
   });
+}
+
+const SSP_LOOKBACK_DAYS = 182;
+
+async function sspHistory(
+  from: string,
+  periodAbsences: Awaited<ReturnType<typeof getPlandayAbsenceRecords>>,
+  accounts: Array<{ id: number; name: string }>,
+  periodShifts: Awaited<ReturnType<typeof getAttendanceFromCache>>["shifts"],
+  shiftTypes: Array<{ id: number; name: string }>,
+): Promise<NonNullable<Parameters<typeof assemblePayroll>[0]["history"]>> {
+  const lookFrom = addDaysIso(from, -SSP_LOOKBACK_DAYS);
+  const dayBefore = addDaysIso(from, -1);
+  const accountName = new Map(accounts.map(a => [a.id, a.name]));
+  const typeName = new Map(shiftTypes.map(t => [t.id, t.name]));
+  const sickNow = sickDatesByEmployee(periodAbsences, accountName, periodShifts, typeName, from, "9999-12-31");
+  if (sickNow.size === 0) return { from: lookFrom, payrollRows: [], absenceRecords: [], rotaShifts: [] };
+
+  const [absenceRecords, attendance] = await Promise.all([
+    getPlandayAbsenceRecords(lookFrom, dayBefore),
+    getAttendanceFromCache(lookFrom, dayBefore),
+  ]);
+  const earlier = sickDatesByEmployee(absenceRecords, accountName, attendance.shifts, typeName, lookFrom, dayBefore);
+  // Pay back to 8 weeks before the earliest spell any sick person's run began.
+  let earliest = from;
+  for (const [id, dates] of sickNow) {
+    const all = [...(earlier.get(id) ?? []), ...dates];
+    for (const d of dates) { const start = linkedRunStart(all, d); if (start < earliest) earliest = start; }
+  }
+  const payFrom = addDaysIso(earliest, -56);
+  const payrollRows = payFrom <= dayBefore ? await payrollRowsFor(payFrom, dayBefore) : [];
+  return { from: lookFrom, payrollRows, absenceRecords, rotaShifts: attendance.shifts };
 }

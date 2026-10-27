@@ -19,8 +19,11 @@ export interface PayrollPdfInput {
     productionHours: number; productionPay: number;
     officeHours: number; officePay: number;
     holidayHours: number; holidayPay: number;
+    sspEstimate?: number;
   };
-  sick: Array<{ name: string; date: string; hours: number | null; contractDaysPerWeek: number | null; contractHoursPerWeek: number | null }>;
+  sick: Array<{ name: string; date: string; hours: number | null; ssp?: number | null; contractDaysPerWeek: number | null; contractHoursPerWeek: number | null }>;
+  /** Statutory Sick Pay estimate per person — for the accountant to check. */
+  ssp?: Array<{ name: string; sickDays: number; total: number; byHandDays?: number; awe: number | null; weeklySsp: number | null; qualifyingDaysPerWeek: number | null; notes: string[] }>;
   joiners: Array<{ name: string; date: string; documents: string[] }>;
   leavers: Array<{ name: string; date: string; note?: string | null }>;
 }
@@ -146,11 +149,35 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
               <Text>
                 <Text style={{ fontFamily: "Helvetica-Bold" }}>{d.name}</Text> — {d.date}
                 {d.hours != null ? ` (${hrs(d.hours)} hours)` : ""}
+                {d.ssp != null ? ` · SSP est. ${gbp(d.ssp)}` : data.ssp?.length ? " · SSP: work out by hand" : ""}
               </Text>
               {contract ? <Text style={s.sub}>{contract}</Text> : null}
             </View>
           );
         })}
+
+        {data.ssp && data.ssp.length > 0 ? (
+          <>
+            <Text style={s.h2}>Statutory Sick Pay — ESTIMATE, please check</Text>
+            <Text style={[s.sub, { marginBottom: 6 }]}>
+              Worked out by the app on the rules from 6 April 2026: paid from the first day, lower of £123.25 a week or 80% of average
+              weekly earnings (pay earned in the 8 weeks before the sickness began), ÷ the person's qualifying days a week. Linked spells
+              and the 28-week limit are taken into account. Not included in the gross pay above.
+            </Text>
+            {data.ssp.map((x, i) => (
+              <View key={i} style={s.item} wrap={false}>
+                <Text>
+                  <Text style={{ fontFamily: "Helvetica-Bold" }}>{x.name}</Text> — {x.sickDays} sick day{x.sickDays === 1 ? "" : "s"} · {(x.byHandDays ?? 0) >= x.sickDays ? "SSP: work out by hand" : `SSP est. ${gbp(x.total)}${x.byHandDays ? ` + ${x.byHandDays} day${x.byHandDays === 1 ? "" : "s"} by hand` : ""}`}
+                </Text>
+                <Text style={s.sub}>
+                  {[x.awe != null ? `average weekly earnings ${gbp(x.awe)}` : null, x.weeklySsp != null ? `weekly SSP ${gbp(x.weeklySsp)}` : null, x.qualifyingDaysPerWeek != null ? `${x.qualifyingDaysPerWeek} qualifying day${x.qualifyingDaysPerWeek === 1 ? "" : "s"} a week` : null].filter(Boolean).join(" · ")}
+                </Text>
+                {x.notes.map((n, j) => <Text key={j} style={s.sub}>{n}</Text>)}
+              </View>
+            ))}
+            <Text style={{ fontFamily: "Helvetica-Bold", marginTop: 2 }}>Total SSP estimate {gbp(data.totals.sspEstimate ?? 0)}</Text>
+          </>
+        ) : null}
 
         <Text style={s.h2}>Joiners</Text>
         {data.joiners.length === 0 ? <Empty text="No new starters." /> : data.joiners.map((j, i) => (
