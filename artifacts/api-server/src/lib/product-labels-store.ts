@@ -10,7 +10,7 @@ import { createHash } from "node:crypto";
 import { db, recipesTable, productLabelTemplatesTable, productLabelSettingsTable, productLabelVersionsTable } from "@workspace/db";
 import { asc, desc, eq, getTableColumns } from "drizzle-orm";
 import {
-  buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, normalisePeriod, normaliseTemplate, resolveTemplateChoice, snapshotKey,
+  buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, labelFormat, normalisePeriod, normaliseTemplate, publishBlockers, resolveTemplateChoice, snapshotKey,
   type LabelSnapshot, type LabelTemplate, type RecipeLabelSettings, type SnapshotChange, type PeriodUnit,
   type TemplateCategoryDefaults, type TemplateChoice,
 } from "@workspace/product-labels";
@@ -169,7 +169,11 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
   // pack listings scan with (lib/barcode-store.ts), so the printed label and
   // the packing scanner can never disagree. Mixed numbers = none printed.
   const pack = opts.packBarcodes?.get(recipe.id) ?? (opts.packBarcodes ? { barcode: null, mixed: false } : await packBarcodeFor(recipe.id));
-  const settings = { ...settingsFromRow(settingsRow), barcode: pack.barcode };
+  // A small label (formats.ts) may fall back to the barcode stored in its
+  // label settings — a product sold as it is (the garlic mayo) may have no
+  // pack listing yet. Back labels keep the pack barcode only, as before.
+  const ownBarcode = !labelFormat(template.template).backLabel && !pack.mixed ? settingsRow?.barcode?.trim() || null : null;
+  const settings = { ...settingsFromRow(settingsRow), barcode: pack.barcode ?? ownBarcode };
   const cooking = recipeCookingSuggestion(opts.cookingData ?? await loadCookingData(recipe.id), recipe.id, template.template.cookingTiers);
   const snapshot = buildSnapshot({
     recipe: { name: recipe.name, packSize: recipe.packSize, shelfLifeDays: recipe.shelfLifeDays },
@@ -207,10 +211,25 @@ export function deckBlockers(deck: CurrentLabel["deck"]): string[] {
   return out;
 }
 
+/** Everything that stops this label going live — the fit, the content
+ *  problems, and (back labels only: formats.ts) the deck's declarations.
+ *  A small label prints no ingredients, so the deck never blocks it. */
+export function labelPublishBlockers(current: CurrentLabel, checked: Pick<LabelProof, "layout" | "content">): string[] {
+  return publishBlockers({
+    archived: current.recipe.archivedAt != null,
+    fits: checked.layout.fits,
+    fitProblems: checked.layout.problems.map(p => p.message),
+    contentProblems: checked.content.problems,
+    deckBlockers: deckBlockers(current.deck),
+    template: current.snapshot.template,
+  });
+}
+
 /** Shown, not blocking: bolding on the label is text-driven, so an unticked
  *  allergen is still bold on the label — but the recipe's allergen list is
  *  wrong until the ingredient is fixed. */
-export function deckWarnings(deck: CurrentLabel["deck"]): string[] {
+export function deckWarnings(deck: CurrentLabel["deck"], template?: LabelTemplate): string[] {
+  if (template && !labelFormat(template).backLabel) return [];
   return deck.allergenMismatches.length
     ? [`Allergen ticks don't match the declaration for: ${deck.allergenMismatches.map(m => `${m.name} (${m.missing.join(", ")})`).join("; ")}.`]
     : [];
@@ -221,9 +240,17 @@ export function changesSinceLive(live: VersionRow | undefined, current: LabelSna
   return diffSnapshots(live.snapshot as LabelSnapshot, current);
 }
 
+/** The proof payload's size facts: the format and its fixed size, so the
+ *  page can show a small label at its size beside a back label. */
+export function proofFormat(proof: LabelProof) {
+  const f = labelFormat({ format: proof.format });
+  return { format: f.key, backLabel: f.backLabel, widthMm: f.widthMm, heightMm: f.heightMm, sizeText: f.sizeText };
+}
+
 /** Field sizes and fit, small enough to store with a published version. */
 export function fitSummary(proof: LabelProof) {
   return {
+    format: proof.format,
     fits: proof.layout.fits,
     problems: proof.layout.problems,
     fields: proof.layout.fields.map(f => ({ key: f.key, sizePt: f.sizePt, width: f.width, minPt: f.minPt, legalMinPt: f.legalMinPt, xHeightMm: Math.round(f.xHeightMm * 100) / 100, lines: f.lines })),

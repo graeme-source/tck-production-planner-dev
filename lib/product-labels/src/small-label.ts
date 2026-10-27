@@ -15,6 +15,8 @@ import type { PlacedRun, TextMeasurer } from "./layout";
 import { checkEan13, encodeEan13, EAN13_QUIET_LEFT, EAN13_QUIET_RIGHT } from "./ean13";
 import { code128Ok, encodeCode128, CODE128_QUIET } from "./code128";
 import { fitLine, FRONT_LABEL_PAGE, type Fit } from "./front-label";
+import { formatLabelDate, type LabelDates } from "./dates";
+import type { LabelSnapshot } from "./snapshot";
 
 export const SMALL_LABEL_PAGE = FRONT_LABEL_PAGE;
 
@@ -61,6 +63,41 @@ export function smallLabelBarcodeModules(code: string): { kind: "ean13" | "code1
     return { kind: "code128", modules: [...quiet, ...encodeCode128(digits), ...quiet] };
   }
   return { problem: `“${code}” can't be printed as a barcode.` };
+}
+
+/** A small-format template's label (formats.ts) from its snapshot: the
+ *  words and code to draw, and the problems that stop it going live. Only
+ *  what this label prints is checked — no deck, cooking or storage rules. */
+export interface SmallLabelContent {
+  input: SmallLabelInput;
+  problems: string[];
+}
+
+export function buildSmallLabelContent(s: LabelSnapshot, dates: LabelDates): SmallLabelContent {
+  const problems: string[] = [];
+  const name = s.labelName.replace(/\s+/g, " ").trim();
+  if (!name) problems.push("No name to print — set the name on the label.");
+  if (!dates.chilledUseBy) problems.push("No use-by — set the recipe's shelf life or a use-by period on this label.");
+  const code = s.barcode?.replace(/\s+/g, "") || null;
+  if (!code) problems.push("No barcode number yet.");
+  else if (/^\d{13}$/.test(code) && !checkEan13(code).ok) {
+    // Thirteen digits is meant to be an EAN-13: a wrong check digit is a
+    // typo, not a code to print as Code 128.
+    const c = checkEan13(code);
+    problems.push(`Barcode number isn't valid: ${c.ok ? "" : c.reason}.`);
+  } else {
+    const enc = smallLabelBarcodeModules(code);
+    if ("problem" in enc) problems.push(`Barcode number isn't valid: ${enc.problem}`);
+  }
+  return {
+    input: {
+      name,
+      useBy: dates.chilledUseBy ? formatLabelDate(dates.chilledUseBy) : "",
+      batch: dates.batchCode,
+      barcode: problems.some(p => p.startsWith("Barcode")) ? null : code,
+    },
+    problems,
+  };
 }
 
 /** Rows on the left, as shares of the height. */

@@ -1,52 +1,81 @@
 /**
  * Pot labels for sub-recipes we sell as they are — /api/sub-recipe-labels
  * (Graeme, 2026-10-27: the TCK Garlic Mayo label, made by hand in Label
- * LIVE until now). Objectives A and F.
+ * LIVE until now). Objectives A, D and F.
  *
- * At the end of making the sub-recipe on the iPad, the done screen shows the
- * label and prints one per pot: name, USE BY (N days from today), batch
- * (Julian YYDDD of today, as on every TCK label) and the product's barcode.
- * 102 × 25 mm, the same stock and print path as the front name labels.
+ * ONE design: the pots get the PUBLISHED label of the product recipe the
+ * sub-recipe is linked to (sub_recipe_product_labels.recipe_id, migration
+ * 0281) — for the mayo, recipe 31 "TCK Garlic Mayo 200ml" on the 102 × 25 mm
+ * "Garlic mayo" template. Its name, use-by period and barcode are set and
+ * checked on that recipe's label page like any other label; here it is only
+ * dated (use-by from today, batch = today's Julian YYDDD) and printed. No
+ * live label, or a live label the recipe has moved on from = nothing
+ * printed, and the done screen says what to do — never a guess.
  *
- *   GET  /                          which sub-recipes have a label (ids)
- *   GET  /:subRecipeId              its label: proof, use-by, pot size
- *   POST /:subRecipeId/print { count }   print-ready PDF
- *
- * Set up per sub-recipe in sub_recipe_product_labels (migration 0272).
+ *   GET  /                               which sub-recipes have a pot label (ids)
+ *   GET  /:subRecipeId                   its label: proof, use-by, pot size — or why not
+ *   POST /:subRecipeId/print { count }   print-ready PDF, recorded as a production print
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { sql } from "drizzle-orm";
-import { db } from "@workspace/db";
-import { addDays, formatLabelDate, julianBatchCode, MAX_PRINT_COUNT } from "@workspace/product-labels";
-import { labelsPdf, renderSmallLabel } from "@workspace/product-labels/render";
+import { eq, sql } from "drizzle-orm";
+import { db, productLabelPrintsTable, usersTable } from "@workspace/db";
+import {
+  buildPrintRecord, describePeriod, labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, type LabelSnapshot,
+} from "@workspace/product-labels";
+import { labelsPdf, proofLabel } from "@workspace/product-labels/render";
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
-import { scanQueueBarcodes } from "../lib/barcode-store";
-import { fonts } from "../lib/product-labels-store";
+import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
 
-type LabelRow = { sub_recipe_id: number; label_name: string; use_by_days: number; barcode_variant_id: string | null; pot_size_g: string | null; [k: string]: unknown };
+type LabelRow = { sub_recipe_id: number; recipe_id: number | null; pot_size_g: string | null; [k: string]: unknown };
 
+/** The pot label as it prints today, or why it can't. */
 async function labelFor(subRecipeId: number) {
   const r = await db.execute<LabelRow>(sql`
-    SELECT sub_recipe_id, label_name, use_by_days, barcode_variant_id, pot_size_g::text AS pot_size_g
+    SELECT sub_recipe_id, recipe_id, pot_size_g::text AS pot_size_g
       FROM sub_recipe_product_labels WHERE sub_recipe_id = ${subRecipeId}`);
   const row = r.rows[0];
   if (!row) return null;
-  const barcode = row.barcode_variant_id ? (await scanQueueBarcodes([row.barcode_variant_id]))[row.barcode_variant_id] ?? null : null;
-  const today = londonDateString();
-  const useByIso = addDays(today, row.use_by_days);
-  return {
+  const base = {
     subRecipeId: row.sub_recipe_id,
-    name: row.label_name,
-    useByDays: row.use_by_days,
-    useByIso,
-    useBy: formatLabelDate(useByIso),
-    batch: julianBatchCode(today),
-    barcode,
+    recipeId: row.recipe_id,
     potSizeG: row.pot_size_g != null ? Number(row.pot_size_g) : null,
+    maxCount: MAX_PRINT_COUNT,
+  };
+  const recipe = row.recipe_id != null ? await loadRecipe(row.recipe_id) : undefined;
+  if (!recipe) {
+    return { ...base, ready: false as const, recipeName: null, message: "No product label is linked to this sub-recipe yet." };
+  }
+  const notReady = (message: string) => ({ ...base, ready: false as const, recipeName: recipe.name, message });
+  const live = await loadLiveVersion(recipe.id);
+  if (!live) return notReady(`Publish the ${recipe.name} label first.`);
+  const snapshot = live.snapshot as LabelSnapshot;
+  if (labelFormat(snapshot.template).backLabel) {
+    return notReady(`The ${recipe.name} label is a back label, not a pot label — pick the small pot label template on its label page and publish it.`);
+  }
+  const current = await buildCurrentLabel(recipe);
+  const today = londonDateString();
+  const proof = proofLabel(snapshot, { printDate: today, productionDate: today }, fonts());
+  const refusal = printRefusal({ hasLive: true, matchesLive: live.snapshotHash === current.hash, fits: proof.layout.fits && proof.content.problems.length === 0 });
+  if (refusal) return notReady(refusal === "update-needed" ? `The ${recipe.name} label has changed since it was published — check it and update the live version first.` : PRINT_REFUSAL_TEXT[refusal]);
+  const input = proof.small!.content.input;
+  return {
+    ...base,
+    ready: true as const,
+    recipeName: recipe.name,
+    name: input.name,
+    useBy: input.useBy,
+    useByPeriod: snapshot.chilled ? describePeriod(snapshot.chilled) : null,
+    batch: input.batch ?? "",
+    barcode: input.barcode ?? null,
+    versionNo: live.versionNo,
+    png: proof.png,
+    // For printing and the print record (not sent to the page).
+    _proof: proof,
+    _live: live,
   };
 }
 
@@ -63,8 +92,9 @@ router.get("/:subRecipeId", async (req: Request, res: Response) => {
   try {
     const l = await labelFor(p.data.subRecipeId);
     if (!l) { res.status(404).json({ error: "This sub-recipe has no pot label." }); return; }
-    const { png, layout } = renderSmallLabel({ name: l.name, useBy: l.useBy, batch: l.batch, barcode: l.barcode }, fonts());
-    res.json({ ...l, png, barcodeProblem: layout.barcodeProblem, maxCount: MAX_PRINT_COUNT });
+    if (!l.ready) { res.json(l); return; }
+    const { _proof, _live, ...out } = l;
+    res.json(out);
   } catch (err) {
     console.error("[sub-recipe-labels] get:", err);
     res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
@@ -80,11 +110,27 @@ router.post("/:subRecipeId/print", validate(PrintBody), async (req: Request, res
   try {
     const l = await labelFor(p.data.subRecipeId);
     if (!l) { res.status(404).json({ error: "This sub-recipe has no pot label." }); return; }
-    const { bitmap, layout } = renderSmallLabel({ name: l.name, useBy: l.useBy, batch: l.batch, barcode: l.barcode }, fonts());
-    const pdf = labelsPdf({ bitmap, dpi: layout.dpi, copies: count, title: `${l.name} labels` });
+    if (!l.ready) { res.status(409).json({ error: l.message }); return; }
+    const proof = l._proof;
+    const pdf = labelsPdf({ bitmap: proof.bitmap, dpi: proof.layout.dpi, copies: count, title: `${l.recipeName} - pot labels` });
+
+    // Recorded against the live version, like the back labels (Objective D).
+    const userId = req.session.userId ?? null;
+    const [u] = userId ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)) : [];
+    await db.insert(productLabelPrintsTable).values(buildPrintRecord({
+      recipe: { id: l._live.recipeId!, name: l.recipeName },
+      live: { id: l._live.id, versionNo: l._live.versionNo, snapshotHash: l._live.snapshotHash },
+      count,
+      dates: proof.dates,
+      plan: { planId: null, planItemId: null },
+      format: "pdf",
+      kind: "production",
+      user: { id: userId, name: u?.name ?? null },
+    }));
+
     const safe = l.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${safe}-labels-x${count}.pdf"`);
+    res.setHeader("Content-Disposition", `inline; filename="${safe}-labels-${proof.dates.batchCode}-x${count}.pdf"`);
     res.setHeader("Cache-Control", "no-store");
     res.send(Buffer.from(pdf));
   } catch (err) {
@@ -94,4 +140,3 @@ router.post("/:subRecipeId/print", validate(PrintBody), async (req: Request, res
 });
 
 export default router;
-

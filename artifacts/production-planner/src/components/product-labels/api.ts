@@ -6,7 +6,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { DeclarationIssue } from "@workspace/allergens";
 import type {
-  FieldKey, FitProblem, LabelDates, LabelSnapshot, LabelStatus, LabelTemplate, Rect, RecipeLabelSettings,
+  FieldKey, FitProblem, LabelDates, LabelFormat, LabelSnapshot, LabelStatus, LabelTemplate, Rect, RecipeLabelSettings,
   SnapshotChange, WidthVariant, CookingValues, ShelfPeriod, BonesWarning, CookingMode, CookingProfile, HalvedRange,
 } from "@workspace/product-labels";
 
@@ -55,6 +55,13 @@ export interface Proof {
   columns: { left: Rect; right: Rect; leftText: Rect };
   barcode: { box: Rect; module: { ok: boolean; moduleDots?: number; moduleMm?: number; magnificationPct?: number; widthDots?: number; reason?: string } };
   dates: LabelDates;
+  /** The template's fixed size (formats.ts). A small label has no text
+   *  fields or fit table — just the picture at its size. */
+  format: LabelFormat;
+  backLabel: boolean;
+  widthMm: number;
+  heightMm: number;
+  sizeText: string;
 }
 
 export interface TemplatePayload {
@@ -130,7 +137,11 @@ export interface RecipeLabel {
   /** What Automatic gives this recipe: the template set as the default for
    *  its category, else the standard one (id null). */
   templateAutomatic: { id: number | null; name: string | null };
-  template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null; netQuantityOn: boolean };
+  template: {
+    id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null; netQuantityOn: boolean;
+    /** Fixed size: false = the small label (name, use-by, batch, barcode only). */
+    format: LabelFormat; backLabel: boolean; sizeText: string;
+  };
   status: LabelStatus;
   statusLabel: string;
   matchesLive: boolean;
@@ -149,9 +160,9 @@ export interface RecipeLabel {
 }
 
 export interface TemplateList {
-  templates: Array<{ id: number; name: string; version: number; updatedAt: string; isDefault: boolean }>;
+  templates: Array<{ id: number; name: string; version: number; updatedAt: string; isDefault: boolean; sizeText: string }>;
   /** Starting designs that can be added as a new template. */
-  presets: Array<{ key: string; name: string; description: string; added: boolean }>;
+  presets: Array<{ key: string; name: string; description: string; sizeText: string; added: boolean }>;
 }
 
 export const labelKeys = {

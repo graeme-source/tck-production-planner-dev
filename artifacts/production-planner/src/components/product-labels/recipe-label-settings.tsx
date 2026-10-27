@@ -45,6 +45,9 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
 
   const s = data.settings;
   const t = data.template;
+  // The template's fixed size decides which settings print (formats.ts): a
+  // small label prints only the name, use-by, batch and barcode.
+  const back = t.backLabel;
   const [loaded, setLoaded] = useState(false);
   const [labelName, setLabelName] = useState("");
   const [netQuantity, setNetQuantity] = useState(data.settings.netQuantity ?? "");
@@ -172,10 +175,11 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
             {/* Automatic = the default for this recipe's category, else the standard one. */}
             <option value="">Automatic — {data.templateAutomatic.name ?? "standard"}</option>
             {templates.data!.templates.map(t => (
-              <option key={t.id} value={t.id}>{t.name}{t.isDefault ? " (standard)" : ""}</option>
+              <option key={t.id} value={t.id}>{t.name}{t.isDefault ? " (standard)" : ""} · {t.sizeText}</option>
             ))}
           </select>
-          <p className="text-sm text-muted-foreground">The layout, wording and cooking steps come from the template. Automatic uses the template set as the default for this recipe's category, else the standard one. <Link href={(templateChoice ?? data.templateAutomatic.id) ? `/labels/settings?template=${templateChoice ?? data.templateAutomatic.id}` : "/labels/settings"} className="font-semibold text-primary underline">Open this template's design</Link></p>
+          <p className="text-base font-semibold">Size: {t.sizeText}{back ? "" : " (small label: name, use-by, batch number and barcode)"}</p>
+          <p className="text-sm text-muted-foreground">The size, layout, wording and cooking steps come from the template. Automatic uses the template set as the default for this recipe's category, else the standard one. <Link href={(templateChoice ?? data.templateAutomatic.id) ? `/labels/settings?template=${templateChoice ?? data.templateAutomatic.id}` : "/labels/settings"} className="font-semibold text-primary underline">Open this template's design</Link></p>
         </div>
       )}
 
@@ -191,11 +195,11 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
           placeholder={data.recipe.name}
           className={cn(inputCls, "w-full max-w-md text-base")}
         />
-        <p className="text-sm text-muted-foreground">Leave blank to use the recipe name ({data.recipe.name}). The title adds the pack size: {data.recipe.packSize} PACK.</p>
+        <p className="text-sm text-muted-foreground">Leave blank to use the recipe name ({data.recipe.name}).{back ? ` The title adds the pack size: ${data.recipe.packSize} PACK.` : " Printed in capitals."}</p>
       </div>
 
       {/* Net quantity — only on templates that print it (e.g. Fried chicken). */}
-      {t.netQuantityOn && (
+      {back && t.netQuantityOn && (
         <div className="space-y-2">
           <label htmlFor="net-quantity" className="text-base font-bold">Net quantity</label>
           <input
@@ -212,6 +216,8 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
         </div>
       )}
 
+      {/* Cooking and the bones warning print on the back label only. */}
+      {back && (<>
       {/* Cooking */}
       <div className="space-y-3">
         <h3 className="flex items-center gap-2 text-base font-bold"><Flame className="w-5 h-5 text-primary" /> Cooking instructions on the label</h3>
@@ -285,19 +291,20 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
         </div>
         <BonesExplain mode={bones} found={data.bonesWarning.auto} words={data.boneRiskWords} />
       </div>
+      </>)}
 
-      {/* Use-by */}
+      {/* Use-by — the small label prints one (the chilled period). */}
       <div className="grid sm:grid-cols-2 gap-5">
         <PeriodField
           icon={<Thermometer className="w-5 h-5 text-primary" />}
-          title="Chilled use-by"
+          title={back ? "Chilled use-by" : "Use-by"}
           value={s.chilled}
           fallback={data.recipe.shelfLifeDays ? `${data.recipe.shelfLifeDays} days (the recipe's shelf life)` : t.chilledDefault ? `${t.chilledDefault.amount} ${t.chilledDefault.unit} (the standard)` : "none"}
           canEdit={canEdit}
           onSave={p => save({ chilled: p })}
           onBlur={() => void auto.flush()}
         />
-        <div className="space-y-2">
+        {back && <div className="space-y-2">
           <PeriodField
             icon={<Snowflake className="w-5 h-5 text-primary" />}
             title="Frozen use-by"
@@ -308,7 +315,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
             onBlur={() => void auto.flush()}
           />
           {toggle("frozenOn", flags.frozenOn, "Frozen line")}
-        </div>
+        </div>}
       </div>
       <p className="text-sm text-muted-foreground">Use-by is counted from the day the label is printed: 31 Jan + 1 month = 28 Feb (29 in a leap year).</p>
     </section>

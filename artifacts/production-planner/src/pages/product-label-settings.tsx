@@ -14,7 +14,7 @@ import { Link } from "wouter";
 import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Info, Loader2, Type, Ruler, Flame, CalendarClock, PenLine, ShieldCheck, Snowflake, Scale } from "lucide-react";
 import {
-  allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, dividerDots, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
+  allowedWidths, barsShorterThanGs1, BODY_WEIGHTS, dividerDots, labelFormat, EAN13_GS1_MIN_BAR_HEIGHT_MM, EAN13_MIN_BAR_HEIGHT_MM, FIELD_KEYS, MAX_STEPS, FIELD_LABEL, PERIOD_UNITS, TEMPLATE_PLACEHOLDERS, WIDTH_LABEL, WIDTH_ORDER,
   type CookingValues, type FieldKey, type FieldStyle, type LabelTemplate, type PeriodUnit, type TemplateText, type WidthVariant,
 } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
@@ -109,7 +109,7 @@ function TemplatePicker({ list, currentId, onPick }: { list: TemplateList | unde
         {list.templates.map(t => (
           <button key={t.id} type="button" onClick={() => onPick(t.isDefault ? null : t.id)} aria-pressed={t.id === currentId}
             className={cn("min-h-11 px-4 rounded-full border-2 text-sm font-bold", t.id === currentId ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground hover:bg-secondary")}>
-            {t.name}{t.isDefault ? " (standard)" : ""}
+            {t.name}{t.isDefault ? " (standard)" : ""} <span className="font-normal">· {t.sizeText}</span>
           </button>
         ))}
       </div>
@@ -119,7 +119,7 @@ function TemplatePicker({ list, currentId, onPick }: { list: TemplateList | unde
             className="min-h-11 px-4 rounded-xl border-2 border-dashed border-border text-sm font-semibold hover:bg-secondary disabled:opacity-60">
             {add.isPending ? <Loader2 className="inline w-4 h-4 animate-spin" /> : "+"} Add the “{p.name}” template
           </button>
-          <span className="text-sm text-muted-foreground">{p.description}</span>
+          <span className="text-sm text-muted-foreground">{p.sizeText}. {p.description}</span>
         </div>
       ))}
       {add.isError && <p className="text-sm font-semibold text-destructive">Couldn't add it — {(add.error as Error).message}</p>}
@@ -134,6 +134,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
   const [meta, setMeta] = useState(initial);
   const versionRef = useRef(initial.version);
   const [raisedNote, setRaisedNote] = useState<string | null>(null);
+  // Fixed when the template was made: decides which settings apply.
+  const format = labelFormat(draft);
 
   const auto = useAutosave(async (tpl: LabelTemplate) => {
     const res = await api<TemplatePayload>("/template", {
@@ -197,6 +199,14 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
         </div>
 
         <div className="space-y-5 xl:order-1">
+          {!format.backLabel && (
+            <Card icon={<Ruler className="w-5 h-5" />} title="Small label">
+              <p className="text-base font-semibold">Size: {format.sizeText} <span className="text-sm font-normal text-muted-foreground">— fixed for this template</span></p>
+              <p className="text-sm text-muted-foreground">Prints the recipe's name on the label (in capitals), USE BY from its use-by period, the batch number and its barcode — EAN-13, or Code 128 for longer codes like Shopify's. The layout is fixed and kept plain; there are no fonts, wording or cooking steps to set.</p>
+              <CategoryDefaults categories={draft.defaultForCategories} onChange={defaultForCategories => update(t => ({ ...t, defaultForCategories }))} />
+            </Card>
+          )}
+          {format.backLabel && (<>
           {/* Fonts + law */}
           <Card icon={<ShieldCheck className="w-5 h-5" />} title="Fonts and the legal minimum">
             <p className="text-sm">
@@ -212,8 +222,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
           {/* Size */}
           <Card icon={<Ruler className="w-5 h-5" />} title="Label size and printer">
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              <Num label="Width" unit="mm" value={draft.page.widthMm} step={1} min={20} max={300} onChange={v => v != null && setPage("widthMm", v)} />
-              <Num label="Height" unit="mm" value={draft.page.heightMm} step={1} min={20} max={300} onChange={v => v != null && setPage("heightMm", v)} />
+              {/* The size is the template's, fixed when it was made (formats.ts). */}
+              <p className="col-span-full text-base font-semibold">Size: {format.sizeText} <span className="text-sm font-normal text-muted-foreground">— fixed for this template</span></p>
               <label className="flex flex-col gap-1">
                 <span className="text-sm font-semibold">Printer</span>
                 <select value={draft.page.dpi} onChange={e => setPage("dpi", Number(e.target.value))} className={inputCls}>
@@ -382,6 +392,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
           <Card icon={<Scale className="w-5 h-5" />} title="Cooking times by weight">
             <CookingTiersEditor template={draft} onChange={cookingTiers => update(t => ({ ...t, cookingTiers }))} />
           </Card>
+          </>)}
 
           {/* Dates */}
           <Card icon={<CalendarClock className="w-5 h-5" />} title="Use-by and batch number">
@@ -396,7 +407,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
                 {PERIOD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>
-            <div className="flex flex-wrap items-end gap-3">
+            {format.backLabel && <div className="flex flex-wrap items-end gap-3">
               <Num label="Standard frozen use-by" value={draft.frozenDefault?.amount ?? null} step={1} min={1} max={999} allowBlank
                 onChange={v => update(t => ({ ...t, frozenDefault: v ? { amount: v, unit: t.frozenDefault?.unit ?? "months" } : null }))} />
               <select
@@ -406,8 +417,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               >
                 {PERIOD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
-            </div>
-            <p className="text-sm text-muted-foreground">Chilled use-by: a recipe's own label setting first, then its shelf life, then this standard. Frozen: the recipe's own setting, else this standard.</p>
+            </div>}
+            <p className="text-sm text-muted-foreground">Chilled use-by: a recipe's own label setting first, then its shelf life, then this standard.{format.backLabel ? " Frozen: the recipe's own setting, else this standard." : ""}</p>
             <div className="space-y-2">
               <p className="text-sm font-semibold">Batch number (YYDDD) is taken from…</p>
               <div className="flex flex-wrap gap-2">
@@ -423,7 +434,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
 
           {/* Shared by every deck and label; saved on its own, not part of
               the template version above. Moved from the old Product Hub. */}
-          <MayContainEditor />
+          {format.backLabel && <MayContainEditor />}
         </div>
       </div>
     </div>

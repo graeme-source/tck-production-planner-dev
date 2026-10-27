@@ -25,7 +25,7 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   resolveBonesWarning, describeCookingTimes, effectiveCookingMode, halveRange, normaliseCookingTiers, resolveCooking,
   DEFAULT_RECIPE_LABEL_SETTINGS, type CookingValues,
-  decideStatus, enforceLegalMinimums, legalMinimums, normaliseTemplate, publishBlockers,
+  decideStatus, enforceLegalMinimums, labelFormat, legalMinimums, normaliseTemplate,
   STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelSnapshot, type LabelTemplate,
 } from "@workspace/product-labels";
 import { encodePng } from "@workspace/product-labels/render";
@@ -34,8 +34,8 @@ import { loadPackBarcodes } from "../lib/barcode-store";
 import { loadCookingData, recipeCookingSuggestion } from "../lib/label-cooking-profile";
 import { rawBody, validate } from "../middleware/validate";
 import {
-  buildCurrentLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, loadAllLiveVersions,
-  loadLiveVersion, loadRecipe, loadTemplate, loadTemplateDefaults, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
+  buildCurrentLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, labelPublishBlockers, loadAllLiveVersions,
+  loadLiveVersion, loadRecipe, loadTemplate, loadTemplateDefaults, proofFormat, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
 } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
@@ -59,6 +59,7 @@ function fail(res: Response, err: unknown, where: string) {
 function proofPayload(proof: ReturnType<typeof renderProof>) {
   const { layout } = proof;
   return {
+    ...proofFormat(proof),
     png: proof.png,
     overflowPng: proof.overflowPng,
     widthDots: layout.widthDots,
@@ -114,12 +115,13 @@ async function listTemplates() {
   const rows = await db.select({
     id: productLabelTemplatesTable.id, name: productLabelTemplatesTable.name,
     version: productLabelTemplatesTable.version, updatedAt: productLabelTemplatesTable.updatedAt,
+    settings: productLabelTemplatesTable.settings,
   }).from(productLabelTemplatesTable).orderBy(productLabelTemplatesTable.id);
   if (rows.length === 0) { await loadTemplate(); return listTemplates(); } // creates the standard one
   const names = new Set(rows.map(r => r.name.trim().toLowerCase()));
   return {
-    templates: rows.map((r, i) => ({ ...r, isDefault: i === 0 })),
-    presets: TEMPLATE_PRESETS.map(p => ({ key: p.key, name: p.name, description: p.description, added: names.has(p.name.toLowerCase()) })),
+    templates: rows.map(({ settings, ...r }, i) => ({ ...r, isDefault: i === 0, sizeText: labelFormat(normaliseTemplate(settings)).sizeText })),
+    presets: TEMPLATE_PRESETS.map(p => ({ key: p.key, name: p.name, description: p.description, sizeText: labelFormat(p.build()).sizeText, added: names.has(p.name.toLowerCase()) })),
   };
 }
 
@@ -160,7 +162,12 @@ router.put("/template", requireManagerOrAdmin, validate(TemplateBody), async (re
   const body = req.body as z.infer<typeof TemplateBody>;
   const settings = rawBody<{ settings: unknown }>(req).settings;
   try {
-    const { template, raised } = enforceLegalMinimums(normaliseTemplate(settings), fonts());
+    // A template's format (its size) is fixed when it's made: whatever the
+    // page sends, the stored one is kept.
+    const [stored] = await db.select({ settings: productLabelTemplatesTable.settings }).from(productLabelTemplatesTable).where(eq(productLabelTemplatesTable.id, body.id));
+    if (!stored) { res.status(404).json({ error: "That label template doesn't exist" }); return; }
+    const fixedFormat = labelFormat(normaliseTemplate(stored.settings)).key;
+    const { template, raised } = enforceLegalMinimums(normaliseTemplate({ ...(settings as object), format: fixedFormat }), fonts());
     const who = await userName(req);
     const updated = await db.update(productLabelTemplatesTable)
       .set({ settings: template, version: sql`${productLabelTemplatesTable.version} + 1`, updatedAt: new Date(), updatedById: who.id, updatedByName: who.name })
@@ -265,10 +272,7 @@ router.get("/recipes", async (_req, res) => {
         isDraft: r.isDraft, archived: r.archivedAt != null, hasLive: !!lv,
         matchesLive: !!lv && lv.snapshotHash === current.hash, currentFits: checked.layout.fits,
       });
-      const blockers = publishBlockers({
-        archived: r.archivedAt != null, fits: checked.layout.fits, fitProblems: checked.layout.problems.map(p => p.message),
-        contentProblems: checked.content.problems, deckBlockers: deckBlockers(current.deck),
-      });
+      const blockers = labelPublishBlockers(current, checked);
       out.push({
         recipeId: r.id,
         name: r.name,
@@ -301,10 +305,8 @@ router.get("/recipes/:id", async (req, res) => {
     const status = decideStatus({
       isDraft: recipe.isDraft, archived: recipe.archivedAt != null, hasLive: !!lv, matchesLive, currentFits: currentProof.layout.fits,
     });
-    const blockers = publishBlockers({
-      archived: recipe.archivedAt != null, fits: currentProof.layout.fits, fitProblems: currentProof.layout.problems.map(x => x.message),
-      contentProblems: currentProof.content.problems, deckBlockers: deckBlockers(current.deck),
-    });
+    const blockers = labelPublishBlockers(current, currentProof);
+    const back = labelFormat(current.template.template).backLabel;
     res.json({
       recipe: {
         id: recipe.id, name: recipe.name, packSize: current.snapshot.packSize, shelfLifeDays: recipe.shelfLifeDays,
@@ -325,7 +327,15 @@ router.get("/recipes/:id", async (req, res) => {
       // its category (templateAutomatic), else the standard one.
       templateChoice: current.settingsRow?.templateId ?? null,
       templateAutomatic: current.automaticTemplate,
-      template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault, netQuantityOn: current.template.template.netQuantity.on },
+      template: {
+        id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking,
+        chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault, netQuantityOn: current.template.template.netQuantity.on,
+        // The template's fixed size (formats.ts): the page shows only the
+        // settings that print at that size.
+        format: labelFormat(current.template.template).key,
+        backLabel: back,
+        sizeText: labelFormat(current.template.template).sizeText,
+      },
       status,
       statusLabel: STATUS_LABEL[status],
       matchesLive,
@@ -334,10 +344,10 @@ router.get("/recipes/:id", async (req, res) => {
       // The deck lines of `blockers`, and the ingredient behind each, so the
       // page can make every named ingredient a button that opens its edit
       // dialog (2026-10-12).
-      deckBlockers: deckBlockers(current.deck),
-      deckIssues: current.deck.declarationIssues,
+      deckBlockers: back ? deckBlockers(current.deck) : [],
+      deckIssues: back ? current.deck.declarationIssues : [],
       warnings: [
-        ...deckWarnings(current.deck),
+        ...deckWarnings(current.deck, current.template.template),
         ...(current.barcodeMixed ? ["This recipe's Shopify listings have different barcodes, so no barcode is printed — set one on the recipe page."] : []),
         ...(!current.snapshot.barcode && !current.barcodeMixed ? ["No barcode — set the pack barcode on the recipe page (it is the one the packing scanner uses)."] : []),
       ],
@@ -436,10 +446,7 @@ router.post("/recipes/:id/publish", requireManagerOrAdmin, validate(PublishBody)
       return;
     }
     const proof = renderProof(current.snapshot);
-    const blockers = publishBlockers({
-      archived: recipe.archivedAt != null, fits: proof.layout.fits, fitProblems: proof.layout.problems.map(x => x.message),
-      contentProblems: proof.content.problems, deckBlockers: deckBlockers(current.deck),
-    });
+    const blockers = labelPublishBlockers(current, proof);
     if (blockers.length) { res.status(422).json({ error: "This label can't go live yet.", blockers }); return; }
     const live = await loadLiveVersion(recipe.id);
     if (live && live.snapshotHash === current.hash) { res.status(409).json({ error: "The live label is already this version." }); return; }

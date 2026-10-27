@@ -30,7 +30,7 @@ import { z } from "zod";
 import { db, productLabelPrintsTable, productLabelVersionsTable, productionPlanItemsTable, productionPlansTable, usersTable } from "@workspace/db";
 import { eq, isNotNull } from "drizzle-orm";
 import {
-  buildPrintRecord, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, normaliseTemplate, testPrintSource, TEST_STAMP_TEXT,
+  buildPrintRecord, labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, normaliseTemplate, testPrintSource, TEST_STAMP_TEXT,
   type LabelSnapshot, type PrintRefusal,
 } from "@workspace/product-labels";
 import { labelsPdf, pngDataUrl, proofLabel, stampTest } from "@workspace/product-labels/render";
@@ -154,7 +154,9 @@ router.post("/:recipeId", validate(PrintBody), async (req: Request, res: Respons
       return;
     }
     const page = normaliseTemplate(r.snapshot.template).page;
-    const title = `${test ? "TEST - " : ""}${r.recipe.name} - back labels`;
+    // "back labels" / "small labels" — the template's format (formats.ts).
+    const kind = `${labelFormat(r.snapshot.template).name.toLowerCase()}s`;
+    const title = `${test ? "TEST - " : ""}${r.recipe.name} - ${kind}`;
     const pdf = labelsPdf({ bitmap: r.proof.bitmap, dpi: page.dpi, copies: body.count, title });
 
     const userId = req.session.userId ?? null;
@@ -175,7 +177,7 @@ router.post("/:recipeId", validate(PrintBody), async (req: Request, res: Respons
 
     const safeName = r.recipe.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
     res.setHeader("Content-Type", "application/pdf");
-    res.setHeader("Content-Disposition", `inline; filename="${test ? "TEST-" : ""}back-labels-${safeName}-${r.proof.dates.batchCode}-x${body.count}.pdf"`);
+    res.setHeader("Content-Disposition", `inline; filename="${test ? "TEST-" : ""}${kind.replace(/ /g, "-")}-${safeName}-${r.proof.dates.batchCode}-x${body.count}.pdf"`);
     res.setHeader("Cache-Control", "no-store");
     res.send(Buffer.from(pdf));
   } catch (err) {
