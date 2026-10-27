@@ -345,15 +345,14 @@ describe("canSnooze", () => {
   });
 });
 
-describe("isImprovementDue — credit completed improvements once", () => {
+// Regression (Graeme, 27 Oct 2026): the Fix queue's catch-up run credited 17
+// reporters with "improvements" for reporting issues. Never again.
+describe("isImprovementDue — the Fix queue never credits an improvement", () => {
   const t = { lane: "improvement", status: "dismissed" as const, issueResolvedAt: null, improvementId: null };
-  it("credits a dismissed or answered improvement", () => {
-    expect(isImprovementDue(t)).toBe(true);
-    expect(isImprovementDue({ ...t, status: "answered" })).toBe(true);
-  });
-  it("credits a fix only once its report is closed", () => {
-    expect(isImprovementDue({ ...t, status: "fixed" })).toBe(false);
-    expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z" })).toBe(true);
+  it("not for a dismissed, answered or fixed-and-closed improvement report", () => {
+    expect(isImprovementDue(t)).toBe(false);
+    expect(isImprovementDue({ ...t, status: "answered" })).toBe(false);
+    expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z" })).toBe(false);
   });
   it("never for defects, open items, or twice", () => {
     expect(isImprovementDue({ ...t, lane: "defect" })).toBe(false);
