@@ -25,6 +25,11 @@ export interface ChecklistItem {
   readings?: ChecklistItemReading[];
   /** Labels still waiting for a reading — worked out by the server. */
   readingsMissing?: string[];
+  /** Optional items (the end-of-day improvement question) never count in
+   *  done/total and never block the checklist. */
+  optional?: boolean;
+  /** The signed-in person's answer today — improvement question only. */
+  promptAnswer?: { answer: string; improvementId: number | null; improvementTitle: string | null } | null;
 }
 
 export interface ChecklistItemReading {

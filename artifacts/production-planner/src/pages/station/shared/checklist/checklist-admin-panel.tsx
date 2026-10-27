@@ -15,6 +15,7 @@ import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
 import { parseReadingText, cleanReadingTyping, labelsFromText } from "@/lib/checklist-reading-input";
+import { IMPROVEMENT_PROMPT_TYPE, IMPROVEMENT_PROMPT_ADMIN_LABEL } from "@/lib/improvement-prompt";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -433,6 +434,7 @@ export function ChecklistAdminPanel({ stationType, onClose }: Props) {
                   <option value="fridge_freezer_temps_closing">Fridge/Freezer Temps (Closing)</option>
                   <option value="closing_fridge_check">Closing Fridge Check (freeze out-of-life packs)</option>
                   <option value="duck_defrost_quantity">Duck Defrost Quantity (+2 plans ahead)</option>
+                  <option value={IMPROVEMENT_PROMPT_TYPE}>{IMPROVEMENT_PROMPT_ADMIN_LABEL} — Yes/No, never blocks</option>
                 </select>
               </div>
             </div>
@@ -618,12 +620,16 @@ function SortableTemplateRow({
         <GripVertical className="w-4 h-4" />
       </button>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium truncate">{template.title}</p>
+        <p className="text-sm font-medium truncate">
+          {template.dynamicDataType === IMPROVEMENT_PROMPT_TYPE ? IMPROVEMENT_PROMPT_ADMIN_LABEL : template.title}
+        </p>
         <p className="text-xs text-muted-foreground">
           {template.schedule === "daily" ? "Daily" :
             template.schedule === "weekly" ? "Weekly" :
             template.schedule === "periodic" ? "Every 4 weeks" : "Specific days"}
-          {template.dynamicDataType && ` · ${template.dynamicDataType.replace(/_/g, " ")}`}
+          {template.dynamicDataType === IMPROVEMENT_PROMPT_TYPE
+            ? " · always last · asked of each person"
+            : template.dynamicDataType && ` · ${template.dynamicDataType.replace(/_/g, " ")}`}
           {template.readingUnit && ` · records a reading (${template.readingUnit})`}
         </p>
       </div>

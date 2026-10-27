@@ -22,6 +22,8 @@ import { sortByPickOrder, earliestBin, FALLBACK_ZONE_ORDER, type PickBin } from 
 import { ChecklistAdminPanel, DispatchShelfRulesCard } from "./checklist-admin-panel";
 import { ChecklistReadingFields } from "./checklist-reading-fields";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
+import { ImprovementPromptCard } from "@/components/improvement-prompt-card";
+import { IMPROVEMENT_PROMPT_TYPE } from "@/lib/improvement-prompt";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -93,6 +95,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   }, [allItems.length, data?.summary.done]);
 
   const selectedItem = allItems.find(i => itemKey(i) === selectedItemKey) ?? null;
+  // The end-of-day "Have you made an improvement today?" question (optional,
+  // answered per person) has its own Yes/No card instead of Mark Complete.
+  const isPrompt = selectedItem?.dynamicDataType === IMPROVEMENT_PROMPT_TYPE;
 
   // Scroll the left-panel list so the selected item is visible. Runs after
   // every selection change (including the optimistic advance from
@@ -109,7 +114,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
   // Dynamic data for selected item
   const { data: dynamicData, loading: dynamicLoading } = useDynamicData(
     planId,
-    selectedItem?.dynamicDataType ?? null,
+    isPrompt ? null : selectedItem?.dynamicDataType ?? null,
   );
 
   // SOPs attached to this checklist's items — one fetch for the whole list.
@@ -387,7 +392,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                   if (!items || items.length === 0) return null;
                   const meta = CATEGORY_META[cat];
                   const Icon = meta.icon;
-                  const catDone = items.filter(i => i.completed).length;
+                  // Optional items (the improvement question) don't count.
+                  const required = items.filter(i => !i.optional);
+                  const catDone = required.filter(i => i.completed).length;
                   const showCompleted = showCompletedByCategory[cat] ?? false;
                   const visibleItems = showCompleted ? items : items.filter(i => !i.completed);
                   return (
@@ -411,7 +418,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                             </button>
                           )}
                           <span className={cn("text-base font-medium", meta.color)}>
-                            {catDone}/{items.length}
+                            {catDone}/{required.length}
                           </span>
                         </div>
                       </div>
@@ -479,6 +486,9 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                               ) : null}
                               {item.type === "oneoff" && (
                                 <span className="text-xs text-amber-500 font-medium">one-off</span>
+                              )}
+                              {item.optional && !item.completed && (
+                                <span className="text-xs text-sky-600 dark:text-sky-400 font-medium">optional</span>
                               )}
                             </div>
                             {(item.type === "oneoff" || isAdmin) && (
@@ -552,7 +562,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                 </div>
 
                 {/* Description */}
-                {selectedItem.description && (
+                {selectedItem.description && !isPrompt && (
                   <div className="mb-4 p-3 bg-secondary/30 rounded-lg">
                     <p className="text-sm text-foreground/80 whitespace-pre-wrap">{selectedItem.description}</p>
                   </div>
@@ -560,7 +570,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
 
                 {/* Linked SOPs — the how-to lives ON the check. Tap to read
                     (and edit if it's wrong); + SOP to attach another. */}
-                {selectedItem.type === "template" && (
+                {selectedItem.type === "template" && !isPrompt && (
                   <div className="mb-4">
                     <SopChips
                       links={sopLinksByItem?.[selectedItem.id] ?? []}
@@ -580,7 +590,7 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                 )}
 
                 {/* Dynamic data display */}
-                {selectedItem.dynamicDataType && (
+                {selectedItem.dynamicDataType && !isPrompt && (
                   <DynamicDataDisplay
                     type={selectedItem.dynamicDataType}
                     data={dynamicData}
@@ -603,7 +613,25 @@ export function StationChecklist({ stationType, planId, defaultCategory }: Props
                 )}
 
                 {/* Completion info or action */}
-                {selectedItem.completed ? (
+                {isPrompt ? (
+                  <>
+                    <ImprovementPromptCard
+                      stationType={stationType}
+                      planId={planId}
+                      templateId={selectedItem.id}
+                      onAnswered={refetch}
+                    />
+                    {isAdmin && (
+                      <button
+                        onClick={() => handleDeleteTemplate(selectedItem)}
+                        className="mt-3 flex items-center gap-2 text-sm text-muted-foreground hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                        Remove this question from the checklist
+                      </button>
+                    )}
+                  </>
+                ) : selectedItem.completed ? (
                   <div className="mt-4 space-y-3">
                     {selectedItem.skippedReason ? (
                       <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg">
