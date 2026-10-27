@@ -8,22 +8,23 @@
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Check, Loader2, Minus, Plus, Printer } from "lucide-react";
+import { Link } from "wouter";
+import { Check, ChevronRight, Loader2, Minus, Plus, Printer } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-interface PotLabel {
+/** The pots print the linked product recipe's PUBLISHED label (one design,
+ *  set on its label page) — or, when there isn't one to print, why not. */
+type PotLabel = {
   subRecipeId: number;
-  name: string;
-  useBy: string;
-  useByDays: number;
-  batch: string;
-  barcode: string | null;
+  recipeId: number | null;
+  recipeName: string | null;
   potSizeG: number | null;
-  png: string;
-  barcodeProblem: string | null;
   maxCount: number;
-}
+} & (
+  | { ready: true; name: string; useBy: string; useByPeriod: string | null; batch: string; barcode: string | null; versionNo: number; png: string }
+  | { ready: false; message: string }
+);
 
 /** Which sub-recipes have a pot label — the done screen asks before showing anything. */
 export function useSubRecipesWithLabels() {
@@ -88,14 +89,29 @@ export function SubRecipePotLabels({ subRecipeId, madeGrams }: { subRecipeId: nu
   if (q.isLoading) return <p className="text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Drawing the pot label…</p>;
   if (q.isError || !q.data) return <p className="text-destructive font-semibold">Couldn't load the pot label — {(q.error as Error | null)?.message}</p>;
   const d = q.data;
+  if (!d.ready) {
+    // Nothing printed on a guess: say what to do, and link to where it's done.
+    return (
+      <div className="w-full max-w-xl rounded-2xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-2 text-left">
+        <p className="text-lg font-bold">Pot labels</p>
+        <p className="font-semibold">{d.message}</p>
+        {d.recipeId != null && (
+          <Link href={`/labels/${d.recipeId}`} className="inline-flex items-center gap-1 h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">
+            Open the {d.recipeName ?? "product"} label <ChevronRight className="w-4 h-4" />
+          </Link>
+        )}
+      </div>
+    );
+  }
   const step = (by: number) => setCountText(String(Math.min(d.maxCount, Math.max(1, (valid ? count : 0) + by))));
   return (
     <div className="w-full max-w-xl rounded-2xl border-2 border-border bg-card p-4 space-y-3 text-left">
       <p className="text-lg font-bold">Pot labels</p>
       <img src={d.png} alt={`Pot label: ${d.name}`} className="w-full rounded-lg ring-1 ring-border bg-white" />
       <p className="text-sm text-muted-foreground">
-        Use by {d.useBy} ({d.useByDays} days) · batch {d.batch}
-        {!d.barcode && <span className="text-amber-700 dark:text-amber-300 font-semibold"> · no barcode found — prints without one</span>}
+        Use by {d.useBy}{d.useByPeriod ? ` (${d.useByPeriod})` : ""} · batch {d.batch} ·{" "}
+        <Link href={`/labels/${d.recipeId}`} className="font-semibold text-primary underline">{d.recipeName} label, version {d.versionNo}</Link>
+        {!d.barcode && <span className="text-amber-700 dark:text-amber-300 font-semibold"> · no barcode</span>}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" onClick={() => step(-1)} aria-label="One fewer" className="h-12 w-12 rounded-xl border-2 border-border inline-flex items-center justify-center hover:bg-secondary"><Minus className="w-5 h-5" /></button>
