@@ -6,6 +6,8 @@ import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
+import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
+import { financePinGateEnabled } from "@/lib/sensitive-pin";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -143,8 +145,14 @@ export default function FinancePage() {
   const { state } = useAuth();
   const [location] = useLocation();
   const user = state.status === "authenticated" ? state.user : null;
+  const founder = Boolean(user && isFounderEmail(user.email));
+  // The private PIN, once, on the way in (Graeme, 2026-10-27: "in case
+  // anyone gets access to it"). Moving between the Finance tabs doesn't ask
+  // again. Who is asked: financePinGateEnabled.
+  const gate = financePinGateEnabled(user ? { isFounder: founder, hasPeopleAccess: (user as { hasPeopleAccess?: boolean }).hasPeopleAccess } : null);
+  useSensitivePinGate({ enabled: gate, includeAdmins: true, entryKey: "finance", scope: "people" });
   if (!user) return null;
-  const allowed = isFounderEmail(user.email) || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
+  const allowed = founder || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
   if (!allowed) return <Redirect to="/" />;
   const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : location.startsWith("/finance/payroll") ? "payroll" : "invoices";
   return (

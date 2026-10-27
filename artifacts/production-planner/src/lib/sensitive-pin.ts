@@ -83,3 +83,15 @@ export function peopleGateMode(
   if (scope !== "people" || !user.hasPeopleAccess) return "normal";
   return user.hasPrivatePin ? "private" : "setup";
 }
+
+/**
+ * Does opening Finance ask for the private PIN? (Graeme, 2026-10-27: "in
+ * case anyone gets access to it... just once when we're going into it".)
+ * Yes for the founder and anyone with People access — they have a private
+ * PIN. No for the accountants, who work from their own computers and have
+ * no PIN to type (asking would lock them out).
+ */
+export function financePinGateEnabled(user: { isFounder: boolean; hasPeopleAccess?: boolean } | null): boolean {
+  if (!user) return false;
+  return user.isFounder || Boolean(user.hasPeopleAccess);
+}

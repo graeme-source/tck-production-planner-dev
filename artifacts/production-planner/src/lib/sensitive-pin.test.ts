@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode } from "./sensitive-pin";
+import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled } from "./sensitive-pin";
 
 const TTL = 5 * 60 * 1000;
 
@@ -92,5 +92,21 @@ describe("peopleGateMode", () => {
   it("non-People pages always use the normal PIN", () => {
     expect(peopleGateMode("general", { hasPeopleAccess: true, hasPrivatePin: true })).toBe("normal");
     expect(peopleGateMode("general", { hasPeopleAccess: true, hasPrivatePin: false })).toBe("normal");
+  });
+});
+
+describe("financePinGateEnabled (Graeme, 2026-10-27)", () => {
+  it("asks the founder and anyone with People access — they have a private PIN", () => {
+    expect(financePinGateEnabled({ isFounder: true })).toBe(true);
+    expect(financePinGateEnabled({ isFounder: false, hasPeopleAccess: true })).toBe(true);
+    // …and it's the PRIVATE PIN they're asked for.
+    expect(peopleGateMode("people", { hasPeopleAccess: true, hasPrivatePin: true })).toBe("private");
+  });
+  it("never asks the accountants (no PIN to type), or no one signed in", () => {
+    expect(financePinGateEnabled({ isFounder: false, hasPeopleAccess: false })).toBe(false);
+    expect(financePinGateEnabled(null)).toBe(false);
+  });
+  it("asks once per visit: moving between Finance tabs is the same entry", () => {
+    expect(shouldDemandPinOnEntry({ authenticated: true, enabled: true, demandedFor: "finance", entryKey: "finance" })).toBe(false);
   });
 });
