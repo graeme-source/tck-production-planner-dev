@@ -21,7 +21,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Plus, Loader2, Camera, CheckCircle2, Clock, ThumbsUp, RotateCcw,
   Trophy, ChevronLeft, X, AlertCircle, Settings2, Clapperboard, Trash2, ArrowBigUp, HandHelping, BookOpen,
-  Lightbulb, EyeOff, ClipboardCheck,
+  Lightbulb, Eye, EyeOff, ClipboardCheck,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
@@ -36,7 +36,7 @@ import { pickFadePair } from "@/lib/before-after-fade";
 import { toast } from "@/hooks/use-toast";
 import { useMarkImprovementSeen, useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { useSeenOnScroll } from "@/hooks/use-seen-on-scroll";
-import { isIdea, needsReview, FEED_PAGE_SIZE, feedShownCount } from "@/lib/improvement-review";
+import { isIdea, needsReview, FEED_PAGE_SIZE, feedShownCount, unseenFilterIds } from "@/lib/improvement-review";
 import { scrollAppToTop } from "@/lib/scroll";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { CreditPeoplePicker, ImprovementCreditEditor } from "@/components/credit-people-picker";
@@ -203,10 +203,16 @@ export default function Improvements() {
   // one marks it seen.
   const [showImprovements, setShowImprovements] = useState(true);
   const [showIdeas, setShowIdeas] = useState(true);
+  // "Not seen yet" — back by request (Graeme, 27 Oct 2026): a filter you
+  // choose, not the old auto-opening "To review" view. Same rule as the
+  // blue nav badge (needsReview); `unseenKept` holds a card on the list
+  // after scrolling past it marks it seen (see unseenFilterIds).
+  const [unseenOnly, setUnseenOnly] = useState(false);
+  const [unseenKept, setUnseenKept] = useState<ReadonlySet<number>>(() => new Set());
   const [showAdmin, setShowAdmin] = useState(false);
   // How far down the feed the reader has got — 10 at a time (2026-10-02).
   const [feedRequested, setFeedRequested] = useState(FEED_PAGE_SIZE);
-  useEffect(() => { setFeedRequested(FEED_PAGE_SIZE); }, [showImprovements, showIdeas]);
+  useEffect(() => { setFeedRequested(FEED_PAGE_SIZE); }, [showImprovements, showIdeas, unseenOnly]);
   // How many the feed has already put on screen for these filters. An
   // unseen one beyond the first ten stretches the feed to reach it; once
   // it's seen the feed must not shrink back and whip that card away from
@@ -250,6 +256,10 @@ export default function Improvements() {
       queryClient.invalidateQueries({ queryKey: ["improvements"], exact: true });
     }
   }, [unseenCount, queryClient]);
+  // While the filter is on, a new unseen one that arrives joins the list.
+  useEffect(() => {
+    if (unseenOnly) setUnseenKept(prev => unseenFilterIds(prev, items));
+  }, [unseenOnly, items]);
 
   // The approval step is a setting, OFF by default (Graeme, 2026-09-07):
   // with it off, a finished improvement goes straight into the feed and the
@@ -336,8 +346,21 @@ export default function Improvements() {
           <Loader2 className="w-6 h-6 animate-spin" /> Loading…
         </div>
       ) : (() => {
+        // "Not seen yet" on: just the ones the nav badge counts (and any
+        // seen since the filter went on). Tapping it again, or either kind
+        // chip, goes back to the full feed.
+        const toggleUnseen = () => {
+          if (unseenOnly) {
+            setUnseenOnly(false);
+            setUnseenKept(new Set());
+          } else {
+            setUnseenKept(unseenFilterIds(new Set(), items));
+            setUnseenOnly(true);
+          }
+        };
         // Filter chips: at least one stays on — a feed of nothing helps no one.
         const toggleKind = (kind: "improvements" | "ideas") => {
+          if (unseenOnly) { setUnseenOnly(false); setUnseenKept(new Set()); return; }
           if (kind === "improvements") {
             if (showImprovements && !showIdeas) return;
             setShowImprovements(v => !v);
@@ -347,14 +370,16 @@ export default function Improvements() {
           }
         };
         const sorted = items
-          .filter(i => (isIdea(i) ? showIdeas : showImprovements))
+          .filter(i => (unseenOnly
+            ? unseenKept.has(i.id) || needsReview(i)
+            : (isIdea(i) ? showIdeas : showImprovements)))
           .sort(byFeedNewest);
         // Ten at a time, more as the reader reaches the bottom — but never
         // cut off something still unseen: it must be reachable to be seen.
         // …and never fewer than already shown, so one going "seen" doesn't
         // drop the cards below it back behind "Show older".
         const lastUnseenIdx = sorted.reduce((n, i, idx) => (needsReview(i) ? idx : n), -1);
-        const filters = `${showImprovements}/${showIdeas}`;
+        const filters = `${unseenOnly}/${showImprovements}/${showIdeas}`;
         const alreadyShown = feedShownRef.current.filters === filters ? feedShownRef.current.shown : 0;
         const shownCount = feedShownCount(sorted.length, Math.max(feedRequested, alreadyShown), lastUnseenIdx);
         feedShownRef.current = { filters, shown: shownCount };
@@ -366,14 +391,34 @@ export default function Improvements() {
               (Graeme, 2026-09-10). */}
           <LeanerBoard />
 
-          {/* One timeline, two kind FILTERS that combine rather than exclude. */}
-          <div className="flex gap-2">
+          {/* One timeline: the "Not seen yet" filter, and two kind FILTERS
+              that combine rather than exclude. Wraps on a phone. */}
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={toggleUnseen}
+              aria-pressed={unseenOnly}
+              title="Show only the improvements you haven't seen yet — the same ones the blue number in the menu counts"
+              className={cn(
+                "flex-1 min-w-[10rem] py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                unseenOnly
+                  ? "border-blue-500 text-blue-600 dark:text-blue-400"
+                  : "border-border text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Eye className="w-5 h-5" /> Not seen yet
+              <span className={cn(
+                "min-w-[24px] h-[24px] px-1.5 rounded-full text-xs font-bold flex items-center justify-center tabular-nums",
+                toReview.length > 0 ? "bg-blue-600 text-white" : "bg-secondary text-muted-foreground",
+              )}>
+                {toReview.length}
+              </span>
+            </button>
             <button
               onClick={() => toggleKind("improvements")}
-              aria-pressed={showImprovements}
+              aria-pressed={!unseenOnly && showImprovements}
               className={cn(
-                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                showImprovements
+                "flex-1 min-w-[10rem] py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                !unseenOnly && showImprovements
                   ? "border-emerald-500 text-emerald-600 dark:text-emerald-400"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
@@ -382,10 +427,10 @@ export default function Improvements() {
             </button>
             <button
               onClick={() => toggleKind("ideas")}
-              aria-pressed={showIdeas}
+              aria-pressed={!unseenOnly && showIdeas}
               className={cn(
-                "flex-1 py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
-                showIdeas
+                "flex-1 min-w-[10rem] py-3.5 rounded-xl font-bold text-base transition-all border-2 bg-card flex items-center justify-center gap-2",
+                !unseenOnly && showIdeas
                   ? "border-amber-500 text-amber-600 dark:text-amber-400"
                   : "border-border text-muted-foreground hover:text-foreground",
               )}
@@ -394,14 +439,31 @@ export default function Improvements() {
             </button>
           </div>
 
-          {isManager && waiting.length > 0 && (
+          {!unseenOnly && isManager && waiting.length > 0 && (
             <Section title={`Waiting for you to check (${waiting.length})`} icon={<Clock className="w-5 h-5 text-amber-500" />}>
               {waiting.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} onOpenThread={() => setThreadFor(i)} />)}
             </Section>
           )}
+          {unseenOnly && timeline.length === 0 ? (
+            <div className="rounded-2xl border-2 border-dashed border-border p-10 text-center text-muted-foreground">
+              <CheckCircle2 className="w-10 h-10 mx-auto mb-2 text-emerald-500" />
+              <p className="text-lg font-semibold text-foreground">All caught up</p>
+              <p>You've seen everything the team has finished.</p>
+              <button
+                onClick={toggleUnseen}
+                className="mt-4 px-5 h-12 rounded-xl border-2 border-border font-bold text-foreground hover:bg-secondary/50 transition-colors"
+              >
+                Show the whole feed
+              </button>
+            </div>
+          ) : (
           <Section
-            title={toReview.length > 0 ? `Latest · ${toReview.length} new` : "Latest"}
-            icon={<CheckCircle2 className="w-5 h-5 text-emerald-500" />}
+            title={unseenOnly
+              ? `Not seen yet (${toReview.length})`
+              : toReview.length > 0 ? `Latest · ${toReview.length} new` : "Latest"}
+            icon={unseenOnly
+              ? <Eye className="w-5 h-5 text-blue-500" />
+              : <CheckCircle2 className="w-5 h-5 text-emerald-500" />}
             empty="Nothing here yet — the feed starts with the first one logged."
           >
             {timeline.map(i => <Card key={i.id} item={i} onOpen={() => setOpenId(i.id)} onOpenThread={() => setThreadFor(i)} />)}
@@ -412,6 +474,7 @@ export default function Improvements() {
               />
             )}
           </Section>
+          )}
 
           {/* The feed invites scrolling — meet the reader at the bottom of
               it with the same call to action as the top. */}
