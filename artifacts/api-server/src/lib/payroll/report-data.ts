@@ -30,6 +30,19 @@
  *     LEAVER_DATE_FIELDS present; Planday's field name is unverified, so a
  *     deactivated employee with none of them is warned about, not dropped
  *     silently.
+ *   HOLIDAY — Planday books holiday as absence records against each
+ *     person's holiday accrual account ("Standard Hourly Accrual", "Fixed
+ *     Full Time", …): any absence account that isn't a sickness / leave
+ *     reason (the shared isAbsenceReasonName rule, as lib/holiday-summary.ts
+ *     uses). APPROVED records only — a pending holiday request is warned
+ *     about, not paid. Hours are the registration's Hours cost; pay is those
+ *     hours × the person's hourly rate (Graeme, 2026-10-27: "it hasn't
+ *     included holiday hours, which obviously we need to pay for").
+ *   OFFICE WORK — a shift whose Planday position sits in a section that
+ *     isn't Production (media, maintenance, planning, meetings…) is office
+ *     work, shown below the line (Graeme, 2026-10-27). Shifts with no
+ *     position, or a position with no section, count as production; the
+ *     unsectioned positions are warned about so they can be put in a section.
  *   CONTRACTED HOURS — chooseContractedHours (lib/contracted-hours.ts), the
  *     same source order as "Hours vs contract": issued in-app contract →
  *     Planday contract rule → uploaded old contract.
@@ -39,21 +52,39 @@
  */
 import { payrollTotals } from "../planday-payroll";
 import { chooseContractedHours, type ContractHoursCandidates } from "../contracted-hours";
-import { isSickName } from "../../services/attendance-classify";
+import { isAbsenceReasonName, isSickName } from "../../services/attendance-classify";
 import type { PlandayPayrollBreak } from "../team-efficiency";
 import type { PayPeriod } from "./period";
 
 // ── Output ────────────────────────────────────────────────────────────────
 
+export interface OfficeWork {
+  /** The Planday position, e.g. "Media". */
+  work: string;
+  hours: number;
+  pay: number;
+}
+
 export interface PayrollPerson {
   plandayEmployeeId: number;
   appUserId: number | null;
   name: string;
+  /** Everything: production + office + holiday. */
   hours: number;
   shifts: number;
   hourlyRate: number | null;
   salaried: boolean;
+  /** Everything: production + office + holiday. */
   grossPay: number;
+  productionHours: number;
+  productionPay: number;
+  /** Below the line: shifts in a non-production Planday section. */
+  officeHours: number;
+  officePay: number;
+  office: OfficeWork[];
+  holidayHours: number;
+  /** holidayHours × hourlyRate; null when there's no hourly rate to use. */
+  holidayPay: number | null;
   contractHoursPerWeek: number | null;
   contractDaysPerWeek: number | null;
 }
@@ -80,7 +111,12 @@ export interface PayrollData {
   sick: SickDay[];
   joiners: StaffChange[];
   leavers: StaffChange[];
-  totals: { hours: number; grossPay: number };
+  totals: {
+    hours: number; grossPay: number;
+    productionHours: number; productionPay: number;
+    officeHours: number; officePay: number;
+    holidayHours: number; holidayPay: number;
+  };
   warnings: string[];
 }
 
@@ -96,6 +132,7 @@ export interface PayrollShiftInput {
   salary: number;
   breaks?: PlandayPayrollBreak[] | null;
   wage?: { rate?: number | null; type?: string | null } | null;
+  positionId?: number | null;
 }
 
 /** A Planday HR employee, active or deactivated. Date fields are optional
@@ -122,7 +159,11 @@ export interface PayrollAbsenceRecordInput {
   id: number;
   employeeId: number;
   status: string;
-  registrations?: Array<{ date?: string | null; account?: { id?: number | null } | null; hours?: number | null }> | null;
+  registrations?: Array<{
+    date?: string | null;
+    account?: { id?: number | null; costs?: Array<{ value?: number | null; unit?: { type?: string | null } | null }> | null } | null;
+    hours?: number | null;
+  }> | null;
 }
 
 /** A person's Planday contract rule, as services/planday-employment.ts
@@ -164,6 +205,10 @@ export interface PayrollInput {
   listLeavers?: boolean;
   contracts: PayrollContractInput[];
   appUsers: PayrollAppUserInput[];
+  /** Planday positions and sections — which shifts are office work.
+   *  Optional: absent = everything is production. */
+  positions?: ReadonlyArray<{ id: number; name: string; sectionId?: number | null }>;
+  sections?: ReadonlyArray<{ id: number; name: string }>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -183,6 +228,20 @@ export function parseContractDays(...texts: Array<string | null | undefined>): n
     }
   }
   return null;
+}
+
+/** A registration's hours: the Hours cost Planday puts on the account
+ *  (what the live data carries), else a bare `hours`. null = no hours. */
+export function registrationHours(reg: NonNullable<PayrollAbsenceRecordInput["registrations"]>[number]): number | null {
+  const costs = reg.account?.costs ?? [];
+  const h = costs.filter(c => /hour/i.test(c.unit?.type ?? "Hours") && typeof c.value === "number");
+  if (h.length > 0) return round2(h.reduce((n, c) => n + (c.value as number), 0));
+  return typeof reg.hours === "number" ? reg.hours : null;
+}
+
+/** Production unless the position sits in a section that isn't Production. */
+export function isProductionSection(name: string | null | undefined): boolean {
+  return name == null || /production/i.test(name);
 }
 
 function wageKind(type: string | null | undefined): "hourly" | "salaried" | "other" {
@@ -263,14 +322,68 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
   }
   if (outside > 0) warnings.push(`${outside} shift${outside === 1 ? "" : "s"} dated outside ${period.label} left out.`);
 
+  // ── Holiday: approved registrations on holiday accrual accounts ──
+  const accountName = new Map(input.absenceAccounts.map(a => [a.id, a.name]));
+  const holidayByEmployee = new Map<number, number>();
+  const pendingHoliday = new Set<number>();
+  let holidayNoHours = 0;
+  for (const rec of input.absenceRecords) {
+    if (rec.status === "Declined") continue;
+    for (const reg of rec.registrations ?? []) {
+      const date = day(reg.date);
+      if (!within(date, period)) continue;
+      const accId = reg.account?.id;
+      const accName = accId != null ? accountName.get(accId) : undefined;
+      if (accName === undefined || isAbsenceReasonName(accName)) continue;
+      if (rec.status !== "Approved") { pendingHoliday.add(rec.id); continue; }
+      const h = registrationHours(reg);
+      if (h == null) { holidayNoHours++; continue; }
+      holidayByEmployee.set(rec.employeeId, round2((holidayByEmployee.get(rec.employeeId) ?? 0) + h));
+    }
+  }
+  if (pendingHoliday.size > 0) {
+    warnings.push(`${pendingHoliday.size} holiday request${pendingHoliday.size === 1 ? " is" : "s are"} not approved in Planday yet, so ${pendingHoliday.size === 1 ? "isn't" : "aren't"} paid here.`);
+  }
+  if (holidayNoHours > 0) warnings.push(`${holidayNoHours} holiday day${holidayNoHours === 1 ? " has" : "s have"} no hours in Planday — not paid here; check by hand.`);
+
+  // ── Office work: which positions sit outside the Production section ──
+  const sectionName = new Map((input.sections ?? []).map(x => [x.id, x.name]));
+  const positionById = new Map((input.positions ?? []).map(x => [x.id, x]));
+  const unsectioned = new Set<string>();
+  const officeWorkOf = (r: PayrollShiftInput): string | null => {
+    if (r.positionId == null) return null;
+    const pos = positionById.get(r.positionId);
+    if (!pos) return null;
+    const sec = pos.sectionId != null ? sectionName.get(pos.sectionId) : undefined;
+    if (sec === undefined) { if (input.sections) unsectioned.add(pos.name); return null; }
+    return isProductionSection(sec) ? null : pos.name;
+  };
+
   const people: PayrollPerson[] = [];
   let totalHours = 0;
   let totalPay = 0;
-  for (const [pdId, rows] of rowsByEmployee) {
+  const tot = { productionHours: 0, productionPay: 0, officeHours: 0, officePay: 0, holidayHours: 0, holidayPay: 0 };
+  const everyone = new Set<number>([...rowsByEmployee.keys(), ...holidayByEmployee.keys()]);
+  for (const pdId of everyone) {
+    const rows = rowsByEmployee.get(pdId) ?? [];
     const name = nameOf(pdId);
     const t = payrollTotals(rows.map(r => ({ ...r, breaks: r.breaks ?? [] })));
-    totalHours += t.totalHours;
-    totalPay += t.grossWages;
+
+    // Split the shifts: production above the line, office work below.
+    const office = new Map<string, { hours: number; pay: number }>();
+    let officeHours = 0;
+    let officePay = 0;
+    for (const r of rows) {
+      const work = officeWorkOf(r);
+      if (!work) continue;
+      const one = payrollTotals([{ ...r, breaks: r.breaks ?? [] }]);
+      const o = office.get(work) ?? { hours: 0, pay: 0 };
+      o.hours += one.totalHours;
+      o.pay += one.grossWages;
+      office.set(work, o);
+      officeHours += one.totalHours;
+      officePay += one.grossWages;
+    }
 
     const sorted = [...rows].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : 0));
     const hourly = sorted.filter(r => wageKind(r.wage?.type) === "hourly");
@@ -289,19 +402,48 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
     }
     if (!userByPd.has(pdId)) warnings.push(`${name} (Planday ${pdId}) isn't linked to anyone in the app.`);
 
+    const holidayHours = holidayByEmployee.get(pdId) ?? 0;
+    const holidayPay = holidayHours > 0 && hourlyRate != null ? round2(holidayHours * hourlyRate) : holidayHours > 0 ? null : 0;
+    if (holidayHours > 0 && holidayPay == null) {
+      warnings.push(`${name} has ${round2(holidayHours)} hours of holiday but no hourly shift this period to take a rate from — work out their holiday pay by hand.`);
+    }
+
+    const productionHours = t.totalHours - officeHours;
+    const productionPay = t.grossWages - officePay;
+    const hours = t.totalHours + holidayHours;
+    const gross = t.grossWages + (holidayPay ?? 0);
+    totalHours += hours;
+    totalPay += gross;
+    tot.productionHours += productionHours;
+    tot.productionPay += productionPay;
+    tot.officeHours += officeHours;
+    tot.officePay += officePay;
+    tot.holidayHours += holidayHours;
+    tot.holidayPay += holidayPay ?? 0;
+
     const c = contractOf(pdId);
     people.push({
       plandayEmployeeId: pdId,
       appUserId: userByPd.get(pdId)?.id ?? null,
       name,
-      hours: round2(t.totalHours),
+      hours: round2(hours),
       shifts: rows.length,
       hourlyRate,
       salaried,
-      grossPay: round2(t.grossWages),
+      grossPay: round2(gross),
+      productionHours: round2(productionHours),
+      productionPay: round2(productionPay),
+      officeHours: round2(officeHours),
+      officePay: round2(officePay),
+      office: [...office.entries()].map(([work, o]) => ({ work, hours: round2(o.hours), pay: round2(o.pay) })).sort((a, b) => a.work.localeCompare(b.work)),
+      holidayHours: round2(holidayHours),
+      holidayPay,
       contractHoursPerWeek: c.hours,
       contractDaysPerWeek: c.days,
     });
+  }
+  if (unsectioned.size > 0) {
+    warnings.push(`Planday position${unsectioned.size === 1 ? "" : "s"} ${[...unsectioned].sort().join(", ")} ${unsectioned.size === 1 ? "isn't" : "aren't"} in a section, so ${unsectioned.size === 1 ? "it's" : "they're"} counted as production — put ${unsectioned.size === 1 ? "it" : "them"} in the right section in Planday.`);
   }
   people.sort((a, b) => a.name.localeCompare(b.name));
 
@@ -310,13 +452,12 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
   // Only people still active in Planday too.
   const activeInPlanday = new Set(input.employees.map(e => e.id));
   for (const u of input.appUsers) {
-    if (!u.isActive || u.plandayEmployeeId == null || rowsByEmployee.has(u.plandayEmployeeId)) continue;
+    if (!u.isActive || u.plandayEmployeeId == null || everyone.has(u.plandayEmployeeId)) continue;
     if (userByPd.get(u.plandayEmployeeId) !== u || !activeInPlanday.has(u.plandayEmployeeId)) continue;
     warnings.push(`${u.name} has no approved shifts in Planday for ${period.label} — check for unapproved shifts or a salary.`);
   }
 
   // ── Sickness ──
-  const accountName = new Map(input.absenceAccounts.map(a => [a.id, a.name]));
   const sickKey = new Map<string, SickDay>();
   const pendingSick = new Set<number>();
   const unknownAccounts = new Set<number>();
@@ -332,7 +473,7 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
       if (rec.status !== "Approved") pendingSick.add(rec.id);
       const key = `${rec.employeeId}|${date}`;
       const existing = sickKey.get(key);
-      const hours = typeof reg.hours === "number" ? reg.hours : null;
+      const hours = registrationHours(reg);
       if (existing) {
         if (hours != null) existing.hours = round2((existing.hours ?? 0) + hours);
         continue;
@@ -417,7 +558,12 @@ export function assemblePayroll(input: PayrollInput): PayrollData {
     sick,
     joiners,
     leavers,
-    totals: { hours: round2(totalHours), grossPay: round2(totalPay) },
+    totals: {
+      hours: round2(totalHours), grossPay: round2(totalPay),
+      productionHours: round2(tot.productionHours), productionPay: round2(tot.productionPay),
+      officeHours: round2(tot.officeHours), officePay: round2(tot.officePay),
+      holidayHours: round2(tot.holidayHours), holidayPay: round2(tot.holidayPay),
+    },
     warnings,
   };
 }

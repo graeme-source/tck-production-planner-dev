@@ -14,7 +14,8 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import {
   isPlandayConfigured, getPlandayPayrollRows, getPlandayEmployees, getPlandayAbsenceRecords,
-  getPlandayAbsenceAccounts, getPlandayContractRules, getPlandayShiftTypes, plandayRead, plandayReadAll,
+  getPlandayAbsenceAccounts, getPlandayContractRules, getPlandayShiftTypes, getPlandayPositions, getPlandaySections,
+  plandayRead, plandayReadAll,
 } from "../../services/planday";
 import { getAttendanceFromCache } from "../../services/planday-attendance-cache";
 import { isSickName } from "../../services/attendance-classify";
@@ -126,7 +127,7 @@ async function contractsFor(plandayIds: number[]): Promise<PayrollContractInput[
 export async function loadPayrollData(from: string, to: string): Promise<PayrollData> {
   if (!isPlandayConfigured()) throw new Error("Planday isn't connected, so there's no payroll to show.");
 
-  const [payrollRows, employees, deactivated, absenceRecords, absenceAccounts, users, attendance, shiftTypes] = await Promise.all([
+  const [payrollRows, employees, deactivated, absenceRecords, absenceAccounts, users, attendance, shiftTypes, positions, sections] = await Promise.all([
     payrollRowsFor(from, to),
     getPlandayEmployees(),
     deactivatedEmployees(),
@@ -137,6 +138,10 @@ export async function loadPayrollData(from: string, to: string): Promise<Payroll
     // "Sick" rather than an absence. The mirror serves stale if Planday's down.
     getAttendanceFromCache(from, to),
     getPlandayShiftTypes(),
+    // Which positions sit outside the Production section — office work,
+    // below the line (Graeme, 2026-10-27).
+    getPlandayPositions(),
+    getPlandaySections(),
   ]);
 
   // Contract rules for everyone the report mentions: paid, sick, or linked.
@@ -160,5 +165,7 @@ export async function loadPayrollData(from: string, to: string): Promise<Payroll
     listLeavers: false,
     contracts,
     appUsers: users,
+    positions,
+    sections,
   });
 }

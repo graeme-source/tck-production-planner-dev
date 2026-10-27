@@ -146,7 +146,7 @@ describe("assemblePayroll — people, hours and pay", () => {
   it("an empty month is zero, not an error", () => {
     const d = assemblePayroll(baseInput({ payrollRows: [] }));
     expect(d.people).toEqual([]);
-    expect(d.totals).toEqual({ hours: 0, grossPay: 0 });
+    expect(d.totals).toEqual({ hours: 0, grossPay: 0, productionHours: 0, productionPay: 0, officeHours: 0, officePay: 0, holidayHours: 0, holidayPay: 0 });
   });
 });
 
@@ -314,5 +314,99 @@ describe("assemblePayroll — joiners and leavers", () => {
     }));
     expect(d.people.find(p => p.plandayEmployeeId === 101)!.appUserId).toBe(11);
     expect(d.warnings.some(w => w.includes("both linked"))).toBe(true);
+  });
+});
+
+/** A registration as live Planday sends it: hours as an Hours cost on the account. */
+const reg = (date: string, account: number, hours: number) => ({ date, account: { id: account, costs: [{ unit: { type: "Hours" }, value: hours }] } });
+
+describe("assemblePayroll — holiday (Graeme, 2026-10-27: holiday hours weren't paid)", () => {
+  it("adds approved holiday hours × the hourly rate to hours and gross pay", () => {
+    const d = assemblePayroll(baseInput({
+      absenceRecords: [{ id: 10, employeeId: 101, status: "Approved", registrations: [reg("2026-10-08", ACC_HOLIDAY, 8.25), reg("2026-10-09", ACC_HOLIDAY, 8.25)] }],
+    }));
+    const chris = d.people.find(p => p.plandayEmployeeId === 101)!;
+    const worked = 2 * (9.5 - 50 / 60);
+    expect(chris.holidayHours).toBe(16.5);
+    expect(chris.holidayPay).toBeCloseTo(16.5 * 12.75, 2);
+    expect(chris.hours).toBeCloseTo(worked + 16.5, 2);
+    expect(chris.grossPay).toBeCloseTo((worked + 16.5) * 12.75, 1);
+    expect(d.totals.holidayHours).toBe(16.5);
+    expect(d.totals.grossPay).toBeCloseTo(d.people.reduce((n, p) => n + p.grossPay, 0), 1);
+  });
+
+  it("someone on holiday all period still appears, with a warning when there's no rate to use", () => {
+    const d = assemblePayroll(baseInput({
+      payrollRows: [shift(101, "2026-09-29", "07:00", "15:00", 12.75)],
+      absenceRecords: [{ id: 11, employeeId: 102, status: "Approved", registrations: [reg("2026-10-08", ACC_HOLIDAY, 4)] }],
+    }));
+    const tommy = d.people.find(p => p.plandayEmployeeId === 102)!;
+    expect(tommy.holidayHours).toBe(4);
+    expect(tommy.holidayPay).toBeNull();
+    expect(d.warnings.some(w => w.includes("Tommy Reed") && w.includes("holiday") && w.includes("by hand"))).toBe(true);
+    expect(d.warnings.some(w => w.includes("Tommy Reed has no approved shifts"))).toBe(false);
+  });
+
+  it("pending holiday isn't paid (warned); sickness and declined records aren't holiday", () => {
+    const d = assemblePayroll(baseInput({
+      absenceRecords: [
+        { id: 12, employeeId: 101, status: "Pending", registrations: [reg("2026-10-08", ACC_HOLIDAY, 8.25)] },
+        { id: 13, employeeId: 101, status: "Declined", registrations: [reg("2026-10-09", ACC_HOLIDAY, 8.25)] },
+        { id: 14, employeeId: 101, status: "Approved", registrations: [reg("2026-10-10", ACC_SICK, 8.25)] },
+      ],
+    }));
+    expect(d.people.find(p => p.plandayEmployeeId === 101)!.holidayHours).toBe(0);
+    expect(d.warnings.some(w => w.includes("holiday request") && w.includes("not approved"))).toBe(true);
+    // Live data's sick hours come from the account's Hours cost too.
+    expect(d.sick.map(s => s.hours)).toEqual([8.25]);
+  });
+});
+
+describe("assemblePayroll — office work below the line (Graeme, 2026-10-27)", () => {
+  const positions = [
+    { id: 1, name: "Builder 1", sectionId: 10 },
+    { id: 2, name: "Media", sectionId: 20 },
+    { id: 3, name: "Production planning", sectionId: 20 },
+    { id: 4, name: "Cleaner", sectionId: null },
+  ];
+  const sections = [{ id: 10, name: "Production" }, { id: 20, name: "Office" }];
+  const at = (s: PayrollShiftInput, positionId: number | null): PayrollShiftInput => ({ ...s, positionId });
+
+  it("splits shifts in a non-production section out, by position, without changing the total", () => {
+    const d = assemblePayroll(baseInput({
+      positions, sections,
+      payrollRows: [
+        at(shift(101, "2026-09-29", "07:00", "15:00", 12.75), 1),
+        at(shift(101, "2026-09-30", "09:00", "13:00", 12.75), 2),
+        at(shift(101, "2026-10-01", "09:00", "11:00", 12.75), 3),
+        at(shift(101, "2026-10-02", "09:00", "10:00", 12.75), 2),
+      ],
+    }));
+    const chris = d.people[0];
+    expect(chris.productionHours).toBe(8);
+    expect(chris.officeHours).toBe(7);
+    expect(chris.office).toEqual([
+      { work: "Media", hours: 5, pay: 63.75 },
+      { work: "Production planning", hours: 2, pay: 25.5 },
+    ]);
+    expect(chris.productionPay + chris.officePay).toBeCloseTo(chris.grossPay, 2);
+    expect(d.totals.officePay).toBe(89.25);
+    expect(d.totals.productionPay + d.totals.officePay + d.totals.holidayPay).toBeCloseTo(d.totals.grossPay, 2);
+  });
+
+  it("no position, or a position with no section, counts as production; unsectioned ones are named", () => {
+    const d = assemblePayroll(baseInput({
+      positions, sections,
+      payrollRows: [at(shift(101, "2026-09-29", "07:00", "15:00", 12.75), null), at(shift(101, "2026-09-30", "07:00", "09:00", 12.75), 4)],
+    }));
+    expect(d.people[0].officeHours).toBe(0);
+    expect(d.people[0].productionHours).toBe(10);
+    expect(d.warnings.some(w => w.includes("Cleaner") && w.includes("section"))).toBe(true);
+  });
+
+  it("without positions/sections everything is production, as before", () => {
+    const d = assemblePayroll(baseInput());
+    expect(d.totals.officeHours).toBe(0);
+    expect(d.totals.productionHours).toBe(d.totals.hours);
   });
 });

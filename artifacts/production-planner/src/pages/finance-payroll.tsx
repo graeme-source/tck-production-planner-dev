@@ -8,21 +8,27 @@
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Download, FileText, Loader2, Mail, Plus, Thermometer, UserMinus, UserPlus, Users, X } from "lucide-react";
+import { Briefcase, Download, FileText, Loader2, Mail, Plus, Thermometer, UserMinus, UserPlus, Users, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface Period { from: string; to: string; label: string }
-interface Person { plandayEmployeeId: number; name: string; hours: number; shifts: number; hourlyRate: number | null; salaried: boolean; grossPay: number; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
+interface Person {
+  plandayEmployeeId: number; name: string; hours: number; shifts: number; hourlyRate: number | null; salaried: boolean; grossPay: number;
+  productionHours: number; productionPay: number; officeHours: number; officePay: number;
+  office: Array<{ work: string; hours: number; pay: number }>;
+  holidayHours: number; holidayPay: number | null;
+  contractHoursPerWeek: number | null; contractDaysPerWeek: number | null;
+}
 interface Sick { plandayEmployeeId: number; name: string; date: string; hours: number | null; contractHoursPerWeek: number | null; contractDaysPerWeek: number | null }
 interface Change { plandayEmployeeId: number; name: string; date: string; documents?: string[] }
 interface Leaver { id: number; name: string; date: string; note: string | null; addedBy: string | null }
 interface Report {
   period: Period; periods: Period[]; current: Period;
   people: Person[]; sick: Sick[]; joiners: Change[]; leavers: Leaver[];
-  totals: { hours: number; grossPay: number };
+  totals: { hours: number; grossPay: number; productionHours: number; productionPay: number; officeHours: number; officePay: number; holidayHours: number; holidayPay: number };
   warnings: string[];
   demo?: boolean; demoAllowed?: boolean;
 }
@@ -97,10 +103,11 @@ export function PayrollPanel() {
 
       {r && (
         <>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
             <Big label="People paid" value={String(r.people.length)} sub={r.period.label} />
-            <Big label="Hours" value={hrs(r.totals.hours)} />
-            <Big label="Gross pay" value={gbp(r.totals.grossPay)} />
+            <Big label="Hours" value={hrs(r.totals.hours)} sub={r.totals.holidayHours > 0 ? `incl. ${hrs(r.totals.holidayHours)} holiday` : undefined} />
+            <Big label="Gross pay" value={gbp(r.totals.grossPay)} sub="production + holiday + office" />
+            <Big label="Office work" value={gbp(r.totals.officePay)} sub={`${hrs(r.totals.officeHours)} · below the line`} />
           </div>
 
           {r.warnings.length > 0 && (
@@ -111,18 +118,52 @@ export function PayrollPanel() {
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_400px] items-start">
             <div className="space-y-4">
-              <Section icon={<Users className="w-5 h-5" />} title={`Hours and pay · ${r.people.length}`}>
+              <Section icon={<Users className="w-5 h-5" />} title={`Production and holiday · ${r.people.filter(p => p.productionHours > 0 || p.holidayHours > 0).length}`}>
                 <div className="grid gap-2 md:grid-cols-2">
-                  {r.people.map(p => (
+                  {r.people.filter(p => p.productionHours > 0 || p.holidayHours > 0).map(p => (
                     <div key={p.plandayEmployeeId} className="rounded-2xl border-2 border-border p-3">
                       <p className="font-bold text-lg break-words">{p.name}</p>
-                      <p className="text-sm text-muted-foreground">{p.shifts} shift{p.shifts === 1 ? "" : "s"} · {hrs(p.hours)}{p.hourlyRate != null ? ` · ${gbp(p.hourlyRate)}/h` : p.salaried ? " · salaried" : ""}</p>
-                      <div className="flex gap-4 mt-1">
-                        <p><span className="text-xs text-muted-foreground block">Gross</span><span className="font-bold tabular-nums">{gbp(p.grossPay)}</span></p>
+                      <p className="text-sm text-muted-foreground">{p.shifts} shift{p.shifts === 1 ? "" : "s"} · {hrs(p.productionHours)}{p.hourlyRate != null ? ` · ${gbp(p.hourlyRate)}/h` : p.salaried ? " · salaried" : ""}</p>
+                      <div className="flex flex-wrap gap-x-5 gap-y-1 mt-1">
+                        <p><span className="text-xs text-muted-foreground block">Production</span><span className="font-bold tabular-nums">{gbp(p.productionPay)}</span></p>
+                        {p.holidayHours > 0 && (
+                          <p>
+                            <span className="text-xs text-muted-foreground block">Holiday · {hrs(p.holidayHours)}</span>
+                            {p.holidayPay != null
+                              ? <span className="font-bold tabular-nums">{gbp(p.holidayPay)}</span>
+                              : <span className="font-semibold text-amber-700 dark:text-amber-300">work out by hand</span>}
+                          </p>
+                        )}
+                        {p.officeHours > 0 && (
+                          <p><span className="text-xs text-muted-foreground block">+ office (below)</span><span className="font-semibold tabular-nums text-muted-foreground">{gbp(p.officePay)}</span></p>
+                        )}
+                        <p><span className="text-xs text-muted-foreground block">Total gross</span><span className="font-bold tabular-nums">{gbp(p.grossPay)}</span></p>
                       </div>
                     </div>
                   ))}
                 </div>
+                <p className="text-sm font-semibold mt-3 tabular-nums">
+                  Production {gbp(r.totals.productionPay)} + holiday {gbp(r.totals.holidayPay)} = {gbp(r.totals.productionPay + r.totals.holidayPay)}
+                </p>
+              </Section>
+
+              {/* Below the line (Graeme, 2026-10-27): shifts in a Planday
+                  section other than Production — media, maintenance,
+                  planning, meetings. */}
+              <Section icon={<Briefcase className="w-5 h-5" />} title={`Below the line — office work · ${hrs(r.totals.officeHours)}`}>
+                {r.totals.officeHours === 0 ? <p className="text-sm text-muted-foreground">No office work this period — shifts count as office work when their Planday position is in a section other than Production.</p> : (
+                  <div className="space-y-1.5">
+                    {r.people.flatMap(p => p.office.map(o => ({ name: p.name, id: p.plandayEmployeeId, ...o }))).map(o => (
+                      <div key={`${o.id}-${o.work}`} className="rounded-xl bg-secondary/50 px-3 py-2 flex flex-wrap items-baseline gap-x-3">
+                        <span className="font-semibold">{o.name}</span>
+                        <span>{o.work}</span>
+                        <span className="text-muted-foreground tabular-nums">{hrs(o.hours)}</span>
+                        <span className="ml-auto font-bold tabular-nums">{gbp(o.pay)}</span>
+                      </div>
+                    ))}
+                    <p className="text-sm font-semibold pt-1 tabular-nums">Office total {gbp(r.totals.officePay)}</p>
+                  </div>
+                )}
               </Section>
 
               <Section icon={<Thermometer className="w-5 h-5" />} title={`Sick days · ${r.sick.length}`}>

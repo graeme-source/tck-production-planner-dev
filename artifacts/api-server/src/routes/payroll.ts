@@ -45,19 +45,38 @@ const periodQuery = z.object({ from: DATE.optional(), to: DATE.optional(), demo:
 // can be looked at without Planday. Never on live.
 const DEMO_ALLOWED = process.env["NODE_ENV"] !== "production";
 function demoPayroll(from: string, to: string): PayrollData {
-  const person = (id: number, name: string, shifts: number, hours: number, rate: number, days: number | null, weekHours: number | null) =>
-    ({ plandayEmployeeId: id, appUserId: null, name, hours, shifts, hourlyRate: rate, salaried: false, grossPay: Math.round(hours * rate * 100) / 100, contractHoursPerWeek: weekHours, contractDaysPerWeek: days });
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+  const person = (id: number, name: string, shifts: number, hours: number, rate: number, days: number | null, weekHours: number | null, holidayHours = 0, office: Array<{ work: string; hours: number }> = []) => {
+    const officeHours = office.reduce((n, o) => n + o.hours, 0);
+    const officeRows = office.map(o => ({ work: o.work, hours: o.hours, pay: r2(o.hours * rate) }));
+    const holidayPay = r2(holidayHours * rate);
+    return {
+      plandayEmployeeId: id, appUserId: null, name, shifts, hourlyRate: rate, salaried: false,
+      hours: hours + holidayHours, grossPay: r2(hours * rate + holidayPay),
+      productionHours: hours - officeHours, productionPay: r2((hours - officeHours) * rate),
+      officeHours, officePay: r2(officeHours * rate), office: officeRows,
+      holidayHours, holidayPay,
+      contractHoursPerWeek: weekHours, contractDaysPerWeek: days,
+    };
+  };
   const people = [
-    person(1, "Sample Person A", 19, 141.5, 12.21, 5, 37.5), person(2, "Sample Person B", 12, 88, 12.21, 3, 22.5),
-    person(3, "Sample Person C", 21, 160.25, 13.5, 5, 40), person(4, "Sample Person D", 8, 52, 12.21, null, 16),
+    person(1, "Sample Person A", 19, 141.5, 12.21, 5, 37.5, 16.5), person(2, "Sample Person B", 12, 88, 12.21, 3, 22.5),
+    person(3, "Sample Person C", 21, 160.25, 13.5, 5, 40, 0, [{ work: "Media", hours: 12 }, { work: "Production planning", hours: 6.5 }]),
+    person(4, "Sample Person D", 8, 52, 12.21, null, 16, 0, [{ work: "Maintenance", hours: 8 }]),
   ];
+  const sum = (f: (p: (typeof people)[number]) => number) => r2(people.reduce((n, p) => n + f(p), 0));
   return {
     period: { from, to, label: `${payPeriodFor(to).label} (SAMPLE DATA)` },
     people,
     sick: [{ plandayEmployeeId: 2, name: "Sample Person B", date: to.slice(0, 8) + "14", hours: 7.5, contractHoursPerWeek: 22.5, contractDaysPerWeek: 3 }],
     joiners: [{ plandayEmployeeId: 4, appUserId: null, name: "Sample Person D", date: to.slice(0, 8) + "06" }],
     leavers: [],
-    totals: { hours: people.reduce((s, p) => s + p.hours, 0), grossPay: Math.round(people.reduce((s, p) => s + p.grossPay, 0) * 100) / 100 },
+    totals: {
+      hours: sum(p => p.hours), grossPay: sum(p => p.grossPay),
+      productionHours: sum(p => p.productionHours), productionPay: sum(p => p.productionPay),
+      officeHours: sum(p => p.officeHours), officePay: sum(p => p.officePay),
+      holidayHours: sum(p => p.holidayHours), holidayPay: sum(p => p.holidayPay),
+    },
     warnings: ["Sample data — made-up people so the report can be looked at. Test server only."],
   };
 }
@@ -88,7 +107,12 @@ function pdfInput(r: Awaited<ReturnType<typeof buildReport>>): PayrollPdfInput {
   return {
     periodLabel: r.period.label,
     generatedAt: new Date().toLocaleString("en-GB", { timeZone: "Europe/London", weekday: "short", day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }),
-    people: r.people.map(p => ({ name: p.name, hours: p.hours, shifts: p.shifts, hourlyRate: p.hourlyRate, grossPay: p.grossPay })),
+    people: r.people.map(p => ({
+      name: p.name, shifts: p.shifts, hourlyRate: p.hourlyRate,
+      productionHours: p.productionHours, productionPay: p.productionPay,
+      holidayHours: p.holidayHours, holidayPay: p.holidayPay,
+      office: p.office,
+    })),
     totals: r.totals,
     sick: r.sick.map(s => ({ name: s.name, date: ukDay(s.date), hours: s.hours, contractDaysPerWeek: s.contractDaysPerWeek, contractHoursPerWeek: s.contractHoursPerWeek })),
     joiners: r.joiners.map(j => ({ name: j.name, date: ukDay(j.date), documents: j.documents })),

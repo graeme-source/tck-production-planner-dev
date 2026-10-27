@@ -8,8 +8,18 @@ type Style = Parameters<typeof StyleSheet.create>[0][string];
 export interface PayrollPdfInput {
   periodLabel: string;
   generatedAt: string;
-  people: Array<{ name: string; hours: number; shifts: number; hourlyRate: number | null; grossPay: number }>;
-  totals: { hours: number; grossPay: number };
+  people: Array<{
+    name: string; shifts: number; hourlyRate: number | null;
+    productionHours: number; productionPay: number;
+    holidayHours: number; holidayPay: number | null;
+    office: Array<{ work: string; hours: number; pay: number }>;
+  }>;
+  totals: {
+    hours: number; grossPay: number;
+    productionHours: number; productionPay: number;
+    officeHours: number; officePay: number;
+    holidayHours: number; holidayPay: number;
+  };
   sick: Array<{ name: string; date: string; hours: number | null; contractDaysPerWeek: number | null; contractHoursPerWeek: number | null }>;
   joiners: Array<{ name: string; date: string; documents: string[] }>;
   leavers: Array<{ name: string; date: string; note?: string | null }>;
@@ -37,21 +47,29 @@ const s = StyleSheet.create({
   pageNo: { position: "absolute", bottom: 20, right: 36, fontSize: 7.5, color: MUTED },
 });
 
-const COLS = [
+type Col = { key: string; label: string; flex: number; num: boolean };
+// Above the line: production shifts + holiday. Office work is below it.
+const COLS: Col[] = [
   { key: "name", label: "Name", flex: 3, num: false },
-  { key: "shifts", label: "Shifts", flex: 1, num: true },
-  { key: "hours", label: "Hours", flex: 1.2, num: true },
-  { key: "rate", label: "Rate", flex: 1.2, num: true },
-  { key: "gross", label: "Gross", flex: 1.6, num: true },
-] as const;
+  { key: "hours", label: "Hours", flex: 1.1, num: true },
+  { key: "holiday", label: "Holiday hrs", flex: 1.3, num: true },
+  { key: "rate", label: "Rate", flex: 1.1, num: true },
+  { key: "gross", label: "Gross", flex: 1.5, num: true },
+];
+const OFFICE_COLS: Col[] = [
+  { key: "name", label: "Name", flex: 3, num: false },
+  { key: "work", label: "Work", flex: 2.4, num: false },
+  { key: "hours", label: "Hours", flex: 1.1, num: true },
+  { key: "pay", label: "Pay", flex: 1.5, num: true },
+];
 
 const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const hrs = (n: number) => n.toLocaleString("en-GB", { maximumFractionDigits: 2 });
 
-function Cells({ values, style }: { values: string[]; style?: Style }) {
+function Cells({ values, style, cols = COLS }: { values: string[]; style?: Style; cols?: Col[] }) {
   return (
     <>
-      {COLS.map((c, i) => (
+      {cols.map((c, i) => (
         <Text key={c.key} style={[{ flex: c.flex }, ...(c.num ? [s.num] : []), ...(style ? [style] : [])]}>{values[i]}</Text>
       ))}
     </>
@@ -77,25 +95,47 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
         <Text style={s.title}>Payroll report — {data.periodLabel}</Text>
         <Text style={s.meta}>Generated {data.generatedAt}</Text>
 
-        <Text style={s.h2}>Summary</Text>
+        <Text style={s.h2}>Production and holiday</Text>
         <View style={s.headRow}>
           <Cells values={COLS.map(c => c.label)} style={s.th} />
         </View>
         {data.people.length === 0 ? (
           <View style={s.row}><Empty text="No hours recorded this period." /></View>
-        ) : data.people.map((p, i) => (
+        ) : data.people.filter(p => p.productionHours > 0 || p.holidayHours > 0).map((p, i) => (
           <View key={i} style={s.row} wrap={false}>
             <Cells values={[
               p.name,
-              String(p.shifts),
-              hrs(p.hours),
+              hrs(p.productionHours),
+              p.holidayHours > 0 ? hrs(p.holidayHours) : "—",
               p.hourlyRate == null ? "—" : gbp(p.hourlyRate),
-              gbp(p.grossPay),
+              p.holidayPay == null && p.holidayHours > 0 ? `${gbp(p.productionPay)} + holiday by hand` : gbp(p.productionPay + (p.holidayPay ?? 0)),
             ]} />
           </View>
         ))}
         <View style={s.totalRow} wrap={false}>
-          <Cells values={["Total", "", hrs(data.totals.hours), "", gbp(data.totals.grossPay)]} />
+          <Cells values={["Total", hrs(data.totals.productionHours), hrs(data.totals.holidayHours), "", gbp(data.totals.productionPay + data.totals.holidayPay)]} />
+        </View>
+
+        <Text style={s.h2}>Below the line — office work</Text>
+        {data.totals.officeHours === 0 ? <Empty text="No office work this period." /> : (
+          <>
+            <View style={s.headRow}>
+              <Cells cols={OFFICE_COLS} values={OFFICE_COLS.map(c => c.label)} style={s.th} />
+            </View>
+            {data.people.flatMap(p => p.office.map(o => ({ name: p.name, ...o }))).map((o, i) => (
+              <View key={i} style={s.row} wrap={false}>
+                <Cells cols={OFFICE_COLS} values={[o.name, o.work, hrs(o.hours), gbp(o.pay)]} />
+              </View>
+            ))}
+            <View style={s.totalRow} wrap={false}>
+              <Cells cols={OFFICE_COLS} values={["Total", "", hrs(data.totals.officeHours), gbp(data.totals.officePay)]} />
+            </View>
+          </>
+        )}
+
+        <View style={[s.totalRow, { marginTop: 14 }]} wrap={false}>
+          <Text style={{ flex: 1 }}>Total gross pay — {hrs(data.totals.hours)} hours</Text>
+          <Text style={s.num}>{gbp(data.totals.grossPay)}</Text>
         </View>
 
         <Text style={s.h2}>Sick days</Text>
