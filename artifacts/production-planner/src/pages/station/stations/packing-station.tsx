@@ -1,5 +1,6 @@
 import React from "react";
 import { useState, useEffect, useCallback } from "react";
+import { FivePackLabelsButton } from "@/components/five-pack-labels";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
   Loader2, RefreshCw, AlertCircle, Box, Truck, Scan, CheckCircle2, Gauge, Refrigerator,
@@ -430,6 +431,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
                   </div>
                 ))}
               </div>
+              <FivePackLabelsButton tag={dispatchTag} />
             </div>
           )}
           <div className="divide-y divide-border/50">

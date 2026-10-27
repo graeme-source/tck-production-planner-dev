@@ -24,6 +24,17 @@ export function isFivePack(productTitle: string, variantTitle?: string | null): 
 export interface DessertLineItem {
   title: string;
   variant_title?: string | null;
+  /** Shopify variant id — the 5-pack labels carry that variant's barcode. */
+  variant_id?: number | string | null;
+  quantity: number;
+}
+
+/** One 5-pack variant to label: its own name and barcode on each label
+ *  (Graeme, 2026-10-27). */
+export interface FivePackLabelLine {
+  variantId: string | null;
+  /** The product name ("Rolo Chocolate Brownie"). */
+  productTitle: string;
   quantity: number;
 }
 
@@ -45,12 +56,15 @@ export interface DessertReport {
   fivePackProducts: DessertReportEntry[];
   /** One number: how many 5-pack labels to print. */
   fivePackTotal: number;
+  /** The same 5-packs by Shopify variant, for printing their labels. */
+  fivePackLabels: FivePackLabelLine[];
   totalQuantity: number;
 }
 
 export function buildDessertReport(orders: DessertOrder[], dessertTitles: Set<string>): DessertReport {
   const fiveTotals = new Map<string, number>();
   const otherTotals = new Map<string, number>();
+  const byVariant = new Map<string, FivePackLabelLine>();
 
   for (const order of orders) {
     for (const item of order.line_items ?? []) {
@@ -63,6 +77,11 @@ export function buildDessertReport(orders: DessertOrder[], dessertTitles: Set<st
           ? `${item.title} — ${item.variant_title}`
           : item.title;
         fiveTotals.set(label, (fiveTotals.get(label) ?? 0) + qty);
+        const variantId = item.variant_id != null && String(item.variant_id) !== "" ? String(item.variant_id) : null;
+        const key = variantId ?? `title:${item.title}`;
+        const line = byVariant.get(key) ?? { variantId, productTitle: item.title, quantity: 0 };
+        line.quantity += qty;
+        byVariant.set(key, line);
       } else {
         otherTotals.set(item.title, (otherTotals.get(item.title) ?? 0) + qty);
       }
@@ -79,5 +98,6 @@ export function buildDessertReport(orders: DessertOrder[], dessertTitles: Set<st
   const fivePackTotal = fivePackProducts.reduce((s, p) => s + p.quantity, 0);
   const totalQuantity = fivePackTotal + products.reduce((s, p) => s + p.quantity, 0);
 
-  return { products, fivePackProducts, fivePackTotal, totalQuantity };
+  const fivePackLabels = [...byVariant.values()].filter(l => l.quantity > 0).sort((a, b) => a.productTitle.localeCompare(b.productTitle));
+  return { products, fivePackProducts, fivePackTotal, fivePackLabels, totalQuantity };
 }

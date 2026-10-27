@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { FivePackLabelsButton } from "@/components/five-pack-labels";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Minus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
@@ -1726,6 +1727,7 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
                 </div>
               ))}
             </div>
+            <FivePackLabelsButton tag={report.tag} />
           </div>
         )}
         <div className="mt-3 pt-2 border-t border-purple-200 dark:border-purple-700 flex items-center justify-between">

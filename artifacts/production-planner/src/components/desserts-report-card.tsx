@@ -9,6 +9,7 @@
 // underneath, as before.
 
 import { useQuery } from "@tanstack/react-query";
+import { FivePackLabelsButton } from "@/components/five-pack-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -72,6 +73,7 @@ export function DessertsReportCard({ tag, className }: { tag: string; className?
               </div>
             ))}
           </div>
+          <FivePackLabelsButton tag={tag} />
         </div>
       )}
     </div>
