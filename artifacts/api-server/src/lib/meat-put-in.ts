@@ -83,6 +83,9 @@ export async function recordPutIn(
       ingredientName: ing.name,
       suggestedAtMinutes: suggested,
       plannedAtMinutes: meat ? Math.round(meat.plannedCookStartMinutes) : null,
+      // When the builders were then expected to need it — the buffer learns
+      // from how wrong this turns out to be.
+      predictedNeedMinutes: live.isToday && recipe ? Math.round(recipe.liveStartMinutes) : null,
       leadMinutes: meat ? Math.round(meat.leadMinutes) : null,
       trayCount,
       putInAt: at,

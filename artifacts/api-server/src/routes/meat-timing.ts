@@ -6,10 +6,11 @@
  *   POST /meat-timing/run                apply what's learned now (manager)
  *   POST /meat-timing/adjustments/:id/revert   put a change back (manager);
  *                                        pauses learning for that meat
- *   PUT  /meat-timing/ingredients/:id    set processing / grace / learning on-off
+ *   PUT  /meat-timing/ingredients/:id    set processing / buffer / learning on-off
  *                                        by hand (manager), logged
- *   PUT  /meat-timing/settings           the 4-hour hold limit + the daily
- *                                        learning switch (admin)
+ *   PUT  /meat-timing/settings           the 4-hour rule (total, chill, bake),
+ *                                        wait weight, buffer cap, learning
+ *                                        switch, ask-why threshold (admin)
  *   POST /meat-timing/review-now         run the daily review now (manager)
  *   GET  /meat-timing/pending-reasons?planId=  off-time put-ins on this plan
  *                                        with no "why?" yet (station)
@@ -22,14 +23,15 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import * as z from "zod";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { LEARNING_RULES, PUT_IN_REASONS } from "@workspace/production-schedule";
+import { LEARNING_RULES, PUT_IN_REASONS, maxOutToLastBuiltMinutes } from "@workspace/production-schedule";
 import { pendingReasons, saveReason, reasonThresholdMinutes, REASON_THRESHOLD_SETTING } from "../lib/meat-put-in";
 import { backfillPutInRecords, reviewDueRecords, weeklyReasonSummary } from "../lib/meat-daily-review-job";
 import { validate } from "../middleware/validate";
 import { requireAdmin, requireManagerOrAdmin } from "../middleware/roles";
 import {
   buildMeatTimingReport, applyLearnedTimings, listAdjustments, revertAdjustment, setMeatTiming,
-  loadMeatTimingSettings, saveSetting, MAX_HOLD_SETTING, LEARNING_ENABLED_SETTING, MIX_READY_SETTING, HOT_READY_SETTING,
+  loadMeatTimingSettings, saveSetting, loadSafetyRule, recordedChillMinutes, learnedBakeMinutes,
+  LEARNING_ENABLED_SETTING, SAFE_TOTAL_SETTING, CHILL_SETTING, BAKE_SETTING, WAIT_WEIGHT_SETTING, BUFFER_MAX_SETTING,
 } from "../lib/meat-timing-learner";
 
 const router: IRouter = Router();
@@ -41,10 +43,16 @@ async function actorOf(req: Request): Promise<{ userId: number; name: string }> 
 }
 
 router.get("/", requireManagerOrAdmin, async (_req: Request, res: Response) => {
-  const [meats, adjustments, settings, weekly, reasonMinutes] = await Promise.all([
+  const [meats, adjustments, settings, weekly, reasonMinutes, rule, chillRecorded, bakeLearned] = await Promise.all([
     buildMeatTimingReport(), listAdjustments(), loadMeatTimingSettings(), weeklyReasonSummary(), reasonThresholdMinutes(),
+    loadSafetyRule(), recordedChillMinutes(), learnedBakeMinutes(),
   ]);
-  res.json({ meats, adjustments, settings: { ...settings, reasonMinutes }, weekly, reasons: PUT_IN_REASONS, rules: LEARNING_RULES });
+  res.json({
+    meats, adjustments, weekly, reasons: PUT_IN_REASONS, rules: LEARNING_RULES,
+    settings: { ...settings, reasonMinutes },
+    // The 4-hour rule as applied today, with where each number came from.
+    safety: { ...rule, maxSpanMinutes: maxOutToLastBuiltMinutes(rule), chillRecorded, bakeLearned },
+  });
 });
 
 router.post("/review-now", requireManagerOrAdmin, validate(z.object({})), async (_req: Request, res: Response) => {
@@ -91,8 +99,8 @@ router.post("/adjustments/:id/revert", requireManagerOrAdmin, validate(z.object(
 
 const IngredientBody = z.object({
   processMinutes: z.number().int().min(0).max(LEARNING_RULES.processMax).optional(),
-  // Grace is time cooked meat sits ready — same cap by hand as learned.
-  graceMinutes: z.number().int().min(0).max(LEARNING_RULES.graceMax).optional(),
+  // Same bounds by hand as learned.
+  bufferMinutes: z.number().int().min(0).max(60).optional(),
   autoLearn: z.boolean().optional(),
 });
 
@@ -105,23 +113,29 @@ router.put("/ingredients/:id", requireManagerOrAdmin, validate(IngredientBody), 
 });
 
 const SettingsBody = z.object({
-  // Oven-out → last batch built. Never more than the 4-hour rule itself.
-  maxHoldMinutes: z.number().int().min(30).max(240).optional(),
   learningEnabled: z.boolean().optional(),
   // Put in further than this from the suggested time → ask why.
   reasonMinutes: z.number().int().min(3).max(60).optional(),
-  // Every mix ready this long before the builders need it; hot meat this long.
-  mixReadyBeforeMinutes: z.number().int().min(0).max(60).optional(),
-  hotReadyBeforeMinutes: z.number().int().min(0).max(60).optional(),
+  // The 4-hour rule: out of the prep oven → last batch chilled to 8 °C.
+  safeTotalMinutes: z.number().int().min(60).max(240).optional(),
+  // Baked calzones to 8 °C, when no probe or plausible tap says otherwise.
+  chillMinutes: z.number().int().min(30).max(240).optional(),
+  // Last batch built → out of the calzone oven; null = learn it.
+  bakeMinutes: z.number().int().min(0).max(120).nullable().optional(),
+  // A minute of builder wait costs this many of sitting.
+  waitWeight: z.number().min(1).max(20).optional(),
+  bufferMaxMinutes: z.number().int().min(2).max(60).optional(),
 });
 
 router.put("/settings", requireAdmin, validate(SettingsBody), async (req: Request, res: Response) => {
   const b = req.body as z.infer<typeof SettingsBody>;
-  if (b.maxHoldMinutes !== undefined) await saveSetting(MAX_HOLD_SETTING, String(b.maxHoldMinutes));
   if (b.learningEnabled !== undefined) await saveSetting(LEARNING_ENABLED_SETTING, b.learningEnabled ? "true" : "false");
   if (b.reasonMinutes !== undefined) await saveSetting(REASON_THRESHOLD_SETTING, String(b.reasonMinutes));
-  if (b.mixReadyBeforeMinutes !== undefined) await saveSetting(MIX_READY_SETTING, String(b.mixReadyBeforeMinutes));
-  if (b.hotReadyBeforeMinutes !== undefined) await saveSetting(HOT_READY_SETTING, String(b.hotReadyBeforeMinutes));
+  if (b.safeTotalMinutes !== undefined) await saveSetting(SAFE_TOTAL_SETTING, String(b.safeTotalMinutes));
+  if (b.chillMinutes !== undefined) await saveSetting(CHILL_SETTING, String(b.chillMinutes));
+  if (b.bakeMinutes !== undefined) await saveSetting(BAKE_SETTING, b.bakeMinutes == null ? "" : String(b.bakeMinutes));
+  if (b.waitWeight !== undefined) await saveSetting(WAIT_WEIGHT_SETTING, String(b.waitWeight));
+  if (b.bufferMaxMinutes !== undefined) await saveSetting(BUFFER_MAX_SETTING, String(b.bufferMaxMinutes));
   res.json({ settings: await loadMeatTimingSettings() });
 });
 

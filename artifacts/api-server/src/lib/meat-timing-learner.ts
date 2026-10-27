@@ -4,65 +4,147 @@
  * tested); this loads the floor history, applies the changes it recommends,
  * logs every one in meat_timing_adjustments (migration 0290) and reverts them.
  *
- * AUTOMATIC, because Graeme asked for it ("could you build an automatic
- * system that self-corrects") and the team never managed to keep these
- * numbers right by hand. It is safe to automate because:
- *   - only processing and grace move — never the cook time or a temperature;
- *   - each run moves a value at most 15 minutes, on at least 5 clean runs;
- *   - grace is capped at 30 minutes;
+ * Per meat it learns PROCESSING (out of the oven — probe reading preferred —
+ * → first mixing tin complete) and the BUFFER (the smallest cover that keeps
+ * builder waits rare). The schedule then targets: out of the oven at =
+ * builders need it − processing − buffer; in = out − cook.
+ *
+ * AUTOMATIC from day one (Graeme). Safe because:
+ *   - only processing and buffer move — never the cook time or a temperature;
+ *   - each run moves a value at most 15 minutes (7 with little data);
+ *   - the buffer is capped (Settings, default 25);
  *   - every change is logged with its evidence, shown to managers, and can be
- *     reverted; reverting switches learning off for that meat until a manager
- *     turns it back on;
+ *     reverted; reverting switches learning off for that meat;
  *   - the whole thing has an off switch (meat_timing_learning_enabled).
  */
 import { db, ingredientsTable, meatTimingAdjustmentsTable, appSettingsTable } from "@workspace/db";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  learnMeatTiming, configuredLead, LEARNING_RULES,
-  type MeatRun, type MeatLearning, type MeatTrayEvent, type TrustSignal,
+  learnMeatTiming, configuredLead, LEARNING_RULES, DEFAULT_SAFETY_RULE,
+  type MeatRun, type MeatLearning, type MeatTrayEvent, type TrustSignal, type LearningRules, type SafetyRule,
 } from "@workspace/production-schedule";
 
 type ReviewStats = Awaited<ReturnType<typeof import("./meat-daily-review-job").reviewStatsByIngredient>> extends Map<number, infer V> ? V : never;
 
 /** Look back this far for runs; the learner itself uses the newest 20 clean ones. */
 export const HISTORY_DAYS = 120;
-export const MAX_HOLD_SETTING = "cooked_meat_max_hold_minutes";
 export const LEARNING_ENABLED_SETTING = "meat_timing_learning_enabled";
 export const LAST_AUTO_RUN_SETTING = "meat_timing_last_auto_run";
-export const MIX_READY_SETTING = "mix_ready_before_minutes";
-export const HOT_READY_SETTING = "hot_mix_ready_before_minutes";
-export const DEFAULT_MIX_READY_MINUTES = 10;
-export const DEFAULT_HOT_READY_MINUTES = 20;
-/** The 4-hour rule less a 30-minute margin. */
-export const DEFAULT_MAX_HOLD_MINUTES = 210;
+export const SAFE_TOTAL_SETTING = "meat_safe_total_minutes";
+export const CHILL_SETTING = "calzone_chill_minutes";
+/** Optional override; unset = learned from the ovens station. */
+export const BAKE_SETTING = "calzone_bake_minutes";
+export const WAIT_WEIGHT_SETTING = "builder_wait_weight";
+export const BUFFER_MAX_SETTING = "meat_buffer_max_minutes";
 
 export interface MeatTimingSettings {
-  maxHoldMinutes: number;
   learningEnabled: boolean;
   lastAutoRun: string | null;
-  /** Every mix ready this long before the builders need it. */
-  mixReadyBeforeMinutes: number;
-  /** Hot meat ready this long before it's needed — the schedule's buffer and the review's target. */
-  hotReadyBeforeMinutes: number;
+  /** Out of the prep oven → last batch chilled to 8 °C. 240. */
+  safeTotalMinutes: number;
+  /** Baked calzones chilling to 8 °C. 120. */
+  chillMinutes: number;
+  /** Set by hand, else null (learned from the ovens station). */
+  bakeMinutesOverride: number | null;
+  /** A minute of builder wait costs this many minutes of sitting. 4. */
+  waitWeight: number;
+  bufferMaxMinutes: number;
 }
 
 export async function loadMeatTimingSettings(): Promise<MeatTimingSettings> {
   const rows = await db
     .select({ key: appSettingsTable.key, value: appSettingsTable.value })
     .from(appSettingsTable)
-    .where(inArray(appSettingsTable.key, [MAX_HOLD_SETTING, LEARNING_ENABLED_SETTING, LAST_AUTO_RUN_SETTING, MIX_READY_SETTING, HOT_READY_SETTING]));
+    .where(inArray(appSettingsTable.key, [
+      LEARNING_ENABLED_SETTING, LAST_AUTO_RUN_SETTING, SAFE_TOTAL_SETTING, CHILL_SETTING,
+      BAKE_SETTING, WAIT_WEIGHT_SETTING, BUFFER_MAX_SETTING,
+    ]));
   const m = new Map(rows.map(r => [r.key, r.value]));
-  const hold = Number(m.get(MAX_HOLD_SETTING));
   const num = (key: string, dflt: number) => {
     const v = Number(m.get(key));
-    return m.has(key) && Number.isFinite(v) && v >= 0 ? v : dflt;
+    return m.has(key) && m.get(key) !== "" && Number.isFinite(v) && v >= 0 ? v : dflt;
   };
   return {
-    maxHoldMinutes: Number.isFinite(hold) && hold > 0 ? hold : DEFAULT_MAX_HOLD_MINUTES,
     learningEnabled: (m.get(LEARNING_ENABLED_SETTING) ?? "true") !== "false",
     lastAutoRun: m.get(LAST_AUTO_RUN_SETTING) ?? null,
-    mixReadyBeforeMinutes: num(MIX_READY_SETTING, DEFAULT_MIX_READY_MINUTES),
-    hotReadyBeforeMinutes: num(HOT_READY_SETTING, DEFAULT_HOT_READY_MINUTES),
+    safeTotalMinutes: num(SAFE_TOTAL_SETTING, DEFAULT_SAFETY_RULE.totalMinutes),
+    chillMinutes: num(CHILL_SETTING, DEFAULT_SAFETY_RULE.chillMinutes),
+    bakeMinutesOverride: m.has(BAKE_SETTING) && m.get(BAKE_SETTING) !== "" ? num(BAKE_SETTING, DEFAULT_SAFETY_RULE.bakeMinutes) : null,
+    waitWeight: num(WAIT_WEIGHT_SETTING, LEARNING_RULES.waitWeight),
+    bufferMaxMinutes: num(BUFFER_MAX_SETTING, LEARNING_RULES.bufferMax),
+  };
+}
+
+export function rulesFromSettings(s: MeatTimingSettings): LearningRules {
+  return { ...LEARNING_RULES, waitWeight: s.waitWeight, bufferMax: Math.max(LEARNING_RULES.bufferMin, s.bufferMaxMinutes) };
+}
+
+/**
+ * Last calzone batch built → out of the calzone oven, minutes: the 90th
+ * percentile over the last 60 days of the ovens station's last batch of each
+ * recipe after the builders' last batch. Null with too little data.
+ */
+export async function learnedBakeMinutes(): Promise<{ minutes: number | null; samples: number }> {
+  const res = await db.execute<{ p90: number | null; n: number }>(sql`
+    WITH b AS (
+      SELECT pi.plan_id, pi.recipe_id,
+        max(bc.completed_at) FILTER (WHERE bc.station_type IN ('building_1','building_2')) AS last_build,
+        max(bc.completed_at) FILTER (WHERE bc.station_type = 'ovens') AS last_oven
+      FROM batch_completions bc
+      JOIN production_plan_items pi ON pi.id = bc.plan_item_id
+      JOIN production_plans p ON p.id = pi.plan_id
+      WHERE p.plan_date >= (CURRENT_DATE - 60)
+      GROUP BY 1, 2
+    )
+    SELECT percentile_cont(0.9) WITHIN GROUP (ORDER BY extract(epoch FROM last_oven - last_build) / 60) AS p90,
+           count(*)::int AS n
+      FROM b WHERE last_build IS NOT NULL AND last_oven > last_build
+       AND last_oven - last_build < interval '2 hours'
+  `);
+  const row = res.rows[0];
+  const n = Number(row?.n ?? 0);
+  return { minutes: n >= 10 && row?.p90 != null ? Math.round(Number(row.p90)) : null, samples: n };
+}
+
+/**
+ * Chill time as RECORDED (calzone chill timer, batch_weight_records): the
+ * last batch's chill end after its last oven pass, median over 60 days. For
+ * information — "chilling finished" is a tap (and is auto-stamped at wrapping
+ * on some days), so it runs late; planning uses the Settings chill time.
+ */
+export async function recordedChillMinutes(): Promise<{ median: number | null; samples: number }> {
+  const res = await db.execute<{ med: number | null; n: number }>(sql`
+    WITH b AS (
+      SELECT pi.plan_id, pi.recipe_id, max(bc.completed_at) FILTER (WHERE bc.station_type = 'ovens') AS last_oven
+      FROM batch_completions bc JOIN production_plan_items pi ON pi.id = bc.plan_item_id
+      GROUP BY 1, 2
+    ), c AS (
+      SELECT plan_id, recipe_id, max(chill_end_at) AS last_chill
+      FROM batch_weight_records
+      WHERE chill_end_at IS NOT NULL AND chilled_via <> 'wrapping_complete_auto'
+        AND recorded_at >= now() - interval '60 days'
+      GROUP BY 1, 2
+    )
+    SELECT percentile_cont(0.5) WITHIN GROUP (ORDER BY extract(epoch FROM c.last_chill - b.last_oven) / 60) AS med,
+           count(*)::int AS n
+      FROM b JOIN c USING (plan_id, recipe_id) WHERE c.last_chill > b.last_oven
+  `);
+  const row = res.rows[0];
+  return { median: row?.med != null ? Math.round(Number(row.med)) : null, samples: Number(row?.n ?? 0) };
+}
+
+/** The 4-hour rule as configured now: total, chill, and bake (override, else learned, else 15). */
+export async function loadSafetyRule(settings?: MeatTimingSettings): Promise<SafetyRule & { bakeSource: "setting" | "learned" | "default" }> {
+  const s = settings ?? await loadMeatTimingSettings();
+  if (s.bakeMinutesOverride != null) {
+    return { totalMinutes: s.safeTotalMinutes, chillMinutes: s.chillMinutes, bakeMinutes: s.bakeMinutesOverride, bakeSource: "setting" };
+  }
+  const learned = await learnedBakeMinutes();
+  return {
+    totalMinutes: s.safeTotalMinutes,
+    chillMinutes: s.chillMinutes,
+    bakeMinutes: learned.minutes ?? DEFAULT_SAFETY_RULE.bakeMinutes,
+    bakeSource: learned.minutes != null ? "learned" : "default",
   };
 }
 
@@ -78,15 +160,17 @@ type RunRow = {
   plan_id: number;
   recipe_id: number;
   plan_date: string;
-  trays: Array<{ in: number; out: number | null }>;
+  trays: Array<{ in: number; out: number | null; probe: number | null }>;
   filling_ready_ms: number | null;
+  need_error: number | null;
 };
 
 /**
- * One row per raw meat × recipe × plan: its oven trays and the first tin of
- * that recipe's filling mixed. Timestamps are stored as UTC wall-clock
- * (timestamp without time zone, written by a UTC server), so epoch maths on
- * them is exact.
+ * One row per raw meat × recipe × plan: its oven trays (with the probe
+ * reading at temperature), the first tin of that recipe's filling mixed, and
+ * — from the daily review — how wrong the builders' predicted time was.
+ * Timestamps are UTC wall-clock (timestamp without time zone, written by a
+ * UTC server), so epoch maths on them is exact.
  */
 export async function loadRuns(ingredientIds?: number[]): Promise<Map<number, MeatRun[]>> {
   const since = new Date(Date.now() - HISTORY_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -97,20 +181,21 @@ export async function loadRuns(ingredientIds?: number[]): Promise<Map<number, Me
     SELECT o.ingredient_id, o.plan_id, o.recipe_id, p.plan_date::text AS plan_date,
       json_agg(json_build_object(
         'in', extract(epoch FROM o.oven_in_at) * 1000,
-        -- The core-temperature probe reading is objective; the "out" tap is
-        -- often pressed late. Prefer the probe when there is one.
-        'out', extract(epoch FROM COALESCE((
+        'out', extract(epoch FROM o.oven_out_at) * 1000,
+        'probe', extract(epoch FROM (
           SELECT min(t.recorded_at) FROM temperature_records t
            WHERE t.plan_id = o.plan_id AND t.recipe_id = o.recipe_id
              AND t.ingredient_id = o.ingredient_id AND t.tray_index = o.tray_index
              AND t.record_type = 'cooked_core' AND t.recorded_at >= o.oven_in_at
-        ), o.oven_out_at)) * 1000
+        )) * 1000
       )) AS trays,
       (SELECT extract(epoch FROM min(bc.completed_at)) * 1000
          FROM batch_completions bc
          JOIN production_plan_items pi ON pi.id = bc.plan_item_id
         WHERE pi.plan_id = o.plan_id AND pi.recipe_id = o.recipe_id
-          AND bc.station_type = 'mixing') AS filling_ready_ms
+          AND bc.station_type = 'mixing') AS filling_ready_ms,
+      (SELECT r.predicted_need_minutes - r.needed_at_minutes FROM meat_put_in_records r
+        WHERE r.plan_id = o.plan_id AND r.recipe_id = o.recipe_id AND r.ingredient_id = o.ingredient_id) AS need_error
     FROM oven_events o
     JOIN production_plans p ON p.id = o.plan_id
     WHERE o.ingredient_id IS NOT NULL AND o.recipe_id IS NOT NULL
@@ -123,6 +208,7 @@ export async function loadRuns(ingredientIds?: number[]): Promise<Map<number, Me
     const trays: MeatTrayEvent[] = (r.trays ?? []).map(t => ({
       inAtMs: Number(t.in),
       outAtMs: t.out == null ? null : Number(t.out),
+      probeAtMs: t.probe == null ? null : Number(t.probe),
     }));
     const list = out.get(Number(r.ingredient_id)) ?? [];
     list.push({
@@ -131,6 +217,7 @@ export async function loadRuns(ingredientIds?: number[]): Promise<Map<number, Me
       planDate: r.plan_date,
       trays,
       fillingReadyAtMs: r.filling_ready_ms == null ? null : Number(r.filling_ready_ms),
+      needErrorMinutes: r.need_error == null ? null : Number(r.need_error),
     });
     out.set(Number(r.ingredient_id), list);
   }
@@ -142,7 +229,7 @@ export interface MeatTimingReportRow {
   name: string;
   cookMinutes: number | null;
   processMinutes: number | null;
-  graceMinutes: number | null;
+  bufferMinutes: number | null;
   autoLearn: boolean;
   configuredLeadMinutes: number | null;
   learning: MeatLearning;
@@ -155,6 +242,8 @@ export interface MeatTimingReportRow {
 
 /** Every raw meat with a cook or process time, or prep-oven history. */
 export async function buildMeatTimingReport(): Promise<MeatTimingReportRow[]> {
+  const settings = await loadMeatTimingSettings();
+  const rules = rulesFromSettings(settings);
   const runs = await loadRuns();
   const meats = await db
     .select({
@@ -163,7 +252,7 @@ export async function buildMeatTimingReport(): Promise<MeatTimingReportRow[]> {
       category: ingredientsTable.category,
       cook: ingredientsTable.estimatedCookTimeMin,
       process: ingredientsTable.meatProcessMinutes,
-      grace: ingredientsTable.meatGraceMinutes,
+      buffer: ingredientsTable.meatBufferMinutes,
       autoLearn: ingredientsTable.meatTimingAutoLearn,
     })
     .from(ingredientsTable);
@@ -178,17 +267,17 @@ export async function buildMeatTimingReport(): Promise<MeatTimingReportRow[]> {
   ]);
   return shown
     .map(m => {
-      const configured = { cookMinutes: m.cook, processMinutes: m.process, graceMinutes: m.grace };
+      const configured = { cookMinutes: m.cook, processMinutes: m.process, bufferMinutes: m.buffer };
       const ex = exclusions.get(m.id);
       return {
         ingredientId: m.id,
         name: m.name,
         cookMinutes: m.cook,
         processMinutes: m.process,
-        graceMinutes: m.grace,
+        bufferMinutes: m.buffer,
         autoLearn: m.autoLearn,
-        configuredLeadMinutes: configuredLead(configured),
-        learning: learnMeatTiming(runs.get(m.id) ?? [], configured, LEARNING_RULES, ex?.exclude),
+        configuredLeadMinutes: configuredLead(configured, rules),
+        learning: learnMeatTiming(runs.get(m.id) ?? [], configured, rules, ex?.exclude),
         trust: trust.get(m.id) ?? { score: null, days: 0, trusted: false, recent: [] },
         habit: ex?.habit ?? null,
         review: stats.get(m.id) ?? null,
@@ -200,7 +289,7 @@ export async function buildMeatTimingReport(): Promise<MeatTimingReportRow[]> {
 export interface AppliedChange {
   ingredientId: number;
   name: string;
-  field: "process" | "grace";
+  field: "process" | "buffer";
   from: number | null;
   to: number;
 }
@@ -218,11 +307,11 @@ export async function applyLearnedTimings(
   for (const row of report) {
     if (!row.autoLearn || row.learning.changes.length === 0) continue;
     const proc = row.learning.changes.find(c => c.field === "process");
-    const grace = row.learning.changes.find(c => c.field === "grace");
+    const buffer = row.learning.changes.find(c => c.field === "buffer");
     await db.transaction(async (tx) => {
-      const set: { meatProcessMinutes?: number; meatGraceMinutes?: number } = {};
+      const set: { meatProcessMinutes?: number; meatBufferMinutes?: number } = {};
       if (proc) set.meatProcessMinutes = proc.to;
-      if (grace) set.meatGraceMinutes = grace.to;
+      if (buffer) set.meatBufferMinutes = buffer.to;
       const updated = await tx
         .update(ingredientsTable)
         .set(set)
@@ -230,11 +319,11 @@ export async function applyLearnedTimings(
           eq(ingredientsTable.id, row.ingredientId),
           eq(ingredientsTable.meatTimingAutoLearn, true),
           sql`${ingredientsTable.meatProcessMinutes} IS NOT DISTINCT FROM ${row.processMinutes}`,
-          sql`${ingredientsTable.meatGraceMinutes} IS NOT DISTINCT FROM ${row.graceMinutes}`,
+          sql`${ingredientsTable.meatBufferMinutes} IS NOT DISTINCT FROM ${row.bufferMinutes}`,
         ))
         .returning({ id: ingredientsTable.id });
       if (updated.length === 0) return; // changed under us — next run re-learns
-      for (const c of [proc, grace]) {
+      for (const c of [proc, buffer]) {
         if (!c) continue;
         await tx.insert(meatTimingAdjustmentsTable).values({
           ingredientId: row.ingredientId,
@@ -245,8 +334,8 @@ export async function applyLearnedTimings(
           source: "auto",
           reason: c.reason,
           runsUsed: row.learning.runsUsed,
-          leadMedianMinutes: row.learning.lead ? row.learning.lead.median.toFixed(1) : null,
-          leadSlowMinutes: row.learning.lead ? row.learning.lead.slow.toFixed(1) : null,
+          processMedianMinutes: row.learning.processing ? row.learning.processing.median.toFixed(1) : null,
+          processSlowMinutes: row.learning.processing ? row.learning.processing.slow.toFixed(1) : null,
           actorUserId: actor?.userId ?? null,
           actorName: actor ? `${actor.name} (ran the learning now)` : "Automatic learning",
         });
@@ -293,7 +382,7 @@ export async function revertAdjustment(id: number, actor: { userId: number | nul
       .limit(1);
     if (newer) return { ok: false, status: 409, error: "A newer change to this value exists — revert that one first" } as const;
 
-    const column = adj.field === "process" ? ingredientsTable.meatProcessMinutes : ingredientsTable.meatGraceMinutes;
+    const column = adj.field === "process" ? ingredientsTable.meatProcessMinutes : ingredientsTable.meatBufferMinutes;
     const [ing] = await tx.select({ current: column }).from(ingredientsTable).where(eq(ingredientsTable.id, adj.ingredientId)).limit(1);
     if (!ing) return { ok: false, status: 404, error: "Ingredient not found" } as const;
 
@@ -301,7 +390,7 @@ export async function revertAdjustment(id: number, actor: { userId: number | nul
       .update(ingredientsTable)
       .set(adj.field === "process"
         ? { meatProcessMinutes: adj.oldValue, meatTimingAutoLearn: false }
-        : { meatGraceMinutes: adj.oldValue, meatTimingAutoLearn: false })
+        : { meatBufferMinutes: adj.oldValue, meatTimingAutoLearn: false })
       .where(eq(ingredientsTable.id, adj.ingredientId));
     await tx
       .update(meatTimingAdjustmentsTable)
@@ -322,26 +411,26 @@ export async function revertAdjustment(id: number, actor: { userId: number | nul
   });
 }
 
-/** A manager setting processing / grace / learning by hand — logged like the rest. */
+/** A manager setting processing / buffer / learning by hand — logged like the rest. */
 export async function setMeatTiming(
   ingredientId: number,
-  body: { processMinutes?: number; graceMinutes?: number; autoLearn?: boolean },
+  body: { processMinutes?: number; bufferMinutes?: number; autoLearn?: boolean },
   actor: { userId: number | null; name: string },
 ): Promise<boolean> {
   return db.transaction(async (tx) => {
     const [ing] = await tx
-      .select({ name: ingredientsTable.name, process: ingredientsTable.meatProcessMinutes, grace: ingredientsTable.meatGraceMinutes })
+      .select({ name: ingredientsTable.name, process: ingredientsTable.meatProcessMinutes, buffer: ingredientsTable.meatBufferMinutes })
       .from(ingredientsTable)
       .where(eq(ingredientsTable.id, ingredientId))
       .limit(1);
     if (!ing) return false;
-    const set: { meatProcessMinutes?: number; meatGraceMinutes?: number; meatTimingAutoLearn?: boolean } = {};
+    const set: { meatProcessMinutes?: number; meatBufferMinutes?: number; meatTimingAutoLearn?: boolean } = {};
     if (body.processMinutes !== undefined) set.meatProcessMinutes = body.processMinutes;
-    if (body.graceMinutes !== undefined) set.meatGraceMinutes = body.graceMinutes;
+    if (body.bufferMinutes !== undefined) set.meatBufferMinutes = body.bufferMinutes;
     if (body.autoLearn !== undefined) set.meatTimingAutoLearn = body.autoLearn;
     if (Object.keys(set).length === 0) return true;
     await tx.update(ingredientsTable).set(set).where(eq(ingredientsTable.id, ingredientId));
-    const log = (field: "process" | "grace", from: number | null, to: number | undefined) => {
+    const log = (field: "process" | "buffer", from: number | null, to: number | undefined) => {
       if (to === undefined || to === from) return null;
       return tx.insert(meatTimingAdjustmentsTable).values({
         ingredientId, ingredientName: ing.name, field, oldValue: from, newValue: to,
@@ -349,7 +438,7 @@ export async function setMeatTiming(
       });
     };
     await log("process", ing.process, body.processMinutes);
-    await log("grace", ing.grace, body.graceMinutes);
+    await log("buffer", ing.buffer, body.bufferMinutes);
     return true;
   });
 }

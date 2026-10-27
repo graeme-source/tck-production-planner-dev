@@ -15,12 +15,11 @@ import { db, productionPlansTable, productionPlanItemsTable, recipesTable, ingre
 import { eq, asc, inArray } from "drizzle-orm";
 import {
   computeDaySchedule, parseClock, formatClock, applySavedBreakAnchors,
-  DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS,
+  DEFAULT_START_TIME, DEFAULT_CHANGEOVER_SECONDS, DEFAULT_BUILDERS, LEARNING_RULES,
   type ScheduleRecipeInput,
 } from "@workspace/production-schedule";
 import { resolveRecipeIngredients, aggregateIngredients } from "./ingredient-resolver";
 import { meatLeadMinutes } from "./meat-lead-time";
-import { loadMeatTimingSettings } from "./meat-timing-learner";
 import {
   isOnDayTimeline, typicalMinutesPerBatch, buildTimingFor, missingBuildTimeWarning,
   splitMeatsByTiming, type RecipeMeat,
@@ -76,20 +75,19 @@ export async function buildPlanSchedule(planId: number) {
           id: ingredientsTable.id,
           cook: ingredientsTable.estimatedCookTimeMin,
           process: ingredientsTable.meatProcessMinutes,
-          grace: ingredientsTable.meatGraceMinutes,
+          buffer: ingredientsTable.meatBufferMinutes,
         })
         .from(ingredientsTable)
         .where(inArray(ingredientsTable.id, [...allMeatIds]))
     : [];
-  // Lead time = cook + process + buffer (lib/meat-lead-time.ts). The buffer
-  // is the bigger of the meat's learned grace (its slow-day spread, migration
-  // 0290) and the hot-meat target (Settings, default 20: hot meat ready 20 min
-  // before the builders need it, Graeme 2026-10-27) — so a typical day is
-  // ready on the target and a slow day still ready before the builders.
-  const { hotReadyBeforeMinutes } = await loadMeatTimingSettings();
-  const bufferOf = (grace: number | null) => Math.max(grace ?? 0, hotReadyBeforeMinutes);
-  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process, bufferOf(r.grace))]));
-  const meatInfoById = new Map(meatInfoRows.map(r => [r.id, { ...r, grace: bufferOf(r.grace) }]));
+  // Lead time = cook + processing + buffer (lib/meat-lead-time.ts), so the
+  // meat comes OUT of the oven processing + buffer before the builders need
+  // it and goes in cook before that. Processing and buffer are learned per
+  // meat (migration 0290, lib/meat-timing-learner.ts); an unset buffer starts
+  // small at 5.
+  const bufferOf = (b: number | null) => b ?? LEARNING_RULES.bufferStart;
+  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process, bufferOf(r.buffer))]));
+  const meatInfoById = new Map(meatInfoRows.map(r => [r.id, { ...r, buffer: bufferOf(r.buffer) }]));
 
   // Settings.
   const settingRows = await db
@@ -131,12 +129,12 @@ export async function buildPlanSchedule(planId: number) {
       name: i.name,
       batches: i.batchesTarget,
       minutesPerBatch: timing.minutesPerBatch,
-      // Cook and grace ride along so the live schedule can check the 4-hour
-      // hold (oven-out → last batch) — lib/production-schedule live-replan.
+      // Cook and buffer ride along so the live schedule can time the out-of-
+      // oven moment and plan waves inside the 4-hour rule (live-replan.ts).
       meats: split.timed.map(m => ({
         ...m,
         cookMinutes: meatInfoById.get(m.rawMeatIngredientId)?.cook ?? null,
-        graceMinutes: meatInfoById.get(m.rawMeatIngredientId)?.grace ?? null,
+        bufferMinutes: meatInfoById.get(m.rawMeatIngredientId)?.buffer ?? null,
       })),
       buildTimeGuessed: timing.guessed,
       untimedMeats: split.untimed,
