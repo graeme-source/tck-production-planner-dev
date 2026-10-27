@@ -632,7 +632,7 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
             items owed today (e.g. milk/cream deferred from Friday for
             Monday's sauce). Same single-source-of-truth list as the
             main prep banner, just filtered to mac cheese recipes. */}
-        <DeferredPrepBanner category={MAC_CHEESE_CATEGORY} />
+        <DeferredPrepBanner category={MAC_CHEESE_CATEGORY} station="macaroni_cheese" />
         <div className="bg-card border border-yellow-200 dark:border-yellow-800 rounded-xl p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-lg flex items-center gap-2">
@@ -674,7 +674,7 @@ export function MacaroniCheeseStation({ plan, isOnBreak = false }: { plan: Produ
 
   return (
     <div className="space-y-6">
-      <DeferredPrepBanner category={MAC_CHEESE_CATEGORY} />
+      <DeferredPrepBanner category={MAC_CHEESE_CATEGORY} station="macaroni_cheese" />
       {/* Summary — recipe breakdown with packs, no batch buttons */}
       <div className="bg-card border border-border rounded-xl p-5">
         <div className="flex items-center justify-between mb-4">

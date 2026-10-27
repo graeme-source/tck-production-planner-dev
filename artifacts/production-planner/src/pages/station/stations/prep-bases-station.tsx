@@ -32,6 +32,7 @@ import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
 import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, tasksLine } from "@/lib/prep-progress";
+import { usePrepSessionCapture, type PrepSessionStation } from "@/hooks/use-prep-session-capture";
 
 interface SubRecipePlanRequirement {
   subRecipeId: number;
@@ -183,6 +184,7 @@ export function SubRecipeMakeFlow({
   sopQueryKey,
   initialSubRecipeId,
   onReplenishComponent,
+  timing,
 }: {
   mode: SubReplenishMode;
   planRequirements: SubRecipePlanRequirement[];
@@ -206,6 +208,9 @@ export function SubRecipeMakeFlow({
   sopLinksBySubRecipe?: Record<number, SopLink[]>;
   onOpenSop?: (sopId: number) => void;
   sopQueryKey?: unknown[];
+  /** The plan the host screen is prepping for — making a sub-recipe here is
+   *  timed in the background (the founder-only prep times report). Omit = untimed. */
+  timing?: { planId: number | null | undefined; station: PrepSessionStation };
 }) {
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SubReplenishState>({
@@ -217,6 +222,20 @@ export function SubRecipeMakeFlow({
     batches: 1,
     checked: new Set(),
   });
+
+  // Prep timing: from picking a sub-recipe to "Mark Complete". Back to the
+  // list, "nothing required" or closing the popup ends it without a time.
+  const sessionTiming = usePrepSessionCapture({
+    planId: timing?.planId ?? null,
+    station: timing?.station ?? "prep_bases",
+    enabled: !!timing,
+  });
+  const makingId = state.sr && (state.phase === "stock_check" || state.phase === "batch_pick" || state.phase === "checklist")
+    ? state.sr.subRecipeId
+    : null;
+  useEffect(() => {
+    sessionTiming.focus(makingId != null ? [{ subRecipeId: makingId }] : []);
+  }, [sessionTiming, makingId]);
 
   const selectSr = (sr: SubRecipePlanRequirement) => {
     setLoadedDetail(null);
@@ -407,7 +426,15 @@ export function SubRecipeMakeFlow({
             {checkedCount === totalItems && totalItems > 0 && (
               <button
                 onClick={() => {
-                  if (state.sr) onDone?.(state.sr.subRecipeId, state.batches);
+                  if (state.sr) {
+                    onDone?.(state.sr.subRecipeId, state.batches);
+                    sessionTiming.made({
+                      subRecipeId: state.sr.subRecipeId,
+                      batches: state.batches,
+                      quantity: yieldPerBatch * state.batches,
+                      unit: sr?.yieldUnit ?? null,
+                    });
+                  }
                   setState(s => ({ ...s, phase: "done" }));
                 }}
                 className="w-full py-4 mt-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
@@ -647,11 +674,13 @@ export function SubRecipeMakeFlow({
         </div>
       )}
 
+      {/* The list shows names and status only. How much to make — and
+          marking it done — is inside the opened sub-recipe (stock check →
+          mixes → checklist → Mark Complete), so every completion is timed
+          from opening it (Graeme, 27 Oct 2026). A done row can still be
+          undone here. */}
       <div className="space-y-2">
         {filteredList.map(sr => {
-          const batchsNeeded = mode === "plan" && sr.totalRequired > 0 && sr.yield > 0
-            ? Math.ceil(sr.totalRequired / sr.yield)
-            : null;
           const isDone = completedIds?.has(sr.subRecipeId) ?? false;
           return (
             <div
@@ -663,17 +692,14 @@ export function SubRecipeMakeFlow({
                   : "border-border bg-card hover:border-primary/40 hover:bg-primary/5"
               )}
             >
-              {mode === "plan" && onToggleDone && (
+              {mode === "plan" && onToggleDone && isDone && (
                 <button
                   onClick={() => onToggleDone(sr.subRecipeId)}
-                  aria-label={isDone ? `Mark ${sr.subRecipeName} not done` : `Mark ${sr.subRecipeName} done`}
+                  aria-label={`Mark ${sr.subRecipeName} not done`}
+                  title="Tap to undo"
                   className="flex-shrink-0 p-1 -m-1 rounded-full transition-transform active:scale-90"
                 >
-                  {isDone ? (
-                    <CheckCircle2 className="w-8 h-8 text-emerald-500" />
-                  ) : (
-                    <div className="w-8 h-8 rounded-full border-2 border-muted-foreground/40 hover:border-emerald-500 transition-colors" />
-                  )}
+                  <CheckCircle2 className="w-8 h-8 text-emerald-500" />
                 </button>
               )}
               <button
@@ -688,14 +714,8 @@ export function SubRecipeMakeFlow({
                     {sr.subRecipeName}
                   </p>
                   <p className="text-base text-muted-foreground">
-                    {isDone
-                      ? "✓ Completed today"
-                      : <>
-                          {formatPrepWeight(sr.yield, sr.yieldUnit)} per mix
-                          {mode === "plan" && sr.totalRequired > 0 && ` · ${formatPrepWeight(sr.totalRequired, sr.yieldUnit)} required`}
-                        </>}
+                    {isDone ? "✓ Completed today" : "Tap to open"}
                   </p>
-                  {!isDone && mode === "plan" && <MixExtraNote qty={sr.mixExtraQty} unit={sr.yieldUnit} />}
                   {onOpenSop && (
                     <div className="mt-1.5" onClick={e => e.stopPropagation()}>
                       <SopChips
@@ -707,12 +727,6 @@ export function SubRecipeMakeFlow({
                     </div>
                   )}
                 </div>
-                {batchsNeeded !== null && !isDone && (
-                  <div className="text-right flex-shrink-0">
-                    <p className="text-2xl font-bold text-primary tabular-nums">{batchsNeeded}</p>
-                    <p className="text-sm text-muted-foreground">mix{batchsNeeded !== 1 ? "es" : ""}</p>
-                  </div>
-                )}
                 <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
               </button>
             </div>
@@ -791,6 +805,15 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   // "Also viewing" presence — the same heartbeat and marker as Main Prep (#64).
   const { presenceData, setViewing } = usePrepPresence(targetPlanId);
+  // Prep timing, in the background (the founder-only prep times report).
+  const timing = usePrepSessionCapture({ planId: targetPlanId, station: "prep_bases", enabled: !isDraft && !noFuturePlan });
+  // The opened item's panel — under the list on an upright iPad, so opening
+  // an item brings it into view.
+  const detailRef = useRef<HTMLDivElement>(null);
+  const showOpenedItem = () => requestAnimationFrame(() => {
+    const el = detailRef.current;
+    if (el && el.getBoundingClientRect().top > window.innerHeight - 120) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   useEffect(() => {
     setViewing(typeof selectedItem === "number" ? selectedItem : null);
   }, [selectedItem, setViewing]);
@@ -961,22 +984,38 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     ? ingredients.find(i => i.ingredientId === selectedItem) ?? null
     : null;
 
+  // Prep timing (founder-only report, no screen): the sauce on screen is timed while
+  // it still has tins to prep. Tomato Base times itself in its make flow.
+  const timedSauceId = selectedIngredient && !stockTabOpen && !ingredientDoneStatus(selectedIngredient).allTinsDone
+    ? selectedIngredient.ingredientId
+    : null;
+  useEffect(() => {
+    timing.focus(timedSauceId != null ? [{ ingredientId: timedSauceId }] : []);
+  }, [timing, timedSauceId]);
+
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
     if (existing) {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+      const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
         method: "DELETE", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
       });
+      if (res.ok) timing.unticked({ ingredientId });
     } else {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+      const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
       });
+      if (res.ok) {
+        // Saved — time it against the session open on this sauce (background).
+        const ing = ingredients.find(i => i.ingredientId === ingredientId);
+        const entry = ing?.recipes.find(r => r.recipeId === recipeId);
+        timing.ticked({ ingredientId, recipeId, tinNumber, quantity: entry?.qtyPerTin ?? null, unit: ing?.unit ?? null });
+      }
     }
     refetch();
   };
@@ -1051,7 +1090,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
       {tabs}
       {sopViewer.dialog}
       {replenishTarget && (
-        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+        <SubRecipeReplenishModal
+          target={replenishTarget}
+          onClose={() => setReplenishTarget(null)}
+          timing={isDraft ? undefined : { planId: targetPlanId, station: "prep_bases" }}
+        />
       )}
 
       {/* Stock checks for this station's ingredients — same card as main
@@ -1112,7 +1155,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
               {/* Tomato Base — special pinned item (hidden when done + Hide completed is on) */}
               {!(hideCompleted && tomatoBaseDone && selectedItem !== "tomato_base") && (
               <button
-                onClick={() => setSelectedItem("tomato_base")}
+                onClick={() => { setSelectedItem("tomato_base"); showOpenedItem(); }}
                 className={cn(
                   "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-border",
                   tomatoBaseDone
@@ -1176,7 +1219,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     return (
                       <React.Fragment key={`${group.recipeId}-${ing.ingredientId}`}>
                       <button
-                        onClick={() => setSelectedItem(ing.ingredientId)}
+                        onClick={() => { setSelectedItem(ing.ingredientId); showOpenedItem(); }}
                         className={cn(
                           "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
                           isSelected
@@ -1221,6 +1264,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                           )}
                         </div>
                         <div className="flex items-center gap-1 flex-shrink-0">
+                          {/* Status only — tins and weights show once the
+                              sauce is opened. */}
                           {rStatus.completedTins > 0 && getPreppedByInitials(ing.ingredientId, group.recipeId).map(({ initials, fullName }) => (
                             <span
                               key={fullName}
@@ -1230,17 +1275,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                               {initials}
                             </span>
                           ))}
-                          {rStatus.totalTins > 0 && (
-                            <span className={cn(
-                              "text-sm tabular-nums",
-                              rStatus.allDone ? "text-yellow-600 font-semibold" : "text-muted-foreground"
-                            )}>
-                              {rStatus.completedTins}/{rStatus.totalTins}
-                            </span>
-                          )}
                         </div>
                       </button>
-                      {/* Linked ingredient sub-rows */}
+                      {/* Linked ingredient sub-rows (names only) */}
                       {ingLinkedItems.map((li, liIdx) => (
                         <div
                           key={`linked-${ing.ingredientId}-${liIdx}`}
@@ -1249,9 +1286,6 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                           <span className="flex items-center gap-2">
                             <span className="text-yellow-500">↳</span>
                             <span>{li.ingredientName}</span>
-                          </span>
-                          <span className="tabular-nums font-medium text-foreground">
-                            {fmtPrepQty(li.totalQty, li.unit)}
                           </span>
                         </div>
                       ))}
@@ -1265,8 +1299,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
           </div>
         </div>
 
-        {/* RIGHT — Sub-recipe flow for Tomato Base, tin view for sauces */}
-        <div className="flex-1 min-w-0">
+        {/* RIGHT — the opened item: Tomato Base's make flow, or a sauce's
+            tins with their amounts and ticks (only here) */}
+        <div ref={detailRef} className="flex-1 min-w-0 scroll-mt-4">
           {selectedItem === "tomato_base" ? (
             tomatoBaseDone ? (
               <div className="bg-emerald-50 dark:bg-emerald-950/30 border-2 border-emerald-300 dark:border-emerald-700 rounded-2xl p-6">
@@ -1320,6 +1355,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     onOpenSop={sopViewer.open}
                     sopQueryKey={subRecipeSopKey}
                     onReplenishComponent={(subRecipeId, name) => setReplenishTarget({ subRecipeId, name })}
+                    timing={isDraft ? undefined : { planId: targetPlanId, station: "prep_bases" }}
                   />
                 )}
               </div>
