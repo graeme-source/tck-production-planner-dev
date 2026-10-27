@@ -108,9 +108,9 @@ export default function FounderAbTests() {
           <div className="space-y-1">
             <p className="text-base font-bold">Rollouts aren't connected yet</p>
             <p className="text-sm text-foreground/80">
-              {tests.data.rollouts.message} Add the <strong>read_rollouts</strong> scope to the planner's app in Shopify
-              (Settings → Apps → Develop apps → the planner app → Configuration) and your Rollouts tests appear here by
-              themselves. Until then, add a test by hand — the numbers work the same.
+              {/* Shopify's own reason, naming the permission it wants (27 Oct 2026). */}
+              {tests.data.rollouts.message} Once it's sorted your Rollouts tests appear here by themselves. Until then,
+              add a test by hand — the numbers work the same.
             </p>
           </div>
         </div>

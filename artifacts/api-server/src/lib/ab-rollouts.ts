@@ -70,6 +70,18 @@ export function testFromRollout(r: RolloutNode, seenThemes: { themeId: number; t
   };
 }
 
+/** Shopify's "access denied" names the scope it wants ("Required access:
+ *  `read_themes`…"). Say THAT one — the old message always blamed
+ *  read_rollouts, but the theme names inside a Rollout need read_themes
+ *  (Graeme, 27 Oct 2026: read_rollouts was granted and it still said no). */
+export function accessDeniedMessage(shopifyError: string): string {
+  const scopes = [...new Set([...shopifyError.matchAll(/`((?:read|write)_[a-z_]+)`/g)].map(m => m[1]!))];
+  const missing = scopes.filter(s => s !== "read_rollouts");
+  const named = missing.length ? missing : scopes;
+  if (!named.length) return "Shopify refused to share the Rollouts — it didn't say which permission it wants.";
+  return `Shopify needs the ${named.join(" and ")} permission${named.length > 1 ? "s" : ""} on the planner's app to read Rollouts (add ${named.length > 1 ? "them" : "it"} under API access → Scopes, approve the update on the store, then restart the app).`;
+}
+
 export const ROLLOUTS_QUERY = `{
   rollouts(first: 50, reverse: true) {
     nodes {

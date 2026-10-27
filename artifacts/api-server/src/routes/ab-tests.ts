@@ -20,7 +20,7 @@ import { validate } from "../middleware/validate";
 import { shopifyGraphQL } from "../services/shopify";
 import { getCachedOrders } from "../lib/orders-cache";
 import { computeAbResults, type AbOrder, type AbVariant, type VariantHits } from "../lib/ab-results";
-import { ROLLOUTS_QUERY, testFromRollout, type RolloutNode } from "../lib/ab-rollouts";
+import { ROLLOUTS_QUERY, accessDeniedMessage, testFromRollout, type RolloutNode } from "../lib/ab-rollouts";
 
 const router: IRouter = Router();
 router.use(requireFounderArea("founder.sales"));
@@ -77,7 +77,7 @@ async function syncRollouts(): Promise<RolloutsStatus> {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     status = /access denied/i.test(msg)
-      ? { connected: false, message: "Shopify hasn't given the planner permission to read Rollouts yet (read_rollouts)." }
+      ? { connected: false, message: accessDeniedMessage(msg) }
       : { connected: false, message: `Couldn't read Rollouts from Shopify: ${msg.slice(0, 200)}` };
     if (!/access denied/i.test(msg)) console.warn("[ab-tests] rollouts sync failed:", msg);
   }

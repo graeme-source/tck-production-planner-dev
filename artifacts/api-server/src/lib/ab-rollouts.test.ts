@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { testFromRollout, type RolloutNode } from "./ab-rollouts";
+import { testFromRollout, type RolloutNode, accessDeniedMessage } from "./ab-rollouts";
 
 const rollout = (treatments: RolloutNode["treatments"]): RolloutNode => ({
   id: "gid://shopify/Rollout/1", name: "Main vs UPF free test", status: "ACTIVE",
@@ -26,5 +26,21 @@ describe("Rollouts → A/B test", () => {
   it("no snippet data yet: just the treatment until the control shows up", () => {
     const t = testFromRollout(rollout([{ split: 50, changes: { nodes: [] } }, { split: 50, changes: themeChange(2, "b") }]), [])!;
     expect(t.variants.map(v => v.label)).toEqual(["Treatment"]);
+  });
+});
+
+// Regression (Graeme, 27 Oct 2026): read_rollouts was granted but the page
+// still blamed it — Shopify was refusing the theme names (read_themes).
+describe("accessDeniedMessage — say the permission Shopify actually wants", () => {
+  it("names read_themes when that's what's missing", () => {
+    const m = accessDeniedMessage("Access denied for theme field. Required access: `read_themes` access scope.");
+    expect(m).toContain("read_themes");
+    expect(m).not.toContain("read_rollouts");
+  });
+  it("names read_rollouts when that really is the missing one", () => {
+    expect(accessDeniedMessage("Access denied for rollouts field. Required access: `read_rollouts` access scope.")).toContain("read_rollouts");
+  });
+  it("still says something useful when Shopify names nothing", () => {
+    expect(accessDeniedMessage("Access denied")).toMatch(/didn't say/);
   });
 });
