@@ -47,7 +47,8 @@ export function MeatInOutLine({ m, trust, large = false }: { m: LiveMeat; trust?
       <span className="font-semibold">{m.rawMeatName}</span>
       {m.started ? (
         <span className="inline-flex items-center gap-1 font-semibold text-orange-600 dark:text-orange-400">
-          <Flame className="w-4 h-4" /> in the oven{m.outMinutes != null ? ` · out at ${formatClock(m.outMinutes)}` : ""}
+          {/* No planned "out at" once it's in: the trays and the probe say when it's cooked. */}
+          <Flame className="w-4 h-4" /> in the oven
         </span>
       ) : (
         <span className={cn("tabular-nums", m.overdue && "text-rose-600 dark:text-rose-400 font-semibold")}>
