@@ -28,12 +28,15 @@
 // raw meat for the prep oven is HOT — its meat gets an exact "in the oven by"
 // time. Everything else (cold meats, veg) is COLD: mixed early, chilled, taken
 // whenever the builders want — so it gets "mix any time before HH:MM"
-// (mixReadyBeforeMinutes ahead of the builders, default 10), never a tight time.
+// (coldMixBufferMinutes ahead of the builders: learned from how early the
+// builders have arrived against the prediction), never a tight time.
 //
-// FOOD SAFETY: for every meat not yet in the oven, holdMinutes is how long the
-// cooked meat would be out (oven-out → that recipe's last batch built). Over
-// maxHoldMinutes (the 4-hour rule less a margin, a setting) it's flagged with
-// the earliest a second wave may go in, rather than silently scheduled.
+// FOOD SAFETY (meat-safety.ts): out of the prep oven → that recipe's last
+// batch built, baked and chilled to 8 °C must be ≤ 240 min, so the meat may be
+// out at most maxSpanMinutes (240 − chill − bake) before the last batch is
+// built. A meat not yet in the oven gets a WAVE plan when one cook can't cover
+// the build; a meat already out gets safetyBreachComing when the live
+// finish is past its limit.
 //
 // Wall-clock minutes since London midnight throughout, like the rest of this
 // package.
@@ -42,6 +45,7 @@ import {
   computeDaySchedule,
   type ScheduleRecipeInput, type ScheduleOptions, type ScheduleBreakInput, type ScheduledBreak,
 } from "./index";
+import { planMeatWaves, type MeatWave } from "./meat-safety";
 
 export interface LiveItemProgress {
   planItemId: number;
@@ -132,10 +136,12 @@ export function measurePace(
 export interface LiveMeat {
   rawMeatIngredientId: number;
   rawMeatName: string;
-  /** cook + process + grace, minutes. */
+  /** cook + processing + buffer, minutes. */
   leadMinutes: number;
   cookMinutes: number | null;
-  graceMinutes: number | null;
+  bufferMinutes: number | null;
+  /** Out of the oven by (first wave), when the cook time is known. */
+  outMinutes: number | null;
   missing: "cook" | "process" | null;
   plannedCookStartMinutes: number;
   liveCookStartMinutes: number;
@@ -143,12 +149,17 @@ export interface LiveMeat {
   started: boolean;
   /** Not started and the live start time has already passed. */
   overdue: boolean;
-  /** Oven-out → this recipe's last batch, minutes (null without a cook time or once started). */
-  holdMinutes: number | null;
-  /** holdMinutes is over the limit — cook in two waves. */
-  holdBreach: boolean;
-  /** With holdBreach: the earliest a second wave may go in and still meet the limit. */
-  secondWaveNotBeforeMinutes: number | null;
+  /**
+   * Not yet in: the cooks needed to stay inside the 4-hour rule (one wave
+   * when the build is short enough). Empty without a cook time, or once in.
+   */
+  waves: MeatWave[];
+  /** Even waves can't comply (processing + buffer alone use up the limit). */
+  safetyImpossible: boolean;
+  /** Already out: the live finish is past its limit — a breach is coming. */
+  safetyBreachComing: boolean;
+  /** …by this many minutes. */
+  safetyOverMinutes: number | null;
 }
 
 export type Drift = "ahead" | "behind" | "on_time";
@@ -201,12 +212,14 @@ export interface LiveReplanInput {
   pace: PaceReading | null;
   /** `${recipeId}:${rawMeatIngredientId}` for meats with a tray already in the oven. */
   meatsStarted?: Set<string>;
-  /** The 4-hour rule less its margin, minutes. */
-  maxHoldMinutes: number;
+  /** Same key → when that meat first came out cooked (probe or tap). */
+  meatsOutAt?: Map<string, number>;
+  /** 4-hour rule: longest the meat may be out before the last batch is built. */
+  maxSpanMinutes: number;
   /** Drift smaller than this reads as "on time". */
   onTimeMinutes?: number;
-  /** Every mix ready this long before the builders need it (setting, default 10). */
-  mixReadyBeforeMinutes?: number;
+  /** Cold mixes ready this long before the builders need them (learned, default 5). */
+  coldMixBufferMinutes?: number;
 }
 
 /** A gap at least this long with no building means the line is stopped. */
@@ -265,7 +278,8 @@ export function pendingBreaks(
 
 export function replanLive(input: LiveReplanInput): LiveSchedule {
   const onTime = input.onTimeMinutes ?? 3;
-  const mixMargin = input.mixReadyBeforeMinutes ?? 10;
+  const mixMargin = input.coldMixBufferMinutes ?? 5;
+  const outAt = input.meatsOutAt ?? new Map<string, number>();
   const planned = computeDaySchedule(input.recipes, input.options);
   const plannedById = new Map(planned.recipes.map(r => [r.planItemId, r]));
   const progressById = new Map(input.progress.map(p => [p.planItemId, p]));
@@ -338,32 +352,45 @@ export function replanLive(input: LiveReplanInput): LiveSchedule {
     const meats: LiveMeat[] = p.meats.map((pm, i) => {
       const lm = l?.meats[i];
       const liveCookStart = lm?.cookStartMinutes ?? pm.cookStartMinutes;
-      const isStarted = startedMeats.has(meatKey(r.recipeId, pm.rawMeatIngredientId));
+      const key = meatKey(r.recipeId, pm.rawMeatIngredientId);
+      const isStarted = startedMeats.has(key);
       const consider = state === "waiting" && !isStarted;
-      let holdMinutes: number | null = null;
-      let holdBreach = false;
-      let secondWave: number | null = null;
-      if (consider && pm.cookMinutes != null) {
-        holdMinutes = Math.round(liveFinish - (liveCookStart + pm.cookMinutes));
-        if (holdMinutes > input.maxHoldMinutes) {
-          holdBreach = true;
-          secondWave = Math.round(liveFinish - input.maxHoldMinutes - pm.cookMinutes);
-        }
+      const buffer = pm.bufferMinutes ?? 0;
+      const processing = pm.cookMinutes != null ? Math.max(0, pm.processMinutes - pm.cookMinutes - buffer) : null;
+      let waves: MeatWave[] = [];
+      let impossible = false;
+      if (consider && pm.cookMinutes != null && processing != null) {
+        const plan = planMeatWaves({
+          startMinutes: liveStart,
+          finishMinutes: liveFinish,
+          batches: Math.max(0, r.batches - built),
+          cookMinutes: pm.cookMinutes,
+          processMinutes: processing,
+          bufferMinutes: buffer,
+          maxSpanMinutes: input.maxSpanMinutes,
+        });
+        waves = plan.waves;
+        impossible = plan.impossible;
       }
+      // Already out: does the live finish break its limit?
+      const out = outAt.get(key);
+      const over = out != null && state !== "done" ? Math.round(liveFinish - (out + input.maxSpanMinutes)) : null;
       return {
         rawMeatIngredientId: pm.rawMeatIngredientId,
         rawMeatName: pm.rawMeatName,
         leadMinutes: pm.processMinutes,
         cookMinutes: pm.cookMinutes,
-        graceMinutes: pm.graceMinutes,
+        bufferMinutes: pm.bufferMinutes,
+        outMinutes: pm.cookMinutes != null ? liveCookStart + pm.cookMinutes : null,
         missing: pm.missing,
         plannedCookStartMinutes: pm.cookStartMinutes,
         liveCookStartMinutes: liveCookStart,
         started: isStarted,
         overdue: consider && liveCookStart < input.nowMinutes,
-        holdMinutes,
-        holdBreach,
-        secondWaveNotBeforeMinutes: secondWave,
+        waves,
+        safetyImpossible: impossible,
+        safetyBreachComing: over != null && over > 0,
+        safetyOverMinutes: over != null && over > 0 ? over : null,
       };
     });
 

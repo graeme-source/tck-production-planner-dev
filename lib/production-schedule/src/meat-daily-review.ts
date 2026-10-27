@@ -1,42 +1,35 @@
-// The daily review of the prep oven (Graeme, 27 Oct 2026): "a self-correcting
-// process that analyses, on a daily basis, what time we actually put stuff in
-// and whether we followed the timings suggested. If not, it analyses how far
-// out we were and then maybe even asks the user for the reason... the mixing
-// prep person can just reliably trust those times every morning: they come
-// in, put it in exactly at the time it says, and it's always ready in time,
-// but never too early."
+// The daily review of the prep oven (Graeme, 27 Oct 2026): "analyses, on a
+// daily basis, what time we actually put stuff in and whether we followed the
+// timings suggested... the mixing prep person can just reliably trust those
+// times every morning: they come in, put it in exactly at the time it says,
+// and it's always ready in time, but never too early."
 //
-// For every raw meat × recipe × day:
-//   PUT IN   actual first tray in vs the "in the oven by" time the station was
-//            showing at that moment (snapshotted when the tray went in).
-//            Within ±followToleranceMinutes = followed.
-//            The tolerance widens with the trays: loading six trays takes 3-4
-//            minutes, so a tap is never exact (loadingMinutesPerTray).
-//   READY    first tin of that recipe's filling mixed vs when the builders were
-//            free for that recipe (the last batch of the recipe before it),
-//            judged against the TARGET: hot meat ready readyTargetMinutes (20)
-//            before it's needed.
-//              ready by the target (± tap noise)      = PERFECT
-//              ready after the target, before needed  = CUT FINE
-//              ready after needed (+ tap noise)       = the builders WAITED
-//              ready more than tooEarlyBeyondTarget   = TOO EARLY
-//                before the target
-//            A few minutes either way (tapNoiseMinutes) is tap noise, never a
-//            model error. The 4-hour cap is separate and absolute (live-replan).
-//            Only hot-meat recipes are reviewed: cold and veg mixes are made
-//            early and chilled on purpose, so early is never a fault for them.
+// For every hot raw meat × recipe × day:
+//   PUT IN   first tray in vs the "in the oven by" time the station was
+//            showing at that moment. Followed = within the tolerance, which
+//            widens with the trays (loading six trays takes 3-4 minutes).
+//   READY    first tin of the filling mixed vs when the builders were free for
+//            the recipe. Two numbers, both to be kept small:
+//              SAT   minutes ready before the builders needed it
+//              WAIT  minutes the builders stood waiting for it
+//            and one cost: sat + waitWeight × wait (waits hurt more).
+//            Outcome: WAITED when wait > tapNoise (a few minutes is tap noise);
+//            TOO EARLY when it sat longer than the meat's buffer +
+//            tooEarlyBeyondBufferMinutes; otherwise PERFECT.
+//   SAFETY   the 4-hour rule (meat-safety.ts): out of the oven → that recipe's
+//            last batch built + baked + chilled to 8 °C. Over the limit = a
+//            breach, flagged whatever else happened.
 //   CAUSE    a bad outcome when the time WAS followed is the model's fault —
-//            the learning must fix it. When it wasn't followed it's human, or
-//            capacity if the reason given is one (oven busy, not defrosted,
-//            short-staffed): neither moves the model, unless "didn't follow"
-//            is a habit (the same direction most days) — then the habit is
-//            how the kitchen really runs and the learning follows it.
+//            the learning must fix it. Not followed = human, or capacity if
+//            the reason given is one (oven busy, not defrosted, short-staffed);
+//            neither moves the model, unless "didn't follow" is a habit.
 //
-// TRUST: a recency-weighted share of recent days that were ready in time and
-// not too early. "Trusted ✓" only when earned: enough days, a high score, and
-// the newest day not a wait.
+// Only hot-meat recipes are reviewed: cold and veg mixes are made early and
+// chilled on purpose, so early is never a fault for them.
 //
 // Wall-clock minutes since London midnight; pure.
+
+import { minutesToChilled, type SafetyRule } from "./meat-safety";
 
 export interface ReviewRules {
   /** Put in within this many minutes of the suggested time = followed. Also the "ask why" threshold. */
@@ -45,21 +38,21 @@ export interface ReviewRules {
   loadingMinutesPerTray: number;
   /** …up to this much. */
   maxLoadingMinutes: number;
-  /** Taps are never exact: differences this small are noise, never a fault. */
+  /** Taps are never exact: a wait this small is noise, never a fault. */
   tapNoiseMinutes: number;
-  /** Hot meat should be ready this long before the builders need it (setting, default 20). */
-  readyTargetMinutes: number;
-  /** Ready more than this beyond the target = too early. */
-  tooEarlyBeyondTargetMinutes: number;
+  /** Sat longer than the buffer + this = too early. */
+  tooEarlyBeyondBufferMinutes: number;
+  /** A minute of builder wait costs this many minutes of sitting. */
+  waitWeight: number;
 }
 
 export const REVIEW_RULES: Readonly<ReviewRules> = {
   followToleranceMinutes: 10,
   loadingMinutesPerTray: 0.6,
   maxLoadingMinutes: 10,
-  tapNoiseMinutes: 5,
-  readyTargetMinutes: 20,
-  tooEarlyBeyondTargetMinutes: 30,
+  tapNoiseMinutes: 3,
+  tooEarlyBeyondBufferMinutes: 15,
+  waitWeight: 4,
 };
 
 /** How far off the suggested time still counts as "followed" for a meat with this many trays. */
@@ -101,10 +94,18 @@ export interface PutInRunInput {
   reasonCode?: string | null;
   /** Trays of this meat — widens the put-in tolerance for loading time. */
   trayCount?: number | null;
+  /** The meat's buffer at the time (sitting up to buffer + allowance is fine). */
+  bufferMinutes?: number | null;
+  /** First tray out cooked (probe preferred) and the recipe's last batch built — for the 4-hour rule. */
+  outAtMinutes?: number | null;
+  lastBuiltAtMinutes?: number | null;
+  safety?: SafetyRule | null;
+  /** When the last batch actually reached 8 °C (probe or a plausible tap). Measured beats predicted. */
+  chilledAtMinutes?: number | null;
 }
 
 export type PutInVerdict = "on_time" | "early" | "late" | "unknown";
-export type Outcome = "perfect" | "cut_fine" | "builders_waited" | "too_early" | "unknown";
+export type Outcome = "perfect" | "builders_waited" | "too_early" | "unknown";
 export type Cause = "none" | "model" | "human" | "capacity" | "unknown";
 
 export interface RunReview {
@@ -118,7 +119,12 @@ export interface RunReview {
   waitMinutes: number | null;
   /** Filling ready before the builders needed it, minutes. */
   satMinutes: number | null;
+  /** sat + waitWeight × wait. */
+  costMinutes: number | null;
   cause: Cause;
+  /** Out of the oven → last batch chilled to 8 °C (predicted from bake + chill). */
+  safetyMinutes: number | null;
+  safetyBreach: boolean;
 }
 
 export function reviewRun(input: PutInRunInput, rules: ReviewRules = REVIEW_RULES): RunReview {
@@ -131,15 +137,14 @@ export function reviewRun(input: PutInRunInput, rules: ReviewRules = REVIEW_RULE
   let sat: number | null = null;
   if (input.readyAtMinutes != null && input.neededAtMinutes != null) {
     const diff = input.readyAtMinutes - input.neededAtMinutes; // + = ready after needed
-    const vsTarget = diff + rules.readyTargetMinutes;            // + = ready after the target
     wait = Math.max(0, Math.round(diff));
     sat = Math.max(0, Math.round(-diff));
-    if (diff > rules.tapNoiseMinutes) outcome = "builders_waited";
-    else if (vsTarget > rules.tapNoiseMinutes) outcome = "cut_fine";
-    else if (-vsTarget > rules.tooEarlyBeyondTargetMinutes) outcome = "too_early";
+    if (wait > rules.tapNoiseMinutes) outcome = "builders_waited";
+    else if (sat > (input.bufferMinutes ?? 0) + rules.tooEarlyBeyondBufferMinutes) outcome = "too_early";
     else outcome = "perfect";
   }
   const readyInTime = outcome === "unknown" ? null : outcome !== "builders_waited";
+  const cost = wait == null || sat == null ? null : sat + rules.waitWeight * wait;
 
   let cause: Cause;
   if (outcome === "perfect") cause = "none";
@@ -147,7 +152,19 @@ export function reviewRun(input: PutInRunInput, rules: ReviewRules = REVIEW_RULE
   else if (followed) cause = "model";
   else cause = reasonCategory(input.reasonCode) === "capacity" ? "capacity" : "human";
 
-  return { deviationMinutes: deviation, putIn, followed, outcome, readyInTime, waitMinutes: wait, satMinutes: sat, cause };
+  let safetyMinutes: number | null = null;
+  if (input.outAtMinutes != null && input.chilledAtMinutes != null) {
+    safetyMinutes = Math.round(input.chilledAtMinutes - input.outAtMinutes);
+  } else if (input.safety && input.outAtMinutes != null && input.lastBuiltAtMinutes != null) {
+    safetyMinutes = Math.round(minutesToChilled(input.outAtMinutes, input.lastBuiltAtMinutes, input.safety));
+  }
+  // Negative = the taps don't add up (meat "out" after its last batch was
+  // built): not measurable, never a pass.
+  if (safetyMinutes != null && safetyMinutes < 0) safetyMinutes = null;
+  const limit = input.safety?.totalMinutes ?? 240;
+  const safetyBreach = safetyMinutes != null && safetyMinutes > limit;
+
+  return { deviationMinutes: deviation, putIn, followed, outcome, readyInTime, waitMinutes: wait, satMinutes: sat, costMinutes: cost, cause, safetyMinutes, safetyBreach };
 }
 
 export interface ReviewedRun {
@@ -225,9 +242,7 @@ export function trustSignal(days: Array<{ planDate: string; outcome: Outcome }>,
   let good = 0;
   for (const d of known) {
     total += w;
-    // Cutting it fine was in time but inside the buffer: half credit.
     if (d.outcome === "perfect") good += w;
-    else if (d.outcome === "cut_fine") good += w / 2;
     w *= rules.decay;
   }
   const score = good / total;

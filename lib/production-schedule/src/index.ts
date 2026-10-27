@@ -46,8 +46,8 @@ export interface ScheduleMeatInput {
    * (the 4-hour rule). Optional: older callers leave it off.
    */
   cookMinutes?: number | null;
-  /** The grace part of processMinutes (time it may sit ready before needed). */
-  graceMinutes?: number | null;
+  /** The buffer part of processMinutes (learned cover so the builders rarely wait). */
+  bufferMinutes?: number | null;
 }
 
 /** A raw meat the recipe needs but whose cook AND process times are both unset. */
@@ -111,7 +111,7 @@ export interface ScheduledMeat {
   missing: "cook" | "process" | null;
   /** Passed through from the input (null when not given). */
   cookMinutes: number | null;
-  graceMinutes: number | null;
+  bufferMinutes: number | null;
 }
 
 export interface ScheduledRecipe {
@@ -171,7 +171,7 @@ function scheduleRecipeAt(
     beforeShiftStart: startMinutes - m.processMinutes < options.startMinutes,
     missing: m.missing ?? null,
     cookMinutes: m.cookMinutes ?? null,
-    graceMinutes: m.graceMinutes ?? null,
+    bufferMinutes: m.bufferMinutes ?? null,
   }));
   return {
     planItemId: recipe.planItemId,
@@ -314,4 +314,5 @@ export * from "./kitchen-scope";
 export * from "./recipe-route";
 export * from "./meat-timing-learning";
 export * from "./meat-daily-review";
+export * from "./meat-safety";
 export * from "./live-replan";

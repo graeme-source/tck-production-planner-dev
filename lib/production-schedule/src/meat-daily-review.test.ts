@@ -22,29 +22,23 @@ describe("needsReason — the ask-why threshold", () => {
   });
 });
 
-// Hot meat target: ready 20 min before the builders need it (440 → ready by 420).
+// Builders free at 440. Buffer 5: ready by 435 is the aim.
 describe("reviewRun", () => {
-  it("followed and ready on the target = perfect", () => {
-    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 405, readyAtMinutes: 420, neededAtMinutes: 440 });
-    expect(r).toMatchObject({ deviationMinutes: 5, putIn: "on_time", followed: true, outcome: "perfect", readyInTime: true, waitMinutes: 0, satMinutes: 20, cause: "none" });
+  it("followed and ready just before needed = perfect, with sat and wait as two numbers", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 405, readyAtMinutes: 436, neededAtMinutes: 440, bufferMinutes: 5 });
+    expect(r).toMatchObject({ deviationMinutes: 5, putIn: "on_time", followed: true, outcome: "perfect", readyInTime: true, waitMinutes: 0, satMinutes: 4, costMinutes: 4, cause: "none" });
   });
-  it("a few minutes either side of the target is tap noise, not a fault", () => {
-    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 424, neededAtMinutes: 440 }).outcome).toBe("perfect");
-    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 444, neededAtMinutes: 440 }).outcome).not.toBe("builders_waited");
+  it("a couple of minutes' wait is tap noise, not a fault", () => {
+    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 443, neededAtMinutes: 440 }).outcome).toBe("perfect");
   });
-  it("ready after the target but before needed = cut fine (in time, inside the buffer)", () => {
-    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 435, neededAtMinutes: 440 });
-    expect(r).toMatchObject({ outcome: "cut_fine", readyInTime: true, cause: "model" });
-  });
-  it("followed but the builders still waited = the model's fault", () => {
+  it("followed but the builders still waited = the model's fault; waits cost 4x", () => {
     const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 452, neededAtMinutes: 440 });
-    expect(r).toMatchObject({ outcome: "builders_waited", readyInTime: false, waitMinutes: 12, cause: "model" });
+    expect(r).toMatchObject({ outcome: "builders_waited", readyInTime: false, waitMinutes: 12, costMinutes: 48, cause: "model" });
   });
-  it("followed but sat far beyond the target = too early, the model's fault", () => {
-    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 380, neededAtMinutes: 440 });
-    expect(r).toMatchObject({ outcome: "too_early", satMinutes: 60, cause: "model" });
-    // 50 min early = target 20 + 30: still fine.
-    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 390, neededAtMinutes: 440 }).outcome).toBe("perfect");
+  it("sat far longer than the buffer = too early, the model's fault", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 400, neededAtMinutes: 440, bufferMinutes: 5 });
+    expect(r).toMatchObject({ outcome: "too_early", satMinutes: 40, cause: "model" });
+    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 420, neededAtMinutes: 440, bufferMinutes: 5 }).outcome).toBe("perfect");
   });
   it("put in late without a capacity reason = human", () => {
     const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 425, readyAtMinutes: 460, neededAtMinutes: 440, reasonCode: "other" });
@@ -59,13 +53,19 @@ describe("reviewRun", () => {
     expect(r.cause).toBe("capacity");
     expect(reasonCategory("oven_busy")).toBe("capacity");
   });
-  it("the target is a setting", () => {
-    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 430, neededAtMinutes: 440 }, { ...REVIEW_RULES, readyTargetMinutes: 10 });
-    expect(r.outcome).toBe("perfect");
+  it("flags a 4-hour breach: out → last batch built + bake + chill over 240", () => {
+    const safety = { totalMinutes: 240, chillMinutes: 120, bakeMinutes: 13 };
+    const ok = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, lastBuiltAtMinutes: 520, safety });
+    expect(ok).toMatchObject({ safetyMinutes: 228, safetyBreach: false });
+    const bad = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, lastBuiltAtMinutes: 560, safety });
+    expect(bad).toMatchObject({ safetyMinutes: 268, safetyBreach: true });
+    // Measured chill (probe) beats the prediction.
+    const measured = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440, outAtMinutes: 425, lastBuiltAtMinutes: 560, chilledAtMinutes: 650, safety });
+    expect(measured).toMatchObject({ safetyMinutes: 225, safetyBreach: false });
   });
   it("no suggestion recorded or never built → unknown, never guessed", () => {
-    expect(reviewRun({ suggestedAtMinutes: null, putInAtMinutes: 400, readyAtMinutes: 420, neededAtMinutes: 440 })).toMatchObject({ putIn: "unknown", followed: null, outcome: "perfect" });
-    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: null, neededAtMinutes: 440 })).toMatchObject({ outcome: "unknown", cause: "unknown", readyInTime: null });
+    expect(reviewRun({ suggestedAtMinutes: null, putInAtMinutes: 400, readyAtMinutes: 436, neededAtMinutes: 440 })).toMatchObject({ putIn: "unknown", followed: null, outcome: "perfect" });
+    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: null, neededAtMinutes: 440 })).toMatchObject({ outcome: "unknown", cause: "unknown", readyInTime: null, costMinutes: null });
   });
 });
 
@@ -118,10 +118,6 @@ describe("trustSignal", () => {
     expect(oldBad.score!).toBeGreaterThan(newBad.score!);
     expect(oldBad.trusted).toBe(true);
     expect(newBad.trusted).toBe(false);
-  });
-  it("cutting it fine earns half credit", () => {
-    const t = trustSignal(days(["cut_fine", "perfect"]));
-    expect(t.score).toBeCloseTo((0.5 + 0.8) / 1.8);
   });
   it("unknown days don't count either way", () => {
     expect(trustSignal(days(["unknown", "perfect"])).days).toBe(1);
