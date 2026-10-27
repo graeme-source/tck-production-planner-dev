@@ -18,6 +18,7 @@ import type { ShelfPeriod } from "./dates";
 import { describePeriod } from "./dates";
 import type { CookingValues, LabelTemplate } from "./template";
 import { COOKING_KEYS, FIELD_KEYS, FIELD_LABEL, normaliseTemplate, type FieldKey } from "./template";
+import { labelFormat } from "./formats";
 
 /** Per-recipe label settings (product_label_settings). Null cooking / period
  *  values mean "use the template's default". */
@@ -166,15 +167,33 @@ export function canonicalJson(value: unknown): string {
  *  that this recipe overrides doesn't flag its label. recipeName is kept for
  *  the record but isn't compared — labelName is what prints. */
 export function comparableSnapshot(s: LabelSnapshot): unknown {
+  if (!labelFormat(s.template).backLabel) return smallComparable(s);
   // boneRiskWords, like the defaults, only matters through the resolved
   // warningOn already in the snapshot.
   // cookingTiers the same: only through the resolved cooking (and labels
   // published before the tiers existed must still match).
   // defaultForCategories only decides WHICH template a recipe gets (that
   // shows as templateId), never what it prints.
-  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, ...template } = s.template;
+  // format: every back label is the same format, and labels published
+  // before formats existed have none — leaving it out keeps their hashes.
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, format: _fm, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
   return { ...rest, template: withoutBlankSubtitle(template) };
+}
+
+/** The small label prints only the name, the use-by, the batch number and
+ *  the barcode (small-label.ts), so only those — and the template and its
+ *  format — decide whether it changed. A deck or cooking change on the mayo
+ *  recipe doesn't flag its pot label. */
+function smallComparable(s: LabelSnapshot): unknown {
+  return {
+    format: labelFormat(s.template).key,
+    templateId: s.templateId,
+    labelName: s.labelName,
+    chilled: s.chilled,
+    barcode: s.barcode,
+    batchBasis: s.template.batchBasis,
+  };
 }
 
 /** A blank subtitle isn't drawn, so its wording and style are left out —
@@ -250,6 +269,21 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
   const add = (key: string, label: string, before: string, after: string) => {
     if (before !== after) out.push({ key, label, before, after });
   };
+  const liveFormat = labelFormat(live.template);
+  const currentFormat = labelFormat(current.template);
+  if (!liveFormat.backLabel || !currentFormat.backLabel) {
+    // A small label (or a switch to / from one): only what it prints.
+    add("labelName", "Name on the label", live.labelName, current.labelName);
+    add("chilled", "Use-by", period(live.chilled), period(current.chilled));
+    add("barcode", "Barcode number", show(live.barcode), show(current.barcode));
+    add("templateId", "Label template", String(live.templateId), String(current.templateId));
+    add("template.format", "Label size", liveFormat.sizeText, currentFormat.sizeText);
+    add("template.batchBasis", "Batch number taken from", live.template.batchBasis, current.template.batchBasis);
+    if (out.length === 0 && !snapshotsMatch(live, current)) {
+      out.push({ key: "other", label: "Other label settings", before: "as published", after: "changed" });
+    }
+    return out;
+  }
   add("labelName", "Name on the label", live.labelName, current.labelName);
   add("packSize", "Pack size", live.packSize, current.packSize);
   add("deckText", "Ingredients", live.deckText, current.deckText);

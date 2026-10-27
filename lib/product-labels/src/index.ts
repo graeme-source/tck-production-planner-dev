@@ -8,6 +8,7 @@ export * from "./dates";
 export * from "./ean13";
 export * from "./legal";
 export * from "./template";
+export * from "./formats";
 export * from "./template-choice";
 export * from "./text";
 export * from "./snapshot";

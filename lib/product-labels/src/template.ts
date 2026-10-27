@@ -14,6 +14,7 @@ import type { BatchBasis, PeriodUnit, ShelfPeriod } from "./dates";
 import { PERIOD_UNITS } from "./dates";
 import { EAN13_MIN_BAR_HEIGHT_MM } from "./ean13";
 import { DEFAULT_COOKING_TIERS, normaliseCookingTiers, type CookingTiersConfig } from "./cooking-tiers";
+import { LABEL_FORMATS, normaliseFormat, type LabelFormat } from "./formats";
 
 export type WidthVariant = "normal" | "semi-condensed" | "condensed";
 /** Widest first — the layout tries them in this order before going smaller. */
@@ -150,6 +151,10 @@ export const COOKING_KEYS: (keyof CookingValues)[] = [
 ];
 
 export interface LabelTemplate {
+  /** The label's size and kind (formats.ts) — set when the template is made
+   *  from a preset, never edited afterwards. The page width and height
+   *  always follow it. Stored templates without one are back labels. */
+  format: LabelFormat;
   page: PageSettings;
   fields: Record<FieldKey, FieldStyle>;
   text: TemplateText;
@@ -235,6 +240,7 @@ const field = (f: Partial<FieldStyle>): FieldStyle => ({
 });
 
 export const DEFAULT_TEMPLATE: LabelTemplate = {
+  format: "back-140x94",
   page: {
     // Graeme's label stock: 140 × 94 mm on a 203 dpi printer, with ~4.5 mm
     // clear all round (rounded corners; ink closer to the edge gets cut off).
@@ -481,11 +487,15 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
   text.steps = normaliseSteps(t);
   const cooking = {} as CookingValues;
   for (const k of COOKING_KEYS) cooking[k] = k in c ? nullableInt(c[k], 0, 400) : D.cooking[k];
+  // The size belongs to the format, never to a typed-in width and height.
+  const format = normaliseFormat(r.format);
+  const spec = LABEL_FORMATS[format];
   return {
+    format,
     page: {
-      widthMm: num(p.widthMm, D.page.widthMm, 20, 300),
-      heightMm: num(p.heightMm, D.page.heightMm, 20, 300),
-      dpi: [203, 300, 600].includes(Number(p.dpi)) ? Number(p.dpi) : D.page.dpi,
+      widthMm: spec.widthMm,
+      heightMm: spec.heightMm,
+      dpi: spec.dpi ?? ([203, 300, 600].includes(Number(p.dpi)) ? Number(p.dpi) : D.page.dpi),
       marginMm: num(p.marginMm, D.page.marginMm, 0, 20),
       columnSplitPct: num(p.columnSplitPct, D.page.columnSplitPct, 20, 80),
       columnGapMm: num(p.columnGapMm, D.page.columnGapMm, 0, 20),
@@ -649,6 +659,33 @@ export function cinnamonBunsTemplate(): LabelTemplate {
   return t;
 }
 
+/** Garlic mayo — the small 102 × 25 mm pot label (Graeme, 2026-10-27),
+ *  until now made by hand in Label LIVE: the recipe's label name, USE BY
+ *  (the recipe's chilled period, else its shelf life, else 38 days — the
+ *  printed label of 27 Oct read 04/12/26), BATCH = the print day's Julian
+ *  YYDDD, and the product's barcode (Shopify's 14-digit code prints as
+ *  Code 128). Nothing else on the template prints at this size. Not a
+ *  category default: the mayo recipe picks it by hand. */
+export function garlicMayoTemplate(): LabelTemplate {
+  const t = normaliseTemplate({ ...JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)), format: "small-102x25" });
+  t.text.title = "{name}";
+  t.text.steps = [];
+  t.text.chilledLabel = "USE BY:";
+  t.text.batchLabel = "BATCH:";
+  t.cooking = {
+    ovenTempC: null, fanTempC: null, ovenMinMinutes: null, ovenMaxMinutes: null,
+    airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
+  };
+  t.cookingTiers = { ...t.cookingTiers, on: false };
+  t.chilledUseByOn = true;
+  t.chilledDefault = { amount: 38, unit: "days" };
+  t.frozenDefault = null;
+  t.batchBasis = "print-day";
+  t.boneRiskWords = [];
+  t.defaultForCategories = [];
+  return t;
+}
+
 export const TEMPLATE_PRESETS: TemplatePreset[] = [
   {
     key: "standard",
@@ -673,5 +710,11 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     name: "Cinnamon buns",
     description: "Desserts heated in the microwave: a subtitle line under the title, three microwave steps, chilled use-by only (do not freeze), ingredients and barcode.",
     build: cinnamonBunsTemplate,
+  },
+  {
+    key: "garlic-mayo",
+    name: "Garlic mayo",
+    description: "The small 102 × 25 mm pot label: name, use-by, batch number and barcode (EAN-13 or Shopify's longer codes). Pick it on the recipe by hand.",
+    build: garlicMayoTemplate,
   },
 ];

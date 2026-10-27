@@ -1,6 +1,7 @@
 /**
  * A recipe's label status, as the Labels list shows it (pure, tested).
  */
+import { labelFormat } from "./formats";
 
 export type LabelStatus = "live" | "update-needed" | "doesnt-fit" | "never-published" | "draft-recipe" | "archived";
 
@@ -66,10 +67,16 @@ export function initialPrintCount(netTwoPacks: number | null | undefined): numbe
 
 /** Can this label be published right now? Both checks — the automatic fit
  *  check and no content blockers — must pass; then a person confirms. */
-export function publishBlockers(input: { archived: boolean; fits: boolean; fitProblems: string[]; contentProblems: string[]; deckBlockers: string[] }): string[] {
+export function publishBlockers(input: {
+  archived: boolean; fits: boolean; fitProblems: string[]; contentProblems: string[]; deckBlockers: string[];
+  /** The label's template: a small-format label (formats.ts) prints no
+   *  ingredients, so the deck's declaration problems don't block it. */
+  template?: { format?: unknown } | null;
+}): string[] {
   const out: string[] = [];
   if (input.archived) out.push("This recipe is archived.");
   if (!input.fits) out.push(...(input.fitProblems.length ? input.fitProblems : ["The label doesn't fit."]));
-  out.push(...input.contentProblems, ...input.deckBlockers);
+  out.push(...input.contentProblems);
+  if (labelFormat(input.template).backLabel) out.push(...input.deckBlockers);
   return out;
 }

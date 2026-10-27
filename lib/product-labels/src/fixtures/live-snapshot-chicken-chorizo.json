@@ -1,0 +1,269 @@
+{
+    "hash": "03b5955013dd0e73459db967f662b92b100dd833f92a6f6be6d05a513b29ce1a",
+    "snapshot": {
+        "frozen": {
+            "unit": "months",
+            "amount": 6
+        },
+        "barcode": "5065018206009",
+        "chilled": {
+            "unit": "days",
+            "amount": 13
+        },
+        "cooking": {
+            "fanTempC": 180,
+            "ovenTempC": 200,
+            "airFryerTempC": 170,
+            "ovenMaxMinutes": 22,
+            "ovenMinMinutes": 18,
+            "airFryerMaxMinutes": 19,
+            "airFryerMinMinutes": 16
+        },
+        "deckText": "Calzone Dough (00 Flour (**Wheat**, Calcium Carbonate, Iron, Niacin, Thiamin), Water, Olive Oil, Salt, Yeast), Mozzarella (Pasteurised Bovine **MILK**, Salt, Lactic Starter Culture, Microbial Rennet, Cellulose), Chicken Breast (17.6%), Tomatoes, Diced Chorizo (4.4%) (Pork (122g per 110g of finished product), **lactose** (**MILK**), salt, dextrin, paprika, **caseinate** (**MILK**), dextrose, garlic, emulsifier (diphosphate), spices, antioxidant (sodium ascorbate), preservatives (sodium nitrite, potassium nitrate)), Red onions, Tomato paste, Red peppers, Greek Feta **Cheese** (Pasteurised sheep's **milk** (70% min), pasteurised goat's **milk** (30% max), salt, microbial rennet, culture), Water, Demerara Sugar, Basil, Salt, Paprika, Garlic Granules, Cayenne Pepper, Black Pepper, Onion Powder, Mixed Herbs (Marjoram, Thyme, Parsley, Basil, Savory), Smoked Paprika, Icing Sugar (Sugar (97%), Maize Starch), Crushed chillis, Ground Cumin, Dried Thyme, Lime powder.",
+        "packSize": "2",
+        "template": {
+            "page": {
+                "dpi": 203,
+                "widthMm": 140,
+                "heightMm": 94,
+                "marginMm": 4.5,
+                "bandGapMm": 3,
+                "dividerMm": 0.25,
+                "dividerOn": true,
+                "smallPack": false,
+                "fieldGapMm": 3,
+                "columnGapMm": 3,
+                "stepsBandMm": 8,
+                "titleBandMm": 7,
+                "stepCircleMm": 5.5,
+                "barcodeSizePct": 151,
+                "columnSplitPct": 41,
+                "stepCircleAuto": true,
+                "barcodeHeightMm": 15
+            },
+            "text": {
+                "steps": [
+                    "Remove the film but **leave the calzones in the wooden tray**.",
+                    "[**OVEN** {ovenTemps}: {ovenHalfMin}–{ovenHalfMax} min ➜ **TURN OVER** ➜ {ovenHalf2Min}–{ovenHalf2Max} min]\n[**AIR FRYER** {airTemp}°C: {airHalfMin}–{airHalfMax} min ➜ **TURN OVER** ➜ {airHalf2Min}–{airHalf2Max} min]"
+                ],
+                "title": "{name} - {packSize} PACK",
+                "address": "Handcrafted at The Calzone Kitchen, Unit 1b, Lower Rectory Farm, Mill Lane, Great Brickhill, Buckinghamshire, MK17 9FX",
+                "storage": "Keep chilled below 5°C, or freeze immediately and keep below -18°C. Defrost fully in the fridge before cooking and eat within 24 hours of defrosting.",
+                "warning": "**WARNING:** Whilst every effort has been made to remove all bones, some may remain.",
+                "batchLabel": "BATCH NUMBER:",
+                "frozenLabel": "IF FROZEN USE BY:",
+                "allergenNote": "Allergens are shown in **Bold**.",
+                "chilledLabel": "IF CHILLED USE BY:",
+                "storageHeading": "STORAGE INSTRUCTIONS:",
+                "ingredientsHeading": "THE INGREDIENTS:"
+            },
+            "fields": {
+                "dates": {
+                    "bold": true,
+                    "caps": false,
+                    "align": "left",
+                    "maxPt": 10,
+                    "minPt": 6.75,
+                    "width": "semi-condensed",
+                    "weight": 700,
+                    "narrowest": "semi-condensed",
+                    "lineHeight": 1.12,
+                    "letterSpacingEm": 0
+                },
+                "steps": {
+                    "bold": false,
+                    "caps": false,
+                    "align": "left",
+                    "maxPt": 10.5,
+                    "minPt": 6.75,
+                    "width": "normal",
+                    "weight": 400,
+                    "narrowest": "semi-condensed",
+                    "lineHeight": 1.1,
+                    "letterSpacingEm": 0
+                },
+                "title": {
+                    "bold": true,
+                    "caps": true,
+                    "align": "center",
+                    "maxPt": 22,
+                    "minPt": 12,
+                    "width": "normal",
+                    "weight": 700,
+                    "narrowest": "condensed",
+                    "lineHeight": 1,
+                    "letterSpacingEm": 0
+                },
+                "address": {
+                    "bold": false,
+                    "caps": false,
+                    "align": "left",
+                    "maxPt": 8,
+                    "minPt": 6.75,
+                    "width": "normal",
+                    "weight": 400,
+                    "narrowest": "semi-condensed",
+                    "lineHeight": 1.12,
+                    "letterSpacingEm": 0
+                },
+                "storage": {
+                    "bold": false,
+                    "caps": false,
+                    "align": "left",
+                    "maxPt": 10.5,
+                    "minPt": 6.75,
+                    "width": "semi-condensed",
+                    "weight": 400,
+                    "narrowest": "semi-condensed",
+                    "lineHeight": 1.12,
+                    "letterSpacingEm": 0
+                },
+                "headings": {
+                    "bold": true,
+                    "caps": true,
+                    "align": "left",
+                    "maxPt": 12.5,
+                    "minPt": 12.5,
+                    "width": "normal",
+                    "weight": 700,
+                    "narrowest": "normal",
+                    "lineHeight": 1.1,
+                    "letterSpacingEm": 0
+                },
+                "ingredients": {
+                    "bold": false,
+                    "caps": false,
+                    "align": "left",
+                    "maxPt": 10.5,
+                    "minPt": 6.75,
+                    "width": "normal",
+                    "weight": 400,
+                    "narrowest": "semi-condensed",
+                    "lineHeight": 1.12,
+                    "letterSpacingEm": 0
+                },
+                "allergenInfo": {
+                    "bold": false,
+                    "caps": false,
+                    "align": "left",
+                    "maxPt": 9,
+                    "minPt": 6.75,
+                    "width": "normal",
+                    "weight": 400,
+                    "narrowest": "semi-condensed",
+                    "lineHeight": 1.12,
+                    "letterSpacingEm": 0
+                }
+            },
+            "cooking": {
+                "fanTempC": 180,
+                "ovenTempC": 200,
+                "airFryerTempC": 170,
+                "ovenMaxMinutes": 22,
+                "ovenMinMinutes": 18,
+                "airFryerMaxMinutes": 19,
+                "airFryerMinMinutes": 16
+            },
+            "batchBasis": "production-day",
+            "netQuantity": {
+                "on": false,
+                "sizePt": 16
+            },
+            "cookingTiers": {
+                "on": true,
+                "tiers": [
+                    {
+                        "key": "light",
+                        "name": "Light",
+                        "cooking": {
+                            "fanTempC": null,
+                            "ovenTempC": null,
+                            "airFryerTempC": 165,
+                            "ovenMaxMinutes": 16,
+                            "ovenMinMinutes": 14,
+                            "airFryerMaxMinutes": 15,
+                            "airFryerMinMinutes": 12
+                        },
+                        "maxMeatG": 20,
+                        "maxWeightG": 260
+                    },
+                    {
+                        "key": "medium",
+                        "name": "Medium",
+                        "cooking": {
+                            "fanTempC": null,
+                            "ovenTempC": null,
+                            "airFryerTempC": null,
+                            "ovenMaxMinutes": 19,
+                            "ovenMinMinutes": 16,
+                            "airFryerMaxMinutes": 17,
+                            "airFryerMinMinutes": 14
+                        },
+                        "maxMeatG": 45,
+                        "maxWeightG": 330
+                    },
+                    {
+                        "key": "heavy",
+                        "name": "Heavy",
+                        "cooking": {
+                            "fanTempC": null,
+                            "ovenTempC": null,
+                            "airFryerTempC": null,
+                            "ovenMaxMinutes": 22,
+                            "ovenMinMinutes": 18,
+                            "airFryerMaxMinutes": 19,
+                            "airFryerMinMinutes": 16
+                        },
+                        "maxMeatG": null,
+                        "maxWeightG": null
+                    }
+                ],
+                "categories": {
+                    "veg": [
+                        "vegetable"
+                    ],
+                    "meat": [
+                        "raw_meat",
+                        "cooked_meat"
+                    ],
+                    "dough": [
+                        "dough"
+                    ],
+                    "cheese": [
+                        "cheese",
+                        "dairy"
+                    ]
+                },
+                "maxOvenMinutes": 22,
+                "maxAirFryerMinutes": 19
+            },
+            "boneRiskWords": [
+                "chicken",
+                "turkey"
+            ],
+            "frozenDefault": {
+                "unit": "months",
+                "amount": 6
+            },
+            "storageBanner": {
+                "on": false,
+                "text": "KEEP FROZEN",
+                "heightMm": 6.5,
+                "snowflake": true
+            },
+            "chilledDefault": {
+                "unit": "days",
+                "amount": 13
+            },
+            "chilledUseByOn": true,
+            "warningPlacement": "allergens",
+            "mayContainBoldList": true
+        },
+        "labelName": "Chicken and Chorizo",
+        "warningOn": true,
+        "mayContain": "May also contain traces of nuts, peanuts, egg, soya, celery, sulphites, mustard, wheat and milk",
+        "recipeName": "Chicken and Chorizo",
+        "templateId": 1
+    },
+    "versionNo": 2
+}
