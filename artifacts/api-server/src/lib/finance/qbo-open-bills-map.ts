@@ -9,7 +9,13 @@ export interface OpenBill {
   vendorName: string;
   docNumber: string | null;
   txnDate: string;
+  /** QBO's DueDate as sent — null when the Bill has none. */
   dueDate: string | null;
+  /** The Bill's payment terms (SalesTermRef). QBO usually sends the id and
+   *  often the name; when only the id comes back the name stays null rather
+   *  than spending another QBO call to look it up. */
+  termsId: string | null;
+  termsName: string | null;
   balance: number;
   currency: string;
 }
@@ -61,6 +67,7 @@ export function openBillsFromQbo(raw: unknown[]): OpenBill[] {
     if (!id || !txnDate || balance === null || balance <= 0) continue;
     const vendor = ref(b["VendorRef"]);
     const currency = ref(b["CurrencyRef"]);
+    const terms = ref(b["SalesTermRef"]);
     byId.set(id, {
       id,
       vendorId: vendor.value,
@@ -68,6 +75,8 @@ export function openBillsFromQbo(raw: unknown[]): OpenBill[] {
       docNumber: str(b["DocNumber"]),
       txnDate,
       dueDate: ymd(b["DueDate"]),
+      termsId: terms.value,
+      termsName: terms.name,
       // Balance is in the bill's own currency, not home currency.
       balance: Math.round(balance * 100) / 100,
       currency: currency.value ?? HOME_CURRENCY,

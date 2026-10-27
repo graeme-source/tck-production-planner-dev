@@ -32,9 +32,17 @@ describe("openBillsFromQbo", () => {
       docNumber: "INV-4471",
       txnDate: "2026-10-01",
       dueDate: "2026-10-31",
+      termsId: "3",
+      termsName: null,
       balance: 1234.56,
       currency: "GBP",
     }]);
+  });
+
+  it("carries the payment terms name when QBO sends it, and nulls when the Bill has no terms (2026-10-27)", () => {
+    expect(openBillsFromQbo([bill({ SalesTermRef: { value: "3", name: "Net 30" } })])[0]).toMatchObject({ termsId: "3", termsName: "Net 30" });
+    const none = openBillsFromQbo([bill({ SalesTermRef: undefined, DueDate: undefined })])[0];
+    expect(none).toMatchObject({ termsId: null, termsName: null, dueDate: null, txnDate: "2026-10-01" });
   });
 
   it("keeps a part-paid bill at its remaining balance", () => {
