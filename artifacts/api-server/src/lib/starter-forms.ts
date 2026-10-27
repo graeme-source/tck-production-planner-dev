@@ -16,8 +16,12 @@
  * unchanged.
  */
 
+import * as z from "zod";
+
 export type StarterFormField =
-  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email" }
+  | { kind: "text"; key: string; label: string; required?: boolean; help?: string; inputMode?: "numeric" | "email";
+      /** Start the box with the person's app sign-in email (they can change it). */
+      prefill?: "account_email" }
   | { kind: "date"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "textarea"; key: string; label: string; required?: boolean; help?: string }
   | { kind: "radio"; key: string; label: string; required?: boolean; help?: string; options: { value: string; label: string; help?: string }[] }
@@ -132,7 +136,7 @@ export const PAYROLL_DETAILS: StarterFormDefinition = {
         { kind: "date", key: "date_of_birth", label: "Date of birth", required: true },
         { kind: "text", key: "ni_number", label: "National Insurance number", required: true },
         // Where the payroll accountant sends each payslip (Graeme, 2026-09-28).
-        { kind: "text", key: "payslip_email", label: "Email address for your payslips", required: true, inputMode: "email",
+        { kind: "text", key: "payslip_email", label: "Email address for your payslips", required: true, inputMode: "email", prefill: "account_email",
           help: "Your payslips will be emailed here each pay day. Use an address only you can read." },
       ],
     },
@@ -222,7 +226,8 @@ function sectionActive(section: StarterFormSection, answers: StarterFormAnswers)
   return typeof v === "string" && section.showWhen.equals.includes(v);
 }
 
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// The same zod check the server uses for every other email address.
+const isEmail = (v: string) => z.string().email().safeParse(v).success;
 
 /** Blank-check for signing. Drafts may be as partial as they like; a
  *  SIGNATURE requires every required field of every active section. */
@@ -234,7 +239,7 @@ export function missingRequiredFields(def: StarterFormDefinition, answers: Start
       if (field.kind === "info" || field.kind === "checkboxes") continue;
       const v = answers[field.key];
       // An email box must hold an email address whenever it's filled in.
-      if (field.kind === "text" && field.inputMode === "email" && typeof v === "string" && v.trim() !== "" && !EMAIL_RE.test(v.trim())) {
+      if (field.kind === "text" && field.inputMode === "email" && typeof v === "string" && v.trim() !== "" && !isEmail(v.trim())) {
         missing.push(`${field.label} (that doesn't look like an email address)`);
         continue;
       }

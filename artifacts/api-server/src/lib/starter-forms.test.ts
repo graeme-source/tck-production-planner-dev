@@ -87,6 +87,16 @@ describe("renderStarterFormBody", () => {
     expect(body).toContain("Yes — Penicillin");
   });
 
+  it("the payroll details document (and so its PDF) carries the payslip email", () => {
+    const body = renderStarterFormBody(PAYROLL_DETAILS, { full_name: "Jane Smith", payslip_email: "jane@example.com" }, SIG);
+    expect(body).toContain("Email address for your payslips: jane@example.com");
+  });
+
+  it("the payslip email box starts with the person's app email", () => {
+    const f = PAYROLL_DETAILS.sections.flatMap(s => s.fields).find(x => x.key === "payslip_email");
+    expect(f && f.kind === "text" ? f.prefill : null).toBe("account_email");
+  });
+
   it("omits the loan-details section when there is no loan", () => {
     const body = renderStarterFormBody(HMRC_STARTER, { has_student_loan: "no" }, SIG);
     expect(body).not.toContain("STUDENT LOAN DETAILS");

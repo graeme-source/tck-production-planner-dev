@@ -178,6 +178,7 @@ import featuresRouter from "./features";
 import contractsRouter from "./contracts";
 import uploadedContractsRouter from "./uploaded-contracts";
 import starterFormsRouter from "./starter-forms";
+import starterPayrollRouter from "./starter-payroll";
 import issuePipelineMachineRouter from "./issue-pipeline-machine";
 import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
@@ -451,6 +452,8 @@ router.use("/contracts/uploaded", uploadedContractsRouter);
 router.use("/contracts", contractsRouter);
 // Starter forms: owner-scoped + HR-records access, guarded inside the router.
 router.use("/starter-forms", starterFormsRouter);
+// New-starter payroll paperwork → the accountant (2026-10-27); guarded inside.
+router.use("/starter-payroll", starterPayrollRouter);
 router.use("/founder-sales", founderSalesRouter);
 // Business → Website A/B tests: Sales & Marketing access (routes/ab-tests.ts).
 router.use("/ab-tests", abTestsRouter);
