@@ -15,6 +15,11 @@
  *   POST /leavers         { from, name, lastDay, note? } — add a leaver to
  *                         the period (migration 0267)
  *   DELETE /leavers/:id   take one off again
+ *   /month-end/*          month-end adjustments: deferred income and
+ *                         25th → month-end labour (payroll-month-end.ts).
+ *                         Every PDF and email carries this period's;
+ *                         ?history=1 / includeHistory adds the history
+ *                         since 31 Mar 2025 as an appendix (+ CSV).
  *
  * Planday is read-only here; lib/payroll/* does the work.
  */
@@ -31,12 +36,41 @@ import type { PayrollData } from "../lib/payroll/report-data";
 import { renderPayrollPdf, type PayrollPdfInput } from "../lib/payroll/pdf";
 import { sendPayrollEmail } from "../lib/payroll/email";
 import { loadStarterDocs } from "../lib/payroll/starter-docs";
+import monthEndRouter, { monthEndForPeriod, monthEndHistory, monthEndSection } from "./payroll-month-end";
+import { historyPdf, monthEndEmailLines, monthEndPdf, type MonthEndSection } from "../lib/payroll/month-end-report";
+import { historyCsv } from "../lib/payroll/month-end";
 
 const router: IRouter = Router();
 router.use(async (req: Request, res: Response, next: NextFunction) => {
   if (await resolveFinanceAccess(req)) { next(); return; }
   res.status(403).json({ error: "Finance access required" });
 });
+router.use("/month-end", monthEndRouter);
+
+/** The month-end section (always) and history (when asked) for the PDF and
+ *  email. Never fails the payroll report: a problem shows in the PDF. */
+async function monthEndExtras(from: string, to: string, withHistory: boolean) {
+  let section: MonthEndSection | null = null;
+  let monthEnd: PayrollPdfInput["monthEnd"] = null;
+  try {
+    section = await monthEndSection(monthEndForPeriod(from, to));
+    monthEnd = monthEndPdf(section);
+  } catch (err) {
+    console.error("[payroll] month-end section failed:", err);
+  }
+  let history: PayrollPdfInput["history"] = null;
+  let csv: { filename: string; content: Buffer } | null = null;
+  if (withHistory) {
+    try {
+      const h = await monthEndHistory();
+      history = historyPdf(h.rows, h.years);
+      csv = { filename: `TCK month-end adjustments ${h.first} to ${h.last}.csv`, content: Buffer.from(historyCsv(h.rows), "utf8") };
+    } catch (err) {
+      console.error("[payroll] month-end history failed:", err);
+    }
+  }
+  return { section, monthEnd, history, csv };
+}
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const periodQuery = z.object({ from: DATE.optional(), to: DATE.optional(), demo: z.enum(["1"]).optional() });
@@ -135,12 +169,15 @@ router.get("/", validateQuery(periodQuery), async (_req: Request, res: Response)
   }
 });
 
-router.get("/pdf", validateQuery(periodQuery), async (_req: Request, res: Response) => {
-  const q = res.locals["query"] as z.infer<typeof periodQuery>;
+const pdfQuery = periodQuery.extend({ history: z.enum(["1"]).optional() });
+
+router.get("/pdf", validateQuery(pdfQuery), async (_req: Request, res: Response) => {
+  const q = res.locals["query"] as z.infer<typeof pdfQuery>;
   const { from, to } = periodOf(q);
   try {
     const r = await buildReport(from, to, q.demo === "1");
-    const pdf = await renderPayrollPdf(pdfInput(r));
+    const me = await monthEndExtras(from, to, q.history === "1");
+    const pdf = await renderPayrollPdf({ ...pdfInput(r), monthEnd: me.monthEnd, history: me.history });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename="TCK payroll ${from} to ${to}.pdf"`);
     res.send(pdf);
@@ -155,6 +192,8 @@ const emailBody = z.object({
   emails: z.array(z.string().trim().email()).min(1).max(10),
   note: z.string().trim().max(1000).nullish(),
   includeStarterForms: z.boolean().default(true),
+  /** Add the month-end history appendix (and its CSV). */
+  includeHistory: z.boolean().default(false),
 });
 
 router.post("/email", validate(emailBody), async (req: Request, res: Response) => {
@@ -164,10 +203,14 @@ router.post("/email", validate(emailBody), async (req: Request, res: Response) =
   let ok = false, error: string | null = null, attached: string[] = [];
   try {
     const r = await buildReport(b.from, b.to);
-    const pdf = await renderPayrollPdf(pdfInput(r));
+    const me = await monthEndExtras(b.from, b.to, b.includeHistory);
+    const pdf = await renderPayrollPdf({ ...pdfInput(r), monthEnd: me.monthEnd, history: me.history });
     const extras = b.includeStarterForms ? r.joinerDocs.map(d => ({ filename: d.filename, content: d.content, contentType: d.contentType })) : [];
-    attached = [`TCK payroll ${b.from} to ${b.to}.pdf`, ...extras.map(e => e.filename)];
-    const sent = await sendPayrollEmail({ to: b.emails, periodLabel: r.period.label, pdf, attachments: extras, note: b.note ?? undefined, sentByName });
+    attached = [`TCK payroll ${b.from} to ${b.to}.pdf`, ...extras.map(e => e.filename), ...(me.csv ? [me.csv.filename] : [])];
+    const sent = await sendPayrollEmail({
+      to: b.emails, periodLabel: r.period.label, pdf, attachments: extras, note: b.note ?? undefined, sentByName,
+      monthEndLines: monthEndEmailLines(me.section, !!me.history), historyCsv: me.csv,
+    });
     ok = sent.ok; error = sent.error ?? null;
   } catch (err) {
     error = err instanceof Error ? err.message : String(err);

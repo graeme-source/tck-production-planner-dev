@@ -19,6 +19,10 @@ export interface PayrollEmailInput {
   attachments: PayrollEmailAttachment[];
   note?: string;
   sentByName: string;
+  /** Month-end adjustment lines for the body (month-end-report.ts). */
+  monthEndLines?: string[];
+  /** The month-end history as a CSV — only when the sender ticks it. */
+  historyCsv?: { filename: string; content: Buffer } | null;
 }
 
 const escapeHtml = (t: string) =>
@@ -45,6 +49,7 @@ export function buildPayrollEmail(input: PayrollEmailInput): EmailPayload {
     "",
     `Attached is The Calzone Kitchen payroll report for ${input.periodLabel}` +
       (extras ? `, plus ${extras} starter form${extras === 1 ? "" : "s"}.` : "."),
+    ...(input.monthEndLines?.length ? ["", ...input.monthEndLines] : []),
     ...(note ? ["", note] : []),
     "",
     "Thanks,",
@@ -69,6 +74,7 @@ export function buildPayrollEmail(input: PayrollEmailInput): EmailPayload {
         content: a.content.toString("base64"),
         contentType: a.contentType,
       })),
+      ...(input.historyCsv ? [{ filename: input.historyCsv.filename, content: input.historyCsv.content.toString("base64"), contentType: "text/csv" }] : []),
     ],
   };
 }

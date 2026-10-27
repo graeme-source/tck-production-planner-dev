@@ -26,6 +26,50 @@ export interface PayrollPdfInput {
   ssp?: Array<{ name: string; sickDays: number; total: number; byHandDays?: number; awe: number | null; weeklySsp: number | null; qualifyingDaysPerWeek: number | null; notes: string[] }>;
   joiners: Array<{ name: string; date: string; documents: string[] }>;
   leavers: Array<{ name: string; date: string; note?: string | null }>;
+  /** Month-end adjustments for the month end inside this pay period. */
+  monthEnd?: MonthEndPdf | null;
+  /** Optional appendix: every month end since 31 Mar 2025. */
+  history?: MonthEndHistoryPdf | null;
+}
+
+/** One pay period's month-end adjustments (lib/payroll/month-end.ts). */
+export interface MonthEndPdf {
+  /** "Month-end adjustments for September 2026" */
+  title: string;
+  deferred: {
+    heading: string;
+    incVat: number;
+    /** Shown only when VAT makes a difference. */
+    exVat: number | null;
+    orders: number;
+    definition: string;
+    opening: { label: string; incVat: number } | null;
+    movement: number | null;
+    trust: string;
+    notes: string[];
+  } | null;
+  deferredError: string | null;
+  labour: {
+    heading: string;
+    pay: number;
+    hours: number;
+    holidayPay: number;
+    holidayHours: number;
+    opening: { label: string; pay: number } | null;
+    movement: number | null;
+    employer: { total: number; ni: number; pension: number; note: string } | null;
+    notes: string[];
+  } | null;
+  labourError: string | null;
+}
+
+type Mv = { opening: number | null; closing: number | null; movement: number | null };
+export interface MonthEndHistoryPdf {
+  opening: { label: string; deferred: number | null; labour: number | null } | null;
+  years: Array<{
+    year: string; span: string; complete: boolean; deferred: Mv; labour: Mv;
+    rows: Array<{ label: string; deferred: Mv; labour: Mv; trustworthy: boolean | null; error: string | null }>;
+  }>;
 }
 
 const GREEN = "#7cb342";
@@ -90,6 +134,117 @@ function Empty({ text }: { text: string }) {
   return <Text style={s.empty}>{text}</Text>;
 }
 
+const signed = (n: number) => `${n > 0 ? "+" : n < 0 ? "-" : ""}${gbp(Math.abs(n))}`;
+
+function Line({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
+  return (
+    <View style={[s.row, ...(bold ? [{ fontFamily: "Helvetica-Bold" }] : [])]} wrap={false}>
+      <Text style={{ flex: 1 }}>{label}</Text>
+      <Text style={s.num}>{value}</Text>
+    </View>
+  );
+}
+
+function MonthEndSection({ m }: { m: MonthEndPdf }) {
+  const d = m.deferred;
+  const l = m.labour;
+  return (
+    <>
+      <Text style={s.h2}>{m.title}</Text>
+      {d ? (
+        <View style={s.item}>
+          <Line bold label={`${d.heading} — ${d.orders} order${d.orders === 1 ? "" : "s"}${d.exVat != null ? " (inc VAT)" : ""}`} value={gbp(d.incVat)} />
+          {d.exVat != null ? <Line label="  ex VAT" value={gbp(d.exVat)} /> : null}
+          {d.opening ? <Line label={`  Opening: ${d.opening.label}`} value={gbp(d.opening.incVat)} /> : null}
+          {d.movement != null ? <Line label="  Movement (closing minus opening) — take off this month's sales" value={signed(d.movement)} /> : null}
+          <Text style={[s.sub, { marginTop: 3 }]}>{d.definition}</Text>
+          <Text style={s.sub}>{d.trust}</Text>
+          {d.notes.map((n, i) => <Text key={i} style={s.sub}>{n}</Text>)}
+        </View>
+      ) : <Text style={s.empty}>Deferred income couldn't be worked out: {m.deferredError ?? "unknown error"}</Text>}
+      {l ? (
+        <View style={[s.item, { marginTop: 8 }]}>
+          <Line bold label={`${l.heading} — ${hrs(l.hours)} hours`} value={gbp(l.pay)} />
+          {l.holidayHours > 0 ? <Line label={`  includes holiday (${hrs(l.holidayHours)} hours)`} value={gbp(l.holidayPay)} /> : null}
+          {l.opening ? <Line label={`  Opening: ${l.opening.label}`} value={gbp(l.opening.pay)} /> : null}
+          {l.movement != null ? <Line label="  Movement (closing minus opening) — add to this month's wages" value={signed(l.movement)} /> : null}
+          {l.employer ? <Line label={`  Employer NI ${gbp(l.employer.ni)} + pension ${gbp(l.employer.pension)} — ESTIMATE`} value={gbp(l.employer.total)} /> : null}
+          <Text style={[s.sub, { marginTop: 3 }]}>
+            Shifts worked from the 25th to the month end are paid in this pay period but belong to the month before. Same pay rules as above:
+            approved shifts, unpaid breaks off, holiday hours at the person's rate.
+          </Text>
+          {l.employer ? <Text style={s.sub}>{l.employer.note}</Text> : null}
+          {l.notes.map((n, i) => <Text key={i} style={s.sub}>{n}</Text>)}
+        </View>
+      ) : <Text style={s.empty}>Labour couldn't be worked out: {m.labourError ?? "unknown error"}</Text>}
+    </>
+  );
+}
+
+const H_COLS: Col[] = [
+  { key: "label", label: "Month end", flex: 3.2, num: false },
+  { key: "do", label: "Opening", flex: 1.3, num: true },
+  { key: "dc", label: "Closing", flex: 1.3, num: true },
+  { key: "dm", label: "Movement", flex: 1.2, num: true },
+  { key: "lo", label: "Opening", flex: 1.3, num: true },
+  { key: "lc", label: "Closing", flex: 1.3, num: true },
+  { key: "lm", label: "Movement", flex: 1.2, num: true },
+];
+
+function HistoryHead() {
+  return (
+    <>
+      <View style={{ flexDirection: "row", marginBottom: 1 }}>
+        <Text style={{ flex: 3.2 }} />
+        <Text style={[s.th, { flex: 3.8, textAlign: "center", borderBottomWidth: 0.5, borderBottomColor: MUTED }]}>Deferred income (inc VAT)</Text>
+        <Text style={[s.th, { flex: 3.8, textAlign: "center", borderBottomWidth: 0.5, borderBottomColor: MUTED, marginLeft: 6 }]}>Labour, 25th to month end</Text>
+      </View>
+      <View style={s.headRow}><Cells cols={H_COLS} values={H_COLS.map(c => c.label)} style={s.th} /></View>
+    </>
+  );
+}
+const money = (n: number | null) => (n == null ? "—" : gbp(n));
+const mvm = (n: number | null) => (n == null ? "—" : signed(n));
+
+function HistoryAppendix({ h }: { h: MonthEndHistoryPdf }) {
+  return (
+    <Page size="A4" style={[s.page, { fontSize: 8 }]}>
+      <Text style={s.title}>Appendix — month-end adjustments history</Text>
+      <Text style={[s.sub, { marginTop: 2, marginBottom: 4 }]}>
+        Deferred income (inc VAT) = orders paid by 23:59 on the month end but not yet dispatched. Labour = gross pay for shifts from the 25th
+        to the month end, paid in the next pay period. Each month's opening is the month end before; the movement (closing minus opening) comes off
+        that month's sales (deferred income) or goes on its wages (labour). Grouped by financial year, April to March.
+      </Text>
+      {h.opening ? (
+        <View style={s.totalRow} wrap={false}>
+          <Text style={{ flex: 3.2 }}>{h.opening.label}</Text>
+          <Text style={[s.num, { flex: 3.8 }]}>{money(h.opening.deferred)}</Text>
+          <Text style={[s.num, { flex: 3.8 }]}>{money(h.opening.labour)}</Text>
+        </View>
+      ) : null}
+      {h.years.map(y => (
+        <View key={y.year} style={{ marginTop: 10 }}>
+          <Text style={{ fontFamily: "Helvetica-Bold", fontSize: 10, marginBottom: 3 }}>Financial year {y.year} ({y.span}){y.complete ? "" : " — so far"}</Text>
+          <HistoryHead />
+          {y.rows.map((r, i) => (
+            <View key={i} style={s.row} wrap={false}>
+              <Cells cols={H_COLS} values={[
+                `${r.label}${r.trustworthy === false ? " (dispatch dates thin — check)" : ""}${r.error ? " (incomplete)" : ""}`,
+                money(r.deferred.opening), money(r.deferred.closing), mvm(r.deferred.movement),
+                money(r.labour.opening), money(r.labour.closing), mvm(r.labour.movement),
+              ]} />
+            </View>
+          ))}
+          <View style={s.totalRow} wrap={false}>
+            <Cells cols={H_COLS} values={[`Year ${y.year}`, money(y.deferred.opening), money(y.deferred.closing), mvm(y.deferred.movement), money(y.labour.opening), money(y.labour.closing), mvm(y.labour.movement)]} />
+          </View>
+        </View>
+      ))}
+      <Text style={s.pageNo} fixed render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
+    </Page>
+  );
+}
+
 function PayrollDocument({ data }: { data: PayrollPdfInput }) {
   return (
     <Document title={`TCK payroll report — ${data.periodLabel}`} author="The Calzone Kitchen">
@@ -140,6 +295,8 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
           <Text style={{ flex: 1 }}>Total gross pay — {hrs(data.totals.hours)} hours</Text>
           <Text style={s.num}>{gbp(data.totals.grossPay)}</Text>
         </View>
+
+        {data.monthEnd ? <MonthEndSection m={data.monthEnd} /> : null}
 
         <Text style={s.h2}>Sick days</Text>
         {data.sick.length === 0 ? <Empty text="None recorded." /> : data.sick.map((d, i) => {
@@ -198,6 +355,7 @@ function PayrollDocument({ data }: { data: PayrollPdfInput }) {
 
         <Text style={s.pageNo} fixed render={({ pageNumber, totalPages }) => `Page ${pageNumber} of ${totalPages}`} />
       </Page>
+      {data.history ? <HistoryAppendix h={data.history} /> : null}
     </Document>
   );
 }

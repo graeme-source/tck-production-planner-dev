@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   HISTORY_START, NOV_2025_OPENING_LABEL, chainHistory, computeDeferredIncome, deferralOrderFromShopify, dispatchTrust,
   estimateEmployerCosts, financialYearOf, groupByFinancialYear, historyCsv, isFinal, labourWindow, lastDayOfMonth,
-  latestClosedMonthEnd, monthEndCutoff, monthEndInPeriod, monthEndsBetween, payPeriodForMonthEnd, resolveDispatch,
+  latestClosedMonthEnd, monthEndCutoff, monthEndInPeriod, monthEndsBetween, payPeriodForMonthEnd, previousMonthEnd, resolveDispatch,
   summariseMonthEndLabour, type DeferralOrder, type HistoryPoint,
 } from "./month-end";
 
@@ -161,6 +161,11 @@ describe("pay period ↔ month end", () => {
     expect(labourWindow("2025-12-31")).toEqual({ from: "2025-12-25", to: "2025-12-31" });
     expect(labourWindow("2026-02-28")).toEqual({ from: "2026-02-25", to: "2026-02-28" });
     expect(lastDayOfMonth("2028-02-03")).toBe("2028-02-29");
+  });
+  it("the month end before — across the New Year and into February", () => {
+    expect(previousMonthEnd("2026-09-30")).toBe("2026-08-31");
+    expect(previousMonthEnd("2026-01-31")).toBe("2025-12-31");
+    expect(previousMonthEnd("2026-03-31")).toBe("2026-02-28");
   });
   it("latest closed month and finality", () => {
     expect(latestClosedMonthEnd("2026-10-27")).toBe("2026-09-30");

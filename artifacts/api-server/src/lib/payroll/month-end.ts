@@ -151,6 +151,12 @@ export function latestClosedMonthEnd(today: string): string {
   return iso(y, m, 0);
 }
 
+/** The month end before this one (30 Sep → 31 Aug; 31 Jan → 31 Dec). */
+export function previousMonthEnd(monthEnd: string): string {
+  const { y, m } = ymd(monthEnd);
+  return iso(y, m, 0);
+}
+
 /** Final once the pay period holding its labour has ended (every shift in
  *  it approved and paid) — then a stored result can be reused. */
 export function isFinal(monthEnd: string, today: string): boolean {
@@ -355,7 +361,9 @@ export function computeDeferredIncome(monthEnd: string, orders: readonly Deferra
     const ex = round2(value * (1 - taxShare));
     const later = !!o.cancelledAt || o.refunds.some(x => Date.parse(x.at) >= cutoffMs && x.amount > 0);
     if (later) add(laterCancelled, value);
-    add(bySource[r.state === "not_yet" ? "not_yet" : r.state], value);
+    // Only not_yet and the dated sources get here (unknown and
+    // nothing_to_send were dealt with above).
+    add(bySource[r.state as keyof typeof bySource], value);
     incVat += value;
     exVat += ex;
     lines.push({
