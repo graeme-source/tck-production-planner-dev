@@ -37,6 +37,7 @@ const WEIGHT_LABEL: Record<number, string> = { 400: "Regular", 500: "Medium", 70
 type SingleTextKey = Exclude<keyof TemplateText, "steps">;
 const TEXT_FIELDS: Array<{ key: SingleTextKey; label: string; rows?: number }> = [
   { key: "title", label: "Title" },
+  { key: "subtitle", label: "Subtitle — a small line under the title (blank = none)" },
   { key: "storageHeading", label: "Storage heading" },
   { key: "storage", label: "Storage instructions", rows: 3 },
   { key: "chilledLabel", label: "Chilled use-by label" },

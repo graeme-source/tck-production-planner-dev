@@ -27,10 +27,13 @@ export const WIDTH_LABEL: Record<WidthVariant, string> = {
 export type BodyWeight = 400 | 500 | 700;
 export const BODY_WEIGHTS: BodyWeight[] = [400, 500, 700];
 
-export type FieldKey = "title" | "steps" | "headings" | "storage" | "dates" | "ingredients" | "allergenInfo" | "address";
-export const FIELD_KEYS: FieldKey[] = ["title", "steps", "headings", "storage", "dates", "ingredients", "allergenInfo", "address"];
+export type FieldKey = "title" | "subtitle" | "steps" | "headings" | "storage" | "dates" | "ingredients" | "allergenInfo" | "address";
+export const FIELD_KEYS: FieldKey[] = ["title", "subtitle", "steps", "headings", "storage", "dates", "ingredients", "allergenInfo", "address"];
 export const FIELD_LABEL: Record<FieldKey, string> = {
   title: "Title",
+  // A small line under the title (e.g. "Recipe by Chris"); blank = not
+  // drawn and the label is laid out exactly as without it (2026-10-27).
+  subtitle: "Subtitle (under the title)",
   steps: "Cooking steps",
   // "STORAGE INSTRUCTIONS:" and "THE INGREDIENTS:" — ONE style so they can't
   // drift apart, printed at a FIXED size (its biggest): only the text under
@@ -114,6 +117,8 @@ export interface PageSettings {
 export interface TemplateText {
   /** e.g. "{name} - {packSize} PACK" */
   title: string;
+  /** A small line under the title, e.g. "Recipe by Chris". Blank = none. */
+  subtitle: string;
   /** The numbered cooking steps, in order (1..n). A blank step isn't drawn
    *  and the numbering closes up. Up to MAX_STEPS. */
   steps: string[];
@@ -267,6 +272,8 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // than Barlow Semi Condensed. Only the title (big, short) may still go
     // fully condensed.
     title: field({ weight: 700, bold: true, caps: true, minPt: 12, maxPt: 22, lineHeight: 1.0, align: "center", narrowest: "condensed" }),
+    // Only drawn when the template's subtitle wording isn't blank.
+    subtitle: field({ maxPt: 9, lineHeight: 1.1, align: "center" }),
     steps: field({ maxPt: 10.5, lineHeight: 1.1 }),
     // Storage and ingredients up to "a couple of points bigger" (Graeme,
     // 2026-10-12, after the proofs). Storage 10.5 is the biggest that stays
@@ -292,6 +299,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   },
   text: {
     title: "{name} - {packSize} PACK",
+    subtitle: "",
     // Two steps (Graeme, 2026-10-11): the old step 3 ("Check they're piping
     // hot…") is gone. Step 1 is the one "some people get wrong", so its key
     // words are bold. Step 2: one line per appliance, the turn in the middle
@@ -603,6 +611,40 @@ export function macaroniCheeseTemplate(): LabelTemplate {
   return t;
 }
 
+/** Cinnamon buns — Graeme's Label LIVE cinnamon bun label (2026-10-27):
+ *  "{name} - {packSize} PACK" as on the calzone label, a small "Recipe by
+ *  Chris" line under it, three microwave steps (plain wording: there are no
+ *  microwave cooking values, and wording with no fill-ins is never flagged),
+ *  chilled-only storage, a chilled use-by only, no bones warning. */
+export function cinnamonBunsTemplate(): LabelTemplate {
+  const t = normaliseTemplate(JSON.parse(JSON.stringify(DEFAULT_TEMPLATE)));
+  t.text.subtitle = "Recipe by Chris";
+  t.text.steps = [
+    "Remove the film cover and place the tray in the microwave.",
+    "Heat in a microwave on full power for 2 minutes (6 buns). Adjust the cooking time for fewer buns.",
+    "Leave to cool for 1 minute and serve.",
+  ];
+  // No oven or air fryer: nothing to fill in, nothing printed from them.
+  t.cooking = {
+    ovenTempC: null, fanTempC: null, ovenMinMinutes: null, ovenMaxMinutes: null,
+    airFryerTempC: null, airFryerMinMinutes: null, airFryerMaxMinutes: null,
+  };
+  t.cookingTiers = { ...t.cookingTiers, on: false };
+  // Three wrapping steps need a taller band than the calzone's two.
+  t.page.stepsBandMm = 11;
+  t.text.storageHeading = "STORAGE INSTRUCTIONS:";
+  t.text.storage = "Keep me chilled below 5°C. Do not freeze.";
+  // Chilled use-by only. The recipe's shelf life sets it, else 5 days (the
+  // current printed label). Not to be frozen, so no frozen line.
+  t.chilledUseByOn = true;
+  t.text.chilledLabel = "USE BY:";
+  t.chilledDefault = { amount: 5, unit: "days" };
+  t.frozenDefault = null;
+  t.boneRiskWords = [];
+  t.defaultForCategories = ["Desserts"];
+  return t;
+}
+
 export const TEMPLATE_PRESETS: TemplatePreset[] = [
   {
     key: "standard",
@@ -621,5 +663,11 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     name: "Macaroni cheese",
     description: "Macaroni cheese: the product name as the title, two oven steps, chilled and frozen use-by dates, storage, ingredients and barcode.",
     build: macaroniCheeseTemplate,
+  },
+  {
+    key: "cinnamon-buns",
+    name: "Cinnamon buns",
+    description: "Desserts heated in the microwave: a subtitle line under the title, three microwave steps, chilled use-by only (do not freeze), ingredients and barcode.",
+    build: cinnamonBunsTemplate,
   },
 ];
