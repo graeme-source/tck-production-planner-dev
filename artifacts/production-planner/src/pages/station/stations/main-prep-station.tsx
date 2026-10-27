@@ -245,6 +245,13 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   // background from opening to its ticks — never shown, never waited on.
   const timing = usePrepSessionCapture({ planId: targetPlanId, station: "main_prep", enabled: !isDraft && !noFuturePlan });
   const stockCheckRef = useRef<HTMLDivElement>(null);
+  // The opened item's panel — on an iPad held upright it sits under the
+  // list, so opening an item brings it into view.
+  const detailRef = useRef<HTMLDivElement>(null);
+  const showOpenedItem = () => requestAnimationFrame(() => {
+    const el = detailRef.current;
+    if (el && el.getBoundingClientRect().top > window.innerHeight - 120) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   const prevNeedsStockCheckRef = useRef(false);
 
   // Tin count override state
@@ -508,11 +515,12 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const itemKey = (ing: MainPrepIngredient) => ing.isSubRecipe ? `sub:${ing.ingredientId}` : `ing:${ing.ingredientId}`;
 
+  // Nothing opens by itself: the amounts and the ticks are only shown once
+  // someone taps an item (Graeme, 27 Oct 2026 — open the item to see what
+  // to prep, which is what makes the prep timing honest). An opened item
+  // that drops off the list (plan changed) just closes.
   useEffect(() => {
-    if (ingredients.length === 0) return;
-    if (selectedItemKey && ingredients.find(i => itemKey(i) === selectedItemKey)) return;
-    const firstIncomplete = ingredients.find(ing => !ingredientDoneStatus(ing).isFullyDone);
-    setSelectedItemKey(itemKey(firstIncomplete ?? ingredients[0]));
+    if (selectedItemKey && !ingredients.find(i => itemKey(i) === selectedItemKey)) setSelectedItemKey(null);
   }, [ingredients]);
 
   const selectedIngredient = ingredients.find(i => itemKey(i) === selectedItemKey) ?? null;
@@ -883,6 +891,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           onClick={() => {
                             setSelectedItemKey(ik);
                             setViewing(ing.ingredientId);
+                            showOpenedItem();
                           }}
                           className={cn(
                             "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
@@ -955,6 +964,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <p className="text-sm text-muted-foreground"><span className="text-amber-500">shared</span></p>
                             )}
                           </div>
+                          {/* Status only — how much to prep (tins, bottles,
+                              weights) shows once the item is opened. */}
                           <div className="flex items-center gap-1 flex-shrink-0">
                             {rStatus.completedTins > 0 && getPreppedByInitials(ing.ingredientId, group.recipeId, ing.isSubRecipe).map(({ initials, fullName }) => (
                               <span
@@ -965,28 +976,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 {initials}
                               </span>
                             ))}
-                            {ing.isBottle && ing.bottlesNeeded ? (
-                              <span className={cn(
-                                "text-sm tabular-nums",
-                                ingStatus.isFullyDone ? "text-emerald-600 font-semibold" : "text-amber-600 font-semibold"
-                              )}>
-                                {ing.bottlesNeeded} btl{ing.bottlesNeeded === 1 ? "" : "s"}
-                              </span>
-                            ) : rStatus.totalTins > 0 ? (
-                              <span className={cn(
-                                "text-sm tabular-nums flex items-baseline gap-1",
-                                rStatus.allDone
-                                  ? "text-emerald-600 font-semibold"
-                                  : rStatus.allResolved
-                                    ? "text-amber-600 font-semibold"
-                                    : "text-muted-foreground"
-                              )}>
-                                <span>{rStatus.resolvedTins}/{rStatus.totalTins}</span>
-                                {rStatus.deferredTins > 0 && (
-                                  <span className="text-[10px] text-amber-600 font-medium">+{rStatus.deferredTins} def</span>
-                                )}
-                              </span>
-                            ) : null}
                           </div>
                         </button>
                         {/* Linked ingredient sub-rows. The LEFT list only
@@ -1015,9 +1004,6 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 )}
                                 <span className={cn(liDone && "line-through")}>{li.ingredientName}</span>
                               </span>
-                              <span className={cn("tabular-nums font-medium", liDone ? "text-emerald-600 dark:text-emerald-400" : "text-foreground")}>
-                                {fmtPrepQty(li.totalQty, li.unit)}
-                              </span>
                             </div>
                           );
                         })}
@@ -1031,8 +1017,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
             </div>
           </div>
 
-          {/* RIGHT — Detail card for selected ingredient */}
-          <div className="flex-1 min-w-0">
+          {/* RIGHT — the opened item: its amounts and its ticks (only here) */}
+          <div ref={detailRef} className="flex-1 min-w-0 scroll-mt-4">
             {selectedIngredient ? (() => {
               const ing = selectedIngredient;
               const status = ingredientDoneStatus(ing);
@@ -1535,9 +1521,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
               </div>
               );
             })() : (
-              <div className="bg-card border-2 border-dashed border-border rounded-2xl p-12 flex flex-col items-center justify-center text-muted-foreground">
+              <div className="bg-card border-2 border-dashed border-border rounded-2xl p-12 flex flex-col items-center justify-center text-center text-muted-foreground">
                 <ClipboardList className="w-12 h-12 mb-3 opacity-40" />
-                <p className="font-medium">Select an ingredient to view its tins</p>
+                <p className="text-xl font-semibold text-foreground">Tap a prep item to open it</p>
+                <p className="text-base mt-1">How much to prep, and the tins to tick, show here.</p>
               </div>
             )}
           </div>
