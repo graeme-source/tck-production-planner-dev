@@ -52,15 +52,28 @@ describe("small product label (102 × 25 mm)", () => {
       expect(r.x + ink.right, r.text).toBeLessThan(l.barcode!.x);
     }
   });
-  it("prints without a barcode when there isn't one", () => {
-    const l = layoutSmallLabel(fonts, { name: "Brownie", useBy: "14/11/26" });
+  it("prints without a barcode when there isn't one — centred on the label", () => {
+    const l = layoutSmallLabel(fonts, { name: "Cinnamon Buns", useBy: "25/04/27", batch: "26300" });
     expect(l.barcode).toBeNull();
     expect(l.ok).toBe(true);
+    for (const r of l.runs) {
+      const ink = fonts.ink(r.text, r.face, r.sizeDots, 0);
+      const left = r.x + ink.left, right = l.widthDots - (r.x + ink.right);
+      expect(Math.abs(left - right), r.text).toBeLessThanOrEqual(2);
+    }
+  });
+  it("keeps 7 mm clear at each side for labels that sit off on the roll", () => {
+    const l = layoutSmallLabel(fonts, { name: "TCK Garlic Mayo", useBy: "04/12/26", batch: "26300", barcode: "97748478844497" });
+    const sevenMm = Math.round((7 / 25.4) * 203);
+    for (const r of l.runs.filter(r => !/^\d+$/.test(r.text))) expect(r.x + fonts.ink(r.text, r.face, r.sizeDots, 0).left).toBeGreaterThanOrEqual(sevenMm - 1);
+    expect(l.widthDots - (l.barcode!.x + l.barcode!.modules.length * l.barcode!.moduleDots)).toBeGreaterThanOrEqual(sevenMm - 1);
   });
   it("renders at the label's size", () => {
     const { bitmap, png } = renderSmallLabel({ name: "TCK Garlic Mayo", useBy: "04/12/26", batch: "26300", barcode: "97748478844497" }, fonts);
     expect(bitmap.width).toBe(Math.round((SMALL_LABEL_PAGE.widthMm / 25.4) * 203));
     if (process.env["SMALL_LABEL_PROOF"]) writeFileSync(process.env["SMALL_LABEL_PROOF"], Buffer.from(png.split(",")[1]!, "base64"));
+    const buns = renderSmallLabel({ name: "Cinnamon Buns", useBy: "25/04/27", batch: "26300" }, fonts);
+    if (process.env["SMALL_LABEL_PROOF_3"]) writeFileSync(process.env["SMALL_LABEL_PROOF_3"], Buffer.from(buns.png.split(",")[1]!, "base64"));
     const brownie = renderSmallLabel({ name: "Rolo Chocolate Brownie", secondLine: "5 pack", useBy: "10/11/26", barcode: "5065018206948" }, fonts);
     if (process.env["SMALL_LABEL_PROOF_2"]) writeFileSync(process.env["SMALL_LABEL_PROOF_2"], Buffer.from(brownie.png.split(",")[1]!, "base64"));
   });

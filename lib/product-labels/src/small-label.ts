@@ -110,6 +110,11 @@ const ROW = { name: 0.34, second: 0.2, useBy: 0.3, batch: 0.2 } as const;
  *  size... we don't have to literally fill up every pixel"): each line's
  *  type is capped, in mm of font size, and the block sits in the middle. */
 const ROW_MAX_MM = { name: 5.2, second: 3.4, useBy: 3.8, batch: 3.4 } as const;
+/** Room for a label that sits a little off on the roll (Graeme,
+ *  2026-10-27: "the margin for error on the alignment is too small... we've
+ *  got loads of horizontal space"): text starts this far in from the left
+ *  edge and the barcode stops this far in from the right. */
+const SIDE_INSET_MM = 7;
 /** Bars no taller than this, however much room there is. */
 const BAR_MAX_MM = 12;
 const ROW_GAP_SHARE = 0.07;
@@ -122,7 +127,8 @@ export function layoutSmallLabel(m: TextMeasurer, input: SmallLabelInput): Small
   const widthDots = Math.round(mmToDots(p.widthMm, p.dpi));
   const heightDots = Math.round(mmToDots(p.heightMm, p.dpi));
   const margin = Math.round(mmToDots(p.marginMm, p.dpi));
-  const innerW = widthDots - margin * 2;
+  const side = Math.round(mmToDots(SIDE_INSET_MM, p.dpi));
+  const innerW = widthDots - side * 2;
   const innerH = heightDots - margin * 2;
   const name = input.name.replace(/\s+/g, " ").trim();
   const runs: PlacedRun[] = [];
@@ -141,7 +147,7 @@ export function layoutSmallLabel(m: TextMeasurer, input: SmallLabelInput): Small
       // 2 dots = 0.25 mm modules: scans reliably at 203 dpi without shouting.
       const moduleDots = Math.max(1, Math.min(2, Math.floor(maxW / enc.modules.length)));
       const w = enc.modules.length * moduleDots;
-      const x = widthDots - margin - w;
+      const x = widthDots - side - w;
       const digitsH = Math.round(innerH * DIGITS_SHARE);
       const barGap = Math.round(innerH * 0.04);
       const barsH = Math.min(innerH - digitsH - barGap, Math.round(mmToDots(BAR_MAX_MM, p.dpi)));
@@ -152,7 +158,7 @@ export function layoutSmallLabel(m: TextMeasurer, input: SmallLabelInput): Small
       const digitText = code.replace(/\s+/g, "");
       const fit = fitLine(m, digitText, 500, w - moduleDots * 8, digitsH, Math.round(mmToDots(3, p.dpi)));
       runs.push({ x: Math.round(x + (w - fit.inkW) / 2 - fit.inkLeft), y: bottom + barGap + fit.inkTop, text: digitText, face: fit.face, sizeDots: fit.size, letterSpacingEm: 0 });
-      leftW = x - margin - Math.round(mmToDots(3, p.dpi));
+      leftW = x - side - Math.round(mmToDots(3, p.dpi));
     }
   }
 
@@ -172,9 +178,12 @@ export function layoutSmallLabel(m: TextMeasurer, input: SmallLabelInput): Small
   const fits: Fit[] = rows.map(r => fitLine(m, r.text, r.weight, leftW, Math.floor((free * r.share) / total), r.max));
   const blockH = fits.reduce((t, f) => t + f.inkTop + f.inkBottom, 0) + gap * (rows.length - 1);
   let top = margin + Math.max(0, (innerH - blockH) / 2);
+  // With a barcode the text is left-aligned at the inset; without one (the
+  // internal freezer label) each line is centred on the label.
   rows.forEach((r, i) => {
     const f = fits[i]!;
-    runs.push({ x: Math.round(margin - f.inkLeft), y: Math.round(top + f.inkTop), text: r.text, face: f.face, sizeDots: f.size, letterSpacingEm: 0 });
+    const x = barcode ? side - f.inkLeft : (widthDots - f.inkW) / 2 - f.inkLeft;
+    runs.push({ x: Math.round(x), y: Math.round(top + f.inkTop), text: r.text, face: f.face, sizeDots: f.size, letterSpacingEm: 0 });
     top += f.inkTop + f.inkBottom + gap;
   });
   return { widthDots, heightDots, dpi: p.dpi, runs, barcode, barcodeProblem, ok: true };
