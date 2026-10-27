@@ -26,6 +26,7 @@ import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep
 import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { SubRecipePotLabels, useSubRecipesWithLabels } from "@/components/sub-recipe-pot-labels";
 import { StationStockChecks } from "../shared/station-stock-checks";
 import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
@@ -329,12 +330,16 @@ export function SubRecipeMakeFlow({
         .filter(r => r.name.toLowerCase().includes(search.toLowerCase()))
         .map(resolveStandaloneSr);
 
+  const labelledSubRecipes = useSubRecipesWithLabels();
+
   const back = () => {
     setLoadedDetail(null);
     setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set() }));
   };
 
   if (state.phase === "done") {
+    // A sub-recipe we sell as it is (TCK Garlic Mayo) prints its pot labels here.
+    const potLabelled = !!sr && state.batches > 0 && !!labelledSubRecipes.data?.has(sr.subRecipeId);
     return (
       <div className="flex flex-col items-center justify-center py-16 gap-6">
         <div className="w-16 h-16 rounded-2xl bg-emerald-500/20 flex items-center justify-center">
@@ -348,6 +353,7 @@ export function SubRecipeMakeFlow({
               : `${state.batches} mix${state.batches !== 1 ? "es" : ""} made · ${formatPrepWeight(yieldPerBatch * state.batches, sr?.yieldUnit)} ready`}
           </p>
         </div>
+        {potLabelled && sr && <SubRecipePotLabels subRecipeId={sr.subRecipeId} madeGrams={toGrams(yieldPerBatch * state.batches, sr.yieldUnit)} />}
         <div className="flex gap-3">
           <button onClick={back} className="px-6 py-3 rounded-xl border border-border hover:bg-secondary/60 font-medium transition-colors">
             Make Another

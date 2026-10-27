@@ -176,6 +176,8 @@ import peopleLettersMineRouter from "./people-letters-mine";
 import productLabelsRouter from "./product-labels";
 import productLabelPrintRouter from "./product-label-print";
 import productFrontLabelRouter from "./product-front-label";
+import dessertLabelsRouter from "./dessert-labels";
+import subRecipeLabelsRouter from "./sub-recipe-labels";
 import productLabelHistoryRouter from "./product-label-history";
 import barcodesRouter from "./barcodes";
 import { runBackup } from "../lib/backup";
@@ -526,6 +528,8 @@ router.use("/product-labels", productLabelHistoryRouter);
 router.use("/product-label-print", productLabelPrintRouter);
 // Front name labels (102 x 25 mm, issue 331): name only, same PDF print path. Anyone signed in.
 router.use("/product-front-label", productFrontLabelRouter);
+router.use("/dessert-labels", dessertLabelsRouter);
+router.use("/sub-recipe-labels", subRecipeLabelsRouter);
 router.use("/fried-chicken", friedChickenRouter);
 router.use("/risk-assessments", riskAssessmentsRouter);
 router.use("/compliance-actions", complianceActionsRouter);
