@@ -49,9 +49,16 @@ export interface DessertReportEntry {
   quantity: number;
 }
 
+/** A non-5-pack dessert line, with the Shopify variants it was ordered as —
+ *  so its despatch label can be found through the recipe ↔ Shopify link
+ *  (recipe_shopify_mappings), never by title. */
+export interface DessertProductLine extends DessertReportEntry {
+  variantIds: string[];
+}
+
 export interface DessertReport {
   /** Non-5-pack desserts (cinnamon buns and friends), one line each. */
-  products: DessertReportEntry[];
+  products: DessertProductLine[];
   /** The 5-pack variants, broken down — what to pull from the freezer. */
   fivePackProducts: DessertReportEntry[];
   /** One number: how many 5-pack labels to print. */
@@ -64,6 +71,7 @@ export interface DessertReport {
 export function buildDessertReport(orders: DessertOrder[], dessertTitles: Set<string>): DessertReport {
   const fiveTotals = new Map<string, number>();
   const otherTotals = new Map<string, number>();
+  const otherVariants = new Map<string, Set<string>>();
   const byVariant = new Map<string, FivePackLabelLine>();
 
   for (const order of orders) {
@@ -84,6 +92,9 @@ export function buildDessertReport(orders: DessertOrder[], dessertTitles: Set<st
         byVariant.set(key, line);
       } else {
         otherTotals.set(item.title, (otherTotals.get(item.title) ?? 0) + qty);
+        const variants = otherVariants.get(item.title) ?? new Set<string>();
+        if (item.variant_id != null && String(item.variant_id) !== "") variants.add(String(item.variant_id));
+        otherVariants.set(item.title, variants);
       }
     }
   }
@@ -94,10 +105,38 @@ export function buildDessertReport(orders: DessertOrder[], dessertTitles: Set<st
       .sort((a, b) => a.title.localeCompare(b.title));
 
   const fivePackProducts = toSortedEntries(fiveTotals);
-  const products = toSortedEntries(otherTotals);
+  const products: DessertProductLine[] = toSortedEntries(otherTotals)
+    .map(e => ({ ...e, variantIds: [...(otherVariants.get(e.title) ?? [])].sort() }));
   const fivePackTotal = fivePackProducts.reduce((s, p) => s + p.quantity, 0);
   const totalQuantity = fivePackTotal + products.reduce((s, p) => s + p.quantity, 0);
 
   const fivePackLabels = [...byVariant.values()].filter(l => l.quantity > 0).sort((a, b) => a.productTitle.localeCompare(b.productTitle));
   return { products, fivePackProducts, fivePackTotal, fivePackLabels, totalQuantity };
+}
+
+// ── Despatch labels for the other desserts (Graeme, 2026-10-27) ─────────────
+// Cinnamon buns get their big despatch label the morning they come out of
+// the freezer: one per pack ordered, printed from the dessert report. A line
+// maps to its recipe through the recipe ↔ Shopify variant link
+// (recipe_shopify_mappings: the pack, wonky and 8-pack variants) — never by
+// title.
+
+export interface DespatchLabelLine {
+  title: string;
+  /** How many labels: the line's quantity (one per pack ordered). */
+  quantity: number;
+  /** The recipe its variants map to; null = not linked to a recipe. */
+  recipeId: number | null;
+}
+
+export function despatchLabelLines(products: DessertProductLine[], variantToRecipe: Map<string, number>): DespatchLabelLine[] {
+  return products.map(p => {
+    const recipeId = p.variantIds.map(v => variantToRecipe.get(v)).find((r): r is number => r != null) ?? null;
+    return { title: p.title, quantity: p.quantity, recipeId };
+  });
+}
+
+/** How many despatch labels print for a recipe: every line that maps to it. */
+export function despatchLabelCount(lines: DespatchLabelLine[], recipeId: number): number {
+  return lines.filter(l => l.recipeId === recipeId).reduce((t, l) => t + l.quantity, 0);
 }

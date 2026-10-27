@@ -1,6 +1,7 @@
 import React from "react";
 import { useState, useEffect, useCallback } from "react";
 import { FivePackLabelsButton } from "@/components/five-pack-labels";
+import { DespatchLabelsButton } from "@/components/despatch-labels";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
   Loader2, RefreshCw, AlertCircle, Box, Truck, Scan, CheckCircle2, Gauge, Refrigerator,
@@ -436,14 +437,18 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
           )}
           <div className="divide-y divide-border/50">
             {desserts.products.map(p => (
-              <div key={p.title} className="flex items-center justify-between px-4 py-2.5">
-                <span className="text-base">{p.title}</span>
-                {/* Units only — the per-product order count sat next to the
-                    unit count and read as a contradiction ("6 orders, 7
-                    packs"). The packer only needs how many units go out. */}
-                <span className="font-bold tabular-nums text-base bg-pink-100 dark:bg-pink-900/30 px-2.5 py-0.5 rounded-lg text-pink-800 dark:text-pink-200">
-                  {p.quantity} <span className="font-medium text-xs">units</span>
-                </span>
+              <div key={p.title} className="px-4 py-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-base">{p.title}</span>
+                  {/* Units only — the per-product order count sat next to the
+                      unit count and read as a contradiction ("6 orders, 7
+                      packs"). The packer only needs how many units go out. */}
+                  <span className="font-bold tabular-nums text-base bg-pink-100 dark:bg-pink-900/30 px-2.5 py-0.5 rounded-lg text-pink-800 dark:text-pink-200">
+                    {p.quantity} <span className="font-medium text-xs">units</span>
+                  </span>
+                </div>
+                {/* Its despatch labels, one tap (cinnamon buns, 2026-10-27). */}
+                <DespatchLabelsButton tag={dispatchTag} title={p.title} />
               </div>
             ))}
           </div>

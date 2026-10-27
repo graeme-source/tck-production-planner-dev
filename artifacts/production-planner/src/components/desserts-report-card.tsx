@@ -10,6 +10,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { FivePackLabelsButton } from "@/components/five-pack-labels";
+import { DespatchLabelsButton } from "@/components/despatch-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -60,6 +61,7 @@ export function DessertsReportCard({ tag, className }: { tag: string; className?
       {desserts.products.map(p => (
         <div key={p.title} className="px-4 py-3 bg-pink-100/60 dark:bg-pink-900/20 border-b border-border/50">
           <BannerRow label={p.title} value={p.quantity} />
+          <DespatchLabelsButton tag={tag} title={p.title} />
         </div>
       ))}
       {fivePack.length > 0 && (

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { FivePackLabelsButton } from "@/components/five-pack-labels";
+import { DespatchLabelsButton } from "@/components/despatch-labels";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Minus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
@@ -1711,6 +1712,8 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
               <span className="text-sm font-bold text-purple-800 dark:text-purple-200">{p.title}</span>
               <span className="text-2xl font-bold tabular-nums text-purple-800 dark:text-purple-200">{p.quantity}</span>
             </div>
+            {/* Its despatch labels, one tap (cinnamon buns, 2026-10-27). */}
+            <DespatchLabelsButton tag={report.tag} title={p.title} />
           </div>
         ))}
         {fivePack.length > 0 && (
