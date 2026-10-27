@@ -7780,62 +7780,9 @@ router.put("/:id/prep-tin-override", async (req, res) => {
   }
 });
 
-router.post("/:id/prep-completions", async (req, res) => {
-  const planId = Number(req.params.id);
-  const { ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId } = req.body as {
-    ingredientId?: number;
-    recipeId?: number;
-    tinNumber?: number;
-    isSubRecipe?: boolean;
-    // When the ingredient was contributed by an expanded sub-recipe
-    // (e.g. Mature Cheddar coming in via Breadcrumb Topping), the
-    // origin sub-recipe id goes here so the completion row records
-    // which copy of the ingredient was ticked. Stored in
-    // prep_completions.sub_recipe_id alongside ingredient_id.
-    subRecipeOriginId?: number | null;
-  };
-  if (!recipeId) { res.status(400).json({ error: "recipeId is required" }); return; }
-  if (await planDraftStatus(planId)) { res.status(409).json({ error: DRAFT_COMPLETION_ERROR }); return; }
-  const userId = (req.session as any)?.userId ?? null;
-
-  if (isSubRecipe) {
-    const result = await db.execute(sql`
-      INSERT INTO prep_completions (plan_id, sub_recipe_id, recipe_id, tin_number, user_id, completed_at)
-      VALUES (${planId}, ${ingredientId}, ${recipeId}, ${tinNumber}, ${userId}, NOW())
-      ON CONFLICT DO NOTHING
-      RETURNING id, sub_recipe_id AS "ingredientId", recipe_id AS "recipeId",
-                tin_number AS "tinNumber", user_id AS "userId", completed_at AS "completedAt"
-    `);
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    if (!row) { res.status(409).json({ error: "Already completed" }); return; }
-    const userName = userId
-      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
-      : null;
-    res.status(201).json({ ...row, isSubRecipe: true, userName });
-  } else {
-    // Raw SQL so we can populate sub_recipe_id alongside ingredient_id when
-    // an origin is provided. The unique index uq_prep_completion_ing keys on
-    // COALESCE(sub_recipe_id, 0) which lets two ticks for the same
-    // (plan, ingredient, parent recipe, tin) coexist as long as their
-    // origin sub-recipes differ.
-    const result = await db.execute(sql`
-      INSERT INTO prep_completions (plan_id, ingredient_id, sub_recipe_id, recipe_id, tin_number, user_id, completed_at)
-      VALUES (${planId}, ${ingredientId}, ${subRecipeOriginId ?? null}, ${recipeId}, ${tinNumber}, ${userId}, NOW())
-      ON CONFLICT DO NOTHING
-      RETURNING id, ingredient_id AS "ingredientId", sub_recipe_id AS "subRecipeOriginId",
-                recipe_id AS "recipeId", tin_number AS "tinNumber",
-                user_id AS "userId", completed_at AS "completedAt"
-    `);
-    const row = result.rows[0] as Record<string, unknown> | undefined;
-    if (!row) { res.status(409).json({ error: "Already completed" }); return; }
-
-    const userName = userId
-      ? (await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)))?.[0]?.name ?? null
-      : null;
-
-    res.status(201).json({ ...row, isSubRecipe: false, userName });
-  }
-});
+// POST /:id/prep-completions (a prep tick) moved to routes/prep-completions.ts
+// (2026-10-27), mounted ahead of this router — same path, body and answers,
+// and the tick is now also recorded for prep timing there.
 
 router.delete("/:id/prep-completions/by-tin", async (req, res) => {
   const planId = Number(req.params.id);

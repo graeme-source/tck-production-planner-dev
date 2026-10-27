@@ -105,6 +105,7 @@ import meetingRemindersRouter from "./meeting-reminders";
 import wishListRouter from "./wish-list";
 import endOfDayRouter from "./end-of-day";
 import qualityRejectsRouter from "./quality-rejects";
+import prepCompletionsRouter from "./prep-completions";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
 import wrappingFreezerRouter from "./wrapping-freezer";
 import shopifyWrapPushesRouter from "./shopify-wrap-pushes";
@@ -292,6 +293,9 @@ router.use("/queued-production", queuedProductionRouter);
 // production-plans router so its paths (including the wonky ones moved out
 // of it) are answered here.
 router.use("/production-plans", qualityRejectsRouter);
+// A prep tick (POST /:id/prep-completions) — moved out of the frozen router
+// 2026-10-27; also records the tick for prep timing (flag-and-allow).
+router.use("/production-plans", prepCompletionsRouter);
 // Taking wrapped packs back out of the fridge/freezer (the wrapping undo) —
 // moved out of the frozen router 2026-10-08; refuses unconfirmed requests.
 router.use("/production-plans", wrappingStorageUndoRouter);

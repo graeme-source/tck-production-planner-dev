@@ -12,14 +12,17 @@
  *   POST /api/prep-sessions/:id/close → { ok }
  *        The person moved off the item. A session that completed nothing is
  *        then "closed without completing".
- *   POST /api/prep-sessions/complete → { linked }
+ *   POST /api/prep-sessions/complete → { result: linked | flagged | not_prep | missing }
  *        { kind: "tick", planId, ingredientId | subRecipeId, recipeId, tinNumber,
  *          subRecipeOriginId?, quantity?, unit? }
- *            the tick the screen has just made through the EXISTING
- *            /production-plans/:id/prep-completions flow: its prep_completions
- *            row is linked to the person's session on the item.
+ *            the tick the screen has just made through the existing
+ *            /production-plans/:id/prep-completions flow (routes/prep-
+ *            completions.ts, which has normally recorded it for timing
+ *            already): adds the tin's amount.
  *        { kind: "make", planId, subRecipeId, batches, quantity?, unit? }
  *            a finished sub-recipe make flow (no prep_completions row).
+ *        A completion with no session open on the item is FLAGGED, not
+ *        refused (flag-and-allow — services/prep-session-store.ts).
  *   POST /api/prep-sessions/untick { planId, ingredientId | subRecipeId } → { ok }
  *        After an undo: the link went with the prep_completions row (ON DELETE
  *        CASCADE); this re-totals the sessions on the item.
@@ -34,10 +37,10 @@ import * as z from "zod";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { validate } from "../middleware/validate";
+import { PREP_SESSION_STATIONS, decideOpen, prepItemOf, type SessionHead } from "../lib/prep-session-rules";
 import {
-  MAX_SESSION_MS, PREP_SESSION_STATIONS, decideOpen, prepItemOf, sessionForCompletion,
-  type SessionHead,
-} from "../lib/prep-session-rules";
+  findTick, itemMatch, ms, recordMakeTiming, recordTickTiming, refreshSessionTotals,
+} from "../services/prep-session-store";
 
 const router: IRouter = Router();
 
@@ -84,54 +87,6 @@ const ParamsId = z.object({ id: z.coerce.number().int().positive() });
 
 const FK_VIOLATION = "23503";
 const pgCode = (err: unknown) => (err as { code?: string } | null)?.code;
-/** Epoch milliseconds from the database (float8 carries microseconds). */
-const ms = (v: number | string) => Math.round(Number(v));
-
-function itemMatch(item: { ingredientId: number | null; subRecipeId: number | null }) {
-  return sql`ingredient_id IS NOT DISTINCT FROM ${item.ingredientId}::int
-    AND sub_recipe_id IS NOT DISTINCT FROM ${item.subRecipeId}::int`;
-}
-
-/** Re-total a session from its completions: latest completion time, and the
- *  quantity when every completion gave one in the same unit. */
-async function refreshSessionTotals(sessionId: number): Promise<void> {
-  await db.execute(sql`
-    UPDATE prep_sessions s SET
-      completed_at = agg.last_at,
-      quantity = agg.qty,
-      quantity_unit = agg.unit
-    FROM (
-      SELECT MAX(completed_at) AS last_at,
-             CASE WHEN COUNT(*) > 0 AND COUNT(quantity) = COUNT(*) AND COUNT(DISTINCT quantity_unit) = 1
-                  THEN SUM(quantity) END AS qty,
-             CASE WHEN COUNT(DISTINCT quantity_unit) = 1 THEN MIN(quantity_unit) END AS unit
-        FROM prep_session_completions
-       WHERE session_id = ${sessionId}
-    ) agg
-    WHERE s.id = ${sessionId}
-  `);
-}
-
-/** The person's sessions on an item that could own a completion at `atSql`. */
-async function candidateSessions(
-  userId: number, planId: number,
-  item: { ingredientId: number | null; subRecipeId: number | null },
-  recipeId: number | null, atSql: ReturnType<typeof sql>,
-): Promise<SessionHead[]> {
-  const rows = await db.execute<{ id: number; opened_ms: number; closed_ms: number | null }>(sql`
-    SELECT id,
-           (EXTRACT(EPOCH FROM opened_at) * 1000)::float8 AS opened_ms,
-           (EXTRACT(EPOCH FROM closed_at) * 1000)::float8 AS closed_ms
-      FROM prep_sessions
-     WHERE user_id = ${userId} AND plan_id = ${planId} AND ${itemMatch(item)}
-       AND (recipe_id IS NULL OR recipe_id IS NOT DISTINCT FROM ${recipeId}::int)
-       AND opened_at <= ${atSql}
-       AND opened_at > ${atSql} - make_interval(secs => ${MAX_SESSION_MS / 1000})
-     ORDER BY opened_at DESC
-     LIMIT 5
-  `);
-  return rows.rows.map(r => ({ id: r.id, openedAt: ms(r.opened_ms), closedAt: r.closed_ms == null ? null : ms(r.closed_ms) }));
-}
 
 router.post("/open", validate(OpenBody), async (req: Request, res: Response) => {
   const body = req.body as z.infer<typeof OpenBody>;
@@ -154,7 +109,7 @@ router.post("/open", validate(OpenBody), async (req: Request, res: Response) => 
                  (EXTRACT(EPOCH FROM closed_at) * 1000)::float8 AS closed_ms
             FROM prep_sessions
            WHERE user_id = ${userId} AND plan_id = ${body.planId} AND ${itemMatch(item)}
-             AND recipe_id IS NOT DISTINCT FROM ${recipeId}::int
+             AND recipe_id IS NOT DISTINCT FROM ${recipeId}::int AND flag IS NULL
            ORDER BY opened_at DESC
            LIMIT 1
         ) s ON TRUE
@@ -216,50 +171,23 @@ router.post("/complete", validate(CompleteBody), async (req: Request, res: Respo
     if (body.kind === "tick") {
       const item = prepItemOf(body);
       if (!item) { res.status(400).json({ error: "Give exactly one of ingredientId or subRecipeId" }); return; }
-      // The tick the screen just made, by its natural key — the same tuple
-      // the prep-completions endpoints use (origin-tagged ingredient ticks
-      // carry the sub-recipe they came through in sub_recipe_id).
-      const cols = sql`id, user_id, (EXTRACT(EPOCH FROM completed_at) * 1000)::float8 AS at_ms`;
-      const tick = await db.execute<{ id: number; user_id: number | null; at_ms: number }>(item.ingredientId != null ? sql`
-        SELECT ${cols} FROM prep_completions
-         WHERE plan_id = ${body.planId} AND ingredient_id = ${item.ingredientId}
-           AND recipe_id = ${body.recipeId} AND tin_number = ${body.tinNumber}
-           AND COALESCE(sub_recipe_id, 0) = COALESCE(${body.subRecipeOriginId ?? null}::int, 0)
-      ` : sql`
-        SELECT ${cols} FROM prep_completions
-         WHERE plan_id = ${body.planId} AND sub_recipe_id = ${item.subRecipeId} AND ingredient_id IS NULL
-           AND recipe_id = ${body.recipeId} AND tin_number = ${body.tinNumber}
-      `);
-      const completion = tick.rows[0];
+      // The tick the screen just made, found by its natural key. The tick
+      // endpoint has normally recorded it already; this adds the tin's amount.
+      const tick = await findTick(body.planId, item, body.recipeId, body.tinNumber, body.subRecipeOriginId ?? null);
       // Only the person who ticked it gets the time.
-      if (!completion || completion.user_id !== userId) { res.json({ linked: false }); return; }
-      const atSql = sql`(SELECT completed_at FROM prep_completions WHERE id = ${completion.id})`;
-      const candidates = await candidateSessions(userId, body.planId, item, body.recipeId, atSql);
-      const sessionId = sessionForCompletion(candidates, ms(completion.at_ms));
-      if (sessionId == null) { res.json({ linked: false }); return; }
-      await db.execute(sql`
-        INSERT INTO prep_session_completions (session_id, prep_completion_id, recipe_id, quantity, quantity_unit, completed_at)
-        SELECT ${sessionId}, pc.id, pc.recipe_id, ${body.quantity ?? null}, ${body.unit ?? null}, pc.completed_at
-          FROM prep_completions pc WHERE pc.id = ${completion.id}
-        ON CONFLICT (prep_completion_id) DO NOTHING
-      `);
-      await refreshSessionTotals(sessionId);
-      res.json({ linked: true });
+      if (!tick || tick.userId !== userId) { res.json({ result: "missing" }); return; }
+      const result = await recordTickTiming(tick.id, { quantity: body.quantity ?? null, unit: body.unit ?? null });
+      res.json({ result });
       return;
     }
 
-    // A finished make flow — timed against the session open on the sub-recipe.
-    const item = { ingredientId: null, subRecipeId: body.subRecipeId };
-    const now = await db.execute<{ now_ms: number }>(sql`SELECT (EXTRACT(EPOCH FROM NOW()) * 1000)::float8 AS now_ms`);
-    const candidates = await candidateSessions(userId, body.planId, item, null, sql`NOW()`);
-    const sessionId = sessionForCompletion(candidates, ms(now.rows[0]?.now_ms ?? Date.now()));
-    if (sessionId == null) { res.json({ linked: false }); return; }
-    await db.execute(sql`
-      INSERT INTO prep_session_completions (session_id, prep_completion_id, recipe_id, quantity, quantity_unit, batches)
-      VALUES (${sessionId}, NULL, NULL, ${body.quantity ?? null}, ${body.unit ?? null}, ${body.batches})
-    `);
-    await refreshSessionTotals(sessionId);
-    res.json({ linked: true });
+    // A finished make flow — timed against the session open on the
+    // sub-recipe, or flagged as made without opening it.
+    const result = await recordMakeTiming({
+      userId, planId: body.planId, subRecipeId: body.subRecipeId, batches: body.batches,
+      quantity: body.quantity ?? null, unit: body.unit ?? null,
+    });
+    res.json({ result });
   } catch (err) {
     console.error("[prep-sessions] complete failed:", err);
     res.status(500).json({ error: "Couldn't link the prep completion" });
