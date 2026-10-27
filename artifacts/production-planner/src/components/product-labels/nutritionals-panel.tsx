@@ -15,10 +15,11 @@ type NutritionalsData = {
   totalRawWeightG: number;
   cookedWeightG: number;
   cookingLossPercent: number;
-  portionWeightG: number;
+  /** Null when the pack size is blank (sold by weight): per 100 g only. */
+  portionWeightG: number | null;
   portionsPerBatch: number;
   per100g: Record<string, number | null>;
-  perPortion: Record<string, number | null>;
+  perPortion: Record<string, number | null> | null;
   completeness: {
     isComplete: boolean;
     totalIngredients: number;
@@ -57,6 +58,7 @@ export function NutritionalsPanel({ recipe }: { recipe: PanelRecipe }) {
   if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   if (error) return <p className="text-destructive text-sm py-4">{error}</p>;
   if (!data) return null;
+  const perPortion = data.perPortion;
 
   return (
     <div className="space-y-4">
@@ -70,11 +72,17 @@ export function NutritionalsPanel({ recipe }: { recipe: PanelRecipe }) {
           <p className="font-bold">{data.cookedWeightG}g</p>
           <p className="text-[10px] text-muted-foreground">(-{data.cookingLossPercent}% loss)</p>
         </div>
-        <div className="bg-secondary/30 rounded-lg p-3 text-center">
-          <p className="text-xs text-muted-foreground">Portion Weight</p>
-          <p className="font-bold">{data.portionWeightG}g</p>
-          <p className="text-[10px] text-muted-foreground">({data.portionsPerBatch} portions)</p>
-        </div>
+        {perPortion && data.portionWeightG != null ? (
+          <div className="bg-secondary/30 rounded-lg p-3 text-center">
+            <p className="text-xs text-muted-foreground">Portion Weight</p>
+            <p className="font-bold">{data.portionWeightG}g</p>
+            <p className="text-[10px] text-muted-foreground">({data.portionsPerBatch} portions)</p>
+          </div>
+        ) : (
+          <div className="bg-secondary/30 rounded-lg p-3 text-center text-xs text-muted-foreground flex items-center justify-center">
+            No pack size — per 100 g only
+          </div>
+        )}
       </div>
 
       <table className="w-full text-sm">
@@ -82,7 +90,7 @@ export function NutritionalsPanel({ recipe }: { recipe: PanelRecipe }) {
           <tr className="border-b border-border">
             <th className="text-left py-1.5 font-semibold">Nutrient</th>
             <th className="text-right py-1.5 font-semibold">Per 100g</th>
-            <th className="text-right py-1.5 font-semibold">Per portion ({data.portionWeightG}g)</th>
+            {perPortion && <th className="text-right py-1.5 font-semibold">Per portion ({data.portionWeightG}g)</th>}
           </tr>
         </thead>
         <tbody>
@@ -90,7 +98,7 @@ export function NutritionalsPanel({ recipe }: { recipe: PanelRecipe }) {
             <tr key={key} className="border-b border-border/50">
               <td className={`py-1.5 ${label.startsWith("  ") ? "pl-4 text-muted-foreground text-xs" : "font-medium"}`}>{label.trim()}</td>
               <td className="text-right py-1.5">{data.per100g[key] != null ? data.per100g[key] : "—"}{data.per100g[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
-              <td className="text-right py-1.5">{data.perPortion[key] != null ? data.perPortion[key] : "—"}{data.perPortion[key] != null && (key.startsWith("energy") ? "" : "g")}</td>
+              {perPortion && <td className="text-right py-1.5">{perPortion[key] != null ? perPortion[key] : "—"}{perPortion[key] != null && (key.startsWith("energy") ? "" : "g")}</td>}
             </tr>
           ))}
         </tbody>

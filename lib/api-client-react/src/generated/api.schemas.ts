@@ -266,7 +266,10 @@ export interface Recipe {
   servingUnit: string;
   category?: string | null;
   notes?: string | null;
+  /** Portions per pack; a blank pack size reads as 1 (see packSizeSet). */
   packSize: number;
+  /** False when the pack size is blank (sold by weight) — nutrition per 100 g only. */
+  packSizeSet?: boolean;
   rrp: number;
   packagingCost: number;
   labourCost: number;
@@ -374,7 +377,8 @@ export interface CreateRecipe {
   servingUnit: string;
   category?: string | null;
   notes?: string | null;
-  packSize?: number;
+  /** Portions per pack. Null (blank) = sold by weight — the website then shows nutrition per 100 g only; everywhere else it counts as 1. */
+  packSize?: number | null;
   rrp?: number;
   packagingCost?: number;
   labourCost?: number;

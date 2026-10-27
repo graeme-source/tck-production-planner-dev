@@ -12,7 +12,7 @@
  * The collection and discount code are their own launch steps
  * (test-box-shopify-launch.ts).
  */
-import { db, testBoxesTable, testBoxRecipesTable, testBoxShopifyProductsTable, recipesTable } from "@workspace/db";
+import { db, testBoxesTable, testBoxRecipesTable, testBoxShopifyProductsTable, recipesTable, recipePackSizeOrOne } from "@workspace/db";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { shopifyAdminUrl, ShopifyWritesBlockedError } from "../services/shopify";
 import { linkVariantToRecipe } from "./recipe-shopify-mapping";
@@ -35,7 +35,8 @@ import {
 // ── What the recipe's own data says (deck, nutrition) ───────────────────────
 export interface LoadedContent {
   deck: { deckText: string; mayContainStatement: string | null; isComplete: boolean; missing: string[] } | null;
-  nutrition: { per100g: Record<string, number | null>; perPortion: Record<string, number | null>; portionWeightG: number; complete: boolean; missing: string[] } | null;
+  /** perPortion / portionWeightG are null for a recipe with no pack size (per 100 g only). */
+  nutrition: { per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; complete: boolean; missing: string[] } | null;
 }
 export type ContentLoader = (recipeId: number) => Promise<LoadedContent>;
 
@@ -57,7 +58,7 @@ export interface RecipePreview {
   barcode: string;
   imagesCopied: boolean;
   metafields: MetafieldLine[];
-  nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string }> };
+  nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string | null }> };
   warnings: string[];
   blocking: string[];
 }
@@ -112,7 +113,7 @@ export async function buildPlan(
   if (!box || box.deletedAt) throw new RunRefused(404, "Test box not found");
 
   const recipes = await db.select({
-    id: recipesTable.id, name: recipesTable.name, description: recipesTable.description, packSize: recipesTable.packSize,
+    id: recipesTable.id, name: recipesTable.name, description: recipesTable.description, packSize: recipePackSizeOrOne,
     notes: recipesTable.notes, isDraft: recipesTable.isDraft,
   }).from(testBoxRecipesTable)
     .innerJoin(recipesTable, eq(recipesTable.id, testBoxRecipesTable.recipeId))

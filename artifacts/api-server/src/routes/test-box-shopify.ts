@@ -69,7 +69,7 @@ function contentLoader(req: Request): ContentLoader {
   return async (recipeId: number): Promise<LoadedContent> => {
     const [deck, nutri] = await Promise.all([
       get<{ deckText: string; mayContainStatement: string | null; isComplete: boolean; missingDeclarations?: string[]; unwrappedDeclarations?: string[] }>(`/api/recipes/${recipeId}/ingredient-deck`),
-      get<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null>; portionWeightG: number; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
+      get<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
     ]);
     return {
       deck: deck ? {

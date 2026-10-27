@@ -11,7 +11,7 @@ import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
-import { toGrams } from "@workspace/units";
+import { toGrams, effectivePackSize, hasPackSize, packSizeToStore } from "@workspace/units";
 import { NUTRIENT_KEYS, missingNutrients } from "@workspace/product-labels";
 import { buildRecipeIngredientDeck } from "../lib/recipe-ingredient-deck";
 import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
@@ -63,7 +63,10 @@ function mapRecipe(r: typeof recipesTable.$inferSelect) {
   return {
     ...r,
     servings: Number(r.servings),
-    packSize: Number(r.packSize),
+    // Blank pack size (migration 0286) counts as 1 for every figure here;
+    // packSizeSet tells the recipe form it's blank (nutrition per 100 g only).
+    packSize: effectivePackSize(r.packSize),
+    packSizeSet: hasPackSize(r.packSize),
     rrp: Number(r.rrp),
     packagingCost: Number(r.packagingCost),
     labourCost: Number(r.labourCost),
@@ -279,7 +282,7 @@ router.post("/", validate(CreateRecipeBody), async (req, res) => {
     name, description,
     servings: String(servings),
     servingUnit, category, notes,
-    packSize: String(packSize ?? 1),
+    packSize: packSizeToStore(packSize),
     rrp: String(rrp ?? 0),
     packagingCost: String(packagingCost ?? 0),
     labourCost: String(labourCost ?? 0),
@@ -633,7 +636,7 @@ router.put("/:id", validate(UpdateRecipeBody), async (req, res) => {
     name, description,
     servings: String(servings),
     servingUnit, category, notes,
-    packSize: String(packSize ?? 1),
+    packSize: packSizeToStore(packSize),
     rrp: String(rrp ?? 0),
     packagingCost: String(packagingCost ?? 0),
     labourCost: String(labourCost ?? 0),
@@ -1031,6 +1034,8 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   // a separate production-batching figure).
   servings: number;
   packSize: number;
+  /** Pack size blank (migration 0286): nutrition per 100 g only. */
+  per100gOnly: boolean;
   missingNutritionals: string[];
   missingNutritionalDetail: Array<{ ingredientId: number; name: string; missing: string[] }>;
   missingDeclarations: string[];
@@ -1042,7 +1047,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   const cookingLossPercent = Number(recipe.cookingLossPercent) || 3;
   const portionsPerBatch = recipe.portionsPerBatch ?? 10;
   const servings = Number(recipe.servings) || 1;
-  const packSize = Number(recipe.packSize) || 1;
+  const packSize = effectivePackSize(recipe.packSize);
 
   const directIngs = await db
     .select({
@@ -1217,6 +1222,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
 
   return {
     items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize,
+    per100gOnly: !hasPackSize(recipe.packSize),
     missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail,
   };
 }
@@ -1225,7 +1231,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
  *  GET /:id/nutritionals, also used by the website sync
  *  (lib/upf-shopify-sync.ts) so both always agree. */
 export async function computeRecipeNutritionals(recipeId: number) {
-  const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
+  const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, per100gOnly, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
     await gatherRecipeIngredients(recipeId);
 
   const cookedWeightG = totalWeightG * (1 - cookingLossPercent / 100);
@@ -1266,17 +1272,21 @@ export async function computeRecipeNutritionals(recipeId: number) {
     }
   }
 
+  // No pack size (migration 0286, e.g. fried chicken sold by weight):
+  // per 100 g only. The portion / pack weights and the per-portion column
+  // are null so nothing downstream can print a misleading "per portion".
   return {
     totalRawWeightG: Math.round(totalWeightG),
     cookingLossPercent,
     cookedWeightG: Math.round(cookedWeightG),
     portionsPerBatch,
     servings,
-    portionWeightG,
+    per100gOnly,
+    portionWeightG: per100gOnly ? null : portionWeightG,
     packSize,
-    declaredPackWeightG,
+    declaredPackWeightG: per100gOnly ? null : declaredPackWeightG,
     per100g,
-    perPortion,
+    perPortion: per100gOnly ? null : perPortion,
     completeness: {
       totalIngredients: items.length,
       missingNutritionals,
@@ -1531,7 +1541,7 @@ router.get("/:id/spec-sheet.pdf", requireAdmin, async (req, res) => {
 
     const [deckResp, nutriResp] = await Promise.all([
       fetchJson<{ ingredients: Array<{ declaration: string; percentage: number }>; deckText: string; allergens: string[]; mayContainStatement: string | null; missingDeclarations: string[] }>(`/api/recipes/${recipeId}/ingredient-deck`),
-      fetchJson<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null>; portionWeightG: number; declaredPackWeightG: number; packSize: number; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
+      fetchJson<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; declaredPackWeightG: number | null; packSize: number; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
     ]);
 
     const missing: string[] = [];

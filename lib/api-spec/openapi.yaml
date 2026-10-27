@@ -2343,6 +2343,10 @@ components:
           nullable: true
         packSize:
           type: number
+          description: Portions per pack; a blank pack size reads as 1 (see packSizeSet).
+        packSizeSet:
+          type: boolean
+          description: False when the pack size is blank (sold by weight) — nutrition per 100 g only.
         rrp:
           type: number
         packagingCost:
@@ -2538,6 +2542,8 @@ components:
           nullable: true
         packSize:
           type: number
+          nullable: true
+          description: Portions per pack. Null (blank) = sold by weight — the website then shows nutrition per 100 g only; everywhere else it counts as 1.
         rrp:
           type: number
         packagingCost:

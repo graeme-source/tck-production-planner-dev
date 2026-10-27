@@ -676,7 +676,17 @@ export const ListRecipesResponseItem = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
-  packSize: zod.number(),
+  packSize: zod
+    .number()
+    .describe(
+      "Portions per pack; a blank pack size reads as 1 (see packSizeSet).",
+    ),
+  packSizeSet: zod
+    .boolean()
+    .optional()
+    .describe(
+      "False when the pack size is blank (sold by weight) — nutrition per 100 g only.",
+    ),
   rrp: zod.number(),
   packagingCost: zod.number(),
   labourCost: zod.number(),
@@ -748,7 +758,12 @@ export const CreateRecipeBody = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
-  packSize: zod.number().optional(),
+  packSize: zod
+    .number()
+    .nullish()
+    .describe(
+      "Portions per pack. Null (blank) = sold by weight — the website then shows nutrition per 100 g only; everywhere else it counts as 1.",
+    ),
   rrp: zod.number().optional(),
   packagingCost: zod.number().optional(),
   labourCost: zod.number().optional(),
@@ -830,7 +845,17 @@ export const GetRecipeResponse = zod
     servingUnit: zod.string(),
     category: zod.string().nullish(),
     notes: zod.string().nullish(),
-    packSize: zod.number(),
+    packSize: zod
+      .number()
+      .describe(
+        "Portions per pack; a blank pack size reads as 1 (see packSizeSet).",
+      ),
+    packSizeSet: zod
+      .boolean()
+      .optional()
+      .describe(
+        "False when the pack size is blank (sold by weight) — nutrition per 100 g only.",
+      ),
     rrp: zod.number(),
     packagingCost: zod.number(),
     labourCost: zod.number(),
@@ -943,7 +968,12 @@ export const UpdateRecipeBody = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
-  packSize: zod.number().optional(),
+  packSize: zod
+    .number()
+    .nullish()
+    .describe(
+      "Portions per pack. Null (blank) = sold by weight — the website then shows nutrition per 100 g only; everywhere else it counts as 1.",
+    ),
   rrp: zod.number().optional(),
   packagingCost: zod.number().optional(),
   labourCost: zod.number().optional(),
@@ -1017,7 +1047,17 @@ export const UpdateRecipeResponse = zod.object({
   servingUnit: zod.string(),
   category: zod.string().nullish(),
   notes: zod.string().nullish(),
-  packSize: zod.number(),
+  packSize: zod
+    .number()
+    .describe(
+      "Portions per pack; a blank pack size reads as 1 (see packSizeSet).",
+    ),
+  packSizeSet: zod
+    .boolean()
+    .optional()
+    .describe(
+      "False when the pack size is blank (sold by weight) — nutrition per 100 g only.",
+    ),
   rrp: zod.number(),
   packagingCost: zod.number(),
   labourCost: zod.number(),

@@ -34,9 +34,10 @@ export interface SpecDeckEntry {
 
 export interface SpecNutrition {
   per100g: Record<string, Nutrient>;
-  perPortion: Record<string, Nutrient>;
-  portionWeightG: number;
-  declaredPackWeightG: number;
+  /** Null for a recipe with no pack size (migration 0286): per 100 g only. */
+  perPortion: Record<string, Nutrient> | null;
+  portionWeightG: number | null;
+  declaredPackWeightG: number | null;
   packSize: number;
   // False when some ingredients have no per-100g data, so the aggregate is
   // understated and must not be presented as a final declaration.
@@ -272,6 +273,9 @@ function Allergens({ data }: { data: ProductSpecPdfData }) {
 }
 
 function Nutrition({ nutrition }: { nutrition: ProductSpecPdfData["nutrition"] }) {
+  // No pack size (e.g. fried chicken sold by weight): per 100 g column only.
+  const perPortion = nutrition?.perPortion ?? null;
+  const valueW = perPortion ? 25 : 50;
   return (
     <View wrap={false}>
       <Text style={styles.section}>5. Nutrition</Text>
@@ -285,21 +289,25 @@ function Nutrition({ nutrition }: { nutrition: ProductSpecPdfData["nutrition"] }
           ) : null}
           <View style={styles.tHeadRow}>
             <Text style={[styles.tHead, cw(50)]}>Typical values</Text>
-            <Text style={[styles.tHead, cw(25), { textAlign: "right" }]}>Per 100g</Text>
-            <Text style={[styles.tHead, cw(25), { textAlign: "right" }]}>Per portion</Text>
+            <Text style={[styles.tHead, cw(valueW), { textAlign: "right" }]}>Per 100g</Text>
+            {perPortion ? <Text style={[styles.tHead, cw(25), { textAlign: "right" }]}>Per portion</Text> : null}
           </View>
           {NUTRIENT_ROWS.map(r => (
             <View key={r.key} style={styles.tRow}>
               <Text style={[styles.tCell, cw(50)]}>{r.label}</Text>
-              <Text style={[styles.tCell, cw(25), { textAlign: "right" }]}>{nutrition.complete ? fmtNutrient(nutrition.per100g[r.key], r.unit) : "pending"}</Text>
-              <Text style={[styles.tCell, cw(25), { textAlign: "right" }]}>{nutrition.complete ? fmtNutrient(nutrition.perPortion[r.key], r.unit) : "pending"}</Text>
+              <Text style={[styles.tCell, cw(valueW), { textAlign: "right" }]}>{nutrition.complete ? fmtNutrient(nutrition.per100g[r.key], r.unit) : "pending"}</Text>
+              {perPortion ? <Text style={[styles.tCell, cw(25), { textAlign: "right" }]}>{nutrition.complete ? fmtNutrient(perPortion[r.key], r.unit) : "pending"}</Text> : null}
             </View>
           ))}
           {/* Portion weight is derived from the recipe's fill/base weights. When
               those are unset the endpoint still returns a figure, but it is the
               bare ingredient sum and wildly understates a finished calzone — so
               never print a net weight we cannot stand behind on a buyer's spec. */}
-          {nutrition.complete ? (
+          {nutrition.portionWeightG == null ? (
+            <Text style={{ fontSize: 8, color: "#666", marginTop: 3 }}>
+              No pack size set (sold by weight), so nutrition is stated per 100 g only.
+            </Text>
+          ) : nutrition.complete ? (
             <Text style={{ fontSize: 8, color: "#666", marginTop: 3 }}>
               Portion weight ~{nutrition.portionWeightG} g. Declared net weight (pack of {nutrition.packSize}) ~{nutrition.declaredPackWeightG} g.
             </Text>
@@ -380,8 +388,8 @@ function Packaging({ spec, nutrition }: { spec: ProductSpecPdfData["spec"]; nutr
       {/* Only state a net weight when it is genuinely derived (recipe fill/base
           weights set). Otherwise the figure is the bare ingredient sum — an
           order of magnitude light — and must never reach a buyer's spec. */}
-      <KV label="Declared net weight" value={nutrition?.complete ? `${nutrition.declaredPackWeightG} g` : null} missing />
-      <KV label="Pack configuration" value={nutrition ? `${nutrition.packSize} portion(s) per pack` : (p.caseConfiguration ?? null)} />
+      <KV label="Declared net weight" value={nutrition?.complete && nutrition.declaredPackWeightG != null ? `${nutrition.declaredPackWeightG} g` : null} missing />
+      <KV label="Pack configuration" value={nutrition && nutrition.portionWeightG != null ? `${nutrition.packSize} portion(s) per pack` : (p.caseConfiguration ?? null)} />
       <KV label="Format" value={p.format} missing />
       <KV label="Primary packaging" value={p.primaryPackaging} missing />
       <KV label="Secondary packaging" value={p.secondaryPackaging} missing />

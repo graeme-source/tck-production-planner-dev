@@ -16,6 +16,13 @@
  *  - A product linked to more than one recipe has no single answer, so all
  *    its figures are held back.
  *  - A product that's no longer linked to any recipe loses its figures.
+ *
+ * No pack size (Graeme, 2026-10-27; migration 0286 — e.g. fried chicken,
+ * sold by weight): the nutrition table goes up per 100 g only, as
+ * { "per100gOnly": true, "per100g": {...} } with no perPortion / portion
+ * weight, and the kcal / protein icons (which the theme labels "per
+ * portion") are held back — a per 100 g number under a per-portion label
+ * would be wrong. Recipes with a portion size are unchanged.
  */
 
 export const WEBSITE_METRICS = ["upf", "kcal", "protein", "nutrition"] as const;
@@ -27,11 +34,12 @@ export const NUTRITION_KEYS = ["energyKj", "energyKcal", "fat", "saturates", "ca
 export type NutritionKey = (typeof NUTRITION_KEYS)[number];
 export type NutritionValues = Record<NutritionKey, number | null>;
 
-/** The recipe's nutrition panel as the Recipes page computes it. */
+/** The recipe's nutrition panel as the Recipes page computes it.
+ *  portionWeightG / perPortion are null for a recipe with no pack size. */
 export interface NutritionPanel {
-  portionWeightG: number;
+  portionWeightG: number | null;
   per100g: NutritionValues;
-  perPortion: NutritionValues;
+  perPortion: NutritionValues | null;
 }
 
 export interface RecipeFacts {
@@ -39,6 +47,8 @@ export interface RecipeFacts {
   name: string;
   upfPercent: number | null;
   unclassifiedIngredients: string[];
+  /** Per 100 g only (migration 0286): no per-portion icons, table per 100 g. */
+  per100gOnly?: boolean;
   kcalPerPortion: number | null;
   proteinPerPortion: number | null;
   /** Ingredients with no kcal / no protein figure. */
@@ -101,13 +111,19 @@ function roundNutrient(key: NutritionKey, v: number): number {
   return Math.round(v * 10) / 10;
 }
 
+/** The reason shown when a per-portion figure is held back by design. */
+export const NO_PACK_SIZE_REASON = "no pack size — per 100 g only";
+
 /**
  * The nutrition table as the JSON the theme reads (custom.nutrition_panel),
  * or null when any value is missing. Keys in a fixed order so an unchanged
  * recipe always produces the identical string (no needless writes).
+ *
+ * With per100gOnly the table is per 100 g only:
+ * { "per100gOnly": true, "per100g": {...} } — no perPortion, no
+ * portionWeightG, so the theme draws just the "Per 100g" column.
  */
-export function nutritionPanelJson(panel: NutritionPanel): string | null {
-  if (!(panel.portionWeightG > 0)) return null;
+export function nutritionPanelJson(panel: NutritionPanel, per100gOnly = false): string | null {
   const pick = (vals: NutritionValues): Record<NutritionKey, number> | null => {
     const out = {} as Record<NutritionKey, number>;
     for (const k of NUTRITION_KEYS) {
@@ -118,9 +134,27 @@ export function nutritionPanelJson(panel: NutritionPanel): string | null {
     return out;
   };
   const per100g = pick(panel.per100g);
+  if (per100gOnly) return per100g ? JSON.stringify({ per100gOnly: true, per100g }) : null;
+  if (panel.portionWeightG == null || !(panel.portionWeightG > 0) || !panel.perPortion) return null;
   const perPortion = pick(panel.perPortion);
   if (!per100g || !perPortion) return null;
   return JSON.stringify({ portionWeightG: Math.round(panel.portionWeightG), per100g, perPortion });
+}
+
+/** True when a nutrition_panel JSON is the per 100 g-only shape. */
+export function isPer100gOnlyPanel(json: string | null): boolean {
+  if (!json) return false;
+  try {
+    const p = JSON.parse(json) as { per100gOnly?: unknown; perPortion?: unknown };
+    return p.per100gOnly === true && p.perPortion == null;
+  } catch {
+    return false;
+  }
+}
+
+/** A figure held back on purpose (no pack size), not for missing data. */
+export function heldByDesign(heldBecause: string | null): boolean {
+  return heldBecause === NO_PACK_SIZE_REASON;
 }
 
 type Figures = Record<WebsiteMetric, { value: FigureValue | null; heldBecause: string | null }>;
@@ -132,17 +166,22 @@ export function recipeFigures(r: RecipeFacts): Figures {
     : r.unclassifiedIngredients.length > 0
       ? held(`not yet classified: ${list(r.unclassifiedIngredients)}`)
       : { value: websiteUpfPercent(r.upfPercent), heldBecause: null };
-  const kcal = r.missingKcal.length > 0
+  // No pack size: the icons are per portion, so there's nothing honest to show.
+  const kcal = r.per100gOnly
+    ? held(NO_PACK_SIZE_REASON)
+    : r.missingKcal.length > 0
     ? held(`no calories on: ${list(r.missingKcal)}`)
     : r.kcalPerPortion == null || r.kcalPerPortion <= 0
       ? held("no portion weight / nutrition yet")
       : { value: Math.round(r.kcalPerPortion), heldBecause: null };
-  const protein = r.missingProtein.length > 0
+  const protein = r.per100gOnly
+    ? held(NO_PACK_SIZE_REASON)
+    : r.missingProtein.length > 0
     ? held(`no protein on: ${list(r.missingProtein)}`)
     : r.proteinPerPortion == null || r.proteinPerPortion < 0 || r.kcalPerPortion == null || r.kcalPerPortion <= 0
       ? held("no portion weight / nutrition yet")
       : { value: Math.round(r.proteinPerPortion * 10) / 10, heldBecause: null };
-  const panelJson = r.nutrition ? nutritionPanelJson(r.nutrition) : null;
+  const panelJson = r.nutrition ? nutritionPanelJson(r.nutrition, r.per100gOnly === true) : null;
   const nutrition = r.missingNutrition.length > 0
     ? held(`missing nutrition on: ${list(r.missingNutrition)}`)
     : panelJson == null
