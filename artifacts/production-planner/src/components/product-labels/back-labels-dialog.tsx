@@ -14,7 +14,7 @@ import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Loader2, Minus, Plus, Printer, X } from "lucide-react";
-import { formatLabelDate, initialPrintCount, MAX_PRINT_COUNT } from "@workspace/product-labels";
+import { formatLabelDate, initialPrintCount, MAX_PRINT_COUNT, type LabelRole } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -40,15 +40,22 @@ const day = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en
  *  net packs, production day from the plan, live label only. mode "test"
  *  (label review page): count 1, dated today, live label — or, with no live
  *  label, today's proof stamped TEST — NOT FOR SALE; recorded as a test. */
-export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, mode = "production", onClose }: {
+export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, mode = "production", role = "main", onClose }: {
   recipeId: number; recipeName: string; planItemId?: number; netPacks?: number;
   /** "today" (Graeme, 2026-10-15): real labels for a product that isn't on
    *  today's plan, from its label page — the live label, dated today, no
    *  plan item; recorded as a production print. */
-  mode?: "production" | "test" | "today"; onClose: () => void;
+  mode?: "production" | "test" | "today";
+  /** Which of the recipe's labels (label-roles.ts): "wrapping" = its
+   *  wrapping label (the cinnamon buns' small freezer label). */
+  role?: LabelRole;
+  onClose: () => void;
 }) {
   const test = mode === "test";
   const today = mode === "today";
+  const wrapping = role === "wrapping";
+  const what = wrapping ? "Freezer labels" : "Back labels";
+  const labelHref = `/labels/${recipeId}${wrapping ? "?label=wrapping" : ""}`;
   const startCount = test || today ? 1 : initialPrintCount(netPacks);
   const [count, setCount] = useState(startCount);
   const [countText, setCountText] = useState(() => String(startCount));
@@ -57,11 +64,12 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
   const [made, setMade] = useState<{ count: number; url: string } | null>(null);
 
   const q = useQuery({
-    queryKey: ["back-labels-preview", recipeId, planItemId ?? null, mode],
+    queryKey: ["back-labels-preview", recipeId, planItemId ?? null, mode, role],
     queryFn: async () => {
       const params = new URLSearchParams();
       if (planItemId && !test) params.set("planItemId", String(planItemId));
       if (test) params.set("test", "1");
+      if (wrapping) params.set("role", "wrapping");
       const res = await fetch(`${BASE}/api/product-label-print/${recipeId}/preview?${params}`, { credentials: "include" });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? `Couldn't load (${res.status})`);
@@ -87,7 +95,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(test ? { count, test: true } : { count, planItemId }),
+        body: JSON.stringify({ ...(test ? { count, test: true } : { count, planItemId }), ...(wrapping ? { role } : {}) }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
@@ -117,12 +125,12 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
       <div
         className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
-        role="dialog" aria-modal="true" aria-label={test ? "Test print" : today ? "Print labels today" : "Back labels"}
+        role="dialog" aria-modal="true" aria-label={test ? "Test print" : today ? "Print labels today" : what}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <Printer className="w-6 h-6 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <h2 className="font-bold text-xl leading-tight truncate">{test ? "Test print" : today ? "Print labels today" : "Back labels"} — {recipeName}</h2>
+            <h2 className="font-bold text-xl leading-tight truncate">{test ? "Test print" : today ? "Print labels today" : what} — {recipeName}</h2>
             <p className="text-sm text-muted-foreground">
               {test
                 ? "Try the printer: same PDF as the wrapping station, dated today, recorded as a test."
@@ -145,7 +153,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
                 <div className="rounded-xl border-2 border-amber-300 bg-amber-50 dark:bg-amber-950/20 p-4 space-y-2">
                   <p className="font-bold flex items-center gap-2"><AlertTriangle className="w-5 h-5 text-amber-600" /> Can't print this one yet</p>
                   <p>{p.refusalText}</p>
-                  <Link href={`/labels/${p.recipeId}`} className="inline-block font-semibold text-primary underline underline-offset-2">Open the {p.recipeName} label</Link>
+                  <Link href={labelHref} className="inline-block font-semibold text-primary underline underline-offset-2">Open the {p.recipeName} label</Link>
                 </div>
               ) : p.source === "current-stamped" ? (
                 <div className="rounded-xl border-2 border-rose-300 bg-rose-50 dark:bg-rose-950/20 p-4 space-y-1">
@@ -155,7 +163,7 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
               ) : (
                 <div className="space-y-1">
                   <p className="text-base">
-                    Prints the <Link href={`/labels/${p.recipeId}`} className="font-semibold text-primary underline underline-offset-2">live label</Link>, version {p.live?.versionNo}
+                    Prints the <Link href={labelHref} className="font-semibold text-primary underline underline-offset-2">live label</Link>, version {p.live?.versionNo}
                     {p.live?.publishedByName ? ` (checked by ${p.live.publishedByName})` : ""}.
                   </p>
                   {test && p.liveMatchesRecipe === false && (
@@ -190,14 +198,14 @@ export function BackLabelsDialog({ recipeId, recipeName, planItemId, netPacks, m
                     <p className="text-sm text-muted-foreground">
                       {test
                         ? "A test print starts at 1 label."
-                        : `Starts at the ${startCount} net 2-packs from the chiller (8-pack bags, wonkies and dog bins already taken off).`}
+                        : wrapping ? `Starts at the ${startCount} packs wrapped from the chiller — one label per pack.` : `Starts at the ${startCount} net 2-packs from the chiller (8-pack bags, wonkies and dog bins already taken off).`}
                     </p>
                   </div>
 
                   <div className="grid grid-cols-2 gap-3 text-base">
                     <Fact label="Printed" value={day(p.dates.printDate)} />
                     <Fact label={test ? "Made (today, for the test)" : "Made (production day)"} value={day(p.dates.productionDate)} />
-                    {p.dates.chilledUseBy && <Fact label="Chilled use by" value={formatLabelDate(p.dates.chilledUseBy)} />}
+                    {p.dates.chilledUseBy && <Fact label={wrapping ? "Use by" : "Chilled use by"} value={formatLabelDate(p.dates.chilledUseBy)} />}
                     {p.dates.frozenUseBy && <Fact label="Frozen use by" value={formatLabelDate(p.dates.frozenUseBy)} />}
                     {p.dates.batchCode && <Fact label="Batch number" value={p.dates.batchCode} />}
                     {p.labelSize && <Fact label="Label" value={`${p.labelSize.widthMm} × ${p.labelSize.heightMm} mm`} />}

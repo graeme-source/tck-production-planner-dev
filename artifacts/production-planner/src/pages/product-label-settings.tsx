@@ -418,7 +418,31 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
                 {PERIOD_UNITS.map(u => <option key={u} value={u}>{u}</option>)}
               </select>
             </div>}
-            <p className="text-sm text-muted-foreground">Chilled use-by: a recipe's own label setting first, then its shelf life, then this standard.{format.backLabel ? " Frozen: the recipe's own setting, else this standard." : ""}</p>
+            <p className="text-sm text-muted-foreground">Chilled use-by: the recipe's shelf life (one source of truth — set on the recipe or its label page); this standard only for a recipe with none.{format.backLabel ? " Frozen: the recipe's own setting, else this standard." : ""}</p>
+            {/* A despatch label counts a fixed period from the day it's
+                printed (= despatched), whatever the recipe's shelf life
+                (shelf-life.ts — cinnamon buns, 2026-10-27). */}
+            <div className="space-y-2">
+              <p className="text-sm font-semibold">The use-by counts…</p>
+              <div className="flex flex-wrap items-end gap-2">
+                <button type="button" onClick={() => update(t => ({ ...t, useBy: { from: "recipe-shelf-life" } }))}
+                  className={cn("h-11 px-4 rounded-full border-2 text-sm font-bold", draft.useBy.from === "recipe-shelf-life" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground")}>
+                  The recipe's shelf life
+                </button>
+                <button type="button" onClick={() => update(t => ({ ...t, useBy: { from: "despatch", period: t.useBy.from === "despatch" ? t.useBy.period : { amount: 5, unit: "days" } } }))}
+                  className={cn("h-11 px-4 rounded-full border-2 text-sm font-bold", draft.useBy.from === "despatch" ? "border-primary bg-primary/10 text-primary" : "border-border text-muted-foreground")}>
+                  A fixed period from despatch
+                </button>
+                {draft.useBy.from === "despatch" && (
+                  <Num label="Use by" unit="days after despatch" value={draft.useBy.period.amount} step={1} min={1} max={365}
+                    onChange={v => v != null && update(t => ({ ...t, useBy: { from: "despatch", period: { amount: v, unit: "days" } } }))} />
+                )}
+              </div>
+              {draft.useBy.from === "despatch" && <p className="text-sm text-muted-foreground">For a despatch label, printed the day the product goes out: the recipe's shelf life isn't used on it.</p>}
+            </div>
+            {!format.backLabel && (
+              <Toggle on={draft.barcodeOn} onChange={on => update(t => ({ ...t, barcodeOn: on }))} label="Print the product's barcode (off = an internal label with none)" />
+            )}
             <div className="space-y-2">
               <p className="text-sm font-semibold">Batch number (YYDDD) is taken from…</p>
               <div className="flex flex-wrap gap-2">

@@ -8,12 +8,12 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronDown, ChevronUp, Download, History, Info, Loader2, Printer, X } from "lucide-react";
-import type { ArchiveImageSource, HistoryEntry } from "@workspace/product-labels";
+import type { ArchiveImageSource, HistoryEntry, LabelRole } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
 import { API, api, fmtDateTime } from "./api";
 import { ChangeRow } from "./publish-dialog";
 
-type VersionRow = HistoryEntry & { publishedDay: string; proofSource: ArchiveImageSource };
+type VersionRow = HistoryEntry & { publishedDay: string; proofSource: ArchiveImageSource; role?: LabelRole };
 
 /** "stored" = the exact image saved when it went live; "redrawn" = published
  *  before images were saved, so drawn again from its saved settings. */
@@ -23,18 +23,23 @@ const sourceNote = (v: VersionRow) =>
     : "Re-drawn from the saved settings (published before label pictures were kept) — dates are the publish day.";
 interface HistoryPayload { recipeId: number; recipeName: string; versions: VersionRow[] }
 
-export function useLabelHistory(recipeId: number) {
+// Which of the recipe's labels (label-roles.ts): each has its own versions.
+const roleQs = (role: LabelRole) => (role === "wrapping" ? "?role=wrapping" : "");
+
+export function useLabelHistory(recipeId: number, role: LabelRole = "main") {
   return useQuery({
-    queryKey: ["product-labels", "history", recipeId],
-    queryFn: () => api<HistoryPayload>(`/recipes/${recipeId}/versions`),
+    queryKey: ["product-labels", "history", recipeId, role],
+    queryFn: () => api<HistoryPayload>(`/recipes/${recipeId}/versions${roleQs(role)}`),
   });
 }
 
-const proofUrl = (recipeId: number, versionNo: number) => `${API}/recipes/${recipeId}/versions/${versionNo}/proof`;
-const pdfUrl = (recipeId: number, versionNo: number) => `${API}/recipes/${recipeId}/versions/${versionNo}/pdf`;
+const proofUrl = (recipeId: number, versionNo: number, role: LabelRole = "main") => `${API}/recipes/${recipeId}/versions/${versionNo}/proof${roleQs(role)}`;
+const pdfUrl = (recipeId: number, versionNo: number, role: LabelRole = "main") => `${API}/recipes/${recipeId}/versions/${versionNo}/pdf${roleQs(role)}`;
 
-export function LabelHistoryPanel({ recipeId }: { recipeId: number }) {
-  const { data, isLoading, error } = useLabelHistory(recipeId);
+export function LabelHistoryPanel({ recipeId, role = "main" }: { recipeId: number; role?: LabelRole }) {
+  const q = useLabelHistory(recipeId, role);
+  const { isLoading, error } = q;
+  const data = q.data ? { ...q.data, versions: q.data.versions.map(v => ({ ...v, role })) } : undefined;
   const [open, setOpen] = useState<VersionRow | null>(null);
 
   if (isLoading) return <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Loading the label history…</div>;
@@ -96,7 +101,7 @@ function VersionCard({ recipeId, v, onOpen }: { recipeId: number; v: VersionRow;
             className="w-full rounded-xl border-2 border-border bg-white p-1 hover:border-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-primary"
             aria-label={`Open version ${v.versionNo} full size`}
           >
-            <img src={proofUrl(recipeId, v.versionNo)} alt={`Label version ${v.versionNo}`} loading="lazy" className="w-full h-auto" />
+            <img src={proofUrl(recipeId, v.versionNo, v.role)} alt={`Label version ${v.versionNo}`} loading="lazy" className="w-full h-auto" />
           </button>
           <p className="text-xs text-muted-foreground">{sourceNote(v)}</p>
         </div>
@@ -130,7 +135,7 @@ function VersionCard({ recipeId, v, onOpen }: { recipeId: number; v: VersionRow;
           <p className="flex items-center gap-2 text-sm"><Printer className="w-4 h-4 shrink-0 text-muted-foreground" /> {printLine(v)}{v.prints.testRuns > 0 ? ` (${v.prints.testRuns} test print${v.prints.testRuns === 1 ? "" : "s"} too.)` : ""}</p>
 
           <a
-            href={pdfUrl(recipeId, v.versionNo)}
+            href={pdfUrl(recipeId, v.versionNo, v.role)}
             download
             className="inline-flex items-center gap-2 h-12 px-5 rounded-xl border-2 border-border bg-card font-bold hover:bg-secondary"
           >
@@ -165,10 +170,10 @@ function ProofModal({ recipeId, recipeName, v, onClose }: { recipeId: number; re
           <button onClick={onClose} className="p-3 rounded-xl hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
         </div>
         <div className="flex-1 overflow-auto p-4 bg-secondary/40">
-          <img src={proofUrl(recipeId, v.versionNo)} alt={`Label version ${v.versionNo}`} className="w-full h-auto bg-white rounded-lg border border-border" />
+          <img src={proofUrl(recipeId, v.versionNo, v.role)} alt={`Label version ${v.versionNo}`} className="w-full h-auto bg-white rounded-lg border border-border" />
         </div>
         <div className="flex flex-wrap justify-end gap-3 px-5 py-3 border-t border-border">
-          <a href={pdfUrl(recipeId, v.versionNo)} download className="inline-flex items-center gap-2 h-12 px-5 rounded-xl border-2 border-border bg-card font-bold hover:bg-secondary">
+          <a href={pdfUrl(recipeId, v.versionNo, v.role)} download className="inline-flex items-center gap-2 h-12 px-5 rounded-xl border-2 border-border bg-card font-bold hover:bg-secondary">
             <Download className="w-5 h-5" /> Download PDF
           </a>
           <button onClick={onClose} className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold">Close</button>

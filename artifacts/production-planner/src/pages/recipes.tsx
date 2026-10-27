@@ -523,6 +523,8 @@ function RecipeForm({
           <div>
             <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
             <input type="number" step="1" min="0" {...register("shelfLifeDays")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. 3" />
+            {/* One source of truth (2026-10-27): the label's use-by comes from here. */}
+            <p className="text-xs text-muted-foreground mt-1">Also sets the use-by printed on its label.</p>
             {errors.shelfLifeDays && <span className="text-destructive text-xs">{errors.shelfLifeDays.message}</span>}
           </div>
           <div>

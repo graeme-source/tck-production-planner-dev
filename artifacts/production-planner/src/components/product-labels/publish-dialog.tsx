@@ -36,7 +36,7 @@ export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: (
   const publish = async () => {
     setBusy(true); setError(null);
     try {
-      await api(`/recipes/${data.recipe.id}/publish`, { method: "POST", body: JSON.stringify({ expectedHash: data.current.hash, confirmed: true }) });
+      await api(`/recipes/${data.recipe.id}/publish`, { method: "POST", body: JSON.stringify({ expectedHash: data.current.hash, confirmed: true, role: data.role }) });
       await invalidate();
       onClose();
     } catch (e) {
@@ -61,7 +61,7 @@ export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: (
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <ShieldCheck className="w-7 h-7 text-primary shrink-0" />
           <div className="flex-1 min-w-0">
-            <h2 className="font-bold text-xl leading-tight truncate">Update the live label — {data.recipe.name}</h2>
+            <h2 className="font-bold text-xl leading-tight truncate">Update the live {data.labels.length > 1 ? data.roleTitle.toLowerCase() : "label"} — {data.recipe.name}</h2>
             <p className="text-sm text-muted-foreground">Check the new label against the live one. Dates and batch use today as a sample.</p>
           </div>
           <button onClick={onClose} className="p-3 rounded-xl hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>

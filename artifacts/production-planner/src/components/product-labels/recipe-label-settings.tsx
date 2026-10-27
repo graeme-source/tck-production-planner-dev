@@ -7,9 +7,10 @@
  * current one, which then shows "Update needed" until someone checks it.
  */
 import { useEffect, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Barcode, ChevronRight, Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
-import { COOKING_KEYS, PERIOD_UNITS, type CookingMode, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
+import { COOKING_KEYS, describePeriod, PERIOD_UNITS, type CookingMode, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
 import { StepPreview } from "./step-preview";
 import { CookingSuggestion } from "./cooking-suggestion";
 import { useAutosave } from "@/hooks/use-autosave";
@@ -32,11 +33,17 @@ function parseWhole(text: string, max: number): number | null | undefined {
 
 export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canEdit: boolean }) {
   const invalidate = useInvalidateLabels();
+  const qc = useQueryClient();
   const merged = useRef<Patch>({});
   const auto = useAutosave(async (patch: Patch) => {
     await api(`/recipes/${data.recipe.id}/settings`, { method: "PUT", body: JSON.stringify(patch) });
     if (merged.current === patch) merged.current = {};
     await invalidate();
+    // The shelf life lives on the recipe: refresh the recipe page's copy too.
+    if ("shelfLifeDays" in patch) {
+      await qc.invalidateQueries({ queryKey: [`/api/recipes/${data.recipe.id}`] });
+      await qc.invalidateQueries({ queryKey: ["/api/recipes"] });
+    }
   });
   const save = (p: Patch) => {
     merged.current = { ...merged.current, ...p };
@@ -55,6 +62,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
   const [flags, setFlags] = useState({ ovenOn: data.settings.ovenOn, airFryerOn: data.settings.airFryerOn, frozenOn: data.settings.frozenOn });
   const templates = useLabelTemplates();
   const [templateChoice, setTemplateChoice] = useState<number | null>(data.templateChoice);
+  const [wrappingChoice, setWrappingChoice] = useState<number | null>(data.wrappingTemplateId);
   // Bones warning: null = Automatic, true / false = always on / off.
   const [bones, setBones] = useState<boolean | null>(data.settings.warningOn);
   useEffect(() => {
@@ -164,7 +172,7 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
       {/* Template */}
       {(templates.data?.templates.length ?? 0) > 1 && (
         <div className="space-y-2">
-          <label htmlFor="label-template" className="text-base font-bold">Label template</label>
+          <label htmlFor="label-template" className="text-base font-bold">{wrappingChoice != null ? "Despatch label template" : "Label template"}</label>
           <select
             id="label-template"
             value={templateChoice ?? ""}
@@ -178,8 +186,34 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
               <option key={t.id} value={t.id}>{t.name}{t.isDefault ? " (standard)" : ""} · {t.sizeText}</option>
             ))}
           </select>
-          <p className="text-base font-semibold">Size: {t.sizeText}{back ? "" : " (small label: name, use-by, batch number and barcode)"}</p>
+          {data.role === "main" && <p className="text-base font-semibold">Size: {t.sizeText}{back ? "" : " (small label: name, use-by, batch number and barcode)"}</p>}
           <p className="text-sm text-muted-foreground">The size, layout, wording and cooking steps come from the template. Automatic uses the template set as the default for this recipe's category, else the standard one. <Link href={(templateChoice ?? data.templateAutomatic.id) ? `/labels/settings?template=${templateChoice ?? data.templateAutomatic.id}` : "/labels/settings"} className="font-semibold text-primary underline">Open this template's design</Link></p>
+        </div>
+      )}
+
+      {/* Wrapping label (label-roles.ts): what the wrapping station prints
+          instead — e.g. the cinnamon buns' small internal freezer label,
+          with the despatch label printed later from the dessert report. */}
+      {(templates.data?.templates.length ?? 0) > 1 && (
+        <div className="space-y-2">
+          <label htmlFor="wrapping-template" className="text-base font-bold">Wrapping station label</label>
+          <select
+            id="wrapping-template"
+            value={wrappingChoice ?? ""}
+            disabled={!canEdit}
+            onChange={e => { const v = e.target.value === "" ? null : Number(e.target.value); setWrappingChoice(v); save({ wrappingTemplateId: v }); }}
+            className={cn(inputCls, "w-full max-w-md text-base")}
+          >
+            <option value="">None — the wrapping station prints the label above</option>
+            {templates.data!.templates.map(t => (
+              <option key={t.id} value={t.id}>{t.name} · {t.sizeText}</option>
+            ))}
+          </select>
+          <p className="text-sm text-muted-foreground">
+            {wrappingChoice == null
+              ? "Most products have one label, printed at wrapping."
+              : "The wrapping station prints this label instead. The label above becomes the despatch label — printed when the product goes out (for desserts, from the dessert report). Each is checked and published on its own."}
+          </p>
         </div>
       )}
 
@@ -293,17 +327,28 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
       </div>
       </>)}
 
-      {/* Use-by — the small label prints one (the chilled period). */}
+      {/* Use-by — the recipe's shelf life, one source of truth (shelf-life.ts);
+          a despatch template counts its own fixed period instead. */}
       <div className="grid sm:grid-cols-2 gap-5">
-        <PeriodField
-          icon={<Thermometer className="w-5 h-5 text-primary" />}
-          title={back ? "Chilled use-by" : "Use-by"}
-          value={s.chilled}
-          fallback={data.recipe.shelfLifeDays ? `${data.recipe.shelfLifeDays} days (the recipe's shelf life)` : t.chilledDefault ? `${t.chilledDefault.amount} ${t.chilledDefault.unit} (the standard)` : "none"}
-          canEdit={canEdit}
-          onSave={p => save({ chilled: p })}
-          onBlur={() => void auto.flush()}
-        />
+        {data.shelfLife.despatchPeriod ? (
+          <div className="space-y-2">
+            <h3 className="flex items-center gap-2 text-base font-bold"><Thermometer className="w-5 h-5 text-primary" /> {back ? "Chilled use-by" : "Use-by"}</h3>
+            <p className="text-2xl font-bold tabular-nums">{describePeriod(data.shelfLife.despatchPeriod)} from despatch</p>
+            <p className="text-sm text-muted-foreground">
+              Set by the {t.name} template: this is a despatch label, printed the day it goes out, so its use-by counts from that day — the recipe's shelf life{data.recipe.shelfLifeDays ? ` (${data.recipe.shelfLifeDays} days)` : ""} isn't used on it.
+              {" "}<Link href={`/labels/settings?template=${t.id}`} className="font-semibold text-primary underline">Open the template</Link>
+            </p>
+          </div>
+        ) : (
+          <ShelfLifeField
+            key={data.recipe.id}
+            days={data.recipe.shelfLifeDays}
+            standard={t.chilledDefault}
+            canEdit={canEdit}
+            onSave={d => save({ shelfLifeDays: d })}
+            onBlur={() => void auto.flush()}
+          />
+        )}
         {back && <div className="space-y-2">
           <PeriodField
             icon={<Snowflake className="w-5 h-5 text-primary" />}
@@ -319,6 +364,46 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
       </div>
       <p className="text-sm text-muted-foreground">Use-by is counted from the day the label is printed: 31 Jan + 1 month = 28 Feb (29 in a leap year).</p>
     </section>
+  );
+}
+
+/** The RECIPE's shelf life, edited from the label page (Graeme,
+ *  2026-10-27): the same number as on the recipe, saved to the recipe, and
+ *  it says so — so the label and the recipe can never disagree. */
+function ShelfLifeField({ days, standard, canEdit, onSave, onBlur }: {
+  days: number | null; standard: ShelfPeriod | null; canEdit: boolean;
+  onSave: (d: number | null) => void; onBlur: () => void;
+}) {
+  const [text, setText] = useState(days ? String(days) : "");
+  const parsed = parseWhole(text, 999);
+  return (
+    <div className="space-y-2">
+      <label htmlFor="shelf-life-days" className="flex items-center gap-2 text-base font-bold"><Thermometer className="w-5 h-5 text-primary" /> Shelf life (days)</label>
+      <div className="flex items-center gap-2">
+        <input
+          id="shelf-life-days"
+          inputMode="numeric"
+          value={text}
+          disabled={!canEdit}
+          placeholder={standard ? String(standard.amount) : "—"}
+          onChange={e => {
+            const v = e.target.value.replace(/[^\d]/g, "").slice(0, 3);
+            setText(v);
+            const p = parseWhole(v, 999);
+            if (p !== undefined) onSave(p === 0 ? null : p);
+          }}
+          onBlur={onBlur}
+          className={cn(inputCls, "w-28", parsed === undefined && "border-destructive")}
+        />
+        <span className="text-muted-foreground">days</span>
+      </div>
+      <p className="text-sm font-semibold">This is the recipe's shelf life — changing it here changes the recipe and the use-by on its label.</p>
+      <p className="text-xs text-muted-foreground">
+        {text === ""
+          ? standard ? `Blank — the label uses the standard ${describePeriod(standard)} until the recipe has a shelf life.` : "Blank — no use-by, so the label can't go live."
+          : "Use-by = the day the label is printed + this many days."}
+      </p>
+    </div>
   );
 }
 

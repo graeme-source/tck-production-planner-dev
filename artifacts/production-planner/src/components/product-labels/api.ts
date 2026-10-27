@@ -8,6 +8,7 @@ import type { DeclarationIssue } from "@workspace/allergens";
 import type {
   FieldKey, FitProblem, LabelDates, LabelFormat, LabelSnapshot, LabelStatus, LabelTemplate, Rect, RecipeLabelSettings,
   SnapshotChange, WidthVariant, CookingValues, ShelfPeriod, BonesWarning, CookingMode, CookingProfile, HalvedRange,
+  ChilledSource, LabelRole,
 } from "@workspace/product-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -119,7 +120,28 @@ export interface TierPreviewRow extends SuggestedTimes {
   profile: CookingProfile;
 }
 
+/** One of a recipe's labels as a card (label-roles.ts). */
+export interface LabelRoleCard {
+  role: LabelRole;
+  title: string;
+  templateName: string;
+  sizeText: string;
+  status: LabelStatus;
+  statusLabel: string;
+}
+
 export interface RecipeLabel {
+  /** Which of the recipe's labels this payload is. */
+  role: LabelRole;
+  /** "Back label", or with a wrapping label "Despatch label" / "Wrapping label". */
+  roleTitle: string;
+  /** The recipe's wrapping label template; null = none. */
+  wrappingTemplateId: number | null;
+  /** Every label the recipe has (one, or wrapping + despatch). */
+  labels: LabelRoleCard[];
+  /** The shelf life → use-by (shelf-life.ts): the recipe's own number, or a
+   *  despatch template's fixed period (despatchPeriod set). */
+  shelfLife: { recipeDays: number | null; source: ChilledSource; period: ShelfPeriod | null; despatchPeriod: ShelfPeriod | null };
   recipe: {
     id: number; name: string; packSize: string; shelfLifeDays: number | null; isDraft: boolean; archived: boolean;
     factoryOvenTempC: number | null; factoryOvenTimeSeconds: number | null;
@@ -170,7 +192,7 @@ export const labelKeys = {
   templateById: (id: number | null) => ["product-labels", "template", id ?? "default"] as const,
   templates: ["product-labels", "templates"] as const,
   list: ["product-labels", "list"] as const,
-  recipe: (id: number) => ["product-labels", "recipe", id] as const,
+  recipe: (id: number, role: LabelRole = "main") => ["product-labels", "recipe", id, role] as const,
 };
 
 /** One template: `id` null = the standard one. */
@@ -186,10 +208,10 @@ export function useLabelList() {
   return useQuery({ queryKey: labelKeys.list, queryFn: () => api<{ recipes: LabelListRow[] }>("/recipes"), staleTime: 0 });
 }
 
-export function useRecipeLabel(id: number | null) {
+export function useRecipeLabel(id: number | null, role: LabelRole = "main") {
   return useQuery({
-    queryKey: labelKeys.recipe(id ?? 0),
-    queryFn: () => api<RecipeLabel>(`/recipes/${id}`),
+    queryKey: labelKeys.recipe(id ?? 0, role),
+    queryFn: () => api<RecipeLabel>(`/recipes/${id}${role === "wrapping" ? "?role=wrapping" : ""}`),
     enabled: id != null && id > 0,
     // Status must reflect the recipe as it is NOW — never a cached verdict.
     staleTime: 0,
@@ -224,18 +246,30 @@ export function fmtDay(iso: string): string {
  *  labels" at the wrapping station; the rest say "Use Label Live" (Graeme,
  *  19 Oct 2026). null until it loads, so nothing flashes up on a guess.
  *  Under ["product-labels", …] so publishing a label refreshes it too. */
-export function useLiveLabelRecipeIds(enabled = true): Set<number> | null {
-  const q = useQuery({
+function useLiveRecipes(enabled: boolean) {
+  return useQuery({
     queryKey: ["product-labels", "live-recipe-ids"],
     enabled,
     staleTime: 60_000,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/product-label-print/live-recipes`, { credentials: "include" });
       if (!res.ok) throw new Error(`Couldn't load published labels (HTTP ${res.status})`);
-      return (await res.json()) as { recipeIds: number[] };
+      return (await res.json()) as { recipeIds: number[]; wrapping?: Array<{ recipeId: number; live: boolean }> };
     },
   });
+}
+
+export function useLiveLabelRecipeIds(enabled = true): Set<number> | null {
+  const q = useLiveRecipes(enabled);
   return q.data ? liveRecipeIdSet(q.data.recipeIds) : null;
+}
+
+/** Recipes with a WRAPPING label (label-roles.ts — the cinnamon buns'
+ *  freezer label) → whether it is published. The wrapping station prints
+ *  that one for them. Same request as useLiveLabelRecipeIds. */
+export function useWrappingLabelRecipes(enabled = true): Map<number, { live: boolean }> {
+  const q = useLiveRecipes(enabled);
+  return new Map((q.data?.wrapping ?? []).map(w => [w.recipeId, { live: w.live }]));
 }
 
 /** Recipes whose front label is the printed 102 × 25 mm name label (test
@@ -261,9 +295,15 @@ export function liveRecipeIdSet(ids: number[] | undefined | null): Set<number> {
 }
 
 /** What the wrapping station shows for a recipe's labels: the print button
- *  (published label), the "Use Label Live" instruction (no label built yet —
- *  the old Label Live software), or nothing while the list is loading. */
-export function wrappingLabelAction(liveIds: Set<number> | null, recipeId: number): "print" | "label-live" | null {
+ *  (published label), "print-wrapping" for a recipe with a wrapping label
+ *  (its small freezer label prints instead of the back label — the dialog
+ *  says if it still needs publishing), the "Use Label Live" instruction (no
+ *  label built yet — the old Label Live software), or nothing while the list
+ *  is loading. */
+export function wrappingLabelAction(
+  liveIds: Set<number> | null, recipeId: number, wrapping?: Map<number, { live: boolean }>,
+): "print" | "print-wrapping" | "label-live" | null {
   if (!liveIds) return null;
+  if (wrapping?.has(recipeId)) return "print-wrapping";
   return liveIds.has(recipeId) ? "print" : "label-live";
 }

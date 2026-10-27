@@ -7,9 +7,9 @@
  * replacing the old Product Hub's pop-ups. Objectives A, D and F.
  */
 import { useState } from "react";
-import { Link, useRoute } from "wouter";
+import { Link, useLocation, useRoute, useSearch } from "wouter";
 import { AlertTriangle, ArrowLeft, Beaker, CheckCircle2, ChefHat, ClipboardList, History, Info, Loader2, Printer, ShieldCheck, Tag, XCircle } from "lucide-react";
-import { areasForChange, FIELD_LABEL, WIDTH_LABEL } from "@workspace/product-labels";
+import { areasForChange, FIELD_LABEL, normaliseLabelRole, WIDTH_LABEL, type LabelRole } from "@workspace/product-labels";
 import { PageHeader } from "@/components/page-header";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
@@ -41,7 +41,9 @@ export default function ProductLabelRecipePage() {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const canEdit = role === "admin" || role === "manager";
-  const { data, isLoading, error, isFetching } = useRecipeLabel(Number.isFinite(id) ? id : null);
+  // Which of the recipe's labels is on screen (?label=wrapping; label-roles.ts).
+  const [labelRole, setLabelRole] = useLabelRoleParam();
+  const { data, isLoading, error, isFetching } = useRecipeLabel(Number.isFinite(id) ? id : null, labelRole);
   const [publishing, setPublishing] = useState(false);
   // Test print and "Print labels — today": everyone (Graeme, 2026-10-15).
   const [testPrinting, setTestPrinting] = useState(false);
@@ -55,7 +57,16 @@ export default function ProductLabelRecipePage() {
   const [tab, setTab] = useTabParam(tabs.map(t => t.key));
 
   if (isLoading) return <div className="flex items-center gap-2 text-muted-foreground py-10"><Loader2 className="w-5 h-5 animate-spin" /> Building the label…</div>;
-  if (error || !data) return <p className="text-destructive">Couldn't load this label — {(error as Error | null)?.message ?? "not found"}</p>;
+  if (error || !data) {
+    return (
+      <div className="space-y-3">
+        <p className="text-destructive">Couldn't load this label — {(error as Error | null)?.message ?? "not found"}</p>
+        {labelRole === "wrapping" && (
+          <button type="button" onClick={() => setLabelRole("main")} className="h-11 px-4 rounded-xl border-2 border-border bg-card font-semibold hover:bg-secondary">Show the main label</button>
+        )}
+      </div>
+    );
+  }
 
   const highlight: Area[] = [...new Set(data.changes.flatMap(c => areasForChange(c.key)))];
   const cur = data.current.proof;
@@ -97,12 +108,39 @@ export default function ProductLabelRecipePage() {
 
       {tabs.length > 1 && <HubTabs tabs={tabs} value={tab} onChange={setTab} />}
 
+      {/* A recipe with a wrapping label has two labels (label-roles.ts):
+          each card shows its status; tap one to check, publish or print it. */}
+      {data.labels.length > 1 && (tab === "label" || tab === "history") && (
+        <div className="grid gap-3 sm:grid-cols-2" role="tablist" aria-label="This product's labels">
+          {data.labels.map(l => (
+            <button
+              key={l.role}
+              type="button"
+              role="tab"
+              aria-selected={l.role === data.role}
+              onClick={() => setLabelRole(l.role)}
+              className={cn(
+                "text-left rounded-2xl border-2 p-4 space-y-2 transition-colors",
+                l.role === data.role ? "border-primary bg-primary/5 ring-2 ring-primary/30" : "border-border bg-card hover:bg-secondary",
+              )}
+            >
+              <p className="text-xl font-bold">{l.title}</p>
+              <p className="text-sm text-muted-foreground">{l.templateName} · {l.sizeText}</p>
+              <p className="text-sm text-muted-foreground">
+                {l.role === "wrapping" ? "Printed at the wrapping station." : "Printed when it goes out — for desserts, from the dessert report."}
+              </p>
+              <span className={cn("inline-block rounded-full border px-3 py-1 text-sm font-bold", STATUS_TONE[l.status])}>{l.statusLabel}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {tab === "deck" ? (
         <section className="rounded-2xl border-2 border-border bg-card p-5">
           <DeckPanel recipe={data.recipe} />
         </section>
       ) : tab === "history" ? (
-        <LabelHistoryPanel recipeId={data.recipe.id} />
+        <LabelHistoryPanel recipeId={data.recipe.id} role={data.role} />
       ) : tab === "nutrition" ? (
         <section className="rounded-2xl border-2 border-border bg-card p-5">
           <NutritionalsPanel recipe={data.recipe} />
@@ -113,7 +151,7 @@ export default function ProductLabelRecipePage() {
         <div className="flex flex-wrap items-center gap-3">
           {data.status === "live" ? <CheckCircle2 className="w-8 h-8" /> : data.status === "doesnt-fit" ? <XCircle className="w-8 h-8" /> : <AlertTriangle className="w-8 h-8" />}
           <div className="flex-1 min-w-0">
-            <p className="text-2xl font-bold">{data.status === "update-needed" ? "Label update needed" : data.status === "doesnt-fit" ? "DOESN'T FIT" : data.statusLabel}</p>
+            <p className="text-2xl font-bold">{data.labels.length > 1 ? `${data.roleTitle} — ` : ""}{data.status === "update-needed" ? "Label update needed" : data.status === "doesnt-fit" ? "DOESN'T FIT" : data.statusLabel}</p>
             <p className="text-base">
               {data.live
                 ? <>Live: version {data.live.versionNo}, published {fmtDateTime(data.live.publishedAt)}{data.live.publishedByName ? ` by ${data.live.publishedByName}` : ""}.</>
@@ -176,16 +214,32 @@ export default function ProductLabelRecipePage() {
 
       {publishing && <PublishDialog data={data} onClose={() => setPublishing(false)} />}
       {printingToday && (
-        <BackLabelsDialog mode="today" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setPrintingToday(false)} />
+        <BackLabelsDialog mode="today" role={data.role} recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setPrintingToday(false)} />
       )}
       {printingFront && (
         <FrontLabelsDialog recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setPrintingFront(false)} />
       )}
       {testPrinting && (
-        <BackLabelsDialog mode="test" recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setTestPrinting(false)} />
+        <BackLabelsDialog mode="test" role={data.role} recipeId={data.recipe.id} recipeName={data.recipe.name} onClose={() => setTestPrinting(false)} />
       )}
     </div>
   );
+}
+
+/** ?label=wrapping shows the wrapping label; no param = the main one. Kept
+ *  in the address (with ?tab) so a link can land on it. */
+function useLabelRoleParam(): [LabelRole, (r: LabelRole) => void] {
+  const search = useSearch();
+  const [location, navigate] = useLocation();
+  const params = new URLSearchParams(search);
+  const role = normaliseLabelRole(params.get("label"));
+  const setRole = (next: LabelRole) => {
+    const p = new URLSearchParams(search);
+    if (next === "main") p.delete("label"); else p.set("label", next);
+    const qs = p.toString();
+    navigate(`${location}${qs ? `?${qs}` : ""}`, { replace: true });
+  };
+  return [role, setRole];
 }
 
 function FitTable({ proof }: { proof: Proof }) {
