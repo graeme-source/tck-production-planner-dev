@@ -3452,6 +3452,12 @@ async function startup() {
     const { startUpfShopifySync } = await import("./lib/upf-shopify-sync");
     startUpfShopifySync();
 
+    // Lucky Order Number (Sales & Marketing → Live offers): every minute,
+    // spot winning order numbers and add the gift / refund / code. Does
+    // nothing while the offer is off; practice mode touches no orders.
+    const { startLuckyOrderJob } = await import("./lib/lucky-order/engine");
+    startLuckyOrderJob();
+
     // Probation reminders — a to-do for the scheduling manager three weeks
     // before someone's probation review falls due, from their Planday start
     // date. Self-gates: does nothing until probation_scheduler_user_id is
