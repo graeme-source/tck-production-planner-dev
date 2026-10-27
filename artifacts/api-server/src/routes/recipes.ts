@@ -1032,6 +1032,11 @@ interface IngredientNutrientRow {
 export async function gatherRecipeIngredients(recipeId: number): Promise<{
   items: IngredientNutrientRow[];
   totalWeightG: number;
+  /** The recipe's weight AS MADE: each ingredient plus each sub-recipe at
+   *  the amount actually put in — the Declared Weights card's "Total raw".
+   *  A cooked sub-recipe (braised beef at ~64% yield) counts at its cooked
+   *  weight here, while `items` carries its raw ingredients' nutrients. */
+  asUsedWeightG: number;
   cookingLossPercent: number;
   portionsPerBatch: number;
   // `servings` is the recipe's "Output / Recipe Size" — i.e. how many
@@ -1198,6 +1203,16 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
   }
 
   const totalWeightG = items.reduce((sum, i) => sum + i.quantityG, 0);
+  // As made (Graeme, 27 Oct 2026): sub-recipes at the weight used, in their
+  // own yield unit — the same sum as the recipe page's Declared Weights.
+  const linkedSubs = subRecipeLinks.length
+    ? await db.select({ id: subRecipesTable.id, yieldUnit: subRecipesTable.yieldUnit }).from(subRecipesTable)
+        .where(inArray(subRecipesTable.id, subRecipeLinks.map(l => l.subRecipeId)))
+    : [];
+  const subUnit = new Map(linkedSubs.map(s => [s.id, s.yieldUnit]));
+  const asUsedWeightG =
+    directIngs.reduce((sum, i) => sum + toGrams(Number(i.quantity), i.unit), 0)
+    + subRecipeLinks.reduce((sum, l) => sum + toGrams(Number(l.quantity), subUnit.get(l.subRecipeId) ?? "g"), 0);
 
   // An ingredient counts as "missing nutritionals" if ANY per-100g value is
   // absent, not only when every one is. A partially-filled ingredient still
@@ -1228,7 +1243,7 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
     .map(i => ({ ingredientId: i.ingredientId, name: i.name }));
 
   return {
-    items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize,
+    items, totalWeightG, asUsedWeightG, cookingLossPercent, portionsPerBatch, servings, packSize,
     per100gOnly: !hasPackSize(recipe.packSize),
     missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail,
   };
@@ -1238,22 +1253,22 @@ export async function gatherRecipeIngredients(recipeId: number): Promise<{
  *  GET /:id/nutritionals, also used by the website sync
  *  (lib/upf-shopify-sync.ts) so both always agree. */
 export async function computeRecipeNutritionals(recipeId: number) {
-  const { items, totalWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, per100gOnly, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
+  const { items, asUsedWeightG, cookingLossPercent, portionsPerBatch, servings, packSize, per100gOnly, missingNutritionals, missingNutritionalDetail, missingDeclarations, missingDeclarationDetail } =
     await gatherRecipeIngredients(recipeId);
 
   // Ingredient quantities sum to the recipe-size weight (servings portions),
   // not a per-batch weight, so the portion divisor is servings — not
   // portionsPerBatch. Cooking loss is water: it concentrates per 100 g but
   // never reduces per portion (see lib/recipe-nutrition.ts).
-  const { cookedWeightG, portionWeightG, per100g, perPortion } =
-    computeNutrition(items, cookingLossPercent, servings);
+  const { totalRawWeightG, cookedWeightG, portionWeightG, per100g, perPortion } =
+    computeNutrition(items, cookingLossPercent, servings, asUsedWeightG);
   const declaredPackWeightG = Math.round(portionWeightG * packSize);
 
   // No pack size (migration 0286, e.g. fried chicken sold by weight):
   // per 100 g only. The portion / pack weights and the per-portion column
   // are null so nothing downstream can print a misleading "per portion".
   return {
-    totalRawWeightG: Math.round(totalWeightG),
+    totalRawWeightG: Math.round(totalRawWeightG),
     cookingLossPercent,
     cookedWeightG: Math.round(cookedWeightG),
     portionsPerBatch,

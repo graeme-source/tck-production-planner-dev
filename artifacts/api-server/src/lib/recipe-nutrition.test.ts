@@ -69,3 +69,24 @@ describe("computeNutrition — cooking loss is water, not nutrients", () => {
     expect(neg.cookedWeightG).toBe(100);
   });
 });
+
+// Regression (Graeme, 27 Oct 2026): a recipe with a cooked sub-recipe showed
+// 414 g raw / 401 g portion in the nutrition panel against a declared 320 g /
+// 310 g, and per 100 g about 25% low. The weight is the recipe AS MADE.
+describe("computeNutrition — the recipe as made, not its sub-recipes' raw weight", () => {
+  const vals = (protein: number) => ({ energyKj: null, energyKcal: null, fat: null, saturates: null, carbohydrate: null, sugars: null, fibre: null, protein, salt: null });
+  // Raw ingredients behind the recipe add up to 414 g (the braised beef
+  // went in cooked), carrying 50 g of protein in total.
+  const items = [{ quantityG: 314, nutrients: vals(12.74) }, { quantityG: 100, nutrients: vals(10) }];
+  it("divides by the as-made weight less the cooking loss", () => {
+    const r = computeNutrition(items, 3, 1, 320);
+    expect(r.totalRawWeightG).toBe(320);
+    expect(Math.round(r.cookedWeightG)).toBe(310);
+    expect(r.portionWeightG).toBe(310);
+    expect(r.perPortion.protein).toBeCloseTo(50, 0);
+    expect(r.per100g.protein).toBeCloseTo(16.1, 1);
+  });
+  it("without an as-made weight it falls back to the ingredients' weight", () => {
+    expect(computeNutrition(items, 3, 1).totalRawWeightG).toBe(414);
+  });
+});

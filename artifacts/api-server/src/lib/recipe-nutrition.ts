@@ -9,6 +9,14 @@
 // Before 2026-10-23 per 100 g was worked out on the RAW weight and then scaled
 // to the cooked portion, which silently took the cooking loss off every
 // nutrient (Margherita protein showed 30.7 g per portion instead of 31.6 g).
+//
+// The weight is the recipe AS MADE (Graeme, 27 Oct 2026): a cooked
+// sub-recipe counts at the weight put in, not its raw ingredients' weight —
+// the braised beef that started as 1.5 kg raw and went in as 0.97 kg cooked
+// counts as 0.97 kg. Its nutrients still come from every raw ingredient
+// (the water it lost carried none). Otherwise per 100 g was ~25% low and the
+// portion showed 401 g against a declared 310 g. Same weight as the recipe
+// page's Declared Weights card.
 
 import { NUTRIENT_KEYS } from "@workspace/product-labels";
 
@@ -41,11 +49,13 @@ function emptyValues(): NutrientValues {
   };
 }
 
-export function computeNutrition(items: NutritionItem[], cookingLossPercent: number, servings: number): NutritionResult {
+export function computeNutrition(items: NutritionItem[], cookingLossPercent: number, servings: number, asUsedWeightG?: number | null): NutritionResult {
   const loss = Math.min(99, Math.max(0, Number.isFinite(cookingLossPercent) ? cookingLossPercent : 0));
   const portions = servings > 0 && Number.isFinite(servings) ? servings : 1;
 
-  const totalRawWeightG = items.reduce((sum, i) => sum + (i.quantityG > 0 ? i.quantityG : 0), 0);
+  const totalRawWeightG = asUsedWeightG != null && asUsedWeightG > 0
+    ? asUsedWeightG
+    : items.reduce((sum, i) => sum + (i.quantityG > 0 ? i.quantityG : 0), 0);
   const cookedWeightG = totalRawWeightG * (1 - loss / 100);
   const portionWeightG = Math.round(cookedWeightG / portions);
 
