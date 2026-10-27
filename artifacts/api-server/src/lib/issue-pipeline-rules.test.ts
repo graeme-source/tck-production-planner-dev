@@ -18,6 +18,7 @@ import {
   queueTabFor,
   canSnooze,
   isImprovementDue,
+  isRepeatOfEarlierRequest,
   improvementDoneAt,
   canDismiss,
   pipelineMayHandle,
@@ -483,5 +484,21 @@ describe("Send and fix it this way", () => {
       { event: "approved_to_fix", note: null, createdAt: "2026-10-15T09:00:00Z", snapshot: null },
     ]);
     expect(thread.map(t => t.text)).toEqual(["Use the wrapping count", "Approved — fix it the way you said"]);
+  });
+});
+
+// Regression (Graeme, 27 Oct 2026): Jane's #328 repeated her #248 and was
+// credited twice for one build. Only the earliest report earns the credit.
+describe("isRepeatOfEarlierRequest — one build, one credit", () => {
+  it("a later repeat of an approved or built improvement isn't credited", () => {
+    expect(isRepeatOfEarlierRequest(328, [{ andonIssueId: 248, lane: "improvement", status: "fixed" }])).toBe(true);
+    expect(isRepeatOfEarlierRequest(317, [{ andonIssueId: 310, lane: "improvement", status: "approved" }])).toBe(true);
+  });
+  it("the first report still is", () => {
+    expect(isRepeatOfEarlierRequest(248, [{ andonIssueId: 328, lane: "improvement", status: "fixed" }])).toBe(false);
+  });
+  it("a related defect or a rejected request doesn't count as the same build", () => {
+    expect(isRepeatOfEarlierRequest(328, [{ andonIssueId: 194, lane: "defect", status: "fixed" }])).toBe(false);
+    expect(isRepeatOfEarlierRequest(328, [{ andonIssueId: 248, lane: "improvement", status: "rejected" }])).toBe(false);
   });
 });
