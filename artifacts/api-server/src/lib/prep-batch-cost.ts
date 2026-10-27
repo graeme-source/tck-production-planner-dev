@@ -1,32 +1,97 @@
 /**
- * Prep minutes and profit per recipe batch (Graeme, 27 Oct 2026 — product
- * decisions on "profit per batch AFTER prep labour": premium recipes vs
- * simpler, cheaper ones; Objectives C and I). Pure.
+ * Labour and profit per recipe batch (Graeme, 27 Oct 2026 — product
+ * decisions on profit per batch AFTER labour: premium recipes vs simpler,
+ * cheaper ones; Objectives C and I). Pure.
  *
- *   prep minutes / batch  = Σ over the recipe's prep items of
- *                           amount per batch (lib/prep-usage.ts) ×
- *                           that item's measured rate (lib/prep-timing.ts)
- *   gross £ / batch       = (list price − cost per pack incl. packaging)
- *                           × packs per batch — the recipe page's own
- *                           figures (routes/recipes.ts computeCosts)
- *   prep labour £ / batch = prep minutes ÷ 60 × the £/hour setting
- *   profit after prep     = gross − prep labour
- * Items with no timings yet add nothing and are listed, so a recipe's
- * minutes are "what we've measured so far", never a guess.
+ *   prep minutes / batch   = Σ over the recipe's prep items of
+ *                            amount per batch (lib/prep-usage.ts) ×
+ *                            that item's measured rate (lib/prep-timing.ts)
+ *   line minutes / batch   = build seconds per batch for ONE builder ÷ the
+ *                            builders working in parallel ÷ 60 — measured on
+ *                            the building station when there's enough history
+ *                            (lib/timing-suggestions.ts), else the recipe's
+ *                            target build time
+ *   gross £ / batch        = (list price − cost per pack incl. packaging)
+ *                            × packs per batch — the recipe page's own
+ *                            figures (routes/recipes.ts computeCosts)
+ *   prep labour £ / batch  = prep minutes × prep crew × £/hour ÷ 60
+ *                            (prep is one person per item)
+ *   line labour £ / batch  = line minutes × line crew × £/hour ÷ 60
+ *                            (the whole line — dough sheeter, two builders,
+ *                            ovens — is there for every batch it runs)
+ *   profit after labour    = gross − line labour − prep labour
+ *   profit per line-minute = profit after labour ÷ line minutes — the line is
+ *                            the scarce resource
+ * The rate and crew sizes are settings (app_settings, LABOUR_SETTING_KEYS)
+ * with defaults, never constants in the maths. Prep items with no timings
+ * yet add nothing and are listed, so prep minutes are "what we've measured
+ * so far", never a guess.
  */
 import type { PrepUsage } from "./prep-usage";
 import type { Confidence, ItemTiming } from "./prep-timing";
 
-/** £ per hour of prep labour, loaded (Graeme's starting figure). */
-export const DEFAULT_PREP_LABOUR_RATE = 14;
-export const MAX_PREP_LABOUR_RATE = 200;
-/** app_settings key for the rate (Analytics → Prep times, autosaved). */
-export const PREP_LABOUR_RATE_KEY = "prep_labour_rate_per_hour";
+export interface LabourSettings {
+  /** £ per person-hour, loaded: pay + NI + pension + having someone in the building. */
+  ratePerHour: number;
+  /** People on a prep item while it's being prepped. */
+  prepCrew: number;
+  /** People on the production line for every batch while it runs. */
+  lineCrew: number;
+  /** Builders building at once — the line makes a batch every build ÷ this. */
+  lineBuilders: number;
+}
 
-/** The stored setting as a rate; anything unusable falls back to the default. */
-export function parseLabourRate(value: string | null | undefined): number {
-  const n = Number(value);
-  return Number.isFinite(n) && n > 0 && n <= MAX_PREP_LABOUR_RATE ? n : DEFAULT_PREP_LABOUR_RATE;
+/** Graeme's figures, 27 Oct 2026: £17.05 an hour; prep is one person; the
+ *  line is four (dough sheeter, two builders, ovens) with two builders. */
+export const DEFAULT_LABOUR_SETTINGS: Readonly<LabourSettings> = {
+  ratePerHour: 17.05,
+  prepCrew: 1,
+  lineCrew: 4,
+  lineBuilders: 2,
+};
+
+/** Where each setting lives in app_settings. */
+export const LABOUR_SETTING_KEYS: Readonly<Record<keyof LabourSettings, string>> = {
+  ratePerHour: "batch_labour_rate_per_hour",
+  prepCrew: "batch_labour_prep_crew",
+  lineCrew: "batch_labour_line_crew",
+  lineBuilders: "batch_labour_line_builders",
+};
+
+const SETTING_MAX: Readonly<Record<keyof LabourSettings, number>> = {
+  ratePerHour: 200,
+  prepCrew: 20,
+  lineCrew: 30,
+  lineBuilders: 10,
+};
+
+/** The stored settings, each falling back to its default when missing or
+ *  unusable (not a number, ≤ 0, or absurdly large); `defaulted` names them. */
+export function parseLabourSettings(stored: Partial<Record<keyof LabourSettings, string | null | undefined>>): {
+  settings: LabourSettings;
+  defaulted: Array<keyof LabourSettings>;
+} {
+  const settings = { ...DEFAULT_LABOUR_SETTINGS };
+  const defaulted: Array<keyof LabourSettings> = [];
+  for (const key of Object.keys(DEFAULT_LABOUR_SETTINGS) as Array<keyof LabourSettings>) {
+    const raw = stored[key];
+    const n = raw == null || String(raw).trim() === "" ? Number.NaN : Number(raw);
+    if (Number.isFinite(n) && n > 0 && n <= SETTING_MAX[key]) settings[key] = n;
+    else defaulted.push(key);
+  }
+  return { settings, defaulted };
+}
+
+/** Line minutes per batch from one builder's build seconds; null when unknown. */
+export function lineMinutesPerBatch(buildSecondsOneBuilder: number | null | undefined, builders: number): number | null {
+  const s = Number(buildSecondsOneBuilder);
+  if (!Number.isFinite(s) || s <= 0 || !(builders > 0)) return null;
+  return s / builders / 60;
+}
+
+/** Minutes × people × £/hour. */
+export function labourCost(minutes: number, crew: number, ratePerHour: number): number {
+  return (minutes / 60) * crew * ratePerHour;
 }
 
 export type LineStatus = "timed" | "not_measured" | "no_matching_amount";
@@ -92,26 +157,36 @@ export function grossPerBatch(c: BatchCosting): number {
   return (c.rrp - c.packIngredientCost - c.packagingCost) * c.packsPerBatch;
 }
 
-/** Prep minutes at £/hour. */
-export function prepLabourCost(minutes: number, ratePerHour: number): number {
-  return (minutes / 60) * ratePerHour;
-}
-
 export interface BatchProfit {
   gross: number;
+  /** Prep minutes × prep crew at the rate. */
   prepLabour: number;
-  profitAfterPrep: number;
-  /** Prep labour as a share of gross (0.12 = 12%); null when gross ≤ 0. */
-  prepShareOfGross: number | null;
+  /** Line minutes × line crew at the rate; null when the line time isn't known. */
+  lineLabour: number | null;
+  /** Gross − line labour − prep labour (an unknown line time counts nothing,
+   *  so check lineLabour before trusting it). */
+  profitAfterLabour: number;
+  /** Profit after labour per minute of line time; null without a line time. */
+  profitPerLineMinute: number | null;
+  /** Line + prep labour as a share of gross (0.12 = 12%); null when gross ≤ 0. */
+  labourShareOfGross: number | null;
 }
 
-export function batchProfit(costing: BatchCosting, prepMinutes: number, ratePerHour: number): BatchProfit {
+export function batchProfit(
+  costing: BatchCosting,
+  minutes: { prep: number; line: number | null },
+  s: LabourSettings,
+): BatchProfit {
   const gross = grossPerBatch(costing);
-  const prepLabour = prepLabourCost(prepMinutes, ratePerHour);
+  const prepLabour = labourCost(minutes.prep, s.prepCrew, s.ratePerHour);
+  const lineLabour = minutes.line != null ? labourCost(minutes.line, s.lineCrew, s.ratePerHour) : null;
+  const profitAfterLabour = gross - prepLabour - (lineLabour ?? 0);
   return {
     gross,
     prepLabour,
-    profitAfterPrep: gross - prepLabour,
-    prepShareOfGross: gross > 0 ? prepLabour / gross : null,
+    lineLabour,
+    profitAfterLabour,
+    profitPerLineMinute: minutes.line != null && minutes.line > 0 ? profitAfterLabour / minutes.line : null,
+    labourShareOfGross: gross > 0 ? (prepLabour + (lineLabour ?? 0)) / gross : null,
   };
 }

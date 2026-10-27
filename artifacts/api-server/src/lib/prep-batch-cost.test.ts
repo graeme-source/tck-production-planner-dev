@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  DEFAULT_PREP_LABOUR_RATE, batchProfit, grossPerBatch, parseLabourRate, prepLabourCost, recipePrepMinutes,
+  DEFAULT_LABOUR_SETTINGS, batchProfit, grossPerBatch, labourCost, lineMinutesPerBatch, parseLabourSettings, recipePrepMinutes,
 } from "./prep-batch-cost";
 import type { ItemTiming, Confidence } from "./prep-timing";
 import type { PrepUsage } from "./prep-usage";
@@ -71,30 +71,60 @@ describe("£ per batch", () => {
     expect(grossPerBatch(costing)).toBeCloseTo(57.25);
   });
 
-  it("prep labour = minutes ÷ 60 × £/hour", () => {
-    expect(prepLabourCost(30, 14)).toBeCloseTo(7);
-    expect(prepLabourCost(0, 14)).toBe(0);
+  it("labour = minutes × people × £/hour ÷ 60", () => {
+    expect(labourCost(30, 1, 17.05)).toBeCloseTo(8.525);
+    expect(labourCost(1.5, 4, 17.05)).toBeCloseTo(1.705);
+    expect(labourCost(0, 4, 17.05)).toBe(0);
   });
 
-  it("profit after prep = gross − prep labour, with prep's share of gross", () => {
-    const p = batchProfit(costing, 30, 14);
+  it("line minutes per batch: one builder's build time shared by the builders working at once", () => {
+    // 3 minutes a batch for one builder, two building side by side → a batch every 1.5 min.
+    expect(lineMinutesPerBatch(180, 2)).toBeCloseTo(1.5);
+    expect(lineMinutesPerBatch(null, 2)).toBeNull();
+    expect(lineMinutesPerBatch(0, 2)).toBeNull();
+    expect(lineMinutesPerBatch(180, 0)).toBeNull();
+  });
+
+  it("weights prep by its one person and the line by its four", () => {
+    const s = DEFAULT_LABOUR_SETTINGS; // £17.05, prep 1, line 4, 2 builders
+    const p = batchProfit(costing, { prep: 30, line: lineMinutesPerBatch(180, s.lineBuilders) }, s);
     expect(p.gross).toBeCloseTo(57.25);
-    expect(p.prepLabour).toBeCloseTo(7);
-    expect(p.profitAfterPrep).toBeCloseTo(50.25);
-    expect(p.prepShareOfGross).toBeCloseTo(7 / 57.25);
+    expect(p.prepLabour).toBeCloseTo(30 * 1 * 17.05 / 60);  // £8.53
+    expect(p.lineLabour).toBeCloseTo(1.5 * 4 * 17.05 / 60); // £1.71
+    expect(p.profitAfterLabour).toBeCloseTo(57.25 - 8.525 - 1.705);
+    expect(p.profitPerLineMinute).toBeCloseTo((57.25 - 8.525 - 1.705) / 1.5);
+    expect(p.labourShareOfGross).toBeCloseTo((8.525 + 1.705) / 57.25);
   });
 
-  it("has no share when the batch makes no gross", () => {
-    expect(batchProfit({ ...costing, rrp: 0 }, 10, 14).prepShareOfGross).toBeNull();
+  it("uses the crew sizes and rate it is given — they are settings, not constants", () => {
+    const p = batchProfit(costing, { prep: 30, line: 2 }, { ratePerHour: 12, prepCrew: 2, lineCrew: 5, lineBuilders: 2 });
+    expect(p.prepLabour).toBeCloseTo(30 * 2 * 12 / 60);
+    expect(p.lineLabour).toBeCloseTo(2 * 5 * 12 / 60);
+  });
+
+  it("without a line time: no line labour, no profit per line-minute", () => {
+    const p = batchProfit(costing, { prep: 30, line: null }, DEFAULT_LABOUR_SETTINGS);
+    expect(p.lineLabour).toBeNull();
+    expect(p.profitPerLineMinute).toBeNull();
+    expect(p.profitAfterLabour).toBeCloseTo(57.25 - 8.525);
+  });
+
+  it("has no labour share when the batch makes no gross", () => {
+    expect(batchProfit({ ...costing, rrp: 0 }, { prep: 10, line: 1 }, DEFAULT_LABOUR_SETTINGS).labourShareOfGross).toBeNull();
   });
 });
 
-describe("parseLabourRate", () => {
-  it("reads a stored rate and falls back to £14 for anything unusable", () => {
-    expect(parseLabourRate("15.5")).toBe(15.5);
-    expect(parseLabourRate(null)).toBe(DEFAULT_PREP_LABOUR_RATE);
-    expect(parseLabourRate("abc")).toBe(DEFAULT_PREP_LABOUR_RATE);
-    expect(parseLabourRate("0")).toBe(DEFAULT_PREP_LABOUR_RATE);
-    expect(parseLabourRate("5000")).toBe(DEFAULT_PREP_LABOUR_RATE);
+describe("parseLabourSettings", () => {
+  it("defaults to £17.05 an hour, prep 1 person, line 4 people, 2 builders", () => {
+    expect(parseLabourSettings({})).toEqual({
+      settings: { ratePerHour: 17.05, prepCrew: 1, lineCrew: 4, lineBuilders: 2 },
+      defaulted: ["ratePerHour", "prepCrew", "lineCrew", "lineBuilders"],
+    });
+  });
+  it("reads stored values and falls back per setting for anything unusable", () => {
+    const r = parseLabourSettings({ ratePerHour: "18.5", prepCrew: "abc", lineCrew: "5", lineBuilders: "0" });
+    expect(r.settings).toEqual({ ratePerHour: 18.5, prepCrew: 1, lineCrew: 5, lineBuilders: 2 });
+    expect(r.defaulted).toEqual(["prepCrew", "lineBuilders"]);
+    expect(parseLabourSettings({ ratePerHour: "5000" }).settings.ratePerHour).toBe(17.05);
   });
 });
