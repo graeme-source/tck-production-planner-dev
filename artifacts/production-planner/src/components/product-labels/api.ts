@@ -224,6 +224,23 @@ export function useLiveLabelRecipeIds(enabled = true): Set<number> | null {
   return q.data ? liveRecipeIdSet(q.data.recipeIds) : null;
 }
 
+/** Recipes whose front label is the printed 102 × 25 mm name label (test
+ *  products — Graeme, 27 Oct 2026). Wrapping makes "Print front labels"
+ *  their main button. */
+export function useFrontLabelDefaultIds(enabled = true): Set<number> {
+  const q = useQuery({
+    queryKey: ["product-labels", "front-default-ids"],
+    enabled,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/product-front-label/default-recipes`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Couldn't load front label choices (HTTP ${res.status})`);
+      return (await res.json()) as { recipeIds: number[] };
+    },
+  });
+  return liveRecipeIdSet(q.data?.recipeIds);
+}
+
 /** Pure: the published-label set. */
 export function liveRecipeIdSet(ids: number[] | undefined | null): Set<number> {
   return new Set((ids ?? []).filter(n => Number.isInteger(n) && n > 0));

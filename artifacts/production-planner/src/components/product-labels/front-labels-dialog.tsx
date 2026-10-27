@@ -8,8 +8,9 @@
  * exists. Closable (X / Close / tap outside), 92dvh, scrolls inside.
  */
 import { useEffect, useState } from "react";
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
-import { Loader2, Minus, Plus, Printer, X } from "lucide-react";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { Check, Loader2, Minus, Plus, Printer, X } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
 import { FRONT_SECOND_LINE_MAX, initialPrintCount, MAX_PRINT_COUNT } from "@workspace/product-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -18,6 +19,8 @@ interface FrontPreview {
   recipeId: number;
   recipeName: string;
   name: string;
+  /** This printed label is the product's front label (migration 0269). */
+  isDefault: boolean;
   canPrint: boolean;
   png: string | null;
   labelSize: { widthMm: number; heightMm: number };
@@ -25,6 +28,7 @@ interface FrontPreview {
 
 /** The front label on the recipe's label page, under the back-label proofs. */
 export function FrontLabelPreview({ recipeId, onPrint }: { recipeId: number; onPrint: () => void }) {
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["front-label-preview", recipeId, ""],
     queryFn: async () => {
@@ -34,6 +38,21 @@ export function FrontLabelPreview({ recipeId, onPrint }: { recipeId: number; onP
       return body as FrontPreview;
     },
   });
+  // Saves as soon as it's flipped, with the state shown beside it.
+  const setDefault = useMutation({
+    mutationFn: async (on: boolean) => {
+      const res = await fetch(`${BASE}/api/product-front-label/${recipeId}/default`, {
+        method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body.error ?? `Couldn't save (${res.status})`);
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["front-label-preview", recipeId] });
+      void qc.invalidateQueries({ queryKey: ["product-labels", "front-default-ids"] });
+    },
+  });
+  const isDefault = setDefault.isPending ? !!setDefault.variables : !!q.data?.isDefault;
   return (
     <section className="space-y-2">
       <div className="flex flex-wrap items-center gap-3">
@@ -43,6 +62,23 @@ export function FrontLabelPreview({ recipeId, onPrint }: { recipeId: number; onP
           <Printer className="w-5 h-5" /> Print front labels
         </button>
       </div>
+      {q.data && (
+        <label className="flex items-start gap-3 rounded-2xl border-2 border-border bg-card p-3 max-w-2xl cursor-pointer">
+          <Switch checked={isDefault} disabled={setDefault.isPending} onCheckedChange={v => setDefault.mutate(v)} className="mt-0.5" />
+          <span className="flex-1 min-w-0">
+            <span className="font-semibold block">This is the product's front label</span>
+            <span className="text-sm text-muted-foreground block">
+              For products with no printed front label (test products). Wrapping then shows Print front labels as the main button.
+            </span>
+          </span>
+          <span className="text-sm shrink-0 self-center">
+            {setDefault.isPending ? <span className="text-muted-foreground inline-flex items-center gap-1"><Loader2 className="w-4 h-4 animate-spin" /> Saving…</span>
+              : setDefault.isError ? <span className="text-destructive font-semibold">Didn't save — {(setDefault.error as Error).message}</span>
+              : setDefault.isSuccess ? <span className="text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1"><Check className="w-4 h-4" /> Saved</span>
+              : null}
+          </span>
+        </label>
+      )}
       {q.isLoading ? (
         <p className="flex items-center gap-2 text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Drawing the front label…</p>
       ) : q.isError ? (

@@ -5,6 +5,10 @@
  *
  *   GET  /:recipeId/preview?second=   the label as it will print (PNG), its name
  *   POST /:recipeId                   { count, secondLine? } → print-ready PDF
+ *   GET  /default-recipes             recipes whose front label IS this one
+ *   PUT  /:recipeId/default           { on } — make it (or stop it being)
+ *                                     the product's front label (2026-10-27,
+ *                                     migration 0269; managers and admins)
  *
  * 102 × 25 mm: the recipe's label name (or name) in big bold type that
  * shrinks to fit one line, with an optional short second line typed in the
@@ -17,7 +21,10 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { FRONT_LABEL_PAGE, FRONT_SECOND_LINE_MAX, MAX_PRINT_COUNT, frontLabelName } from "@workspace/product-labels";
 import { labelsPdf, renderFrontLabel } from "@workspace/product-labels/render";
+import { eq } from "drizzle-orm";
+import { db, productLabelSettingsTable } from "@workspace/db";
 import { validate, validateQuery } from "../middleware/validate";
+import { requireManagerOrAdmin } from "../middleware/roles";
 import { fonts, loadRecipe, loadSettingsRow, settingsFromRow } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
@@ -29,11 +36,40 @@ const PrintBody = z.object({
   secondLine: z.string().max(200).nullable().optional(),
 });
 
-async function nameFor(recipeId: number): Promise<{ id: number; recipeName: string; name: string } | null> {
+const DefaultBody = z.object({ on: z.boolean() });
+
+router.get("/default-recipes", async (_req: Request, res: Response) => {
+  try {
+    const rows = await db.select({ recipeId: productLabelSettingsTable.recipeId })
+      .from(productLabelSettingsTable).where(eq(productLabelSettingsTable.frontLabelPrinted, true));
+    res.json({ recipeIds: rows.map(r => r.recipeId) });
+  } catch (err) {
+    console.error("[product-front-label] default-recipes:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+router.put("/:recipeId/default", requireManagerOrAdmin, validate(DefaultBody), async (req: Request, res: Response) => {
+  const p = RecipeParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const { on } = req.body as z.infer<typeof DefaultBody>;
+  try {
+    if (!(await loadRecipe(p.data.recipeId))) { res.status(404).json({ error: "Recipe not found" }); return; }
+    await db.insert(productLabelSettingsTable).values({ recipeId: p.data.recipeId, frontLabelPrinted: on })
+      .onConflictDoUpdate({ target: productLabelSettingsTable.recipeId, set: { frontLabelPrinted: on } });
+    res.json({ ok: true, on });
+  } catch (err) {
+    console.error("[product-front-label] default:", err);
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
+async function nameFor(recipeId: number): Promise<{ id: number; recipeName: string; name: string; isDefault: boolean } | null> {
   const recipe = await loadRecipe(recipeId);
   if (!recipe) return null;
-  const settings = settingsFromRow(await loadSettingsRow(recipe.id));
-  return { id: recipe.id, recipeName: recipe.name, name: frontLabelName(settings.labelName, recipe.name) };
+  const row = await loadSettingsRow(recipe.id);
+  const settings = settingsFromRow(row);
+  return { id: recipe.id, recipeName: recipe.name, name: frontLabelName(settings.labelName, recipe.name), isDefault: !!row?.frontLabelPrinted };
 }
 
 router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Request, res: Response) => {
@@ -48,6 +84,7 @@ router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Reques
       recipeId: r.id,
       recipeName: r.recipeName,
       name: r.name,
+      isDefault: r.isDefault,
       canPrint: layout.ok,
       png: layout.ok ? png : null,
       labelSize: { widthMm: FRONT_LABEL_PAGE.widthMm, heightMm: FRONT_LABEL_PAGE.heightMm },

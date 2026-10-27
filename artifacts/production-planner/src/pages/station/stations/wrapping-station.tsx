@@ -33,7 +33,7 @@ import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type Ta
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
 import { FrontLabelsDialog } from "@/components/product-labels/front-labels-dialog";
-import { useLiveLabelRecipeIds, wrappingLabelAction } from "@/components/product-labels/api";
+import { useFrontLabelDefaultIds, useLiveLabelRecipeIds, wrappingLabelAction } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 import { CookChillCard } from "@/components/cook-chill/cook-chill-card";
 
@@ -179,6 +179,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const canPrintBackLabels = useCanPrintBackLabels();
   // Only recipes with a published label get the button (2026-10-19).
   const liveLabelRecipeIds = useLiveLabelRecipeIds(canPrintBackLabels);
+  const frontLabelDefaultIds = useFrontLabelDefaultIds(canPrintBackLabels);
   const [backLabelsFor, setBackLabelsFor] = useState<{ recipeId: number; recipeName: string; planItemId: number; net: number } | null>(null);
   const [frontLabelsFor, setFrontLabelsFor] = useState<{ recipeId: number; recipeName: string; net: number } | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
@@ -938,12 +939,15 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                     </button>
                   )}
                   {/* Front name label beside it (#331): needs only the
-                      recipe's name, so test flavours get one too. */}
+                      recipe's name, so test flavours get one too. A product
+                      whose front label IS this one gets it as a filled main
+                      button (Graeme, 27 Oct 2026). */}
                   {canPrintBackLabels && (
                     <button
                       type="button"
                       onClick={() => setFrontLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, net })}
-                      className={cn(wrappingLabelAction(liveLabelRecipeIds, item.recipeId) ? "" : "ml-auto","h-11 px-4 rounded-xl border-2 border-primary text-primary text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/10 active:scale-[0.98]")}
+                      className={cn(wrappingLabelAction(liveLabelRecipeIds, item.recipeId) ? "" : "ml-auto","h-11 px-4 rounded-xl border-2 border-primary text-sm font-bold flex items-center gap-2 shrink-0 active:scale-[0.98]",
+                        frontLabelDefaultIds.has(item.recipeId) ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-primary hover:bg-primary/10")}
                     >
                       <Printer className="w-4 h-4" /> Print front labels
                     </button>

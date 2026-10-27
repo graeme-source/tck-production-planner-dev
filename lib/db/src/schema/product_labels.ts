@@ -45,6 +45,10 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   // Net quantity printed above the barcode on templates that show it, e.g.
   // "500g". NULL = not set. Migration 0174.
   netQuantity: text("net_quantity"),
+  // The printed 102 × 25 mm name label is this product's front label (test
+  // products with no printed front). Not part of the back label, so never in
+  // its snapshot. Migration 0269.
+  frontLabelPrinted: boolean("front_label_printed").notNull().default(false),
   // Customer cooking times: 'suggested' (template weight tiers) / 'manual'
   // (the values above); NULL = manual when any value is set, else
   // suggested. Migration 0175.
