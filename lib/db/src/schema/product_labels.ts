@@ -36,9 +36,11 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   // Bones warning: TRUE / FALSE = always on / off; NULL = Automatic (on when
   // the ingredients contain a template boneRiskWords word). Migration 0173.
   warningOn: boolean("warning_on"),
-  // NULL = the recipe's shelf_life_days (chilled) / the template (frozen).
-  chilledAmount: integer("chilled_amount"),
-  chilledUnit: text("chilled_unit"),
+  // The label-only chilled period (chilled_amount / chilled_unit) is gone
+  // (migration 0311, 2026-10-27): the recipe's shelf_life_days is the one
+  // source of truth for the chilled use-by. The columns stay in the table,
+  // cleared, and nothing reads them.
+  // Frozen: NULL = the template's.
   frozenOn: boolean("frozen_on").notNull().default(true),
   frozenAmount: integer("frozen_amount"),
   frozenUnit: text("frozen_unit"),
@@ -53,6 +55,11 @@ export const productLabelSettingsTable = pgTable("product_label_settings", {
   // (the values above); NULL = manual when any value is set, else
   // suggested. Migration 0175.
   cookingMode: text("cooking_mode"),
+  // The WRAPPING label (lib/product-labels label-roles.ts, migration 0310):
+  // the template the wrapping station prints instead of the main label —
+  // the cinnamon buns' small internal freezer label. NULL = none (the
+  // wrapping station prints the main label, as for calzones).
+  wrappingTemplateId: integer("wrapping_template_id").references(() => productLabelTemplatesTable.id, { onDelete: "set null" }),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
   updatedByName: text("updated_by_name"),
 });
@@ -68,6 +75,10 @@ export const productLabelVersionsTable = pgTable("product_label_versions", {
   id: serial("id").primaryKey(),
   recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
   recipeName: text("recipe_name").notNull(),
+  // 'main' (the back / despatch label — every version published before
+  // roles existed) or 'wrapping' (label-roles.ts, migration 0310). Each
+  // role has its own version numbers and its own live version.
+  role: text("role").notNull().default("main"),
   versionNo: integer("version_no").notNull(),
   snapshot: jsonb("snapshot").notNull(),
   snapshotHash: text("snapshot_hash").notNull(),
@@ -83,8 +94,8 @@ export const productLabelVersionsTable = pgTable("product_label_versions", {
   proofPng: bytea("proof_png"),
   proofDpi: integer("proof_dpi"),
 }, t => [
-  unique("product_label_versions_recipe_version").on(t.recipeId, t.versionNo),
-  index("idx_product_label_versions_recipe").on(t.recipeId, t.versionNo),
+  unique("product_label_versions_recipe_role_version").on(t.recipeId, t.role, t.versionNo),
+  index("idx_product_label_versions_recipe").on(t.recipeId, t.role, t.versionNo),
 ]);
 
 export type ProductLabelTemplate = typeof productLabelTemplatesTable.$inferSelect;
