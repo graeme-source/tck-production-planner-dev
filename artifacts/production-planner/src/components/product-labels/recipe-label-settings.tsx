@@ -1,15 +1,15 @@
 /**
  * A recipe's label settings — label name, cooking values, bones warning,
- * use-by periods. The barcode is shown here but SET on the recipe page: it
- * is the one the packing scanner uses (components/barcodes), so the label
- * and the scanner can never disagree. Every field autosaves with a visible save state
+ * use-by periods. The barcode has its own card at the top of the label page
+ * (components/barcodes — the one number the label, the packing scanner and
+ * Shopify share). Every field autosaves with a visible save state
  * (charter rule 5). Saving never changes the LIVE label: it changes the
  * current one, which then shows "Update needed" until someone checks it.
  */
 import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Barcode, ChevronRight, Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
+import { Flame, Snowflake, Thermometer, AlertTriangle } from "lucide-react";
 import { COOKING_KEYS, describePeriod, PERIOD_UNITS, type CookingMode, type CookingValues, type PeriodUnit, type ShelfPeriod } from "@workspace/product-labels";
 import { StepPreview } from "./step-preview";
 import { CookingSuggestion } from "./cooking-suggestion";
@@ -158,15 +158,6 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-xl font-bold">This recipe's label settings</h2>
         {canEdit ? <SaveChip state={auto.state} error={auto.error} onRetry={() => void auto.flush()} /> : <span className="text-sm text-muted-foreground">View only — managers can change these</span>}
-      </div>
-
-      {/* Barcode — set on the recipe page, the one the packing scanner uses. */}
-      <div className="space-y-2">
-        <p className="flex items-center gap-2 text-base font-bold"><Barcode className="w-5 h-5 text-primary" /> Barcode</p>
-        <p className="text-lg font-mono font-semibold tracking-wider">{s.barcode ?? "None yet"}</p>
-        <Link href={`/recipes?edit=${data.recipe.id}`} className="inline-flex items-center gap-1 text-sm font-semibold text-primary">
-          Set it on the recipe page — the packing scanner uses the same number <ChevronRight className="w-4 h-4" />
-        </Link>
       </div>
 
       {/* Template */}

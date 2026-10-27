@@ -11,5 +11,6 @@ export * from "./set";
 export * from "./identity";
 export * from "./copies";
 export * from "./reconcile";
+export * from "./push";
 export * from "./scan";
 export * from "./packer";

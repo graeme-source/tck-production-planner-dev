@@ -219,11 +219,16 @@ describe("pull / hourly check classification", () => {
     expect(d.outcome).toBe("conflict");
     expect(d.setOurs).toBeUndefined();
   });
-  it("the hourly check never fills — it reports Shopify-only instead", () => {
-    const d = decidePull({ mode: "check", linked: true, ours: null, shopify: { barcode: "5065018206054" } });
-    expect(d.outcome).toBe("shopify-only");
-    expect(d).not.toHaveProperty("setOurs");
+  it("the hourly check adopts Shopify's where we have none (12 Oct 2026)", () => {
+    expect(decidePull({ mode: "check", linked: true, ours: null, shopify: { barcode: "5065018206054" } }))
+      .toEqual({ outcome: "filled", setOurs: "5065018206054", invalid: false });
     expect(decidePull({ mode: "check", linked: true, ours: "5065018206054", shopify: { barcode: "5065018206207" } }).outcome).toBe("conflict");
+  });
+  it("the hourly check never adopts back a barcode a person moved away, or another product's number", () => {
+    const cleared = decidePull({ mode: "check", linked: true, setInApp: true, ours: null, shopify: { barcode: "5065018206054" } });
+    expect(cleared.outcome).toBe("shopify-only");
+    expect(cleared).not.toHaveProperty("setOurs");
+    expect(decidePull({ mode: "check", linked: true, heldElsewhere: true, ours: null, shopify: { barcode: "5065018206054" } }).outcome).toBe("shopify-only");
   });
   it("missing: Shopify has no barcode", () => {
     expect(linked("5065018206054", null).outcome).toBe("missing");

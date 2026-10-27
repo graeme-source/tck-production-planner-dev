@@ -21,6 +21,10 @@ export const productLabelTemplatesTable = pgTable("product_label_templates", {
 export const productLabelSettingsTable = pgTable("product_label_settings", {
   recipeId: integer("recipe_id").primaryKey().references(() => recipesTable.id, { onDelete: "cascade" }),
   templateId: integer("template_id").references(() => productLabelTemplatesTable.id, { onDelete: "set null" }),
+  // The recipe's barcode lives in sku_barcodes / recipe_pending_barcodes
+  // (set in the Barcode box). This column is only a small label's fallback
+  // (product-labels-store.ts) — migration 0326 copied any number in it for a
+  // recipe with no Shopify listing into recipe_pending_barcodes and kept it.
   barcode: text("barcode"),
   labelName: text("label_name"),
   ovenOn: boolean("oven_on").notNull().default(true),
