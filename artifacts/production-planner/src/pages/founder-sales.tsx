@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -14,6 +14,18 @@ import { MarketingCalendar } from "@/components/marketing-calendar/marketing-cal
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { SalesDriversSection } from "@/components/sales-drivers/sales-drivers-section";
 import { ChangeLog } from "@/components/sales-drivers/change-log";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { LuckyOrderOffer } from "@/components/live-offers/lucky-order-offer";
+
+// Tabs (Graeme, 27 Oct 2026): the bundle builder and live offers each get
+// their own tab instead of sitting at the bottom of one long page. The tab
+// follows the URL hash, so links like /founder/sales#live-offers land on it.
+const TABS = ["overview", "live-offers", "bundle-builder"] as const;
+type Tab = (typeof TABS)[number];
+const tabFromHash = (): Tab => {
+  const h = window.location.hash.replace("#", "") as Tab;
+  return TABS.includes(h) ? h : "overview";
+};
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -87,6 +99,17 @@ export default function FounderSales() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["founder-sales-pulse"] });
 
+  const [tab, setTab] = useState<Tab>(tabFromHash);
+  useEffect(() => {
+    const onHash = () => setTab(tabFromHash());
+    window.addEventListener("hashchange", onHash);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, []);
+  const changeTab = (t: string) => {
+    setTab(t as Tab);
+    history.replaceState(null, "", t === "overview" ? window.location.pathname : `#${t}`);
+  };
+
   if (!ready) return null;
   if (!canSales) return <Redirect to={home ?? "/"} />;
 
@@ -98,55 +121,71 @@ export default function FounderSales() {
         description="Revenue pace, email cadence and the marketing calendar — there's always something on."
       />
 
-      {/* ── Attention strip: the assistant speaks first ─────────────────── */}
-      {isLoading ? (
-        <Skeleton className="h-16 w-full" />
-      ) : (data?.attention.length ?? 0) > 0 ? (
-        <div className="space-y-2">
-          {data!.attention.map((a, i) => (
-            <div key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
-              <span className="text-amber-800 dark:text-amber-300">{a.message}</span>
+      <Tabs value={tab} onValueChange={changeTab} className="space-y-6">
+        <TabsList className="flex-wrap h-auto gap-1">
+          <TabsTrigger value="overview" className="min-h-10 px-4">Overview</TabsTrigger>
+          <TabsTrigger value="live-offers" className="min-h-10 px-4">Live offers</TabsTrigger>
+          {canBundles && <TabsTrigger value="bundle-builder" className="min-h-10 px-4">Bundle builder</TabsTrigger>}
+        </TabsList>
+
+        <TabsContent value="overview" className="space-y-6 mt-0">
+          {/* ── Attention strip: the assistant speaks first ─────────────────── */}
+          {isLoading ? (
+            <Skeleton className="h-16 w-full" />
+          ) : (data?.attention.length ?? 0) > 0 ? (
+            <div className="space-y-2">
+              {data!.attention.map((a, i) => (
+                <div key={i} className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-sm flex items-start gap-2.5">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0 mt-0.5" />
+                  <span className="text-amber-800 dark:text-amber-300">{a.message}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      ) : data ? (
-        <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-sm flex items-center gap-2.5">
-          <Check className="w-4 h-4 text-primary flex-shrink-0" />
-          <span>On pace and emails flowing. Nothing needs you here today.</span>
-        </div>
-      ) : null}
+          ) : data ? (
+            <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-2.5 text-sm flex items-center gap-2.5">
+              <Check className="w-4 h-4 text-primary flex-shrink-0" />
+              <span>On pace and emails flowing. Nothing needs you here today.</span>
+            </div>
+          ) : null}
 
-      {/* Pace and email cadence side by side, stretched to the same height;
-          the calendar runs full width beneath both (Graeme, 2026-09-30). */}
-      <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-stretch [&>*]:h-full">
-        <PaceCard pace={data?.pace ?? null} loading={isLoading} />
-        <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
-      </div>
-      <MarketingCalendar />
-
-      {/* What's driving sales — delivery wait, conversion and the website
-          changelog on one timeline (Graeme, 2026-10-16). Objective I. */}
-      <SalesDriversSection canEdit={canSales} />
-
-      {/* Bundle calculator — moved here from the old Product Hub (Graeme,
-          12 Oct 2026): pricing bundles is a sales job. Full width under the
-          calendar, in the same card style as the rest of the page. */}
-      {canBundles && (
-        <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
-          <div>
-            <h2 className="text-sm font-semibold flex items-center gap-2">
-              <Calculator className="w-4 h-4 text-primary" /> Bundle calculator
-            </h2>
-            <p className="text-sm text-muted-foreground mt-1">Build a bundle from recipes and extras, and see its cost, margin and shipping at a price.</p>
+          {/* Pace and email cadence side by side, stretched to the same height;
+              the calendar runs full width beneath both (Graeme, 2026-09-30). */}
+          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-stretch [&>*]:h-full">
+            <PaceCard pace={data?.pace ?? null} loading={isLoading} />
+            <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
           </div>
-          <BundleCalculator />
-        </section>
-      )}
+          <MarketingCalendar />
 
-      {/* The change log, collapsed to one button at the very bottom — rarely
-          needed (Graeme, 2026-10-21). Objective I. */}
-      <ChangeLog canEdit={canSales} />
+          {/* What's driving sales — delivery wait, conversion and the website
+              changelog on one timeline (Graeme, 2026-10-16). Objective I. */}
+          <SalesDriversSection canEdit={canSales} />
+
+          {/* The change log, collapsed to one button at the very bottom — rarely
+              needed (Graeme, 2026-10-21). Objective I. */}
+          <ChangeLog canEdit={canSales} />
+        </TabsContent>
+
+        {/* Switchable offers — Lucky Order Number first (Graeme, 27 Oct 2026). */}
+        <TabsContent value="live-offers" className="mt-0">
+          <LuckyOrderOffer isFounder={isFounder} />
+        </TabsContent>
+
+        {/* Bundle calculator — moved here from the old Product Hub (Graeme,
+            12 Oct 2026); its own tab since 27 Oct. */}
+        {canBundles && (
+          <TabsContent value="bundle-builder" className="mt-0">
+            <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
+              <div>
+                <h2 className="text-sm font-semibold flex items-center gap-2">
+                  <Calculator className="w-4 h-4 text-primary" /> Bundle calculator
+                </h2>
+                <p className="text-sm text-muted-foreground mt-1">Build a bundle from recipes and extras, and see its cost, margin and shipping at a price.</p>
+              </div>
+              <BundleCalculator />
+            </section>
+          </TabsContent>
+        )}
+      </Tabs>
     </div>
   );
 }
