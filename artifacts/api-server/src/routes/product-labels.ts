@@ -25,8 +25,8 @@ import { and, eq, sql } from "drizzle-orm";
 import {
   resolveBonesWarning, describeCookingTimes, effectiveCookingMode, halveRange, normaliseCookingTiers, resolveCooking,
   DEFAULT_RECIPE_LABEL_SETTINGS, type CookingValues,
-  decideStatus, enforceLegalMinimums, labelFormat, legalMinimums, normaliseTemplate,
-  STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelSnapshot, type LabelTemplate,
+  decideStatus, enforceLegalMinimums, labelFormat, labelRoleTitle, legalMinimums, normaliseTemplate, normaliseUseByRule, resolveChilledPeriod,
+  STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelRole, type LabelSnapshot, type LabelTemplate,
 } from "@workspace/product-labels";
 import { encodePng } from "@workspace/product-labels/render";
 import { requireManagerOrAdmin } from "../middleware/roles";
@@ -34,13 +34,15 @@ import { loadPackBarcodes } from "../lib/barcode-store";
 import { loadCookingData, recipeCookingSuggestion } from "../lib/label-cooking-profile";
 import { rawBody, validate } from "../middleware/validate";
 import {
-  buildCurrentLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, labelPublishBlockers, loadAllLiveVersions,
+  buildCurrentLabel, buildRoleLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, labelPublishBlockers, loadAllLiveVersions,
   loadLiveVersion, loadRecipe, loadTemplate, loadTemplateDefaults, proofFormat, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
 } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
 
 const IdParams = z.object({ id: z.coerce.number().int().positive() });
+// Which of the recipe's labels (label-roles.ts); none = the main label.
+const RoleQuery = z.object({ role: z.enum(["main", "wrapping"]).optional() });
 
 async function userName(req: Request): Promise<{ id: number | null; name: string | null }> {
   const id = req.session.userId ?? null;
@@ -291,14 +293,33 @@ router.get("/recipes", async (_req, res) => {
 
 // ── One recipe ─────────────────────────────────────────────────────────────
 
+/** One of a recipe's labels as a card: its title, template and status. */
+async function roleStatus(recipe: CurrentLabel["recipe"], role: LabelRole) {
+  const current = await buildRoleLabel(recipe, role);
+  if (!current) return null;
+  const lv = await loadLiveVersion(recipe.id, role);
+  const status = decideStatus({
+    isDraft: recipe.isDraft, archived: recipe.archivedAt != null, hasLive: !!lv,
+    matchesLive: !!lv && lv.snapshotHash === current.hash, currentFits: checkFit(current.snapshot).layout.fits,
+  });
+  return {
+    role, title: labelRoleTitle(role, current.wrappingTemplateId != null), templateName: current.template.name,
+    sizeText: labelFormat(current.template.template).sizeText, status, statusLabel: STATUS_LABEL[status],
+  };
+}
+
 router.get("/recipes/:id", async (req, res) => {
   const p = IdParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
+  const q = RoleQuery.safeParse(req.query);
+  if (!q.success) { res.status(400).json({ error: "Invalid label role" }); return; }
+  const role: LabelRole = q.data.role ?? "main";
   try {
     const recipe = await loadRecipe(p.data.id);
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
-    const current = await buildCurrentLabel(recipe);
-    const lv = await loadLiveVersion(recipe.id);
+    const current = await buildRoleLabel(recipe, role);
+    if (!current) { res.status(404).json({ error: `${recipe.name} has no wrapping label.` }); return; }
+    const lv = await loadLiveVersion(recipe.id, role);
     const currentProof = renderProof(current.snapshot);
     const liveProof = lv ? renderProof(lv.snapshot as LabelSnapshot) : null;
     const matchesLive = !!lv && lv.snapshotHash === current.hash;
@@ -307,7 +328,32 @@ router.get("/recipes/:id", async (req, res) => {
     });
     const blockers = labelPublishBlockers(current, currentProof);
     const back = labelFormat(current.template.template).backLabel;
+    const hasWrapping = current.wrappingTemplateId != null;
+    // Both labels' status, for the cards at the top of the page — the one
+    // on screen is worked out above, the other one here.
+    const labels = [{ role, title: labelRoleTitle(role, hasWrapping), templateName: current.template.name, sizeText: labelFormat(current.template.template).sizeText, status, statusLabel: STATUS_LABEL[status] }];
+    if (hasWrapping) {
+      const other: LabelRole = role === "main" ? "wrapping" : "main";
+      const o = await roleStatus(recipe, other);
+      if (o) labels.push(o);
+      labels.sort((a, b) => (a.role === "wrapping" ? -1 : 1) - (b.role === "wrapping" ? -1 : 1));
+    }
+    // Shelf life: the recipe's own number IS the use-by (shelf-life.ts) —
+    // unless this template counts a fixed period from despatch.
+    const t = current.template.template;
+    const resolved = resolveChilledPeriod(t, recipe.shelfLifeDays);
+    const rule = normaliseUseByRule(t.useBy);
     res.json({
+      role,
+      roleTitle: labelRoleTitle(role, hasWrapping),
+      wrappingTemplateId: current.wrappingTemplateId,
+      labels,
+      shelfLife: {
+        recipeDays: recipe.shelfLifeDays,
+        source: resolved.source,
+        period: resolved.period,
+        despatchPeriod: rule.from === "despatch" ? rule.period : null,
+      },
       recipe: {
         id: recipe.id, name: recipe.name, packSize: current.snapshot.packSize, shelfLifeDays: recipe.shelfLifeDays,
         isDraft: recipe.isDraft, archived: recipe.archivedAt != null,
@@ -386,7 +432,13 @@ const SettingsBody = z.object({
   airFryerTempC: nullableInt(400),
   airFryerMinMinutes: nullableInt(240),
   airFryerMaxMinutes: nullableInt(240),
-  chilled: Period,
+  // The RECIPE's shelf life (recipes.shelf_life_days) — the one source of
+  // truth for the chilled use-by (shelf-life.ts). Edited here or on the
+  // recipe page; there is no label-only chilled period any more. null /
+  // 0 = none set.
+  shelfLifeDays: z.number().int().min(0).max(999).nullable().optional(),
+  // The wrapping label's template (label-roles.ts); null = none.
+  wrappingTemplateId: z.number().int().positive().nullable().optional(),
   frozen: Period,
 });
 
@@ -411,11 +463,22 @@ router.put("/recipes/:id/settings", requireManagerOrAdmin, validate(SettingsBody
       }
       set.templateId = body.templateId;
     }
+    if (body.wrappingTemplateId !== undefined) {
+      if (body.wrappingTemplateId != null) {
+        const [t] = await db.select({ id: productLabelTemplatesTable.id }).from(productLabelTemplatesTable).where(eq(productLabelTemplatesTable.id, body.wrappingTemplateId));
+        if (!t) { res.status(400).json({ error: "That label template doesn't exist" }); return; }
+      }
+      set.wrappingTemplateId = body.wrappingTemplateId;
+    }
     for (const k of ["ovenTempC", "fanTempC", "ovenMinMinutes", "ovenMaxMinutes", "airFryerTempC", "airFryerMinMinutes", "airFryerMaxMinutes"] as const) {
       if (body[k] !== undefined) set[k] = body[k] ?? null;
     }
-    if (body.chilled !== undefined) { set.chilledAmount = body.chilled?.amount ?? null; set.chilledUnit = body.chilled?.unit ?? null; }
     if (body.frozen !== undefined) { set.frozenAmount = body.frozen?.amount ?? null; set.frozenUnit = body.frozen?.unit ?? null; }
+    // The recipe's shelf life: written to the RECIPE, the same column the
+    // recipe page edits, so the two can never disagree.
+    if (body.shelfLifeDays !== undefined) {
+      await db.update(recipesTable).set({ shelfLifeDays: body.shelfLifeDays || null }).where(eq(recipesTable.id, recipe.id));
+    }
     await db.insert(productLabelSettingsTable)
       .values({ recipeId: recipe.id, ...set })
       .onConflictDoUpdate({ target: productLabelSettingsTable.recipeId, set });
@@ -430,17 +493,21 @@ const PublishBody = z.object({
   expectedHash: z.string().regex(/^[0-9a-f]{64}$/),
   /** "I've checked it — update live" — the human half of the double check. */
   confirmed: z.literal(true),
+  /** Which of the recipe's labels (label-roles.ts); none = the main label. */
+  role: z.enum(["main", "wrapping"]).optional(),
 });
 
 router.post("/recipes/:id/publish", requireManagerOrAdmin, validate(PublishBody), async (req, res) => {
   const p = IdParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "Invalid recipe id" }); return; }
   const body = req.body as z.infer<typeof PublishBody>;
+  const role: LabelRole = body.role ?? "main";
   try {
     const recipe = await loadRecipe(p.data.id);
     if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
     // Rebuild on the server — never trust what the page sent.
-    const current = await buildCurrentLabel(recipe);
+    const current = await buildRoleLabel(recipe, role);
+    if (!current) { res.status(404).json({ error: `${recipe.name} has no wrapping label.` }); return; }
     if (current.hash !== body.expectedHash) {
       res.status(409).json({ error: "The label changed while you were checking it (someone edited the recipe or the template). Look at the new proof and confirm again." });
       return;
@@ -448,7 +515,7 @@ router.post("/recipes/:id/publish", requireManagerOrAdmin, validate(PublishBody)
     const proof = renderProof(current.snapshot);
     const blockers = labelPublishBlockers(current, proof);
     if (blockers.length) { res.status(422).json({ error: "This label can't go live yet.", blockers }); return; }
-    const live = await loadLiveVersion(recipe.id);
+    const live = await loadLiveVersion(recipe.id, role);
     if (live && live.snapshotHash === current.hash) { res.status(409).json({ error: "The live label is already this version." }); return; }
     const who = await userName(req);
 
@@ -457,16 +524,17 @@ router.post("/recipes/:id/publish", requireManagerOrAdmin, validate(PublishBody)
       await client.query("BEGIN");
       // Serialise publishes of one recipe so version numbers can't collide.
       await client.query("SELECT pg_advisory_xact_lock($1, $2)", [20261010, recipe.id]);
+      // Each label role has its own version numbers (migration 0310).
       const { rows } = await client.query<{ next: number }>(
-        "SELECT COALESCE(MAX(version_no), 0) + 1 AS next FROM product_label_versions WHERE recipe_id = $1", [recipe.id],
+        "SELECT COALESCE(MAX(version_no), 0) + 1 AS next FROM product_label_versions WHERE recipe_id = $1 AND role = $2", [recipe.id, role],
       );
       const versionNo = Number(rows[0].next);
       await client.query(
         `INSERT INTO product_label_versions
-           (recipe_id, recipe_name, version_no, snapshot, snapshot_hash, fit, template_id, template_version, published_by_id, published_by_name,
+           (recipe_id, recipe_name, role, version_no, snapshot, snapshot_hash, fit, template_id, template_version, published_by_id, published_by_name,
             proof_png, proof_dpi)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [recipe.id, recipe.name, versionNo, JSON.stringify(current.snapshot), current.hash, JSON.stringify(fitSummary(proof)),
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+        [recipe.id, recipe.name, role, versionNo, JSON.stringify(current.snapshot), current.hash, JSON.stringify(fitSummary(proof)),
           current.template.id, current.template.version, who.id, who.name,
           // The exact image going live (dated today, the publish day) — the
           // label history shows this, never a later re-draw (migration 0172).

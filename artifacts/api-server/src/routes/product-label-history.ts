@@ -34,6 +34,10 @@ const router: IRouter = Router();
 
 const RecipeParams = z.object({ id: z.coerce.number().int().positive() });
 const VersionParams = RecipeParams.extend({ versionNo: z.coerce.number().int().positive() });
+// Which of the recipe's labels (label-roles.ts, migration 0310): each role
+// has its own version numbers. None = the main label, as before.
+const RoleQuery = z.object({ role: z.enum(["main", "wrapping"]).optional() });
+const roleOf = (req: Request) => RoleQuery.safeParse(req.query).data?.role ?? "main";
 
 function fail(res: Response, err: unknown, where: string) {
   console.error(`[product-label-history] ${where}:`, err);
@@ -55,13 +59,16 @@ router.get("/recipes/:id/versions", async (req: Request, res: Response) => {
       publishedByName: productLabelVersionsTable.publishedByName,
       hasStoredProof: sql<boolean>`${productLabelVersionsTable.proofPng} IS NOT NULL`,
     }).from(productLabelVersionsTable)
-      .where(eq(productLabelVersionsTable.recipeId, recipe.id))
+      .where(and(eq(productLabelVersionsTable.recipeId, recipe.id), eq(productLabelVersionsTable.role, roleOf(req))))
       .orderBy(asc(productLabelVersionsTable.versionNo));
+    // Only this label's prints: another role's version numbers overlap.
+    const ids = new Set(versions.map(v => v.id));
     const prints = versions.length
-      ? await db.select({
+      ? (await db.select({
           labelVersionId: productLabelPrintsTable.labelVersionId, versionNo: productLabelPrintsTable.versionNo,
           count: productLabelPrintsTable.count, kind: productLabelPrintsTable.kind, createdAt: productLabelPrintsTable.createdAt,
-        }).from(productLabelPrintsTable).where(eq(productLabelPrintsTable.recipeId, recipe.id))
+        }).from(productLabelPrintsTable).where(eq(productLabelPrintsTable.recipeId, recipe.id)))
+          .filter(pr => pr.labelVersionId == null || ids.has(pr.labelVersionId))
       : [];
     const stored = new Map(versions.map(v => [v.id, v.hasStoredProof === true]));
     const history = buildLabelHistory(
@@ -86,7 +93,7 @@ async function versionImage(req: Request, res: Response) {
   const p = VersionParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "Invalid recipe or version" }); return null; }
   const [v] = await db.select().from(productLabelVersionsTable)
-    .where(and(eq(productLabelVersionsTable.recipeId, p.data.id), eq(productLabelVersionsTable.versionNo, p.data.versionNo)));
+    .where(and(eq(productLabelVersionsTable.recipeId, p.data.id), eq(productLabelVersionsTable.role, roleOf(req)), eq(productLabelVersionsTable.versionNo, p.data.versionNo)));
   if (!v) { res.status(404).json({ error: "No such label version" }); return null; }
   const day = londonDateString(v.publishedAt);
   const image = archiveImage(

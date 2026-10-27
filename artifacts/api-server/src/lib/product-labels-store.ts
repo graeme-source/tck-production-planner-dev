@@ -8,10 +8,11 @@
  */
 import { createHash } from "node:crypto";
 import { db, recipesTable, productLabelTemplatesTable, productLabelSettingsTable, productLabelVersionsTable } from "@workspace/db";
-import { asc, desc, eq, getTableColumns } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns } from "drizzle-orm";
 import {
   buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, labelFormat, normalisePeriod, normaliseTemplate, publishBlockers, resolveTemplateChoice, snapshotKey,
-  type LabelSnapshot, type LabelTemplate, type RecipeLabelSettings, type SnapshotChange, type PeriodUnit,
+  wrappingTemplateChoice,
+  type LabelRole, type LabelSnapshot, type LabelTemplate, type RecipeLabelSettings, type SnapshotChange, type PeriodUnit,
   type TemplateCategoryDefaults, type TemplateChoice,
 } from "@workspace/product-labels";
 import { checkLabel, proofLabel, type LabelProof } from "@workspace/product-labels/render";
@@ -84,7 +85,6 @@ export function settingsFromRow(row: SettingsRow | undefined): RecipeLabelSettin
     },
     cookingMode: row.cookingMode === "suggested" || row.cookingMode === "manual" ? row.cookingMode : null,
     warningOn: row.warningOn,
-    chilled: normalisePeriod({ amount: row.chilledAmount, unit: row.chilledUnit as PeriodUnit }),
     frozenOn: row.frozenOn,
     frozen: normalisePeriod({ amount: row.frozenAmount, unit: row.frozenUnit as PeriodUnit }),
     netQuantity: row.netQuantity ?? null,
@@ -103,16 +103,20 @@ export async function loadSettingsRow(recipeId: number): Promise<SettingsRow | u
 export type VersionRow = Omit<typeof productLabelVersionsTable.$inferSelect, "proofPng">;
 const { proofPng: _proofPng, ...versionColumns } = getTableColumns(productLabelVersionsTable);
 
-export async function loadLiveVersion(recipeId: number): Promise<VersionRow | undefined> {
+/** The live version of one of a recipe's labels (label-roles.ts): "main"
+ *  (the back / despatch label, as before) unless asked for "wrapping". */
+export async function loadLiveVersion(recipeId: number, role: LabelRole = "main"): Promise<VersionRow | undefined> {
   const [row] = await db.select(versionColumns).from(productLabelVersionsTable)
-    .where(eq(productLabelVersionsTable.recipeId, recipeId))
+    .where(and(eq(productLabelVersionsTable.recipeId, recipeId), eq(productLabelVersionsTable.role, role)))
     .orderBy(desc(productLabelVersionsTable.versionNo))
     .limit(1);
   return row;
 }
 
-export async function loadAllLiveVersions(): Promise<Map<number, VersionRow>> {
-  const rows = await db.select(versionColumns).from(productLabelVersionsTable).orderBy(desc(productLabelVersionsTable.versionNo));
+export async function loadAllLiveVersions(role: LabelRole = "main"): Promise<Map<number, VersionRow>> {
+  const rows = await db.select(versionColumns).from(productLabelVersionsTable)
+    .where(eq(productLabelVersionsTable.role, role))
+    .orderBy(desc(productLabelVersionsTable.versionNo));
   const out = new Map<number, VersionRow>();
   for (const r of rows) if (r.recipeId != null && !out.has(r.recipeId)) out.set(r.recipeId, r);
   return out;
@@ -123,6 +127,10 @@ export async function loadAllLiveVersions(): Promise<Map<number, VersionRow>> {
 export type RecipeRow = typeof recipesTable.$inferSelect;
 
 export interface CurrentLabel {
+  /** Which of the recipe's labels this is (label-roles.ts). */
+  role: LabelRole;
+  /** The recipe's wrapping label template, or null = none. */
+  wrappingTemplateId: number | null;
   recipe: RecipeRow;
   /** The pack listings hold different barcodes (none is printed). */
   barcodeMixed: boolean;
@@ -150,12 +158,18 @@ export async function loadRecipe(recipeId: number): Promise<RecipeRow | undefine
 
 /** The label as it would be if published now. `templateOverride` renders a
  *  template that isn't saved yet (the settings page's live preview). */
-export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; templateDefaults?: TemplateCategoryDefaults[]; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }>; cookingData?: CookingData } = {}): Promise<CurrentLabel> {
+export async function buildCurrentLabel(recipe: RecipeRow, opts: { role?: LabelRole; templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; templateDefaults?: TemplateCategoryDefaults[]; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }>; cookingData?: CookingData } = {}): Promise<CurrentLabel> {
+  const role = opts.role ?? "main";
   const settingsRow = await loadSettingsRow(recipe.id);
   // The picked template, else the one set as the default for this recipe's
   // category (e.g. Macaroni cheese), else the standard one.
   const defaults = opts.templateDefaults ?? await loadTemplateDefaults();
-  const templateChoice = resolveTemplateChoice(settingsRow?.templateId ?? null, recipe.category, defaults);
+  const wrappingTemplateId = wrappingTemplateChoice(settingsRow?.wrappingTemplateId ?? null, defaults.map(t => t.id));
+  // The wrapping label is only ever the template picked for it.
+  if (role === "wrapping" && wrappingTemplateId == null) throw new Error(`${recipe.name} has no wrapping label.`);
+  const templateChoice: TemplateChoice = role === "wrapping"
+    ? { id: wrappingTemplateId, reason: "chosen" }
+    : resolveTemplateChoice(settingsRow?.templateId ?? null, recipe.category, defaults);
   const auto = resolveTemplateChoice(null, recipe.category, defaults);
   const automaticTemplate = { id: auto.id, name: (auto.id != null ? defaults.find(t => t.id === auto.id) : defaults[0])?.name ?? null };
   const key = templateChoice.id ?? "default";
@@ -184,7 +198,18 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
     template: template.template,
     cookingSuggestion: cooking.suggestion?.cooking ?? null,
   });
-  return { recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, templateChoice, automaticTemplate, deck, snapshot, hash: snapshotHash(snapshot), cooking };
+  return { role, wrappingTemplateId, recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, templateChoice, automaticTemplate, deck, snapshot, hash: snapshotHash(snapshot), cooking };
+}
+
+/** One of a recipe's labels, or null when it has no label in that role (a
+ *  recipe without a wrapping label). */
+export async function buildRoleLabel(recipe: RecipeRow, role: LabelRole, opts: Parameters<typeof buildCurrentLabel>[1] = {}): Promise<CurrentLabel | null> {
+  if (role === "main") return buildCurrentLabel(recipe, { ...opts, role });
+  const row = await loadSettingsRow(recipe.id);
+  if (row?.wrappingTemplateId == null) return null;
+  const defaults = opts.templateDefaults ?? await loadTemplateDefaults();
+  if (wrappingTemplateChoice(row.wrappingTemplateId, defaults.map(t => t.id)) == null) return null;
+  return buildCurrentLabel(recipe, { ...opts, templateDefaults: defaults, role });
 }
 
 /** Proof dates: today (London) for both print and production day — a sample,

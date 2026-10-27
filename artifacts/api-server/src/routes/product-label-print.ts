@@ -27,16 +27,16 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, productLabelPrintsTable, productLabelVersionsTable, productionPlanItemsTable, productionPlansTable, usersTable } from "@workspace/db";
+import { db, productLabelPrintsTable, productLabelSettingsTable, productLabelVersionsTable, productionPlanItemsTable, productionPlansTable, usersTable } from "@workspace/db";
 import { eq, isNotNull } from "drizzle-orm";
 import {
   buildPrintRecord, labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, normaliseTemplate, testPrintSource, TEST_STAMP_TEXT,
-  type LabelSnapshot, type PrintRefusal,
+  type LabelRole, type LabelSnapshot, type PrintRefusal,
 } from "@workspace/product-labels";
 import { labelsPdf, pngDataUrl, proofLabel, stampTest } from "@workspace/product-labels/render";
 import { validate, validateQuery } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
-import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
+import { buildRoleLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
 // Every print here is for EVERYONE signed in: back labels at the wrapping
@@ -47,12 +47,18 @@ const router: IRouter = Router();
 // recorded as a test, so it can't pass for a real one).
 
 const RecipeParams = z.object({ recipeId: z.coerce.number().int().positive() });
+// role: which of the recipe's labels (label-roles.ts) — the wrapping
+// station asks for "wrapping" when the recipe has a wrapping label (the
+// cinnamon buns' freezer label). None = the main label, as before.
+const Role = z.enum(["main", "wrapping"]).optional();
 const PreviewQuery = z.object({
   planItemId: z.coerce.number().int().positive().optional(),
   test: z.enum(["1", "true"]).optional(),
+  role: Role,
 });
 const PrintBody = z.object({
   count: z.number().int().min(1).max(MAX_PRINT_COUNT),
+  role: Role,
   planItemId: z.number().int().positive().optional(),
   /** A test print from the label review page (dated today, recorded as a test). */
   test: z.boolean().optional(),
@@ -74,14 +80,15 @@ async function planDay(planItemId: number | undefined, recipeId: number): Promis
 }
 
 /** Everything both endpoints need: which label prints, whether it may, and today's run. */
-async function prepare(recipeId: number, planItemId: number | undefined, test: boolean) {
+async function prepare(recipeId: number, planItemId: number | undefined, test: boolean, role: LabelRole = "main") {
   const recipe = await loadRecipe(recipeId);
   if (!recipe) return { status: 404 as const, error: "Recipe not found" };
   // A test print is dated today, whatever plan it might belong to.
   const plan = await planDay(test ? undefined : planItemId, recipeId);
   if ("error" in plan) return { status: 400 as const, error: plan.error };
-  const live = await loadLiveVersion(recipeId);
-  const current = await buildCurrentLabel(recipe);
+  const current = await buildRoleLabel(recipe, role);
+  if (!current) return { status: 404 as const, error: `${recipe.name} has no wrapping label.` };
+  const live = await loadLiveVersion(recipeId, role);
   const printDate = londonDateString();
   const matchesLive = !!live && live.snapshotHash === current.hash;
 
@@ -94,7 +101,7 @@ async function prepare(recipeId: number, planItemId: number | undefined, test: b
     ? (proof?.layout.fits ? null : "doesnt-fit")
     : printRefusal({ hasLive: !!live, matchesLive, fits: proof?.layout.fits ?? false });
   return {
-    status: 200 as const, recipe, plan, live, matchesLive, current, snapshot, proof, refusal, printDate, stamped,
+    status: 200 as const, role, recipe, plan, live, matchesLive, current, snapshot, proof, refusal, printDate, stamped,
     png: proof ? (stamped ? pngDataUrl(proof.bitmap) : proof.png) : null,
   };
 }
@@ -105,10 +112,20 @@ async function prepare(recipeId: number, planItemId: number | undefined, test: b
 // its preview used calzone cooking instructions). Real prints of anything
 // else are already refused below (printRefusal: no live label).
 router.get("/live-recipes", async (_req: Request, res: Response) => {
-  const rows = await db.selectDistinct({ recipeId: productLabelVersionsTable.recipeId })
+  const rows = await db.selectDistinct({ recipeId: productLabelVersionsTable.recipeId, role: productLabelVersionsTable.role })
     .from(productLabelVersionsTable)
     .where(isNotNull(productLabelVersionsTable.recipeId));
-  res.json({ recipeIds: rows.map(r => r.recipeId as number) });
+  // Recipes with a WRAPPING label (label-roles.ts): the wrapping station
+  // prints that one instead ("Print freezer labels"), published or not —
+  // the dialog says when it still needs publishing.
+  const wrapping = await db.select({ recipeId: productLabelSettingsTable.recipeId })
+    .from(productLabelSettingsTable)
+    .where(isNotNull(productLabelSettingsTable.wrappingTemplateId));
+  const liveWrapping = new Set(rows.filter(r => r.role === "wrapping").map(r => r.recipeId as number));
+  res.json({
+    recipeIds: [...new Set(rows.filter(r => r.role === "main").map(r => r.recipeId as number))],
+    wrapping: wrapping.map(w => ({ recipeId: w.recipeId, live: liveWrapping.has(w.recipeId) })),
+  });
 });
 
 router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Request, res: Response) => {
@@ -117,11 +134,14 @@ router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Reques
   const q = res.locals.query as z.infer<typeof PreviewQuery>;
   const test = q.test !== undefined;
   try {
-    const r = await prepare(p.data.recipeId, q.planItemId, test);
+    const r = await prepare(p.data.recipeId, q.planItemId, test, q.role ?? "main");
     if (r.status !== 200) { res.status(r.status).json({ error: r.error }); return; }
     res.json({
       recipeId: r.recipe.id,
       recipeName: r.recipe.name,
+      role: r.role,
+      /** "Small label" / "Back label" — the format of what prints. */
+      formatName: r.snapshot ? labelFormat(r.snapshot.template).name : null,
       test,
       /** live = the live label; current-stamped = today's proof, stamped TEST — NOT FOR SALE. */
       source: r.stamped ? "current-stamped" : "live",
@@ -147,7 +167,7 @@ router.post("/:recipeId", validate(PrintBody), async (req: Request, res: Respons
   const body = req.body as z.infer<typeof PrintBody>;
   const test = body.test === true;
   try {
-    const r = await prepare(p.data.recipeId, body.planItemId, test);
+    const r = await prepare(p.data.recipeId, body.planItemId, test, body.role ?? "main");
     if (r.status !== 200) { res.status(r.status).json({ error: r.error }); return; }
     if (r.refusal || !r.proof || !r.snapshot || (!test && !r.live)) {
       res.status(409).json({ error: r.refusal ? PRINT_REFUSAL_TEXT[r.refusal] : "Can't print this label.", refusal: r.refusal });
