@@ -19,7 +19,8 @@ export interface PrepSessionPause { from: number; to: number }
 export const prepSessionsTable = pgTable("prep_sessions", {
   id: serial("id").primaryKey(),
   planId: integer("plan_id").notNull().references(() => productionPlansTable.id, { onDelete: "cascade" }),
-  station: text("station").notNull(),
+  /** The screen it was opened on; NULL on a flagged row (no screen opened it). */
+  station: text("station"),
   ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "cascade" }),
   subRecipeId: integer("sub_recipe_id").references(() => subRecipesTable.id, { onDelete: "cascade" }),
   recipeId: integer("recipe_id").references(() => recipesTable.id, { onDelete: "set null" }),
@@ -31,6 +32,11 @@ export const prepSessionsTable = pgTable("prep_sessions", {
   quantity: numeric("quantity", { precision: 14, scale: 4 }),
   quantityUnit: text("quantity_unit"),
   pauses: jsonb("pauses").$type<PrepSessionPause[]>().notNull().default([]),
+  /** NULL for a real session; 'completed_without_open' (CHECK in the
+   *  migration; the constant is COMPLETED_WITHOUT_OPEN in the api-server's
+   *  lib/prep-session-rules.ts) for the zero-length row recorded when a tick
+   *  arrived with nothing open — flag-and-allow, counted, never timed. */
+  flag: text("flag"),
 });
 
 // What completed a session: a prep tick (linked to its prep_completions row,

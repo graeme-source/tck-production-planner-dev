@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  CONTINUE_WINDOW_MS, MAX_SESSION_MS, decideOpen, prepItemOf, sessionForCompletion,
+  CONTINUE_WINDOW_MS, MAX_SESSION_MS, completionTiming, decideOpen, isPrepTin, prepItemOf, sessionForCompletion,
 } from "./prep-session-rules";
 
 const MIN = 60_000;
@@ -73,6 +73,32 @@ describe("sessionForCompletion", () => {
 
   it("returns null when there is nothing to link to", () => {
     expect(sessionForCompletion([], T0)).toBeNull();
+  });
+});
+
+describe("completionTiming — a completion needs an open session (flag-and-allow)", () => {
+  it("links a completion made inside an opened item", () => {
+    expect(completionTiming([{ id: 4, openedAt: T0, closedAt: null }], T0 + 6 * MIN)).toEqual({ kind: "link", sessionId: 4 });
+  });
+
+  it("flags a completion with nothing opened on the item — the tick stands, it just isn't timed", () => {
+    expect(completionTiming([], T0)).toEqual({ kind: "flag" });
+  });
+
+  it("flags a completion long after the person moved off the item", () => {
+    expect(completionTiming([{ id: 4, openedAt: T0, closedAt: T0 + MIN }], T0 + MIN + CONTINUE_WINDOW_MS + 1)).toEqual({ kind: "flag" });
+  });
+
+  it("flags a completion when the only session was opened after it", () => {
+    expect(completionTiming([{ id: 4, openedAt: T0 + MIN, closedAt: null }], T0)).toEqual({ kind: "flag" });
+  });
+});
+
+describe("isPrepTin", () => {
+  it("counts tins and trays 1…n, not the mixing station's tin-0 confirmation", () => {
+    expect(isPrepTin(1)).toBe(true);
+    expect(isPrepTin(12)).toBe(true);
+    expect(isPrepTin(0)).toBe(false);
   });
 });
 

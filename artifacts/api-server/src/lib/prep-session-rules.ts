@@ -79,6 +79,32 @@ export function sessionForCompletion(candidates: readonly SessionHead[], at: num
   return best.id;
 }
 
+/** What happens to the timing of a completion (Graeme, 27 Oct 2026: "no
+ *  completing prep without opening the item"). The prep screens only offer
+ *  the tick inside an opened item, and the server checks too: a completion
+ *  with a session open on the item is linked to it; one with nothing open
+ *  (an old screen still cached on an iPad, an open that never arrived) is
+ *  FLAGGED — recorded as completed without opening, counted, never timed.
+ *  Flag, not refuse: the tick itself always stands, so prep is never blocked
+ *  by a network blip. */
+export type CompletionTiming = { kind: "link"; sessionId: number } | { kind: "flag" };
+
+/** prep_sessions.flag on the zero-length row that records a flagged
+ *  completion (the migration's CHECK allows only this value). */
+export const COMPLETED_WITHOUT_OPEN = "completed_without_open";
+
+export function completionTiming(candidates: readonly SessionHead[], at: number): CompletionTiming {
+  const sessionId = sessionForCompletion(candidates, at);
+  return sessionId != null ? { kind: "link", sessionId } : { kind: "flag" };
+}
+
+/** Tin 0 is the mixing station's add-at-cooking confirmation (the stock
+ *  poured into the trays on production day), stored as a prep_completions
+ *  row — not prep, so never timed or flagged. Real prep tins are 1…n. */
+export function isPrepTin(tinNumber: number): boolean {
+  return Number.isInteger(tinNumber) && tinNumber >= 1;
+}
+
 /** "Exactly one prep item" — an ingredient or a sub-recipe, never both. */
 export function prepItemOf(body: { ingredientId?: number | null; subRecipeId?: number | null }):
   { ingredientId: number; subRecipeId: null } | { ingredientId: null; subRecipeId: number } | null {

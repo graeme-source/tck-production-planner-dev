@@ -14,7 +14,7 @@
 -- prep_sessions: one row per person working one prep item.
 --   plan_id          the plan the screen was prepping for
 --   station          the screen it was opened on (main_prep, prep_bases,
---                    prep_meat) — context only
+--                    prep_meat…) — context only; NULL on a flagged row
 --   ingredient_id /  the prep item; exactly one is set (a sub-recipe for
 --   sub_recipe_id    Garlic Butter, Tomato Base, a rub…)
 --   recipe_id        set when the screen opens the item for ONE recipe (Raw
@@ -31,6 +31,11 @@
 --   quantity_unit    completions, in the unit the screen showed
 --   pauses           [{"from": ms, "to": ms}] — closed, then re-opened
 --                    within 15 minutes and continued: the gap is not prep
+--   flag             NULL for a real session. 'completed_without_open' when
+--                    a tick arrived and the person had nothing open on that
+--                    item (an old screen, a network blip): the tick is still
+--                    saved — flag-and-allow, prep is never blocked — and this
+--                    zero-length row records it, counted but never timed
 --
 -- prep_session_completions: what completed a session. One row per prep tick,
 -- linked to the existing prep_completions row (and deleted with it when the
@@ -42,7 +47,7 @@
 CREATE TABLE IF NOT EXISTS prep_sessions (
   id SERIAL PRIMARY KEY,
   plan_id INTEGER NOT NULL REFERENCES production_plans(id) ON DELETE CASCADE,
-  station TEXT NOT NULL,
+  station TEXT,
   ingredient_id INTEGER REFERENCES ingredients(id) ON DELETE CASCADE,
   sub_recipe_id INTEGER REFERENCES sub_recipes(id) ON DELETE CASCADE,
   recipe_id INTEGER REFERENCES recipes(id) ON DELETE SET NULL,
@@ -54,7 +59,9 @@ CREATE TABLE IF NOT EXISTS prep_sessions (
   quantity NUMERIC(14, 4),
   quantity_unit TEXT,
   pauses JSONB NOT NULL DEFAULT '[]'::jsonb,
-  CONSTRAINT prep_sessions_one_item CHECK (num_nonnulls(ingredient_id, sub_recipe_id) = 1)
+  flag TEXT,
+  CONSTRAINT prep_sessions_one_item CHECK (num_nonnulls(ingredient_id, sub_recipe_id) = 1),
+  CONSTRAINT prep_sessions_flag CHECK (flag IS NULL OR flag = 'completed_without_open')
 );
 
 -- "This person's latest session on this item" — every open and tick asks it.
