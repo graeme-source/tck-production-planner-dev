@@ -82,7 +82,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
-  // Prep timing, in the background (Analytics → Prep times).
+  // Prep timing, in the background (the founder-only prep times report).
   const timing = usePrepSessionCapture({ planId: targetPlanId, station: "prep_meat", enabled: !isDraft && !noFuturePlan });
 
   // SOP links for the whole board in two calls (recipes + ingredients),

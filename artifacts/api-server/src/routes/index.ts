@@ -570,7 +570,7 @@ router.use("/label-stock", labelStockRouter);
 router.use("/print-jobs", printJobsRouter);
 router.use("/prep-linked-completions", prepLinkedCompletionsRouter);
 // Prep sessions — when a prep item is opened, completed and closed, written
-// in the background by the prep screens (Analytics → Prep times reads them).
+// in the background by the prep screens (the founder-only /prep-times report reads them).
 // Any signed-in station user; open/complete sit in the daily PIN lock.
 router.use("/prep-sessions", prepSessionsRouter);
 router.use("/plan-move", planMoveRouter);

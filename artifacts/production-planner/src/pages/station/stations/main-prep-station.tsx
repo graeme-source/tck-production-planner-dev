@@ -241,7 +241,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   // "Also viewing" presence — shared with Bases & Sauces (#64).
   const { presenceData, setViewing } = usePrepPresence(targetPlanId);
-  // Prep timing (Analytics → Prep times): the item on screen is timed in the
+  // Prep timing (founder-only report, no screen): the item on screen is timed in the
   // background from opening to its ticks — never shown, never waited on.
   const timing = usePrepSessionCapture({ planId: targetPlanId, station: "main_prep", enabled: !isDraft && !noFuturePlan });
   const stockCheckRef = useRef<HTMLDivElement>(null);

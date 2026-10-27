@@ -7,9 +7,10 @@ import { usersTable } from "./users";
 
 // Prep sessions — how long prep really takes (migration 0312; Objectives C
 // and I). One row per person working one prep item, written invisibly by
-// the prep screens (routes/prep-sessions.ts) and read by Analytics → Prep
-// times. The migration file holds the CHECK (exactly one of ingredient_id /
-// sub_recipe_id) and the indexes, and documents every column.
+// the prep screens (routes/prep-sessions.ts) and read by the founder-only
+// report (routes/prep-times.ts). The migration file holds the CHECK
+// (exactly one of ingredient_id / sub_recipe_id) and the indexes, and
+// documents every column.
 
 /** A gap in a session: it was closed, then re-opened within the continue
  *  window and carried on. Epoch milliseconds. Not prep time. */

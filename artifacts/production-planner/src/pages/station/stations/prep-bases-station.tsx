@@ -209,7 +209,7 @@ export function SubRecipeMakeFlow({
   onOpenSop?: (sopId: number) => void;
   sopQueryKey?: unknown[];
   /** The plan the host screen is prepping for — making a sub-recipe here is
-   *  timed for Analytics → Prep times, in the background. Omit = untimed. */
+   *  timed in the background (the founder-only prep times report). Omit = untimed. */
   timing?: { planId: number | null | undefined; station: PrepSessionStation };
 }) {
   const [search, setSearch] = useState("");
@@ -818,7 +818,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   // "Also viewing" presence — the same heartbeat and marker as Main Prep (#64).
   const { presenceData, setViewing } = usePrepPresence(targetPlanId);
-  // Prep timing, in the background (Analytics → Prep times).
+  // Prep timing, in the background (the founder-only prep times report).
   const timing = usePrepSessionCapture({ planId: targetPlanId, station: "prep_bases", enabled: !isDraft && !noFuturePlan });
   useEffect(() => {
     setViewing(typeof selectedItem === "number" ? selectedItem : null);
@@ -990,7 +990,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     ? ingredients.find(i => i.ingredientId === selectedItem) ?? null
     : null;
 
-  // Prep timing (Analytics → Prep times): the sauce on screen is timed while
+  // Prep timing (founder-only report, no screen): the sauce on screen is timed while
   // it still has tins to prep. Tomato Base times itself in its make flow.
   const timedSauceId = selectedIngredient && !stockTabOpen && !ingredientDoneStatus(selectedIngredient).allTinsDone
     ? selectedIngredient.ingredientId

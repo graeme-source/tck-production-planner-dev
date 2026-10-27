@@ -2,7 +2,7 @@
  * Prep sessions — capture how long prep really takes (Graeme, 27 Oct 2026;
  * Objectives C and I). Written in the background by the prep screens
  * (production-planner hooks/use-prep-session-capture.ts): never shown to the
- * team, never waited on. Read by Analytics → Prep times (routes/prep-times.ts).
+ * team, never waited on. Read by the founder-only report (routes/prep-times.ts).
  *
  *   POST /api/prep-sessions/open
  *        { planId, station, ingredientId | subRecipeId, recipeId?, deviceId? }

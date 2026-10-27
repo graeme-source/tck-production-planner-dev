@@ -4,7 +4,8 @@
  * Objectives C and I). A prep screen tells this hook which prep item is open
  * and when a tick or a make flow completes; the hook reports that to
  * /api/prep-sessions (api-server routes/prep-sessions.ts) in the background.
- * Analytics → Prep times turns it into minutes per item and per batch.
+ * The founder-only report (GET /api/prep-times/report — no screen) turns it
+ * into minutes per item and per batch.
  *
  * Invisible by design: no extra taps, nothing on screen changes, nothing
  * waits on it. Every request is fire-and-forget and marked quiet, so a PIN

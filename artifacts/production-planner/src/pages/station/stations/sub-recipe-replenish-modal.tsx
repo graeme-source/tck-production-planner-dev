@@ -32,7 +32,7 @@ export function SubRecipeReplenishModal({ target, onClose, timing }: {
   target: ReplenishTarget;
   onClose: () => void;
   /** The plan the screen is prepping for — making the sub-recipe is timed
-   *  for Analytics → Prep times (in the background). Omit to time nothing. */
+   *  in the background (the founder-only prep times report). Omit to time nothing. */
   timing?: { planId: number | null | undefined; station: PrepSessionStation };
 }) {
   const { data } = useListSubRecipes();

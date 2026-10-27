@@ -6,7 +6,7 @@
 -- record WHEN a tin was ticked; nothing recorded when the item was OPENED,
 -- so durations could not be measured. These two tables add that, invisibly:
 -- the prep screens write them in the background (routes/prep-sessions.ts)
--- and Analytics → Prep times reads them (routes/prep-times.ts). The rules —
+-- and the founder-only report reads them (routes/prep-times.ts). The rules —
 -- when a re-open continues a session, which session a tick belongs to, and
 -- how durations are cleaned — are pure and tested in the api-server's
 -- lib/prep-session-rules.ts and lib/prep-timing.ts.
