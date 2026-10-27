@@ -169,11 +169,13 @@ export function RecipeLabelSettings({ data, canEdit }: { data: RecipeLabel; canE
             onChange={e => { const v = e.target.value === "" ? null : Number(e.target.value); setTemplateChoice(v); save({ templateId: v }); }}
             className={cn(inputCls, "w-full max-w-md text-base")}
           >
+            {/* Automatic = the default for this recipe's category, else the standard one. */}
+            <option value="">Automatic — {data.templateAutomatic.name ?? "standard"}</option>
             {templates.data!.templates.map(t => (
-              <option key={t.id} value={t.isDefault ? "" : t.id}>{t.name}{t.isDefault ? " (standard)" : ""}</option>
+              <option key={t.id} value={t.id}>{t.name}{t.isDefault ? " (standard)" : ""}</option>
             ))}
           </select>
-          <p className="text-sm text-muted-foreground">The layout, wording and cooking steps come from the template. <Link href={templateChoice ? `/labels/settings?template=${templateChoice}` : "/labels/settings"} className="font-semibold text-primary underline">Open this template's design</Link></p>
+          <p className="text-sm text-muted-foreground">The layout, wording and cooking steps come from the template. Automatic uses the template set as the default for this recipe's category, else the standard one. <Link href={(templateChoice ?? data.templateAutomatic.id) ? `/labels/settings?template=${templateChoice ?? data.templateAutomatic.id}` : "/labels/settings"} className="font-semibold text-primary underline">Open this template's design</Link></p>
         </div>
       )}
 

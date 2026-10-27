@@ -170,7 +170,9 @@ export function comparableSnapshot(s: LabelSnapshot): unknown {
   // warningOn already in the snapshot.
   // cookingTiers the same: only through the resolved cooking (and labels
   // published before the tiers existed must still match).
-  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, ...template } = s.template;
+  // defaultForCategories only decides WHICH template a recipe gets (that
+  // shows as templateId), never what it prints.
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
   return { ...rest, template };
 }

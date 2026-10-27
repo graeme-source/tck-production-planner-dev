@@ -125,8 +125,11 @@ export interface RecipeLabel {
   boneRiskWords: string[];
   settingsUpdatedAt: string | null;
   settingsUpdatedByName: string | null;
-  /** The template this recipe picked; null = the standard one. */
+  /** The template this recipe picked; null = Automatic (templateAutomatic). */
   templateChoice: number | null;
+  /** What Automatic gives this recipe: the template set as the default for
+   *  its category, else the standard one (id null). */
+  templateAutomatic: { id: number | null; name: string | null };
   template: { id: number; name: string; version: number; cooking: CookingValues; chilledDefault: ShelfPeriod | null; frozenDefault: ShelfPeriod | null; netQuantityOn: boolean };
   status: LabelStatus;
   statusLabel: string;

@@ -180,6 +180,11 @@ export interface LabelTemplate {
   /** Where the bones warning goes: with the allergen note (standard) or at
    *  the end of the storage text. */
   warningPlacement: "allergens" | "storage";
+  /** Recipe categories (recipes.category, any case) that use this template
+   *  when the recipe hasn't picked one (template-choice.ts) — e.g. a new
+   *  macaroni cheese gets the Macaroni cheese label, not the calzone one.
+   *  Doesn't change what prints, so it isn't part of a label's comparison. */
+  defaultForCategories: string[];
 }
 
 export interface StorageBanner {
@@ -326,6 +331,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   chilledUseByOn: true,
   netQuantity: { on: false, sizePt: 16 },
   warningPlacement: "allergens",
+  defaultForCategories: [],
 };
 
 // ── Normalising stored settings ────────────────────────────────────────────
@@ -505,6 +511,7 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       sizePt: num(obj(r.netQuantity).sizePt, D.netQuantity.sizePt, 6.75, 40),
     },
     warningPlacement: r.warningPlacement === "storage" ? "storage" : r.warningPlacement === "allergens" ? "allergens" : D.warningPlacement,
+    defaultForCategories: normaliseWords(r.defaultForCategories, D.defaultForCategories),
   };
 }
 
@@ -591,6 +598,8 @@ export function macaroniCheeseTemplate(): LabelTemplate {
   t.frozenDefault = { amount: 3, unit: "months" };
   // No bones in macaroni cheese: Automatic never switches the warning on.
   t.boneRiskWords = [];
+  // A recipe in this category with no template picked gets this one.
+  t.defaultForCategories = ["Macaroni Cheese"];
   return t;
 }
 
