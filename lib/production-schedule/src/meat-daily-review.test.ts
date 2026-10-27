@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  reviewRun, needsReason, runsToExclude, trustSignal, reasonCategory, builderFreeAtMinutes, REVIEW_RULES,
+  reviewRun, needsReason, runsToExclude, trustSignal, reasonCategory, builderFreeAtMinutes, putInToleranceMinutes, REVIEW_RULES,
   type ReviewedRun, type Outcome,
 } from "./meat-daily-review";
 
@@ -13,32 +13,58 @@ describe("needsReason — the ask-why threshold", () => {
     expect(needsReason(null)).toBe(false);
     expect(needsReason(6, { ...REVIEW_RULES, followToleranceMinutes: 5 })).toBe(true);
   });
+  it("loading trays takes time: the tolerance widens with the trays, capped", () => {
+    expect(putInToleranceMinutes(0)).toBe(10);
+    expect(putInToleranceMinutes(6)).toBeCloseTo(13.6);
+    expect(putInToleranceMinutes(40)).toBe(20);
+    expect(needsReason(13, REVIEW_RULES, 6)).toBe(false);
+    expect(needsReason(14, REVIEW_RULES, 6)).toBe(true);
+  });
 });
 
+// Hot meat target: ready 20 min before the builders need it (440 → ready by 420).
 describe("reviewRun", () => {
-  it("followed and ready just in time = perfect", () => {
-    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 405, readyAtMinutes: 438, neededAtMinutes: 440 });
-    expect(r).toMatchObject({ deviationMinutes: 5, putIn: "on_time", followed: true, outcome: "perfect", readyInTime: true, waitMinutes: 0, satMinutes: 2, cause: "none" });
+  it("followed and ready on the target = perfect", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 405, readyAtMinutes: 420, neededAtMinutes: 440 });
+    expect(r).toMatchObject({ deviationMinutes: 5, putIn: "on_time", followed: true, outcome: "perfect", readyInTime: true, waitMinutes: 0, satMinutes: 20, cause: "none" });
+  });
+  it("a few minutes either side of the target is tap noise, not a fault", () => {
+    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 424, neededAtMinutes: 440 }).outcome).toBe("perfect");
+    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 444, neededAtMinutes: 440 }).outcome).not.toBe("builders_waited");
+  });
+  it("ready after the target but before needed = cut fine (in time, inside the buffer)", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 435, neededAtMinutes: 440 });
+    expect(r).toMatchObject({ outcome: "cut_fine", readyInTime: true, cause: "model" });
   });
   it("followed but the builders still waited = the model's fault", () => {
     const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 452, neededAtMinutes: 440 });
     expect(r).toMatchObject({ outcome: "builders_waited", readyInTime: false, waitMinutes: 12, cause: "model" });
   });
-  it("followed but sat far too long = the model's fault too", () => {
-    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 400, neededAtMinutes: 440 });
-    expect(r).toMatchObject({ outcome: "too_early", satMinutes: 40, cause: "model" });
+  it("followed but sat far beyond the target = too early, the model's fault", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 380, neededAtMinutes: 440 });
+    expect(r).toMatchObject({ outcome: "too_early", satMinutes: 60, cause: "model" });
+    // 50 min early = target 20 + 30: still fine.
+    expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 390, neededAtMinutes: 440 }).outcome).toBe("perfect");
   });
   it("put in late without a capacity reason = human", () => {
     const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 425, readyAtMinutes: 460, neededAtMinutes: 440, reasonCode: "other" });
     expect(r).toMatchObject({ putIn: "late", followed: false, outcome: "builders_waited", cause: "human" });
+  });
+  it("loading six trays: 13 min off is still followed", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 413, readyAtMinutes: 452, neededAtMinutes: 440, trayCount: 6 });
+    expect(r).toMatchObject({ followed: true, cause: "model" });
   });
   it("put in late because the oven was busy = capacity", () => {
     const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 425, readyAtMinutes: 460, neededAtMinutes: 440, reasonCode: "oven_busy" });
     expect(r.cause).toBe("capacity");
     expect(reasonCategory("oven_busy")).toBe("capacity");
   });
+  it("the target is a setting", () => {
+    const r = reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: 430, neededAtMinutes: 440 }, { ...REVIEW_RULES, readyTargetMinutes: 10 });
+    expect(r.outcome).toBe("perfect");
+  });
   it("no suggestion recorded or never built → unknown, never guessed", () => {
-    expect(reviewRun({ suggestedAtMinutes: null, putInAtMinutes: 400, readyAtMinutes: 438, neededAtMinutes: 440 })).toMatchObject({ putIn: "unknown", followed: null, outcome: "perfect" });
+    expect(reviewRun({ suggestedAtMinutes: null, putInAtMinutes: 400, readyAtMinutes: 420, neededAtMinutes: 440 })).toMatchObject({ putIn: "unknown", followed: null, outcome: "perfect" });
     expect(reviewRun({ suggestedAtMinutes: 400, putInAtMinutes: 400, readyAtMinutes: null, neededAtMinutes: 440 })).toMatchObject({ outcome: "unknown", cause: "unknown", readyInTime: null });
   });
 });
@@ -92,6 +118,10 @@ describe("trustSignal", () => {
     expect(oldBad.score!).toBeGreaterThan(newBad.score!);
     expect(oldBad.trusted).toBe(true);
     expect(newBad.trusted).toBe(false);
+  });
+  it("cutting it fine earns half credit", () => {
+    const t = trustSignal(days(["cut_fine", "perfect"]));
+    expect(t.score).toBeCloseTo((0.5 + 0.8) / 1.8);
   });
   it("unknown days don't count either way", () => {
     expect(trustSignal(days(["unknown", "perfect"])).days).toBe(1);

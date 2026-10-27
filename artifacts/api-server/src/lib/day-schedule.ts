@@ -20,6 +20,7 @@ import {
 } from "@workspace/production-schedule";
 import { resolveRecipeIngredients, aggregateIngredients } from "./ingredient-resolver";
 import { meatLeadMinutes } from "./meat-lead-time";
+import { loadMeatTimingSettings } from "./meat-timing-learner";
 import {
   isOnDayTimeline, typicalMinutesPerBatch, buildTimingFor, missingBuildTimeWarning,
   splitMeatsByTiming, type RecipeMeat,
@@ -80,10 +81,15 @@ export async function buildPlanSchedule(planId: number) {
         .from(ingredientsTable)
         .where(inArray(ingredientsTable.id, [...allMeatIds]))
     : [];
-  // Lead time = cook + process + grace (lib/meat-lead-time.ts; grace from
-  // migration 0290, learned daily by lib/meat-timing-learner.ts).
-  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process, r.grace)]));
-  const meatInfoById = new Map(meatInfoRows.map(r => [r.id, r]));
+  // Lead time = cook + process + buffer (lib/meat-lead-time.ts). The buffer
+  // is the bigger of the meat's learned grace (its slow-day spread, migration
+  // 0290) and the hot-meat target (Settings, default 20: hot meat ready 20 min
+  // before the builders need it, Graeme 2026-10-27) — so a typical day is
+  // ready on the target and a slow day still ready before the builders.
+  const { hotReadyBeforeMinutes } = await loadMeatTimingSettings();
+  const bufferOf = (grace: number | null) => Math.max(grace ?? 0, hotReadyBeforeMinutes);
+  const leadById = new Map(meatInfoRows.map(r => [r.id, meatLeadMinutes(r.cook, r.process, bufferOf(r.grace))]));
+  const meatInfoById = new Map(meatInfoRows.map(r => [r.id, { ...r, grace: bufferOf(r.grace) }]));
 
   // Settings.
   const settingRows = await db

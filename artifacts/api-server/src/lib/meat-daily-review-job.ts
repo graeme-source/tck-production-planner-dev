@@ -17,11 +17,12 @@
 import { db, meatPutInRecordsTable, appSettingsTable } from "@workspace/db";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import {
-  reviewRun, runsToExclude, trustSignal, builderFreeAtMinutes, parseClock, DEFAULT_START_TIME,
+  reviewRun, runsToExclude, trustSignal, builderFreeAtMinutes, parseClock, DEFAULT_START_TIME, REVIEW_RULES, needsReason,
   type ReviewedRun, type TrustSignal, type Outcome, type BuiltItemSpan,
 } from "@workspace/production-schedule";
 import { londonDateString } from "./london-time";
 import { reasonThresholdMinutes } from "./meat-put-in";
+import { loadMeatTimingSettings } from "./meat-timing-learner";
 
 /** Backfill and trust look back this far. */
 export const REVIEW_HISTORY_DAYS = 45;
@@ -80,6 +81,14 @@ export async function reviewDueRecords(includeToday: boolean): Promise<number> {
   if (due.length === 0) return 0;
   const startMinutes = await buildingStartMinutes();
   const threshold = await reasonThresholdMinutes();
+  const { hotReadyBeforeMinutes } = await loadMeatTimingSettings();
+  // Trays per run, for the loading-time tolerance (the snapshot may not have it).
+  const trayRows = await db.execute<{ plan_id: number; recipe_id: number; ingredient_id: number; n: number }>(sql`
+    SELECT plan_id, recipe_id, ingredient_id, count(*)::int AS n FROM oven_events
+     WHERE plan_id IN (${sql.join([...new Set(due.map(d => d.planId))].map(id => sql`${id}`), sql`, `)})
+     GROUP BY 1, 2, 3
+  `);
+  const traysOf = new Map(trayRows.rows.map(r => [`${r.plan_id}:${r.recipe_id}:${r.ingredient_id}`, Number(r.n)]));
 
   const planIds = [...new Set(due.map(d => d.planId))];
   // Per plan item: first + last building batch, first mixing tin (London minutes).
@@ -117,13 +126,15 @@ export async function reviewDueRecords(includeToday: boolean): Promise<number> {
       readyAtMinutes: ready.length ? Math.min(...ready) : null,
       neededAtMinutes: needed.length ? Math.min(...needed) : null,
       reasonCode: rec.reasonCode,
-    }, { followToleranceMinutes: threshold, tooEarlyMinutes: 30, readyGraceMinutes: 2 });
+      trayCount: rec.trayCount ?? traysOf.get(`${rec.planId}:${rec.recipeId}:${rec.ingredientId}`) ?? null,
+    }, { ...REVIEW_RULES, followToleranceMinutes: threshold, readyTargetMinutes: hotReadyBeforeMinutes });
     await db.update(meatPutInRecordsTable).set({
       readyAtMinutes: ready.length ? Math.min(...ready) : null,
       neededAtMinutes: needed.length ? Math.min(...needed) : null,
       outcome: review.outcome,
       cause: review.cause,
       followed: review.followed,
+      trayCount: rec.trayCount ?? traysOf.get(`${rec.planId}:${rec.recipeId}:${rec.ingredientId}`) ?? null,
       waitMinutes: review.waitMinutes,
       satMinutes: review.satMinutes,
       reviewedAt: new Date(),
@@ -178,7 +189,7 @@ export async function learningExclusions(ingredientIds: number[]): Promise<Map<n
 export async function reviewStatsByIngredient(ingredientIds: number[]) {
   const rows = await reviewedFor(ingredientIds);
   const out = new Map<number, {
-    reviewed: number; followed: number; notFollowed: number; perfect: number; waited: number; tooEarly: number;
+    reviewed: number; followed: number; notFollowed: number; perfect: number; waited: number; tooEarly: number; cutFine: number;
     model: number; human: number; capacity: number; avgWait: number | null; avgSat: number | null;
   }>();
   for (const id of ingredientIds) {
@@ -192,6 +203,7 @@ export async function reviewStatsByIngredient(ingredientIds: number[]) {
       perfect: mine.filter(r => r.outcome === "perfect").length,
       waited: mine.filter(r => r.outcome === "builders_waited").length,
       tooEarly: mine.filter(r => r.outcome === "too_early").length,
+      cutFine: mine.filter(r => r.outcome === "cut_fine").length,
       model: mine.filter(r => r.cause === "model").length,
       human: mine.filter(r => r.cause === "human").length,
       capacity: mine.filter(r => r.cause === "capacity").length,
@@ -210,7 +222,8 @@ export async function weeklyReasonSummary() {
     .where(and(gte(meatPutInRecordsTable.planDate, daysAgo(7)), isNotNull(meatPutInRecordsTable.deviationMinutes)))
     .orderBy(desc(meatPutInRecordsTable.planDate));
   const threshold = await reasonThresholdMinutes();
-  const off = rows.filter(r => Math.abs(r.deviationMinutes ?? 0) > threshold);
+  const rules = { ...REVIEW_RULES, followToleranceMinutes: threshold };
+  const off = rows.filter(r => needsReason(r.deviationMinutes, rules, r.trayCount ?? 0));
   const counts = new Map<string, number>();
   for (const r of off) counts.set(r.reasonCode ?? "not_answered", (counts.get(r.reasonCode ?? "not_answered") ?? 0) + 1);
   return {

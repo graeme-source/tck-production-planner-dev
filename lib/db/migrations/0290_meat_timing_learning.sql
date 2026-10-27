@@ -22,7 +22,11 @@
 --       4-hour rule less a 30-minute margin = 210.
 --   meat_timing_learning_enabled  'true' — the daily automatic run.
 --   meat_put_in_reason_minutes  Put in further than this from the suggested
---       time → the station asks why. 10.
+--       time → the station asks why. 10 (+ loading time per tray).
+--   mix_ready_before_minutes      Every mix ready this long before the
+--       builders need it. 10.
+--   hot_mix_ready_before_minutes  Hot meat ready this long before it's
+--       needed. 20. The schedule aims for it; the daily review judges by it.
 --
 -- Additive only; idempotent. No existing values are changed.
 
@@ -77,6 +81,8 @@ CREATE TABLE IF NOT EXISTS meat_put_in_records (
   suggested_at_minutes INTEGER,
   planned_at_minutes INTEGER,
   lead_minutes INTEGER,
+  -- Trays of this meat: loading takes time, so the put-in tolerance widens.
+  tray_count INTEGER,
   put_in_at TIMESTAMPTZ NOT NULL,
   put_in_minutes INTEGER NOT NULL,
   deviation_minutes INTEGER,
@@ -102,5 +108,7 @@ CREATE INDEX IF NOT EXISTS meat_put_in_records_ingredient_idx
 INSERT INTO app_settings (key, value) VALUES
   ('cooked_meat_max_hold_minutes', '210'),
   ('meat_timing_learning_enabled', 'true'),
-  ('meat_put_in_reason_minutes', '10')
+  ('meat_put_in_reason_minutes', '10'),
+  ('mix_ready_before_minutes', '10'),
+  ('hot_mix_ready_before_minutes', '20')
 ON CONFLICT (key) DO NOTHING;

@@ -19,6 +19,17 @@
 // Each recipe carries both times — planned ("was") and live — so the screen
 // can say "Godfather mix needed ~10:40 (was 10:55 — builders are ahead)".
 //
+// THE ORDER BUILT, NOT THE ORDER PLANNED: builders swap recipes on the day
+// ("the pork's not quite cooked"). The recipe with the latest batch is the
+// one in hand, whatever its planned slot; anything already started and
+// paused goes back in the queue at its planned place.
+//
+// HOT vs COLD (from data, never names): a recipe whose ingredients include a
+// raw meat for the prep oven is HOT — its meat gets an exact "in the oven by"
+// time. Everything else (cold meats, veg) is COLD: mixed early, chilled, taken
+// whenever the builders want — so it gets "mix any time before HH:MM"
+// (mixReadyBeforeMinutes ahead of the builders, default 10), never a tight time.
+//
 // FOOD SAFETY: for every meat not yet in the oven, holdMinutes is how long the
 // cooked meat would be out (oven-out → that recipe's last batch built). Over
 // maxHoldMinutes (the 4-hour rule less a margin, a setting) it's flagged with
@@ -162,6 +173,10 @@ export interface LiveRecipe {
   /** For a recipe not yet done: the builders move on to this next. */
   nextFlavour: { planItemId: number; name: string; atMinutes: number; wasMinutes: number } | null;
   buildTimeGuessed: boolean;
+  /** Hot = a prep-oven raw meat goes in it (exact times); cold = chilled mix (any time before). */
+  kind: "hot" | "cold";
+  /** The mix must be ready by this time (builders' start − the mix margin). */
+  mixByMinutes: number;
 }
 
 export interface LiveSchedule {
@@ -190,6 +205,8 @@ export interface LiveReplanInput {
   maxHoldMinutes: number;
   /** Drift smaller than this reads as "on time". */
   onTimeMinutes?: number;
+  /** Every mix ready this long before the builders need it (setting, default 10). */
+  mixReadyBeforeMinutes?: number;
 }
 
 /** A gap at least this long with no building means the line is stopped. */
@@ -248,6 +265,7 @@ export function pendingBreaks(
 
 export function replanLive(input: LiveReplanInput): LiveSchedule {
   const onTime = input.onTimeMinutes ?? 3;
+  const mixMargin = input.mixReadyBeforeMinutes ?? 10;
   const planned = computeDaySchedule(input.recipes, input.options);
   const plannedById = new Map(planned.recipes.map(r => [r.planItemId, r]));
   const progressById = new Map(input.progress.map(p => [p.planItemId, p]));
@@ -268,7 +286,16 @@ export function replanLive(input: LiveReplanInput): LiveSchedule {
   const builtOf = (id: number) => Math.max(0, progressById.get(id)?.built ?? 0);
 
   const started = input.ticks.length > 0 || input.progress.some(p => p.built > 0);
-  const remaining = input.recipes.filter(r => !isDone(r));
+  // Follow the order actually being built: the item with the latest batch is
+  // in hand now (even if the builders jumped ahead of the plan); the rest keep
+  // their planned order.
+  let inHand: number | null = null;
+  let latest = -Infinity;
+  for (const t of input.ticks) if (t.atMinutes >= latest) { latest = t.atMinutes; inHand = t.planItemId; }
+  const notDone = input.recipes.filter(r => !isDone(r));
+  const remaining = inHand != null && notDone.some(r => r.planItemId === inHand)
+    ? [notDone.find(r => r.planItemId === inHand)!, ...notDone.filter(r => r.planItemId !== inHand)]
+    : notDone;
 
   // Before the day has started, the morning plan IS the forecast — unless the
   // start time has passed with nothing built, when everything slides to now.
@@ -298,7 +325,10 @@ export function replanLive(input: LiveReplanInput): LiveSchedule {
     const l = liveById.get(r.planItemId);
     const built = builtOf(r.planItemId);
     const done = isDone(r);
-    const state: LiveRecipe["state"] = done ? "done" : built > 0 ? "building" : "waiting";
+    // "Building" is only the one in hand; a recipe started then paused (the
+    // builders switched away from it) is waiting again, at its queue slot.
+    const isInHand = inHand != null ? r.planItemId === inHand : built > 0;
+    const state: LiveRecipe["state"] = done ? "done" : built > 0 && isInHand ? "building" : "waiting";
     const liveStart = state === "building"
       ? (firstTickById.get(r.planItemId) ?? l?.startMinutes ?? p.startMinutes)
       : (l?.startMinutes ?? p.startMinutes);
@@ -354,7 +384,20 @@ export function replanLive(input: LiveReplanInput): LiveSchedule {
       meats,
       nextFlavour: null,
       buildTimeGuessed: r.buildTimeGuessed ?? false,
+      kind: (r.meats?.length ?? 0) > 0 || (r.untimedMeats?.length ?? 0) > 0 ? "hot" : "cold",
+      mixByMinutes: liveStart - mixMargin,
     };
+  });
+
+  // Live order: done first (as built), then the in-hand recipe, then the queue.
+  const rank = new Map(remaining.map((r, i) => [r.planItemId, i]));
+  const firstTick = (id: number) => firstTickById.get(id) ?? Infinity;
+  recipes.sort((a, b) => {
+    const ad = a.state === "done" ? 0 : 1;
+    const bd = b.state === "done" ? 0 : 1;
+    if (ad !== bd) return ad - bd;
+    if (ad === 0) return firstTick(a.planItemId) - firstTick(b.planItemId) || a.plannedStartMinutes - b.plannedStartMinutes;
+    return (rank.get(a.planItemId) ?? 0) - (rank.get(b.planItemId) ?? 0);
   });
 
   // Next flavour: the next recipe in the order the builders still have to do.

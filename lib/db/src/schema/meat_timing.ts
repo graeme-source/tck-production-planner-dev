@@ -40,6 +40,7 @@ export const meatPutInRecordsTable = pgTable("meat_put_in_records", {
   suggestedAtMinutes: integer("suggested_at_minutes"),
   plannedAtMinutes: integer("planned_at_minutes"),
   leadMinutes: integer("lead_minutes"),
+  trayCount: integer("tray_count"),
   putInAt: timestamp("put_in_at", { withTimezone: true }).notNull(),
   putInMinutes: integer("put_in_minutes").notNull(),
   deviationMinutes: integer("deviation_minutes"),

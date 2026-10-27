@@ -10,10 +10,21 @@
 //   PUT IN   actual first tray in vs the "in the oven by" time the station was
 //            showing at that moment (snapshotted when the tray went in).
 //            Within ±followToleranceMinutes = followed.
+//            The tolerance widens with the trays: loading six trays takes 3-4
+//            minutes, so a tap is never exact (loadingMinutesPerTray).
 //   READY    first tin of that recipe's filling mixed vs when the builders were
-//            free for that recipe (the last batch of the recipe before it).
-//            Ready after they were free = the builders WAITED; ready more than
-//            tooEarlyMinutes before = TOO EARLY (sitting).
+//            free for that recipe (the last batch of the recipe before it),
+//            judged against the TARGET: hot meat ready readyTargetMinutes (20)
+//            before it's needed.
+//              ready by the target (± tap noise)      = PERFECT
+//              ready after the target, before needed  = CUT FINE
+//              ready after needed (+ tap noise)       = the builders WAITED
+//              ready more than tooEarlyBeyondTarget   = TOO EARLY
+//                before the target
+//            A few minutes either way (tapNoiseMinutes) is tap noise, never a
+//            model error. The 4-hour cap is separate and absolute (live-replan).
+//            Only hot-meat recipes are reviewed: cold and veg mixes are made
+//            early and chilled on purpose, so early is never a fault for them.
 //   CAUSE    a bad outcome when the time WAS followed is the model's fault —
 //            the learning must fix it. When it wasn't followed it's human, or
 //            capacity if the reason given is one (oven busy, not defrosted,
@@ -30,17 +41,32 @@
 export interface ReviewRules {
   /** Put in within this many minutes of the suggested time = followed. Also the "ask why" threshold. */
   followToleranceMinutes: number;
-  /** Filling ready more than this long before the builders needed it = too early. */
-  tooEarlyMinutes: number;
-  /** Ready up to this long after the builders were free still counts as in time (a tin is quick). */
-  readyGraceMinutes: number;
+  /** Loading trays takes time — the tolerance widens by this per tray… */
+  loadingMinutesPerTray: number;
+  /** …up to this much. */
+  maxLoadingMinutes: number;
+  /** Taps are never exact: differences this small are noise, never a fault. */
+  tapNoiseMinutes: number;
+  /** Hot meat should be ready this long before the builders need it (setting, default 20). */
+  readyTargetMinutes: number;
+  /** Ready more than this beyond the target = too early. */
+  tooEarlyBeyondTargetMinutes: number;
 }
 
 export const REVIEW_RULES: Readonly<ReviewRules> = {
   followToleranceMinutes: 10,
-  tooEarlyMinutes: 30,
-  readyGraceMinutes: 2,
+  loadingMinutesPerTray: 0.6,
+  maxLoadingMinutes: 10,
+  tapNoiseMinutes: 5,
+  readyTargetMinutes: 20,
+  tooEarlyBeyondTargetMinutes: 30,
 };
+
+/** How far off the suggested time still counts as "followed" for a meat with this many trays. */
+export function putInToleranceMinutes(trayCount: number | null | undefined, rules: ReviewRules = REVIEW_RULES): number {
+  const trays = Math.max(0, trayCount ?? 0);
+  return rules.followToleranceMinutes + Math.min(rules.maxLoadingMinutes, trays * rules.loadingMinutesPerTray);
+}
 
 /** Quick-pick reasons for putting meat in off-time. Category drives the learning. */
 export const PUT_IN_REASONS = [
@@ -59,9 +85,9 @@ export function reasonCategory(code: string | null | undefined): "capacity" | "p
   return PUT_IN_REASONS.find(r => r.code === code)?.category ?? "other";
 }
 
-/** Deviation in minutes (+ = late, − = early) is past the threshold → ask why. */
-export function needsReason(deviationMinutes: number | null, rules: ReviewRules = REVIEW_RULES): boolean {
-  return deviationMinutes != null && Math.abs(deviationMinutes) > rules.followToleranceMinutes;
+/** Deviation in minutes (+ = late, − = early) is past the tolerance (incl. loading time) → ask why. */
+export function needsReason(deviationMinutes: number | null, rules: ReviewRules = REVIEW_RULES, trayCount = 0): boolean {
+  return deviationMinutes != null && Math.abs(deviationMinutes) > putInToleranceMinutes(trayCount, rules);
 }
 
 export interface PutInRunInput {
@@ -73,10 +99,12 @@ export interface PutInRunInput {
   /** When the builders were free for this recipe. Null = they never built it. */
   neededAtMinutes: number | null;
   reasonCode?: string | null;
+  /** Trays of this meat — widens the put-in tolerance for loading time. */
+  trayCount?: number | null;
 }
 
 export type PutInVerdict = "on_time" | "early" | "late" | "unknown";
-export type Outcome = "perfect" | "builders_waited" | "too_early" | "unknown";
+export type Outcome = "perfect" | "cut_fine" | "builders_waited" | "too_early" | "unknown";
 export type Cause = "none" | "model" | "human" | "capacity" | "unknown";
 
 export interface RunReview {
@@ -95,7 +123,7 @@ export interface RunReview {
 
 export function reviewRun(input: PutInRunInput, rules: ReviewRules = REVIEW_RULES): RunReview {
   const deviation = input.suggestedAtMinutes == null ? null : Math.round(input.putInAtMinutes - input.suggestedAtMinutes);
-  const followed = deviation == null ? null : Math.abs(deviation) <= rules.followToleranceMinutes;
+  const followed = deviation == null ? null : Math.abs(deviation) <= putInToleranceMinutes(input.trayCount, rules);
   const putIn: PutInVerdict = deviation == null ? "unknown" : followed ? "on_time" : deviation < 0 ? "early" : "late";
 
   let outcome: Outcome = "unknown";
@@ -103,10 +131,12 @@ export function reviewRun(input: PutInRunInput, rules: ReviewRules = REVIEW_RULE
   let sat: number | null = null;
   if (input.readyAtMinutes != null && input.neededAtMinutes != null) {
     const diff = input.readyAtMinutes - input.neededAtMinutes; // + = ready after needed
+    const vsTarget = diff + rules.readyTargetMinutes;            // + = ready after the target
     wait = Math.max(0, Math.round(diff));
     sat = Math.max(0, Math.round(-diff));
-    if (diff > rules.readyGraceMinutes) outcome = "builders_waited";
-    else if (-diff > rules.tooEarlyMinutes) outcome = "too_early";
+    if (diff > rules.tapNoiseMinutes) outcome = "builders_waited";
+    else if (vsTarget > rules.tapNoiseMinutes) outcome = "cut_fine";
+    else if (-vsTarget > rules.tooEarlyBeyondTargetMinutes) outcome = "too_early";
     else outcome = "perfect";
   }
   const readyInTime = outcome === "unknown" ? null : outcome !== "builders_waited";
@@ -195,7 +225,9 @@ export function trustSignal(days: Array<{ planDate: string; outcome: Outcome }>,
   let good = 0;
   for (const d of known) {
     total += w;
+    // Cutting it fine was in time but inside the buffer: half credit.
     if (d.outcome === "perfect") good += w;
+    else if (d.outcome === "cut_fine") good += w / 2;
     w *= rules.decay;
   }
   const score = good / total;

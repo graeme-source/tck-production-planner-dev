@@ -29,7 +29,7 @@ import { validate } from "../middleware/validate";
 import { requireAdmin, requireManagerOrAdmin } from "../middleware/roles";
 import {
   buildMeatTimingReport, applyLearnedTimings, listAdjustments, revertAdjustment, setMeatTiming,
-  loadMeatTimingSettings, saveSetting, MAX_HOLD_SETTING, LEARNING_ENABLED_SETTING,
+  loadMeatTimingSettings, saveSetting, MAX_HOLD_SETTING, LEARNING_ENABLED_SETTING, MIX_READY_SETTING, HOT_READY_SETTING,
 } from "../lib/meat-timing-learner";
 
 const router: IRouter = Router();
@@ -110,6 +110,9 @@ const SettingsBody = z.object({
   learningEnabled: z.boolean().optional(),
   // Put in further than this from the suggested time → ask why.
   reasonMinutes: z.number().int().min(3).max(60).optional(),
+  // Every mix ready this long before the builders need it; hot meat this long.
+  mixReadyBeforeMinutes: z.number().int().min(0).max(60).optional(),
+  hotReadyBeforeMinutes: z.number().int().min(0).max(60).optional(),
 });
 
 router.put("/settings", requireAdmin, validate(SettingsBody), async (req: Request, res: Response) => {
@@ -117,6 +120,8 @@ router.put("/settings", requireAdmin, validate(SettingsBody), async (req: Reques
   if (b.maxHoldMinutes !== undefined) await saveSetting(MAX_HOLD_SETTING, String(b.maxHoldMinutes));
   if (b.learningEnabled !== undefined) await saveSetting(LEARNING_ENABLED_SETTING, b.learningEnabled ? "true" : "false");
   if (b.reasonMinutes !== undefined) await saveSetting(REASON_THRESHOLD_SETTING, String(b.reasonMinutes));
+  if (b.mixReadyBeforeMinutes !== undefined) await saveSetting(MIX_READY_SETTING, String(b.mixReadyBeforeMinutes));
+  if (b.hotReadyBeforeMinutes !== undefined) await saveSetting(HOT_READY_SETTING, String(b.hotReadyBeforeMinutes));
   res.json({ settings: await loadMeatTimingSettings() });
 });
 

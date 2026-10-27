@@ -149,6 +149,37 @@ describe("replanLive", () => {
   });
 });
 
+describe("replanLive — the order actually built, and hot vs cold", () => {
+  it("builders jump ahead to Philly (pork not cooked): Philly is in hand, Godfather waits after it", () => {
+    const live = replanLive({
+      recipes, options, nowMinutes: 450,
+      progress: [{ planItemId: 1, built: 8, markedComplete: false }, { planItemId: 3, built: 2, markedComplete: false }],
+      ticks: [...ticks(1, 422, 8, 2.5), ...ticks(3, 445, 2, 2.5)],
+      pace: null, maxHoldMinutes: 210,
+    });
+    expect(live.recipes.map(r => [r.name, r.state])).toEqual([["Carnizone", "done"], ["Philly", "building"], ["Godfather", "waiting"]]);
+    const philly = live.recipes[1];
+    // 6 left x 2.5 = 15 min -> Godfather needed at 07:45.
+    expect(philly.nextFlavour).toMatchObject({ name: "Godfather", atMinutes: 465 });
+    expect(live.recipes[2].liveStartMinutes).toBe(465);
+  });
+  it("a recipe started then paused goes back in the queue", () => {
+    const live = replanLive({
+      recipes, options, nowMinutes: 450,
+      progress: [{ planItemId: 1, built: 3, markedComplete: false }, { planItemId: 2, built: 2, markedComplete: false }],
+      ticks: [...ticks(1, 422, 3, 2.5), ...ticks(2, 445, 2, 2.5)],
+      pace: null, maxHoldMinutes: 210,
+    });
+    expect(live.recipes.map(r => [r.name, r.state])).toEqual([["Godfather", "building"], ["Carnizone", "waiting"], ["Philly", "waiting"]]);
+  });
+  it("recipes with a prep-oven meat are hot; the rest are cold mixes with a mix-by time", () => {
+    const live = replanLive({ recipes, options, progress: [], ticks: [], nowMinutes: 400, pace: null, maxHoldMinutes: 210, mixReadyBeforeMinutes: 10 });
+    expect(live.recipes.map(r => r.kind)).toEqual(["cold", "hot", "hot"]);
+    expect(live.recipes[0].mixByMinutes).toBe(410);
+    expect(live.recipes[1].mixByMinutes).toBe(430);
+  });
+});
+
 describe("pendingBreaks", () => {
   const morning = { id: "morning", label: "Morning break", minutes: 15, anchorMinutes: 555 };
   it("a break already taken is not ahead any more", () => {

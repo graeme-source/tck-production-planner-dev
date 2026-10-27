@@ -45,6 +45,7 @@ export async function recordPutIn(
   recipeId: number,
   ingredientId: number,
   at: Date = new Date(),
+  trayCount: number | null = null,
 ): Promise<PutInResult | null> {
   const [existing] = await db
     .select()
@@ -83,6 +84,7 @@ export async function recordPutIn(
       suggestedAtMinutes: suggested,
       plannedAtMinutes: meat ? Math.round(meat.plannedCookStartMinutes) : null,
       leadMinutes: meat ? Math.round(meat.leadMinutes) : null,
+      trayCount,
       putInAt: at,
       putInMinutes,
       deviationMinutes: deviation,
@@ -96,7 +98,8 @@ export async function recordPutIn(
     suggestedAtMinutes: suggested,
     putInMinutes,
     deviationMinutes: deviation,
-    needsReason: needsReason(deviation, { ...REVIEW_RULES, followToleranceMinutes: threshold }),
+    // Loading the trays takes time — the tolerance widens with them.
+    needsReason: needsReason(deviation, { ...REVIEW_RULES, followToleranceMinutes: threshold }, trayCount ?? 0),
     ingredientName: ing.name,
     recipeName: recipe?.name ?? `Recipe #${recipeId}`,
   };
@@ -114,7 +117,8 @@ export async function pendingReasons(planId: number) {
       isNotNull(meatPutInRecordsTable.deviationMinutes),
       sql`abs(${meatPutInRecordsTable.deviationMinutes}) > ${threshold}`,
     ));
-  return rows.map(r => ({
+  const rules = { ...REVIEW_RULES, followToleranceMinutes: threshold };
+  return rows.filter(r => needsReason(r.deviationMinutes, rules, r.trayCount ?? 0)).map(r => ({
     recordId: r.id,
     recipeName: r.recipeName,
     ingredientName: r.ingredientName,

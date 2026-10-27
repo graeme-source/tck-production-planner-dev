@@ -29,6 +29,10 @@ export const HISTORY_DAYS = 120;
 export const MAX_HOLD_SETTING = "cooked_meat_max_hold_minutes";
 export const LEARNING_ENABLED_SETTING = "meat_timing_learning_enabled";
 export const LAST_AUTO_RUN_SETTING = "meat_timing_last_auto_run";
+export const MIX_READY_SETTING = "mix_ready_before_minutes";
+export const HOT_READY_SETTING = "hot_mix_ready_before_minutes";
+export const DEFAULT_MIX_READY_MINUTES = 10;
+export const DEFAULT_HOT_READY_MINUTES = 20;
 /** The 4-hour rule less a 30-minute margin. */
 export const DEFAULT_MAX_HOLD_MINUTES = 210;
 
@@ -36,19 +40,29 @@ export interface MeatTimingSettings {
   maxHoldMinutes: number;
   learningEnabled: boolean;
   lastAutoRun: string | null;
+  /** Every mix ready this long before the builders need it. */
+  mixReadyBeforeMinutes: number;
+  /** Hot meat ready this long before it's needed — the schedule's buffer and the review's target. */
+  hotReadyBeforeMinutes: number;
 }
 
 export async function loadMeatTimingSettings(): Promise<MeatTimingSettings> {
   const rows = await db
     .select({ key: appSettingsTable.key, value: appSettingsTable.value })
     .from(appSettingsTable)
-    .where(inArray(appSettingsTable.key, [MAX_HOLD_SETTING, LEARNING_ENABLED_SETTING, LAST_AUTO_RUN_SETTING]));
+    .where(inArray(appSettingsTable.key, [MAX_HOLD_SETTING, LEARNING_ENABLED_SETTING, LAST_AUTO_RUN_SETTING, MIX_READY_SETTING, HOT_READY_SETTING]));
   const m = new Map(rows.map(r => [r.key, r.value]));
   const hold = Number(m.get(MAX_HOLD_SETTING));
+  const num = (key: string, dflt: number) => {
+    const v = Number(m.get(key));
+    return m.has(key) && Number.isFinite(v) && v >= 0 ? v : dflt;
+  };
   return {
     maxHoldMinutes: Number.isFinite(hold) && hold > 0 ? hold : DEFAULT_MAX_HOLD_MINUTES,
     learningEnabled: (m.get(LEARNING_ENABLED_SETTING) ?? "true") !== "false",
     lastAutoRun: m.get(LAST_AUTO_RUN_SETTING) ?? null,
+    mixReadyBeforeMinutes: num(MIX_READY_SETTING, DEFAULT_MIX_READY_MINUTES),
+    hotReadyBeforeMinutes: num(HOT_READY_SETTING, DEFAULT_HOT_READY_MINUTES),
   };
 }
 
@@ -83,7 +97,14 @@ export async function loadRuns(ingredientIds?: number[]): Promise<Map<number, Me
     SELECT o.ingredient_id, o.plan_id, o.recipe_id, p.plan_date::text AS plan_date,
       json_agg(json_build_object(
         'in', extract(epoch FROM o.oven_in_at) * 1000,
-        'out', extract(epoch FROM o.oven_out_at) * 1000
+        -- The core-temperature probe reading is objective; the "out" tap is
+        -- often pressed late. Prefer the probe when there is one.
+        'out', extract(epoch FROM COALESCE((
+          SELECT min(t.recorded_at) FROM temperature_records t
+           WHERE t.plan_id = o.plan_id AND t.recipe_id = o.recipe_id
+             AND t.ingredient_id = o.ingredient_id AND t.tray_index = o.tray_index
+             AND t.record_type = 'cooked_core' AND t.recorded_at >= o.oven_in_at
+        ), o.oven_out_at)) * 1000
       )) AS trays,
       (SELECT extract(epoch FROM min(bc.completed_at)) * 1000
          FROM batch_completions bc

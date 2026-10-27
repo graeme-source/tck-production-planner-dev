@@ -35,20 +35,22 @@ export async function buildLiveSchedule(planId: number, now: Date = new Date()):
         .from(productionPlanItemsTable)
         .where(inArray(productionPlanItemsTable.id, itemIds))
     : [];
-  const completions = itemIds.length
+  // Only batches up to `now` (so a past moment can be re-played exactly).
+  const completionsAll = itemIds.length
     ? await db
         .select({ planItemId: batchCompletionsTable.planItemId, completedAt: batchCompletionsTable.completedAt })
         .from(batchCompletionsTable)
         .where(and(inArray(batchCompletionsTable.planItemId, itemIds), inArray(batchCompletionsTable.stationType, BUILDING_STATIONS)))
     : [];
+  const completions = completionsAll.filter(c => new Date(c.completedAt).getTime() <= now.getTime());
   const oven = await db
-    .select({ recipeId: ovenEventsTable.recipeId, ingredientId: ovenEventsTable.ingredientId })
+    .select({ recipeId: ovenEventsTable.recipeId, ingredientId: ovenEventsTable.ingredientId, inAt: ovenEventsTable.ovenInAt })
     .from(ovenEventsTable)
     .where(and(eq(ovenEventsTable.planId, planId), isNotNull(ovenEventsTable.recipeId), isNotNull(ovenEventsTable.ingredientId)));
 
   const builtById = new Map<number, number>();
   for (const c of completions) builtById.set(c.planItemId, (builtById.get(c.planItemId) ?? 0) + 1);
-  const progress = items.map(i => ({ planItemId: i.id, built: builtById.get(i.id) ?? 0, markedComplete: i.markedAt != null }));
+  const progress = items.map(i => ({ planItemId: i.id, built: builtById.get(i.id) ?? 0, markedComplete: i.markedAt != null && new Date(i.markedAt).getTime() <= now.getTime() }));
 
   const ticks: BuildTick[] = isToday
     ? completions.map(c => ({ planItemId: c.planItemId, atMinutes: londonMinuteOfDay(new Date(c.completedAt)) }))
@@ -63,8 +65,9 @@ export async function buildLiveSchedule(planId: number, now: Date = new Date()):
     ticks,
     nowMinutes: isToday ? londonMinuteOfDay(now) : 0,
     pace,
-    meatsStarted: new Set(oven.map(o => meatKey(o.recipeId!, o.ingredientId!))),
+    meatsStarted: new Set(oven.filter(o => new Date(o.inAt).getTime() <= now.getTime()).map(o => meatKey(o.recipeId!, o.ingredientId!))),
     maxHoldMinutes: settings.maxHoldMinutes,
+    mixReadyBeforeMinutes: settings.mixReadyBeforeMinutes,
   });
 
   return { planId, planDate: String(base.planDate).slice(0, 10), isToday, maxHoldMinutes: settings.maxHoldMinutes, ...live };
