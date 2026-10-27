@@ -5,7 +5,7 @@
  */
 
 /** The station keys a session can be opened from (the server checks them). */
-export type PrepSessionStation = "main_prep" | "prep_bases" | "prep_meat" | "prep";
+export type PrepSessionStation = "main_prep" | "prep_bases" | "prep_meat" | "prep" | "macaroni_cheese";
 
 /** A prep item as a screen holds it: an ingredient or a sub-recipe, and the
  *  one recipe it was opened for when the screen works recipe by recipe

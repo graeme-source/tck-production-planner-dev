@@ -31,9 +31,10 @@ export const MAX_SESSION_MS = 2 * 60 * 60_000;
 export const CONTINUE_WINDOW_MS = 15 * 60_000;
 
 /** The screens that capture sessions (context on the row; zod-checked) —
- *  the station keys the app already uses; "prep" is the Prepping For hub,
+ *  the station keys the app already uses ("macaroni_cheese" opens deferred
+ *  prep from its banner); "prep" is the Prepping For hub,
  *  whose Replenish flow makes sub-recipes. */
-export const PREP_SESSION_STATIONS = ["main_prep", "prep_bases", "prep_meat", "prep"] as const;
+export const PREP_SESSION_STATIONS = ["main_prep", "prep_bases", "prep_meat", "prep", "macaroni_cheese"] as const;
 export type PrepSessionStation = (typeof PREP_SESSION_STATIONS)[number];
 
 /** What the rules need to know about a session — epoch milliseconds. */
