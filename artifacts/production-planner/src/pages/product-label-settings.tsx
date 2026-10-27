@@ -37,6 +37,7 @@ const WEIGHT_LABEL: Record<number, string> = { 400: "Regular", 500: "Medium", 70
 type SingleTextKey = Exclude<keyof TemplateText, "steps">;
 const TEXT_FIELDS: Array<{ key: SingleTextKey; label: string; rows?: number }> = [
   { key: "title", label: "Title" },
+  { key: "subtitle", label: "Subtitle — a small line under the title (blank = none)" },
   { key: "storageHeading", label: "Storage heading" },
   { key: "storage", label: "Storage instructions", rows: 3 },
   { key: "chilledLabel", label: "Chilled use-by label" },
@@ -122,7 +123,7 @@ function TemplatePicker({ list, currentId, onPick }: { list: TemplateList | unde
         </div>
       ))}
       {add.isError && <p className="text-sm font-semibold text-destructive">Couldn't add it — {(add.error as Error).message}</p>}
-      <p className="text-sm text-muted-foreground">Each recipe picks its template in its own label settings; recipes that haven't picked one use the standard template.</p>
+      <p className="text-sm text-muted-foreground">Each recipe picks its template in its own label settings; recipes that haven't picked one use the template set as the default for their recipe category (below, in each design), else the standard template.</p>
     </section>
   );
 }
@@ -321,6 +322,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
             </div>
             <Toggle on={draft.mayContainBoldList} onChange={v => update(t => ({ ...t, mayContainBoldList: v }))} label="Print the may-contain list in bold" />
             <BoneWords words={draft.boneRiskWords} onChange={boneRiskWords => update(t => ({ ...t, boneRiskWords }))} />
+            <CategoryDefaults categories={draft.defaultForCategories} onChange={defaultForCategories => update(t => ({ ...t, defaultForCategories }))} />
           </Card>
 
           {/* Frozen products & extra lines (fried chicken, 2026-10-12) */}
@@ -558,6 +560,41 @@ function BoneWords({ words, onChange }: { words: string[]; onChange: (w: string[
       <div className="flex flex-wrap gap-2">
         <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
           placeholder="Add a word, e.g. lamb" aria-label="Add a word" className={cn(inputCls, "w-56")} />
+        <button type="button" onClick={add} className="h-11 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary">Add</button>
+      </div>
+    </div>
+  );
+}
+
+/** Recipe categories that get this template when a recipe hasn't picked
+ *  one (e.g. "Macaroni Cheese"). Saved with the rest of the design. */
+function CategoryDefaults({ categories, onChange }: { categories: string[]; onChange: (c: string[]) => void }) {
+  const [text, setText] = useState("");
+  const add = () => {
+    const c = text.trim().replace(/\s+/g, " ");
+    if (!c) return;
+    if (!categories.some(x => x.toLowerCase() === c.toLowerCase())) onChange([...categories, c]);
+    setText("");
+  };
+  return (
+    <div className="space-y-2 rounded-xl border-2 border-border p-3">
+      <p className="font-bold">Default for recipe categories</p>
+      <p className="text-sm text-muted-foreground">
+        A recipe in one of these categories (as set on the recipe page, any capitals) uses this template unless its own label settings pick another. So a new product in the category gets the right label from the start. Recipes in no listed category use the standard template.
+      </p>
+      <div className="flex flex-wrap gap-2">
+        {categories.length === 0 && <span className="text-sm text-muted-foreground">None — recipes only get this template by picking it.</span>}
+        {categories.map(c => (
+          <span key={c} className="inline-flex items-center gap-2 h-11 pl-4 pr-1 rounded-full border-2 border-primary bg-primary/10 text-primary font-bold text-sm">
+            {c}
+            <button type="button" onClick={() => onChange(categories.filter(x => x !== c))} aria-label={`Remove ${c}`}
+              className="h-9 w-9 rounded-full hover:bg-primary/20 font-bold">×</button>
+          </span>
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <input value={text} onChange={e => setText(e.target.value)} onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); add(); } }}
+          placeholder="Add a category, e.g. Desserts" aria-label="Add a recipe category" className={cn(inputCls, "w-64")} />
         <button type="button" onClick={add} className="h-11 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary">Add</button>
       </div>
     </div>

@@ -15,6 +15,8 @@ import { fillTemplate, mayContainParagraph, mergeRuns, parseBold, type Paragraph
 
 export interface LabelContent {
   title: Paragraph[];
+  /** The small line under the title; empty = none (nothing drawn). */
+  subtitle: Paragraph[];
   /** Three steps, each its own box with a numbered circle. */
   steps: Paragraph[][];
   /** "STORAGE INSTRUCTIONS:" / "THE INGREDIENTS:" — the shared, fixed-size
@@ -87,6 +89,8 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   };
 
   const title = fill(t.title, "The title");
+  // Older snapshots have no subtitle (normaliseTemplate gives "").
+  const subtitle = fill(t.subtitle ?? "", "The subtitle");
   // Blank steps aren't drawn and the numbering closes up (1..n on the label).
   const steps = t.steps.filter(src => src.trim() !== "").map((src, i) => {
     const r = fill(src, `Step ${i + 1}`);
@@ -136,6 +140,7 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
 
   return {
     title: nonEmpty([parseBold(title.text.trim())]),
+    subtitle: subtitle.text.trim() ? nonEmpty([parseBold(subtitle.text.trim())]) : [],
     steps,
     storageHeading: nonEmpty([heading(t.storageHeading)]),
     storage: nonEmpty(storage),

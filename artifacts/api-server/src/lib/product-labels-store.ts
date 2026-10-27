@@ -10,8 +10,9 @@ import { createHash } from "node:crypto";
 import { db, recipesTable, productLabelTemplatesTable, productLabelSettingsTable, productLabelVersionsTable } from "@workspace/db";
 import { asc, desc, eq, getTableColumns } from "drizzle-orm";
 import {
-  buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, normalisePeriod, normaliseTemplate, snapshotKey,
+  buildSnapshot, DEFAULT_RECIPE_LABEL_SETTINGS, diffSnapshots, normalisePeriod, normaliseTemplate, resolveTemplateChoice, snapshotKey,
   type LabelSnapshot, type LabelTemplate, type RecipeLabelSettings, type SnapshotChange, type PeriodUnit,
+  type TemplateCategoryDefaults, type TemplateChoice,
 } from "@workspace/product-labels";
 import { checkLabel, proofLabel, type LabelProof } from "@workspace/product-labels/render";
 import { loadBundledFonts } from "@workspace/product-labels/node";
@@ -55,6 +56,14 @@ export async function loadTemplate(id?: number | null): Promise<LoadedTemplate> 
     await db.update(productLabelTemplatesTable).set({ settings: template }).where(eq(productLabelTemplatesTable.id, row.id));
   }
   return { id: row.id, name: row.name, version: row.version, template, updatedAt: row.updatedAt, updatedByName: row.updatedByName };
+}
+
+/** Every template's id, name and the recipe categories it's the default
+ *  for (template-choice.ts) — read once per request, a handful of rows. */
+export async function loadTemplateDefaults(): Promise<TemplateCategoryDefaults[]> {
+  const rows = await db.select({ id: productLabelTemplatesTable.id, name: productLabelTemplatesTable.name, settings: productLabelTemplatesTable.settings })
+    .from(productLabelTemplatesTable).orderBy(asc(productLabelTemplatesTable.id));
+  return rows.map(r => ({ id: r.id, name: r.name, defaultForCategories: normaliseTemplate(r.settings).defaultForCategories }));
 }
 
 // ── Per-recipe settings ────────────────────────────────────────────────────
@@ -119,6 +128,12 @@ export interface CurrentLabel {
   settings: RecipeLabelSettings;
   settingsRow: SettingsRow | undefined;
   template: LoadedTemplate;
+  /** Why this template: picked in the label settings, the default for the
+   *  recipe's category, or the standard one. */
+  templateChoice: TemplateChoice;
+  /** What "no template picked" would give this recipe (the settings page
+   *  names it on its Automatic option). */
+  automaticTemplate: { id: number | null; name: string | null };
   deck: Awaited<ReturnType<typeof buildRecipeIngredientDeck>>;
   snapshot: LabelSnapshot;
   hash: string;
@@ -134,12 +149,18 @@ export async function loadRecipe(recipeId: number): Promise<RecipeRow | undefine
 
 /** The label as it would be if published now. `templateOverride` renders a
  *  template that isn't saved yet (the settings page's live preview). */
-export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }>; cookingData?: CookingData } = {}): Promise<CurrentLabel> {
+export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverride?: LabelTemplate; templateCache?: Map<number | "default", LoadedTemplate>; templateDefaults?: TemplateCategoryDefaults[]; packBarcodes?: Map<number, { barcode: string | null; mixed: boolean }>; cookingData?: CookingData } = {}): Promise<CurrentLabel> {
   const settingsRow = await loadSettingsRow(recipe.id);
-  const key = settingsRow?.templateId ?? "default";
+  // The picked template, else the one set as the default for this recipe's
+  // category (e.g. Macaroni cheese), else the standard one.
+  const defaults = opts.templateDefaults ?? await loadTemplateDefaults();
+  const templateChoice = resolveTemplateChoice(settingsRow?.templateId ?? null, recipe.category, defaults);
+  const auto = resolveTemplateChoice(null, recipe.category, defaults);
+  const automaticTemplate = { id: auto.id, name: (auto.id != null ? defaults.find(t => t.id === auto.id) : defaults[0])?.name ?? null };
+  const key = templateChoice.id ?? "default";
   let template = opts.templateCache?.get(key);
   if (!template) {
-    template = await loadTemplate(settingsRow?.templateId ?? null);
+    template = await loadTemplate(templateChoice.id);
     opts.templateCache?.set(key, template);
   }
   if (opts.templateOverride) template = { ...template, template: opts.templateOverride };
@@ -158,7 +179,7 @@ export async function buildCurrentLabel(recipe: RecipeRow, opts: { templateOverr
     template: template.template,
     cookingSuggestion: cooking.suggestion?.cooking ?? null,
   });
-  return { recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, deck, snapshot, hash: snapshotHash(snapshot), cooking };
+  return { recipe, barcodeMixed: pack.mixed, settings, settingsRow, template, templateChoice, automaticTemplate, deck, snapshot, hash: snapshotHash(snapshot), cooking };
 }
 
 /** Proof dates: today (London) for both print and production day — a sample,

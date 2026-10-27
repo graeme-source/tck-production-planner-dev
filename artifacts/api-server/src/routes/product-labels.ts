@@ -35,7 +35,7 @@ import { loadCookingData, recipeCookingSuggestion } from "../lib/label-cooking-p
 import { rawBody, validate } from "../middleware/validate";
 import {
   buildCurrentLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, loadAllLiveVersions,
-  loadLiveVersion, loadRecipe, loadTemplate, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
+  loadLiveVersion, loadRecipe, loadTemplate, loadTemplateDefaults, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
 } from "../lib/product-labels-store";
 
 const router: IRouter = Router();
@@ -107,7 +107,8 @@ router.get("/template", async (req, res) => {
 // ── Several templates (2026-10-12: fried chicken gets its own) ─────────────
 // Every label template, and the starting designs (presets) that can be added
 // as a new one. A recipe picks its template in its label settings; with
-// none picked it uses the standard one (lowest id).
+// none picked it uses the template set as the default for its category
+// (defaultForCategories, template-choice.ts), else the standard one (lowest id).
 
 async function listTemplates() {
   const rows = await db.select({
@@ -251,12 +252,13 @@ router.get("/recipes", async (_req, res) => {
     const recipes = await db.select().from(recipesTable).orderBy(recipesTable.name);
     const live = await loadAllLiveVersions();
     const templateCache = new Map<number | "default", LoadedTemplate>();
+    const templateDefaults = await loadTemplateDefaults();
     const packBarcodes = await loadPackBarcodes();
     const cookingData = await loadCookingData();
     const out = [];
     for (const r of recipes) {
       if (r.archivedAt && !live.has(r.id)) continue;
-      const current = await buildCurrentLabel(r, { templateCache, packBarcodes, cookingData });
+      const current = await buildCurrentLabel(r, { templateCache, templateDefaults, packBarcodes, cookingData });
       const lv = live.get(r.id);
       const checked = checkFit(current.snapshot);
       const status = decideStatus({
@@ -319,8 +321,10 @@ router.get("/recipes/:id", async (req, res) => {
       boneRiskWords: current.template.template.boneRiskWords,
       settingsUpdatedAt: current.settingsRow?.updatedAt ?? null,
       settingsUpdatedByName: current.settingsRow?.updatedByName ?? null,
-      // The template this recipe picked; null = the standard one.
+      // The template this recipe picked; null = Automatic: the default for
+      // its category (templateAutomatic), else the standard one.
       templateChoice: current.settingsRow?.templateId ?? null,
+      templateAutomatic: current.automaticTemplate,
       template: { id: current.template.id, name: current.template.name, version: current.template.version, cooking: current.template.template.cooking, chilledDefault: current.template.template.chilledDefault, frozenDefault: current.template.template.frozenDefault, netQuantityOn: current.template.template.netQuantity.on },
       status,
       statusLabel: STATUS_LABEL[status],

@@ -402,7 +402,23 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Bands
   const titleBox: Rect = { x: innerX, y: margin, w: innerW, h: d(page.titleBandMm) };
-  const stepsTop = titleBox.y + titleBox.h + d(page.bandGapMm);
+  // Title fitted here (it only needs its band); placed with the fields below.
+  const titleSpec: FieldSpec = { key: "title", boxes: [titleBox], paras: [content.title], inset: 0, style: t.fields.title };
+  const titleFit = fitGroup([titleSpec], titleBox.h, false, 0, t, m);
+  // Optional subtitle: a small centred line just under the title's ink. It
+  // pushes the steps and columns down by its own height; with none (the
+  // usual case) nothing below moves.
+  let subtitleFit: { trials: Trial[]; fits: boolean } | null = null;
+  let subtitleBox: Rect | null = null;
+  let bandsBottom = titleBox.y + titleBox.h;
+  if (content.subtitle?.length && t.fields.subtitle) {
+    const y = titleBox.y + titleFit.trials[0].height + d(1.2);
+    const box: Rect = { x: innerX, y, w: innerW, h: d(8) };
+    subtitleFit = fitGroup([{ key: "subtitle", boxes: [box], paras: [content.subtitle], inset: 0, style: t.fields.subtitle }], box.h, false, 0, t, m);
+    subtitleBox = { ...box, h: subtitleFit.trials[0].height };
+    bandsBottom = Math.max(bandsBottom, subtitleBox.y + subtitleBox.h);
+  }
+  const stepsTop = bandsBottom + d(page.bandGapMm);
   const stepsH = d(page.stepsBandMm);
   const stepGap = d(page.columnGapMm);
   // Step-number circle: fixed (stepCircleMm), or — the default — as tall as
@@ -527,13 +543,14 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Missing glyphs anywhere = can't print that character.
   const allParas: Array<[FieldKey, Paragraph[]]> = [
-    ["title", content.title], ["steps", content.steps.flat()],
+    ["title", content.title], ["subtitle", content.subtitle ?? []], ["steps", content.steps.flat()],
     ["headings", [...content.storageHeading, ...content.ingredientsHeading]],
     ["storage", content.storage], ["dates", content.dates],
     ["ingredients", content.ingredients], ["allergenInfo", content.allergenInfo], ["address", content.address],
   ];
   for (const [key, paras] of allParas) {
     const st = t.fields[key];
+    if (!st) continue;
     const missing = new Set<string>();
     for (const p of paras) for (const r of styleRuns(p, st)) {
       for (const ch of m.missingGlyphs(r.text, faceFor(st, st.width, r.bold))) missing.add(ch);
@@ -547,9 +564,13 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
 
   // Title — its own band.
   {
-    const g = fitGroup([spec("title", [titleBox], [content.title])], titleBox.h, false, 0, t, m);
+    const g = titleFit;
     fields.push(fieldLayout(g.trials[0], [titleBox], -1, g.fits, t, m));
     if (!g.fits) problems.push(overflowProblem(g.trials[0], titleBox.h, mm1));
+  }
+  if (subtitleFit && subtitleBox) {
+    fields.push(fieldLayout(subtitleFit.trials[0], [subtitleBox], subtitleBox.y, subtitleFit.fits, t, m));
+    if (!subtitleFit.fits) problems.push(overflowProblem(subtitleFit.trials[0], d(8), mm1));
   }
   // Steps — one size for all of them; the boxes are re-worked for every size
   // tried (bigger first, narrower widths before smaller), so the whole-line

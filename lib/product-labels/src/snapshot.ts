@@ -170,9 +170,22 @@ export function comparableSnapshot(s: LabelSnapshot): unknown {
   // warningOn already in the snapshot.
   // cookingTiers the same: only through the resolved cooking (and labels
   // published before the tiers existed must still match).
-  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, ...template } = s.template;
+  // defaultForCategories only decides WHICH template a recipe gets (that
+  // shows as templateId), never what it prints.
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
-  return { ...rest, template };
+  return { ...rest, template: withoutBlankSubtitle(template) };
+}
+
+/** A blank subtitle isn't drawn, so its wording and style are left out —
+ *  labels published before the subtitle existed still match. */
+function withoutBlankSubtitle<T extends { text?: unknown; fields?: unknown }>(template: T): T {
+  const text = (template.text ?? {}) as Record<string, unknown>;
+  const sub = text.subtitle;
+  if (typeof sub === "string" && sub.trim() !== "") return template;
+  const { subtitle: _s, ...restText } = text;
+  const { subtitle: _f, ...restFields } = (template.fields ?? {}) as Record<string, unknown>;
+  return { ...template, ...(template.text ? { text: restText } : {}), ...(template.fields ? { fields: restFields } : {}) };
 }
 
 /** Canonical key of a snapshot — equal keys = identical printed label
@@ -195,7 +208,7 @@ export interface SnapshotChange {
 /** Which parts of the label a change shows up in — the proof highlights
  *  them. "barcode" is the barcode block; "all" = the whole label. */
 export function areasForChange(key: string): Array<FieldKey | "barcode" | "all"> {
-  if (key === "labelName" || key === "packSize") return ["title"];
+  if (key === "labelName" || key === "packSize") return ["title", "subtitle"];
   if (key === "deckText") return ["ingredients"];
   if (key === "mayContain" || key === "warningOn" || key === "template.mayContainBoldList") return ["allergenInfo"];
   if (key.startsWith("cooking.")) return ["steps"];
@@ -207,7 +220,7 @@ export function areasForChange(key: string): Array<FieldKey | "barcode" | "all">
   if (key.startsWith("template.fields.")) return [key.slice("template.fields.".length) as FieldKey];
   if (key.startsWith("template.text.steps")) return ["steps"];
   const text: Record<string, FieldKey> = {
-    title: "title", storageHeading: "headings", storage: "storage",
+    title: "title", subtitle: "subtitle", storageHeading: "headings", storage: "storage",
     chilledLabel: "dates", frozenLabel: "dates", batchLabel: "dates", ingredientsHeading: "headings",
     allergenNote: "allergenInfo", warning: "allergenInfo", address: "address",
   };
@@ -289,7 +302,10 @@ export function diffTemplates(rawA: LabelTemplate, rawB: LabelTemplate): Snapsho
   if (canonicalJson(a.page) !== canonicalJson(b.page)) {
     out.push({ key: "template.page", label: "Template — label size & layout", before: pageSummary(a), after: pageSummary(b) });
   }
+  const noSubtitle = !a.text.subtitle.trim() && !b.text.subtitle.trim();
   for (const f of FIELD_KEYS) {
+    // A subtitle's style doesn't matter while there's no subtitle to draw.
+    if (f === "subtitle" && noSubtitle) continue;
     if (canonicalJson(a.fields[f]) !== canonicalJson(b.fields[f])) {
       out.push({ key: `template.fields.${f}`, label: `Template typography — ${FIELD_LABEL[f]}`, before: styleSummary(a, f), after: styleSummary(b, f) });
     }
@@ -313,7 +329,7 @@ export function diffTemplates(rawA: LabelTemplate, rawB: LabelTemplate): Snapsho
 }
 
 const TEXT_LABEL: Record<string, string> = {
-  title: "title",
+  title: "title", subtitle: "subtitle",
   storageHeading: "storage heading", storage: "storage instructions",
   chilledLabel: "chilled use-by label", frozenLabel: "frozen use-by label", batchLabel: "batch label",
   ingredientsHeading: "ingredients heading", allergenNote: "allergen note", warning: "warning", address: "address",
