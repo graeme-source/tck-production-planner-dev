@@ -33,7 +33,7 @@ import { summariseTakeBackOut, takeBackOutBody, type TakeBackOutSummary, type Ta
 import { TakeBackOutDialog } from "../shared/take-back-out-dialog";
 import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
 import { FrontLabelsDialog } from "@/components/product-labels/front-labels-dialog";
-import { useFrontLabelDefaultIds, useLiveLabelRecipeIds, wrappingLabelAction } from "@/components/product-labels/api";
+import { useFrontLabelDefaultIds, useLiveLabelRecipeIds, useWrappingLabelRecipes, wrappingLabelAction } from "@/components/product-labels/api";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 import { CookChillCard } from "@/components/cook-chill/cook-chill-card";
 
@@ -179,8 +179,11 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
   const canPrintBackLabels = useCanPrintBackLabels();
   // Only recipes with a published label get the button (2026-10-19).
   const liveLabelRecipeIds = useLiveLabelRecipeIds(canPrintBackLabels);
+  // A recipe with a wrapping label (cinnamon buns: the small freezer label)
+  // prints that one here instead (label-roles.ts, 2026-10-27).
+  const wrappingLabelRecipes = useWrappingLabelRecipes(canPrintBackLabels);
   const frontLabelDefaultIds = useFrontLabelDefaultIds(canPrintBackLabels);
-  const [backLabelsFor, setBackLabelsFor] = useState<{ recipeId: number; recipeName: string; planItemId: number; net: number } | null>(null);
+  const [backLabelsFor, setBackLabelsFor] = useState<{ recipeId: number; recipeName: string; planItemId: number; net: number; role?: "main" | "wrapping" } | null>(null);
   const [frontLabelsFor, setFrontLabelsFor] = useState<{ recipeId: number; recipeName: string; net: number } | null>(null);
   const [queueOpen, setQueueOpen] = useState(false);
   // The toggle-row slot exists only after the parent's first commit, so
@@ -678,6 +681,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
           recipeName={backLabelsFor.recipeName}
           planItemId={backLabelsFor.planItemId}
           netPacks={backLabelsFor.net}
+          role={backLabelsFor.role}
           onClose={() => setBackLabelsFor(null)}
         />
       )}
@@ -926,16 +930,28 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                       labels". */}
                   {/* No label built yet → a plain instruction, not a button
                       (Graeme, 19 Oct 2026: "Use Label Live" — the old way). */}
-                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId) === "label-live" && (
+                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId, wrappingLabelRecipes) === "label-live" && (
                     <span className="ml-auto shrink-0 text-sm font-semibold text-muted-foreground">Use Label Live</span>
                   )}
-                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId) === "print" && (
+                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId, wrappingLabelRecipes) === "print" && (
                     <button
                       type="button"
                       onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net })}
                       className="ml-auto h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/90 active:scale-[0.98]"
                     >
                       <Printer className="w-4 h-4" /> Print back labels
+                    </button>
+                  )}
+                  {/* Its wrapping label instead (cinnamon buns: the small
+                      180-day freezer label; the despatch label prints from
+                      the dessert report). */}
+                  {canPrintBackLabels && wrappingLabelAction(liveLabelRecipeIds, item.recipeId, wrappingLabelRecipes) === "print-wrapping" && (
+                    <button
+                      type="button"
+                      onClick={() => setBackLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, planItemId: item.id, net, role: "wrapping" })}
+                      className="ml-auto h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-2 shrink-0 hover:bg-primary/90 active:scale-[0.98]"
+                    >
+                      <Printer className="w-4 h-4" /> Print freezer labels
                     </button>
                   )}
                   {/* Front name label beside it (#331): needs only the
@@ -946,7 +962,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
                     <button
                       type="button"
                       onClick={() => setFrontLabelsFor({ recipeId: item.recipeId, recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, net })}
-                      className={cn(wrappingLabelAction(liveLabelRecipeIds, item.recipeId) ? "" : "ml-auto","h-11 px-4 rounded-xl border-2 border-primary text-sm font-bold flex items-center gap-2 shrink-0 active:scale-[0.98]",
+                      className={cn(wrappingLabelAction(liveLabelRecipeIds, item.recipeId, wrappingLabelRecipes) ? "" : "ml-auto","h-11 px-4 rounded-xl border-2 border-primary text-sm font-bold flex items-center gap-2 shrink-0 active:scale-[0.98]",
                         frontLabelDefaultIds.has(item.recipeId) ? "bg-primary text-primary-foreground hover:bg-primary/90" : "text-primary hover:bg-primary/10")}
                     >
                       <Printer className="w-4 h-4" /> Print front labels
