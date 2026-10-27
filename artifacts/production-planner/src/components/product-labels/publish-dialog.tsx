@@ -7,6 +7,7 @@
  * Closable (X / Cancel / tap outside), capped at 92dvh with internal scroll.
  */
 import { useState } from "react";
+import { smallestField } from "@/lib/label-smallest-field";
 import { CheckCircle2, Loader2, ShieldCheck, X, XCircle } from "lucide-react";
 import { areasForChange, FIELD_LABEL, wordDiff, type SnapshotChange } from "@workspace/product-labels";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,8 @@ export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: (
   const fixIssues = blockers.length ? [] : (data.deckIssues ?? []);
   const shownBlockers = blockers.length ? blockers : otherBlockers(data.blockers, data.deckBlockers, data.deckIssues);
   const fits = cur.fits;
-  const smallest = cur.fields.reduce((m, f) => (f.sizePt < m.sizePt ? f : m), cur.fields[0]);
+  // A small 102 × 25 label has no field table (2026-10-27: it crashed here).
+  const smallest = smallestField(cur.fields);
   const canPublish = fits && allBlockers.length === 0 && ticked && !busy;
 
   const publish = async () => {
@@ -89,7 +91,9 @@ export function PublishDialog({ data, onClose }: { data: RecipeLabel; onClose: (
               Automatic check
             </h3>
             {fits ? (
-              <p>Everything fits. Smallest text: {FIELD_LABEL[smallest.key]} at {smallest.sizePt} pt, x-height {smallest.xHeightMm} mm (the law's minimum works out at {smallest.legalMinPt} pt in this font). No field is below its minimum.</p>
+              smallest
+                ? <p>Everything fits. Smallest text: {FIELD_LABEL[smallest.key]} at {smallest.sizePt} pt, x-height {smallest.xHeightMm} mm (the law's minimum works out at {smallest.legalMinPt} pt in this font). No field is below its minimum.</p>
+                : <p>Everything fits on the label.</p>
             ) : <p className="font-semibold text-rose-700 dark:text-rose-400">DOESN'T FIT — it can't go live like this.</p>}
             {shownBlockers.length > 0 && (
               <ul className="list-disc pl-6 space-y-1 text-rose-800 dark:text-rose-300">
