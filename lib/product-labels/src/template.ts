@@ -643,6 +643,15 @@ export function friedChickenTemplate(): LabelTemplate {
   // so the blocks stay distinct). The storage side keeps its 3 mm gaps.
   t.allergenNoteAfterMayContain = true;
   t.page.ingredientsGapMm = 1.5;
+  // Live's Korean deck was longer still (address 0.9 mm over, same day), so
+  // the ingredients column gets more room without shrinking any text: 2 mm
+  // between the bands (was 3), the column split moved to 38% (was 41%) and
+  // the barcode at 114% (was 151%; still above the standard 100% size —
+  // 3-dot bars instead of 4). The cooking steps and storage text keep their
+  // sizes. Fits a deck about 40% longer than the local one.
+  t.page.bandGapMm = 2;
+  t.page.columnSplitPct = 38;
+  t.page.barcodeSizePct = 114;
   return t;
 }
 
