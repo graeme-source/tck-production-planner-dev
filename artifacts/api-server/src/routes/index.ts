@@ -77,6 +77,7 @@ import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
 import checklistsRouter from "./checklists";
+import improvementPromptRouter from "./improvement-prompt";
 import checklistReadingsRouter from "./checklist-readings";
 import cookChillRouter from "./cook-chill";
 import curiosityRouter from "./curiosity";
@@ -479,6 +480,9 @@ router.use("/issue-pipeline", issuePipelineRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
 router.use("/checklists", checklistsRouter);
+// "Have you made an improvement today?" — the optional last closing-checklist
+// item (signed-in person only; uptake is manager-guarded in the file).
+router.use("/improvement-prompt", improvementPromptRouter);
 // Readings on checklist items (scale calibration etc., issues #87/#169).
 router.use("/checklist-readings", checklistReadingsRouter);
 // Cook-and-chill records for cooked sub-recipes (issue #244).

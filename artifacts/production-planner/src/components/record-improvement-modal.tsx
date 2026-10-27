@@ -29,10 +29,20 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 type Mode = "choose" | "idea" | "done";
 
-export function RecordImprovementModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function RecordImprovementModal({ open, onClose, station, initialMode, onSaved }: {
+  open: boolean;
+  onClose: () => void;
+  /** Where it happened (a station type); "general" when opened from the dock. */
+  station?: string;
+  /** Skip the first question — e.g. "done" from the end-of-day "Yes". */
+  initialMode?: "idea" | "done";
+  /** Told the new improvement's id once it's saved (before the modal closes). */
+  onSaved?: (improvementId: number) => void;
+}) {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<Mode>("choose");
+  const startMode: Mode = initialMode ?? "choose";
+  const [mode, setMode] = useState<Mode>(startMode);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,7 +70,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
   if (!open) return null;
 
   const reset = () => {
-    setMode("choose"); setTitle(""); setDescription("");
+    setMode(startMode); setTitle(""); setDescription("");
     setCredited(meId != null ? [meId] : []);
     setBeforeTaken(false); setAfterTaken(false);
     setTitleConfirmed(false); setBeforeSkipped(false); setAfterSkipped(false);
@@ -208,7 +218,7 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || title.trim(),
-          station: "general",
+          station: station || "general",
           // An idea is for whoever picks it up; something you've done is yours.
           claim: !isIdea,
           // …and everyone you did it with. Ideas are credited when done.
@@ -217,6 +227,8 @@ export function RecordImprovementModal({ open, onClose }: { open: boolean; onClo
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't save it");
       const improvement = await res.json();
+      // Saved — tell the opener now, whatever happens to the photos.
+      onSaved?.(improvement.id);
 
       // Every upload's answer is checked — a failed one used to vanish
       // without a word, silently losing the clip (that's how improvement 33

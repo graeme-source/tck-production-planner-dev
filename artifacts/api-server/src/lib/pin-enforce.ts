@@ -59,6 +59,8 @@ export const ATTRIBUTING_WRITES: readonly Rule[] = [
   // Checklists and the HACCP records filed through them
   { method: "POST", pattern: /^\/checklists\/completions\/?$/, what: "checklist tick" },
   { method: "PUT", pattern: new RegExp(`^/checklists/oneoff/${ID}/?$`), what: "one-off checklist tick" },
+  // "Have you made an improvement today?" — filed under who answered.
+  { method: "POST", pattern: /^\/improvement-prompt\/answer\/?$/, what: "end-of-day improvement answer" },
   { method: "POST", pattern: /^\/checklists\/(location-temperature-record|packing-batch-record|closing-fridge-freeze)\/?$/, what: "HACCP record" },
   { method: "POST", pattern: /^\/temperature-records\/?$/, what: "temperature record" },
   // A checklist reading (scale calibration…) is filed under who took it.

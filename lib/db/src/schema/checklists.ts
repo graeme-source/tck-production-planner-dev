@@ -2,6 +2,7 @@ import { pgTable, serial, text, integer, timestamp, boolean, unique, date, numer
 import { createInsertSchema } from "drizzle-zod";
 import { productionPlansTable } from "./production_plans";
 import { usersTable } from "./users";
+import { improvementSubmissionsTable } from "./improvements_and_andon";
 
 export const checklistTemplatesTable = pgTable("checklist_templates", {
   id: serial("id").primaryKey(),
@@ -77,6 +78,25 @@ export const checklistReadingsTable = pgTable("checklist_readings", {
 }, (t) => [
   unique("uq_checklist_reading").on(t.templateId, t.planId, t.label),
   index("checklist_readings_recorded_at_idx").on(t.recordedAt),
+]);
+
+// "Have you made an improvement today?" — the optional last item on every
+// closing checklist (migration 0320). One answer per person per London day;
+// answering again replaces it. improvementId is the one they logged (or
+// pointed at) when they said yes.
+export const improvementPromptAnswersTable = pgTable("improvement_prompt_answers", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  day: date("day").notNull(),
+  answer: text("answer").notNull(), // "yes" | "no"
+  improvementId: integer("improvement_id").references(() => improvementSubmissionsTable.id, { onDelete: "set null" }),
+  stationType: text("station_type"),
+  planId: integer("plan_id").references(() => productionPlansTable.id, { onDelete: "set null" }),
+  templateId: integer("template_id").references(() => checklistTemplatesTable.id, { onDelete: "set null" }),
+  answeredAt: timestamp("answered_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [
+  unique("uq_improvement_prompt_answer").on(t.userId, t.day),
+  index("improvement_prompt_answers_day_idx").on(t.day),
 ]);
 
 export const insertChecklistTemplateSchema = createInsertSchema(checklistTemplatesTable);

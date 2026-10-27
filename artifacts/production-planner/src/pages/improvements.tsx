@@ -44,6 +44,7 @@ import { creditIds, creditLabel, isCreditedTo } from "@/lib/improvement-credits"
 import { LeanerBoard } from "@/components/leaner-board";
 import { CreditBadge, CreditWeightControl, PremiumStrip, useIsFounder } from "@/components/improvement-credit-weight";
 import { premiumStyle } from "@/lib/improvement-premium";
+import { ImprovementPromptUptake } from "@/components/improvement-prompt-uptake";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -433,7 +434,9 @@ export default function Improvements() {
         </div>
       )}
       {isManager && (
-        <div className={userRole === "admin" ? "" : "pt-4 border-t border-border"}>
+        <div className={userRole === "admin" ? "space-y-3" : "pt-4 border-t border-border space-y-3"}>
+          {/* Who's answering the end-of-day "made an improvement today?" */}
+          <ImprovementPromptUptake />
           <button
             onClick={() => setShowAdmin(s => !s)}
             className="w-full h-12 rounded-2xl border-2 border-border text-base font-bold flex items-center justify-center gap-2 hover:bg-secondary/50 transition-colors text-muted-foreground"
