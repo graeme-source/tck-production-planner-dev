@@ -164,9 +164,10 @@ export function BarcodeGroupCard({ group, canEdit, prominent }: { group: GroupVi
         onChange={e => onChange(e.target.value)}
         onBlur={() => void auto.flush()}
         placeholder={group.mixed ? "Listings differ — type the one number" : "e.g. 5065018206009"}
-        className={cn(inputCls, check && !check.ok && "border-destructive")}
+        className={cn(inputCls, check && !check.ok && text.replace(/\s+/g, "") !== (group.barcode ?? "") && "border-destructive")}
       />
-      {check && !check.ok && <p className="text-sm text-destructive font-semibold">Not saved — {check.reason}.</p>}
+      {/* Only for a number someone has typed — never for the saved one. */}
+      {check && !check.ok && text.replace(/\s+/g, "") !== (group.barcode ?? "") && <p className="text-sm text-destructive font-semibold">Not saved — {check.reason}.</p>}
       {group.mixed && <p className="text-sm text-amber-700 dark:text-amber-400 font-semibold">These listings hold different barcodes, so none is printed on the label. Type the one number they should all use.</p>}
       {!group.barcode && !group.mixed && !text && <p className="text-sm text-amber-700 dark:text-amber-400">No barcode — the label can't go live and the packing screen will ask packers to check this product by eye.</p>}
       {group.heldProblem && <p className="text-sm text-destructive font-semibold flex items-start gap-1"><AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" /> {group.heldProblem}</p>}

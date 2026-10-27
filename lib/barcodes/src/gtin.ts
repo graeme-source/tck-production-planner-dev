@@ -10,7 +10,12 @@
  * typed into the app or pulled from Shopify.
  */
 
-export type GtinFormat = "EAN-8" | "UPC-A" | "EAN-13" | "GTIN-14";
+/** "Store code": a 14-digit number that isn't a retail GTIN — Shopify's own
+ *  code on a product (TCK Garlic Mayo's 97748478844497). It's a real,
+ *  working barcode (prints as Code 128 on the small labels, the scanner reads
+ *  it), so it's accepted; there's no check digit to test (Graeme,
+ *  2026-10-27: "get rid of this warning unless it's an actual problem"). */
+export type GtinFormat = "EAN-8" | "UPC-A" | "EAN-13" | "GTIN-14" | "Store code";
 
 const FORMAT_BY_LENGTH: Record<number, GtinFormat> = { 8: "EAN-8", 12: "UPC-A", 13: "EAN-13", 14: "GTIN-14" };
 
@@ -42,6 +47,12 @@ export function checkGtin(input: string | null | undefined): GtinCheck {
   const format = FORMAT_BY_LENGTH[digits.length];
   if (!format) return { ok: false, reason: `Barcodes have 8, 12, 13 or 14 digits — this has ${digits.length}` };
   const expected = gtinCheckDigit(digits.slice(0, -1));
+  // 8, 12 and 13 digits are retail barcodes — a wrong check digit there is
+  // a typo and is refused. A 14-digit code that isn't a GTIN-14 is a store
+  // code, not a mistake.
+  if (format === "GTIN-14" && Number(digits[digits.length - 1]) !== expected) {
+    return { ok: true, digits, format: "Store code" };
+  }
   if (Number(digits[digits.length - 1]) !== expected) {
     return { ok: false, reason: `Last digit should be ${expected} — check the number was typed correctly` };
   }

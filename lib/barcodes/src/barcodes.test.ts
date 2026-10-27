@@ -237,10 +237,13 @@ describe("pull / hourly check classification", () => {
   it("not in Shopify: the variant is gone", () => {
     expect(linked("5065018206054", undefined).outcome).toBe("not-in-shopify");
   });
-  it("invalid: still stored, but flagged", () => {
-    const d = linked(null, "31035957422417");
-    expect(d).toMatchObject({ outcome: "filled", setOurs: "31035957422417", invalid: true });
-    expect(linked("97748478844497", "97748478844497")).toMatchObject({ outcome: "unchanged", invalid: true });
+  it("invalid: still stored, but flagged (a mistyped retail barcode)", () => {
+    const d = linked(null, "5065018206949");
+    expect(d).toMatchObject({ outcome: "filled", setOurs: "5065018206949", invalid: true });
+  });
+  it("a 14-digit store code (Shopify's own, e.g. Garlic Mayo) is not flagged (27 Oct 2026)", () => {
+    expect(linked(null, "31035957422417")).toMatchObject({ outcome: "filled", setOurs: "31035957422417", invalid: false });
+    expect(linked("97748478844497", "97748478844497")).toMatchObject({ outcome: "unchanged", invalid: false });
   });
   it("a barcode set in the app is never overwritten by a check, even once unlinked", () => {
     expect(decidePull({ mode: "check", linked: false, setInApp: true, ours: "5065018206054", shopify: { barcode: "5065018206207" } }).outcome).toBe("conflict");
@@ -256,7 +259,7 @@ describe("pull / hourly check classification", () => {
     expect(decidePull({ linked: true, current: false, ours: null, shopify: { barcode: "5065018206344" } })).toEqual({ outcome: "retired", invalid: false });
   });
   it("counts outcomes and invalids", () => {
-    const c = countOutcomes([linked(null, "5065018206054"), linked("5065018206054", "5065018206207"), linked(null, "31035957422417"), linked(null, null)]);
+    const c = countOutcomes([linked(null, "5065018206054"), linked("5065018206054", "5065018206207"), linked(null, "5065018206949"), linked(null, null)]);
     expect(c).toMatchObject({ filled: 2, conflict: 1, missing: 1, invalid: 1 });
   });
   it("'Different in Shopify' when Shopify has a number that isn't ours", () => {
@@ -404,5 +407,20 @@ describe("F2F copies — the same pack, marked once", () => {
       c("x7", "F2F - Ambiguous", "5065018206054"),
       c("x8", "Chicken no Chorizo (F2F)", "5065018206009"),
     ], packs)).toEqual([]);
+  });
+});
+
+// Regression (Graeme, 27 Oct 2026): TCK Garlic Mayo's Shopify code
+// 97748478844497 showed "Not saved — Last digit should be 3" though nobody
+// typed anything and it scans fine. A 14-digit non-GTIN is a store code.
+describe("checkGtin — store codes", () => {
+  it("accepts a 14-digit store code without a check-digit warning", () => {
+    expect(checkGtin("97748478844497")).toMatchObject({ ok: true, format: "Store code", digits: "97748478844497" });
+  });
+  it("still refuses a 13-digit retail barcode with a typo", () => {
+    expect(checkGtin("5065018206949")).toMatchObject({ ok: false });
+  });
+  it("a real GTIN-14 is still a GTIN-14", () => {
+    expect(checkGtin("15065018206051")).toMatchObject({ ok: true, format: "GTIN-14" });
   });
 });
