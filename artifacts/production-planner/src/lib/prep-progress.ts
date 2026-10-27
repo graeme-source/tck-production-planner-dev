@@ -136,6 +136,15 @@ export function mainPrepProgress(input: MainPrepProgressInput | null | undefined
   return { done, total, units: t.units, deferredUnits: t.deferredUnits };
 }
 
+/** True when every tickable linked row under a Main Prep line (pasta cooking
+ *  water, salt) is ticked. A line only counts as done — struck through, and
+ *  hidden by "Hide completed" — once its tins are resolved AND this is true,
+ *  so Macaroni can't disappear with its water and salt still to do (issue
+ *  #361). Display-only rows (no `key`) never hold a line open. */
+export function linkedRowsAllTicked(rows: Array<{ key?: string }> | undefined, linkedDone: ReadonlySet<string>): boolean {
+  return (rows ?? []).every(r => !r.key || linkedDone.has(r.key));
+}
+
 // ── Bases & Sauces ──────────────────────────────────────────────────────────
 
 /** Rows the Bases & Sauces list shows. "Normal Base" is represented by the

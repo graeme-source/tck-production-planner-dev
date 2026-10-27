@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  prepProgress, mainPrepProgress, basesProgress, rawMeatProgress, tasksLine, progressPct,
+  prepProgress, mainPrepProgress, basesProgress, rawMeatProgress, tasksLine, progressPct, linkedRowsAllTicked,
   type PrepTick, type PrepTinLine, type PrepProgressInput,
 } from "./prep-progress";
 
@@ -227,5 +227,22 @@ describe("wording", () => {
 
   it("nothing loaded yet is zero, not a crash", () => {
     expect(prepProgress({ mainPrep: null, bases: null, rawMeat: null })).toMatchObject({ done: 0, total: 0, pct: 0 });
+  });
+});
+
+// Issue #361 (Jane, 27 Oct): Macaroni was struck through and hidden with its
+// cooking water and salt still unticked.
+describe("linkedRowsAllTicked", () => {
+  const rows = [{ key: "water:macaroni" }, { key: "salt:macaroni" }, {}];
+  it("holds the line open while water or salt is unticked", () => {
+    expect(linkedRowsAllTicked(rows, new Set())).toBe(false);
+    expect(linkedRowsAllTicked(rows, new Set(["water:macaroni"]))).toBe(false);
+  });
+  it("lets the line finish once every tickable row is ticked", () => {
+    expect(linkedRowsAllTicked(rows, new Set(["water:macaroni", "salt:macaroni"]))).toBe(true);
+  });
+  it("never blocks a line with no linked rows or display-only rows", () => {
+    expect(linkedRowsAllTicked(undefined, new Set())).toBe(true);
+    expect(linkedRowsAllTicked([{}], new Set())).toBe(true);
   });
 });
