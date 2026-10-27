@@ -52,7 +52,7 @@ async function loadTeamIdeaRows(): Promise<TeamIdeaRow[]> {
            ARRAY_REMOVE(ARRAY_AGG(DISTINCT p.user_id) || ARRAY[s.submitted_by], NULL) AS by_ids,
            s.progress_status = 'complete' AS done,
            (SELECT a.id FROM improvement_attachments a
-             WHERE a.improvement_id = s.id AND a.kind = 'image'
+             WHERE a.improvement_id = s.id AND a.kind = 'image' AND a.comment_id IS NULL
              ORDER BY (a.phase = 'after') DESC NULLS LAST, a.id DESC LIMIT 1) AS photo_id,
            COALESCE(s.done_at, s.created_at) AS at
       FROM improvement_submissions s

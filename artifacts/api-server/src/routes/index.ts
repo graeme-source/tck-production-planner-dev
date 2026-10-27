@@ -72,6 +72,7 @@ import stockControlRouter from "./stock-control";
 import eightPackStockRouter from "./eight-pack-stock";
 import founderPanelsRouter from "./founder-panels";
 import improvementsRouter from "./improvements";
+import improvementThreadRouter from "./improvement-thread";
 import improvementCreditWeightRouter from "./improvement-credit-weight";
 import dailyCheckinRouter from "./daily-checkin";
 import andonRouter from "./andon";
@@ -481,6 +482,8 @@ router.use("/ad-efficiency", adEfficiencyRouter);
 router.use("/google-ads-link", googleAdsLinkRouter);
 // ×2 / ×3 credits on an improvement — founder only, guarded per route.
 router.use("/improvements", improvementCreditWeightRouter);
+// Comments & photos on an improvement — the timeline (27 Oct 2026).
+router.use("/improvements", improvementThreadRouter);
 router.use("/improvements", improvementsRouter);
 // The first-of-the-day improvement check-in card (the signed-in person only).
 router.use("/daily-checkin", dailyCheckinRouter);

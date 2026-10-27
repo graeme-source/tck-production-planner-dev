@@ -46,6 +46,7 @@ export async function backfillAutoSubmittedImprovements(): Promise<void> {
          AND EXISTS (
                SELECT 1 FROM improvement_attachments a
                 WHERE a.improvement_id = s.id
+                  AND a.comment_id IS NULL  -- a comment's photo isn't evidence (0331)
                   AND (a.phase IS NULL OR a.phase = 'after')
              )
       RETURNING s.id, s.title
