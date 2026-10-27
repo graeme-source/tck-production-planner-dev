@@ -1,7 +1,7 @@
 import { formatBatches } from "../shared/format-batches";
 import { formatPrepWeight } from "@workspace/units";
 import React from "react";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
 import {
   Loader2, CheckCircle2, Beef, ExternalLink, Package, Check, BookOpen,
@@ -25,6 +25,8 @@ import { StockCheckButton } from "../shared/stock-check-entry";
 import { MixExtraNote } from "../shared/mix-extra-note";
 import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
 import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
+import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-session-capture";
+import { prepItemKey } from "@/lib/prep-session-capture";
 
 interface PrepTrayCompletion {
   id: number;
@@ -80,6 +82,8 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { recipes, isLoading, nextPlan, targetPlanId, noFuturePlan } = usePrepByRecipe("prep_meat", plan.id, plan.planDate, isDirect);
   const isDraft = nextPlan?.status === "draft";
   const { completions, refetch } = usePrepMeatCompletions(targetPlanId ?? plan.id);
+  // Prep timing, in the background (Analytics → Prep times).
+  const timing = usePrepSessionCapture({ planId: targetPlanId, station: "prep_meat", enabled: !isDraft && !noFuturePlan });
 
   // SOP links for the whole board in two calls (recipes + ingredients),
   // same pattern as main prep — "raw prep items" carry SOPs like any other.
@@ -191,6 +195,33 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     }
   }, [recipes, selectedRecipeId]);
 
+  // Prep timing: the selected recipe's meats that still have trays to fill,
+  // each timed for this recipe. A finished recipe being looked at isn't prep.
+  const timedMeats = useMemo<PrepSessionItem[]>(() => {
+    if (stockTabOpen) return [];
+    const sel = recipes.find(r => r.recipeId === selectedRecipeId) ?? recipes[0];
+    if (!sel) return [];
+    return sel.ingredients
+      .filter(i => i.isRawMeat && (i.trayCount ?? 0) > 0)
+      .filter(i => Array.from({ length: i.trayCount ?? 0 }, (_, k) => k + 1).some(tn => !isCompleted(i.ingredientId, sel.recipeId, tn)))
+      .map(i => ({ ingredientId: i.ingredientId, recipeId: sel.recipeId }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isCompleted reads completions
+  }, [stockTabOpen, recipes, selectedRecipeId, completions]);
+  const timedMeatsKey = timedMeats.map(prepItemKey).join(",");
+  useEffect(() => {
+    timing.focus(timedMeats);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- timedMeatsKey is timedMeats' identity
+  }, [timing, timedMeatsKey]);
+
+  /** What one tray holds, as the tray button shows it (pieces or kg). */
+  const trayQuantity = (ingredientId: number, recipeId: number): { quantity: number | null; unit: string | null } => {
+    const ing = recipes.find(r => r.recipeId === recipeId)?.ingredients.find(i => i.ingredientId === ingredientId && i.isRawMeat);
+    const trays = ing?.trayCount ?? 0;
+    if (!ing || trays <= 0) return { quantity: null, unit: null };
+    if (ing.pieceCount != null && ing.pieceCount > 0) return { quantity: Math.ceil(ing.pieceCount / trays), unit: "pieces" };
+    return { quantity: toKg(ing.rawQty, ing.unit) / trays, unit: "kg" };
+  };
+
   const [trayPending, setTrayPending] = useState<string | null>(null);
 
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
@@ -202,19 +233,22 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
     try {
       const existing = getCompletion(ingredientId, recipeId, trayNum);
       if (existing) {
-        await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+        const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
           method: "DELETE",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
         });
+        if (res.ok) timing.unticked({ ingredientId });
       } else {
-        await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+        const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ingredientId, recipeId, tinNumber: trayNum }),
         });
+        // Saved — time it against the session open on this meat (background).
+        if (res.ok) timing.ticked({ ingredientId, recipeId, tinNumber: trayNum, ...trayQuantity(ingredientId, recipeId) });
       }
       refetch();
     } finally {
@@ -304,7 +338,11 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
       {tabs}
       {sopViewer.dialog}
       {replenishTarget && (
-        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+        <SubRecipeReplenishModal
+          target={replenishTarget}
+          onClose={() => setReplenishTarget(null)}
+          timing={isDraft ? undefined : { planId: targetPlanId, station: "prep_meat" }}
+        />
       )}
 
 

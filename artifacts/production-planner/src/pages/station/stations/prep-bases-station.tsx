@@ -32,6 +32,7 @@ import { useMainPrepData } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
 import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, tasksLine } from "@/lib/prep-progress";
+import { usePrepSessionCapture, type PrepSessionStation } from "@/hooks/use-prep-session-capture";
 
 interface SubRecipePlanRequirement {
   subRecipeId: number;
@@ -183,6 +184,7 @@ export function SubRecipeMakeFlow({
   sopQueryKey,
   initialSubRecipeId,
   onReplenishComponent,
+  timing,
 }: {
   mode: SubReplenishMode;
   planRequirements: SubRecipePlanRequirement[];
@@ -206,6 +208,9 @@ export function SubRecipeMakeFlow({
   sopLinksBySubRecipe?: Record<number, SopLink[]>;
   onOpenSop?: (sopId: number) => void;
   sopQueryKey?: unknown[];
+  /** The plan the host screen is prepping for — making a sub-recipe here is
+   *  timed for Analytics → Prep times, in the background. Omit = untimed. */
+  timing?: { planId: number | null | undefined; station: PrepSessionStation };
 }) {
   const [search, setSearch] = useState("");
   const [state, setState] = useState<SubReplenishState>({
@@ -217,6 +222,20 @@ export function SubRecipeMakeFlow({
     batches: 1,
     checked: new Set(),
   });
+
+  // Prep timing: from picking a sub-recipe to "Mark Complete". Back to the
+  // list, "nothing required" or closing the popup ends it without a time.
+  const sessionTiming = usePrepSessionCapture({
+    planId: timing?.planId ?? null,
+    station: timing?.station ?? "prep_bases",
+    enabled: !!timing,
+  });
+  const makingId = state.sr && (state.phase === "stock_check" || state.phase === "batch_pick" || state.phase === "checklist")
+    ? state.sr.subRecipeId
+    : null;
+  useEffect(() => {
+    sessionTiming.focus(makingId != null ? [{ subRecipeId: makingId }] : []);
+  }, [sessionTiming, makingId]);
 
   const selectSr = (sr: SubRecipePlanRequirement) => {
     setLoadedDetail(null);
@@ -407,7 +426,15 @@ export function SubRecipeMakeFlow({
             {checkedCount === totalItems && totalItems > 0 && (
               <button
                 onClick={() => {
-                  if (state.sr) onDone?.(state.sr.subRecipeId, state.batches);
+                  if (state.sr) {
+                    onDone?.(state.sr.subRecipeId, state.batches);
+                    sessionTiming.made({
+                      subRecipeId: state.sr.subRecipeId,
+                      batches: state.batches,
+                      quantity: yieldPerBatch * state.batches,
+                      unit: sr?.yieldUnit ?? null,
+                    });
+                  }
                   setState(s => ({ ...s, phase: "done" }));
                 }}
                 className="w-full py-4 mt-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"
@@ -791,6 +818,8 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
   const { subRecipes: planSubRecipes, loading: subRecipesLoading } = usePlanSubRecipeRequirements(targetPlanId);
   // "Also viewing" presence — the same heartbeat and marker as Main Prep (#64).
   const { presenceData, setViewing } = usePrepPresence(targetPlanId);
+  // Prep timing, in the background (Analytics → Prep times).
+  const timing = usePrepSessionCapture({ planId: targetPlanId, station: "prep_bases", enabled: !isDraft && !noFuturePlan });
   useEffect(() => {
     setViewing(typeof selectedItem === "number" ? selectedItem : null);
   }, [selectedItem, setViewing]);
@@ -961,22 +990,38 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     ? ingredients.find(i => i.ingredientId === selectedItem) ?? null
     : null;
 
+  // Prep timing (Analytics → Prep times): the sauce on screen is timed while
+  // it still has tins to prep. Tomato Base times itself in its make flow.
+  const timedSauceId = selectedIngredient && !stockTabOpen && !ingredientDoneStatus(selectedIngredient).allTinsDone
+    ? selectedIngredient.ingredientId
+    : null;
+  useEffect(() => {
+    timing.focus(timedSauceId != null ? [{ ingredientId: timedSauceId }] : []);
+  }, [timing, timedSauceId]);
+
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
     if (existing) {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
+      const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
         method: "DELETE", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
       });
+      if (res.ok) timing.unticked({ ingredientId });
     } else {
-      await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
+      const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ingredientId, recipeId, tinNumber }),
       });
+      if (res.ok) {
+        // Saved — time it against the session open on this sauce (background).
+        const ing = ingredients.find(i => i.ingredientId === ingredientId);
+        const entry = ing?.recipes.find(r => r.recipeId === recipeId);
+        timing.ticked({ ingredientId, recipeId, tinNumber, quantity: entry?.qtyPerTin ?? null, unit: ing?.unit ?? null });
+      }
     }
     refetch();
   };
@@ -1051,7 +1096,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
       {tabs}
       {sopViewer.dialog}
       {replenishTarget && (
-        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+        <SubRecipeReplenishModal
+          target={replenishTarget}
+          onClose={() => setReplenishTarget(null)}
+          timing={isDraft ? undefined : { planId: targetPlanId, station: "prep_bases" }}
+        />
       )}
 
       {/* Stock checks for this station's ingredients — same card as main
@@ -1320,6 +1369,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     onOpenSop={sopViewer.open}
                     sopQueryKey={subRecipeSopKey}
                     onReplenishComponent={(subRecipeId, name) => setReplenishTarget({ subRecipeId, name })}
+                    timing={isDraft ? undefined : { planId: targetPlanId, station: "prep_bases" }}
                   />
                 )}
               </div>

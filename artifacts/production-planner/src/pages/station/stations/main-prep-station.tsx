@@ -29,6 +29,7 @@ import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { mainPrepProgress, progressPct, tasksLine } from "@/lib/prep-progress";
+import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-session-capture";
 
 export interface MainPrepIngredient {
   ingredientId: number;
@@ -240,6 +241,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
   // "Also viewing" presence — shared with Bases & Sauces (#64).
   const { presenceData, setViewing } = usePrepPresence(targetPlanId);
+  // Prep timing (Analytics → Prep times): the item on screen is timed in the
+  // background from opening to its ticks — never shown, never waited on.
+  const timing = usePrepSessionCapture({ planId: targetPlanId, station: "main_prep", enabled: !isDraft && !noFuturePlan });
   const stockCheckRef = useRef<HTMLDivElement>(null);
   const prevNeedsStockCheckRef = useRef(false);
 
@@ -513,6 +517,27 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const selectedIngredient = ingredients.find(i => itemKey(i) === selectedItemKey) ?? null;
 
+  // Time the item on screen while it still has tins to prep — a finished
+  // item that is only being looked at isn't prep. Same on the Stock Check tab.
+  const timedItem: PrepSessionItem | null = selectedIngredient && !stockTabOpen && !ingredientDoneStatus(selectedIngredient).allTinsResolved
+    ? (selectedIngredient.isSubRecipe ? { subRecipeId: selectedIngredient.ingredientId } : { ingredientId: selectedIngredient.ingredientId })
+    : null;
+  const timedKey = timedItem ? `${timedItem.ingredientId ?? ""}/${timedItem.subRecipeId ?? ""}` : "";
+  useEffect(() => {
+    timing.focus(timedItem ? [timedItem] : []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- timedKey is timedItem's identity
+  }, [timing, timedKey]);
+
+  // What one tin holds, in the unit shown on it — the bottles card's tick
+  // covers the whole amount.
+  const tinQuantity = (ingredientId: number, recipeId: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) => {
+    const ing = ingredients.find(i => i.ingredientId === ingredientId && !!i.isSubRecipe === !!isSubRecipe);
+    if (!ing) return { quantity: null, unit: null };
+    if (ing.isBottle && ing.bottlesNeeded) return { quantity: ing.totalQty, unit: ing.unit };
+    const entry = ing.recipes.find(r => r.recipeId === recipeId && (r.subRecipeOriginId ?? null) === (subRecipeOriginId ?? null));
+    return { quantity: entry?.qtyPerTin ?? null, unit: ing.unit };
+  };
+
   // SOPs attached to these ingredients — ingredient-level plus recipe-scoped
   // (burger beef can carry a different SOP per recipe). Sub-recipe rows are
   // skipped: their ids live in a different table, so an ingredient-keyed
@@ -561,6 +586,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     if (isDraft) { toastDraftBlocked(); return; }
     setViewing(ingredientId);
     const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId);
+    const item = isSubRecipe ? { subRecipeId: ingredientId } : { ingredientId };
     await runTinAction(async (signal) => {
       if (existing) {
         await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
@@ -569,6 +595,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe, subRecipeOriginId: subRecipeOriginId ?? null }),
           signal,
         });
+        timing.unticked(item);
       } else {
         await guardedFetch(`/api/production-plans/${targetPlanId}/prep-completions`, {
           method: "POST",
@@ -576,6 +603,8 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           body: JSON.stringify({ ingredientId, recipeId, tinNumber, isSubRecipe: !!isSubRecipe, subRecipeOriginId: subRecipeOriginId ?? null }),
           signal,
         });
+        // Saved — time it against the session open on this item (background).
+        timing.ticked({ ...item, recipeId, tinNumber, subRecipeOriginId: isSubRecipe ? null : subRecipeOriginId ?? null, ...tinQuantity(ingredientId, recipeId, isSubRecipe, subRecipeOriginId) });
       }
     });
   };
@@ -738,7 +767,11 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       {tabs}
 
       {replenishTarget && (
-        <SubRecipeReplenishModal target={replenishTarget} onClose={() => setReplenishTarget(null)} />
+        <SubRecipeReplenishModal
+          target={replenishTarget}
+          onClose={() => setReplenishTarget(null)}
+          timing={isDraft ? undefined : { planId: targetPlanId, station: "main_prep" }}
+        />
       )}
 
       {/* Deferred-prep banner — hidden when no items are owed today. Ticking
