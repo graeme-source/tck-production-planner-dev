@@ -1,0 +1,299 @@
+{
+  "note": "Korean Fried Chicken 500g (recipe 29) as built from the local copy of live on 2026-10-27, before migration 0330. The barcode is a stand-in; the template is the stored 'Fried chicken' template (id 2) at that time. Live's deck may be longer: the tests also lengthen it by 20%.",
+  "snapshot": {
+    "recipeName": "Korean Fried Chicken 500g",
+    "labelName": "Korean Fried Chicken 500g",
+    "packSize": "1",
+    "deckText": "**Buttermilk** Fried Chicken Strip (Chicken Breast Inner Fillets, Vegetable Oil (Refined Soyabean oil, Anti-foaming agent (E900)), Whole **Milk**, Breadcrumbs (**wheat** flour, salt, spices [pepper, chillies}, potato and corn starch, emulsifier: guar gum,chicken protein powder, fat powder [palm fat, **milk** sugar, **milk** protein}, glucose syrup, flavour enhancer:monosodium glutamate, flavour [contains flavour enhancer: monosodium glutamate, **wheat**, **soy**, **celery**],stabilizer E450, acidity regulator: sodium bicarbonate), **WHEAT** Flour, Lemon Juice (Lemon Juice from Concentrate, Lemon Oil, Preservative (Potassium **Metabisulphite**)), Black Pepper, Smoked Paprika, Dried Thyme, Salt, Cayenne Pepper, Rosemary, Sage, Ground White Pepper), Yangnyeom Korean Dipping Sauce (Corn Syrup, Tomato Ketchup, Minced Garlic, Gochujang Hot Pepper Paste (Corn Syrup, Red Pepper Paste 25% (Red Pepper Powder, Water, Salt, Onion, Garlic, Corn Starch), Water, **Wheat** Flour, Rice Powder, **Wheat**, Salt, Distilled Alcohol (Contain **Wheat**, **Barley**), **Soybean**, **Soybean** Powder, Glutinous Rice, Koji), Demerara Sugar, Premium Dark **Soy** Sauce, Water).",
+    "mayContain": "May also contain traces of nuts, peanuts, egg, soya, celery, sulphites, mustard, wheat and milk",
+    "warningOn": true,
+    "cooking": {
+      "ovenTempC": 190,
+      "fanTempC": 170,
+      "ovenMinMinutes": 14,
+      "ovenMaxMinutes": 16,
+      "airFryerTempC": null,
+      "airFryerMinMinutes": null,
+      "airFryerMaxMinutes": null
+    },
+    "chilled": {
+      "amount": 13,
+      "unit": "days"
+    },
+    "frozen": {
+      "amount": 5,
+      "unit": "months"
+    },
+    "barcode": "5065018206009",
+    "netQuantity": "500g",
+    "templateId": 2,
+    "template": {
+      "format": "back-140x94",
+      "page": {
+        "widthMm": 140,
+        "heightMm": 94,
+        "dpi": 203,
+        "marginMm": 4.5,
+        "columnSplitPct": 41,
+        "columnGapMm": 3,
+        "titleBandMm": 7,
+        "stepsBandMm": 11,
+        "bandGapMm": 3,
+        "fieldGapMm": 3,
+        "dividerOn": true,
+        "dividerMm": 0.25,
+        "stepCircleAuto": true,
+        "stepCircleMm": 5.5,
+        "barcodeHeightMm": 15,
+        "barcodeSizePct": 151,
+        "smallPack": false
+      },
+      "fields": {
+        "title": {
+          "width": "normal",
+          "narrowest": "condensed",
+          "weight": 700,
+          "minPt": 12,
+          "maxPt": 22,
+          "letterSpacingEm": 0,
+          "lineHeight": 1,
+          "bold": true,
+          "caps": true,
+          "align": "center"
+        },
+        "subtitle": {
+          "width": "normal",
+          "narrowest": "semi-condensed",
+          "weight": 400,
+          "minPt": 6.75,
+          "maxPt": 9,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.1,
+          "bold": false,
+          "caps": false,
+          "align": "center"
+        },
+        "steps": {
+          "width": "normal",
+          "narrowest": "semi-condensed",
+          "weight": 400,
+          "minPt": 6.75,
+          "maxPt": 10.5,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.1,
+          "bold": false,
+          "caps": false,
+          "align": "left"
+        },
+        "headings": {
+          "width": "normal",
+          "narrowest": "normal",
+          "weight": 700,
+          "minPt": 12.5,
+          "maxPt": 12.5,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.1,
+          "bold": true,
+          "caps": true,
+          "align": "left"
+        },
+        "storage": {
+          "width": "semi-condensed",
+          "narrowest": "semi-condensed",
+          "weight": 400,
+          "minPt": 6.75,
+          "maxPt": 10.5,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.12,
+          "bold": false,
+          "caps": false,
+          "align": "left"
+        },
+        "dates": {
+          "width": "semi-condensed",
+          "narrowest": "semi-condensed",
+          "weight": 700,
+          "minPt": 6.75,
+          "maxPt": 10,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.12,
+          "bold": true,
+          "caps": false,
+          "align": "left"
+        },
+        "ingredients": {
+          "width": "normal",
+          "narrowest": "condensed",
+          "weight": 400,
+          "minPt": 6.75,
+          "maxPt": 10.5,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.12,
+          "bold": false,
+          "caps": false,
+          "align": "left"
+        },
+        "allergenInfo": {
+          "width": "normal",
+          "narrowest": "semi-condensed",
+          "weight": 400,
+          "minPt": 6.75,
+          "maxPt": 9,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.12,
+          "bold": false,
+          "caps": false,
+          "align": "left"
+        },
+        "address": {
+          "width": "normal",
+          "narrowest": "semi-condensed",
+          "weight": 400,
+          "minPt": 6.75,
+          "maxPt": 8,
+          "letterSpacingEm": 0,
+          "lineHeight": 1.12,
+          "bold": false,
+          "caps": false,
+          "align": "left"
+        }
+      },
+      "text": {
+        "title": "{weightFirstName}",
+        "subtitle": "",
+        "storageHeading": "",
+        "storage": "**Delivered chilled** — that's how it should arrive. Freeze it as soon as it arrives and store at -18°C or below. Cook from frozen.",
+        "chilledLabel": "IF CHILLED USE BY:",
+        "frozenLabel": "USE BY:",
+        "batchLabel": "BATCH NUMBER:",
+        "ingredientsHeading": "THE INGREDIENTS:",
+        "allergenNote": "For allergens, see ingredients in **bold**.",
+        "warning": "**WARNING:** Whilst every effort has been made to remove all bones, some may remain.",
+        "address": "Handcrafted at The Calzone Kitchen, Unit 1b, Lower Rectory Farm, Mill Lane, Great Brickhill, Buckinghamshire, MK17 9FX",
+        "steps": [
+          "**COOK FROM FROZEN.** Pre-heat the oven to {ovenTemps} and remove all packaging.",
+          "Spread the chicken strips across a baking tray.",
+          "Cook for {ovenMin}–{ovenMax} minutes until piping hot and crunchy."
+        ]
+      },
+      "cooking": {
+        "ovenTempC": 190,
+        "fanTempC": 170,
+        "ovenMinMinutes": 14,
+        "ovenMaxMinutes": 16,
+        "airFryerTempC": null,
+        "airFryerMinMinutes": null,
+        "airFryerMaxMinutes": null
+      },
+      "cookingTiers": {
+        "on": false,
+        "tiers": [
+          {
+            "key": "light",
+            "name": "Light",
+            "maxWeightG": 260,
+            "maxMeatG": 20,
+            "cooking": {
+              "ovenTempC": null,
+              "fanTempC": null,
+              "ovenMinMinutes": 14,
+              "ovenMaxMinutes": 16,
+              "airFryerTempC": 165,
+              "airFryerMinMinutes": 12,
+              "airFryerMaxMinutes": 15
+            }
+          },
+          {
+            "key": "medium",
+            "name": "Medium",
+            "maxWeightG": 330,
+            "maxMeatG": 45,
+            "cooking": {
+              "ovenTempC": null,
+              "fanTempC": null,
+              "ovenMinMinutes": 16,
+              "ovenMaxMinutes": 19,
+              "airFryerTempC": null,
+              "airFryerMinMinutes": 14,
+              "airFryerMaxMinutes": 17
+            }
+          },
+          {
+            "key": "heavy",
+            "name": "Heavy",
+            "maxWeightG": null,
+            "maxMeatG": null,
+            "cooking": {
+              "ovenTempC": null,
+              "fanTempC": null,
+              "ovenMinMinutes": 18,
+              "ovenMaxMinutes": 22,
+              "airFryerTempC": null,
+              "airFryerMinMinutes": 16,
+              "airFryerMaxMinutes": 19
+            }
+          }
+        ],
+        "maxOvenMinutes": 22,
+        "maxAirFryerMinutes": 19,
+        "categories": {
+          "meat": [
+            "raw_meat",
+            "cooked_meat"
+          ],
+          "veg": [
+            "vegetable"
+          ],
+          "cheese": [
+            "cheese",
+            "dairy"
+          ],
+          "dough": [
+            "dough"
+          ]
+        }
+      },
+      "chilledDefault": {
+        "amount": 13,
+        "unit": "days"
+      },
+      "frozenDefault": {
+        "amount": 5,
+        "unit": "months"
+      },
+      "batchBasis": "production-day",
+      "mayContainBoldList": true,
+      "boneRiskWords": [
+        "chicken",
+        "turkey"
+      ],
+      "storageBanner": {
+        "on": true,
+        "text": "FREEZE ON ARRIVAL",
+        "snowflake": true,
+        "heightMm": 6.5
+      },
+      "chilledUseByOn": false,
+      "bestBefore": {
+        "on": false,
+        "label": "BEST BEFORE:",
+        "period": {
+          "amount": 3,
+          "unit": "days"
+        }
+      },
+      "useBy": {
+        "from": "recipe-shelf-life"
+      },
+      "barcodeOn": true,
+      "netQuantity": {
+        "on": true,
+        "sizePt": 16
+      },
+      "warningPlacement": "storage",
+      "defaultForCategories": [
+        "Fried Chicken"
+      ]
+    }
+  }
+}

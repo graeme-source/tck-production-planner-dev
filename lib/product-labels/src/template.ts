@@ -88,6 +88,12 @@ export interface PageSettings {
   bandGapMm: number;
   /** Space between stacked fields inside a column. */
   fieldGapMm: number;
+  /** The space between the ingredients, the allergen note / may-contain
+   *  block and the address in the RIGHT column only. Null (every template
+   *  but fried chicken) = fieldGapMm, as before. A long deck gets those
+   *  millimetres instead of the text going smaller (Korean fried chicken,
+   *  Graeme, 2026-10-27: the address no longer fitted at the bottom). */
+  ingredientsGapMm: number | null;
   /** Step-number circles as tall as the step's text (cap top of the first
    *  line to the bottom of the last — two lines = about the steps band),
    *  worked out from the size the steps actually fit at (Graeme, 2026-10-12:
@@ -184,6 +190,12 @@ export interface LabelTemplate {
   batchBasis: BatchBasis;
   /** Bold the allergen list in the may-contain statement. */
   mayContainBoldList: boolean;
+  /** Print the allergen note at the END of the may-contain sentence ("May
+   *  also contain traces of …. For allergens, see ingredients in bold.")
+   *  instead of on a line of its own above it — saves a line under a long
+   *  deck (fried chicken, 2026-10-27). With no may-contain statement the
+   *  note prints on its own as before. Off on every other template. */
+  allergenNoteAfterMayContain: boolean;
   /** Words that switch the bones warning on for a recipe left on
    *  Automatic: any of them anywhere in its ingredients (whole word, any
    *  case — bones.ts). Empty = Automatic is always off. */
@@ -274,6 +286,9 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
     // two lines up to ~10.5 pt), so the longest real deck (The Godfather)
     // still fits at the legal minimum in Semi Condensed.
     titleBandMm: 7, stepsBandMm: 8, bandGapMm: 3, fieldGapMm: 3,
+    // The ingredients column uses fieldGapMm too unless a template sets its
+    // own (fried chicken).
+    ingredientsGapMm: null,
     stepCircleAuto: true, stepCircleMm: 5.5,
     // 0.25 mm = 2 dots at 203 dpi: a hairline that still prints solidly.
     dividerOn: true, dividerMm: 0.25,
@@ -355,6 +370,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   frozenDefault: { amount: 6, unit: "months" },
   batchBasis: "production-day",
   mayContainBoldList: true,
+  allergenNoteAfterMayContain: false,
   // Graeme, 2026-10-12: "anything with chicken in it" may have bones —
   // and turkey too.
   boneRiskWords: ["chicken", "turkey"],
@@ -522,6 +538,8 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       stepsBandMm: num(p.stepsBandMm, D.page.stepsBandMm, 2, 60),
       bandGapMm: num(p.bandGapMm, D.page.bandGapMm, 0, 20),
       fieldGapMm: num(p.fieldGapMm, D.page.fieldGapMm, 0, 20),
+      // Blank / missing = the field gap (templates saved before it existed).
+      ingredientsGapMm: p.ingredientsGapMm == null || p.ingredientsGapMm === "" ? null : num(p.ingredientsGapMm, D.page.fieldGapMm, 0, 20),
       dividerOn: bool(p.dividerOn, D.page.dividerOn),
       dividerMm: num(p.dividerMm, D.page.dividerMm, 0.05, 2),
       // Templates saved before it existed get the default (auto).
@@ -540,6 +558,7 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
     frozenDefault: "frozenDefault" in r ? normalisePeriod(r.frozenDefault) : D.frozenDefault,
     batchBasis: r.batchBasis === "print-day" ? "print-day" : r.batchBasis === "production-day" ? "production-day" : D.batchBasis,
     mayContainBoldList: bool(r.mayContainBoldList, D.mayContainBoldList),
+    allergenNoteAfterMayContain: bool(r.allergenNoteAfterMayContain, D.allergenNoteAfterMayContain),
     boneRiskWords: normaliseWords(r.boneRiskWords, D.boneRiskWords),
     // Templates saved before these existed get the standard behaviour.
     storageBanner: normaliseBanner(r.storageBanner, D.storageBanner),
@@ -616,6 +635,14 @@ export function friedChickenTemplate(): LabelTemplate {
   t.warningPlacement = "storage";
   t.text.allergenNote = "For allergens, see ingredients in **bold**.";
   t.fields.ingredients = { ...t.fields.ingredients, narrowest: "condensed" };
+  // Room for the longest decks (Korean fried chicken outgrew the column,
+  // Graeme, 2026-10-27: the address no longer fitted at the bottom). Rather
+  // than shrink anything below what it's allowed: the allergen note runs on
+  // after the may-contain sentence (one line saved) and the ingredients
+  // column closes its gaps to 1.5 mm (still twice the space between lines,
+  // so the blocks stay distinct). The storage side keeps its 3 mm gaps.
+  t.allergenNoteAfterMayContain = true;
+  t.page.ingredientsGapMm = 1.5;
   return t;
 }
 

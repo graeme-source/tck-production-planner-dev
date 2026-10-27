@@ -237,6 +237,8 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               <Num label="Steps band" unit="mm" value={draft.page.stepsBandMm} step={0.5} min={2} max={60} onChange={v => v != null && setPage("stepsBandMm", v)} />
               <Num label="Gap between bands" unit="mm" value={draft.page.bandGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("bandGapMm", v)} />
               <Num label="Gap between blocks" unit="mm" value={draft.page.fieldGapMm} step={0.5} min={0} max={20} onChange={v => v != null && setPage("fieldGapMm", v)} />
+              {/* Blank = the same as the gap between blocks. Tighter here gives a long deck room (fried chicken, 2026-10-27). */}
+              <Num label="Gaps under the ingredients" unit="mm" value={draft.page.ingredientsGapMm} step={0.5} min={0} max={20} allowBlank placeholder={`${draft.page.fieldGapMm} (same)`} onChange={v => setPage("ingredientsGapMm", v)} />
               {!draft.page.stepCircleAuto && (
                 <Num label="Step number circle" unit="mm" value={draft.page.stepCircleMm} step={0.2} min={2} max={20} onChange={v => v != null && setPage("stepCircleMm", v)} />
               )}
@@ -331,6 +333,7 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
               ))}
             </div>
             <Toggle on={draft.mayContainBoldList} onChange={v => update(t => ({ ...t, mayContainBoldList: v }))} label="Print the may-contain list in bold" />
+            <Toggle on={draft.allergenNoteAfterMayContain} onChange={v => update(t => ({ ...t, allergenNoteAfterMayContain: v }))} label="Run the allergen note on after the may-contain sentence (saves a line under a long ingredient list)" />
             <BoneWords words={draft.boneRiskWords} onChange={boneRiskWords => update(t => ({ ...t, boneRiskWords }))} />
             <CategoryDefaults categories={draft.defaultForCategories} onChange={defaultForCategories => update(t => ({ ...t, defaultForCategories }))} />
           </Card>

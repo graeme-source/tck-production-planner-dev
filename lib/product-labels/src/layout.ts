@@ -559,7 +559,6 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   }
 
   const spec = (key: FieldKey, boxes: Rect[], paras: Paragraph[][], inset = 0): FieldSpec => ({ key, boxes, paras, inset, style: t.fields[key] });
-  const fieldGap = d(page.fieldGapMm);
   const fields: FieldLayout[] = [];
 
   // Title — its own band.
@@ -651,7 +650,7 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   // Columns — stacked fields shrinking together.
   // `bottomKey` sits at the foot of the column when everything fits (the
   // address, bottom right, as on Graeme's label).
-  const stackColumn = (keys: FieldKey[], box: Rect, bottomKey?: FieldKey) => {
+  const stackColumn = (keys: FieldKey[], box: Rect, bottomKey?: FieldKey, fieldGap = d(page.fieldGapMm)) => {
     const specs = keys.map(k => spec(k, [box], [fieldParagraphs(content, k)]));
     const g = fitGroup(specs, box.h, true, fieldGap, t, m);
     let y = box.y;
@@ -732,7 +731,9 @@ export function layoutLabel(t: LabelTemplate, content: LabelContent, m: TextMeas
   }
 
   stackColumn(["storage", "dates"], { ...leftText, y: leftText.y + leftHead, h: Math.max(0, leftText.h - leftHead) });
-  stackColumn(["ingredients", "allergenInfo", "address"], { ...right, y: right.y + rightHead, h: Math.max(0, right.h - rightHead) }, "address");
+  // The ingredients column may have its own, tighter gaps (fried chicken's
+  // long decks, 2026-10-27); unset = the same gap as the storage column.
+  stackColumn(["ingredients", "allergenInfo", "address"], { ...right, y: right.y + rightHead, h: Math.max(0, right.h - rightHead) }, "address", d(page.ingredientsGapMm ?? page.fieldGapMm));
 
   // Step numbers ride along with the steps field's runs.
   const steps = fields.find(f => f.key === "steps");
