@@ -215,7 +215,9 @@ export function LeanReviewPage() {
   const allAnswered = data.quiz.every((_q, i) => answers[i] != null);
 
   return (
-    <div key={isPreview ? "preview" : "this-week"} className="max-w-3xl mx-auto space-y-5 pb-16">
+    // Full width, text beside the video on wide screens, so a lesson page fits
+    // without scrolling (Graeme, 2026-10-27).
+    <div key={isPreview ? "preview" : "this-week"} className="w-full space-y-4 pb-10">
       {/* Header */}
       <div>
         <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isPreview ? "text-amber-600" : "text-purple-500")}>
@@ -329,7 +331,7 @@ export function LeanReviewPage() {
           )}
         </div>
       ) : lesson ? (
-        <div className="space-y-4">
+        <div className={cn("grid gap-4 items-start", (lesson.videoUrl || lesson.diagram || lesson.imageUrl || isPreview) && "xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]")}>
           <div className="bg-card border border-border rounded-2xl p-5">
             <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">
               {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][pageIdx] ?? `Part ${pageIdx + 1}`}'s angle
@@ -338,12 +340,14 @@ export function LeanReviewPage() {
             <p className="text-sm text-muted-foreground mb-4">{lesson.summary}</p>
             <MarkdownBlock content={lesson.whatToShowMd} />
           </div>
-          {lesson.videoUrl && <YouTubeEmbed url={lesson.videoUrl} />}
-          {isPreview && <VideoSwapBox key={lesson.id} lesson={lesson} />}
-          {lesson.diagram && <LessonDiagram id={lesson.diagram} />}
-          {lesson.imageUrl && (
-            <img src={lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
-          )}
+          <div className="space-y-4 min-w-0">
+            {lesson.videoUrl && <YouTubeEmbed url={lesson.videoUrl} fitHeight={300} />}
+            {isPreview && <VideoSwapBox key={lesson.id} lesson={lesson} />}
+            {lesson.diagram && <LessonDiagram id={lesson.diagram} />}
+            {lesson.imageUrl && (
+              <img src={lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
+            )}
+          </div>
         </div>
       ) : null}
 

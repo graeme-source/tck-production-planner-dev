@@ -651,7 +651,9 @@ function MeetingShell({
             <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
           </div>
         ) : (
-          <div className="max-w-6xl mx-auto w-full my-auto">
+          // The learning slide uses the full width so its video is as big as
+          // the screen allows (Graeme, 2026-10-27: no tiny videos, no scrolling).
+          <div className={cn(slide.kind === "learning" ? "w-full" : "max-w-6xl", "mx-auto w-full my-auto")}>
             <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
           </div>
         )}
@@ -3535,12 +3537,12 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
       )}
       <p className="text-lg text-muted-foreground mb-6">{data.lesson.summary}</p>
       {media ? (
-        <div className="grid gap-4 md:grid-cols-2 items-start">
+        <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-start">
           <div className="glass-panel rounded-2xl p-6">
             <MarkdownBlock content={data.lesson.whatToShowMd} />
           </div>
-          <div className="space-y-4">
-            {data.lesson.videoUrl && <YouTubeEmbed url={data.lesson.videoUrl} />}
+          <div className="space-y-4 min-w-0">
+            {data.lesson.videoUrl && <YouTubeEmbed url={data.lesson.videoUrl} fitHeight={330} />}
             {data.lesson.diagram && <LessonDiagram id={data.lesson.diagram} />}
             {data.lesson.imageUrl && (
               <img src={data.lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />

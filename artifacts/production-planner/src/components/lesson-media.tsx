@@ -45,7 +45,10 @@ export function MarkdownBlock({ content }: { content: string }) {
   );
 }
 
-export function YouTubeEmbed({ url }: { url: string }) {
+/** `fitHeight`: the video is as big as fits in the window less that many
+ *  pixels (headers, pager) — a lesson or meeting slide shows the whole video
+ *  without scrolling (Graeme, 2026-10-27: "minimise scrolling at all costs"). */
+export function YouTubeEmbed({ url, fitHeight }: { url: string; fitHeight?: number }) {
   const id = youtubeIdFromUrl(url);
   if (!id) {
     return (
@@ -55,7 +58,8 @@ export function YouTubeEmbed({ url }: { url: string }) {
     );
   }
   return (
-    <div className="w-full rounded-2xl overflow-hidden bg-black" style={{ aspectRatio: "16 / 9" }}>
+    <div className="w-full mx-auto rounded-2xl overflow-hidden bg-black"
+      style={{ aspectRatio: "16 / 9", ...(fitHeight != null ? { maxWidth: `calc((100dvh - ${fitHeight}px) * 16 / 9)` } : {}) }}>
       <iframe
         src={youtubeEmbedSrc(id, currentOrigin())}
         title="Video"
