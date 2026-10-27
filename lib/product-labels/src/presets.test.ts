@@ -321,8 +321,9 @@ describe("cinnamon buns template", () => {
     expect(s.warningOn).toBe(false);
     expect(text(c.allergenInfo).join(" ")).not.toContain("bones");
   });
-  it("a recipe's own chilled period beats its shelf life (the buns' 180-day frozen shelf life must not print)", () => {
-    const c = bunContent(bunSnap({ chilled: { amount: 5, unit: "days" } }, 180));
+  it("a despatch label: use-by = despatch + 5 whatever the recipe's shelf life (the buns' 180-day freezer life must not print)", () => {
+    const c = bunContent(bunSnap({}, 180));
+    expect(text(c.dates)[0]).toBe("BEST BEFORE: 30/10/26");
     expect(text(c.dates)[1]).toBe("USE BY: 01/11/26");
   });
   it("fits: three step circles, subtitle under the title, no problems", () => {

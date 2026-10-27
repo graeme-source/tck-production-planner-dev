@@ -15,6 +15,7 @@ import { PERIOD_UNITS } from "./dates";
 import { EAN13_MIN_BAR_HEIGHT_MM } from "./ean13";
 import { DEFAULT_COOKING_TIERS, normaliseCookingTiers, type CookingTiersConfig } from "./cooking-tiers";
 import { LABEL_FORMATS, normaliseFormat, type LabelFormat } from "./formats";
+import { DEFAULT_USE_BY_RULE, normaliseUseByRule, type UseByRule } from "./shelf-life";
 
 export type WidthVariant = "normal" | "semi-condensed" | "condensed";
 /** Widest first — the layout tries them in this order before going smaller. */
@@ -164,9 +165,20 @@ export interface LabelTemplate {
    *  manager switches it on. Like the standard cooking values, it only
    *  matters through the resolved cooking in a snapshot. */
   cookingTiers: CookingTiersConfig;
-  /** Chilled use-by when neither the recipe's label nor its shelf life sets
-   *  one (Graeme, 2026-10-10: calzone standard 13 days). */
+  /** Chilled use-by for a recipe with no shelf life set (Graeme,
+   *  2026-10-10: calzone standard 13 days). The recipe's shelf life always
+   *  wins (shelf-life.ts) — there is no label-only override. */
   chilledDefault: ShelfPeriod | null;
+  /** Where the chilled use-by comes from (shelf-life.ts): the recipe's shelf
+   *  life (every template but one), or a FIXED period from despatch — the
+   *  print day — for a despatch label like the cinnamon buns' big label
+   *  (Graeme, 2026-10-27). Left out of a label's comparison while it is the
+   *  default, so labels published before it existed keep their hashes. */
+  useBy: UseByRule;
+  /** Small labels only: print the product's barcode. Off = an internal
+   *  label (the cinnamon buns' freezer label) with none, and no barcode is
+   *  needed to publish it. Back labels always print theirs. */
+  barcodeOn: boolean;
   /** Frozen use-by when the recipe doesn't set its own. Null = no frozen line. */
   frozenDefault: ShelfPeriod | null;
   batchBasis: BatchBasis;
@@ -349,6 +361,8 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   storageBanner: { on: false, text: "KEEP FROZEN", snowflake: true, heightMm: 6.5 },
   chilledUseByOn: true,
   bestBefore: { on: false, label: "BEST BEFORE:", period: { amount: 3, unit: "days" } },
+  useBy: DEFAULT_USE_BY_RULE,
+  barcodeOn: true,
   netQuantity: { on: false, sizePt: 16 },
   warningPlacement: "allergens",
   defaultForCategories: [],
@@ -535,6 +549,10 @@ export function normaliseTemplate(raw: unknown): LabelTemplate {
       label: typeof obj(r.bestBefore).label === "string" ? String(obj(r.bestBefore).label) : D.bestBefore.label,
       period: normalisePeriod(obj(r.bestBefore).period) ?? D.bestBefore.period,
     },
+    // Templates saved before these existed: the recipe's shelf life, and
+    // the barcode printed (as before).
+    useBy: normaliseUseByRule(r.useBy),
+    barcodeOn: bool(r.barcodeOn, D.barcodeOn),
     netQuantity: {
       on: bool(obj(r.netQuantity).on, D.netQuantity.on),
       sizePt: num(obj(r.netQuantity).sizePt, D.netQuantity.sizePt, 6.75, 40),
@@ -660,11 +678,15 @@ export function cinnamonBunsTemplate(): LabelTemplate {
   t.page.stepsBandMm = 11;
   t.text.storageHeading = "STORAGE INSTRUCTIONS:";
   t.text.storage = "Keep me chilled below 5°C. Do not freeze.";
-  // Chilled use-by only. The recipe's shelf life sets it, else 5 days (the
-  // current printed label). Not to be frozen, so no frozen line.
+  // Chilled use-by only, and it is a DESPATCH label (Graeme, 2026-10-27):
+  // printed the morning the buns come out of the freezer, use-by = despatch
+  // + 5 days whatever the recipe's shelf life (180 days — the freezer life,
+  // printed on the small internal label at wrapping). Not to be frozen, so
+  // no frozen line.
   t.chilledUseByOn = true;
   t.text.chilledLabel = "USE BY:";
   t.chilledDefault = { amount: 5, unit: "days" };
+  t.useBy = { from: "despatch", period: { amount: 5, unit: "days" } };
   t.frozenDefault = null;
   // Best before = despatch day + 3 (Graeme, 2026-10-27); labels print on
   // the despatch day, so it counts from the print day.
@@ -701,6 +723,23 @@ export function garlicMayoTemplate(): LabelTemplate {
   return t;
 }
 
+/** Internal freezer label — the small 102 × 25 mm label put on a product
+ *  when it is wrapped and frozen (Graeme, 2026-10-27: "The 180-day one is a
+ *  freezer-only internal small label; it just says 'Cinnamon Buns', batch
+ *  number, and use-by date, very much like the 5-pack labels"). Name, USE BY
+ *  = print day + the recipe's shelf life, BATCH = the production day's
+ *  Julian YYDDD. No barcode: it is never scanned or sold as it is — the
+ *  despatch label goes over the top. A recipe picks it as its WRAPPING
+ *  label (label-roles.ts), so the wrapping station prints this one. */
+export function internalFreezerTemplate(): LabelTemplate {
+  const t = garlicMayoTemplate();
+  t.chilledDefault = null;
+  t.batchBasis = "production-day";
+  t.barcodeOn = false;
+  t.useBy = { from: "recipe-shelf-life" };
+  return t;
+}
+
 export const TEMPLATE_PRESETS: TemplatePreset[] = [
   {
     key: "standard",
@@ -731,5 +770,11 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     name: "Garlic mayo",
     description: "The small 102 × 25 mm pot label: name, use-by, batch number and barcode (EAN-13 or Shopify's longer codes). Pick it on the recipe by hand.",
     build: garlicMayoTemplate,
+  },
+  {
+    key: "internal-freezer",
+    name: "Internal freezer label (102 × 25 mm)",
+    description: "The small internal label put on at wrapping, before freezing: name, use-by from the recipe's shelf life, batch number, no barcode. Pick it as a recipe's wrapping label.",
+    build: internalFreezerTemplate,
   },
 ];

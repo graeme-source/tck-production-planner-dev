@@ -77,9 +77,13 @@ export function buildSmallLabelContent(s: LabelSnapshot, dates: LabelDates): Sma
   const problems: string[] = [];
   const name = s.labelName.replace(/\s+/g, " ").trim();
   if (!name) problems.push("No name to print — set the name on the label.");
-  if (!dates.chilledUseBy) problems.push("No use-by — set the recipe's shelf life or a use-by period on this label.");
-  const code = s.barcode?.replace(/\s+/g, "") || null;
-  if (!code) problems.push("No barcode number yet.");
+  if (!dates.chilledUseBy) problems.push("No use-by — set the recipe's shelf life.");
+  // An internal label (template barcode switched off) prints none and
+  // needs none to go live.
+  const wantsBarcode = s.template.barcodeOn !== false;
+  const code = wantsBarcode ? s.barcode?.replace(/\s+/g, "") || null : null;
+  if (!wantsBarcode) { /* no barcode on this label */ }
+  else if (!code) problems.push("No barcode number yet.");
   else if (/^\d{13}$/.test(code) && !checkEan13(code).ok) {
     // Thirteen digits is meant to be an EAN-13: a wrong check digit is a
     // typo, not a code to print as Code 128.

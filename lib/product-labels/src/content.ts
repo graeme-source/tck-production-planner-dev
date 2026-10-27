@@ -119,7 +119,7 @@ export function buildLabelContent(s: LabelSnapshot, dates: LabelDates): LabelCon
   if (bb?.on && bb.period.amount > 0) dateLines.push(dateLine(bb.label, formatLabelDate(addPeriod(dates.printDate, bb.period))));
   if (s.template.chilledUseByOn !== false) {
     if (dates.chilledUseBy) dateLines.push(dateLine(t.chilledLabel, formatLabelDate(dates.chilledUseBy)));
-    else problems.push("No chilled use-by — set the recipe's shelf life or a chilled period on this label.");
+    else problems.push("No chilled use-by — set the recipe's shelf life.");
   }
   if (dates.frozenUseBy) dateLines.push(dateLine(t.frozenLabel, formatLabelDate(dates.frozenUseBy)));
   else if (s.template.chilledUseByOn === false) problems.push("No use-by — this template prints only the frozen use-by; switch the frozen line on or set a frozen period.");

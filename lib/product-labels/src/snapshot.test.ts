@@ -46,7 +46,7 @@ describe("snapshot change detection", () => {
   });
 
   it("lists cooking, barcode and use-by changes field by field", () => {
-    const now = make({ settings: { cooking: { ...DEFAULT_RECIPE_LABEL_SETTINGS.cooking, ovenMaxMinutes: 25 }, barcode: "4006381333931", chilled: { amount: 10, unit: "days" } } });
+    const now = make({ settings: { cooking: { ...DEFAULT_RECIPE_LABEL_SETTINGS.cooking, ovenMaxMinutes: 25 }, barcode: "4006381333931" }, shelf: 10 });
     const keys = diffSnapshots(make(), now).map(c => c.key);
     expect(keys).toEqual(["cooking.ovenMaxMinutes", "chilled", "barcode"]);
   });

@@ -10,6 +10,8 @@ export * from "./legal";
 export * from "./template";
 export * from "./formats";
 export * from "./template-choice";
+export * from "./shelf-life";
+export * from "./label-roles";
 export * from "./text";
 export * from "./snapshot";
 export * from "./content";

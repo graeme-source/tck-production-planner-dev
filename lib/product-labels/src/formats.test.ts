@@ -79,7 +79,7 @@ describe("format normalisation", () => {
     expect(t.batchBasis).toBe("print-day");
     expect(t.defaultForCategories).toEqual([]);
     // Every other preset is a back label.
-    for (const p of TEMPLATE_PRESETS.filter(x => x.key !== "garlic-mayo")) expect(labelFormat(p.build()).backLabel).toBe(true);
+    for (const p of TEMPLATE_PRESETS.filter(x => x.key !== "garlic-mayo" && x.key !== "internal-freezer")) expect(labelFormat(p.build()).backLabel).toBe(true);
   });
 });
 
@@ -110,23 +110,22 @@ describe("small-format snapshots", () => {
     expect(snapshotsMatch(mayo(), mayo({ deck: "Rapeseed Oil, **Egg** Yolk, Garlic" }))).toBe(true);
     expect(snapshotsMatch(mayo(), mayo({ settings: { warningOn: true, frozen: { amount: 3, unit: "months" } } }))).toBe(true);
     expect(snapshotsMatch(mayo(), mayo({ settings: { labelName: "Garlic Mayo" } }))).toBe(false);
-    expect(snapshotsMatch(mayo(), mayo({ settings: { chilled: { amount: 30, unit: "days" } } }))).toBe(false);
+    expect(snapshotsMatch(mayo(), mayo({ shelf: 30 }))).toBe(false);
     expect(snapshotsMatch(mayo(), mayo({ settings: { barcode: "5065018206009" } }))).toBe(false);
   });
 
   it("lists the small label's own changes, and a switch of size", () => {
-    expect(diffSnapshots(mayo(), mayo({ settings: { chilled: { amount: 30, unit: "days" } } })).map(c => c.key)).toEqual(["chilled"]);
+    expect(diffSnapshots(mayo(), mayo({ shelf: 30 })).map(c => c.key)).toEqual(["chilled"]);
     const switched = diffSnapshots(calzone(), mayo());
     expect(switched.map(c => c.key)).toEqual(expect.arrayContaining(["templateId", "template.format"]));
     expect(switched.find(c => c.key === "template.format")).toMatchObject({ before: "140 × 94 mm", after: "102 × 25 mm" });
     expect(switched.some(c => c.key === "deckText" || c.key.startsWith("cooking."))).toBe(false);
   });
 
-  it("use-by: the label's period, else the shelf life, else the template's 38 days (printed 27 Oct → 04/12/26)", () => {
+  it("use-by: the recipe's shelf life, else the template's 38 days (printed 27 Oct → 04/12/26)", () => {
     expect(datesFor(mayo()).chilledUseBy).toBe("2026-12-04");
     expect(buildSmallLabelContent(mayo(), datesFor(mayo())).input).toMatchObject({ name: "TCK Garlic Mayo", useBy: "04/12/26", batch: "26300", barcode: MAYO_CODE });
     expect(datesFor(mayo({ shelf: 30 })).chilledUseBy).toBe("2026-11-26");
-    expect(datesFor(mayo({ settings: { chilled: { amount: 2, unit: "weeks" } } })).chilledUseBy).toBe("2026-11-10");
   });
 });
 

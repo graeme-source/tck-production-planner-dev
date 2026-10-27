@@ -19,6 +19,7 @@ import { describePeriod } from "./dates";
 import type { CookingValues, LabelTemplate } from "./template";
 import { COOKING_KEYS, FIELD_KEYS, FIELD_LABEL, normaliseTemplate, type FieldKey } from "./template";
 import { labelFormat } from "./formats";
+import { normaliseUseByRule, resolveChilledPeriod } from "./shelf-life";
 
 /** Per-recipe label settings (product_label_settings). Null cooking / period
  *  values mean "use the template's default". */
@@ -36,7 +37,8 @@ export interface RecipeLabelSettings {
   /** Bones warning: true / false = always on / off; null = Automatic (on
    *  when the ingredients contain one of the template's boneRiskWords). */
   warningOn: BonesSetting;
-  chilled: ShelfPeriod | null;
+  // No chilled period here (2026-10-27): the recipe's shelf life is the one
+  // source of truth for the chilled use-by (shelf-life.ts).
   frozenOn: boolean;
   frozen: ShelfPeriod | null;
   /** Net quantity printed above the barcode, e.g. "500g" — only on
@@ -60,7 +62,7 @@ export const EMPTY_COOKING: CookingValues = {
 
 export const DEFAULT_RECIPE_LABEL_SETTINGS: RecipeLabelSettings = {
   barcode: null, labelName: null, ovenOn: true, airFryerOn: true,
-  cooking: { ...EMPTY_COOKING }, cookingMode: null, warningOn: null, chilled: null, frozenOn: true, frozen: null, netQuantity: null,
+  cooking: { ...EMPTY_COOKING }, cookingMode: null, warningOn: null, frozenOn: true, frozen: null, netQuantity: null,
 };
 
 export interface LabelSnapshot {
@@ -127,11 +129,13 @@ export function buildSnapshot(input: {
   cookingSuggestion?: CookingValues | null;
 }): LabelSnapshot {
   const { recipe, deck, settings: s, template } = input;
-  // Chilled use-by: the label's own setting → the recipe's shelf life (some
-  // calzones are deliberately 10 days) → the standard (13 days).
-  const chilled = s.chilled
-    ?? (recipe.shelfLifeDays && recipe.shelfLifeDays > 0 ? { amount: recipe.shelfLifeDays, unit: "days" as const } : null)
-    ?? template.chilledDefault;
+  // Chilled use-by (shelf-life.ts): a despatch template's fixed period →
+  // the recipe's shelf life (some calzones are deliberately 10 days) → the
+  // standard (13 days) for a recipe with none set.
+  const chilled = resolveChilledPeriod(template, recipe.shelfLifeDays).period;
+  // A small label with its barcode switched off (the internal freezer
+  // label) prints none, so none is in its snapshot.
+  const noBarcode = !labelFormat(template).backLabel && template.barcodeOn === false;
   return {
     recipeName: recipe.name,
     labelName: s.labelName?.trim() || recipe.name,
@@ -144,7 +148,7 @@ export function buildSnapshot(input: {
     cooking: resolveCooking(template, s, input.cookingSuggestion),
     chilled,
     frozen: s.frozenOn ? (s.frozen ?? template.frozenDefault) : null,
-    barcode: s.barcode?.replace(/\s+/g, "") || null,
+    barcode: noBarcode ? null : s.barcode?.replace(/\s+/g, "") || null,
     ...(template.netQuantity?.on ? { netQuantity: s.netQuantity?.trim() || null } : {}),
     templateId: input.templateId,
     template,
@@ -176,9 +180,21 @@ export function comparableSnapshot(s: LabelSnapshot): unknown {
   // shows as templateId), never what it prints.
   // format: every back label is the same format, and labels published
   // before formats existed have none — leaving it out keeps their hashes.
-  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, format: _fm, ...template } = s.template;
+  // barcodeOn is a small-label switch (a back label always prints its
+  // barcode), so it never matters here.
+  const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, format: _fm, barcodeOn: _bo, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
-  return { ...rest, template: withoutOffBestBefore(withoutBlankSubtitle(template)) };
+  return { ...rest, template: withoutDefaultUseBy(withoutOffBestBefore(withoutBlankSubtitle(template))) };
+}
+
+/** The use-by rule only goes into the comparison when it is NOT the
+ *  default: every label published before it existed counts from the
+ *  recipe's shelf life, so leaving the default out keeps their hashes
+ *  (2026-10-27). A despatch rule is kept, normalised. */
+function withoutDefaultUseBy<T extends { useBy?: unknown }>(template: T): T {
+  const rule = normaliseUseByRule(template.useBy);
+  const { useBy: _u, ...rest } = template;
+  return (rule.from === "recipe-shelf-life" ? rest : { ...rest, useBy: rule }) as T;
 }
 
 /** A best-before that's off isn't drawn, so it's left out — labels
@@ -201,6 +217,10 @@ function smallComparable(s: LabelSnapshot): unknown {
     chilled: s.chilled,
     barcode: s.barcode,
     batchBasis: s.template.batchBasis,
+    // Only when they differ from the default, so the published garlic mayo
+    // label (barcode on, use-by from shelf life) keeps its hash.
+    ...(s.template.barcodeOn === false ? { barcodeOn: false } : {}),
+    ...(normaliseUseByRule(s.template.useBy).from === "despatch" ? { useBy: normaliseUseByRule(s.template.useBy) } : {}),
   };
 }
 
@@ -239,7 +259,8 @@ export function areasForChange(key: string): Array<FieldKey | "barcode" | "all">
   if (key === "deckText") return ["ingredients"];
   if (key === "mayContain" || key === "warningOn" || key === "template.mayContainBoldList") return ["allergenInfo"];
   if (key.startsWith("cooking.")) return ["steps"];
-  if (key === "chilled" || key === "frozen" || key === "template.batchBasis" || key === "template.chilledUseByOn") return ["dates"];
+  if (key === "chilled" || key === "frozen" || key === "template.batchBasis" || key === "template.chilledUseByOn" || key === "template.useBy") return ["dates"];
+  if (key === "template.barcodeOn") return ["barcode"];
   if (key === "template.storageBanner") return ["storage"];
   if (key === "template.netQuantity") return ["barcode"];
   if (key === "template.warningPlacement") return ["storage", "allergenInfo"];
@@ -270,6 +291,10 @@ const COOKING_LABEL: Record<keyof CookingValues, string> = {
 
 const show = (v: unknown): string => (v == null || v === "" ? "(blank)" : String(v));
 const period = (p: ShelfPeriod | null) => (p ? describePeriod(p) : "(none)");
+const useByText = (t: { useBy?: unknown }) => {
+  const r = normaliseUseByRule(t.useBy);
+  return r.from === "despatch" ? `${describePeriod(r.period)} from despatch` : "The recipe's shelf life";
+};
 
 /** What changed between the live label and the label as it would be now. */
 export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): SnapshotChange[] {
@@ -287,6 +312,8 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
     add("templateId", "Label template", String(live.templateId), String(current.templateId));
     add("template.format", "Label size", liveFormat.sizeText, currentFormat.sizeText);
     add("template.batchBasis", "Batch number taken from", live.template.batchBasis, current.template.batchBasis);
+    add("template.barcodeOn", "Barcode printed", live.template.barcodeOn === false ? "No" : "Yes", current.template.barcodeOn === false ? "No" : "Yes");
+    add("template.useBy", "Use-by counted from", useByText(live.template), useByText(current.template));
     if (out.length === 0 && !snapshotsMatch(live, current)) {
       out.push({ key: "other", label: "Other label settings", before: "as published", after: "changed" });
     }
@@ -358,6 +385,7 @@ export function diffTemplates(rawA: LabelTemplate, rawB: LabelTemplate): Snapsho
     const band = (t: LabelTemplate) => (t.storageBanner.on ? `“${t.storageBanner.text}”${t.storageBanner.snowflake ? " with snowflakes" : ""}, ${t.storageBanner.heightMm} mm` : "Off");
     out.push({ key: "template.storageBanner", label: "Storage band", before: band(a), after: band(b) });
   }
+  if (useByText(a) !== useByText(b)) out.push({ key: "template.useBy", label: "Use-by counted from", before: useByText(a), after: useByText(b) });
   if (a.chilledUseByOn !== b.chilledUseByOn) out.push({ key: "template.chilledUseByOn", label: "Chilled use-by line", before: onOff(a.chilledUseByOn), after: onOff(b.chilledUseByOn) });
   if (canonicalJson(a.netQuantity) !== canonicalJson(b.netQuantity)) {
     const nq = (t: LabelTemplate) => (t.netQuantity.on ? `On, ${t.netQuantity.sizePt} pt` : "Off");
