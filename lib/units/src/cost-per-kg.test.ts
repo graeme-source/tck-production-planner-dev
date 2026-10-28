@@ -5,6 +5,8 @@ describe("cost per kg", () => {
   it("weights in any unit come out per kg", () => {
     expect(costPerKg(6.07, 3, "kg")).toBeCloseTo(2.0233, 4);
     expect(costPerKg(1.5, 500, "g")).toBe(3);
+    // A recipe's RRP per kg (Recipes table): £19.95 for a 600 g pack.
+    expect(costPerKg(19.95, 600, "g")).toBeCloseTo(33.25, 6);
     expect(costPerKg("4.80", "2", "KG")).toBe(2.4);
   });
 
