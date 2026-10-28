@@ -2,7 +2,7 @@
  * Lucky Order Number winner emails (Graeme, 27 Oct 2026) — transactional
  * "congratulations, you've won" emails sent through Resend to every winner,
  * whatever their marketing consent. Subject and body for each prize are
- * written on Sales & Marketing → Live offers; these are the defaults.
+ * written on The Business → Live offers; these are the defaults.
  * Pure: builds the email, doesn't send it. Objective I.
  *
  * Placeholders, filled per winner:

@@ -124,3 +124,32 @@ export function initialStatuses(tier: LuckyTier, practice: boolean) {
     emailStatus: step(true),
   };
 }
+
+/** The Shopify discount for a 000 winner: £amount off each of the first
+ *  `cycles` subscription orders, one use, that customer only, subscriptions
+ *  only, and it can't be stacked with other order/product discounts. One
+ *  builder for the real code and the founder's practice code (28 Oct 2026),
+ *  so the practice one is configured exactly like a winner's. */
+export function subscriptionDiscountInput(p: { title: string; code: string; customerId: string; startsAt: string; amount: number; cycles: number }) {
+  return {
+    title: p.title,
+    code: p.code,
+    startsAt: p.startsAt,
+    context: { customers: { add: [p.customerId] } },
+    usageLimit: 1,
+    appliesOncePerCustomer: true,
+    recurringCycleLimit: p.cycles,
+    combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: true },
+    customerGets: {
+      value: { discountAmount: { amount: p.amount.toFixed(2), appliesOnEachItem: false } },
+      items: { all: true },
+      appliesOnOneTimePurchase: false,
+      appliesOnSubscription: true,
+    },
+  };
+}
+
+/** A practice code's name: clearly a test, never a real order number. */
+export function practiceCodeFor(random: string): string {
+  return `LUCKYYEAR-TEST-${random.replace(/[^A-Z0-9]/gi, "").slice(0, 6).toUpperCase()}`;
+}

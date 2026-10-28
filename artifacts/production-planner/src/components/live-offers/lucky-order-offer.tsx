@@ -1,10 +1,11 @@
 /**
- * Lucky Order Number (Graeme, 27 Oct 2026) — Sales & Marketing → Live offers.
+ * Lucky Order Number (Graeme, 27 Oct 2026) — The Business → Live offers.
  * Order numbers ending 0 win a free gift, 00 a free gift + full refund, 000 a
  * free subscription year. Switch, schedule, gift and refund limit autosave;
  * winners and refund approvals below. Server: api-server routes/live-offers.ts
  * and lib/lucky-order. Objective I.
  */
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Gift, Loader2, Mail, RefreshCw, Search, AlertTriangle, PartyPopper, Send } from "lucide-react";
@@ -116,6 +117,12 @@ export function LuckyOrderOffer({ isFounder }: { isFounder: boolean }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 
+  // A real practice 000 code for the founder only, to check its settings in
+  // Shopify before the offer goes live (28 Oct 2026).
+  const practice = useMutation({
+    mutationFn: () => api<{ code: string; title: string; customerEmail: string; adminUrl: string | null }>("/lucky-order/test-code", { method: "POST", body: "{}" }),
+  });
+
   if (q.isLoading) return <div className="rounded-2xl border border-border bg-card p-5 text-sm text-muted-foreground">Loading…</div>;
   if (q.error || !q.data?.offer) return <div className="rounded-2xl border border-border bg-card p-5 text-sm text-red-700">{(q.error as Error)?.message ?? "The offer isn't set up yet."}</div>;
   const { offer, winners } = q.data;
@@ -198,8 +205,27 @@ export function LuckyOrderOffer({ isFounder }: { isFounder: boolean }) {
               {action.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Check now
             </button>
           )}
+          {isFounder && (
+            <button type="button"
+              onClick={() => { if (window.confirm("Make a REAL practice 000 code in Shopify, tied to your own customer account only? Disable it in Shopify once you've checked it.")) practice.mutate(); }}
+              disabled={practice.isPending}
+              className="inline-flex items-center gap-1.5 px-3 min-h-9 rounded-lg border border-border text-sm hover:bg-muted">
+              {practice.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Make me a practice 000 code
+            </button>
+          )}
         </div>
         {action.error && <p className="text-sm text-red-700">{(action.error as Error).message}</p>}
+        {practice.error && <p className="text-sm text-red-700">{(practice.error as Error).message}</p>}
+        {practice.data && (
+          <div className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-1">
+            <p className="text-sm">Practice code — only {practice.data.customerEmail} can use it:</p>
+            <p className="text-2xl font-mono font-bold tracking-wide select-all">{practice.data.code}</p>
+            <p className="text-sm text-muted-foreground">Set up exactly like a 000 winner's. Check it, then disable it in Shopify.</p>
+            {practice.data.adminUrl && (
+              <a href={practice.data.adminUrl} target="_blank" rel="noopener noreferrer" className="text-sm font-semibold text-primary underline">Open it in Shopify discounts</a>
+            )}
+          </div>
+        )}
       </section>
 
       {(awaiting.length > 0 || stuck.length > 0) && (
@@ -207,7 +233,7 @@ export function LuckyOrderOffer({ isFounder }: { isFounder: boolean }) {
           <h3 className="text-sm font-semibold flex items-center gap-2"><AlertTriangle className="w-4 h-4 text-amber-600" /> Waiting for you</h3>
           {awaiting.map(w => (
             <div key={w.orderId} className="flex flex-wrap items-center gap-3 text-sm">
-              <span><strong>{w.orderName}</strong> · {w.customerName ?? w.customerEmail} · full refund of <strong>{gbp(w.refundAmount)}</strong></span>
+              <span><strong><ShopifyOrderNumber orderId={w.orderId} name={w.orderName} /></strong> · {w.customerName ?? w.customerEmail} · full refund of <strong>{gbp(w.refundAmount)}</strong></span>
               {isFounder && (
                 <span className="flex gap-2">
                   <button type="button" className="px-3 min-h-9 rounded-lg bg-primary text-primary-foreground font-medium" disabled={action.isPending}
@@ -220,7 +246,7 @@ export function LuckyOrderOffer({ isFounder }: { isFounder: boolean }) {
           ))}
           {stuck.map(w => (
             <div key={w.orderId} className="flex flex-wrap items-center gap-3 text-sm">
-              <span><strong>{w.orderName}</strong> got stuck: {w.lastError}</span>
+              <span><strong><ShopifyOrderNumber orderId={w.orderId} name={w.orderName} /></strong> got stuck: {w.lastError}</span>
               {isFounder && (
                 <button type="button" className="px-3 min-h-9 rounded-lg border border-border" onClick={() => action.mutate({ path: "/lucky-order/retry", body: { orderId: w.orderId } })}>Try again</button>
               )}
@@ -257,7 +283,7 @@ export function LuckyOrderOffer({ isFounder }: { isFounder: boolean }) {
                 {winners.map(w => (
                   <tr key={w.orderId} className="border-t border-border/60 align-top">
                     <td className="py-2 pr-3 whitespace-nowrap">
-                      <span className="font-medium">{w.orderName}</span>
+                      <span className="font-medium"><ShopifyOrderNumber orderId={w.orderId} name={w.orderName} /></span>
                       {w.practice && <span className="ml-1.5 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-muted text-muted-foreground">practice</span>}
                       <span className="block text-xs text-muted-foreground">{when(w.orderCreatedAt)} · {w.sourceName?.startsWith("subscription") ? "renewal" : "website"} · {gbp(w.orderTotal)}</span>
                     </td>

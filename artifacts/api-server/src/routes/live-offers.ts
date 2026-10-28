@@ -25,7 +25,7 @@ import { requireFounderArea } from "../middleware/founder-area-access";
 import { requireFounder, FOUNDER_EMAIL } from "../middleware/founder-access";
 import { shopifyWritesBlocked } from "../services/shopify";
 import {
-  OFFER_KEY, loadOffer, runLuckyOrderPass, decideRefund, retryWinner, sendWinnerEmail,
+  OFFER_KEY, loadOffer, runLuckyOrderPass, decideRefund, retryWinner, sendWinnerEmail, createPracticeSubscriptionCode,
 } from "../lib/lucky-order/engine";
 import { offerLiveAt } from "../lib/lucky-order/rules";
 
@@ -219,6 +219,17 @@ router.post("/lucky-order/test-email", requireFounder, validate(testEmail), asyn
     res.json({ ok: true, sentTo: FOUNDER_EMAIL });
   } catch (err) {
     res.status(502).json({ error: err instanceof Error ? err.message : "Couldn't send the test" });
+  }
+});
+
+// A real, live practice 000 code for the founder only (28 Oct 2026) — tied
+// to his own Shopify customer account, configured exactly like a winner's,
+// so the settings can be checked in Shopify before the offer goes live.
+router.post("/lucky-order/test-code", requireFounder, validate(z.object({})), async (_req: Request, res: Response) => {
+  try {
+    res.json(await createPracticeSubscriptionCode());
+  } catch (err) {
+    res.status(502).json({ error: err instanceof Error ? err.message : "Couldn't make the practice code" });
   }
 });
 

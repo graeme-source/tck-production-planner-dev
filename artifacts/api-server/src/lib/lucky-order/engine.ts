@@ -27,10 +27,11 @@ import { schedule } from "node-cron";
 import { isStaging } from "../app-env";
 import { FOUNDER_EMAIL } from "../founder-email";
 import { sendEmail } from "../email";
-import { shopifyGraphQL, shopifyGraphQLWrite, ShopifyWritesBlockedError } from "../../services/shopify";
+import { shopifyAdminOrderBase, shopifyGraphQL, shopifyGraphQLWrite, ShopifyWritesBlockedError } from "../../services/shopify";
+import { randomBytes } from "node:crypto";
 import {
   winningTier, orderNumberFromName, windowStart, refundNeedsApproval, subscriptionCodeFor,
-  initialStatuses, TIER_LABEL, type LuckyTier, type OfferWindow,
+  initialStatuses, TIER_LABEL, practiceCodeFor, subscriptionDiscountInput, type LuckyTier, type OfferWindow,
 } from "./rules";
 import { buildWinnerEmail, DEFAULT_TEMPLATES, DEFAULT_TERMS, type WinnerEmailTemplates } from "./emails";
 
@@ -252,26 +253,43 @@ async function createSubscriptionCode(w: WinnerRow, s: LuckySettings): Promise<s
   const r = await shopifyGraphQLWrite<{ discountCodeBasicCreate: { codeDiscountNode: { id: string } | null; userErrors: UserErrors } }>(
     "luckyDiscountCodeCreate",
     `mutation ($d: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $d) { codeDiscountNode { id } userErrors { field message } } }`,
-    { d: {
+    { d: subscriptionDiscountInput({
       title: `Lucky Order Number ${w.order_name}: free subscription year`,
-      code,
-      startsAt: new Date().toISOString(),
-      context: { customers: { add: [w.customer_id] } },
-      usageLimit: 1,
-      appliesOncePerCustomer: true,
-      recurringCycleLimit: s.subscriptionCycles,
-      combinesWith: { orderDiscounts: false, productDiscounts: false, shippingDiscounts: true },
-      customerGets: {
-        value: { discountAmount: { amount: s.subscriptionAmount.toFixed(2), appliesOnEachItem: false } },
-        items: { all: true },
-        appliesOnOneTimePurchase: false,
-        appliesOnSubscription: true,
-      },
-    } },
+      code, customerId: w.customer_id, startsAt: new Date().toISOString(),
+      amount: s.subscriptionAmount, cycles: s.subscriptionCycles,
+    }) },
   );
   check("creating the subscription code", r.discountCodeBasicCreate.userErrors);
   await tagOrder(w.order_id, "lucky-order-subscription");
   return code;
+}
+
+/** A REAL, live practice 000 code for the founder to inspect in Shopify
+ *  before the offer goes live (Graeme, 28 Oct 2026: "give me a live one,
+ *  but just give it to me, no one else"). Built by the same input as a
+ *  winner's code and tied to the founder's own Shopify customer account, so
+ *  nobody else can use it. Disable it in Shopify when done. */
+export async function createPracticeSubscriptionCode(): Promise<{ code: string; title: string; customerEmail: string; adminUrl: string | null }> {
+  const offer = await loadOffer();
+  if (!offer) throw new Error("The offer isn't set up yet");
+  const found = await shopifyGraphQL<{ customers: { nodes: Array<{ id: string; email: string | null }> } }>(
+    `query ($q: String!) { customers(first: 1, query: $q) { nodes { id email } } }`, { q: `email:${FOUNDER_EMAIL}` },
+  );
+  const customer = found.customers.nodes[0];
+  if (!customer) throw new Error(`No Shopify customer account uses ${FOUNDER_EMAIL}, so there's no one to tie the practice code to`);
+  const code = practiceCodeFor(randomBytes(4).toString("hex"));
+  const title = `PRACTICE — Lucky Order Number 000 code for Graeme (disable after checking)`;
+  const r = await shopifyGraphQLWrite<{ discountCodeBasicCreate: { codeDiscountNode: { id: string } | null; userErrors: UserErrors } }>(
+    "luckyPracticeCodeCreate",
+    `mutation ($d: DiscountCodeBasicInput!) { discountCodeBasicCreate(basicCodeDiscount: $d) { codeDiscountNode { id } userErrors { field message } } }`,
+    { d: subscriptionDiscountInput({
+      title, code, customerId: customer.id, startsAt: new Date().toISOString(),
+      amount: offer.settings.subscriptionAmount, cycles: offer.settings.subscriptionCycles,
+    }) },
+  );
+  check("creating the practice code", r.discountCodeBasicCreate.userErrors);
+  const id = r.discountCodeBasicCreate.codeDiscountNode?.id.split("/").pop() ?? null;
+  return { code, title, customerEmail: customer.email ?? FOUNDER_EMAIL, adminUrl: id ? shopifyAdminOrderBase().replace(/orders\/$/, `discounts/${id}`) : null };
 }
 
 // ── Winner email (Resend) ───────────────────────────────────────────────────
@@ -319,7 +337,7 @@ async function tellFounder(message: string, todo?: { title: string; notes: strin
     if (todo) {
       await db.execute(sql`
         INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, status)
-        SELECT ${id}, NULL, 'Lucky Order Number', ${todo.title}, ${todo.notes}, '/founder/sales#live-offers', 'high', 'open'
+        SELECT ${id}, NULL, 'Lucky Order Number', ${todo.title}, ${todo.notes}, '/founder/live-offers', 'high', 'open'
         WHERE NOT EXISTS (SELECT 1 FROM todo_tasks WHERE assignee_id = ${id} AND title = ${todo.title} AND status = 'open')
       `);
     }
@@ -394,7 +412,7 @@ async function workWinner(w: WinnerRow, offer: LuckyOffer): Promise<void> {
       w.refund_amount = String(plan.amount);
       await tellFounder(
         `Lucky Order ${w.order_name}: full refund of £${plan.amount.toFixed(2)} is over the £${s.refundAutoLimit} limit and needs your approval.`,
-        { title: `Approve Lucky Order refund ${w.order_name} (£${plan.amount.toFixed(2)})`, notes: "Sales & Marketing → Live offers → waiting for your approval." },
+        { title: `Approve Lucky Order refund ${w.order_name} (£${plan.amount.toFixed(2)})`, notes: "The Business → Live offers → waiting for your approval." },
       );
     } else {
       const refunded = await doRefund(w.order_id, plan);
@@ -454,7 +472,7 @@ async function workWinners(offer: LuckyOffer): Promise<void> {
       if (attempts >= MAX_ATTEMPTS) {
         await tellFounder(
           `Lucky Order ${w.order_name} needs a hand: ${msg.slice(0, 300)}`,
-          { title: `Lucky Order ${w.order_name} got stuck`, notes: `${msg.slice(0, 400)}\n\nSales & Marketing → Live offers shows what's done; "Try again" retries.` },
+          { title: `Lucky Order ${w.order_name} got stuck`, notes: `${msg.slice(0, 400)}\n\nThe Business → Live offers shows what's done; "Try again" retries.` },
         );
       }
     }

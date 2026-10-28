@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   orderNumberFromName, luckyTier, winningTier, disqualified, offerLiveAt, windowStart,
-  refundNeedsApproval, subscriptionCodeFor, initialStatuses, isWebsiteOrRenewal,
+  refundNeedsApproval, subscriptionCodeFor, initialStatuses, isWebsiteOrRenewal, subscriptionDiscountInput, practiceCodeFor,
   type OfferWindow, type OrderFacts,
 } from "./rules";
 
@@ -84,5 +84,24 @@ describe("refunds and codes", () => {
   it("practice mode marks every step practice; real mode pending", () => {
     expect(initialStatuses("gift_refund", true)).toEqual({ giftStatus: "practice", refundStatus: "practice", codeStatus: "n/a", emailStatus: "practice" });
     expect(initialStatuses("subscription", false)).toEqual({ giftStatus: "n/a", refundStatus: "n/a", codeStatus: "pending", emailStatus: "pending" });
+  });
+});
+
+describe("the 000 subscription code's Shopify settings", () => {
+  const d = subscriptionDiscountInput({ title: "t", code: "LUCKYYEAR-TEST-ABC123", customerId: "gid://shopify/Customer/1", startsAt: "2026-10-28T10:00:00Z", amount: 75, cycles: 6 });
+  it("is one use, for that customer only, on subscriptions only", () => {
+    expect(d.context).toEqual({ customers: { add: ["gid://shopify/Customer/1"] } });
+    expect(d.usageLimit).toBe(1);
+    expect(d.appliesOncePerCustomer).toBe(true);
+    expect(d.customerGets.appliesOnSubscription).toBe(true);
+    expect(d.customerGets.appliesOnOneTimePurchase).toBe(false);
+  });
+  it("takes £75 off each of the first 6 subscription orders and doesn't stack", () => {
+    expect(d.customerGets.value).toEqual({ discountAmount: { amount: "75.00", appliesOnEachItem: false } });
+    expect(d.recurringCycleLimit).toBe(6);
+    expect(d.combinesWith).toEqual({ orderDiscounts: false, productDiscounts: false, shippingDiscounts: true });
+  });
+  it("practice codes are clearly tests", () => {
+    expect(practiceCodeFor("a1b2c3d4")).toBe("LUCKYYEAR-TEST-A1B2C3");
   });
 });
