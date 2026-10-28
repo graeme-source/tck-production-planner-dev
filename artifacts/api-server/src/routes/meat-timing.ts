@@ -1,8 +1,12 @@
 /**
- * Self-correcting prep-oven timings — the managers' view (Graeme, 2026-10-27).
+ * Self-correcting prep-oven timings (Graeme, 2026-10-27).
  *
  *   GET  /meat-timing                    every raw meat: configured vs learned,
- *                                        the spread, what would change, + the log
+ *                                        the spread, what would change, + the log.
+ *                                        Anyone signed in — the people doing the
+ *                                        work read it from the Mixing station
+ *                                        menu (Graeme, 28 Oct 2026); changing
+ *                                        anything stays manager/admin.
  *   POST /meat-timing/run                apply what's learned now (manager)
  *   POST /meat-timing/adjustments/:id/revert   put a change back (manager);
  *                                        pauses learning for that meat
@@ -41,7 +45,7 @@ async function actorOf(req: Request): Promise<{ userId: number; name: string }> 
   return { userId: id, name: u?.name ?? "Someone" };
 }
 
-router.get("/", requireManagerOrAdmin, async (_req: Request, res: Response) => {
+router.get("/", async (_req: Request, res: Response) => {
   const [meats, adjustments, settings, weekly, reasonMinutes, headline] = await Promise.all([
     buildMeatTimingReport(), listAdjustments(), loadMeatTimingSettings(), weeklyReasonSummary(), reasonThresholdMinutes(),
     headlineNumbers(14),

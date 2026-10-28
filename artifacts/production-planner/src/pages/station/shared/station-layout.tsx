@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import { StationMenu } from "@/components/station-changes/station-menu";
 import { StationPinnedContacts, StationContactsDialog } from "@/components/contacts/station-contacts";
-import { MeatTimingReviewDialog, useCanManageMeatTiming } from "@/components/meat-timing-learning-card";
+import { MeatTimingReviewDialog } from "@/components/meat-timing-learning-card";
 import { format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -108,10 +108,10 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
   // (Graeme, 2026-09-16 / 27 Oct 2026). Messaging is its own button.
   const [manageSopsOpen, setManageSopsOpen] = useState(false);
   const [contactsOpen, setContactsOpen] = useState(false);
-  // Prep oven timings, for managers reviewing on the Mixing & Cooking
-  // station — in the menu, deliberately not on the screen (Graeme, 28 Oct 2026).
+  // Prep oven timings on the Mixing & Cooking station — for everyone who
+  // works there, but in the menu, deliberately not on the screen: they find
+  // it when they're told it's there (Graeme, 28 Oct 2026).
   const [ovenTimingsOpen, setOvenTimingsOpen] = useState(false);
-  const { canManage: canReviewOvenTimings } = useCanManageMeatTiming();
   const { state, logout, lockStation } = useAuth();
   const { canAccess } = usePagePermissions();
   const andonBadge = useAndonBadge(stationType);
@@ -276,7 +276,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                   { key: "contacts", label: "Contacts for this station", icon: BookUser, iconClass: "text-indigo-600", onSelect: () => setContactsOpen(true) },
                   { key: "sop-library", label: "View SOP library", icon: BookOpen, iconClass: "text-primary", onSelect: () => setStandardsOpen(true) },
                   { key: "add-sop", label: "Add SOP to this station", icon: BookPlus, iconClass: "text-primary", onSelect: () => setManageSopsOpen(true) },
-                  ...(stationType === "mixing" && canReviewOvenTimings
+                  ...(stationType === "mixing"
                     ? [{ key: "oven-timings", label: "Prep oven timings (self-correcting)", icon: Timer, iconClass: "text-rose-500", onSelect: () => setOvenTimingsOpen(true) }]
                     : []),
                 ]}

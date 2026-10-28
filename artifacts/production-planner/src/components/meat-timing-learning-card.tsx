@@ -3,7 +3,10 @@
  * window on the self-correcting meat times. Shown in two places:
  *   - the Recipes page, as a fold-away card (MeatTimingLearningCard);
  *   - the Mixing & Cooking station's Station menu, as a pop-up
- *     (MeatTimingReviewDialog) — tucked away, not on the station screen.
+ *     (MeatTimingReviewDialog) — tucked away, not on the station screen, but
+ *     open to everyone who works there (Graeme, 28 Oct 2026: "the people
+ *     that are doing the work need access to it"). Only managers and admins
+ *     see the controls (put back, on/off, update now, settings).
  *
  * Plain by default (Graeme, 28 Oct 2026: "give me information that is just
  * clear about what has happened and what needs to happen, and what changes
@@ -99,7 +102,7 @@ function Fold({ label, children, className }: { label: string; children: React.R
   );
 }
 
-function MeatCard({ m, learningEnabled, onToggle, busy }: { m: MeatRow; learningEnabled: boolean; onToggle: (on: boolean) => void; busy: boolean }) {
+function MeatCard({ m, learningEnabled, canManage, onToggle, busy }: { m: MeatRow; learningEnabled: boolean; canManage: boolean; onToggle: (on: boolean) => void; busy: boolean }) {
   const s = meatTimingSummary(m, learningEnabled);
   const r = m.review;
   const p = s.proposal;
@@ -162,10 +165,12 @@ function MeatCard({ m, learningEnabled, onToggle, busy }: { m: MeatRow; learning
         {r && r.safetyChecked > 0 && r.safetyBreaches === 0 && (
           <p className="text-sm text-muted-foreground flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-emerald-600" /> Within the 4-hour limit on all {r.safetyChecked} measured days.</p>
         )}
-        <label className="flex items-center gap-2 text-sm font-medium min-h-[40px]">
-          <input type="checkbox" className="w-5 h-5" checked={m.autoLearn} disabled={busy} onChange={e => onToggle(e.target.checked)} />
-          Change this meat's time automatically
-        </label>
+        {canManage && (
+          <label className="flex items-center gap-2 text-sm font-medium min-h-[40px]">
+            <input type="checkbox" className="w-5 h-5" checked={m.autoLearn} disabled={busy} onChange={e => onToggle(e.target.checked)} />
+            Change this meat's time automatically
+          </label>
+        )}
       </Fold>
     </div>
   );
@@ -188,7 +193,7 @@ function useCanManage() {
 
 /** Everything under the heading — used by the Recipes card and the station pop-up. */
 function MeatTimingReview() {
-  const { isAdmin } = useCanManage();
+  const { canManage, isAdmin } = useCanManage();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Record<string, string>>({});
   const set = (k: string) => (v: string) => setDraft(d => ({ ...d, [k]: v }));
@@ -270,7 +275,7 @@ function MeatTimingReview() {
       {cards.length > 0 && (
         <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">
           {cards.map(m => (
-            <MeatCard key={m.ingredientId} m={m} learningEnabled={data.settings.learningEnabled} busy={toggle.isPending}
+            <MeatCard key={m.ingredientId} m={m} learningEnabled={data.settings.learningEnabled} canManage={canManage} busy={toggle.isPending}
               onToggle={on => toggle.mutate({ id: m.ingredientId, on })} />
           ))}
         </div>
@@ -315,7 +320,7 @@ function MeatTimingReview() {
                     </p>
                     {a.revertedAt && <p className="text-xs">Put back by {a.revertedByName}</p>}
                   </div>
-                  {a.source !== "revert" && !a.revertedAt && (
+                  {canManage && a.source !== "revert" && !a.revertedAt && (
                     <button onClick={() => revert.mutate(a.id)} disabled={revert.isPending} className="min-h-[40px] px-3 rounded-lg border border-border inline-flex items-center gap-1.5 whitespace-nowrap">
                       <RotateCcw className="w-4 h-4" /> Put back
                     </button>
@@ -347,7 +352,7 @@ function MeatTimingReview() {
         )}
       </Fold>
 
-      <Fold label="Update now and settings">
+      {canManage && <Fold label="Update now and settings">
         <div className="flex flex-wrap items-center gap-3">
           <button onClick={() => review.mutate()} disabled={review.isPending} className="min-h-[44px] px-4 rounded-xl border border-border font-medium disabled:opacity-50">
             {review.isPending ? "Checking…" : "Check today's put-ins now"}
@@ -378,7 +383,7 @@ function MeatTimingReview() {
             </button>
           </div>
         )}
-      </Fold>
+      </Fold>}
     </div>
   );
 }
@@ -404,7 +409,7 @@ export function MeatTimingLearningCard() {
   );
 }
 
-/** Mixing & Cooking station: opened from the Station menu (managers only). */
+/** Mixing & Cooking station: opened from the Station menu (everyone; controls for managers). */
 export function MeatTimingReviewDialog({ onClose }: { onClose: () => void }) {
   return createPortal(
     <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
@@ -431,4 +436,3 @@ export function MeatTimingReviewDialog({ onClose }: { onClose: () => void }) {
   );
 }
 
-export { useCanManage as useCanManageMeatTiming };
