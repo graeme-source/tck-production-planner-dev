@@ -31,6 +31,7 @@ import {
   checkShelfLife, londonDeliveryDay, issueEmailToldText, issueLinesOf, newIssueLines, issuePhotoGate, issueLinesMissingCode,
   receivedAfterDamage, reopenDamagedLine, formatReportQty, type DeliveryIssueOutcome, type DamageDisposition,
   shopifyUploadsOf,
+  stockConfirmLines,
 } from "@workspace/goods-in";
 import { ShelfLifeWarning, ShelfLifeRejectedNote, ShelfLifeRecordNote } from "@/components/deliveries/shelf-life-warning";
 import { DamagePanel, DamageRecordNote, type LineDamage } from "@/components/deliveries/damage-panel";
@@ -40,6 +41,7 @@ import { useShortReportSettings, type ShortReportOutcome } from "@/components/de
 import { ShortReportStep } from "@/components/deliveries/short-report-step";
 import { ShortReportSettingsModal } from "@/components/deliveries/short-report-settings-modal";
 import { ShopifyUploadConfirm } from "@/components/deliveries/shopify-upload-confirm";
+import { StockAddConfirm } from "@/components/deliveries/stock-add-confirm";
 import { LineReceiptStatus, OrderShortBadge } from "@/components/deliveries/receipt-status";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -374,6 +376,7 @@ function ReceivingDialog({
   // goods-in that's short, with a note and "Also tell…" people.
   const [dialogStep, setDialogStep] = useState<"lines" | "short">("lines");
   const [shopifyConfirmOpen, setShopifyConfirmOpen] = useState(false);
+  const [stockConfirmOpen, setStockConfirmOpen] = useState(false);
   const [shortNote, setShortNote] = useState("");
   /** null = not touched yet → the configured people. */
   const [alsoTell, setAlsoTell] = useState<number[] | null>(null);
@@ -602,6 +605,22 @@ function ReceivingDialog({
     };
   }));
 
+  // Every line and what this save adds to stock — confirmed before saving.
+  const stockLines = stockConfirmLines(lines.map((l) => {
+    const ol = order.lines.find((x) => x.id === l.lineId);
+    return {
+      lineId: l.lineId,
+      name: l.ingredientName,
+      unit: l.unit,
+      nativeUnit: l.nativeUnit,
+      packWeight: l.packWeight,
+      stockInPacks: l.stockInPacks,
+      quantityOrdered: l.quantityOrdered,
+      previousReceived: ol?.goodsInChecked ? Number(ol.quantityReceived ?? 0) : 0,
+      newReceived: submitOf(l).quantityReceived,
+    };
+  }));
+
   const receiveMutation = useMutation({
     mutationFn: async ({ shopifyUploadConfirmed }: { shopifyUploadConfirmed: boolean }) => {
       const res = await fetch(`${BASE}/api/deliveries/${order.id}/receive`, {
@@ -703,11 +722,13 @@ function ReceivingDialog({
     },
   });
 
-  // Saving puts Shopify-linked stock on sale, so it goes through the
-  // "type it again" pop-up first (Graeme, 28 Oct 2026).
-  const submit = () => {
-    if (shopifyUploads.length > 0) setShopifyConfirmOpen(true);
-    else receiveMutation.mutate({ shopifyUploadConfirmed: false });
+  // Saving adds stock, so the receiver first checks every item's quantity
+  // ("Check what's going into stock"); Shopify-linked stock then goes on sale,
+  // so it also goes through the "type it again" pop-up (Graeme, 28 Oct 2026).
+  const submit = () => setStockConfirmOpen(true);
+  const afterStockConfirmed = () => {
+    if (shopifyUploads.length > 0) { setStockConfirmOpen(false); setShopifyConfirmOpen(true); }
+    else receiveMutation.mutate({ shopifyUploadConfirmed: false }, { onError: () => setStockConfirmOpen(false) });
   };
 
   const handleClose = () => {
@@ -1394,6 +1415,14 @@ function ReceivingDialog({
             </p>
           )}
         </div>
+        {stockConfirmOpen && (
+          <StockAddConfirm
+            lines={stockLines}
+            saving={receiveMutation.isPending}
+            onClose={() => setStockConfirmOpen(false)}
+            onConfirm={afterStockConfirmed}
+          />
+        )}
         {shopifyConfirmOpen && shopifyUploads.length > 0 && (
           <ShopifyUploadConfirm
             uploads={shopifyUploads}
