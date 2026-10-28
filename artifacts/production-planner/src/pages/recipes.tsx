@@ -29,6 +29,7 @@ import { AfterFirstSaveNote, EDITOR_INPUT, EditorField, EditorSection, EditorTic
 import { LinesTable } from "@/components/recipe-editor/lines-table";
 import { useEditorIngredients } from "@/components/recipe-editor/use-editor-ingredients";
 import { recipeIngredientLineCost, recipeSubRecipeLineCost } from "@/lib/recipe-line-cost";
+import { MarginStrip } from "@/components/recipe-editor/margin-strip";
 import { buildRecipeCreatePayload, buildRecipeUpdatePayload } from "@/lib/recipe-editor-payload";
 import { RECIPE_FIELD_TABS, type EditorTabId } from "@/lib/recipe-editor-tabs";
 import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
@@ -492,6 +493,16 @@ function RecipeForm({
                 productionTicks
                 costLabel="per portion"
                 qtyNote="cooked qty"
+                totalFooter={costPerPortion => (
+                  <MarginStrip
+                    costPerPortion={costPerPortion}
+                    packSize={watchedPackSize}
+                    packagingCost={watchedPackaging}
+                    labourCost={watchedLabour}
+                    rrp={watchedRrp}
+                    onRrpChange={v => setValue("rrp", v as unknown as number, { shouldDirty: true })}
+                  />
+                )}
                 ingredients={{
                   name: "ingredients",
                   idField: "ingredientId",

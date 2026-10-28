@@ -34,6 +34,7 @@
  * aren't visible here.
  */
 import { lazy, Suspense, useMemo, useRef, useState } from "react";
+import type React from "react";
 import { useFieldArray, type FieldErrors, type UseFormReturn } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, Layers, Plus, SquareArrowOutUpRight, X } from "lucide-react";
@@ -100,6 +101,8 @@ export type LinesTableProps = {
   costLabel: string;
   /** What the quantities mean, shown by the table's title, e.g. "cooked qty". */
   qtyNote?: string;
+  /** Shown under the total (a recipe's RRP and live margin); gets the total. */
+  totalFooter?: (totalCost: number | null) => React.ReactNode;
 };
 
 // The row is a grid on a wide screen and stacks on a narrow one. With the
@@ -137,7 +140,7 @@ function errorAt(errors: FieldErrors, path: string): string | null {
   return typeof msg === "string" && msg ? msg : null;
 }
 
-export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, productionTicks, costLabel, qtyNote }: LinesTableProps) {
+export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, productionTicks, costLabel, qtyNote, totalFooter }: LinesTableProps) {
   const { control, register, setValue, watch, formState: { errors } } = form;
   const ingArray = useFieldArray({ control, name: ingCfg.name });
   const subArray = useFieldArray({ control, name: subCfg.name });
@@ -463,7 +466,7 @@ export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, prod
         </div>
 
         {lines.length > 0 && (
-          <div className="flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t-2 border-border bg-secondary/30 rounded-b-2xl">
+          <div className={cn("flex items-center justify-between gap-3 flex-wrap px-4 py-3 border-t-2 border-border bg-secondary/30", !totalFooter && "rounded-b-2xl")}>
             <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Total cost of the lines</span>
             <span className="text-xl font-bold tabular-nums">
               {anyCost ? formatLineCost(totalCost) : "—"}
@@ -471,6 +474,7 @@ export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, prod
             </span>
           </div>
         )}
+        {lines.length > 0 && totalFooter?.(anyCost ? totalCost : null)}
       </div>
 
       {rootError && <span className="text-destructive text-sm font-medium block">{rootError}</span>}
