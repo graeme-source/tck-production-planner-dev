@@ -22,6 +22,11 @@
  *      big "Enter stock" button. A plain-words read-back says what will be
  *      saved ("550 g = 5.5 packs of 100g"); a count way out against recent
  *      counts asks "Are you sure — 5,500 g?" and needs a second tap.
+ *   3. "You are updating the stock check for … to 70 g. Please confirm." —
+ *      "Yes, update it" or "No, disregard this change" (Graeme, 28 Oct 2026:
+ *      someone only looking at a count could overwrite it). Enter never
+ *      confirms, and the empty box shows no grey 0 that could read as the
+ *      current stock.
  *
  * The unit is the item's stock-check unit (ingredients.stock_check_unit,
  * GET /api/stock-check-units; resolveStockCheckUnit in @workspace/units).
@@ -195,16 +200,24 @@ export function StockCheckEntryForm({
   const [raw, setRaw] = useState("");
   const [useBy, setUseBy] = useState("");
   const [armed, setArmed] = useState(false);
+  // "You are updating the stock check to … Please confirm" (Graeme, 28 Oct
+  // 2026): a count only saves after a second, deliberate tap, so someone who
+  // only meant to look can't overwrite the stock by accident.
+  const [confirming, setConfirming] = useState(false);
   const [saving, setSaving] = useState(false);
   const amountRef = useNoScrollAutoFocus<HTMLInputElement>(step === "amount");
   const { data: history } = useStockCheckHistory(checkDate);
   const { data: expected } = useStockCheckExpected(ingredientProp.id);
 
   // A different ingredient (the forced pop-up moving on) starts again at step 1.
-  useEffect(() => { setStep("unit"); setRaw(""); setUseBy(""); setArmed(false); }, [ingredientProp.id]);
+  useEffect(() => { setStep("unit"); setRaw(""); setUseBy(""); setArmed(false); setConfirming(false); }, [ingredientProp.id]);
 
-  const setValue = (v: string) => { setRaw(v); setArmed(false); };
-  const onDictated = useCallback((n: number) => { setRaw(String(n)); setArmed(false); }, []);
+  const setValue = (v: string) => { setRaw(v); setArmed(false); setConfirming(false); };
+  const onDictated = useCallback((n: number) => { setRaw(String(n)); setArmed(false); setConfirming(false); }, []);
+  const disregard = () => {
+    setStep("unit"); setRaw(""); setUseBy(""); setArmed(false); setConfirming(false);
+    toast({ title: "Not saved", description: `${ingredientProp.name}: the stock was left as it was.` });
+  };
 
   const value = parseStockAmount(raw);
   const described = value != null ? describeStockCount(value, unit, ingredient) : null;
@@ -237,6 +250,7 @@ export function StockCheckEntryForm({
     if (nativeQty == null || saving) return;
     if (isDraft && !saveNative) { toastDraftBlocked(); return; }
     if (warning && !armed) { setArmed(true); return; }
+    if (!confirming) { setConfirming(true); return; }
     setSaving(true);
     try {
       if (saveNative) await saveNative(nativeQty);
@@ -256,7 +270,7 @@ export function StockCheckEntryForm({
       void queryClient.invalidateQueries({ queryKey: ["station-stock-checks"] });
       void queryClient.invalidateQueries({ queryKey: ["reminder-stock-checks"] });
       const saved = nativeQty;
-      setStep("unit"); setRaw(""); setUseBy(""); setArmed(false);
+      setStep("unit"); setRaw(""); setUseBy(""); setArmed(false); setConfirming(false);
       onSaved?.(saved);
     } catch (err) {
       toast({ title: "Not saved", description: err instanceof Error ? err.message : "Stock check failed to save — please try again", variant: "destructive" });
@@ -332,8 +346,9 @@ export function StockCheckEntryForm({
           enterKeyHint="done"
           value={raw}
           onChange={e => setValue(e.target.value)}
-          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); void save(); } }}
-          placeholder="0"
+          // Enter never confirms — the confirm step needs its own tap.
+          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); if (!confirming) void save(); } }}
+          readOnly={confirming}
           aria-describedby={`sc-unit-${ingredient.id}`}
           className={cn(
             "flex-1 min-w-0 h-24 px-4 text-6xl font-bold text-right tabular-nums bg-background border-4 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-300",
@@ -389,6 +404,32 @@ export function StockCheckEntryForm({
         </div>
       )}
 
+      {confirming && readBack ? (
+        <div className="rounded-2xl border-4 border-blue-600 bg-blue-50 dark:bg-blue-950/40 p-4 space-y-3" role="alertdialog" aria-label="Confirm the stock check">
+          <p className="text-2xl font-bold text-blue-950 dark:text-blue-50">
+            You are updating the stock check for {ingredient.name} to <span className="whitespace-nowrap">{described?.entered}</span>. Please confirm.
+          </p>
+          <p className="text-base text-blue-900 dark:text-blue-200">This replaces the stock figure. Only confirm if you&rsquo;ve just counted it.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={save}
+              disabled={saving}
+              className="min-h-[64px] rounded-xl bg-blue-600 text-white text-xl font-bold hover:bg-blue-700 inline-flex items-center justify-center gap-2 px-3 disabled:opacity-60"
+            >
+              {saving ? <><Loader2 className="w-6 h-6 animate-spin" /> Saving…</> : <><CheckCircle2 className="w-6 h-6" /> Yes, update it</>}
+            </button>
+            <button
+              type="button"
+              onClick={disregard}
+              disabled={saving}
+              className="min-h-[64px] rounded-xl border-2 border-blue-600 bg-background text-blue-900 dark:text-blue-100 text-lg font-bold hover:bg-blue-100/60 dark:hover:bg-blue-900/30 px-3"
+            >
+              No, disregard this change
+            </button>
+          </div>
+        </div>
+      ) : (
       <button
         type="button"
         onClick={save}
@@ -408,6 +449,7 @@ export function StockCheckEntryForm({
             ? "Yes, it's right — enter stock"
             : <><CheckCircle2 className="w-6 h-6" /> Enter stock</>}
       </button>
+      )}
     </div>
   );
 }
