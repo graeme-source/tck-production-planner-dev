@@ -43,6 +43,15 @@ export interface WishListItem {
   mine: boolean;
   canEdit: boolean;
   votes: WishListVotes;
+  /** How many comments — the thread itself opens on tap (migration 0343). */
+  commentCount: number;
+}
+
+export interface WishListComment { id: number; userName: string; comment: string; createdAt: string; mine: boolean }
+
+/** "Comments (2)" / "Comment" — the row button, so a thread is seen without showing it. */
+export function commentButtonLabel(count: number): string {
+  return count > 0 ? `${count} comment${count === 1 ? "" : "s"}` : "Comment";
 }
 
 export interface LinkReading {

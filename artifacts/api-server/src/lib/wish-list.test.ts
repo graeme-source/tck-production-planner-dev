@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
+  commentNotificationMessage,
+  commentRecipients,
   canEditItem,
   canManageWishList,
   canVoteToday,
@@ -230,5 +232,21 @@ describe("readProductPage", () => {
   it("returns nulls, not a crash, for a page with nothing on it", () => {
     const r = readProductPage("<html><body>hello</body></html>", "https://x.com/");
     expect(r).toMatchObject({ title: null, pricePence: null, imageUrl: null });
+  });
+});
+
+describe("wish list comment notifications", () => {
+  it("tells the requester and earlier commenters, never the writer or anyone twice", () => {
+    expect(commentRecipients({ requesterId: 1, earlierCommenterIds: [2, 3, 2, null, 1], authorId: 3 }).sort()).toEqual([1, 2]);
+  });
+  it("the requester replying to themselves tells nobody new", () => {
+    expect(commentRecipients({ requesterId: 1, earlierCommenterIds: [], authorId: 1 })).toEqual([]);
+  });
+  it("an item with no requester left still reaches earlier commenters", () => {
+    expect(commentRecipients({ requesterId: null, earlierCommenterIds: [5], authorId: 6 })).toEqual([5]);
+  });
+  it("says whose item it is", () => {
+    expect(commentNotificationMessage("Lorna Brown", "Spray bottles", true)).toBe("Lorna Brown commented on your wish list item: Spray bottles");
+    expect(commentNotificationMessage("Graeme", "Spray bottles", false)).toBe("Graeme commented on a wish list item: Spray bottles");
   });
 });

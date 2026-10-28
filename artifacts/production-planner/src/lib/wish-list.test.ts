@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   DEFAULT_FILTER,
+  commentButtonLabel,
   FILTERS,
   countsByFilter,
   formatPence,
@@ -22,7 +23,7 @@ function item(id: number, over: Partial<WishListItem> = {}): WishListItem {
     currency: "GBP", imageUrl: null, storeName: null, notes: null, quantity: 1, status: "requested",
     statusNote: null, statusChangedAt: null, statusChangedByName: null, orderedAt: null, orderedByName: null,
     receivedAt: null, createdByName: "Sam", createdAt: `2026-10-${String(10 + id).padStart(2, "0")}T09:00:00Z`,
-    mine: false, canEdit: false, votes: { total: 1, people: 1, days: 1, votedToday: false },
+    mine: false, canEdit: false, votes: { total: 1, people: 1, days: 1, votedToday: false }, commentCount: 0,
     ...over,
   };
 }
@@ -119,5 +120,13 @@ describe("wish list filters", () => {
   it("All comes first and is selected on arrival", () => {
     expect(FILTERS[0].key).toBe("all");
     expect(DEFAULT_FILTER).toBe("all");
+  });
+});
+
+describe("wish list comment button", () => {
+  it("shows there are comments without showing them", () => {
+    expect(commentButtonLabel(0)).toBe("Comment");
+    expect(commentButtonLabel(1)).toBe("1 comment");
+    expect(commentButtonLabel(3)).toBe("3 comments");
   });
 });
