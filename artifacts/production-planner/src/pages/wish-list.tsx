@@ -10,15 +10,22 @@
  * The founder and admins approve / mark ordered / received / decline (with
  * a note), edit and remove; the person who asked can edit their own item
  * while it's still "Asked for". The server enforces all of it.
+ *
+ * Comments (28 Oct 2026): hidden behind a "N comments" button on each item;
+ * a new one tells the person who asked and earlier commenters, and the
+ * bell opens /wish-list?comments=<id> straight onto the thread.
  */
-import { useMemo, useState, type ReactNode } from "react";
-import { ExternalLink, Gift, Loader2, Pencil, Plus, Search, ThumbsUp, Check, X, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useSearch } from "wouter";
+import { ExternalLink, Gift, Loader2, MessageSquare, Pencil, Plus, Search, Send, ThumbsUp, Check, X, Trash2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { AddToWishListSheet } from "@/components/wish-list/add-to-wish-list-sheet";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { feedTimestamp } from "@/lib/feed-time";
 import {
+  useAddWishComment,
+  useWishComments,
   useDeleteWishItem,
   useEditWishItem,
   useSetWishStatus,
@@ -27,6 +34,7 @@ import {
 } from "@/hooks/use-wish-list";
 import {
   DEFAULT_FILTER,
+  commentButtonLabel,
   FILTERS,
   SORTS,
   STATUS_LABEL,
@@ -64,6 +72,13 @@ export default function WishListPage() {
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState<WishListItem | null>(null);
   const [editing, setEditing] = useState<WishListItem | null>(null);
+  // Thread open on this item — from its button, or a bell link (?comments=<id>).
+  const search = useSearch();
+  const [commentsFor, setCommentsFor] = useState<number | null>(null);
+  useEffect(() => {
+    const id = Number(new URLSearchParams(search).get("comments"));
+    if (Number.isInteger(id) && id > 0) setCommentsFor(id);
+  }, [search]);
 
   const setSort = (s: WishListSort) => {
     setSortState(s);
@@ -200,7 +215,7 @@ export default function WishListPage() {
                     <td className="px-4 py-3"><Votes item={item} topVotes={topVotes} stack /></td>
                     <td className="px-4 py-3"><StatusPill item={item} /></td>
                     <td className="px-4 py-3 text-right">
-                      <RowActions item={item} canManage={canManage} onManage={setManaging} onEdit={setEditing} />
+                      <RowActions item={item} canManage={canManage} onManage={setManaging} onEdit={setEditing} onComments={i => setCommentsFor(i.id)} />
                     </td>
                   </tr>
                 ))}
@@ -226,7 +241,7 @@ export default function WishListPage() {
                 <Votes item={item} topVotes={topVotes} />
                 <div className="flex flex-wrap items-center gap-2 justify-between">
                   <StatusPill item={item} />
-                  <RowActions item={item} canManage={canManage} onManage={setManaging} onEdit={setEditing} />
+                  <RowActions item={item} canManage={canManage} onManage={setManaging} onEdit={setEditing} onComments={i => setCommentsFor(i.id)} />
                 </div>
               </li>
             ))}
@@ -237,6 +252,16 @@ export default function WishListPage() {
       <AddToWishListSheet open={adding} onClose={() => setAdding(false)} />
       {managing && <ManageDialog item={managing} onClose={() => setManaging(null)} onEdit={() => { setEditing(managing); setManaging(null); }} />}
       {editing && <EditDialog item={editing} onClose={() => setEditing(null)} />}
+      {commentsFor != null && (
+        <CommentsDialog
+          itemId={commentsFor}
+          item={items.find(i => i.id === commentsFor) ?? null}
+          onClose={() => {
+            setCommentsFor(null);
+            if (new URLSearchParams(window.location.search).has("comments")) history.replaceState(null, "", window.location.pathname);
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -326,24 +351,24 @@ function StatusPill({ item }: { item: WishListItem }) {
   );
 }
 
-function RowActions({ item, canManage, onManage, onEdit }: {
-  item: WishListItem; canManage: boolean; onManage: (i: WishListItem) => void; onEdit: (i: WishListItem) => void;
+function RowActions({ item, canManage, onManage, onEdit, onComments }: {
+  item: WishListItem; canManage: boolean; onManage: (i: WishListItem) => void; onEdit: (i: WishListItem) => void; onComments: (i: WishListItem) => void;
 }) {
-  if (canManage) {
-    return (
-      <button onClick={() => onManage(item)} className="h-12 px-4 rounded-xl border-2 border-border font-bold hover:bg-secondary/60 whitespace-nowrap">
-        Update
+  const btn = "h-12 px-4 rounded-xl border-2 border-border font-bold hover:bg-secondary/60 whitespace-nowrap flex items-center justify-center gap-1.5";
+  return (
+    <div className="flex flex-wrap items-center justify-end gap-2">
+      {canManage && <button onClick={() => onManage(item)} className={btn}>Update</button>}
+      {/* Editing on the row itself, not only inside Update (Graeme, 28 Oct 2026). */}
+      {item.canEdit && <button onClick={() => onEdit(item)} className={btn}><Pencil className="w-4 h-4" /> Edit</button>}
+      <button
+        onClick={() => onComments(item)}
+        className={cn(btn, item.commentCount > 0 ? "border-primary/50 text-primary" : "text-muted-foreground")}
+        aria-label={`${commentButtonLabel(item.commentCount)} on ${item.title}`}
+      >
+        <MessageSquare className="w-4 h-4" /> {commentButtonLabel(item.commentCount)}
       </button>
-    );
-  }
-  if (item.canEdit) {
-    return (
-      <button onClick={() => onEdit(item)} className="h-12 px-4 rounded-xl border-2 border-border font-bold hover:bg-secondary/60 flex items-center gap-1.5">
-        <Pencil className="w-4 h-4" /> Edit
-      </button>
-    );
-  }
-  return null;
+    </div>
+  );
 }
 
 /** Shared shell for the two small dialogs: X, 92dvh cap, inner scroll. */
@@ -476,6 +501,60 @@ function EditDialog({ item, onClose }: { item: WishListItem; onClose: () => void
         <textarea value={notes} onChange={e => setNotes(e.target.value)} rows={3} maxLength={2000} className={field} /></label>
       {(title !== item.title || url !== (item.url ?? "") || priceChanged || quantity !== item.quantity || notes !== (item.notes ?? "")) && (
         <p className="text-sm font-semibold text-amber-700 dark:text-amber-300" role="status">Not saved yet — tap Save changes.</p>
+      )}
+    </DialogShell>
+  );
+}
+
+function CommentsDialog({ itemId, item, onClose }: { itemId: number; item: WishListItem | null; onClose: () => void }) {
+  const comments = useWishComments(itemId);
+  const add = useAddWishComment();
+  const [text, setText] = useState("");
+  const send = () => {
+    const comment = text.trim();
+    if (!comment) return;
+    add.mutate({ id: itemId, comment }, {
+      onSuccess: () => setText(""),
+      onError: (e: Error) => toast({ title: "Comment not sent — try again", description: e.message, variant: "destructive" }),
+    });
+  };
+  return (
+    <DialogShell
+      title={item ? `Comments · ${item.title}` : "Comments"}
+      onClose={onClose}
+      footer={
+        <div className="space-y-2">
+          <textarea
+            value={text}
+            onChange={e => setText(e.target.value)}
+            rows={2}
+            maxLength={2000}
+            placeholder="Write a comment…"
+            aria-label="Write a comment"
+            className="w-full px-3 py-2.5 rounded-xl border-2 border-border bg-background text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+          />
+          <button onClick={send} disabled={!text.trim() || add.isPending} className="w-full h-14 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center justify-center gap-2 disabled:opacity-50">
+            {add.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />} {add.isPending ? "Sending…" : "Send"}
+          </button>
+          {text.trim() && !add.isPending && <p className="text-sm font-semibold text-amber-700 dark:text-amber-300" role="status">Not sent yet — tap Send.</p>}
+        </div>
+      }
+    >
+      {comments.isLoading ? (
+        <p className="text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>
+      ) : comments.isError ? (
+        <p className="text-rose-700">Couldn't load the comments — {(comments.error as Error).message}</p>
+      ) : (comments.data ?? []).length === 0 ? (
+        <p className="text-muted-foreground">No comments yet. The person who asked for it hears about yours.</p>
+      ) : (
+        <ul className="space-y-3">
+          {comments.data!.map(c => (
+            <li key={c.id} className={cn("rounded-2xl px-4 py-3", c.mine ? "bg-primary/10 ml-6" : "bg-secondary/60 mr-6")}>
+              <p className="text-sm font-bold">{c.mine ? "You" : c.userName} <span className="font-normal text-muted-foreground">· {feedTimestamp(c.createdAt)}</span></p>
+              <p className="text-base whitespace-pre-wrap break-words">{c.comment}</p>
+            </li>
+          ))}
+        </ul>
       )}
     </DialogShell>
   );

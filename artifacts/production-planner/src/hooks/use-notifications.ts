@@ -9,6 +9,8 @@ export interface AppNotification {
   message: string;
   andonIssueId: number | null;
   improvementId: number | null;
+  /** Wish List comment notifications open that item's thread (migration 0343). */
+  wishListItemId?: number | null;
   read: boolean;
   createdAt: string;
 }

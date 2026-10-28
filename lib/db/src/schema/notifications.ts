@@ -1,6 +1,7 @@
 import { pgTable, serial, text, integer, boolean, timestamp } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
 import { andonIssuesTable, improvementSubmissionsTable } from "./improvements_and_andon";
+import { wishListItemsTable } from "./wish_list";
 
 export const notificationsTable = pgTable("notifications", {
   id: serial("id").primaryKey(),
@@ -12,6 +13,9 @@ export const notificationsTable = pgTable("notifications", {
   // deep-links to it. Comments and ratings use it; the team-wide
   // "improvement" celebration rows stopped on 27 Oct 2026.
   improvementId: integer("improvement_id").references(() => improvementSubmissionsTable.id, { onDelete: "cascade" }),
+  // The Wish List item a comment notification is about (migration 0343) —
+  // the bell opens that item's comments.
+  wishListItemId: integer("wish_list_item_id").references(() => wishListItemsTable.id, { onDelete: "cascade" }),
   read: boolean("read").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });

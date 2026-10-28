@@ -5,7 +5,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
-import type { LinkReading, WishListItem, WishListStatus } from "@/lib/wish-list";
+import type { LinkReading, WishListComment, WishListItem, WishListStatus } from "@/lib/wish-list";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -91,6 +91,26 @@ export function useVote() {
     mutationFn: (id: number) => call<{ item: WishListItem }>(`/${id}/vote`, { method: "POST", body: {} }),
     // A 409 (already voted today) also means the screen is out of date.
     onSettled: invalidate,
+  });
+}
+
+/** One item's comments — fetched only when its thread is opened. */
+export function useWishComments(itemId: number) {
+  return useQuery({
+    queryKey: [...WISH_LIST_KEY, "comments", itemId],
+    queryFn: () => call<{ comments: WishListComment[] }>(`/${itemId}/comments`).then(r => r.comments),
+  });
+}
+
+export function useAddWishComment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, comment }: { id: number; comment: string }) =>
+      call<{ item: WishListItem }>(`/${id}/comments`, { method: "POST", body: { comment } }),
+    onSuccess: (_r, v) => {
+      qc.invalidateQueries({ queryKey: [...WISH_LIST_KEY, "comments", v.id] });
+      qc.invalidateQueries({ queryKey: WISH_LIST_KEY });
+    },
   });
 }
 

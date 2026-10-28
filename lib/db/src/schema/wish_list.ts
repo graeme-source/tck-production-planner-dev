@@ -47,5 +47,16 @@ export const wishListAlertAcksTable = pgTable("wish_list_alert_acks", {
   ackedAt: timestamp("acked_at").notNull().defaultNow(),
 });
 
+/** Comments on an item (migration 0343) — shown only when the thread is opened. */
+export const wishListCommentsTable = pgTable("wish_list_comments", {
+  id: serial("id").primaryKey(),
+  itemId: integer("item_id").notNull().references(() => wishListItemsTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  comment: text("comment").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export type WishListItem = typeof wishListItemsTable.$inferSelect;
+export type WishListComment = typeof wishListCommentsTable.$inferSelect;
 export type WishListVote = typeof wishListVotesTable.$inferSelect;

@@ -467,3 +467,25 @@ export function titleFromUrl(url: string | null): string | null {
   if (words.length < 3) return null;
   return (words[0].toUpperCase() + words.slice(1)).slice(0, 300);
 }
+
+// ── Comments (migration 0343) ──────────────────────────────────────────────
+
+/** Who hears about a new comment: the person who asked for the item and
+ *  everyone who has commented before — never the writer, never twice. */
+export function commentRecipients(input: {
+  requesterId: number | null;
+  earlierCommenterIds: ReadonlyArray<number | null>;
+  authorId: number;
+}): number[] {
+  const out = new Set<number>();
+  if (input.requesterId != null) out.add(input.requesterId);
+  for (const id of input.earlierCommenterIds) if (id != null) out.add(id);
+  out.delete(input.authorId);
+  return [...out];
+}
+
+/** The bell line: "Lorna Brown commented on your wish list item: Spray bottles". */
+export function commentNotificationMessage(authorName: string, itemTitle: string, isRequester: boolean): string {
+  const title = itemTitle.length > 80 ? `${itemTitle.slice(0, 77)}…` : itemTitle;
+  return `${authorName} commented on ${isRequester ? "your" : "a"} wish list item: ${title}`;
+}

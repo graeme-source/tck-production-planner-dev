@@ -13,6 +13,9 @@
  *   POST /:id/status       approve / ordered / received / declined (+ note)
  *                          — founder/admins
  *   DELETE /:id            soft delete — founder/admins
+ *   GET  /:id/comments     the item's comments, oldest first (anyone signed in)
+ *   POST /:id/comments     add one; tells the requester + earlier commenters
+ *                          (migration 0343)
  *   GET  /alerts           new items this founder/admin hasn't acknowledged
  *   POST /alerts/ack       "Got it" — acknowledges up to an item id
  *
@@ -23,8 +26,10 @@ import { z } from "zod";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   db,
+  notificationsTable,
   usersTable,
   wishListAlertAcksTable,
+  wishListCommentsTable,
   wishListItemsTable,
   wishListVotesTable,
   type WishListItem,
@@ -39,6 +44,8 @@ import {
   canManageWishList,
   canVoteToday,
   cleanProductUrl,
+  commentNotificationMessage,
+  commentRecipients,
   decodeEntities,
   findDuplicate,
   parsePriceToPence,
@@ -71,7 +78,7 @@ function idParam(req: Request): number | null {
   return Number.isInteger(id) && id > 0 ? id : null;
 }
 
-function toClient(item: WishListItem, votes: readonly VoteRow[], viewer: Me, today: string) {
+function toClient(item: WishListItem, votes: readonly VoteRow[], viewer: Me, today: string, commentCount = 0) {
   return {
     id: item.id,
     url: item.url,
@@ -96,7 +103,19 @@ function toClient(item: WishListItem, votes: readonly VoteRow[], viewer: Me, tod
     mine: item.createdByUserId === viewer.id,
     canEdit: canEditItem(item, viewer),
     votes: summariseVotes(votes, viewer.id, today),
+    // The list shows only how many; the thread opens on tap.
+    commentCount,
   };
+}
+
+async function commentCounts(itemIds: number[]): Promise<Map<number, number>> {
+  if (itemIds.length === 0) return new Map();
+  const rows = await db
+    .select({ itemId: wishListCommentsTable.itemId, n: sql<number>`count(*)::int` })
+    .from(wishListCommentsTable)
+    .where(inArray(wishListCommentsTable.itemId, itemIds))
+    .groupBy(wishListCommentsTable.itemId);
+  return new Map(rows.map(r => [r.itemId, Number(r.n)]));
 }
 
 async function liveItems(): Promise<WishListItem[]> {
@@ -122,7 +141,8 @@ async function oneItemForClient(id: number, viewer: Me) {
   const [item] = await db.select().from(wishListItemsTable).where(and(eq(wishListItemsTable.id, id), isNull(wishListItemsTable.deletedAt)));
   if (!item) return null;
   const votes = (await votesByItem([id])).get(id) ?? [];
-  return toClient(item, votes, viewer, londonDateString());
+  const comments = (await commentCounts([id])).get(id) ?? 0;
+  return toClient(item, votes, viewer, londonDateString(), comments);
 }
 
 /** Insert today's vote; false when this person already voted today (the
@@ -146,11 +166,12 @@ router.get("/", async (req: Request, res: Response) => {
     if (!viewer) { res.status(401).json({ error: "Not signed in" }); return; }
     const today = londonDateString();
     const items = await liveItems();
-    const votes = await votesByItem(items.map(i => i.id));
+    const ids = items.map(i => i.id);
+    const [votes, comments] = await Promise.all([votesByItem(ids), commentCounts(ids)]);
     res.json({
       today,
       canManage: viewer.canManage,
-      items: items.map(i => toClient(i, votes.get(i.id) ?? [], viewer, today)),
+      items: items.map(i => toClient(i, votes.get(i.id) ?? [], viewer, today, comments.get(i.id) ?? 0)),
     });
   } catch (err) {
     console.error("[wish-list] list error:", err);
@@ -403,6 +424,58 @@ router.patch("/:id", validate(editInput), async (req: Request, res: Response) =>
   } catch (err) {
     console.error("[wish-list] edit error:", err);
     res.status(500).json({ error: "Couldn't save the change" });
+  }
+});
+
+// ── Comments (migration 0343) ──────────────────────────────────────────────
+
+router.get("/:id/comments", async (req: Request, res: Response) => {
+  const id = idParam(req);
+  if (!id) { res.status(400).json({ error: "Invalid item" }); return; }
+  try {
+    const viewer = await me(req);
+    if (!viewer) { res.status(401).json({ error: "Not signed in" }); return; }
+    const rows = await db
+      .select({ id: wishListCommentsTable.id, userId: wishListCommentsTable.userId, userName: wishListCommentsTable.userName, comment: wishListCommentsTable.comment, createdAt: wishListCommentsTable.createdAt })
+      .from(wishListCommentsTable)
+      .where(eq(wishListCommentsTable.itemId, id))
+      .orderBy(wishListCommentsTable.createdAt, wishListCommentsTable.id);
+    res.json({
+      comments: rows.map(r => ({ id: r.id, userName: r.userName ?? "Someone", comment: r.comment, createdAt: r.createdAt.toISOString(), mine: r.userId === viewer.id })),
+    });
+  } catch (err) {
+    console.error("[wish-list] comments error:", err);
+    res.status(500).json({ error: "Couldn't load the comments" });
+  }
+});
+
+const commentInput = z.object({ comment: z.string().trim().min(1, "Write something first").max(2000) });
+
+router.post("/:id/comments", validate(commentInput), async (req: Request, res: Response) => {
+  const id = idParam(req);
+  if (!id) { res.status(400).json({ error: "Invalid item" }); return; }
+  try {
+    const viewer = await me(req);
+    if (!viewer) { res.status(401).json({ error: "Not signed in" }); return; }
+    const [item] = await db.select().from(wishListItemsTable).where(and(eq(wishListItemsTable.id, id), isNull(wishListItemsTable.deletedAt)));
+    if (!item) { res.status(404).json({ error: "That item isn't on the list any more" }); return; }
+    const { comment } = req.body as z.infer<typeof commentInput>;
+    const earlier = await db.select({ userId: wishListCommentsTable.userId }).from(wishListCommentsTable).where(eq(wishListCommentsTable.itemId, id));
+    const name = viewer.name ?? "Someone";
+    await db.insert(wishListCommentsTable).values({ itemId: id, userId: viewer.id, userName: name, comment });
+    const recipients = commentRecipients({ requesterId: item.createdByUserId, earlierCommenterIds: earlier.map(e => e.userId), authorId: viewer.id });
+    if (recipients.length > 0) {
+      await db.insert(notificationsTable).values(recipients.map(userId => ({
+        userId,
+        type: "wish_list_comment",
+        message: commentNotificationMessage(name, item.title, userId === item.createdByUserId),
+        wishListItemId: id,
+      })));
+    }
+    res.json({ item: await oneItemForClient(id, viewer) });
+  } catch (err) {
+    console.error("[wish-list] comment error:", err);
+    res.status(500).json({ error: "Couldn't save the comment" });
   }
 });
 
