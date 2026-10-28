@@ -36,7 +36,7 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db, appSettingsTable, recipesTable, skuBarcodesTable, barcodeEventsTable, packingScanRejectionsTable, recipePendingBarcodesTable, usersTable, type SkuBarcode } from "@workspace/db";
 import {
   countOutcomes, countSync, decidePull, decideSync, deriveLinkedVariants, describeClash, groupBarcode, gtinKey, identitiesFor, isDifferentInShopify,
-  kindLabel, checkGtin, planAssignment, planPackerBarcode, planScanBarcodes, resolveOwnership, clubSpecialScan, isClubSpecialTitle, suggestF2fLinks,
+  kindLabel, checkGtin, pickShareHolder, planAssignment, planPackerBarcode, planScanBarcodes, resolveOwnership, clubSpecialScan, isClubSpecialTitle, suggestF2fLinks,
   MANAGED_BY_HAND,
   type AlsoAccepts, type ClubSpecialScan, type CopyLink,
   type BarcodeHolder, type BarcodeMap, type Clash, type Holding, type Identity, type KnownCodes, type LinkKind, type LinkedVariant,
@@ -1020,6 +1020,36 @@ export async function setPackerBarcode(variantId: string, input: string, actor: 
   const l = link as LinkedVariant | undefined;
   await pushProduct(l?.recipeId ?? null, l?.kind ?? null, l ? null : variantId, before, actor);
   return result!;
+}
+
+/** Packing bench, manager or admin (Graeme, 28 Oct 2026): this listing is
+ *  the SAME physical product as the one that already holds the scanned
+ *  barcode — "Buttermilk Fried Chicken 400g + rice", where a Shopify flow
+ *  adds the rice and the pack is the plain 400g pack. Marks it "same product
+ *  as" that listing (barcodes only, like an F2F copy) so both scan with the
+ *  one code, then sets it if it has none yet. Never for a recipe's own
+ *  listing: two recipes must never share a code. */
+export async function sharePackerBarcode(variantId: string, input: string, actor: Actor, fallbackName: string | null): Promise<{ barcode: string; name: string; sameAs: string }> {
+  const g = checkGtin(input);
+  if (!g.ok) throw new BarcodeRefused(422, `That isn't a valid barcode: ${g.reason}. Scan it again.`);
+  const key = gtinKey(g.digits);
+  const s = await loadOwnership(db);
+  if (s.linkOf.has(variantId)) {
+    throw new BarcodeRefused(409, "This listing is a recipe's own pack, so it can't share another product's barcode. Set it on the Barcodes page.");
+  }
+  if (s.clubSpecial.has(variantId)) {
+    throw new BarcodeRefused(409, "The Club Special follows the current special's barcode, set on the Barcodes page.");
+  }
+  const myKey = s.identities.get(variantId)?.key ?? `v${variantId}`;
+  const holder = pickShareHolder(g.digits, myKey, holdersFrom(s, new Set([variantId])));
+  if (!holder) throw new BarcodeRefused(409, `No product we sell has ${g.digits} — use "Set its barcode" instead.`);
+  await setSameProductAs(variantId, holder.variantId, actor);
+  // Already holding that very number (the identity was all that blocked
+  // it): nothing more to set.
+  const mine = s.byVariant.get(variantId)?.barcode;
+  if (mine && gtinKey(mine) === key) return { barcode: g.digits, name: holder.identityName, sameAs: holder.identityName };
+  const r = await setPackerBarcode(variantId, g.digits, actor, fallbackName);
+  return { ...r, sameAs: holder.identityName };
 }
 
 // ── Pull (one-time) and hourly check — Shopify → app (adopt where we have none) ──

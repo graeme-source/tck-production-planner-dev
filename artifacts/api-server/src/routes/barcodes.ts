@@ -24,6 +24,7 @@
  *   GET  /scan-rejections                recent refused scans (manager/admin)
  *   GET  /f2f-links                      F2F copies to mark "same product as" their recipe's pack (dry run)
  *   POST /f2f-links                      apply the chosen ones (admin) — barcodes only, no recipe mapping
+ *   POST /variants/:variantId/packer-share  packing bench (manager/admin): same product as the code's holder — share its barcode
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
@@ -34,7 +35,7 @@ import { requireFulfilmentAccess } from "../lib/fulfilment-access";
 import {
   BarcodeRefused, actorOf, applyF2fLinks, applySync, f2fSuggestions, loadOwnership, loadEvents, loadGroups, loadOverview, loadScanRejections, logScanRejection,
   previewSync, reconcileBarcodes, retryPush, scanMap, sendOursToShopify,
-  setGroupBarcode, setPackerBarcode, setSameProductAs, useShopifyBarcode, type Actor,
+  setGroupBarcode, setPackerBarcode, setSameProductAs, sharePackerBarcode, useShopifyBarcode, type Actor,
 } from "../lib/barcode-store";
 
 const router: IRouter = Router();
@@ -119,6 +120,18 @@ router.post("/variants/:variantId/packer-set", requireFulfilmentAccess, validate
   try {
     res.json(await setPackerBarcode(p.data.variantId, body.barcode, await actor(req), body.productName ?? null));
   } catch (err) { fail(res, err, "POST /variants/:id/packer-set"); }
+});
+
+// Packing bench, manager/admin (Graeme, 28 Oct 2026): a listing that is the
+// same pack as another product's ("Buttermilk Fried Chicken 400g + rice" =
+// the plain 400g pack; a flow adds the rice) shares that product's barcode.
+router.post("/variants/:variantId/packer-share", requireManagerOrAdmin, validate(PackerSetBody), async (req, res) => {
+  const p = VariantParams.safeParse(req.params);
+  if (!p.success) { res.status(400).json({ error: "Invalid variant id" }); return; }
+  const body = req.body as z.infer<typeof PackerSetBody>;
+  try {
+    res.json(await sharePackerBarcode(p.data.variantId, body.barcode, await actor(req), body.productName ?? null));
+  } catch (err) { fail(res, err, "POST /variants/:id/packer-share"); }
 });
 
 router.get("/overview", requireManagerOrAdmin, async (_req, res) => {
