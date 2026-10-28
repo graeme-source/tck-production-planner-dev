@@ -11,10 +11,16 @@
  * (fetch a manager), or when the product already has one (changing a
  * barcode is manager-only). Rules: @workspace/barcodes packer.ts; server:
  * POST /api/barcodes/variants/:id/packer-set.
+ *
+ * When the number belongs to another product, a manager or admin can say
+ * this listing IS that product's pack (Graeme, 28 Oct 2026: "Fried Chicken
+ * 400g + rice" is the plain 400g pack — a flow adds the rice), so it shares
+ * the barcode: POST /variants/:id/packer-share.
  */
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { AlertCircle, ArrowLeft, Barcode, Eye, Loader2, X } from "lucide-react";
+import { AlertCircle, ArrowLeft, Barcode, Eye, Link2, Loader2, X } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
 import { checkGtin, gtinKey, type KnownCodes } from "@workspace/barcodes";
 import { barcodesApi, SCAN_MAP_KEY, type ApiError } from "./api";
 
@@ -68,6 +74,12 @@ export function SetBarcodeDialog({
   const [code, setCode] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [blocked, setBlocked] = useState(false);
+  /** The product that already has the scanned number — a manager can say
+   *  this listing is the same pack and share it. */
+  const [heldBy, setHeldBy] = useState<{ code: string; name: string } | null>(null);
+  const { state } = useAuth();
+  const role = state.status === "authenticated" ? state.user.role : null;
+  const canShare = role === "admin" || role === "manager";
   const scanRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -84,12 +96,26 @@ export function SetBarcodeDialog({
       await qc.refetchQueries({ queryKey: SCAN_MAP_KEY });
       onSet(r.barcode);
     },
-    onError: (err: ApiError) => {
+    onError: (err: ApiError, barcode) => {
       setProblem(err.message);
       // A number that's someone else's, or a product that already has one:
       // nothing the packer can fix here.
       setBlocked(err.status === 409);
+      const product = (err.body as { why?: string; product?: string } | undefined);
+      if (product?.why === "elsewhere" && product.product) setHeldBy({ code: barcode, name: product.product });
     },
+  });
+
+  const share = useMutation({
+    mutationFn: (barcode: string) => barcodesApi<{ barcode: string; name: string }>(`/variants/${target.variantId}/packer-share`, {
+      method: "POST",
+      body: JSON.stringify({ barcode, productName: target.name }),
+    }),
+    onSuccess: async (r) => {
+      await qc.refetchQueries({ queryKey: SCAN_MAP_KEY });
+      onSet(r.barcode);
+    },
+    onError: (err: ApiError) => setProblem(err.message),
   });
 
   function handleScan(e: React.FormEvent) {
@@ -99,6 +125,7 @@ export function SetBarcodeDialog({
     const raw = scanRef.current?.value ?? "";
     if (scanRef.current) scanRef.current.value = "";
     setBlocked(false);
+    setHeldBy(null);
     const g = checkGtin(raw);
     if (!g.ok) {
       setProblem(g.reason === "No barcode number" ? "Scan the barcode on the pack." : `That isn't a valid barcode: ${g.reason}. Scan it again.`);
@@ -108,6 +135,7 @@ export function SetBarcodeDialog({
     if (owner) {
       setProblem(`${g.digits} is already the barcode of ${owner.name}, not ${target.name}. Don't pack it — check the pack and fetch a manager.`);
       setBlocked(true);
+      setHeldBy({ code: g.digits, name: owner.name });
       return;
     }
     setProblem(null);
@@ -182,6 +210,23 @@ export function SetBarcodeDialog({
             </div>
           )}
 
+          {heldBy && canShare && (
+            <div className="rounded-2xl border-2 border-primary/40 bg-primary/5 p-4 space-y-3">
+              <p className="text-lg">
+                <span className="font-bold">Manager:</span> is <span className="font-bold">{target.name}</span> really the same pack as <span className="font-bold">{heldBy.name}</span> (with extras added another way)?
+              </p>
+              <p className="text-sm text-muted-foreground">Then they share barcode {heldBy.code}: scanning it ticks either one. Only do this if the pack in hand is identical.</p>
+              <button
+                type="button"
+                disabled={share.isPending}
+                onClick={() => { setProblem(null); share.mutate(heldBy.code); }}
+                className="w-full min-h-[56px] rounded-xl bg-primary text-primary-foreground font-bold text-lg flex items-center justify-center gap-2 disabled:opacity-60"
+              >
+                {share.isPending ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</> : <><Link2 className="w-5 h-5" /> Same pack — share {heldBy.name}'s barcode</>}
+              </button>
+            </div>
+          )}
+
           {problem && (
             <div role="alert" className="rounded-2xl border-2 border-red-400 bg-red-50 dark:bg-red-950/40 p-4 text-red-900 dark:text-red-200 text-lg font-semibold flex gap-2">
               <AlertCircle className="w-6 h-6 flex-shrink-0 mt-0.5" /> {problem}
@@ -200,7 +245,7 @@ export function SetBarcodeDialog({
           )}
           {step === "scan" && (
             <>
-              <button type="button" onClick={() => { setProblem(null); setBlocked(false); setStep("eye"); }} className="min-h-[56px] px-5 rounded-xl border-2 border-border font-semibold text-lg flex items-center gap-1.5">
+              <button type="button" onClick={() => { setProblem(null); setBlocked(false); setHeldBy(null); setStep("eye"); }} className="min-h-[56px] px-5 rounded-xl border-2 border-border font-semibold text-lg flex items-center gap-1.5">
                 <ArrowLeft className="w-5 h-5" /> Back
               </button>
               <button type="button" onClick={close} className="flex-1 min-h-[56px] rounded-xl border-2 border-border font-semibold text-lg">Cancel</button>

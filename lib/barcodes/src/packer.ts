@@ -114,3 +114,19 @@ export function planPackerBarcode(
   }
   return { ok: true, digits: g.digits, format: g.format };
 }
+
+/**
+ * "Same pack — share its barcode" (Graeme, 28 Oct 2026): the listing whose
+ * barcode a manager says this one shares — a CURRENT product of another
+ * identity holding the code in our table, else in Shopify. Null when no
+ * product we sell has it (then it's an ordinary set, not a share).
+ */
+export function pickShareHolder(input: string, myIdentityKey: string, holders: BarcodeHolder[]): BarcodeHolder | null {
+  const g = checkGtin(input);
+  if (!g.ok) return null;
+  const key = gtinKey(g.digits);
+  const others = holders.filter(h => h.identityKey !== myIdentityKey && h.current && !h.variantId.startsWith("pending:"));
+  return others.find(h => h.ours != null && gtinKey(h.ours) === key)
+    ?? others.find(h => h.shopify != null && gtinKey(h.shopify) === key)
+    ?? null;
+}
