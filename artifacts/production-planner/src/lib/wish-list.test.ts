@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
+  DEFAULT_FILTER,
+  FILTERS,
   countsByFilter,
   formatPence,
   looksLikeLink,
@@ -110,5 +112,12 @@ describe("looksLikeLink", () => {
     expect(looksLikeLink("nisbets.co.uk/tongs")).toBe(true);
     expect(looksLikeLink("new mop bucket")).toBe(false);
     expect(looksLikeLink("mop")).toBe(false);
+  });
+});
+
+describe("wish list filters", () => {
+  it("All comes first and is selected on arrival", () => {
+    expect(FILTERS[0].key).toBe("all");
+    expect(DEFAULT_FILTER).toBe("all");
   });
 });

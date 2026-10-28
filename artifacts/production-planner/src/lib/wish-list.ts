@@ -72,13 +72,16 @@ export const STATUS_TONE: Record<WishListStatus, string> = {
 };
 
 export type WishListFilter = "open" | "ordered" | "received" | "declined" | "all";
+// "All" first and selected on arrival, so everyone sees what's been ordered
+// as well as what's still asked for (Graeme, 28 Oct 2026).
 export const FILTERS: Array<{ key: WishListFilter; label: string }> = [
+  { key: "all", label: "All" },
   { key: "open", label: "Open" },
   { key: "ordered", label: "Ordered" },
   { key: "received", label: "Received" },
   { key: "declined", label: "Declined" },
-  { key: "all", label: "All" },
 ];
+export const DEFAULT_FILTER: WishListFilter = "all";
 
 export type WishListSort = "votes" | "newest" | "oldest" | "price-low" | "price-high";
 export const SORTS: Array<{ key: WishListSort; label: string }> = [
