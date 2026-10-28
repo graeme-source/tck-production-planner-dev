@@ -61,6 +61,14 @@ export type ScanDecision =
   | { kind: "typed-not-scanned" }
   | { kind: "no-match" };
 
+/** Every refusal the packing scan box can log — one list for the API's
+ *  validation and the packing_scan_rejections CHECK constraint (a kind added
+ *  here needs a migration widening it; scan-rejection-kinds.test.ts checks). */
+export const SCAN_REJECTION_KINDS = [
+  "wrong-item", "ambiguous", "unknown-barcode", "typed-not-scanned", "no-match", "already-picked",
+] as const;
+export type ScanRejectionKind = typeof SCAN_REJECTION_KINDS[number];
+
 const isDigits = (s: string) => /^\d+$/.test(s);
 
 /** What a value entered in the packing scan box means. Only a barcode

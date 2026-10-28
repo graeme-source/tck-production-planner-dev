@@ -27,7 +27,7 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { LINK_KINDS, type LinkKind } from "@workspace/barcodes";
+import { LINK_KINDS, SCAN_REJECTION_KINDS, type LinkKind } from "@workspace/barcodes";
 import { requireAdmin, requireManagerOrAdmin } from "../middleware/roles";
 import { rawBody, validate, validateQuery } from "../middleware/validate";
 import { requireFulfilmentAccess } from "../lib/fulfilment-access";
@@ -142,7 +142,7 @@ const RejectionBody = z.object({
   orderId: z.union([z.string(), z.number()]).transform(String).nullable().optional(),
   orderName: z.string().max(60).nullable().optional(),
   code: z.string().min(1).max(200),
-  kind: z.enum(["wrong-item", "ambiguous", "unknown-barcode", "typed-not-scanned", "no-match", "already-picked"]),
+  kind: z.enum(SCAN_REJECTION_KINDS),
   message: z.string().max(500).nullable().optional(),
 });
 
