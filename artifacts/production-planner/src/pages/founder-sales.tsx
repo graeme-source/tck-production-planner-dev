@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { Redirect } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -6,25 +6,19 @@ import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { format, parseISO } from "date-fns";
-import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle, Calculator } from "lucide-react";
-import { useAuth } from "@/contexts/auth-context";
-import { BundleCalculator } from "@/components/bundle-calculator";
+import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
 import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { SalesDriversSection } from "@/components/sales-drivers/sales-drivers-section";
 import { ChangeLog } from "@/components/sales-drivers/change-log";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { LuckyOrderOffer } from "@/components/live-offers/lucky-order-offer";
 
-// Tabs (Graeme, 27 Oct 2026): the bundle builder and live offers each get
-// their own tab instead of sitting at the bottom of one long page. The tab
-// follows the URL hash, so links like /founder/sales#live-offers land on it.
-const TABS = ["overview", "live-offers", "bundle-builder"] as const;
-type Tab = (typeof TABS)[number];
-const tabFromHash = (): Tab => {
-  const h = window.location.hash.replace("#", "") as Tab;
-  return TABS.includes(h) ? h : "overview";
+// One page, no inner tabs (Graeme, 28 Oct 2026): Live offers and the bundle
+// builder moved to their own Business tabs next to the floor map. Old
+// /founder/sales#live-offers and #bundle-builder links are sent there.
+const MOVED_TABS: Record<string, string> = {
+  "#live-offers": "/founder/live-offers",
+  "#bundle-builder": "/founder/bundle-builder",
 };
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -83,12 +77,7 @@ export default function FounderSales() {
   // Emails waiting for approval show inside the marketing calendar (2026-10-20).
   const { ready, canSales, isFounder, home } = useFounderArea();
   const queryClient = useQueryClient();
-  // The bundle calculator's API (/api/bundles) is managers and admins only,
-  // so a Sales & Marketing grantee on the viewer role doesn't get a section
-  // that can only fail.
-  const { state } = useAuth();
-  const role = state.status === "authenticated" ? state.user.role : "viewer";
-  const canBundles = role === "admin" || role === "manager";
+  const [moved] = useState(() => MOVED_TABS[window.location.hash] ?? null);
 
   const { data, isLoading } = useQuery<Pulse>({
     queryKey: ["founder-sales-pulse"],
@@ -99,17 +88,7 @@ export default function FounderSales() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ["founder-sales-pulse"] });
 
-  const [tab, setTab] = useState<Tab>(tabFromHash);
-  useEffect(() => {
-    const onHash = () => setTab(tabFromHash());
-    window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
-  }, []);
-  const changeTab = (t: string) => {
-    setTab(t as Tab);
-    history.replaceState(null, "", t === "overview" ? window.location.pathname : `#${t}`);
-  };
-
+  if (moved) return <Redirect to={moved} replace />;
   if (!ready) return null;
   if (!canSales) return <Redirect to={home ?? "/"} />;
 
@@ -117,18 +96,11 @@ export default function FounderSales() {
     <div className="space-y-6">
       <FounderNav />
       <PageHeader
-        title="Sales & Marketing"
+        title="Email & Marketing Calendar"
         description="Revenue pace, email cadence and the marketing calendar — there's always something on."
       />
 
-      <Tabs value={tab} onValueChange={changeTab} className="space-y-6">
-        <TabsList className="flex-wrap h-auto gap-1">
-          <TabsTrigger value="overview" className="min-h-10 px-4">Overview</TabsTrigger>
-          <TabsTrigger value="live-offers" className="min-h-10 px-4">Live offers</TabsTrigger>
-          {canBundles && <TabsTrigger value="bundle-builder" className="min-h-10 px-4">Bundle builder</TabsTrigger>}
-        </TabsList>
-
-        <TabsContent value="overview" className="space-y-6 mt-0">
+      <div className="space-y-6">
           {/* ── Attention strip: the assistant speaks first ─────────────────── */}
           {isLoading ? (
             <Skeleton className="h-16 w-full" />
@@ -163,29 +135,7 @@ export default function FounderSales() {
           {/* The change log, collapsed to one button at the very bottom — rarely
               needed (Graeme, 2026-10-21). Objective I. */}
           <ChangeLog canEdit={canSales} />
-        </TabsContent>
-
-        {/* Switchable offers — Lucky Order Number first (Graeme, 27 Oct 2026). */}
-        <TabsContent value="live-offers" className="mt-0">
-          <LuckyOrderOffer isFounder={isFounder} />
-        </TabsContent>
-
-        {/* Bundle calculator — moved here from the old Product Hub (Graeme,
-            12 Oct 2026); its own tab since 27 Oct. */}
-        {canBundles && (
-          <TabsContent value="bundle-builder" className="mt-0">
-            <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
-              <div>
-                <h2 className="text-sm font-semibold flex items-center gap-2">
-                  <Calculator className="w-4 h-4 text-primary" /> Bundle calculator
-                </h2>
-                <p className="text-sm text-muted-foreground mt-1">Build a bundle from recipes and extras, and see its cost, margin and shipping at a price.</p>
-              </div>
-              <BundleCalculator />
-            </section>
-          </TabsContent>
-        )}
-      </Tabs>
+      </div>
     </div>
   );
 }

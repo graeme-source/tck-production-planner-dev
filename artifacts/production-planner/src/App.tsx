@@ -70,6 +70,8 @@ import FounderFocus from "@/pages/founder-focus";
 import FounderSales from "@/pages/founder-sales";
 import FounderAbTests from "@/pages/founder-ab-tests";
 import FounderFloor from "@/pages/founder-floor";
+import FounderLiveOffers from "@/pages/founder-live-offers";
+import FounderBundleBuilder from "@/pages/founder-bundle-builder";
 import TestBoxesPage from "@/pages/test-boxes";
 import FounderContracts from "@/pages/founder-contracts";
 import FounderFixQueue from "@/pages/founder-fix-queue";
@@ -278,6 +280,8 @@ function Router() {
               <Route path="/founder/sales" component={FounderSales} />
               <Route path="/founder/ab-tests" component={FounderAbTests} />
               <Route path="/founder/floor" component={FounderFloor} />
+              <Route path="/founder/live-offers" component={FounderLiveOffers} />
+              <Route path="/founder/bundle-builder" component={FounderBundleBuilder} />
               {/* Contracts moved into People, Fix queue to its own sidebar line
                   (2026-09-29). Old links keep working, query string and all
                   (?fromUploaded= pre-fills a new contract). */}

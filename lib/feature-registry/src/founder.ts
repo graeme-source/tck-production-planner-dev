@@ -84,11 +84,18 @@ export const FOUNDER_TABS = [
   { href: "/founder/numbers", label: "Numbers", feature: FOUNDER_FEATURES.numbers },
   { href: "/founder/focus", label: "Schedule" },
   { href: "/founder/pnl", label: "P&L" },
-  { href: "/founder/sales", label: "Sales & Marketing", feature: FOUNDER_FEATURES.sales },
+  // Renamed from "Sales & Marketing" (28 Oct 2026): the sales numbers live
+  // on Numbers; this tab is the email + marketing calendar page.
+  { href: "/founder/sales", label: "Email & Marketing Calendar", feature: FOUNDER_FEATURES.sales },
   // Website A/B tests (2026-10-24): same people as Sales & Marketing.
   { href: "/founder/ab-tests", label: "Website A/B tests", feature: FOUNDER_FEATURES.sales },
   // Floor map (2026-10-26): the founder's own while he tries it out.
   { href: "/founder/floor", label: "Floor map" },
+  // Live offers and the bundle builder (28 Oct 2026): their own tabs next to
+  // the floor map, out of the Sales & Marketing page's inner tabs. Same people
+  // as Sales & Marketing.
+  { href: "/founder/live-offers", label: "Live offers", feature: FOUNDER_FEATURES.sales },
+  { href: "/founder/bundle-builder", label: "Bundle builder", feature: FOUNDER_FEATURES.sales },
 ] as const satisfies ReadonlyArray<{ href: string; label: string; feature?: FounderFeatureKey }>;
 
 export type FounderTab = (typeof FOUNDER_TABS)[number];
