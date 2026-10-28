@@ -311,6 +311,7 @@ export function formatClock(totalMinutes: number): string {
 
 export * from "./target-finish";
 export * from "./kitchen-scope";
+export * from "./plan-merge";
 export * from "./recipe-route";
 export * from "./meat-timing-learning";
 export * from "./meat-daily-review";

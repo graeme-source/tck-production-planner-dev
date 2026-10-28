@@ -136,6 +136,7 @@ import { isPrintBridgePath } from "../lib/print-bridge-paths";
 import prepLinkedCompletionsRouter from "./prep-linked-completions";
 import prepSessionsRouter from "./prep-sessions";
 import planMoveRouter from "./plan-move";
+import planMergeRouter from "./plan-merge";
 import dictationRouter from "./dictation";
 import icePacksRouter from "./ice-packs";
 import wholesaleBagsRouter from "./wholesale-bags";
@@ -612,6 +613,9 @@ router.use("/prep-linked-completions", prepLinkedCompletionsRouter);
 // Any signed-in station user; open/complete sit in the daily PIN lock.
 router.use("/prep-sessions", prepSessionsRouter);
 router.use("/plan-move", planMoveRouter);
+// One plan per day: a new calzone plan merges into the day's fried-chicken /
+// mac-cheese-only plan instead of making a second one (2026-10-28).
+router.use("/plan-merge", planMergeRouter);
 router.use("/dictation", dictationRouter);
 router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);

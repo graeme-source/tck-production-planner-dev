@@ -201,12 +201,15 @@ function runDateLabel(iso: string): string {
  *    a rare correction, not the job: the job is hitting + as the bags come off
  *    the fryer. A big green "Change the run" sat next to the count read as THE
  *    thing to press (Graeme, 2026-09-04), so it folds away behind three dots. */
-function PlanTheRunButton({ plan, label, variant = "primary" }: {
+function PlanTheRunButton({ plan, label, variant = "primary", autoOpen = false }: {
   plan: ProductionPlanDetail;
   label: string;
   variant?: "primary" | "quiet";
+  /** Open the planning dialog straight away — arriving from the plans
+   *  page's "Add Fried Chicken Production" on an empty day (?fcadd=1). */
+  autoOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(autoOpen);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const { state } = useAuth();
@@ -292,6 +295,16 @@ function PlanTheRunButton({ plan, label, variant = "primary" }: {
 function NoRunToday({ plan, onGoToPrep }: { plan: ProductionPlanDetail; onGoToPrep?: () => void }) {
   const { data, isLoading } = useNextFriedChickenRun(plan.planDate);
   const [, navigate] = useLocation();
+  // "Add Fried Chicken Production" on an empty day lands here with ?fcadd=1:
+  // the day's plan has just been made, so open the run planner at once. Read
+  // once, then dropped from the address so a refresh doesn't reopen it.
+  const [autoOpen] = useState(() => new URLSearchParams(window.location.search).get("fcadd") === "1");
+  useEffect(() => {
+    if (!autoOpen) return;
+    const url = new URL(window.location.href);
+    url.searchParams.delete("fcadd");
+    window.history.replaceState(window.history.state, "", url.toString());
+  }, [autoOpen]);
 
   if (isLoading) {
     return (
@@ -309,7 +322,7 @@ function NoRunToday({ plan, onGoToPrep }: { plan: ProductionPlanDetail; onGoToPr
         <p className="text-lg text-muted-foreground">
           Say how many kilos of raw chicken the run is and it'll work out the bags.
         </p>
-        <PlanTheRunButton plan={plan} label="Plan this day's run" />
+        <PlanTheRunButton plan={plan} label="Plan this day's run" autoOpen={autoOpen} />
       </div>
     );
   }
@@ -327,7 +340,7 @@ function NoRunToday({ plan, onGoToPrep }: { plan: ProductionPlanDetail; onGoToPr
           </div>
           {/* A run is still plannable for TODAY even though another one is
               coming — chicken days move. */}
-          <PlanTheRunButton plan={plan} label="Plan a run for today" variant="quiet" />
+          <PlanTheRunButton plan={plan} label="Plan a run for today" variant="quiet" autoOpen={autoOpen} />
         </div>
         <div className="flex gap-3 flex-wrap">
           <button
