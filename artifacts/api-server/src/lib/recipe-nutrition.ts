@@ -80,3 +80,15 @@ export function computeNutrition(items: NutritionItem[], cookingLossPercent: num
 
   return { totalRawWeightG, cookedWeightG, portionWeightG, per100g, perPortion };
 }
+
+/**
+ * The declared pack weight in grams — the label's figure (computeRecipeNutritionals:
+ * portion weight × pack size), from the recipe as made. Null without a weight
+ * or a pack size. Drives the recipes table's cost per kg (Graeme, 28 Oct 2026).
+ */
+export function declaredPackWeightG(asUsedWeightG: number, cookingLossPercent: number, servings: number, packSize: number | null): number | null {
+  if (!(asUsedWeightG > 0) || packSize == null || !(packSize > 0)) return null;
+  const { portionWeightG } = computeNutrition([], cookingLossPercent, servings, asUsedWeightG);
+  const g = Math.round(portionWeightG * packSize);
+  return g > 0 ? g : null;
+}

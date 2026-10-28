@@ -8,11 +8,11 @@ import { validate, rawBody } from "../middleware/validate";
 import { reconcileRecipeQuid, snapshotLineQuid } from "../lib/quid-store";
 import { carryQuid, sentQuid } from "../lib/quid-plan";
 import { computeSubRecipeCosts } from "../lib/sub-recipe-costs";
-import { computeNutrition } from "../lib/recipe-nutrition";
+import { computeNutrition, declaredPackWeightG } from "../lib/recipe-nutrition";
 import { generateQrCode } from "../lib/qr-code";
 import { recalculateDptRequirements } from "./dpt-ingredient-requirements";
 import { londonDateString } from "../lib/london-time";
-import { toGrams, effectivePackSize, hasPackSize, packSizeToStore } from "@workspace/units";
+import { toGrams, effectivePackSize, hasPackSize, packSizeToStore, costPerKg } from "@workspace/units";
 import { NUTRIENT_KEYS, missingNutrients } from "@workspace/product-labels";
 import { buildRecipeIngredientDeck } from "../lib/recipe-ingredient-deck";
 import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
@@ -206,12 +206,39 @@ function enrichWithCosts(
   };
 }
 
+/** Each recipe's weight as made (ingredients in their own units, sub-recipes
+ *  at the weight used) — the same sum the label's declared weight starts
+ *  from (gatherRecipeIngredients' asUsedWeightG), for the whole list at once. */
+async function computeAsUsedWeights(recipeIds: number[]): Promise<Record<number, number>> {
+  if (recipeIds.length === 0) return {};
+  const [ings, subs] = await Promise.all([
+    db.select({ recipeId: recipeIngredientsTable.recipeId, quantity: recipeIngredientsTable.quantity, unit: ingredientsTable.unit })
+      .from(recipeIngredientsTable)
+      .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
+      .where(inArray(recipeIngredientsTable.recipeId, recipeIds)),
+    db.select({ recipeId: recipeSubRecipesTable.recipeId, quantity: recipeSubRecipesTable.quantity, unit: subRecipesTable.yieldUnit })
+      .from(recipeSubRecipesTable)
+      .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
+      .where(inArray(recipeSubRecipesTable.recipeId, recipeIds)),
+  ]);
+  const out: Record<number, number> = {};
+  for (const row of [...ings, ...subs]) {
+    out[row.recipeId] = (out[row.recipeId] ?? 0) + toGrams(Number(row.quantity), row.unit ?? "g");
+  }
+  return out;
+}
+
 router.get("/", async (_req, res) => {
   const rows = await db.select().from(recipesTable).orderBy(recipesTable.name);
   const mapped = rows.map(mapRecipe);
   const ids = mapped.map(r => r.id);
-  const rawCosts = await computeCosts(ids);
-  res.json(mapped.map(r => enrichWithCosts(r, rawCosts[r.id] ?? 0)));
+  const [rawCosts, weights] = await Promise.all([computeCosts(ids), computeAsUsedWeights(ids)]);
+  res.json(mapped.map(r => {
+    const costed = enrichWithCosts(r, rawCosts[r.id] ?? 0);
+    // Cost per kg of the declared pack (Graeme, 28 Oct 2026).
+    const packG = declaredPackWeightG(weights[r.id] ?? 0, r.cookingLossPercent, r.servings, r.packSizeSet ? r.packSize : null);
+    return { ...costed, declaredPackWeightG: packG, costPerKg: packG ? costPerKg(costed.totalPackCost, packG, "g") : null };
+  }));
 });
 
 interface MarinadeInput {

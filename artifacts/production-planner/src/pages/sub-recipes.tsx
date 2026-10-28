@@ -8,7 +8,7 @@ import { boldAllergens, declarationIssues } from "@workspace/allergens";
 import { DeclarationFixButtons } from "@/components/declaration-fix";
 import { rowsToDeclarationItems } from "@/lib/declaration-fix";
 import { SubRecipeLabelUsage } from "@/components/sub-recipe-label-usage";
-import { toGrams, kgOrNull } from "@workspace/units";
+import { toGrams, kgOrNull, costPerKg, formatCostPerKg } from "@workspace/units";
 import { PageHeader } from "@/components/page-header";
 import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -770,6 +770,11 @@ function EditSubRecipeDialog({
   );
 }
 
+/** Cost per kg of what a sub-recipe makes (its cost per yield unit, per kg). */
+function subCostPerKg(sr: Pick<SubRecipe, "yieldUnit"> & { costPerYieldUnit?: number | string | null }): number | null {
+  return costPerKg(sr.costPerYieldUnit, 1, sr.yieldUnit);
+}
+
 // The option lists both editors' rows pick from — shared by this page and
 // the pop-up opened from a recipe's sub-recipe row.
 function toIngredientOptions(ingredients: Ingredient[] | undefined): IngredientOption[] {
@@ -1130,7 +1135,7 @@ export default function SubRecipes() {
   // Same list controls as the recipes page — a sub-recipe is a recipe, so
   // browsing them should feel identical (Graeme, 2026-08-28).
   const [viewMode, setViewMode] = useState<"cards" | "table">("table");
-  type SubSortKey = "name" | "yield" | "upf";
+  type SubSortKey = "name" | "yield" | "upf" | "costKg";
   const [sortKey, setSortKey] = useState<SubSortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
@@ -1138,6 +1143,7 @@ export default function SubRecipes() {
   const filtered = [...(searched ?? [])].sort((a, b) => {
     const dir = sortDir === "asc" ? 1 : -1;
     if (sortKey === "yield") return (Number(a.yield) - Number(b.yield)) * dir;
+    if (sortKey === "costKg") return ((subCostPerKg(a) ?? -1) - (subCostPerKg(b) ?? -1)) * dir;
     if (sortKey === "upf") {
       const av = subUpfById.get(a.id)?.upfPercent ?? -1;
       const bv = subUpfById.get(b.id)?.upfPercent ?? -1;
@@ -1284,6 +1290,7 @@ export default function SubRecipes() {
                 <SortHead label="Name" k="name" />
                 <th className="px-3 py-2 font-medium text-left">Code</th>
                 <SortHead label="Yield" k="yield" align="right" />
+                <SortHead label="Cost/kg" k="costKg" align="right" />
                 <SortHead label="UPF" k="upf" align="right" />
                 <th className="px-3 py-2 font-medium text-right">Actions</th>
               </tr>
@@ -1303,6 +1310,7 @@ export default function SubRecipes() {
                     </td>
                     <td className="px-3 py-2 text-xs text-muted-foreground tabular-nums">SR-{recipe.id.toString().padStart(4, "0")}</td>
                     <td className="px-3 py-2 text-right tabular-nums">{recipe.yield} {recipe.yieldUnit}</td>
+                    <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCostPerKg(subCostPerKg(recipe))}</td>
                     <td className="px-3 py-2 text-right">
                       {upf ? (
                         <UpfPercentPill
@@ -1378,7 +1386,10 @@ export default function SubRecipes() {
               )}
             </div>
             <div className="mt-auto flex items-center justify-between gap-2 pt-3 border-t border-border/60">
-              <span className="text-sm font-medium">Yield: {recipe.yield} {recipe.yieldUnit}</span>
+              <span className="text-sm font-medium">
+                Yield: {recipe.yield} {recipe.yieldUnit}
+                <span className="block text-muted-foreground tabular-nums">{formatCostPerKg(subCostPerKg(recipe))}</span>
+              </span>
               <span className="flex items-center gap-1.5">
                 {(() => {
                   const upf = subUpfById.get(recipe.id);

@@ -5,6 +5,7 @@ import type { Ingredient } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
+import { costPerKg, formatCostPerKg } from "@workspace/units";
 import {
   Search, Plus, Trash2, Edit2, Loader2, ExternalLink, Upload,
   FileText, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
@@ -570,7 +571,7 @@ export default function Inventory() {
                 <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pack Size</th>
                 {activeTab === "supplies" && <th className="text-right py-3 px-3 font-medium text-muted-foreground">Pallet</th>}
                 <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/Pack</th>
-                <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/Unit</th>
+                <th className="text-right py-3 px-3 font-medium text-muted-foreground">Cost/kg</th>
                 <th className="text-left py-3 px-3 font-medium text-muted-foreground">Supplier</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Used In</th>
                 <th className="text-center py-3 px-3 font-medium text-muted-foreground">Kanban</th>
@@ -617,18 +618,17 @@ export default function Inventory() {
                     </td>
                     <td className="py-3 px-3 text-right tabular-nums text-muted-foreground">
                       {(() => {
-                        // Same maths as the edit dialog's live "cost per unit"
-                        // readout: pack cost spread over the pack size. Gram
-                        // and millilitre packs are shown per kg / per L so
-                        // costs compare at a glance across the whole table.
+                        // Per kg on every row so costs compare at a glance
+                        // and a price change shows (Graeme, 28 Oct 2026);
+                        // litres at 1 kg. Count items ("each") can't be per
+                        // kg, so they keep their per-item cost.
                         const cost = Number(item.costPerPack);
                         const size = Number(item.packWeight);
                         if (!(cost > 0) || !(size > 0)) return <span className="opacity-40">—</span>;
-                        let perUnit = cost / size;
-                        let unit = item.unit;
-                        if (unit === "g") { perUnit *= 1000; unit = "kg"; }
-                        else if (unit === "ml") { perUnit *= 1000; unit = "L"; }
-                        return `£${perUnit.toFixed(perUnit >= 0.1 ? 2 : 4)}/${unit}`;
+                        const perKg = costPerKg(cost, size, item.unit);
+                        if (perKg != null) return <span className="text-foreground">{formatCostPerKg(perKg)}</span>;
+                        const each = cost / size;
+                        return `£${each.toFixed(each >= 0.1 ? 2 : 4)} each`;
                       })()}
                     </td>
                     <td className="py-3 px-3 text-muted-foreground text-xs">

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeNutrition, type NutrientValues } from "./recipe-nutrition";
+import { computeNutrition, declaredPackWeightG, type NutrientValues } from "./recipe-nutrition";
 
 function n(partial: Partial<NutrientValues>): NutrientValues {
   return {
@@ -88,5 +88,18 @@ describe("computeNutrition — the recipe as made, not its sub-recipes' raw weig
   });
   it("without an as-made weight it falls back to the ingredients' weight", () => {
     expect(computeNutrition(items, 3, 1).totalRawWeightG).toBe(414);
+  });
+});
+
+describe("declared pack weight (recipes table cost per kg)", () => {
+  it("is the label's portion weight × pack size, from the recipe as made", () => {
+    // 1,000 g as made, 3% loss, 4 portions → 243 g a portion (rounded), 2 a pack.
+    expect(declaredPackWeightG(1000, 3, 4, 2)).toBe(486);
+    expect(declaredPackWeightG(1000, 3, 4, 2)).toBe(computeNutrition([], 3, 4, 1000).portionWeightG * 2);
+  });
+
+  it("no weight or no pack size: none", () => {
+    expect(declaredPackWeightG(0, 3, 4, 2)).toBeNull();
+    expect(declaredPackWeightG(1000, 3, 4, null)).toBeNull();
   });
 });

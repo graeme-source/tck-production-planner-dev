@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, useMemo } from "react";
-import { toGrams } from "@workspace/units";
+import { toGrams, formatCostPerKg } from "@workspace/units";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useListRecipes, useListIngredients, useListSubRecipes, useGetRecipe, useListCategoryDefaults, useGetUpfSummary, getGetRecipeQueryKey, getListRecipesQueryKey, getListIngredientsQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
@@ -1559,6 +1559,8 @@ type RecipeItem = {
   rawMaterialCostPerBatch: number; costPerPortion: number; packIngredientCost: number;
   totalPackCost: number; grossMargin: number | null;
   isCoreMenu?: boolean;
+  /** Label's declared pack weight and total pack cost per kg (GET /recipes). */
+  declaredPackWeightG?: number | null; costPerKg?: number | null;
 };
 
 interface NutritionalsData {
@@ -1943,6 +1945,9 @@ function RecipeCard({ recipe, upf, onEdit, onDelete, onBreakdown, onDuplicate, o
           <div className="pt-1 font-semibold" style={recipeColor ? { borderTopColor: recipeColor + "40", borderTopWidth: "1px" } : { borderTopColor: "var(--border)", borderTopWidth: "1px" }}>Total pack cost</div>
           <div className="pt-1 text-right font-bold" style={recipeColor ? { borderTopColor: recipeColor + "40", borderTopWidth: "1px", color: recipeColor } : { borderTopColor: "var(--border)", borderTopWidth: "1px" }}>£{fmt(recipe.totalPackCost)}</div>
 
+          <div className="text-muted-foreground">Cost per kg{recipe.declaredPackWeightG ? ` (${recipe.declaredPackWeightG} g pack)` : ""}</div>
+          <div className="text-right font-medium">{formatCostPerKg(recipe.costPerKg)}</div>
+
           {recipe.rrp > 0 && (
             <>
               <div className="text-muted-foreground">RRP</div>
@@ -2027,7 +2032,7 @@ export default function Recipes() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [coreMenuOnly, setCoreMenuOnly] = useState(false);
   const [viewMode, setViewMode] = useState<"cards" | "table">("table");
-  type SortKey = "name" | "category" | "rrp" | "packCost" | "grossProfit" | "gpm" | "upf";
+  type SortKey = "name" | "category" | "rrp" | "packCost" | "costKg" | "grossProfit" | "gpm" | "upf";
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const { data: duplicateDetailData } = useGetRecipe(duplicatingId!, { query: { queryKey: getGetRecipeQueryKey(duplicatingId!), enabled: duplicatingId !== null } });
@@ -2162,6 +2167,7 @@ export default function Recipes() {
       case "category": return (r.category ?? "").toLowerCase();
       case "rrp": return rrp;
       case "packCost": return Number(r.totalPackCost) || 0;
+      case "costKg": return r.costPerKg ?? Number.NEGATIVE_INFINITY;
       case "grossProfit": return rrp > 0 ? rrp - (Number(r.totalPackCost) || 0) : Number.NEGATIVE_INFINITY;
       case "gpm": return r.grossMargin == null ? Number.NEGATIVE_INFINITY : Number(r.grossMargin);
       case "upf": {
@@ -2471,6 +2477,7 @@ export default function Recipes() {
                 {sortTh("Category", "category")}
                 {sortTh("RRP", "rrp", "right")}
                 {sortTh("Total pack cost", "packCost", "right")}
+                {sortTh("Cost/kg", "costKg", "right")}
                 {sortTh("Gross profit", "grossProfit", "right")}
                 {sortTh("GP margin", "gpm", "right")}
                 {sortTh("UPF", "upf", "right")}
@@ -2502,6 +2509,7 @@ export default function Recipes() {
                     <td className="py-2.5 px-3 text-muted-foreground">{r.category ?? "—"}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{hasRrp ? `£${fmt(rrp)}` : "—"}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">£{fmt(r.totalPackCost)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums" title={r.declaredPackWeightG ? `Total pack cost ÷ ${r.declaredPackWeightG} g declared pack weight` : "No declared pack weight"}>{formatCostPerKg(r.costPerKg)}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{hasRrp ? `£${fmt(gp)}` : "—"}</td>
                     <td className={cn("py-2.5 px-3 text-right tabular-nums font-semibold", mColor)}>{m == null ? "—" : `${m.toFixed(1)}%`}</td>
                     <td className="py-2.5 px-3 text-right">
@@ -2552,7 +2560,7 @@ export default function Recipes() {
                 );
               })}
               {sortedRecipes.length === 0 && (
-                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
+                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground text-sm">No recipes match your filters.</td></tr>
               )}
             </tbody>
           </table>
