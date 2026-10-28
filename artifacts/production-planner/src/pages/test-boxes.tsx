@@ -35,7 +35,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO, formatDistanceToNowStrict } from "date-fns";
 import {
   AlertTriangle, ArrowLeft, CalendarDays, Check, ChevronDown, ChevronRight, Clock, Crown, ExternalLink, Loader2, Lock, Package,
-  Plus, Rocket, Search, Trash2, Truck, Users, X,
+  Plus, Rocket, Search, Tag, Trash2, Truck, Users, X,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { useAutosave, type AutosaveState } from "@/hooks/use-autosave";
@@ -43,6 +43,10 @@ import { SaveChip } from "@/components/save-chip";
 import { PageHeader } from "@/components/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { addRecipesByTag, recipeTagCounts } from "@/lib/test-box-recipe-tags";
+
+/** Most recipes a test box takes (server: routes/test-boxes.ts MAX_RECIPES). */
+const MAX_BOX_RECIPES = 4;
 import { RecipeDraftBadge } from "@/components/recipe-archive";
 import { LaunchStepAction, type LaunchAction } from "@/components/test-boxes/launch-step-actions";
 import { CloseOrdersModal, ProductionPanel } from "@/components/test-boxes/delivery-production";
@@ -988,7 +992,7 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
     queryKey: ["test-boxes", "recipe-options"],
     // Drafts are included (flagged isDraft) — a test box is how a draft gets
     // trialled. Archived recipes aren't.
-    queryFn: () => api<{ recipes: Array<{ id: number; name: string; category: string | null; isDraft?: boolean }> }>("/recipe-options"),
+    queryFn: () => api<{ recipes: Array<{ id: number; name: string; category: string | null; isDraft?: boolean; tags?: string[] }> }>("/recipe-options"),
     staleTime: 5 * 60_000,
   });
   const all = data?.recipes ?? [];
@@ -999,7 +1003,19 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
     if (!needle) return [];
     return all.filter(r => !ids.includes(r.id) && r.name.toLowerCase().includes(needle)).slice(0, 8);
   }, [q, all, ids]);
-  const full = ids.length >= 4;
+  const full = ids.length >= MAX_BOX_RECIPES;
+  // Box-sized tags only: a tag on more recipes than a box holds isn't a box.
+  const tagOptions = useMemo(() => recipeTagCounts(all).filter(t => t.count <= MAX_BOX_RECIPES * 2), [all]);
+  const [tagNote, setTagNote] = useState<string | null>(null);
+  const addTag = (tag: string) => {
+    const r = addRecipesByTag(ids, all, tag, MAX_BOX_RECIPES);
+    if (r.added.length) onChange(r.ids);
+    setTagNote(
+      r.added.length === 0 && r.left.length === 0 ? `Every recipe tagged '${tag}' is already in the box.`
+        : r.left.length ? `${r.added.length ? `Added ${r.added.join(", ")}. ` : ""}A box takes ${MAX_BOX_RECIPES} — not added: ${r.left.join(", ")}.`
+        : `Added ${r.added.join(", ")}.`,
+    );
+  };
 
   return (
     <div className="space-y-2">
@@ -1040,6 +1056,25 @@ function RecipePicker({ ids, names, onChange }: { ids: number[]; names: Array<{ 
           )}
         </div>
       )}
+      {!full && tagOptions.length > 0 && (
+        <div className="space-y-1.5">
+          <span className="block text-sm text-muted-foreground">Or add every recipe with a tag:</span>
+          <div className="flex flex-wrap gap-2">
+            {tagOptions.map(t => (
+              <button
+                key={t.tag}
+                type="button"
+                onClick={() => addTag(t.tag)}
+                className="min-h-11 px-4 rounded-full border-2 border-border bg-background text-base font-semibold inline-flex items-center gap-2 hover:bg-secondary/60"
+              >
+                <Tag className="w-4 h-4 text-muted-foreground" /> {t.tag}
+                <span className="text-sm font-normal text-muted-foreground tabular-nums">{t.count}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {tagNote && <p className="text-sm" role="status">{tagNote}</p>}
       {full && <p className="text-sm text-muted-foreground">Four recipes is the most a test box takes.</p>}
       {ids.some(id => draftIds.has(id)) && (
         <p className="text-sm text-muted-foreground">A draft can go in a test box, but it won't be offered on a production plan or in Queued production until it's put on the menu — from <Link href="/recipes?view=drafts" className="font-semibold text-primary underline underline-offset-2">Recipes → Drafts</Link>.</p>
