@@ -74,7 +74,7 @@ export function QuantityInput({
             aria-pressed={display === u}
             className={cn(
               "transition-colors",
-              lg ? "w-10 h-full" : "px-1.5 flex-1",
+              lg ? "w-9 h-full" : "px-1.5 flex-1",
               i > 0 && (lg ? "border-l border-border" : "border-t border-border"),
               display === u ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/60",
             )}
