@@ -587,8 +587,12 @@ function RecipeForm({
                       )}
                     />
                   </EditorField>
-                  <EditorField label="Description (optional)" className="md:col-span-2">
-                    <textarea {...register("description")} className={cn(EDITOR_INPUT, "min-h-[64px] resize-y")} placeholder="Brief description…" />
+                  <EditorField
+                    label="Description — shown on the website"
+                    className="md:col-span-2"
+                    hint="When a test box makes or updates this recipe's Shopify product, this becomes its description and the recipe line under its picture on the collection grid (custom.product_recipe). Keep it to a sentence or two."
+                  >
+                    <textarea {...register("description")} className={cn(EDITOR_INPUT, "min-h-[64px] resize-y")} placeholder="e.g. Slow-cooked shredded beef and mushrooms in a rich red wine gravy, with extra mature cheddar." />
                   </EditorField>
                 </div>
               </EditorSection>
