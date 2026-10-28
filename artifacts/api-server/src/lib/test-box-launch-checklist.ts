@@ -72,7 +72,7 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
     // Key kept from the hand-made version so earlier ticks stay.
     key: "shopify-products",
     title: () => "Create Shopify products",
-    how: c => `The app duplicates the last test-box product for each recipe as a draft — tags show, no-wholesale, calzones and '${c.boxName}', the app's ingredient deck, description and pack size, no barcode — and links it to the recipe so its sales reach the planner. One at a time or all together; or link a product made by hand. Ticks itself once every recipe has a product.`,
+    how: c => `The app duplicates the last test-box product for each recipe as a draft — tags show, no-wholesale, calzones and '${c.boxName}', the app's ingredient deck, description, pack size, price from the RRP and nutrition table image, no barcode — and links it to the recipe so its sales reach the planner. One at a time or all together; or link a product made by hand. Ticks itself once every recipe has a product.`,
     from: "launch", workingDaysBefore: 3, automated: true, action: "shopify-products",
   },
   {
@@ -95,8 +95,9 @@ export const LAUNCH_CHECKLIST: readonly LaunchStepTemplate[] = [
   },
   {
     key: "shopify-nutrition",
-    title: () => "Upload each new product's nutrition table image",
-    how: () => "The website's nutrition table is an image (custom.nutritional_info), so the app can't write it — it removes the copied product's one. The numbers are in 'Create Shopify products' on this box.",
+    // Key kept from the hand-upload version so earlier ticks stay.
+    title: () => "Check each new product's nutrition table image",
+    how: () => "'Create Shopify products' draws each recipe's nutrition table from its numbers and puts it on the product (custom.nutritional_info) — once the recipe's nutrition is complete and Shopify lets the app upload files (write_files). Check it on each product's nutrition tab. Any product the preview says was left off needs its image uploaded by hand, or the run again once it's fixed.",
     from: "launch", workingDaysBefore: 2, automated: false,
   },
   {

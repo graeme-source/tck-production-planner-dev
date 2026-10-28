@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   MF, chooseTemplate, collectionHandle, copiedFromRecipeId, decideRecipeAction, descriptionHtml, findBoxCollection,
-  launchTicks, metafieldPlan, missingWriteScopes, newCollectionSettings, nutritionRows, perPackValue,
+  MAX_NUTRITION_PNG_BYTES, checkNutritionPng, launchTicks, metafieldPlan, missingFileScopes, missingWriteScopes, newCollectionSettings,
+  nutritionImageForRun, nutritionImagePlan, nutritionRows, perPackValue,
   previousBoxCollection, productSearchQuery, recipeWarnings, sameTitle, singleLine, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
   type CollectionInfo, type MetafieldValue, productPrice } from "./test-box-shopify-rules";
 
@@ -63,18 +64,77 @@ describe("content", () => {
     expect(descriptionHtml("Hot & <spicy>\n\nSecond")).toBe("<p>Hot &amp; &lt;spicy&gt;</p>\n<p>Second</p>");
     expect(singleLine(" a\n b  c ")).toBe("a b c");
   });
-  it("nutrition rows: energy whole, salt 2dp, missing shown as a dash", () => {
-    const rows = nutritionRows({ energyKj: 1000.4, energyKcal: 239.2, fat: 9.25, salt: 1.234, saturates: null }, { energyKj: 2500, energyKcal: 598, fat: 23.1, salt: 3.08 });
-    expect(rows[0]).toEqual({ label: "Energy", per100g: "1000 kJ", perPortion: "2500 kJ" });
-    expect(rows[1].label).toBe("");
-    expect(rows[2].per100g).toBe("9.3g");
-    expect(rows[3].per100g).toBe("—");
-    expect(rows[8].per100g).toBe("1.23g");
+  it("nutrition rows: worded and rounded like the website's nutrition images, missing shown as a dash", () => {
+    const rows = nutritionRows({ energyKj: 1000.4, energyKcal: 239.2, fat: 9.25, salt: 1.234, saturates: null, carbohydrate: 20.4 }, { energyKj: 2500, energyKcal: 598, fat: 23.1, salt: 3.08 });
+    expect(rows[0]).toEqual({ key: "energyKj", label: "Energy", indent: false, optional: false, per100g: "1000kJ", perPortion: "2500kJ" });
+    expect(rows[1]).toMatchObject({ key: "energyKcal", label: "", per100g: "239kcal" });
+    expect(rows[2]).toMatchObject({ per100g: "9.3g", perPortion: "23g" });
+    expect(rows[3]).toMatchObject({ label: "of which saturates", indent: true, per100g: "—" });
+    expect(rows[4].per100g).toBe("20g");
+    expect(rows[6]).toMatchObject({ key: "fibre", optional: true });
+    expect(rows[8]).toMatchObject({ key: "salt", per100g: "1.2g", perPortion: "3.1g" });
   });
   it("nutrition rows with no pack size: per 100 g only, no per-portion column", () => {
     const rows = nutritionRows({ energyKj: 1000.4, energyKcal: 239.2 }, null);
-    expect(rows[0]).toEqual({ label: "Energy", per100g: "1000 kJ", perPortion: null });
+    expect(rows[0]).toMatchObject({ label: "Energy", per100g: "1000kJ", perPortion: null });
     expect(rows.every(r => r.perPortion === null)).toBe(true);
+  });
+});
+
+describe("the nutrition image", () => {
+  // A real 1000 × 600 PNG header (signature + IHDR) padded out.
+  const png = (w: number, h: number, extra = 40) => {
+    const b = Buffer.alloc(33 + extra);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
+    b.writeUInt32BE(13, 8); b.write("IHDR", 12, "ascii"); b.writeUInt32BE(w, 16); b.writeUInt32BE(h, 20);
+    return b.toString("base64");
+  };
+
+  it("needs write_files (or write_images) — missing it is reported, not fatal", () => {
+    expect(missingFileScopes(["write_products"])).toEqual(["write_files"]);
+    expect(missingFileScopes(["write_products", "write_files"])).toEqual([]);
+    expect(missingFileScopes(["write_images"])).toEqual([]);
+    // The products scope check is unchanged by it.
+    expect(missingWriteScopes(["write_products"])).toEqual([]);
+  });
+
+  it("is put on only when the nutrition is complete and Shopify allows file uploads", () => {
+    expect(nutritionImagePlan({ nutritionComplete: true, missingFileScopes: [] }).willAttach).toBe(true);
+    const noScope = nutritionImagePlan({ nutritionComplete: true, missingFileScopes: ["write_files"] });
+    expect(noScope.willAttach).toBe(false);
+    expect(noScope.summary).toContain("Shopify hasn't given the app permission to upload files yet (write_files) — the nutrition image will be left off; add the scope to have it put on.");
+    expect(nutritionImagePlan({ nutritionComplete: false, missingFileScopes: [] })).toMatchObject({ willAttach: false });
+  });
+
+  it("the preview line: 'set' when it will be put on; otherwise the template's is still removed", () => {
+    const template: MetafieldValue[] = [{ ...MF.nutrition, value: "gid://shopify/MediaImage/1" }];
+    const content = { description: "x", packSize: 2, deckDocument: null, deckSummary: null };
+    const on = metafieldPlan(content, template, "STD", nutritionImagePlan({ nutritionComplete: true, missingFileScopes: [] }));
+    expect(on.lines.find(l => l.field === "custom.nutritional_info")).toMatchObject({ action: "set" });
+    // Removed first either way, so a failed upload never leaves another recipe's table.
+    expect(on.remove.map(m => m.key)).toContain("nutritional_info");
+    const off = metafieldPlan(content, template, "STD", nutritionImagePlan({ nutritionComplete: true, missingFileScopes: ["write_files"] }));
+    expect(off.lines.find(l => l.field === "custom.nutritional_info")).toMatchObject({ action: "remove" });
+    expect(off.lines.find(l => l.field === "custom.nutritional_info")!.summary).toContain("write_files");
+  });
+
+  it("checks the browser's PNG before anything goes to Shopify", () => {
+    const ok = checkNutritionPng(png(1000, 600));
+    expect(ok).toMatchObject({ ok: true, width: 1000, height: 600 });
+    expect(checkNutritionPng(`data:image/png;base64,${png(1000, 600)}`).ok).toBe(true);
+    expect(checkNutritionPng(Buffer.from("GIF89a not a png at all, honestly, long enough").toString("base64"))).toMatchObject({ ok: false, reason: "The nutrition image isn't a PNG" });
+    expect(checkNutritionPng("not base64 !!")).toMatchObject({ ok: false });
+    expect(checkNutritionPng(png(50, 50))).toMatchObject({ ok: false });
+    expect(checkNutritionPng(png(1000, 600, MAX_NUTRITION_PNG_BYTES))).toMatchObject({ ok: false, reason: "The nutrition image is too big" });
+  });
+
+  it("for the run: the PNG when it will be put on, else the reason for the results", () => {
+    const will = { title: "Properoni CarniZone", nutritionImage: { willAttach: true, summary: "x" } };
+    const r = nutritionImageForRun(will, png(1000, 600));
+    expect(r.note).toBeNull();
+    expect(r.image).toMatchObject({ filename: "properoni-carnizone-nutrition.png", alt: "Properoni CarniZone nutrition" });
+    expect(nutritionImageForRun(will, undefined).note).toContain("didn't send one");
+    expect(nutritionImageForRun({ ...will, nutritionImage: { willAttach: false, summary: "No permission" } }, png(1000, 600))).toEqual({ image: null, note: "Nutrition image left off: No permission" });
   });
 });
 

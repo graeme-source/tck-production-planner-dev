@@ -3,20 +3,27 @@
  *
  * Step 1 — Preview: the server works out, WITHOUT writing anything, what each
  * recipe's draft product would be (template, title, tags, details, barcode,
- * images) and what's missing. Step 2 — create one recipe's
+ * images, the nutrition image) and what's missing. Step 2 — create one recipe's
  * product, or all of them, after a plain-English confirm. A recipe already
  * linked to a Shopify product is shown as "Already in Shopify" and never
  * duplicated; one that isn't can be linked to an existing product instead.
  *
+ * The nutrition image (custom.nutritional_info) is drawn HERE, in the
+ * browser, from the preview's nutrition rows (lib/nutrition-image.ts +
+ * nutrition-image-canvas.ts) and sent with the create as a PNG; the server
+ * uploads it to Shopify Files and points the product at it.
+ *
  * API: routes/test-box-shopify.ts. Shapes mirror lib/test-box-shopify-run.ts.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, ExternalLink, Link2, Loader2, Search, ShieldAlert, ShoppingBag, X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { base64FromDataUrl, nutritionImageLayout, type NutritionImageRow } from "@/lib/nutrition-image";
+import { drawNutritionPng } from "@/lib/nutrition-image-canvas";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -40,7 +47,8 @@ interface RecipePreview {
   price: { set: string | null; summary: string };
   imagesCopied: boolean;
   metafields: MetafieldLine[];
-  nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string | null }> };
+  nutrition: { complete: boolean; portionWeightG: number | null; rows: NutritionImageRow[] };
+  nutritionImage: { willAttach: boolean; summary: string };
   warnings: string[];
   blocking: string[];
 }
@@ -49,6 +57,7 @@ interface Preview {
   writesBlocked: boolean;
   blockedMessage: string | null;
   missingScopes: string[];
+  missingFileScopes: string[];
   includeImages: boolean;
   templates: Array<{ productId: string; title: string; status: string; tags: string[]; adminUrl: string }>;
   recipes: RecipePreview[];
@@ -121,9 +130,31 @@ export function ShopifyProductsModal({ boxId, onClose }: { boxId: number; onClos
     refetchOnWindowFocus: false,
   });
 
+  // Each recipe's nutrition image, drawn from the preview's numbers (data
+  // URLs). Drawn whenever the numbers are complete, so the preview shows it
+  // even when Shopify can't take it yet; only sent when it will be put on.
+  const nutritionPngs = useMemo(() => {
+    const out = new Map<number, string>();
+    for (const r of preview.data?.recipes ?? []) {
+      if (r.action === "linked" || !r.nutrition.complete) continue;
+      const layout = nutritionImageLayout(r.nutrition.rows, r.nutrition.portionWeightG);
+      if (!layout) continue;
+      try {
+        const png = drawNutritionPng(layout);
+        if (png) out.set(r.recipeId, png);
+      } catch { /* no canvas: the card says the image couldn't be drawn */ }
+    }
+    return out;
+  }, [preview.data]);
+
   const create = useMutation({
-    mutationFn: (recipeIds: number[]) =>
-      call<RunResult>(boxId, "/create", { method: "POST", body: JSON.stringify({ recipeIds, templates, includeImages }) }, true),
+    mutationFn: (recipeIds: number[]) => {
+      const nutritionImages = (preview.data?.recipes ?? [])
+        .filter(r => recipeIds.includes(r.recipeId) && r.nutritionImage.willAttach)
+        .map(r => ({ recipeId: r.recipeId, pngBase64: base64FromDataUrl(nutritionPngs.get(r.recipeId) ?? "") }))
+        .filter((n): n is { recipeId: number; pngBase64: string } => !!n.pngBase64);
+      return call<RunResult>(boxId, "/create", { method: "POST", body: JSON.stringify({ recipeIds, templates, includeImages, nutritionImages }) }, true);
+    },
     onSuccess: r => {
       setResult(r);
       setConfirm(null);
@@ -178,6 +209,11 @@ export function ShopifyProductsModal({ boxId, onClose }: { boxId: number; onClos
               <b>Shopify hasn't given the app permission to create products yet.</b> In the Shopify app's settings (Dev Dashboard → the planner app → Access scopes) add <code>{p.missingScopes.join(", ")}</code>, release the new version and approve it in the store. Until then this can only preview.
             </Banner>
           )}
+          {p.missingFileScopes.length > 0 && (
+            <Banner tone="amber" icon={<ShieldAlert className="w-5 h-5" />}>
+              <b>Shopify hasn't given the app permission to upload files yet ({p.missingFileScopes.join(", ")})</b> — the nutrition images will be left off; add the scope to have them put on. The products are still made. Add it the same way: Dev Dashboard → the planner app → Access scopes, release the new version and approve it in the store.
+            </Banner>
+          )}
 
           <label className="flex items-center gap-3 rounded-2xl border-2 border-border p-3.5 cursor-pointer">
             <input type="checkbox" checked={includeImages} onChange={e => setIncludeImages(e.target.checked)} className="w-6 h-6 accent-emerald-600" />
@@ -194,6 +230,7 @@ export function ShopifyProductsModal({ boxId, onClose }: { boxId: number; onClos
               r={r}
               templates={p.templates}
               blockedBy={blockedBy}
+              nutritionPng={nutritionPngs.get(r.recipeId) ?? null}
               busy={create.isPending}
               onTemplate={productId => setTemplates(t => ({ ...t, [String(r.recipeId)]: productId }))}
               onCreate={() => setConfirm([r.recipeId])}
@@ -217,8 +254,8 @@ export function ShopifyProductsModal({ boxId, onClose }: { boxId: number; onClos
   );
 }
 
-function RecipeCard({ boxId, r, templates, blockedBy, busy, onTemplate, onCreate, onLinked }: {
-  boxId: number; r: RecipePreview; templates: Preview["templates"]; blockedBy: string | null; busy: boolean;
+function RecipeCard({ boxId, r, templates, blockedBy, nutritionPng, busy, onTemplate, onCreate, onLinked }: {
+  boxId: number; r: RecipePreview; templates: Preview["templates"]; blockedBy: string | null; nutritionPng: string | null; busy: boolean;
   onTemplate: (productId: string) => void; onCreate: () => void; onLinked: () => void;
 }) {
   const [showNutrition, setShowNutrition] = useState(false);
@@ -296,9 +333,11 @@ function RecipeCard({ boxId, r, templates, blockedBy, busy, onTemplate, onCreate
             ))}
           </dl>
 
+          <NutritionImagePreview r={r} png={nutritionPng} />
+
           <div>
             <button onClick={() => setShowNutrition(s => !s)} className="text-sm font-semibold text-primary inline-flex items-center gap-1">
-              {showNutrition ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Nutrition from the app {r.nutrition.complete ? "" : "(incomplete)"} — for the nutrition image
+              {showNutrition ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} Nutrition from the app {r.nutrition.complete ? "" : "(incomplete)"} — the numbers in the image
             </button>
             {showNutrition && <NutritionTable n={r.nutrition} />}
           </div>
@@ -340,6 +379,32 @@ function MetafieldRow({ m }: { m: MetafieldLine }) {
         {m.summary}
       </dd>
     </>
+  );
+}
+
+/** The picture that goes on the product's nutrition tab, or why it won't. */
+function NutritionImagePreview({ r, png }: { r: RecipePreview; png: string | null }) {
+  const will = r.nutritionImage.willAttach && !!png;
+  return (
+    <div className={cn("rounded-2xl border-2 p-3.5 flex flex-col sm:flex-row gap-4 items-start", will ? "border-emerald-500/40 bg-emerald-500/5" : "border-border")}>
+      {png ? (
+        <img src={png} alt={`${r.title} nutrition table`} className={cn("flex-shrink-0 w-full sm:w-[300px] rounded-lg border border-border bg-white", !will && "opacity-60")} />
+      ) : (
+        <div className="flex-shrink-0 w-full sm:w-[300px] h-[150px] rounded-lg border-2 border-dashed border-border flex items-center justify-center text-sm text-muted-foreground text-center p-3">
+          No image — the nutrition numbers aren't complete
+        </div>
+      )}
+      <div className="flex-1 min-w-0 space-y-1">
+        <p className="text-base font-bold flex items-center gap-2">
+          {will ? <Check className="w-5 h-5 text-emerald-600" /> : <AlertTriangle className="w-5 h-5 text-amber-600" />}
+          Nutrition image {will ? "— will be put on" : "— left off"}
+        </p>
+        <p className="text-base">
+          {r.nutritionImage.willAttach && !png ? "This page couldn't draw the image, so it will be left off — reload and try again." : r.nutritionImage.summary}
+        </p>
+        {will && <p className="text-sm text-muted-foreground">Uploaded to Shopify Files and shown on the product's nutrition tab. Running it again puts a freshly made one on.</p>}
+      </div>
+    </div>
   );
 }
 
@@ -435,7 +500,7 @@ function ConfirmCreate({ recipes, includeImages, pending, error, onCancel, onCon
       <ul className="text-sm list-disc pl-5 space-y-0.5">
         {recipes.map(r => <li key={r.recipeId}>{r.title}{r.action === "create" ? (includeImages ? " — with the template's images" : " — no images") : " — update"}</li>)}
       </ul>
-      <p className="text-sm text-muted-foreground">Prices come from each recipe's RRP. Barcodes stay blank (GS1, by hand), and each product is linked to its recipe so sales reach the planner.</p>
+      <p className="text-sm text-muted-foreground">Prices come from each recipe's RRP, and each product gets its recipe's nutrition image where the preview says so. Barcodes stay blank (GS1, by hand), and each product is linked to its recipe so sales reach the planner.</p>
       {error && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {error.message}</p>}
     </Shell>
   );
@@ -459,7 +524,7 @@ function Results({ result, onBack }: { result: RunResult; onBack: () => void }) 
       {result.ticked.products && (
         <p className="text-sm flex items-center gap-2"><Check className="w-4 h-4 text-emerald-600" /> Every recipe now has its Shopify product — 'Create Shopify products' is ticked. Next: create the collection.</p>
       )}
-      <p className="text-sm text-muted-foreground">Still by hand (on the launch checklist): GS1 barcodes, the nutrition image, images, and setting everything live on launch day.</p>
+      <p className="text-sm text-muted-foreground">Still by hand (on the launch checklist): GS1 barcodes, the product photos, a nutrition image for any product above that says it was left off, and setting everything live on launch day.</p>
       <button onClick={onBack} className="px-4 py-3 rounded-xl border-2 border-border text-base font-semibold hover:bg-secondary">Back to the preview</button>
     </div>
   );

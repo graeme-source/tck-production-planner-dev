@@ -5,7 +5,9 @@
  * (the launch checklist ticks itself).
  *
  *   POST /api/test-boxes/:id/shopify/preview   what WOULD happen — reads only
- *   POST /api/test-boxes/:id/shopify/create    make / update drafts (one recipe or all)
+ *   POST /api/test-boxes/:id/shopify/create    make / update drafts (one recipe or all), with
+ *                                              each recipe's nutrition image (PNG drawn in the
+ *                                              browser; bigger body limit in lib/big-body-routes.ts)
  *   GET  /api/test-boxes/:id/shopify/search    find an existing product to link (read only)
  *   POST /api/test-boxes/:id/shopify/link      link an existing variant to a recipe (no Shopify write)
  *   GET  /api/test-boxes/:id/shopify/collection           the collection step: status / what it would make
@@ -27,7 +29,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
-import { validate } from "../middleware/validate";
+import { rawBody, validate } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { requireManagerOrAdmin, resolveRole } from "../middleware/roles";
 import { shopifyWritesBlocked, ShopifyWritesBlockedError } from "../services/shopify";
@@ -117,18 +119,27 @@ const running = new Set<number>();
 const CreateBody = z.object({
   recipeIds: z.array(z.number().int().positive()).min(1, "Pick at least one recipe").max(10),
   ...Options,
+  // Each recipe's nutrition table as a base64 PNG (≈50 KB; the decoded
+  // bytes are checked again by checkNutritionPng before any upload).
+  nutritionImages: z.array(z.object({
+    recipeId: z.number().int().positive(),
+    pngBase64: z.string().min(100).max(800_000, "A nutrition image is too big"),
+  })).max(10).optional(),
 });
 router.post("/:id/shopify/create", requireManagerOrAdmin, validate(CreateBody), async (req: Request, res: Response) => {
   const id = idParam(req);
   if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
-  const b = CreateBody.parse(req.body);
+  // Nested array items: read from the raw body (validate() re-builds nested
+  // objects), then parse again so the shape is still enforced.
+  const b = CreateBody.parse(rawBody(req));
   const inBox = new Set(await boxRecipeIds(id));
   if (!b.recipeIds.every(r => inBox.has(r))) { res.status(400).json({ error: "A recipe in the request isn't in this box" }); return; }
   // One run per box at a time: a double tap must not duplicate twice.
   if (running.has(id)) { res.status(409).json({ error: "Already making this box's products — wait for it to finish." }); return; }
   running.add(id);
   try {
-    const result = await runCreate(id, b.recipeIds, { templates: b.templates, includeImages: b.includeImages }, await actor(req), liveShopify, contentLoader(req), shopifyWritesBlocked());
+    const nutritionImages = Object.fromEntries((b.nutritionImages ?? []).map(n => [n.recipeId, n.pngBase64]));
+    const result = await runCreate(id, b.recipeIds, { templates: b.templates, includeImages: b.includeImages, nutritionImages }, await actor(req), liveShopify, contentLoader(req), shopifyWritesBlocked());
     res.status(result.stoppedByGuard ? 503 : 200).json(result.stoppedByGuard ? { ...result, error: result.stoppedByGuard, code: "SHOPIFY_WRITES_BLOCKED" } : result);
   } catch (err) {
     fail(res, err, "create");
