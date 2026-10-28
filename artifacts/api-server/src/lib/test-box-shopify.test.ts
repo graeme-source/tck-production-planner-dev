@@ -69,6 +69,20 @@ describe("making one recipe's product (fake store, no network)", () => {
     expect(r).toMatchObject({ productId: "500", status: "DRAFT", variants: [{ id: "900", title: "2 Pack" }] });
   });
 
+  it("sets the price from the recipe's RRP with the blank barcode on a new product", async () => {
+    const { port, writes } = fakeStore();
+    const r = await applyRecipeProduct(port, { ...input, price: "19.95" }, async () => {});
+    expect(writes.find(w => w.op === "productVariantsBulkUpdate")!.vars).toMatchObject({ variants: [{ id: "gid://shopify/ProductVariant/900", barcode: null, price: "19.95" }] });
+    expect(r.steps).toContain("Set the price to £19.95 from the recipe's RRP");
+  });
+
+  it("a re-run with an RRP sets the price only — the barcode added since is left alone", async () => {
+    const { port, writes } = fakeStore();
+    await applyRecipeProduct(port, { ...input, action: "update", existingProductId: "500", price: "21.50" }, async () => {});
+    const v = (writes.find(w => w.op === "productVariantsBulkUpdate")!.vars as { variants: Array<Record<string, unknown>> }).variants;
+    expect(v).toEqual([{ id: "gid://shopify/ProductVariant/900", price: "21.50" }]);
+  });
+
   it("can leave the images behind", async () => {
     const { port, writes } = fakeStore();
     await applyRecipeProduct(port, { ...input, includeImages: false }, async () => {});

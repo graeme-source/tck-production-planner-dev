@@ -27,7 +27,7 @@ import {
 } from "./test-box-shopify";
 import {
   STANDARD_COOKING_SECTIONS, chooseTemplate, copiedFromRecipeId, decideRecipeAction, descriptionHtml,
-  launchTicks, metafieldPlan, missingWriteScopes, nutritionRows,
+  launchTicks, metafieldPlan, missingWriteScopes, nutritionRows, productPrice,
   recipeWarnings, sameTitle, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
   type MetafieldLine, type RecipeAction, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
@@ -56,6 +56,8 @@ export interface RecipePreview {
   tagsRemoved: string[];
   statusAfter: string;
   barcode: string;
+  /** The price after the run: from the recipe's RRP, or left as it is. */
+  price: { set: string | null; summary: string };
   imagesCopied: boolean;
   metafields: MetafieldLine[];
   nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string | null }> };
@@ -80,6 +82,7 @@ interface Internal {
     templateMainVariantIds: string[];
     createdProductId: string | null;
     descriptionHtml: string;
+    price: string | null;
   }>;
 }
 
@@ -114,7 +117,7 @@ export async function buildPlan(
 
   const recipes = await db.select({
     id: recipesTable.id, name: recipesTable.name, description: recipesTable.description, packSize: recipePackSizeOrOne,
-    notes: recipesTable.notes, isDraft: recipesTable.isDraft,
+    notes: recipesTable.notes, isDraft: recipesTable.isDraft, rrp: recipesTable.rrp,
   }).from(testBoxRecipesTable)
     .innerJoin(recipesTable, eq(recipesTable.id, testBoxRecipesTable.recipeId))
     .where(eq(testBoxRecipesTable.testBoxId, boxId))
@@ -199,6 +202,7 @@ export async function buildPlan(
       deckSummary: loaded.deck ? loaded.deck.deckText.replace(/\*\*/g, "") : null,
     };
     const base = action === "update" ? mineSnap : template;
+    const price = productPrice(r.rrp, base?.variants.length ?? 0, base?.variants[0]?.price ?? null);
     const plan = metafieldPlan(content, base?.metafields ?? [], STANDARD_COOKING);
     const { warnings, blocking } = recipeWarnings({
       action,
@@ -225,6 +229,7 @@ export async function buildPlan(
       templateMainVariantIds: template ? template.variants.filter(v => mainMapped.has(v.id)).map(v => v.id) : [],
       createdProductId: mineSnap ? mine!.shopifyProductId : null,
       descriptionHtml: r.description?.trim() ? descriptionHtml(r.description) : "",
+      price: price.price,
     });
     previews.push({
       recipeId: r.id,
@@ -243,6 +248,7 @@ export async function buildPlan(
       tagsRemoved: tagChanges((action === "update" ? mineSnap?.tags : template?.tags) ?? [], tags).removed,
       statusAfter: action === "update" ? (mineSnap?.status ?? "DRAFT") : "DRAFT",
       barcode: action === "create" ? "Left blank — add the GS1 barcode by hand" : "Not changed",
+      price: { set: price.price, summary: price.summary },
       imagesCopied: action === "create" ? opts.includeImages : false,
       metafields: plan.lines,
       nutrition: {
@@ -355,6 +361,7 @@ export async function runCreate(
         includeImages: opts.includeImages,
         content: internal.content,
         standardCooking: STANDARD_COOKING,
+        price: internal.price,
       }, async (productId) => {
         // Stored before anything else happens to it — a later failure can
         // never lead to a second duplicate.

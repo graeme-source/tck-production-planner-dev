@@ -168,6 +168,8 @@ export interface ApplyInput {
   includeImages: boolean;
   content: RecipeContent;
   standardCooking: string;
+  /** "19.95" from the recipe's RRP (rules productPrice), or null to leave it. */
+  price?: string | null;
 }
 
 export interface ApplyResult {
@@ -225,18 +227,25 @@ export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, o
   check("the product update", u.productUpdate.userErrors);
   steps.push(input.action === "create" ? "Set title, tags and description; status Draft" : "Updated title, tags and description");
 
-  // Barcodes blank on a new product (GS1 numbers go on by hand). Never on a
-  // re-run — they may have been added since.
-  if (input.action === "create" && product.variants.length) {
+  // Barcodes blank on a new product (GS1 numbers go on by hand) — never on a
+  // re-run, they may have been added since. Price from the recipe's RRP, on
+  // a one-variant product only, every run.
+  const clearBarcode = input.action === "create";
+  const price = input.price && product.variants.length === 1 ? input.price : null;
+  if (product.variants.length && (clearBarcode || price)) {
     const b = await port.write<{ productVariantsBulkUpdate: { userErrors: UserErrors } }>(
       "productVariantsBulkUpdate",
       `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
         productVariantsBulkUpdate(productId: $productId, variants: $variants) { userErrors { field message } }
       }`,
-      { productId: productGid(productId), variants: product.variants.map(v => ({ id: variantGid(v.id), barcode: null })) },
+      {
+        productId: productGid(productId),
+        variants: product.variants.map(v => ({ id: variantGid(v.id), ...(clearBarcode ? { barcode: null } : {}), ...(price ? { price } : {}) })),
+      },
     );
-    check("clearing the barcodes", b.productVariantsBulkUpdate.userErrors);
-    steps.push("Cleared the barcode");
+    check(clearBarcode ? "clearing the barcode" : "setting the price", b.productVariantsBulkUpdate.userErrors);
+    if (clearBarcode) steps.push("Cleared the barcode");
+    if (price) steps.push(`Set the price to £${price} from the recipe's RRP`);
   }
 
   const plan = metafieldPlan(input.content, product.metafields, input.standardCooking);

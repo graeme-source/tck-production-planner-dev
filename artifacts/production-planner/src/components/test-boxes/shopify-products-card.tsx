@@ -37,6 +37,7 @@ interface RecipePreview {
   tagsRemoved: string[];
   statusAfter: string;
   barcode: string;
+  price: { set: string | null; summary: string };
   imagesCopied: boolean;
   metafields: MetafieldLine[];
   nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string | null }> };
@@ -287,6 +288,8 @@ function RecipeCard({ boxId, r, templates, blockedBy, busy, onTemplate, onCreate
               {r.tags.map(t => <Chip key={t} tone="emerald">{t}</Chip>)}
               {r.tagsRemoved.map(t => <span key={t} className="px-2 py-0.5 rounded-full bg-secondary text-muted-foreground text-xs line-through" title="Removed (carried over from the template)">{t}</span>)}
             </dd>
+            <dt className="text-muted-foreground">Price</dt>
+            <dd className={cn(r.price.set ? "font-semibold" : "text-amber-700 dark:text-amber-300")}>{r.price.summary}</dd>
             <dt className="text-muted-foreground">Barcode</dt><dd>{r.barcode}</dd>
             {r.metafields.map(m => (
               <MetafieldRow key={m.field} m={m} />
@@ -432,7 +435,7 @@ function ConfirmCreate({ recipes, includeImages, pending, error, onCancel, onCon
       <ul className="text-sm list-disc pl-5 space-y-0.5">
         {recipes.map(r => <li key={r.recipeId}>{r.title}{r.action === "create" ? (includeImages ? " — with the template's images" : " — no images") : " — update"}</li>)}
       </ul>
-      <p className="text-sm text-muted-foreground">Barcodes stay blank (GS1, by hand), and each product is linked to its recipe so sales reach the planner.</p>
+      <p className="text-sm text-muted-foreground">Prices come from each recipe's RRP. Barcodes stay blank (GS1, by hand), and each product is linked to its recipe so sales reach the planner.</p>
       {error && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {error.message}</p>}
     </Shell>
   );
@@ -456,7 +459,7 @@ function Results({ result, onBack }: { result: RunResult; onBack: () => void }) 
       {result.ticked.products && (
         <p className="text-sm flex items-center gap-2"><Check className="w-4 h-4 text-emerald-600" /> Every recipe now has its Shopify product — 'Create Shopify products' is ticked. Next: create the collection.</p>
       )}
-      <p className="text-sm text-muted-foreground">Still by hand (on the launch checklist): GS1 barcodes, the nutrition image, images, price, and setting everything live on launch day.</p>
+      <p className="text-sm text-muted-foreground">Still by hand (on the launch checklist): GS1 barcodes, the nutrition image, images, and setting everything live on launch day.</p>
       <button onClick={onBack} className="px-4 py-3 rounded-xl border-2 border-border text-base font-semibold hover:bg-secondary">Back to the preview</button>
     </div>
   );

@@ -391,6 +391,22 @@ export function recipeWarnings(input: {
 }
 
 /**
+ * The product's price comes from the recipe's RRP (Graeme, 28 Oct 2026), so
+ * the price set while costing the recipe is what goes on sale. Only on a
+ * one-variant product (every test-box product so far: "2 Pack") — with more
+ * variants the app can't tell which pack the RRP is for, so they're left as
+ * they are. No RRP: the price is left as it is (the template's, on a new one).
+ */
+export function productPrice(rrp: unknown, variantCount: number, current: string | null): { price: string | null; summary: string } {
+  const n = Number(rrp);
+  const now = current != null && current !== "" ? `£${Number(current).toFixed(2)}` : null;
+  if (!(n > 0)) return { price: null, summary: `No RRP on the recipe — ${now ? `stays ${now}` : "left as it is"}. Set the RRP on the recipe first.` };
+  if (variantCount !== 1) return { price: null, summary: `Several variants — prices left as they are (RRP £${n.toFixed(2)}); set them in Shopify.` };
+  const price = n.toFixed(2);
+  return { price, summary: now && Number(current) === Number(price) ? `£${price} (the recipe's RRP)` : `£${price} from the recipe's RRP${now ? ` (was ${now})` : ""}` };
+}
+
+/**
  * Which of a new product's variants to link to the recipe: a one-variant
  * product (every test-box product so far: "2 Pack") links that variant;
  * otherwise only variants whose title matches a template variant that is the

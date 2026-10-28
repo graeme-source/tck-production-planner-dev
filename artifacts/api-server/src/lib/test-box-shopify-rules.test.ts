@@ -3,8 +3,7 @@ import {
   MF, chooseTemplate, collectionHandle, copiedFromRecipeId, decideRecipeAction, descriptionHtml, findBoxCollection,
   launchTicks, metafieldPlan, missingWriteScopes, newCollectionSettings, nutritionRows, perPackValue,
   previousBoxCollection, productSearchQuery, recipeWarnings, sameTitle, singleLine, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
-  type CollectionInfo, type MetafieldValue,
-} from "./test-box-shopify-rules";
+  type CollectionInfo, type MetafieldValue, productPrice } from "./test-box-shopify-rules";
 
 describe("tags", () => {
   it("are exactly show, no-wholesale, calzones and the box name", () => {
@@ -211,5 +210,17 @@ describe("readiness and ticks", () => {
   it("spots the same product title written differently", () => {
     expect(sameTitle("Properoni Chicken & Chorizo", "properoni chicken and chorizo")).toBe(true);
     expect(sameTitle("Properoni Chicken", "Properoni Chorizo")).toBe(false);
+  });
+});
+
+describe("productPrice", () => {
+  it("takes the recipe's RRP on a one-variant product", () => {
+    expect(productPrice(19.95, 1, "17.95")).toEqual({ price: "19.95", summary: "£19.95 from the recipe's RRP (was £17.95)" });
+    expect(productPrice("19.95", 1, "19.95").summary).toBe("£19.95 (the recipe's RRP)");
+  });
+  it("leaves the price alone with no RRP, or several variants", () => {
+    expect(productPrice(0, 1, "17.95")).toMatchObject({ price: null });
+    expect(productPrice(0, 1, "17.95").summary).toContain("stays £17.95");
+    expect(productPrice(19.95, 2, "17.95")).toMatchObject({ price: null });
   });
 });
