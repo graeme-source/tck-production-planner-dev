@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, type ReactNode } from "react";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListSubRecipes, useListIngredients, useGetSubRecipe, useGetUpfSummary, getGetSubRecipeQueryKey, getGetUpfSummaryQueryKey } from "@workspace/api-client-react";
 import { UpfChip, UpfPercentPill } from "@/components/upf-badge";
@@ -10,7 +10,7 @@ import { rowsToDeclarationItems } from "@/lib/declaration-fix";
 import { SubRecipeLabelUsage } from "@/components/sub-recipe-label-usage";
 import { toGrams, kgOrNull, costPerKg, formatCostPerKg } from "@workspace/units";
 import { PageHeader } from "@/components/page-header";
-import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown } from "lucide-react";
+import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
@@ -20,13 +20,13 @@ import { NumberInput } from "@/components/ui/number-input";
 import { SubRecipePrepTimeField } from "@/components/sub-recipe-prep-time-field";
 import { SubRecipeCookChillToggle } from "@/components/cook-chill/sub-recipe-cook-chill-toggle";
 import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
-import { EditorForm } from "@/components/recipe-editor/editor-form";
-import { LineRows } from "@/components/recipe-editor/line-rows";
+import { EDITOR_INPUT, EditorField, EditorSection, EditorTick, EditorTotals, NotesField, RecipeEditorShell, useEditorTabs } from "@/components/recipe-editor/editor-shell";
+import { LinesTable } from "@/components/recipe-editor/lines-table";
 import { useEditorIngredients } from "@/components/recipe-editor/use-editor-ingredients";
 import { recipeSubRecipeLineCost, subRecipeIngredientLineCost } from "@/lib/recipe-line-cost";
 import { buildSubRecipePayload } from "@/lib/recipe-editor-payload";
+import { SUB_RECIPE_FIELD_TABS, type EditorTabId } from "@/lib/recipe-editor-tabs";
 import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
-import { scrollToFirstError } from "@/components/recipe-editor/scroll-to-error";
 
 // The mix yield is derived from the components on every change, so it never
 // counts as an unsaved change on its own.
@@ -187,24 +187,32 @@ function DeclarationPreview({
   );
 }
 
-function YieldSanityCheck({
-  ingredientRows,
-  allIngredients,
-  componentRows,
-  allSubRecipes,
-  yieldValue,
-  yieldUnit,
-}: {
+/** "1.250 kg" or "850 g". */
+function formatKg(kg: number): string {
+  return kg >= 1 ? `${kg.toFixed(3)} kg` : `${Math.round(kg * 1000)} g`;
+}
+
+type YieldSanityProps = {
   ingredientRows: { ingredientId: number; quantity: number }[];
   allIngredients: IngredientOption[];
   componentRows: { componentSubRecipeId: number; quantity: number }[];
   allSubRecipes: SubRecipeOption[];
   yieldValue: number;
   yieldUnit: string;
-}) {
+};
+
+/** Yield against the weight of the lines — null when it can't be compared.
+ *  Drives the check below and the amber dot on the Ingredients tab. */
+function checkYield(
+  ingredientRows: YieldSanityProps["ingredientRows"],
+  allIngredients: IngredientOption[],
+  componentRows: YieldSanityProps["componentRows"],
+  allSubRecipes: SubRecipeOption[],
+  yieldValue: number,
+  yieldUnit: string,
+): { cookedKg: number; yieldKg: number; ratio: number; ok: boolean; allWeight: boolean } | null {
   let cookedKg = 0;
   let allWeight = true;
-
   for (const row of ingredientRows) {
     const ing = allIngredients.find(i => i.id === row.ingredientId);
     if (!ing) continue;
@@ -212,17 +220,26 @@ function YieldSanityCheck({
     if (kg === null) { allWeight = false; continue; }
     cookedKg += kg;
   }
-
-  const componentKg = computeComponentKg(componentRows, allSubRecipes);
-  cookedKg += componentKg;
-
+  cookedKg += computeComponentKg(componentRows, allSubRecipes);
   if (cookedKg === 0) return null;
   const yieldKg = toKg(yieldValue, yieldUnit);
   if (yieldKg === null) return null;
-
   const ratio = yieldKg / cookedKg;
+  return { cookedKg, yieldKg, ratio, ok: ratio >= 0.5 && ratio <= 1.05, allWeight };
+}
+
+function YieldSanityCheck({
+  ingredientRows,
+  allIngredients,
+  componentRows,
+  allSubRecipes,
+  yieldValue,
+  yieldUnit,
+}: YieldSanityProps) {
+  const check = checkYield(ingredientRows, allIngredients, componentRows, allSubRecipes, yieldValue, yieldUnit);
+  if (!check) return null;
+  const { cookedKg, yieldKg, ratio, ok, allWeight } = check;
   const pct = (ratio * 100).toFixed(0);
-  const ok = ratio >= 0.5 && ratio <= 1.05;
   const warning = !ok;
 
   return (
@@ -359,9 +376,12 @@ function SubRecipeForm({
   onDirtyChange,
   submitRef,
   subRecipeId,
+  panels,
 }: {
   /** Set when editing — drives the "On product labels" verdicts. */
   subRecipeId?: number;
+  /** Edit mode: the self-saving panels for each tab (prep time, cook-chill…). */
+  panels?: Partial<Record<EditorTabId, ReactNode>>;
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
@@ -408,7 +428,9 @@ function SubRecipeForm({
   const watchedYieldUnit = watch("yieldUnit");
   const watchedYieldPercent = watch("yieldPercent");
 
-  const save = handleSubmit(onSubmit, scrollToFirstError);
+  // The tab bar shared with final products; a refused save opens the tab with the first error.
+  const tabs = useEditorTabs(SUB_RECIPE_FIELD_TABS);
+  const save = handleSubmit(onSubmit, tabs.onInvalid);
   useEffect(() => {
     if (submitRef) {
       submitRef.current = save;
@@ -439,223 +461,176 @@ function SubRecipeForm({
     setValue("yield", autoValue, { shouldValidate: false });
   }, [totalComponentKg, effectivePercent, watchedYieldUnit, setValue]);
 
-
+  const err = (m: unknown) => (m ? <span className="text-destructive text-sm">{String(m)}</span> : null);
+  const hasLines = (watchedIngredients?.length ?? 0) > 0 || (watchedSubRecipeComponents?.length ?? 0) > 0;
+  const yieldCheck = hasLines
+    ? checkYield(watchedIngredients ?? [], localIngredients, watchedSubRecipeComponents ?? [], allSubRecipes, watchedYield ?? 0, watchedYieldUnit ?? "kg")
+    : null;
+  const declarationProblems = declarationIssues(rowsToDeclarationItems(watchedIngredients ?? [], localIngredients)).length;
 
   return (
     <>
       {quickAddDialog}
 
-      {/* Shared layout with the recipe editor (components/recipe-editor). */}
-      <EditorForm
+      {/* The same tabbed editor as final products (components/recipe-editor/editor-shell). */}
+      <RecipeEditorShell
+        tabs={tabs}
+        errors={errors}
+        fieldTabs={SUB_RECIPE_FIELD_TABS}
         onSubmit={save}
-        details={<>
-        <div>
-          <label className="text-sm font-medium mb-1 block">Name</label>
-          <input
-            {...register("name")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="e.g. Calzone Dough"
-          />
-          {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
-        </div>
+        warnings={{ ingredients: yieldCheck != null && !yieldCheck.ok, label: declarationProblems > 0 }}
+        content={{
+          ingredients: {
+            hint: "The lines and their costs",
+            fields: <>
+              <EditorTotals
+                tiles={[
+                  { label: "Total in", value: totalComponentKg > 0 ? formatKg(totalComponentKg) : "—", sub: "Weight of every line" },
+                  { label: "Yield %", value: `${effectivePercent}%`, sub: effectivePercent < 100 ? "Process loss set on Details" : "No loss (blank = 100%)" },
+                  { label: "Mix yield", value: watchedYield ? `${Number(watchedYield)} ${watchedYieldUnit ?? ""}` : "—", sub: "What one mix makes", highlight: true },
+                ]}
+              />
+              <LinesTable
+                form={form}
+                costLabel="per batch"
+                ingredients={{
+                  name: "ingredients",
+                  idField: "ingredientId",
+                  options: localIngredients,
+                  onQuickAdd: openQuickAdd,
+                  newRow: () => ({ ingredientId: 0, quantity: 0, hideFromPrep: false, marinadeForIngredientId: null, marinadeAddAtCooking: false }),
+                  lineCost: row => subRecipeIngredientLineCost(row?.quantity, localIngredients.find(i => i.id === Number(row?.ingredientId))),
+                  hideFromPrep: true,
+                  ratioNote: true,
+                  link: {
+                    word: "Marinade for",
+                    addLabel: "+ Marinade for a raw meat",
+                    // Only a non-meat line can be a marinade, and only for a raw
+                    // meat in this sub-recipe (migration 0111).
+                    targets: row => localIngredients.find(i => i.id === Number(row?.ingredientId))?.category === "raw_meat" ? [] : rawMeatTargets,
+                  },
+                }}
+                subRecipes={{
+                  name: "subRecipeComponents",
+                  idField: "componentSubRecipeId",
+                  options: availableSubRecipes,
+                  upfById: subUpfById,
+                  addDisabled: availableSubRecipes.length === 0,
+                  addDisabledText: "No other sub-recipes available yet.",
+                  newRow: () => ({ componentSubRecipeId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false }),
+                  lineCost: row => recipeSubRecipeLineCost(row?.quantity, allSubRecipes.find(s => s.id === Number(row?.componentSubRecipeId)), 1),
+                  link: { word: "Marinade for", addLabel: "+ Marinade for a raw meat", targets: () => rawMeatTargets },
+                }}
+              />
+              {hasLines && (
+                <YieldSanityCheck
+                  ingredientRows={watchedIngredients ?? []}
+                  allIngredients={localIngredients}
+                  componentRows={watchedSubRecipeComponents ?? []}
+                  allSubRecipes={allSubRecipes}
+                  yieldValue={watchedYield ?? 0}
+                  yieldUnit={watchedYieldUnit ?? "kg"}
+                />
+              )}
+            </>,
+            panels: panels?.ingredients,
+          },
+          details: {
+            hint: "Name, yield, shelf life",
+            fields: <>
+              <EditorSection title="Name and description">
+                <div className="grid grid-cols-1 gap-4">
+                  <EditorField label="Name *" error={err(errors.name?.message)}>
+                    <input {...register("name")} className={EDITOR_INPUT} placeholder="e.g. Calzone Dough" />
+                  </EditorField>
+                  <EditorField label="Description (optional)">
+                    <textarea {...register("description")} className={cn(EDITOR_INPUT, "min-h-[64px] resize-y")} placeholder="Brief description..." />
+                  </EditorField>
+                </div>
+              </EditorSection>
 
-        <div>
-          <label className="text-sm font-medium mb-1 block">Description (optional)</label>
-          <textarea
-            {...register("description")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[48px] resize-none"
-            placeholder="Brief description..."
-          />
-        </div>
+              <EditorSection title="Yield and shelf life" icon={<Scale className="w-4 h-4 text-primary" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <EditorField
+                    label={<span className="flex items-center justify-between gap-2">Mix yield *
+                      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                        {effectivePercent < 100 ? `Auto · ${effectivePercent}% of weight` : "Auto · 100% of weight"}
+                      </span>
+                    </span>}
+                    error={err(errors.yield?.message)}
+                    hint={`Always tracks the recipe's total weight (${totalComponentKg > 0 ? `${totalComponentKg.toFixed(3)} kg of components` : "add ingredients"}) so it can never go stale. Use Yield % for process loss.`}
+                  >
+                    <input
+                      type="number"
+                      step="0.001"
+                      {...register("yield")}
+                      readOnly
+                      tabIndex={-1}
+                      className={cn(EDITOR_INPUT, "bg-primary/5 border-primary/40 cursor-default focus:ring-0")}
+                      placeholder="Add ingredients…"
+                    />
+                  </EditorField>
+                  <EditorField
+                    label={<>Yield % <span className="font-normal text-muted-foreground">(blank = 100%)</span></>}
+                    error={err(errors.yieldPercent?.message)}
+                    hint="Only set when the process genuinely loses weight — e.g. 85 for a sauce reduced to 85% of its inputs."
+                  >
+                    <input type="number" step="0.1" min="1" max="100" {...register("yieldPercent")} className={EDITOR_INPUT} placeholder="100" />
+                  </EditorField>
+                  <EditorField label="Yield unit *" error={err(errors.yieldUnit?.message)}>
+                    <input {...register("yieldUnit")} className={EDITOR_INPUT} placeholder="kg, L, portions" />
+                  </EditorField>
+                  <EditorField label="Shelf life (days)" error={err(errors.shelfLifeDays?.message)}>
+                    <input type="number" step="1" min="0" {...register("shelfLifeDays")} className={EDITOR_INPUT} placeholder="e.g. 3" />
+                  </EditorField>
+                </div>
+              </EditorSection>
 
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <div className="flex items-center justify-between mb-1">
-              <label className="text-sm font-medium">Mix Yield *</label>
-              <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-primary/10 text-primary">
-                {effectivePercent < 100 ? `Auto · ${effectivePercent}% of weight` : "Auto · 100% of weight"}
-              </span>
-            </div>
-            <input
-              type="number"
-              step="0.001"
-              {...register("yield")}
-              readOnly
-              tabIndex={-1}
-              className="w-full px-3 py-2 bg-primary/5 border border-primary/40 rounded-lg text-sm focus:outline-none cursor-default"
-              placeholder="Add ingredients…"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Always tracks the recipe's total weight ({totalComponentKg > 0 ? `${totalComponentKg.toFixed(3)} kg of components` : "add ingredients"}) so it can never go stale. Use Yield % for process loss.
-            </p>
-            {errors.yield && <span className="text-destructive text-xs">{errors.yield.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Yield % <span className="font-normal text-muted-foreground">(blank = 100%)</span></label>
-            <input
-              type="number"
-              step="0.1"
-              min="1"
-              max="100"
-              {...register("yieldPercent")}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="100"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Only set when the process genuinely loses weight — e.g. 85 for a sauce reduced to 85% of its inputs.
-            </p>
-            {errors.yieldPercent && <span className="text-destructive text-xs">{errors.yieldPercent.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Yield Unit *</label>
-            <input
-              {...register("yieldUnit")}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="kg, L, portions"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
-            <input
-              type="number"
-              step="1"
-              min="0"
-              {...register("shelfLifeDays")}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="e.g. 3"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 py-1">
-          <input
-            type="checkbox"
-            id="isBase"
-            {...register("isBase")}
-            className="w-4 h-4 rounded border-border accent-primary"
-          />
-          <div>
-            <label htmlFor="isBase" className="text-sm font-medium cursor-pointer">Base sub-recipe</label>
-            <p className="text-xs text-muted-foreground">Bases (sauces, dough) are managed in the Bases & Sauces station. Non-base sub-recipes appear in the ad-hoc Replenish flow.</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 py-1">
-          <input
-            type="checkbox"
-            id="expandInPrep"
-            {...register("expandInPrep")}
-            className="w-4 h-4 rounded border-border accent-primary"
-          />
-          <div>
-            <label htmlFor="expandInPrep" className="text-sm font-medium cursor-pointer">Show individual ingredients in prep</label>
-            <p className="text-xs text-muted-foreground">When enabled, the prep station shows each ingredient separately instead of a single sub-recipe line.</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 py-1">
-          <input
-            type="checkbox"
-            id="prepOneTinPerRecipe"
-            {...register("prepOneTinPerRecipe")}
-            className="w-4 h-4 rounded border-border accent-primary"
-          />
-          <div>
-            <label htmlFor="prepOneTinPerRecipe" className="text-sm font-medium cursor-pointer">One tin per recipe in Main Prep</label>
-            <p className="text-xs text-muted-foreground">Main Prep weighs this as a single tin for each recipe, however many batches (e.g. Garlic Butter). The Orders page counts the same tins.</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-3 py-1">
-          <input
-            type="checkbox"
-            id="madeOnProductionDay"
-            {...register("madeOnProductionDay")}
-            className="w-4 h-4 rounded border-border accent-primary"
-          />
-          <div>
-            <label htmlFor="madeOnProductionDay" className="text-sm font-medium cursor-pointer">Made on production day (dough only)</label>
-            <p className="text-xs text-muted-foreground">For doughs mixed on the day of production (e.g. cinnamon bun dough) instead of the day before. The dough station shows it on the plan's own day, not the day-before view.</p>
-          </div>
-        </div>
-
-        <div>
-          <label className="text-sm font-medium">Label Declaration Name</label>
-          <input
-            {...register("labelDeclaration")}
-            placeholder="e.g. Tomato Sauce — used as compound ingredient name on labels"
-            className="w-full mt-1 px-3 py-2 bg-background border border-border rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <p className="text-xs text-muted-foreground mt-1">If set, this name appears in the ingredient deck when this sub-recipe is listed as a compound ingredient.</p>
-          <DeclarationPreview
-            ingredientRows={watchedIngredients ?? []}
-            allIngredients={localIngredients}
-            componentRows={watchedSubRecipeComponents ?? []}
-            allSubRecipes={allSubRecipes}
-            compoundName={watchedLabelDeclaration}
-          />
-          <SubRecipeLabelUsage subRecipeId={subRecipeId ?? null} />
-        </div>
-
-        </>}
-        lines={[
-          <LineRows
-            key="ingredients"
-            form={form}
-            kind="ingredient"
-            name="ingredients"
-            idField="ingredientId"
-            title="Ingredients"
-            emptyText="No raw ingredients added yet."
-            addLabel="Add ingredient to sub-recipe"
-            options={localIngredients}
-            onQuickAdd={openQuickAdd}
-            newRow={() => ({ ingredientId: 0, quantity: 0, hideFromPrep: false, marinadeForIngredientId: null, marinadeAddAtCooking: false })}
-            lineCost={row => subRecipeIngredientLineCost(row?.quantity, localIngredients.find(i => i.id === Number(row?.ingredientId)))}
-            hideFromPrep
-            ratioNote
-            link={{
-              word: "Marinade for",
-              addLabel: "+ Marinade for a raw meat",
-              // Only a non-meat line can be a marinade, and only for a raw
-              // meat in this sub-recipe (migration 0111).
-              targets: row => localIngredients.find(i => i.id === Number(row?.ingredientId))?.category === "raw_meat" ? [] : rawMeatTargets,
-            }}
-          />,
-          <LineRows
-            key="components"
-            form={form}
-            kind="subRecipe"
-            name="subRecipeComponents"
-            idField="componentSubRecipeId"
-            tone="accent"
-            title="Sub-recipe Components"
-            emptyText={availableSubRecipes.length === 0 ? "No other sub-recipes available yet." : "No nested sub-recipes added yet."}
-            addLabel="Add sub-recipe component"
-            addDisabled={availableSubRecipes.length === 0}
-            options={availableSubRecipes}
-            upfById={subUpfById}
-            newRow={() => ({ componentSubRecipeId: 0, quantity: 0, marinadeForIngredientId: null, marinadeAddAtCooking: false })}
-            lineCost={row => recipeSubRecipeLineCost(row?.quantity, allSubRecipes.find(s => s.id === Number(row?.componentSubRecipeId)), 1)}
-            link={{ word: "Marinade for", addLabel: "+ Marinade for a raw meat", targets: () => rawMeatTargets }}
-          />,
-        ]}
-        afterLines={<>
-          {errors.ingredients?.message && (
-            <span className="text-destructive text-sm block">{errors.ingredients.message}</span>
-          )}
-          {((watchedIngredients?.length ?? 0) > 0 || (watchedSubRecipeComponents?.length ?? 0) > 0) && (
-            <YieldSanityCheck
-              ingredientRows={watchedIngredients ?? []}
-              allIngredients={localIngredients}
-              componentRows={watchedSubRecipeComponents ?? []}
-              allSubRecipes={allSubRecipes}
-              yieldValue={watchedYield ?? 0}
-              yieldUnit={watchedYieldUnit ?? "kg"}
-            />
-          )}
-        </>}
-        notes={register("notes")}
+              <NotesField register={register("notes")} />
+            </>,
+          },
+          production: {
+            hint: "Stations and prep",
+            fields: (
+              <EditorSection title="How it's made">
+                <div className="space-y-3">
+                  <EditorTick id="isBase" register={register("isBase")} label="Base sub-recipe" hint="Bases (sauces, dough) are managed in the Bases & Sauces station. Non-base sub-recipes appear in the ad-hoc Replenish flow." />
+                  <EditorTick id="expandInPrep" register={register("expandInPrep")} label="Show individual ingredients in prep" hint="When enabled, the prep station shows each ingredient separately instead of a single sub-recipe line." />
+                  <EditorTick id="prepOneTinPerRecipe" register={register("prepOneTinPerRecipe")} label="One tin per recipe in Main Prep" hint="Main Prep weighs this as a single tin for each recipe, however many batches (e.g. Garlic Butter). The Orders page counts the same tins." />
+                  <EditorTick id="madeOnProductionDay" register={register("madeOnProductionDay")} label="Made on production day (dough only)" hint="For doughs mixed on the day of production (e.g. cinnamon bun dough) instead of the day before. The dough station shows it on the plan's own day, not the day-before view." />
+                </div>
+              </EditorSection>
+            ),
+            panels: panels?.production,
+          },
+          label: {
+            hint: "Declaration, where it prints",
+            fields: (
+              <EditorSection title="On the label">
+                <EditorField
+                  label="Label declaration name"
+                  hint="If set, this name appears in the ingredient deck when this sub-recipe is listed as a compound ingredient."
+                >
+                  <input
+                    {...register("labelDeclaration")}
+                    placeholder="e.g. Tomato Sauce — used as compound ingredient name on labels"
+                    className={EDITOR_INPUT}
+                  />
+                </EditorField>
+                <DeclarationPreview
+                  ingredientRows={watchedIngredients ?? []}
+                  allIngredients={localIngredients}
+                  componentRows={watchedSubRecipeComponents ?? []}
+                  allSubRecipes={allSubRecipes}
+                  compoundName={watchedLabelDeclaration}
+                />
+                <SubRecipeLabelUsage subRecipeId={subRecipeId ?? null} />
+              </EditorSection>
+            ),
+            panels: panels?.label,
+          },
+          more: { panels: panels?.more },
+        }}
         save={{
           mode: isEdit ? "edit" : "create",
           dirty,
@@ -731,7 +706,7 @@ function EditSubRecipeDialog({
     : { name: "", description: "", yield: 1, yieldPercent: "", yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, prepOneTinPerRecipe: false, labelDeclaration: "", ingredients: [], subRecipeComponents: [] };
 
   return (
-    <EditorDialog
+    <EditorDialog fullHeight
       open={open}
       onClose={() => { setFormIsDirty(false); onOpenChange(false); }}
       dirty={formIsDirty}
@@ -743,14 +718,6 @@ function EditSubRecipeDialog({
           {isLoading ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
-            <>
-              {detail && (
-                <YieldComparison detail={detail as SubRecipeDetail} />
-              )}
-              {detail && (
-                <SubRecipePrepTimeField subRecipeId={id} yieldText={`${Number(detail.yield)} ${detail.yieldUnit}`} />
-              )}
-              {detail && <SubRecipeCookChillToggle subRecipeId={id} />}
               <SubRecipeForm
                 key={id}
                 subRecipeId={id}
@@ -763,8 +730,16 @@ function EditSubRecipeDialog({
                 onDirtyChange={setFormIsDirty}
                 submitRef={submitRef}
                 onSubmit={(data) => updateSubRecipe.mutate({ id, data: buildSubRecipePayload(data) }, { onSuccess: () => onOpenChange(false) })}
+                // The self-saving panels, each on its tab (components/recipe-editor/editor-shell).
+                panels={detail ? {
+                  // Saved cost summary + yield analysis, under the lines.
+                  ingredients: <YieldComparison detail={detail as SubRecipeDetail} />,
+                  production: <>
+                    <SubRecipePrepTimeField subRecipeId={id} yieldText={`${Number(detail.yield)} ${detail.yieldUnit}`} />
+                    <SubRecipeCookChillToggle subRecipeId={id} />
+                  </>,
+                } : undefined}
               />
-            </>
           )}
     </EditorDialog>
   );
@@ -1190,7 +1165,7 @@ export default function SubRecipes() {
         }
       />
 
-      <EditorDialog
+      <EditorDialog fullHeight
         open={isAddOpen}
         onClose={() => { setAddFormDirty(false); setIsAddOpen(false); }}
         dirty={addFormDirty}
