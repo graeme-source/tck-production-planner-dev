@@ -1,27 +1,32 @@
 /**
- * "Prep-oven timings" card on the Recipes page (Graeme, 2026-10-27) — the
- * managers' window on the self-correcting meat times:
- *   - each hot raw meat: cook (set, never changed) + learned processing +
- *     learned buffer; the processing spread and runs behind it; what the next
- *     learning run would change; trust and recent outcomes; minutes SAT and
- *     builders' WAIT (the two numbers being minimised); model vs human vs
- *     capacity; the 4-hour rule as checked on reviewed days;
- *   - every automatic or hand change, with Revert;
- *   - the week's off-time put-ins and the reasons given;
- *   - leading with two plain numbers: how long meat sat waiting, and how
- *     many times the builders waited (last 14 days);
- *   - measured 4-hour evidence (probe or plausible tap only), and the
- *     admin settings.
+ * "Prep oven timings — self-correcting" (Graeme, 2026-10-27) — the managers'
+ * window on the self-correcting meat times. Shown in two places:
+ *   - the Recipes page, as a fold-away card (MeatTimingLearningCard);
+ *   - the Mixing & Cooking station's Station menu, as a pop-up
+ *     (MeatTimingReviewDialog) — tucked away, not on the station screen.
+ *
+ * Plain by default (Graeme, 28 Oct 2026: "give me information that is just
+ * clear about what has happened and what needs to happen, and what changes
+ * you're proposing"). Each meat reads as: when it goes in now → the change
+ * suggested (or none) and why → what really happened. The numbers behind it
+ * (cook + oven-to-mix + spare, the daily outcomes) sit in a "How it's worked
+ * out" fold; meats without enough days yet are one short list. Wording:
+ * lib/meat-timing-summary.ts.
  *
  * Server: GET/POST/PUT /api/meat-timing (routes/meat-timing.ts).
  */
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Beef, CheckCircle2, Loader2, RotateCcw, Sparkles, ChevronDown, ChevronUp, ShieldCheck, AlertTriangle } from "lucide-react";
+import {
+  AlertTriangle, ArrowRight, Beef, CheckCircle2, ChevronDown, ChevronUp, Clock, Loader2, RotateCcw, ShieldCheck, Sparkles, X,
+} from "lucide-react";
 import { formatClock, type MeatLearning, type TrustSignal } from "@workspace/production-schedule";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { adjustmentFieldLabel, meatTimingSummary } from "@/lib/meat-timing-summary";
+import { formatUkDate } from "@workspace/uk-date";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const KEY = ["meat-timing"];
@@ -74,86 +79,94 @@ async function send(path: string, method: string, body: unknown = {}) {
   return json;
 }
 
-const OUTCOME_DOT: Record<string, string> = {
-  perfect: "bg-emerald-500", builders_waited: "bg-rose-500", too_early: "bg-amber-400", unknown: "bg-muted",
+const OUTCOME: Record<string, { dot: string; label: string }> = {
+  perfect: { dot: "bg-emerald-500", label: "right" },
+  builders_waited: { dot: "bg-rose-500", label: "builders waited" },
+  too_early: { dot: "bg-amber-400", label: "too early" },
+  unknown: { dot: "bg-muted", label: "not known" },
 };
 
-function MeatCard({ m, onToggle, busy }: { m: MeatRow; onToggle: (on: boolean) => void; busy: boolean }) {
-  const l = m.learning;
+function Fold({ label, children, className }: { label: string; children: React.ReactNode; className?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={className}>
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="min-h-[40px] inline-flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground">
+        {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />} {label}
+      </button>
+      {open && <div className="pt-1 space-y-2">{children}</div>}
+    </div>
+  );
+}
+
+function MeatCard({ m, learningEnabled, onToggle, busy }: { m: MeatRow; learningEnabled: boolean; onToggle: (on: boolean) => void; busy: boolean }) {
+  const s = meatTimingSummary(m, learningEnabled);
   const r = m.review;
+  const p = s.proposal;
   return (
     <div className="rounded-xl border-2 border-border p-4 space-y-3 bg-background">
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-lg font-bold flex items-center gap-2"><Beef className="w-5 h-5 text-rose-500" />{m.name}</p>
-          <p className="text-sm text-muted-foreground tabular-nums">
-            In the oven <b className="text-foreground">{m.configuredLeadMinutes ?? "?"} min</b> before the builders need it:
-            {" "}cook {m.cookMinutes ?? "?"} (set) + processing {m.processMinutes ?? "?"} + buffer {m.bufferMinutes ?? 5}
-          </p>
-        </div>
-        {m.trust.trusted ? (
-          <span className="inline-flex items-center gap-1 text-sm font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300 whitespace-nowrap">
-            <CheckCircle2 className="w-4 h-4" /> Trusted
-          </span>
-        ) : m.trust.score != null ? (
-          <span className="text-sm font-semibold px-2.5 py-1 rounded-full bg-secondary whitespace-nowrap">{Math.round(m.trust.score * 100)}% right</span>
-        ) : null}
+      <div>
+        <p className="text-lg font-bold flex items-center gap-2"><Beef className="w-5 h-5 text-rose-500 shrink-0" />{m.name}</p>
+        {s.now && <p className="text-base font-semibold flex items-center gap-1.5 mt-1"><Clock className="w-4 h-4 text-muted-foreground shrink-0" />{s.now}</p>}
       </div>
 
-      {l.status === "learned" && l.processing ? (
-        <p className="text-sm">
-          Out of the oven → first tin mixed (last {l.runsUsed} runs): <b>{Math.round(l.processing.estimate)} min</b>
-          {" "}(typical {Math.round(l.processing.median)}, slow days {Math.round(l.processing.slow)}, range {Math.round(l.processing.min)}–{Math.round(l.processing.max)}).
-          {l.learned && <> Learned: processing <b>{l.learned.processMinutes}</b>, buffer <b>{l.learned.bufferMinutes}</b>{l.needErrorRuns ? ` (from ${l.needErrorRuns} days of builder timing)` : ""}.</>}
-        </p>
+      {p.kind === "change" ? (
+        <div className="rounded-lg border-2 border-primary/40 bg-primary/5 px-3 py-2.5 space-y-1">
+          <p className="text-xs font-bold uppercase tracking-wide text-primary">Suggested change</p>
+          <p className="font-bold flex items-start gap-1.5"><ArrowRight className="w-4 h-4 mt-1 shrink-0 text-primary" />{p.headline}</p>
+          <p className="text-sm">{p.why}</p>
+          <p className="text-sm text-muted-foreground">{p.when}</p>
+        </div>
+      ) : p.kind === "none" ? (
+        <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4 shrink-0" />{p.headline}</p>
       ) : (
-        <p className="text-sm text-muted-foreground">
-          {l.status === "no_cook_time" ? "No cook time set — learning waits for one (it never guesses a cook time)." : `Not enough clean runs yet (${l.runsUsed} usable of ${l.runsSeen}) — the set times stand.`}
-        </p>
-      )}
-      {l.changes.length > 0 && (
-        <ul className="text-sm space-y-1">
-          {l.changes.map(c => (
-            <li key={c.field} className="rounded-lg bg-primary/5 px-3 py-2">
-              Next run: {c.field} {c.from ?? "unset"} → <b>{c.to} min</b>. <span className="text-muted-foreground">{c.reason}</span>
-            </li>
-          ))}
-        </ul>
+        <p className="text-sm text-muted-foreground">{p.headline}</p>
       )}
 
-      {r && r.reviewed > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1" aria-label="Recent days, newest first">
-            {m.trust.recent.map((o, i) => <span key={i} className={cn("w-4 h-4 rounded-full", OUTCOME_DOT[o])} title={o.replace("_", " ")} />)}
-          </div>
-          <div className="grid grid-cols-2 gap-2">
-            <div className="rounded-lg bg-secondary/50 px-3 py-2">
-              <p className="text-2xl font-extrabold tabular-nums">{r.avgSat ?? "—"}<span className="text-sm font-medium"> min</span></p>
-              <p className="text-xs text-muted-foreground">average sat ready before needed</p>
-            </div>
-            <div className={cn("rounded-lg px-3 py-2", r.waited > 0 ? "bg-rose-50 dark:bg-rose-900/20" : "bg-secondary/50")}>
-              <p className="text-2xl font-extrabold tabular-nums">{r.waited}<span className="text-sm font-medium"> days</span></p>
-              <p className="text-xs text-muted-foreground">builders waited{r.avgWait ? ` (~${r.avgWait} min)` : ""}</p>
-            </div>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            {r.reviewed} reviewed: {r.perfect} right, {r.waited} builders waited, {r.tooEarly} too early.
-            {" "}Time followed {r.followed}, not followed {r.notFollowed}. Misses: {r.model} the times', {r.human} people's, {r.capacity} capacity.
-            {m.habit && <> The team habitually puts this in <b>{m.habit}</b> — the learning follows that.</>}
-          </p>
-          {r.safetyChecked > 0 && (
-            <p className={cn("text-sm flex items-center gap-1.5", r.safetyBreaches ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-muted-foreground")}>
-              {r.safetyBreaches ? <AlertTriangle className="w-4 h-4" /> : <ShieldCheck className="w-4 h-4 text-emerald-600" />}
-              4-hour rule (measured chill only): {r.safetyChecked} days, {r.safetyBreaches} over{r.worstSafetyMinutes != null ? ` · longest ${Math.floor(r.worstSafetyMinutes / 60)}h ${r.worstSafetyMinutes % 60}m` : ""}.
-            </p>
-          )}
+      {s.happened.length > 0 && (
+        <div className="space-y-1">
+          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">What happened</p>
+          {s.happened.map((h, i) => <p key={i} className="text-sm">{h}</p>)}
         </div>
       )}
 
-      <label className="flex items-center gap-2 text-sm font-medium">
-        <input type="checkbox" className="w-5 h-5" checked={m.autoLearn} disabled={busy} onChange={e => onToggle(e.target.checked)} />
-        Learn this automatically
-      </label>
+      {r && r.safetyBreaches > 0 && (
+        <p className="text-sm font-semibold text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+          <AlertTriangle className="w-4 h-4 shrink-0" />
+          Over the 4-hour limit on {r.safetyBreaches} of {r.safetyChecked} measured days
+          {r.worstSafetyMinutes != null ? ` (longest ${Math.floor(r.worstSafetyMinutes / 60)}h ${r.worstSafetyMinutes % 60}m)` : ""}.
+        </p>
+      )}
+
+      <Fold label="How it's worked out">
+        {s.breakdown && <p className="text-sm">{s.breakdown}</p>}
+        <p className="text-sm text-muted-foreground">
+          The cooking time is the one set on the ingredient and is never changed. The other two are learned from when the meat
+          came out of the oven and when the first tin was ticked as mixed, and move a few minutes at a time.
+        </p>
+        {m.trust.recent.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+            <span>Recent days, newest first:</span>
+            <span className="flex items-center gap-1" aria-hidden>
+              {m.trust.recent.map((o, i) => <span key={i} className={cn("w-3.5 h-3.5 rounded-full", OUTCOME[o]?.dot)} title={OUTCOME[o]?.label} />)}
+            </span>
+            <span><span className="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500" /> right · <span className="inline-block w-2.5 h-2.5 rounded-full bg-rose-500" /> builders waited · <span className="inline-block w-2.5 h-2.5 rounded-full bg-amber-400" /> too early</span>
+          </div>
+        )}
+        {r && r.notFollowed > 0 && (
+          <p className="text-sm text-muted-foreground">
+            On {r.notFollowed} of {r.reviewed} days it went in at a different time from the one suggested — those days aren't used to learn from.
+          </p>
+        )}
+        {m.habit && <p className="text-sm text-muted-foreground">The team usually puts this in a little {m.habit}, and the timing follows that.</p>}
+        {r && r.safetyChecked > 0 && r.safetyBreaches === 0 && (
+          <p className="text-sm text-muted-foreground flex items-center gap-1.5"><ShieldCheck className="w-4 h-4 text-emerald-600" /> Within the 4-hour limit on all {r.safetyChecked} measured days.</p>
+        )}
+        <label className="flex items-center gap-2 text-sm font-medium min-h-[40px]">
+          <input type="checkbox" className="w-5 h-5" checked={m.autoLearn} disabled={busy} onChange={e => onToggle(e.target.checked)} />
+          Change this meat's time automatically
+        </label>
+      </Fold>
     </div>
   );
 }
@@ -167,21 +180,24 @@ function NumberSetting({ label, placeholder, value, onChange, min, max }: { labe
   );
 }
 
-export function MeatTimingLearningCard() {
+function useCanManage() {
   const { state } = useAuth();
-  const canManage = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
-  const isAdmin = state.status === "authenticated" && state.user.role === "admin";
+  const role = state.status === "authenticated" ? state.user.role : null;
+  return { canManage: role === "admin" || role === "manager", isAdmin: role === "admin" };
+}
+
+/** Everything under the heading — used by the Recipes card and the station pop-up. */
+function MeatTimingReview() {
+  const { isAdmin } = useCanManage();
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const set = (k: string) => (v: string) => setDraft(d => ({ ...d, [k]: v }));
 
   const { data, isLoading, isError, error } = useQuery<Data>({
     queryKey: KEY,
-    enabled: canManage && open,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/meat-timing`, { credentials: "include" });
-      if (!res.ok) throw new Error(`Couldn't load prep-oven timings (${res.status})`);
+      if (!res.ok) throw new Error(`Couldn't load prep oven timings (${res.status})`);
       return res.json();
     },
   });
@@ -193,9 +209,9 @@ export function MeatTimingLearningCard() {
   };
   const fail = (err: unknown) => toast({ title: "Didn't save", description: err instanceof Error ? err.message : String(err), variant: "destructive" });
 
-  const run = useMutation({ mutationFn: () => send("/run", "POST"), onSuccess: (r: { applied: unknown[] }) => done(`Learned: ${r.applied.length} change(s) applied`)(), onError: fail });
-  const review = useMutation({ mutationFn: () => send("/review-now", "POST"), onSuccess: (r: { reviewed: number }) => done(`Reviewed ${r.reviewed} put-in(s)`)(), onError: fail });
-  const revert = useMutation({ mutationFn: (id: number) => send(`/adjustments/${id}/revert`, "POST"), onSuccess: done("Reverted — learning paused for that meat"), onError: fail });
+  const run = useMutation({ mutationFn: () => send("/run", "POST"), onSuccess: (r: { applied: unknown[] }) => done(r.applied.length ? `${r.applied.length} change(s) made` : "Nothing to change")(), onError: fail });
+  const review = useMutation({ mutationFn: () => send("/review-now", "POST"), onSuccess: (r: { reviewed: number }) => done(`Checked ${r.reviewed} put-in(s)`)(), onError: fail });
+  const revert = useMutation({ mutationFn: (id: number) => send(`/adjustments/${id}/revert`, "POST"), onSuccess: done("Put back — automatic changes paused for that meat"), onError: fail });
   const toggle = useMutation({
     mutationFn: (b: { id: number; on: boolean }) => send(`/ingredients/${b.id}`, "PUT", { autoLearn: b.on }),
     onSuccess: done("Saved"), onError: fail,
@@ -205,132 +221,214 @@ export function MeatTimingLearningCard() {
     onSuccess: done("Settings saved"), onError: fail,
   });
 
-  if (!canManage) return null;
-  const reasonLabel = (code: string) => data?.reasons.find(r => r.code === code)?.label ?? (code === "not_answered" ? "Not answered yet" : code);
-  const numbers: Array<[string, string]> = [
-    ["reasonMinutes", "reasonMinutes"], ["waitWeight", "waitWeight"], ["bufferMaxMinutes", "bufferMaxMinutes"],
-  ];
-  const dirty = numbers.some(([k]) => (draft[k] ?? "") !== "");
+  if (isLoading) return <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>;
+  if (isError || !data) return <p className="text-sm text-rose-600">{error instanceof Error ? error.message : "Couldn't load"}</p>;
+
+  const reasonLabel = (code: string) => data.reasons.find(r => r.code === code)?.label ?? (code === "not_answered" ? "No reason given yet" : code);
+  const numbers = ["reasonMinutes", "waitWeight", "bufferMaxMinutes"] as const;
+  const dirty = numbers.some(k => (draft[k] ?? "") !== "");
+
+  // Meats with days to learn from get a card, suggested changes first; the
+  // rest are one short list (Graeme: too much shown by default).
+  const withData = data.meats.filter(m => m.learning.status === "learned");
+  const order = (m: MeatRow) => (m.learning.changes.length > 0 ? 0 : 1);
+  const cards = [...withData].sort((a, b) => order(a) - order(b));
+  const waiting = data.meats.filter(m => m.learning.status !== "learned");
+  const suggested = withData.filter(m => m.learning.changes.length > 0).length;
+  const recent = data.adjustments.slice(0, 10);
 
   return (
+    <div className="space-y-5">
+      {/* The two numbers that matter (Graeme, 2026-10-27). */}
+      <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
+        <div className="rounded-xl bg-secondary/50 p-4">
+          <p className="text-4xl font-extrabold tabular-nums">{data.headline.avgSatMinutes ?? "—"}<span className="text-lg font-semibold"> min</span></p>
+          <p className="text-base">Cooked meat sat waiting to be mixed, on average (last {data.headline.days} days)</p>
+        </div>
+        <div className={cn("rounded-xl p-4", data.headline.builderWaits > 0 ? "bg-rose-50 dark:bg-rose-900/20" : "bg-secondary/50")}>
+          <p className="text-4xl font-extrabold tabular-nums">{data.headline.builderWaits}<span className="text-lg font-semibold"> times</span></p>
+          <p className="text-base">The builders had to wait for a filling (last {data.headline.days} days)</p>
+        </div>
+      </div>
+      {data.headline.measuredOverLimit > 0 && (
+        <p className="text-sm font-semibold text-rose-700 dark:text-rose-300 flex items-center gap-1.5">
+          <AlertTriangle className="w-4 h-4" /> {data.headline.measuredOverLimit} of {data.headline.measuredChillDays} measured chills went over 4 hours.
+        </p>
+      )}
+
+      <p className="text-base">
+        {suggested > 0
+          ? <><b>{suggested} {suggested === 1 ? "meat has" : "meats have"} a suggested change</b> — shown first. </>
+          : "No changes suggested right now. "}
+        <span className="text-muted-foreground">
+          {data.settings.learningEnabled
+            ? "Times are checked and adjusted by themselves after production each day."
+            : "Automatic changes are switched off — nothing changes by itself."}
+        </span>
+      </p>
+
+      {cards.length > 0 && (
+        <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">
+          {cards.map(m => (
+            <MeatCard key={m.ingredientId} m={m} learningEnabled={data.settings.learningEnabled} busy={toggle.isPending}
+              onToggle={on => toggle.mutate({ id: m.ingredientId, on })} />
+          ))}
+        </div>
+      )}
+
+      {waiting.length > 0 && (
+        <div className="rounded-xl border border-border p-4 space-y-2">
+          <p className="font-bold">Not enough days recorded yet — using the set times</p>
+          <ul className="grid gap-x-6 gap-y-1 grid-cols-1 md:grid-cols-2 2xl:grid-cols-3 text-sm">
+            {waiting.map(m => (
+              <li key={m.ingredientId} className="flex justify-between gap-3">
+                <span className="font-medium">{m.name}</span>
+                <span className="text-muted-foreground tabular-nums whitespace-nowrap">
+                  {m.learning.status === "no_cook_time" ? "no cook time set" : m.configuredLeadMinutes != null ? `in ${m.configuredLeadMinutes} min before` : "—"}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <h3 className="text-lg font-bold">Changes made</h3>
+        {recent.length === 0 ? (
+          <p className="text-sm text-muted-foreground">Nothing has been changed yet.</p>
+        ) : (
+          <ul className="space-y-2">
+            {recent.map(a => {
+              const diff = a.oldValue != null ? a.newValue - a.oldValue : null;
+              return (
+                <li key={a.id} className={cn("rounded-lg border border-border px-3 py-2 text-sm flex items-start justify-between gap-3", a.revertedAt && "opacity-60")}>
+                  <div>
+                    <p>
+                      <b>{a.ingredientName}</b>{" "}
+                      {diff != null && diff !== 0
+                        ? <>goes in <b>{Math.abs(diff)} min {diff > 0 ? "earlier" : "later"}</b> ({adjustmentFieldLabel(a.field)} {a.oldValue} → {a.newValue} min)</>
+                        : <>{adjustmentFieldLabel(a.field)} set to {a.newValue} min</>}
+                    </p>
+                    <p className="text-muted-foreground">
+                      {a.source === "auto" ? "Changed automatically" : a.source === "revert" ? `Put back by ${a.actorName ?? "a manager"}` : `Changed by ${a.actorName ?? "a manager"}`}
+                      {" · "}{formatUkDate(a.createdAt.slice(0, 10))} {new Date(a.createdAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                    </p>
+                    {a.revertedAt && <p className="text-xs">Put back by {a.revertedByName}</p>}
+                  </div>
+                  {a.source !== "revert" && !a.revertedAt && (
+                    <button onClick={() => revert.mutate(a.id)} disabled={revert.isPending} className="min-h-[40px] px-3 rounded-lg border border-border inline-flex items-center gap-1.5 whitespace-nowrap">
+                      <RotateCcw className="w-4 h-4" /> Put back
+                    </button>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+
+      <Fold label={`This week: ${data.weekly.offTime} of ${data.weekly.putIns} put in at a different time`}>
+        {data.weekly.byReason.length > 0 && (
+          <p className="text-sm text-muted-foreground">Reasons given: {data.weekly.byReason.map(b => `${reasonLabel(b.code)} (${b.count})`).join(" · ")}</p>
+        )}
+        {data.weekly.items.length > 0 && (
+          <ul className="grid gap-2 grid-cols-1 lg:grid-cols-2">
+            {data.weekly.items.map(it => {
+              const dev = it.deviationMinutes ?? 0;
+              return (
+                <li key={it.id} className="rounded-lg border border-border px-3 py-2 text-sm">
+                  <b>{it.ingredientName}</b> for {it.recipeName} · {formatUkDate(it.planDate)}: went in at {formatClock(it.putInMinutes)}
+                  {it.suggestedAtMinutes != null && <>, {Math.abs(dev)} min {dev > 0 ? "late" : "early"} (suggested {formatClock(it.suggestedAtMinutes)})</>}
+                  {" — "}{reasonLabel(it.reasonCode ?? "not_answered")}{it.reasonNote ? `: ${it.reasonNote}` : ""}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Fold>
+
+      <Fold label="Update now and settings">
+        <div className="flex flex-wrap items-center gap-3">
+          <button onClick={() => review.mutate()} disabled={review.isPending} className="min-h-[44px] px-4 rounded-xl border border-border font-medium disabled:opacity-50">
+            {review.isPending ? "Checking…" : "Check today's put-ins now"}
+          </button>
+          <button onClick={() => run.mutate()} disabled={run.isPending} className="min-h-[44px] px-4 rounded-xl border-2 border-primary text-primary font-semibold disabled:opacity-50">
+            {run.isPending ? "Changing…" : "Make the suggested changes now"}
+          </button>
+          {data.settings.lastAutoRun && <span className="text-sm text-muted-foreground">Last automatic update {formatUkDate(data.settings.lastAutoRun)}</span>}
+        </div>
+        {isAdmin && (
+          <div className="flex flex-wrap items-end gap-4 border-t border-border pt-4">
+            <NumberSetting label="Ask why if more than (min) off" min={3} max={60} placeholder={String(data.settings.reasonMinutes)} value={draft.reasonMinutes ?? ""} onChange={set("reasonMinutes")} />
+            <NumberSetting label="A builder-wait minute counts as (× sitting)" min={1} max={20} placeholder={String(data.settings.waitWeight)} value={draft.waitWeight ?? ""} onChange={set("waitWeight")} />
+            <NumberSetting label="Most spare time (min)" min={2} max={60} placeholder={String(data.settings.bufferMaxMinutes)} value={draft.bufferMaxMinutes ?? ""} onChange={set("bufferMaxMinutes")} />
+            <label className="text-sm flex items-center gap-2 pb-2">
+              <input type="checkbox" className="w-5 h-5" checked={data.settings.learningEnabled} onChange={e => saveSettings.mutate({ learningEnabled: e.target.checked })} />
+              Change times automatically each day
+            </label>
+            <button
+              disabled={saveSettings.isPending || !dirty}
+              onClick={() => saveSettings.mutate(
+                Object.fromEntries(numbers.filter(k => (draft[k] ?? "") !== "").map(k => [k, Number(draft[k])])),
+                { onSuccess: () => setDraft({}) },
+              )}
+              className="min-h-[44px] px-4 rounded-xl bg-primary text-primary-foreground font-semibold disabled:opacity-50"
+            >
+              {saveSettings.isPending ? "Saving…" : "Save settings"}
+            </button>
+          </div>
+        )}
+      </Fold>
+    </div>
+  );
+}
+
+const TITLE = "Prep oven timings — self-correcting";
+
+/** Recipes page: folded away until opened. */
+export function MeatTimingLearningCard() {
+  const { canManage } = useCanManage();
+  const [open, setOpen] = useState(false);
+  if (!canManage) return null;
+  return (
     <section className="bg-card border border-border rounded-2xl p-5 space-y-4">
-      <button className="w-full flex items-center justify-between gap-3 text-left" onClick={() => setOpen(o => !o)}>
+      <button className="w-full flex items-center justify-between gap-3 text-left" onClick={() => setOpen(o => !o)} aria-expanded={open}>
         <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-primary" /> Prep-oven timings — self-correcting</h2>
-          <p className="text-sm text-muted-foreground">How long meat sat waiting, how often the builders waited, what each meat really takes after the oven, and what the system changed and why.</p>
+          <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-primary" /> {TITLE}</h2>
+          <p className="text-sm text-muted-foreground">When each meat goes in the oven, any change suggested, and how the last few weeks went.</p>
         </div>
         {open ? <ChevronUp className="w-6 h-6" /> : <ChevronDown className="w-6 h-6" />}
       </button>
-
-      {open && (isLoading ? (
-        <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p>
-      ) : isError || !data ? (
-        <p className="text-sm text-rose-600">{error instanceof Error ? error.message : "Couldn't load"}</p>
-      ) : (
-        <div className="space-y-5">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-sm">
-              Learning {data.settings.learningEnabled ? "runs daily after production" : "is switched off"}
-              {data.settings.lastAutoRun ? ` · last ${data.settings.lastAutoRun}` : ""}
-            </span>
-            <button onClick={() => review.mutate()} disabled={review.isPending} className="min-h-[44px] px-4 rounded-xl border border-border font-medium disabled:opacity-50">
-              {review.isPending ? "Reviewing…" : "Review now"}
-            </button>
-            <button onClick={() => run.mutate()} disabled={run.isPending} className="min-h-[44px] px-4 rounded-xl bg-primary text-primary-foreground font-semibold disabled:opacity-50">
-              {run.isPending ? "Learning…" : "Learn now"}
-            </button>
-          </div>
-
-          {/* The two numbers that matter (Graeme, 2026-10-27). */}
-          <div className="grid gap-3 grid-cols-1 sm:grid-cols-2">
-            <div className="rounded-xl bg-secondary/50 p-4">
-              <p className="text-4xl font-extrabold tabular-nums">{data.headline.avgSatMinutes ?? "—"}<span className="text-lg font-semibold"> min</span></p>
-              <p className="text-base">Meat sat waiting, on average (last {data.headline.days} days)</p>
-            </div>
-            <div className={cn("rounded-xl p-4", data.headline.builderWaits > 0 ? "bg-rose-50 dark:bg-rose-900/20" : "bg-secondary/50")}>
-              <p className="text-4xl font-extrabold tabular-nums">{data.headline.builderWaits}<span className="text-lg font-semibold"> times</span></p>
-              <p className="text-base">Builders waited for a mix (last {data.headline.days} days)</p>
-            </div>
-          </div>
-          {data.headline.measuredChillDays > 0 && (
-            <p className={cn("text-sm flex items-center gap-1.5", data.headline.measuredOverLimit ? "text-rose-700 dark:text-rose-300 font-semibold" : "text-muted-foreground")}>
-              <ShieldCheck className="w-4 h-4" />
-              4-hour rule, where the chill was measured (probe or a believable "chilled" tap): {data.headline.measuredChillDays} checks, {data.headline.measuredOverLimit} over 4 hours.
-            </p>
-          )}
-
-          <div className="grid gap-3 grid-cols-1 lg:grid-cols-2 2xl:grid-cols-3">
-            {data.meats.map(m => (
-              <MeatCard key={m.ingredientId} m={m} busy={toggle.isPending} onToggle={on => toggle.mutate({ id: m.ingredientId, on })} />
-            ))}
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-lg font-bold">This week's off-time put-ins</h3>
-            <p className="text-sm text-muted-foreground">
-              {data.weekly.putIns} put-ins, {data.weekly.onTime} on the suggested time (± {data.settings.reasonMinutes} min plus loading time), {data.weekly.offTime} off.
-              {data.weekly.byReason.length > 0 && " Reasons: " + data.weekly.byReason.map(b => `${reasonLabel(b.code)} ${b.count}`).join(" · ")}
-            </p>
-            {data.weekly.items.length > 0 && (
-              <ul className="grid gap-2 grid-cols-1 lg:grid-cols-2">
-                {data.weekly.items.map(it => (
-                  <li key={it.id} className="rounded-lg border border-border px-3 py-2 text-sm">
-                    <b>{it.ingredientName}</b> for {it.recipeName} · {it.planDate}: in {formatClock(it.putInMinutes)} vs {it.suggestedAtMinutes != null ? formatClock(it.suggestedAtMinutes) : "—"}
-                    {" "}({(it.deviationMinutes ?? 0) > 0 ? "+" : ""}{it.deviationMinutes} min) — {reasonLabel(it.reasonCode ?? "not_answered")}{it.reasonNote ? `: ${it.reasonNote}` : ""}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <h3 className="text-lg font-bold">Changes</h3>
-            {data.adjustments.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No changes yet.</p>
-            ) : (
-              <ul className="space-y-2">
-                {data.adjustments.map(a => (
-                  <li key={a.id} className={cn("rounded-lg border border-border px-3 py-2 text-sm flex items-start justify-between gap-3", a.revertedAt && "opacity-60")}>
-                    <div>
-                      <b>{a.ingredientName}</b> {a.field} {a.oldValue ?? "unset"} → {a.newValue} min
-                      <span className="text-muted-foreground"> · {a.source === "auto" ? "learned" : a.source} · {a.actorName ?? ""} · {new Date(a.createdAt).toLocaleString("en-GB", { dateStyle: "short", timeStyle: "short" })}</span>
-                      <p className="text-muted-foreground">{a.reason}</p>
-                      {a.revertedAt && <p className="text-xs">Reverted by {a.revertedByName}</p>}
-                    </div>
-                    {a.source !== "revert" && !a.revertedAt && (
-                      <button onClick={() => revert.mutate(a.id)} disabled={revert.isPending} className="min-h-[40px] px-3 rounded-lg border border-border inline-flex items-center gap-1.5 whitespace-nowrap">
-                        <RotateCcw className="w-4 h-4" /> Revert
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {isAdmin && (
-            <div className="flex flex-wrap items-end gap-4 border-t border-border pt-4">
-              <NumberSetting label="Ask why beyond (min)" min={3} max={60} placeholder={String(data.settings.reasonMinutes)} value={draft.reasonMinutes ?? ""} onChange={set("reasonMinutes")} />
-              <NumberSetting label="A wait minute counts as (× sitting)" min={1} max={20} placeholder={String(data.settings.waitWeight)} value={draft.waitWeight ?? ""} onChange={set("waitWeight")} />
-              <NumberSetting label="Buffer cap (min)" min={2} max={60} placeholder={String(data.settings.bufferMaxMinutes)} value={draft.bufferMaxMinutes ?? ""} onChange={set("bufferMaxMinutes")} />
-              <label className="text-sm flex items-center gap-2 pb-2">
-                <input type="checkbox" className="w-5 h-5" checked={data.settings.learningEnabled} onChange={e => saveSettings.mutate({ learningEnabled: e.target.checked })} />
-                Daily automatic learning
-              </label>
-              <button
-                disabled={saveSettings.isPending || !dirty}
-                onClick={() => saveSettings.mutate(
-                  Object.fromEntries(numbers.filter(([k]) => (draft[k] ?? "") !== "").map(([k, field]) => [field, Number(draft[k])])),
-                  { onSuccess: () => setDraft({}) },
-                )}
-                className="min-h-[44px] px-4 rounded-xl bg-primary text-primary-foreground font-semibold disabled:opacity-50"
-              >
-                {saveSettings.isPending ? "Saving…" : "Save settings"}
-              </button>
-            </div>
-          )}
-        </div>
-      ))}
+      {open && <MeatTimingReview />}
     </section>
   );
 }
+
+/** Mixing & Cooking station: opened from the Station menu (managers only). */
+export function MeatTimingReviewDialog({ onClose }: { onClose: () => void }) {
+  return createPortal(
+    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={TITLE}
+        onClick={e => e.stopPropagation()}
+        className="bg-background border-2 border-border rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92dvh] flex flex-col overflow-hidden"
+      >
+        <div className="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-border shrink-0">
+          <Sparkles className="w-6 h-6 text-primary shrink-0" />
+          <h2 className="flex-1 font-display font-bold text-xl">{TITLE}</h2>
+          <button onClick={onClose} className="w-11 h-11 rounded-lg flex items-center justify-center hover:bg-secondary" aria-label="Close">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4">
+          <MeatTimingReview />
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+export { useCanManage as useCanManageMeatTiming };
