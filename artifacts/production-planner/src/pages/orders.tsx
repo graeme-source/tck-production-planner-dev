@@ -1224,6 +1224,10 @@ export default function Orders() {
       credentials: "include",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ingredientId: kanban.ingredientId, supplierId }),
+    }).then(async r => {
+      // A refusal (not just a lost connection) must say so too — it used to
+      // show the line and quietly lose it on the next visit.
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
     }).catch(() => {
       toast({
         title: "Kanban not saved",
@@ -1627,12 +1631,16 @@ export default function Orders() {
   // edit cutoff — a fresh order (845c5a92). The placed-supplier filter below
   // used to hide that card on the same plan; it now shows as a new order.
   const lockedOpenPoSupplierIds = new Set(suppliers.filter(s => s.supplier.lockedOpenPo).map(s => s.supplier.id));
+  // Pulled kanbans the server still has queued (not ordered, not put back) —
+  // their card stays until they're ordered, removed or the card is dismissed.
+  const queuedKanbanSupplierIds = new Set(suppliers.filter(s => s.lines.some(l => l.isKanban)).map(s => s.supplier.id));
   /** Does this supplier have an in-progress card on To Order? (#194) */
   const hasPendingCard = (supplierId: number): boolean => showsPendingCard({
     placed: placedSupplierIds.has(supplierId),
     reopened: reopenedSupplierIds.has(supplierId),
     separate: separateOrderSuppliers.has(supplierId),
     lockedOpenPo: lockedOpenPoSupplierIds.has(supplierId),
+    queuedKanbans: queuedKanbanSupplierIds.has(supplierId),
   });
   const dptPendingSuppliersAll = suppliers.filter(s => hasPendingCard(s.supplier.id));
   const kanbanOnlyPendingAll = Object.values(kanbanOnlySupplierInfo)
@@ -2310,6 +2318,16 @@ export default function Orders() {
                       {openOrdersForSupplier(placedOrders, so.supplier.id, selectedPlanId)
                         .map(o => `Order #${o.id} (due ${orderDueText(o.expectedDeliveryDate)})`)
                         .join(", ") || "The placed order"} stays as it is — this is a second order with its own delivery date.
+                    </p>
+                  )}
+                  {!isReopened && !separateOrderSuppliers.has(so.supplier.id) && !so.supplier.lockedOpenPo
+                    && placedSupplierIds.has(so.supplier.id) && queuedKanbanSupplierIds.has(so.supplier.id) && (
+                    <p className="text-xs text-sky-700 dark:text-sky-400 mt-0.5">
+                      {(() => {
+                        const ids = openOrdersForSupplier(placedOrders, so.supplier.id, selectedPlanId).map(o => `#${o.id}`);
+                        const which = ids.length > 1 ? `orders ${ids.join(" and ")} were` : ids.length ? `order ${ids[0]} was` : "the order was";
+                        return `Kanbans pulled after ${which} placed — they stay here until ordered or removed. Placing this makes a new order.`;
+                      })()}
                     </p>
                   )}
                   {so.supplier.lockedOpenPo && !isReopened && !separateOrderSuppliers.has(so.supplier.id) && (

@@ -58,6 +58,10 @@ describe("showsPendingCard", () => {
   it("shows it again while that order is being edited", () => {
     expect(showsPendingCard({ ...base, placed: true, reopened: true })).toBe(true);
   });
+  it("keeps showing pulled kanbans not yet ordered, even after the supplier's order is placed (regression, 28 Oct 2026)", () => {
+    expect(showsPendingCard({ ...base, placed: true, queuedKanbans: true })).toBe(true);
+    expect(showsPendingCard({ ...base, placed: true, queuedKanbans: false })).toBe(false);
+  });
   it("shows it for a separate second order", () => {
     expect(showsPendingCard({ ...base, placed: true, separate: true })).toBe(true);
   });

@@ -48,16 +48,24 @@ export type SupplierCardState = {
   /** The calculation found new needs while the placed order is past the
    *  supplier's edit cutoff — they belong on a new order. */
   lockedOpenPo: boolean;
+  /** Pulled kanbans for this supplier that haven't been ordered yet (the
+   *  server keeps them queued until ordered or put back). Optional so older
+   *  callers read as false. */
+  queuedKanbans?: boolean;
 };
 
 /**
  * Does the supplier have an in-progress card on the To Order tab? A supplier
  * with nothing placed always does (the normal single-order case, unchanged).
  * Once an order is placed the card hides — unless that order is being edited,
- * or a second, separate order is under way.
+ * a second, separate order is under way, or kanbans pulled since are still
+ * waiting to be ordered. That last one (Graeme, 28 Oct 2026): pulled in the
+ * morning onto a plan whose order was placed yesterday, the kanbans were
+ * still queued on the server but their card hid as soon as anyone left the
+ * page, so they looked as if they'd vanished.
  */
 export function showsPendingCard(s: SupplierCardState): boolean {
-  return !s.placed || s.reopened || s.separate || s.lockedOpenPo;
+  return !s.placed || s.reopened || s.separate || s.lockedOpenPo || !!s.queuedKanbans;
 }
 
 export type OrderTarget<T> =
