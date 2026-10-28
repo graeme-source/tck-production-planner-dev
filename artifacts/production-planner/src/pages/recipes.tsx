@@ -9,9 +9,7 @@ import { useAppMutations } from "@/hooks/use-mutations";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { SortableTh } from "@/components/sortable-th";
-import { TimingHealthCard } from "@/components/timing-health-card";
-import { MeatTimingLearningCard } from "@/components/meat-timing-learning-card";
-import { UpfWebsiteSync } from "@/components/upf-website-sync";
+import { RecipeToolsMenu } from "@/components/recipe-tools-menu";
 import { Plus, Trash2, ChefHat, FlaskConical, X, Edit2, Loader2, TrendingUp, Package, Wrench, ChevronDown, ChevronRight, BarChart2, Beaker, AlertTriangle, ClipboardList, Copy, Check, QrCode, Filter, Scale, LayoutGrid, Table2, Archive } from "lucide-react";
 import { useForm, Controller } from "react-hook-form";
 import * as z from "zod";
@@ -2200,17 +2198,18 @@ export default function Recipes() {
         title="Final Product Recipes"
         description="Master recipes with full cost and margin calculations for your finished goods."
         action={
-          <button onClick={() => setIsAddOpen(true)} className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors">
-            <Plus className="w-5 h-5" /> Create Recipe
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Timing check, prep oven timings and website nutrition — the
+                now-and-then tools, one button instead of three panels
+                (Graeme, 28 Oct 2026). */}
+            <RecipeToolsMenu onEditRecipe={setEditingId} />
+            <button onClick={() => setIsAddOpen(true)} className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium shadow-md shadow-primary/20 flex items-center gap-2 hover:bg-primary/90 transition-colors">
+              <Plus className="w-5 h-5" /> Create Recipe
+            </button>
+          </div>
         }
       />
 
-      <TimingHealthCard onEditRecipe={setEditingId} />
-
-      <MeatTimingLearningCard />
-
-      <UpfWebsiteSync />
 
       {/* Drafts · On the menu · Archived (migrations 0141, 0142). Nothing is
           deleted in any move; drafts and archived recipes are kept in full. */}

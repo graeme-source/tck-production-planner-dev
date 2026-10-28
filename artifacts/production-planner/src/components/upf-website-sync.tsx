@@ -84,8 +84,9 @@ function ago(iso: string | null | undefined): string {
   return hours < 24 ? `${hours} h ago` : new Date(iso).toLocaleDateString("en-GB");
 }
 
-export function UpfWebsiteSync() {
-  const [open, setOpen] = useState(false);
+/** `embedded`: inside the Recipe tools pop-up — the product list shows straight away. */
+export function UpfWebsiteSync({ embedded }: { embedded?: boolean } = {}) {
+  const [open, setOpen] = useState(embedded === true);
   const qc = useQueryClient();
   const { state } = useAuth();
   const canRun = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
@@ -96,7 +97,9 @@ export function UpfWebsiteSync() {
     onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
   });
 
-  if (q.isLoading || q.error || !q.data) return null;
+  // On the page it stays out of the way; in the pop-up it says what's happening.
+  if (q.isLoading) return embedded ? <p className="text-sm text-muted-foreground flex items-center gap-2"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</p> : null;
+  if (q.error || !q.data) return embedded ? <p className="text-sm text-red-700">Couldn't load the website figures{q.error ? ` — ${(q.error as Error).message}` : ""}.</p> : null;
   const { products, writesBlocked } = q.data;
   // A per-portion figure held back on purpose (no pack size) isn't missing.
   const shown = (f: Figure) => f.value != null || f.byDesign === true;
@@ -106,7 +109,7 @@ export function UpfWebsiteSync() {
   const lastCheck = products.reduce<string | null>((a, p) => (!a || p.checkedAt > a ? p.checkedAt : a), null);
 
   return (
-    <div className="rounded-2xl border border-border bg-card">
+    <div className={embedded ? "" : "rounded-2xl border border-border bg-card"}>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
         <button type="button" onClick={() => setOpen(o => !o)} className="flex items-center gap-2 font-semibold text-sm min-h-11" aria-expanded={open}>
           {open ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}

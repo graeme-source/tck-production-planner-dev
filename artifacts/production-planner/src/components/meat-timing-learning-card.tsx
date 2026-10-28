@@ -1,7 +1,7 @@
 /**
- * "Prep oven timings — self-correcting" (Graeme, 2026-10-27) — the managers'
- * window on the self-correcting meat times. Shown in two places:
- *   - the Recipes page, as a fold-away card (MeatTimingLearningCard);
+ * "Prep oven timings — self-correcting" (Graeme, 2026-10-27) — the window on
+ * the self-correcting meat times. Shown in two places:
+ *   - the Recipes page's Recipe tools menu (components/recipe-tools-menu.tsx);
  *   - the Mixing & Cooking station's Station menu, as a pop-up
  *     (MeatTimingReviewDialog) — tucked away, not on the station screen, but
  *     open to everyone who works there (Graeme, 28 Oct 2026: "the people
@@ -19,10 +19,9 @@
  * Server: GET/POST/PUT /api/meat-timing (routes/meat-timing.ts).
  */
 import { useState } from "react";
-import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowRight, Beef, CheckCircle2, ChevronDown, ChevronUp, Clock, Loader2, RotateCcw, ShieldCheck, Sparkles, X,
+  AlertTriangle, ArrowRight, Beef, CheckCircle2, ChevronDown, ChevronUp, Clock, Loader2, RotateCcw, ShieldCheck, Sparkles,
 } from "lucide-react";
 import { formatClock, type MeatLearning, type TrustSignal } from "@workspace/production-schedule";
 import { useAuth } from "@/contexts/auth-context";
@@ -30,6 +29,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { adjustmentFieldLabel, meatTimingSummary } from "@/lib/meat-timing-summary";
 import { formatUkDate } from "@workspace/uk-date";
+import { ToolPopup } from "@/components/tool-popup";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const KEY = ["meat-timing"];
@@ -191,8 +191,8 @@ function useCanManage() {
   return { canManage: role === "admin" || role === "manager", isAdmin: role === "admin" };
 }
 
-/** Everything under the heading — used by the Recipes card and the station pop-up. */
-function MeatTimingReview() {
+/** The whole read-out — in the Recipe tools pop-up and the station pop-up. */
+export function MeatTimingReview() {
   const { canManage, isAdmin } = useCanManage();
   const qc = useQueryClient();
   const [draft, setDraft] = useState<Record<string, string>>({});
@@ -390,49 +390,11 @@ function MeatTimingReview() {
 
 const TITLE = "Prep oven timings — self-correcting";
 
-/** Recipes page: folded away until opened. */
-export function MeatTimingLearningCard() {
-  const { canManage } = useCanManage();
-  const [open, setOpen] = useState(false);
-  if (!canManage) return null;
-  return (
-    <section className="bg-card border border-border rounded-2xl p-5 space-y-4">
-      <button className="w-full flex items-center justify-between gap-3 text-left" onClick={() => setOpen(o => !o)} aria-expanded={open}>
-        <div>
-          <h2 className="text-xl font-bold flex items-center gap-2"><Sparkles className="w-5 h-5 text-primary" /> {TITLE}</h2>
-          <p className="text-sm text-muted-foreground">When each meat goes in the oven, any change suggested, and how the last few weeks went.</p>
-        </div>
-        {open ? <ChevronUp className="w-6 h-6" /> : <ChevronDown className="w-6 h-6" />}
-      </button>
-      {open && <MeatTimingReview />}
-    </section>
-  );
-}
-
 /** Mixing & Cooking station: opened from the Station menu (everyone; controls for managers). */
 export function MeatTimingReviewDialog({ onClose }: { onClose: () => void }) {
-  return createPortal(
-    <div className="fixed inset-0 z-[120] bg-black/60 flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={TITLE}
-        onClick={e => e.stopPropagation()}
-        className="bg-background border-2 border-border rounded-2xl shadow-2xl w-full max-w-6xl max-h-[92dvh] flex flex-col overflow-hidden"
-      >
-        <div className="flex items-center gap-3 px-4 sm:px-5 py-3 border-b border-border shrink-0">
-          <Sparkles className="w-6 h-6 text-primary shrink-0" />
-          <h2 className="flex-1 font-display font-bold text-xl">{TITLE}</h2>
-          <button onClick={onClose} className="w-11 h-11 rounded-lg flex items-center justify-center hover:bg-secondary" aria-label="Close">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto px-4 sm:px-5 py-4">
-          <MeatTimingReview />
-        </div>
-      </div>
-    </div>,
-    document.body,
+  return (
+    <ToolPopup title={TITLE} icon={Sparkles} onClose={onClose}>
+      <MeatTimingReview />
+    </ToolPopup>
   );
 }
-

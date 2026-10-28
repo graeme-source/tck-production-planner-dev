@@ -327,14 +327,12 @@ function MeatCard({ issue, windowDays, onSaved }: {
   );
 }
 
-export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: number) => void }) {
+/** The timing check, shared by the card and the Recipe tools menu's count. */
+export function useTimingHealth() {
   const { state: authState } = useAuth();
   const canManage = authState.status === "authenticated" &&
     (authState.user.role === "admin" || authState.user.role === "manager");
-  const [justSaved, setJustSaved] = useState<string[]>([]);
-  const { restore } = useTimingReview();
-
-  const { data, isLoading, isError, error, refetch, isFetching } = useQuery<TimingHealth>({
+  const query = useQuery<TimingHealth>({
     queryKey: ["timing-health"],
     enabled: canManage,
     queryFn: async () => {
@@ -344,6 +342,18 @@ export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: nu
     },
     staleTime: 60_000,
   });
+  const d = query.data;
+  const total = (d?.recipes.length ?? 0) + (d?.meats.length ?? 0);
+  const missingCount = (d?.recipes.filter(r => r.kind === "missing").length ?? 0) + (d?.meats.filter(m => m.kind === "missing").length ?? 0);
+  return { ...query, canManage, total, missingCount };
+}
+
+/** `embedded`: inside the Recipe tools pop-up, which carries the title. */
+export function TimingHealthCard({ onEditRecipe, embedded }: { onEditRecipe: (recipeId: number) => void; embedded?: boolean }) {
+  const [justSaved, setJustSaved] = useState<string[]>([]);
+  const { restore } = useTimingReview();
+
+  const { data, isLoading, isError, error, refetch, isFetching, canManage, total, missingCount } = useTimingHealth();
 
   // A "review this" to-do links to /recipes#timing-data — bring the card into view.
   useEffect(() => {
@@ -354,14 +364,11 @@ export function TimingHealthCard({ onEditRecipe }: { onEditRecipe: (recipeId: nu
   if (!canManage) return null;
   const onSaved = (summary: string) => setJustSaved(prev => [summary, ...prev.filter(p => p !== summary)].slice(0, 6));
 
-  const total = (data?.recipes.length ?? 0) + (data?.meats.length ?? 0);
-  const missingCount = (data?.recipes.filter(r => r.kind === "missing").length ?? 0) + (data?.meats.filter(m => m.kind === "missing").length ?? 0);
-
   return (
-    <section id="timing-data" className="scroll-mt-4 rounded-2xl border border-border bg-secondary/20 p-4 sm:p-5 space-y-4" aria-labelledby="timing-data-heading">
+    <section id="timing-data" className={cn("scroll-mt-4 space-y-4", !embedded && "rounded-2xl border border-border bg-secondary/20 p-4 sm:p-5")} aria-labelledby="timing-data-heading">
       <div className="flex items-start justify-between gap-3 flex-wrap">
         <div>
-          <h2 id="timing-data-heading" className="font-display text-xl font-bold flex items-center gap-2">
+          <h2 id="timing-data-heading" className={cn("font-display text-xl font-bold flex items-center gap-2", embedded && "sr-only")}>
             <Clock className="w-5 h-5" /> Timing data
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5 max-w-3xl">
