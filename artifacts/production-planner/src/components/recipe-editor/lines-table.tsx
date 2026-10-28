@@ -106,8 +106,8 @@ export type LinesTableProps = {
 // production ticks it needs an iPad-landscape width before it goes flat.
 const LAYOUT = {
   ticks: {
-    row: "lg:grid lg:grid-cols-[minmax(12rem,1fr)_12.5rem_5.5rem_3.5rem_3.5rem_3.5rem_5.5rem_3rem] lg:gap-x-3 lg:items-center",
-    head: "hidden lg:grid lg:grid-cols-[minmax(12rem,1fr)_12.5rem_5.5rem_3.5rem_3.5rem_3.5rem_5.5rem_3rem] lg:gap-x-3",
+    row: "lg:grid lg:grid-cols-[minmax(12rem,1fr)_12rem_5rem_3rem_3rem_3rem_5rem_3rem] lg:gap-x-2 lg:items-center",
+    head: "hidden lg:grid lg:grid-cols-[minmax(12rem,1fr)_12rem_5rem_3rem_3rem_3rem_5rem_3rem] lg:gap-x-2",
     full: "w-full lg:w-auto",
     contents: "lg:contents",
     stackOnly: "lg:hidden",
@@ -297,7 +297,7 @@ export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, prod
                         type="button"
                         onClick={() => (ing ? setOpenIngredientId(ing.id) : sub && setOpenSubRecipeId(sub.id))}
                         className={cn(
-                          "shrink-0 inline-flex items-center justify-center gap-1 h-12 min-w-[4.75rem] px-2.5 rounded-xl border-2 border-border text-sm font-semibold transition-colors",
+                          "shrink-0 inline-flex items-center justify-center gap-1 h-12 min-w-[4rem] px-2.5 rounded-xl border-2 border-border text-sm font-semibold transition-colors",
                           isSub ? "text-accent hover:bg-accent/10" : "text-primary hover:bg-primary/10",
                         )}
                         title={ing ? `Open ${ing.name} (#${ing.id}) — its full ingredient record` : `Open ${sub!.name} (#${sub!.id}) — the sub-recipe and its ingredients`}
@@ -369,7 +369,7 @@ export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, prod
                                   const g = Number(e.target.value) || 0;
                                   set(`${path}.mixingOverage`, convertQuantity(g, "g", unit) ?? g);
                                 }}
-                                className="w-16 h-11 rounded-lg border-2 border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-base font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-amber-500/30"
+                                className="w-14 h-11 rounded-lg border-2 border-amber-300 bg-amber-50/50 dark:bg-amber-900/10 px-1 text-base font-semibold tabular-nums text-center focus:outline-none focus:ring-2 focus:ring-amber-500/30"
                               />
                               <span className="text-sm text-amber-700">g</span>
                             </label>
