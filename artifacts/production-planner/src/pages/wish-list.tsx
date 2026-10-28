@@ -26,6 +26,7 @@ import {
   useWishList,
 } from "@/hooks/use-wish-list";
 import {
+  DEFAULT_FILTER,
   FILTERS,
   SORTS,
   STATUS_LABEL,
@@ -58,7 +59,7 @@ function savedSort(): WishListSort {
 export default function WishListPage() {
   const { data, isLoading, error } = useWishList();
   const [adding, setAdding] = useState(false);
-  const [filter, setFilter] = useState<WishListFilter>("open");
+  const [filter, setFilter] = useState<WishListFilter>(DEFAULT_FILTER);
   const [sort, setSortState] = useState<WishListSort>(savedSort);
   const [query, setQuery] = useState("");
   const [managing, setManaging] = useState<WishListItem | null>(null);
