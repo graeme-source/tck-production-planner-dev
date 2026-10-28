@@ -83,16 +83,17 @@ export function MarginStrip({ costPerPortion, packSize, packagingCost, labourCos
 
       {packCost > 0 && (
         <div className="flex flex-wrap items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Price for</span>
+          <span className="text-muted-foreground">Set the RRP for a margin of</span>
           {priceFor.map(({ m, price }) => (
             <button
               key={m}
               type="button"
               onClick={() => onRrpChange(price.toFixed(2))}
-              className="min-h-10 px-3 rounded-full border border-border bg-card font-semibold tabular-nums hover:bg-secondary/60"
-              title={`Set the RRP to ${money(price)}`}
+              className={cn("min-h-11 px-4 rounded-xl border-2 font-bold tabular-nums transition-colors hover:brightness-95", TONE_CLASS[marginTone(m)!])}
+              title={`Set the RRP to ${money(price)} — you can still type over it`}
+              data-testid={`margin-strip-set-${m}`}
             >
-              {m}%: {money(price)}
+              {m}% → {money(price)}
             </button>
           ))}
         </div>
