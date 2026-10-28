@@ -77,12 +77,13 @@ import { NotificationFlash } from "@/components/notification-flash";
 import { ImprovementCelebration } from "@/components/improvement-celebration";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { FoundersAssistant, ASSISTANT_NAME } from "@/components/founders-assistant";
+import { JaneAvatar } from "@/components/jane-avatar";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { TestRequestCard } from "@/components/test-request-card";
 import { ClipboardCheck, Gift } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, Bot, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
+import { AlertOctagon, Banknote, BookOpen, BookUser, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -1125,7 +1126,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
     // Wish List (Graeme, 23 Oct 2026): paste a link to ask for kit.
     { key: "wish-list", label: `Add to ${WISH_LIST_NAME}`, hint: WISH_LIST_SUBTITLE, icon: Gift, tone: "bg-pink-500 text-white shadow-pink-500/30", onClick: run(onOpenWishList) },
     { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: "bg-violet-500 text-white shadow-violet-500/30", onClick: run(onOpenKanban) },
-    { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: Bot, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
+    { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: JaneAvatar, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
   ];
 
   return (

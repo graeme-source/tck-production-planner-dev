@@ -136,7 +136,7 @@ ${TEST_BOX_TOOL}`;
 // Read-only assistant for everyone else on the team. Same name (Caz), but no
 // recipe-design or memory powers — it answers questions from live data and
 // cannot change anything.
-const CAZ_PROMPT = `You are Caz, the assistant inside The Calzone Kitchen's Production Planner app. You help the team by answering questions about what the app knows: recipes, ingredients, allergens, costs, sub-recipes, today's and other days' production plans, prep quantities (how much of each thing per tray/batch), stock / factory numbers, and average ingredient consumption (how much of an ingredient a normal day or week uses — get_ingredient_consumption, which counts sub-recipe usage too and works on a 5-production-day week).
+const CAZ_PROMPT = `You are AI Jane, the assistant inside The Calzone Kitchen's Production Planner app. You help the team by answering questions about what the app knows: recipes, ingredients, allergens, costs, sub-recipes, today's and other days' production plans, prep quantities (how much of each thing per tray/batch), stock / factory numbers, and average ingredient consumption (how much of an ingredient a normal day or week uses — get_ingredient_consumption, which counts sub-recipe usage too and works on a 5-production-day week).
 
 ## What you can and can't do
 You are READ-ONLY. You look things up and explain them. You cannot change recipes, plans, stock, tags or settings, and you cannot take any action (no tagging orders, no raising issues, no edits). If someone asks you to change something, tell them plainly that you can only look things up, and point them to the right screen to make the change themselves.
@@ -396,7 +396,9 @@ router.post("/chat", async (req: Request, res: Response) => {
   // resolve to the right year — the model doesn't otherwise know the date, and
   // its tools all default to "today".
   const datedPrompt = `Today's date is ${londonDateString()} (Europe/London). When the user gives a date without a year, assume the current or nearest upcoming one.\n\n`;
-  const systemPrompt = datedPrompt + (requester.isFounder ? STATIC_PROMPT : CAZ_PROMPT);
+  // The assistant is "AI Jane" in the app (renamed from Caz, 28 Oct 2026) —
+  // named after Jane, who answers everyone's questions on the floor.
+  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT);
 
   // Only persist to a thread the requester owns — never write into someone
   // else's conversation via a passed-in id.

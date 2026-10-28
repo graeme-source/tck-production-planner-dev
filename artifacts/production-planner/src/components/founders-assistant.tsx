@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, Bot, User as UserIcon, Plus, BookOpen, X, Save, MessagesSquare, Trash2, ChefHat, Wrench, Paperclip, ImageIcon, ArrowLeft } from "lucide-react";
+import { Send, Loader2, User as UserIcon, Plus, BookOpen, X, Save, MessagesSquare, Trash2, ChefHat, Wrench, Paperclip, ImageIcon, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { JaneAvatar } from "@/components/jane-avatar";
 
-export const ASSISTANT_NAME = "Caz";
+// Named after Jane, who answers everyone's questions on the floor, while she's
+// on maternity leave (Graeme, 28 Oct 2026). Was "Caz".
+export const ASSISTANT_NAME = "AI Jane";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -118,9 +121,9 @@ interface ThreadDetail extends ThreadSummary {
 // Founder gets the recipe-design pitch; everyone else gets the read-only
 // look-up assistant (which is all the server will let them do anyway).
 const FOUNDER_WELCOME =
-  "Hey, I'm Caz. Ask me anything — design a recipe, look up costs, sanity-check a margin, or just talk through an idea. I'll remember important things across sessions and can propose recipe drafts for you to Save.";
+  `Hey, I'm ${ASSISTANT_NAME}. Ask me anything — design a recipe, look up costs, sanity-check a margin, or just talk through an idea. I'll remember important things across sessions and can propose recipe drafts for you to Save.`;
 const STAFF_WELCOME =
-  "Hi, I'm Caz. Ask me anything about the app — recipes, ingredients, allergens, today's production plan, how much of something goes per tray, what's in stock. I can look things up but I can't change anything.";
+  `Hi, I'm ${ASSISTANT_NAME}. Ask me anything about the app — recipes, ingredients, allergens, today's production plan, how much of something goes per tray, what's in stock. I can look things up but I can't change anything.`;
 
 function welcomeMessage(isFounder: boolean): Message {
   return { id: 0, role: "assistant", content: isFounder ? FOUNDER_WELCOME : STAFF_WELCOME };
@@ -540,9 +543,7 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
                 <ArrowLeft className="w-4 h-4" />
               </button>
             ) : (
-              <div className="w-7 h-7 rounded-full bg-orange-500/10 flex items-center justify-center flex-shrink-0">
-                <Bot className="w-4 h-4 text-orange-600" />
-              </div>
+              <JaneAvatar className="w-8 h-8 flex-shrink-0" />
             )}
             <div className="min-w-0">
               <div className="text-sm font-semibold truncate">
@@ -656,9 +657,7 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
           return (
             <div key={msg.id} className={cn("flex gap-2", msg.role === "user" ? "justify-end" : "justify-start")}>
               {msg.role === "assistant" && (
-                <div className="w-8 h-8 rounded-full bg-orange-500/10 flex items-center justify-center flex-shrink-0">
-                  <Bot className="w-4 h-4 text-orange-600" />
-                </div>
+                <JaneAvatar className="w-8 h-8 flex-shrink-0" />
               )}
               <div className={cn(
                 "max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed",
