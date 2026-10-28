@@ -13,6 +13,10 @@
  *   metafieldsDelete / metafieldsSet
  *   collectionCreate(input: { title, ruleSet: TAG EQUALS box, sortOrder })
  *   discountCodeBasicCreate(basicCodeDiscount) — needs write_discounts
+ *   stagedUploadsCreate → POST to the staged target → fileCreate → (poll the
+ *     MediaImage until READY) → metafieldsSet custom.nutritional_info — the
+ *     nutrition image; needs write_files, and is skipped (never fatal) when
+ *     there is no image or the upload fails
  * The app's Shopify connection had NEITHER write_products NOR write_discounts
  * on 2026-10-02 (read-only check of currentAppInstallation.accessScopes), so
  * the previews say so and the creates refuse until the scopes are added.
@@ -20,9 +24,9 @@
  * refuses (throws ShopifyWritesBlockedError) on staging or with
  * BLOCK_SHOPIFY_WRITES=true. Nothing is ever published or set Active.
  */
-import { shopifyGraphQL, shopifyGraphQLWrite } from "../services/shopify";
+import { shopifyGraphQL, shopifyGraphQLWrite, shopifyWritesBlocked, ShopifyWritesBlockedError } from "../services/shopify";
 import {
-  metafieldPlan, productSearchQuery, type CollectionInfo, type MetafieldRef, type MetafieldValue, type RecipeContent, type TemplateCandidate,
+  MF, metafieldPlan, productSearchQuery, type CollectionInfo, type MetafieldRef, type MetafieldValue, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
 import type { ExistingDiscount } from "./test-box-discount-rules";
 
@@ -170,6 +174,98 @@ export interface ApplyInput {
   standardCooking: string;
   /** "19.95" from the recipe's RRP (rules productPrice), or null to leave it. */
   price?: string | null;
+  /** This recipe's nutrition table as a PNG (drawn in the browser, checked by
+   *  checkNutritionPng). Absent: no image is put on — the template's is
+   *  still removed. */
+  nutritionImage?: { bytes: Uint8Array; filename: string; alt: string } | null;
+}
+
+// ── File uploads (the nutrition image) ──────────────────────────────────────
+export interface StagedTarget { url: string; resourceUrl: string; parameters: Array<{ name: string; value: string }> }
+/** The HTTP POST of a file to Shopify's staged-upload target (not GraphQL).
+ *  Injectable so tests never touch the network. */
+export type StagedUploader = (target: StagedTarget, file: { bytes: Uint8Array; filename: string; mimeType: string }) => Promise<void>;
+
+export const liveUploader: StagedUploader = async (target, file) => {
+  // Only reached after the guarded stagedUploadsCreate succeeded — checked
+  // again so this can never be the one side effect that slips through.
+  if (shopifyWritesBlocked()) throw new ShopifyWritesBlockedError("stagedUpload");
+  const form = new FormData();
+  for (const p of target.parameters) form.append(p.name, p.value);
+  form.append("file", new Blob([Uint8Array.from(file.bytes)], { type: file.mimeType }), file.filename);
+  const r = await fetch(target.url, { method: "POST", body: form });
+  if (!r.ok) throw new Error(`Shopify's file storage refused the upload (HTTP ${r.status})`);
+};
+
+export interface FileDeps {
+  upload: StagedUploader;
+  sleep: (ms: number) => Promise<void>;
+  /** How many times to look for the file to be READY (one second apart). */
+  pollTries: number;
+}
+export const liveFileDeps: FileDeps = { upload: liveUploader, sleep: ms => new Promise(r => setTimeout(r, ms)), pollTries: 10 };
+
+/**
+ * Upload a PNG to Shopify Files and wait (briefly) for it: stagedUploadsCreate
+ * → POST → fileCreate → poll. Returns the MediaImage gid and whether it was
+ * READY in time (a file still processing can already be referenced).
+ */
+export async function uploadImageFile(port: ShopifyPort, deps: FileDeps, file: { bytes: Uint8Array; filename: string; alt: string }): Promise<{ fileId: string; ready: boolean }> {
+  const st = await port.write<{ stagedUploadsCreate: { stagedTargets: StagedTarget[] | null; userErrors: UserErrors } }>(
+    "stagedUploadsCreate",
+    `mutation($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) { stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } }
+    }`,
+    { input: [{ resource: "IMAGE", filename: file.filename, mimeType: "image/png", httpMethod: "POST", fileSize: String(file.bytes.length) }] },
+  );
+  check("the upload slot", st.stagedUploadsCreate.userErrors);
+  const target = st.stagedUploadsCreate.stagedTargets?.[0];
+  if (!target) throw new Error("Shopify didn't give an upload slot");
+
+  await deps.upload(target, { bytes: file.bytes, filename: file.filename, mimeType: "image/png" });
+
+  const fc = await port.write<{ fileCreate: { files: Array<{ id: string; fileStatus: string }> | null; userErrors: UserErrors } }>(
+    "fileCreate",
+    `mutation($files: [FileCreateInput!]!) { fileCreate(files: $files) { files { id fileStatus } userErrors { field message } } }`,
+    { files: [{ originalSource: target.resourceUrl, contentType: "IMAGE", alt: file.alt.slice(0, 500) }] },
+  );
+  check("the file", fc.fileCreate.userErrors);
+  const fileId = fc.fileCreate.files?.[0]?.id;
+  if (!fileId) throw new Error("Shopify didn't return the new file");
+
+  for (let i = 0; i < deps.pollTries; i++) {
+    const r = await port.read<{ node: { fileStatus?: string; fileErrors?: Array<{ message: string }> } | null }>(
+      `query($id: ID!) { node(id: $id) { ... on MediaImage { fileStatus fileErrors { message } image { url } } } }`,
+      { id: fileId },
+    );
+    const status = r.node?.fileStatus;
+    if (status === "READY") return { fileId, ready: true };
+    if (status === "FAILED") throw new Error(`Shopify couldn't process the image${r.node?.fileErrors?.length ? `: ${r.node.fileErrors.map(e => e.message).join("; ")}` : ""}`);
+    if (i < deps.pollTries - 1) await deps.sleep(1000);
+  }
+  return { fileId, ready: false };
+}
+
+/** Make this recipe's nutrition image and point custom.nutritional_info at
+ *  it. Never fatal: a failure leaves the product without one (the
+ *  template's was already removed) and says so in the steps — except the
+ *  write guard, which always stops the run. */
+async function attachNutritionImage(port: ShopifyPort, deps: FileDeps, productId: string, image: NonNullable<ApplyInput["nutritionImage"]>): Promise<string> {
+  try {
+    const { fileId, ready } = await uploadImageFile(port, deps, image);
+    const s = await port.write<{ metafieldsSet: { userErrors: UserErrors } }>(
+      "metafieldsSet",
+      `mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } } }`,
+      { metafields: [{ ownerId: productGid(productId), namespace: MF.nutrition.namespace, key: MF.nutrition.key, type: MF.nutrition.type, value: fileId }] },
+    );
+    check("attaching the nutrition image", s.metafieldsSet.userErrors);
+    return `Uploaded this recipe's nutrition table image and put it on (${MF.nutrition.namespace}.${MF.nutrition.key})${ready ? "" : " — Shopify is still processing it, it shows in a minute"}`;
+  } catch (err) {
+    if (err instanceof ShopifyWritesBlockedError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[test-box-shopify] nutrition image for product ${productId}:`, msg);
+    return `Nutrition image NOT put on: ${msg}. Upload it by hand or run this again.`;
+  }
 }
 
 export interface ApplyResult {
@@ -185,7 +281,7 @@ export interface ApplyResult {
  * Shopify returns the new product's id — BEFORE anything else — so the caller
  * can store it and a failure further on can't lead to a second duplicate.
  */
-export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, onDuplicated: (productId: string) => Promise<void>): Promise<ApplyResult> {
+export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, onDuplicated: (productId: string) => Promise<void>, files: FileDeps = liveFileDeps): Promise<ApplyResult> {
   const steps: string[] = [];
   let productId = input.existingProductId;
 
@@ -267,6 +363,9 @@ export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, o
     check("writing the details", s.metafieldsSet.userErrors);
     steps.push(`Wrote ${plan.set.map(m => `${m.namespace}.${m.key}`).join(", ")}`);
   }
+
+  // A fresh nutrition image every run (a re-run replaces the last one).
+  if (input.nutritionImage) steps.push(await attachNutritionImage(port, files, productId, input.nutritionImage));
 
   return {
     productId,

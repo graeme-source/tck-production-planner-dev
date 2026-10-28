@@ -23,13 +23,13 @@ import { syncTestBox, type Actor } from "./test-box-data";
 import { tickTestBoxTask } from "./test-box-todos";
 import {
   applyRecipeProduct, fetchAccessScopes, fetchProducts, fetchTemplateCandidates,
-  fetchVariantProducts, type ProductSnapshot, type ShopifyPort,
+  fetchVariantProducts, liveFileDeps, type FileDeps, type ProductSnapshot, type ShopifyPort,
 } from "./test-box-shopify";
 import {
   STANDARD_COOKING_SECTIONS, chooseTemplate, copiedFromRecipeId, decideRecipeAction, descriptionHtml,
-  launchTicks, metafieldPlan, missingWriteScopes, nutritionRows, productPrice,
+  launchTicks, metafieldPlan, missingFileScopes, missingWriteScopes, nutritionImageForRun, nutritionImagePlan, nutritionRows, productPrice,
   recipeWarnings, sameTitle, tagChanges, templateSearchQuery, testBoxTags, variantsToLink,
-  type MetafieldLine, type RecipeAction, type RecipeContent, type TemplateCandidate,
+  type MetafieldLine, type NutritionRow, type RecipeAction, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
 
 // ── What the recipe's own data says (deck, nutrition) ───────────────────────
@@ -60,7 +60,10 @@ export interface RecipePreview {
   price: { set: string | null; summary: string };
   imagesCopied: boolean;
   metafields: MetafieldLine[];
-  nutrition: { complete: boolean; portionWeightG: number | null; rows: Array<{ label: string; per100g: string; perPortion: string | null }> };
+  nutrition: { complete: boolean; portionWeightG: number | null; rows: NutritionRow[] };
+  /** Whether the run puts this recipe's nutrition image on (the browser
+   *  draws it from `nutrition` and sends it with the create), and why not. */
+  nutritionImage: { willAttach: boolean; summary: string };
   warnings: string[];
   blocking: string[];
 }
@@ -69,6 +72,8 @@ export interface Preview {
   writesBlocked: boolean;
   blockedMessage: string | null;
   missingScopes: string[];
+  /** write_files missing: products are still made, the nutrition image is left off. */
+  missingFileScopes: string[];
   includeImages: boolean;
   templates: Array<TemplateCandidate & { adminUrl: string }>;
   recipes: RecipePreview[];
@@ -176,6 +181,7 @@ export async function buildPlan(
     : new Set<string>();
 
   const contents = await Promise.all(recipes.map(r => loadContent(r.id)));
+  const fileScopesMissing = missingFileScopes(scopes);
   const tags = testBoxTags(box.name);
   const perRecipe: Internal["perRecipe"] = new Map();
   const previews: RecipePreview[] = [];
@@ -203,7 +209,8 @@ export async function buildPlan(
     };
     const base = action === "update" ? mineSnap : template;
     const price = productPrice(r.rrp, base?.variants.length ?? 0, base?.variants[0]?.price ?? null);
-    const plan = metafieldPlan(content, base?.metafields ?? [], STANDARD_COOKING);
+    const nutritionImage = nutritionImagePlan({ nutritionComplete: loaded.nutrition?.complete ?? false, missingFileScopes: fileScopesMissing });
+    const plan = metafieldPlan(content, base?.metafields ?? [], STANDARD_COOKING, nutritionImage);
     const { warnings, blocking } = recipeWarnings({
       action,
       templateFound: template != null,
@@ -256,6 +263,7 @@ export async function buildPlan(
         portionWeightG: loaded.nutrition?.portionWeightG ?? null,
         rows: loaded.nutrition ? nutritionRows(loaded.nutrition.per100g, loaded.nutrition.perPortion) : [],
       },
+      nutritionImage,
       warnings,
       blocking,
     });
@@ -267,6 +275,7 @@ export async function buildPlan(
       writesBlocked,
       blockedMessage: writesBlocked ? new ShopifyWritesBlockedError("preview").message : null,
       missingScopes: missingWriteScopes(scopes),
+      missingFileScopes: fileScopesMissing,
       includeImages: opts.includeImages,
       templates: candidates.filter(c => c.tags.every(t => t.trim().toLowerCase() !== box.name.trim().toLowerCase()))
         .map(c => ({ ...c, adminUrl: shopifyAdminUrl("products", c.productId) })),
@@ -324,11 +333,12 @@ export async function tickEarnedLaunchSteps(boxId: number, user: Actor): Promise
 export async function runCreate(
   boxId: number,
   recipeIds: number[],
-  opts: { templates?: Record<string, string>; includeImages: boolean },
+  opts: { templates?: Record<string, string>; includeImages: boolean; nutritionImages?: Record<number, string> },
   user: Actor,
   port: ShopifyPort,
   loadContent: ContentLoader,
   writesBlocked: boolean,
+  files: FileDeps = liveFileDeps,
 ): Promise<RunResult> {
   const plan = await buildPlan(boxId, opts, port, loadContent, writesBlocked);
   // With writes blocked the guard stops the run at its first write (and says
@@ -350,6 +360,7 @@ export async function runCreate(
     }
     if (rp.blocking.length) { results.push({ ...base, outcome: "skipped", message: rp.blocking[0], product: null }); continue; }
     const internal = plan.perRecipe.get(rp.recipeId)!;
+    const nutrition = nutritionImageForRun(rp, opts.nutritionImages?.[rp.recipeId]);
     try {
       const res = await applyRecipeProduct(port, {
         action: rp.action,
@@ -362,6 +373,7 @@ export async function runCreate(
         content: internal.content,
         standardCooking: STANDARD_COOKING,
         price: internal.price,
+        nutritionImage: nutrition.image,
       }, async (productId) => {
         // Stored before anything else happens to it — a later failure can
         // never lead to a second duplicate.
@@ -373,7 +385,8 @@ export async function runCreate(
           target: [testBoxShopifyProductsTable.testBoxId, testBoxShopifyProductsTable.recipeId],
           set: { shopifyProductId: productId, productTitle: rp.title, templateProductId: internal.template?.id ?? null, imagesCopied: opts.includeImages, state: "created", lastError: null, updatedByName: user.name, updatedAt: new Date() },
         });
-      });
+      }, files);
+      if (nutrition.note) res.steps.push(nutrition.note);
       await db.update(testBoxShopifyProductsTable)
         .set({ state: "complete", productTitle: res.title, lastError: null, updatedByName: user.name, updatedAt: new Date() })
         .where(and(eq(testBoxShopifyProductsTable.testBoxId, boxId), eq(testBoxShopifyProductsTable.recipeId, rp.recipeId)));

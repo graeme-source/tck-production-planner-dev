@@ -21,4 +21,7 @@ export const BIG_BODY_JSON_ROUTES: Readonly<Record<string, string>> = {
   // Recipe Designer chat accepts up to 10 base64 image attachments of
   // ≤5 MB each (Anthropic's per-image limit), validated in the route.
   "/api/recipe-designer/chat": "30mb",
+  // Test box → Shopify products: each recipe's nutrition table PNG (≈50 KB,
+  // at most 10 recipes × 800 000 base64 characters, checked in the route).
+  "/api/test-boxes/:id/shopify/create": "9mb",
 };

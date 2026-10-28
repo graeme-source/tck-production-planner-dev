@@ -15,6 +15,10 @@ describe("BIG_BODY_JSON_ROUTES", () => {
     expect(BIG_BODY_JSON_ROUTES["/api/ingredients/scrape-photo"]).toBe("10mb");
   });
 
+  it("lets the test-box Shopify create carry its nutrition image PNGs", () => {
+    expect(BIG_BODY_JSON_ROUTES["/api/test-boxes/:id/shopify/create"]).toBe("9mb");
+  });
+
   it("uses absolute /api/ paths (they are matched at app level, before the router)", () => {
     for (const path of Object.keys(BIG_BODY_JSON_ROUTES)) {
       expect(path, `${path} must start with /api/`).toMatch(/^\/api\//);

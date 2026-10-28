@@ -25,14 +25,16 @@
  *     (single_line_text_field "2" = calzones per pack), custom.ingredient_deck
  *     (rich_text_field), custom.cooking_instructions (rich_text_field —
  *     identical standard text on every calzone), custom.nutritional_info
- *     (file_reference → an IMAGE of the nutrition table — not text, so the
- *     app can't write it), custom.pairs_with (list.product_reference, the
+ *     (file_reference → an IMAGE of the nutrition table — black on white,
+ *     "Typical values | per 100g | per 355g serving"; the app draws one in
+ *     the browser and uploads it, needing the write_files scope), custom.pairs_with (list.product_reference, the
  *     garlic mayo), legacy custom_fields.recipe ("string": an older copy of
  *     the description), judgeme.* / reviews.* (review apps).
  *   - Barcode: GS1 number added by hand later (blank on his fresh draft).
  *   - Collection per box: a SMART collection named for the box whose rule
  *     is TAG EQUALS <box tag> (e.g. "August Test Box" = tag "Summer Test Box").
  */
+import { NUTRITION_TABLE_ROWS, formatNutrient } from "@workspace/product-labels";
 
 export const TEST_BOX_BASE_TAGS: readonly string[] = ["show", "no-wholesale", "calzones"];
 
@@ -79,6 +81,15 @@ export const STANDARD_COOKING_SECTIONS: ReadonlyArray<{ heading: string; text: s
 
 /** The scopes the app's Shopify connection needs to make the products. */
 export const REQUIRED_WRITE_SCOPES: readonly string[] = ["write_products"];
+
+/** …and to upload the nutrition image (stagedUploadsCreate + fileCreate,
+ *  Admin API 2026-01: "Requires write_files … or write_images"). Missing it
+ *  never stops the products — the image is just left off. */
+export const FILE_WRITE_SCOPES: readonly string[] = ["write_files"];
+
+export function missingFileScopes(scopes: string[]): string[] {
+  return scopes.includes("write_files") || scopes.includes("write_images") ? [] : [...FILE_WRITE_SCOPES];
+}
 
 const norm = (s: string) => s.trim().toLowerCase();
 
@@ -158,29 +169,74 @@ export function singleLine(description: string): string {
   return description.replace(/\s+/g, " ").trim();
 }
 
-export const NUTRIENT_ROWS: ReadonlyArray<{ key: string; label: string; unit: string }> = [
-  { key: "energyKj", label: "Energy", unit: "kJ" },
-  { key: "energyKcal", label: "Energy", unit: "kcal" },
-  { key: "fat", label: "Fat", unit: "g" },
-  { key: "saturates", label: "of which saturates", unit: "g" },
-  { key: "carbohydrate", label: "Carbohydrate", unit: "g" },
-  { key: "sugars", label: "of which sugars", unit: "g" },
-  { key: "fibre", label: "Fibre", unit: "g" },
-  { key: "protein", label: "Protein", unit: "g" },
-  { key: "salt", label: "Salt", unit: "g" },
-];
+export interface NutritionRow { key: string; label: string; indent: boolean; optional: boolean; per100g: string; perPortion: string | null }
 
 /** The app's nutrition (GET /api/recipes/:id/nutritionals) as table rows —
- *  what the nutrition image has to show. Energy whole numbers, the rest to
- *  one decimal place (salt to two). perPortion null (a recipe with no
- *  portion size) gives perPortion null on every row: per 100 g only. */
-export function nutritionRows(per100g: Record<string, number | null>, perPortion: Record<string, number | null> | null): Array<{ label: string; per100g: string; perPortion: string | null }> {
-  const fmt = (key: string, unit: string, v: number | null | undefined) => {
-    if (v == null) return "—";
-    const dp = key.startsWith("energy") ? 0 : key === "salt" ? 2 : 1;
-    return `${v.toFixed(dp)}${unit === "g" ? "g" : ` ${unit}`}`;
-  };
-  return NUTRIENT_ROWS.map(r => ({ label: r.unit === "kcal" ? "" : r.label, per100g: fmt(r.key, r.unit, per100g[r.key]), perPortion: perPortion ? fmt(r.key, r.unit, perPortion[r.key]) : null }));
+ *  exactly what the nutrition image says. Row order, labels and rounding
+ *  are the shared ones in @workspace/product-labels (nutrition-table.ts,
+ *  matching the website's existing images). perPortion null (a recipe with
+ *  no portion size) gives perPortion null on every row: per 100 g only. */
+export function nutritionRows(per100g: Record<string, number | null>, perPortion: Record<string, number | null> | null): NutritionRow[] {
+  return NUTRITION_TABLE_ROWS.map(r => ({
+    key: r.key, label: r.label, indent: r.indent, optional: r.optional,
+    per100g: formatNutrient(r.key, per100g[r.key]),
+    perPortion: perPortion ? formatNutrient(r.key, perPortion[r.key]) : null,
+  }));
+}
+
+// ── Nutrition image ─────────────────────────────────────────────────────────
+/** Whether the run will put a nutrition image on this recipe's product, and
+ *  the plain-English line the preview shows. */
+export function nutritionImagePlan(input: { nutritionComplete: boolean; missingFileScopes: string[] }): { willAttach: boolean; summary: string } {
+  if (!input.nutritionComplete) {
+    return { willAttach: false, summary: "Nutrition isn't complete, so no image can be made yet — the template's is removed. Finish the nutrition and run this again." };
+  }
+  if (input.missingFileScopes.length) {
+    return { willAttach: false, summary: `Shopify hasn't given the app permission to upload files yet (${input.missingFileScopes.join(", ")}) — the nutrition image will be left off; add the scope to have it put on. The template's is removed.` };
+  }
+  return { willAttach: true, summary: "This recipe's nutrition table, drawn by the app from the numbers below and uploaded as a new image" };
+}
+
+/** The biggest nutrition PNG the server takes (decoded). A 1000 px table is
+ *  about 30–80 KB; anything near this is not one of ours. */
+export const MAX_NUTRITION_PNG_BYTES = 600_000;
+
+/** A nutrition image sent by the browser (base64 PNG) checked before it goes
+ *  anywhere near Shopify: really a PNG, a sensible size. Pure. */
+export function checkNutritionPng(base64: string): { ok: true; bytes: Uint8Array; width: number; height: number } | { ok: false; reason: string } {
+  const clean = base64.replace(/^data:image\/png;base64,/, "");
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(clean)) return { ok: false, reason: "The nutrition image isn't valid base64" };
+  const bytes = Uint8Array.from(Buffer.from(clean, "base64"));
+  if (bytes.length > MAX_NUTRITION_PNG_BYTES) return { ok: false, reason: "The nutrition image is too big" };
+  const sig = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  if (bytes.length < 33 || !sig.every((b, i) => bytes[i] === b)) return { ok: false, reason: "The nutrition image isn't a PNG" };
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const width = view.getUint32(16);
+  const height = view.getUint32(20);
+  if (width < 200 || width > 3000 || height < 100 || height > 3000) return { ok: false, reason: `The nutrition image is an odd size (${width}×${height})` };
+  return { ok: true, bytes, width, height };
+}
+
+/**
+ * The nutrition image for one recipe's run: the browser's PNG when the
+ * preview said it will be put on and the PNG passes the checks, else null
+ * with the line for the results.
+ */
+export function nutritionImageForRun(
+  rp: { title: string; nutritionImage: { willAttach: boolean; summary: string } },
+  pngBase64: string | undefined,
+): { image: { bytes: Uint8Array; filename: string; alt: string } | null; note: string | null } {
+  if (!rp.nutritionImage.willAttach) return { image: null, note: `Nutrition image left off: ${rp.nutritionImage.summary}` };
+  if (!pngBase64) return { image: null, note: "Nutrition image left off: the page didn't send one (reload the preview and run again). The template's was removed." };
+  const png = checkNutritionPng(pngBase64);
+  if (!png.ok) return { image: null, note: `Nutrition image left off: ${png.reason}. The template's was removed.` };
+  return { image: { bytes: png.bytes, filename: nutritionFilename(rp.title), alt: `${rp.title} nutrition` }, note: null };
+}
+
+/** "Properoni CarniZone" → "properoni-carnizone-nutrition.png". */
+export function nutritionFilename(title: string): string {
+  const slug = collectionHandle(title).slice(0, 60) || "recipe";
+  return `${slug}-nutrition.png`;
 }
 
 // ── Metafields ──────────────────────────────────────────────────────────────
@@ -200,7 +256,7 @@ export interface RecipeContent {
  * the product's metafields as they are now (the template's, straight after
  * Duplicate).
  */
-export function metafieldPlan(content: RecipeContent, existing: MetafieldValue[], standardCooking: string): {
+export function metafieldPlan(content: RecipeContent, existing: MetafieldValue[], standardCooking: string, nutritionImage?: { willAttach: boolean; summary: string }): {
   set: MetafieldValue[]; remove: MetafieldRef[]; lines: MetafieldLine[];
 } {
   const has = (m: MetafieldRef) => existing.find(e => e.namespace === m.namespace && e.key === m.key);
@@ -249,10 +305,15 @@ export function metafieldPlan(content: RecipeContent, existing: MetafieldValue[]
   for (const m of TEMPLATE_ONLY_METAFIELDS) {
     if (has(m)) remove.push(pick(m));
   }
-  lines.push({
-    label: MF.nutrition.label, field: field(MF.nutrition), action: has(MF.nutrition) ? "remove" : "none",
-    summary: "An image — the app can't make it. The template's is removed; upload this recipe's by hand",
-  });
+  // The nutrition image: the template's is always removed first (so another
+  // recipe's never shows, even if the upload fails); the run then sets this
+  // recipe's own image once it is uploaded (applyRecipeProduct).
+  lines.push(nutritionImage?.willAttach
+    ? { label: MF.nutrition.label, field: field(MF.nutrition), action: "set", summary: nutritionImage.summary }
+    : {
+      label: MF.nutrition.label, field: field(MF.nutrition), action: has(MF.nutrition) ? "remove" : "none",
+      summary: nutritionImage?.summary ?? "An image — the template's is removed; this recipe's is made when the run has its picture",
+    });
 
   return { set, remove, lines };
 }
