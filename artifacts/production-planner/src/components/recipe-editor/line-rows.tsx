@@ -1,6 +1,8 @@
 /**
  * The ingredient rows and sub-recipe rows of the recipe AND sub-recipe
- * editors — one component, so both editors search, add, measure, cost and
+ * editors. Every picked line has an "open" button (#id ↗) that opens its
+ * ingredient record or sub-recipe in a pop-up on top, without losing your
+ * place — sub-recipes all the way down — one component, so both editors search, add, measure, cost and
  * link lines exactly the same way (Graeme, 2026-10-12: "if it's got the same
  * thing … it should just use exactly the same structure and code").
  * Objectives A and F.
@@ -19,7 +21,7 @@
  * marinadeAddAtCooking — field paths are built from `name`, so the form's
  * own types aren't visible here.
  */
-import { useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useMemo, useState, type ReactNode } from "react";
 import { useFieldArray, type UseFormReturn } from "react-hook-form";
 import { useQueryClient } from "@tanstack/react-query";
 import { FlaskConical, Plus, SquareArrowOutUpRight, X } from "lucide-react";
@@ -34,6 +36,10 @@ import { formatLineCost } from "@/lib/recipe-line-cost";
 import { QuantityInput } from "./quantity-input";
 import type { EditorIngredientOption, EditorSubRecipeOption } from "./types";
 import { toGrams, convertQuantity } from "@workspace/units";
+
+// The sub-recipe editor lives on the Sub-recipes page, which itself uses
+// these rows — loaded on demand so the two don't import each other.
+const SubRecipeEditorPopup = lazy(() => import("@/pages/sub-recipes").then(m => ({ default: m.SubRecipeEditorPopup })));
 
 const MIX_EXTRA_HELP =
   "Extra grams per production day (not per batch), added once at the mixing station. " +
@@ -93,6 +99,10 @@ export function LineRows(props: LineRowsProps) {
   // which one we're using"). Objective G.
   const qc = useQueryClient();
   const [openIngredientId, setOpenIngredientId] = useState<number | null>(null);
+  // Sub-recipe rows open the same way, in their own pop-up on top (Graeme,
+  // 28 Oct 2026: "I want it to behave the same, whether it's an ingredient
+  // or a subrecipe"); its rows open further down in turn.
+  const [openSubRecipeId, setOpenSubRecipeId] = useState<number | null>(null);
   // The full records (nutrients aren't on the page's option list) — the same
   // cached /api/ingredients query the pages use, so a save refreshes both.
   const { data: allIngredients } = useListIngredients();
@@ -181,6 +191,19 @@ export function LineRows(props: LineRowsProps) {
                       data-testid={`open-ingredient-${ing.id}`}
                     >
                       <span className="tabular-nums text-muted-foreground">#{ing.id}</span>
+                      <SquareArrowOutUpRight className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {props.kind === "subRecipe" && sub && (
+                    <button
+                      type="button"
+                      onClick={() => setOpenSubRecipeId(sub.id)}
+                      className="shrink-0 inline-flex items-center gap-1 h-9 px-2 rounded-lg border border-border text-[11px] font-medium text-accent hover:bg-accent/10 transition-colors"
+                      title={`Open ${sub.name} (#${sub.id}) — the sub-recipe and its ingredients`}
+                      aria-label={`Open sub-recipe ${sub.name}, number ${sub.id}`}
+                      data-testid={`open-sub-recipe-${sub.id}`}
+                    >
+                      <span className="tabular-nums text-muted-foreground">#{sub.id}</span>
                       <SquareArrowOutUpRight className="w-3.5 h-3.5" />
                     </button>
                   )}
@@ -339,6 +362,12 @@ export function LineRows(props: LineRowsProps) {
           // by the dialog; the UPF roll-up behind the row badges is ours.
           onSaved={() => { void qc.invalidateQueries({ queryKey: getGetUpfSummaryQueryKey() }); }}
         />
+      )}
+
+      {openSubRecipeId != null && (
+        <Suspense fallback={null}>
+          <SubRecipeEditorPopup id={openSubRecipeId} onClose={() => setOpenSubRecipeId(null)} />
+        </Suspense>
       )}
     </div>
   );

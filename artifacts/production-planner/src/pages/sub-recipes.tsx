@@ -737,7 +737,8 @@ function EditSubRecipeDialog({
       dirty={formIsDirty}
       onSaveRequest={() => submitRef.current?.()}
       entityLabel="sub-recipe"
-      title="Edit Sub-Recipe"
+      // Named, so a pop-up stacked on a recipe says which one it is.
+      title={detail ? `Edit Sub-Recipe · ${detail.name}` : "Edit Sub-Recipe"}
     >
           {isLoading ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
@@ -766,6 +767,58 @@ function EditSubRecipeDialog({
             </>
           )}
     </EditorDialog>
+  );
+}
+
+// The option lists both editors' rows pick from — shared by this page and
+// the pop-up opened from a recipe's sub-recipe row.
+function toIngredientOptions(ingredients: Ingredient[] | undefined): IngredientOption[] {
+  return (ingredients ?? []).map(i => ({
+    id: i.id,
+    name: i.name,
+    unit: i.unit,
+    processingRatio: i.processingRatio ?? null,
+    novaClass: i.novaClass ?? null,
+    novaMarkers: i.novaMarkers ?? [],
+    labelDeclaration: (i as { labelDeclaration?: string | null }).labelDeclaration ?? null,
+    allergens: (i as { allergens?: string[] }).allergens ?? [],
+    supplierName: (i as unknown as { supplierName?: string | null }).supplierName ?? null,
+    costPerPack: Number((i as unknown as { costPerPack?: number | string }).costPerPack ?? 0) || 0,
+    packWeight: Number((i as unknown as { packWeight?: number | string }).packWeight ?? 0) || 0,
+    // Drives the "Marinade for" targets: only raw_meat rows qualify.
+    category: (i as unknown as { category?: string | null }).category ?? null,
+  }));
+}
+
+function toSubRecipeOptions(subRecipes: SubRecipe[] | undefined): SubRecipeOption[] {
+  return (subRecipes ?? []).map(sr => ({
+    id: sr.id,
+    name: sr.name,
+    yieldUnit: sr.yieldUnit,
+    // Line cost of a nested component (qty × cost per yield unit), as the
+    // recipe editor shows for its sub-recipe lines.
+    costPerYieldUnit: Number(sr.costPerYieldUnit) || 0,
+  }));
+}
+
+/**
+ * A sub-recipe opened in its own pop-up from a row inside a recipe or another
+ * sub-recipe, on top of what you were editing (Graeme, 28 Oct 2026: "when
+ * something's inside a recipe, I want it to behave the same, whether it's an
+ * ingredient or a subrecipe"). Its own rows open the same way, so you can
+ * keep going down. Loads its lists from the shared cached queries.
+ */
+export function SubRecipeEditorPopup({ id, onClose }: { id: number; onClose: () => void }) {
+  const { data: subRecipes } = useListSubRecipes();
+  const { data: ingredients } = useListIngredients();
+  return (
+    <EditSubRecipeDialog
+      id={id}
+      open
+      onOpenChange={v => { if (!v) onClose(); }}
+      ingredients={toIngredientOptions(ingredients)}
+      subRecipes={toSubRecipeOptions(subRecipes)}
+    />
   );
 }
 
@@ -1107,30 +1160,8 @@ export default function SubRecipes() {
     </th>
   );
 
-  const ingredientList: IngredientOption[] = (ingredients ?? []).map(i => ({
-    id: i.id,
-    name: i.name,
-    unit: i.unit,
-    processingRatio: i.processingRatio ?? null,
-    novaClass: i.novaClass ?? null,
-    novaMarkers: i.novaMarkers ?? [],
-    labelDeclaration: (i as { labelDeclaration?: string | null }).labelDeclaration ?? null,
-    allergens: (i as { allergens?: string[] }).allergens ?? [],
-    supplierName: (i as unknown as { supplierName?: string | null }).supplierName ?? null,
-    costPerPack: Number((i as unknown as { costPerPack?: number | string }).costPerPack ?? 0) || 0,
-    packWeight: Number((i as unknown as { packWeight?: number | string }).packWeight ?? 0) || 0,
-    // Drives the "Marinade for" targets: only raw_meat rows qualify.
-    category: (i as unknown as { category?: string | null }).category ?? null,
-  }));
-
-  const subRecipeList: SubRecipeOption[] = (subRecipes ?? []).map(sr => ({
-    id: sr.id,
-    name: sr.name,
-    yieldUnit: sr.yieldUnit,
-    // Line cost of a nested component (qty × cost per yield unit), as the
-    // recipe editor shows for its sub-recipe lines.
-    costPerYieldUnit: Number(sr.costPerYieldUnit) || 0,
-  }));
+  const ingredientList = toIngredientOptions(ingredients);
+  const subRecipeList = toSubRecipeOptions(subRecipes);
 
   const addDefaults: FormValues = {
     name: "", description: "", yield: 1, yieldUnit: "kg", notes: "", shelfLifeDays: undefined, isBase: false, expandInPrep: false, madeOnProductionDay: false, prepOneTinPerRecipe: false, labelDeclaration: "",
