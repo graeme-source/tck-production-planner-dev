@@ -49,7 +49,7 @@ import {
   toISODate,
 } from "@workspace/business-days";
 import { parseISODate, resolveDeliveryDate } from "@/lib/order-delivery";
-import { openOrdersForSupplier, orderTargetFor, placedOrderEditState, showsPendingCard } from "@/lib/supplier-order-target";
+import { kanbansToPutBack, openOrdersForSupplier, orderTargetFor, placedOrderEditState, showsPendingCard } from "@/lib/supplier-order-target";
 import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
 import { useNow } from "@/hooks/use-now";
@@ -1750,6 +1750,17 @@ export default function Orders() {
   const totalPlacedForPlan = placedForPlan.length;
 
   const dismissSupplier = useCallback((supplierId: number) => {
+    // Pulled kanbans on the card go back on the board, as deleting their line
+    // does — hiding the card alone left them queued on the server, so they
+    // came back every day for a week (AA Labels, Graeme 28 Oct 2026).
+    for (const ingredientId of kanbansToPutBack(editableLines[supplierId] ?? [])) {
+      fetch(`${BASE}/api/kanbans/unqueue`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientId }),
+      }).catch(() => {});
+    }
     setDismissedSupplierIds(prev => {
       const next = new Set(prev);
       next.add(supplierId);
@@ -1764,7 +1775,7 @@ export default function Orders() {
       next.delete(supplierId);
       return next;
     });
-  }, [persistDismissed, updateSeparateOrderSuppliers]);
+  }, [persistDismissed, updateSeparateOrderSuppliers, editableLines]);
   const restoreSupplier = useCallback((supplierId: number) => {
     setDismissedSupplierIds(prev => {
       if (!prev.has(supplierId)) return prev;
@@ -3469,6 +3480,11 @@ export default function Orders() {
                 Hide the draft order for <span className="font-semibold text-foreground">{dismissConfirm.supplierName}</span>?
                 Any items the system suggested won't be placed and the card will disappear from the To-Order list.
               </p>
+              {(editableLines[dismissConfirm.supplierId] ?? []).some(l => l.isKanban) && (
+                <p className="text-sm font-semibold text-foreground">
+                  Its pulled kanbans ({(editableLines[dismissConfirm.supplierId] ?? []).filter(l => l.isKanban).map(l => l.ingredientName).join(", ")}) go back on the board, so they won&rsquo;t come back tomorrow. Pull them again if they&rsquo;re still needed.
+                </p>
+              )}
               <p className="text-xs text-muted-foreground">
                 You can bring it back via the "Show dismissed" link at the bottom of the list, or click "+ Add supplier order" to start fresh.
               </p>

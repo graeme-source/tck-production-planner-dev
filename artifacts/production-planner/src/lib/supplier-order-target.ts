@@ -107,3 +107,10 @@ export function placedOrderEditState(
   if (r || separateSupplierIds.has(order.supplierId)) return "supplier-busy";
   return "free";
 }
+
+/** The pulled kanbans to put back on the board when a supplier's card is
+ *  dismissed — otherwise the server keeps them queued and they return every
+ *  day for a week (AA Labels, 28 Oct 2026). One per ingredient. */
+export function kanbansToPutBack(lines: ReadonlyArray<{ ingredientId: number; isKanban?: boolean }>): number[] {
+  return [...new Set(lines.filter(l => l.isKanban && l.ingredientId > 0).map(l => l.ingredientId))];
+}

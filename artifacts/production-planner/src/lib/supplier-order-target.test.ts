@@ -4,6 +4,7 @@ import {
   orderTargetFor,
   placedOrderEditState,
   showsPendingCard,
+  kanbansToPutBack,
   type OpenOrderLike,
 } from "./supplier-order-target";
 
@@ -101,5 +102,16 @@ describe("placedOrderEditState — keyed by order, not supplier", () => {
   it("is free otherwise, and other suppliers are unaffected", () => {
     expect(placedOrderEditState(po(10), {}, new Set())).toBe("free");
     expect(placedOrderEditState(po(30, { supplierId: OTHER }), { [SUPPLIER]: { id: 10 } }, new Set([SUPPLIER]))).toBe("free");
+  });
+});
+
+describe("kanbansToPutBack", () => {
+  it("puts back every pulled kanban on a dismissed card, once each, and nothing else (regression, 28 Oct 2026)", () => {
+    expect(kanbansToPutBack([
+      { ingredientId: 334, isKanban: true },
+      { ingredientId: 334, isKanban: true },
+      { ingredientId: 12, isKanban: false },
+      { ingredientId: -1, isKanban: true },
+    ])).toEqual([334]);
   });
 });
