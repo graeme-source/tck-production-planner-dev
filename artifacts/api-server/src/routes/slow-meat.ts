@@ -83,6 +83,13 @@ async function guard(req: Request, res: Response, next: NextFunction, planId: nu
   next();
 }
 
+/** The same check as a new plan, for the lines a merge adds to an existing
+ *  day's plan (routes/plan-merge.ts) — only the incoming lines are counted,
+ *  exactly as if they were being created. */
+export function slowMeatNewLinesGuard(req: Request, res: Response, next: NextFunction): Promise<void> {
+  return guard(req, res, next, null);
+}
+
 export const slowMeatPlanGuard: IRouter = Router();
 
 slowMeatPlanGuard.post("/", (req, res, next) => guard(req, res, next, null));

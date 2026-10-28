@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  hasCalzoneLine, mergeBlock, pickMergeTarget, mergedStatus, mergedNotes, planMergeLayout,
+  hasCalzoneLine, mergeBlock, pickMergeTarget, mergedStatus, mergedNotes, planMergeLayout, isRepeatMerge,
 } from "./plan-merge";
 import { FRIED_CHICKEN_CATEGORY, MAC_CHEESE_CATEGORY } from "./kitchen-scope";
 
@@ -127,5 +127,17 @@ describe("planMergeLayout", () => {
     const layout = planMergeLayout([], [{ recipeId: 1 }, { recipeId: 2 }]);
     expect(layout.inserts.map(i => i.orderPosition)).toEqual([1, 2]);
     expect(layout.moves).toEqual([]);
+  });
+});
+
+describe("isRepeatMerge", () => {
+  const existing = [{ recipeId: 1, batchesTarget: 6 }, { recipeId: 2, batchesTarget: 4 }, { recipeId: 60, batchesTarget: 30 }];
+  it("recognises the same create arriving twice", () => {
+    expect(isRepeatMerge(existing, [{ recipeId: 1, batchesTarget: 6 }, { recipeId: 2, batchesTarget: 4 }])).toBe(true);
+  });
+  it("is false for a different plan or an empty one", () => {
+    expect(isRepeatMerge(existing, [{ recipeId: 1, batchesTarget: 7 }])).toBe(false);
+    expect(isRepeatMerge(existing, [{ recipeId: 3, batchesTarget: 6 }])).toBe(false);
+    expect(isRepeatMerge(existing, [])).toBe(false);
   });
 });

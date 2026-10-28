@@ -149,3 +149,16 @@ export function planMergeLayout(
 
   return { inserts, moves, skippedRecipeIds: skipped };
 }
+
+/** A merge that has already landed — the same request arriving twice (a
+ *  double tap). True when every incoming line is already on the plan with the
+ *  same batches, so the second request can answer "done" instead of being
+ *  refused as a clash. */
+export function isRepeatMerge(
+  existing: ReadonlyArray<{ recipeId: number; batchesTarget: number | null | undefined }>,
+  incoming: ReadonlyArray<{ recipeId: number; batchesTarget?: number | null }>,
+): boolean {
+  if (incoming.length === 0) return false;
+  const on = new Map(existing.map(e => [e.recipeId, Number(e.batchesTarget) || 0]));
+  return incoming.every(i => on.has(i.recipeId) && on.get(i.recipeId) === (Number(i.batchesTarget) || 0));
+}
