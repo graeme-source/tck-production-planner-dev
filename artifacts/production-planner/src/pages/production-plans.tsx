@@ -37,7 +37,8 @@ import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
 import { AddFriedChickenDialog } from "@/components/fried-chicken/add-fried-chicken-dialog";
 import { FriedChickenPrepSheetDialog } from "@/components/fried-chicken/prep-sheet";
 import { FRIED_CHICKEN_CATEGORY, type StationPlanItem } from "@/pages/station/shared/constants";
-import { mainKitchenItems } from "@workspace/production-schedule";
+import { mainKitchenItems, pickMergeTarget, type MergeCandidatePlan } from "@workspace/production-schedule";
+import { useMergeIntoDayPlan } from "@/lib/plan-merge-api";
 import { netTwoPacks, batchesReadyToWrap, packsWrapped } from "@/pages/station/shared/recipe-completion";
 import { useRecipeRoutes } from "@/lib/recipe-routes";
 import { capacityBreakdown, formatCapacityBreakdown, batchesForPacks, packsFromBatches } from "@workspace/production-schedule";
@@ -2650,6 +2651,15 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   const [marginGuardFor, setMarginGuardFor] = useState<"draft" | "active" | null>(null);
   // "There's already a plan for this day" (2026-10-15) — the save it paused.
   const [dateClash, setDateClash] = useState<{ status: "draft" | "active"; opts: SubmitOpts } | null>(null);
+  // One plan per day (2026-10-28): the plan this save merges into — the
+  // day's fried-chicken / mac-cheese-only plan — or null for a normal create.
+  // The list endpoint carries each plan's items with their category.
+  const mergeTarget = pickMergeTarget(
+    (existingPlans ?? []) as unknown as MergeCandidatePlan[],
+    planDate,
+    autoSavedPlanId.current,
+  );
+  const mergeIntoDay = useMergeIntoDayPlan();
   const addRowBatches = (id: string, n: number) => {
     const row = items.find(it => it.id === id);
     if (row && n > 0) updateItem(id, { batchesTarget: row.batchesTarget + n });
@@ -2740,6 +2750,59 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       return;
     }
 
+    const data = {
+      planDate,
+      prepDate: prepDate || null,
+      doughDate: doughDate || null,
+      name: planName || `Plan ${planDate}`,
+      notes: notes || undefined,
+      status: targetStatus,
+      items: includedItems.map((it, i) => ({
+        recipeId: it.recipeId,
+        orderPosition: i + 1,
+        batchesTarget: it.batchesTarget,
+        tinSize: it.tinSize ?? undefined,
+        maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
+        sopUrl: it.sopUrl ?? undefined,
+      })),
+    };
+
+    // One plan per day (Graeme, 2026-10-28): the day already holds fried
+    // chicken or mac cheese but no calzones → the calzones go INTO that plan,
+    // as if everything had been added together. No question to answer.
+    if (mergeTarget) {
+      const ownDraft = autoSavedPlanId.current;
+      submittingRef.current = true;
+      setIsSubmitting(true);
+      mergeIntoDay.mutate(
+        { planId: mergeTarget.id, data },
+        {
+          onSuccess: (plan) => {
+            // A draft this dialog auto-saved earlier is superseded by the merge.
+            if (ownDraft !== null && ownDraft !== plan.id) {
+              void fetch(`${BASE}/api/production-plans/${ownDraft}`, { method: "DELETE", credentials: "include" });
+            }
+            isDirty.current = false;
+            autoSavedPlanId.current = null;
+            toast({
+              title: "Added to the day's plan",
+              description: plan.skippedRecipeIds.length > 0
+                ? `${plan.addedCount} recipe(s) added to "${plan.name}". ${plan.skippedRecipeIds.length} already on it were left as they were.`
+                : `${plan.addedCount} recipe(s) added to "${plan.name}" — what was already planned that day is kept.`,
+            });
+            onClose();
+            onCreated?.(plan.id);
+            if (targetStatus === "active") downloadLockPdf(plan.id);
+          },
+          onError: (err) => {
+            toast({ title: "Couldn't save the plan", description: err.message, variant: "destructive" });
+          },
+          onSettled: () => { submittingRef.current = false; setIsSubmitting(false); },
+        },
+      );
+      return;
+    }
+
     // Guard against accidentally planning the same day twice: open the
     // existing plan, replace a draft, or (deliberately) make a second one.
     const duplicates = (existingPlans ?? []).filter(
@@ -2753,23 +2816,6 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     submittingRef.current = true;
     setIsSubmitting(true);
     try {
-      const data = {
-        planDate,
-        prepDate: prepDate || null,
-        doughDate: doughDate || null,
-        name: planName || `Plan ${planDate}`,
-        notes: notes || undefined,
-        status: targetStatus,
-        items: includedItems.map((it, i) => ({
-          recipeId: it.recipeId,
-          orderPosition: i + 1,
-          batchesTarget: it.batchesTarget,
-          tinSize: it.tinSize ?? undefined,
-          maxBatchesPerTin: it.maxBatchesPerTin ?? undefined,
-          sopUrl: it.sopUrl ?? undefined,
-        })),
-      };
-
       if (autoSavedPlanId.current !== null) {
         updatePlan.mutate(
           { id: autoSavedPlanId.current, data },
@@ -2918,7 +2964,12 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                     {dateWarning}
                   </p>
                 )}
-                {duplicatePlansForDate.length > 0 && (
+                {mergeTarget ? (
+                  <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-1 flex items-center gap-1">
+                    <Info className="w-3 h-3 flex-shrink-0" />
+                    {`This day already has "${duplicatePlansForDate.find(p => p.id === mergeTarget.id)?.name ?? "a plan"}" — these recipes will be added to it.`}
+                  </p>
+                ) : duplicatePlansForDate.length > 0 && (
                   <p className="text-xs text-amber-600 dark:text-amber-400 mt-1 flex items-center gap-1">
                     <AlertTriangle className="w-3 h-3 flex-shrink-0" />
                     {duplicatePlansForDate.length === 1
@@ -6454,9 +6505,11 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   const { deletePlan, createPlan } = useAppMutations();
   const [deleteTarget, setDeleteTarget] = useState<{ id: number; name: string } | null>(null);
   // "day" = prep/pack/dispatch day without production (checklists etc.);
-  // "mac" = mac & cheese-only production. Both create an item-less plan for
-  // the selected date, then route to the right place.
-  const [creatingDayPlan, setCreatingDayPlan] = useState<null | "day" | "mac">(null);
+  // "mac" = mac & cheese-only production; "chicken" = fried chicken before
+  // any calzone plan exists (2026-10-28). All create an item-less plan for
+  // the selected date, then route to the right place. A calzone plan made
+  // for the day later merges into it (lib plan-merge, /api/plan-merge).
+  const [creatingDayPlan, setCreatingDayPlan] = useState<null | "day" | "mac" | "chicken">(null);
   const { state: listAuthState } = useAuth();
   const listUserRole = listAuthState.status === "authenticated" ? listAuthState.user.role : undefined;
   const canEditPlanList = listUserRole === "admin" || listUserRole === "manager";
@@ -6543,7 +6596,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
   const selectedDoughWork = doughWorkByDate[selectedDateKey] ?? [];
   const selectedFriedChickenWork = friedChickenWorkByDate[selectedDateKey] ?? [];
 
-  const openDayWithoutProduction = (kind: "day" | "mac") => {
+  const openDayWithoutProduction = (kind: "day" | "mac" | "chicken") => {
     // Same-day duplicate guard as the create dialog: allowed, but never by
     // accident.
     if ((plansByDate[selectedDateKey] ?? []).length > 0) {
@@ -6563,7 +6616,9 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           // synthetic "prep day for…" cards on other days.
           prepDate: selectedDateKey,
           doughDate: selectedDateKey,
-          name: kind === "mac" ? "Mac & Cheese Production" : "Prep & Pack Day",
+          name: kind === "mac" ? "Mac & Cheese Production"
+            : kind === "chicken" ? "Fried Chicken Production"
+            : "Prep & Pack Day",
           status: "active",
           items: [],
         } as CreateProductionPlan & { prepDate?: string | null; doughDate?: string | null },
@@ -6573,6 +6628,8 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           // Mac & cheese goes straight to its station, which opens on the
           // "Add Macaroni Cheese to this Plan" form for an empty plan.
           if (kind === "mac") navigate(`/plans/${plan.id}/station/macaroni_cheese`);
+          // Fried chicken goes to its station with the run planner open.
+          else if (kind === "chicken") navigate(`/plans/${plan.id}/station/fried_chicken?view=production&fcadd=1`);
           else onViewPlan(plan.id);
         },
         onSettled: () => setCreatingDayPlan(null),
@@ -6829,6 +6886,20 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                 {creatingDayPlan === "mac" ? <Loader2 className="w-4 h-4 animate-spin" /> : <UtensilsCrossed className="w-4 h-4" />}
                 Mac &amp; Cheese only
               </button>
+              {/* Fried chicken before the calzone plan (Graeme, 2026-10-28):
+                  makes the day's plan holding only the chicken run; Create
+                  Plan for this day later adds the calzones into it. Managers
+                  only — planning the run is a manager action on the server. */}
+              {canEditPlanList && (
+                <button
+                  onClick={() => openDayWithoutProduction("chicken")}
+                  disabled={creatingDayPlan !== null}
+                  className="px-4 py-2 border border-orange-300/70 dark:border-orange-700/60 bg-orange-50 dark:bg-orange-950/20 hover:bg-orange-100 dark:hover:bg-orange-950/40 rounded-xl text-sm font-medium flex items-center gap-1.5 text-orange-800 dark:text-orange-200 disabled:opacity-50"
+                >
+                  {creatingDayPlan === "chicken" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Drumstick className="w-4 h-4" />}
+                  Add Fried Chicken Production
+                </button>
+              )}
               <button
                 onClick={() => navigate(`/plans/queued?date=${selectedDateKey}`)}
                 className="px-4 py-2 border border-violet-400/50 bg-violet-500/10 hover:bg-violet-500/20 rounded-xl text-sm font-medium flex items-center gap-1.5 text-violet-800 dark:text-violet-300"
@@ -6839,7 +6910,7 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
               </button>
             </div>
             <p className="text-[11px] mt-3 opacity-60 max-w-sm text-center px-4">
-              Opening the day gives access to every station's checklists, packing and dispatch — you can still add Mac &amp; Cheese or a full plan later.
+              Opening the day gives access to every station's checklists, packing and dispatch — you can still add Mac &amp; Cheese, fried chicken or a full plan later. A plan created for this day later is added into the same plan, never a second one.
             </p>
           </div>
         ) : (
@@ -6953,6 +7024,18 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                 </div>
               );
             })}
+            {/* The day holds fried chicken / mac cheese but no calzones yet:
+                the calzone plan is added INTO this day's plan (one plan per
+                day, 2026-10-28), so say so on the button. */}
+            {pickMergeTarget(selectedDayPlans as unknown as MergeCandidatePlan[], selectedDateKey) && (
+              <button
+                onClick={onCreatePlan}
+                className="rounded-xl px-4 py-3 border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 transition-colors flex items-center justify-center gap-2 text-sm font-medium text-primary"
+              >
+                <Plus className="w-4 h-4" />
+                Add calzone production to this day
+              </button>
+            )}
           </div>
         )}
       </div>
