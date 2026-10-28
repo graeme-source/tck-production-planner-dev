@@ -18,7 +18,7 @@ import { adjustInventoryLevel } from "../services/shopify";
 import { outstandingCollectionsForOrder } from "./collections";
 import { receiptDelta, stockQuantityForReceipt } from "../lib/goods-in-stock";
 import { z } from "zod";
-import { effectiveReceived, issuePhotoGate, MAX_ISSUE_PHOTOS, type DeliveryIssueOutcome } from "@workspace/goods-in";
+import { effectiveReceived, issuePhotoGate, MAX_ISSUE_PHOTOS, SHOPIFY_UPLOAD_NOT_CONFIRMED, shopifyUnitsFor, type DeliveryIssueOutcome } from "@workspace/goods-in";
 import { validate } from "../middleware/validate";
 import { sendShortDeliveryReport, type ShortReportOutcome } from "../lib/short-delivery-report";
 import {
@@ -200,6 +200,12 @@ router.get("/weekly", async (req, res) => {
         // Packs per pallet — lets goods-in read "1 pallet — 50 packs".
         palletSize: ingredientsTable.palletSize,
         perishable: ingredientsTable.perishable,
+        // Linked to a Shopify variant (bought-in brownies): receiving it adds
+        // stock to the store, so the dialog asks for a second confirmation.
+        shopifyVariantId: ingredientsTable.shopifyVariantId,
+        shopifyProductTitle: ingredientsTable.shopifyProductTitle,
+        shopifyVariantTitle: ingredientsTable.shopifyVariantTitle,
+        shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
       })
       .from(purchaseOrderLinesTable)
       .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -489,6 +495,11 @@ router.get("/:id", async (req, res) => {
       goodsInChecked: purchaseOrderLinesTable.goodsInChecked,
       notes: purchaseOrderLinesTable.notes,
       useByDate: purchaseOrderLinesTable.useByDate,
+      // Shopify-linked lines need the second confirmation (as on /weekly).
+      shopifyVariantId: ingredientsTable.shopifyVariantId,
+      shopifyProductTitle: ingredientsTable.shopifyProductTitle,
+      shopifyVariantTitle: ingredientsTable.shopifyVariantTitle,
+      shopifyUnitsPerPack: ingredientsTable.shopifyUnitsPerPack,
     })
     .from(purchaseOrderLinesTable)
     .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
@@ -665,6 +676,9 @@ const receiveBody = z.object({
     photoIds: z.array(z.number().int().positive()).max(MAX_ISSUE_PHOTOS),
     allItemsConfirmed: z.boolean(),
   }).nullish(),
+  /** The receiver read the "this goes on sale" pop-up and typed each
+   *  Shopify-linked quantity again. Without it nothing is pushed. */
+  shopifyUploadConfirmed: z.boolean().optional(),
 });
 
 router.post("/:id/receive", validate(receiveBody), async (req, res) => {
@@ -679,6 +693,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     notes,
     shortReport,
     issuePhotos,
+    shopifyUploadConfirmed,
   } = req.body as z.infer<typeof receiveBody>;
 
   // A collection scheduled with this delivery must be handed over and signed
@@ -893,8 +908,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     receivedDelta: number,
   ) => {
     if (!ingredientId || !variantId || receivedDelta === 0) return;
-    const perPack = Number(unitsPerPack) || 1;
-    const units = Math.round(receivedDelta * perPack);
+    const units = shopifyUnitsFor(receivedDelta, unitsPerPack);
     if (units === 0) return;
     const existing = shopifyPushes.get(ingredientId);
     if (existing) existing.units += units;
@@ -1079,6 +1093,13 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
   // failures are reported back to the operator but never fail the goods-in.
   const shopifySync: Array<{ ingredientName: string; units: number; newQuantity?: number; error?: string }> = [];
   for (const push of shopifyPushes.values()) {
+    // Stock on Shopify goes on sale, so it needs the on-screen confirmation
+    // (an old cached screen never sends it). Goods-in itself still saves.
+    if (shopifyUploadConfirmed !== true) {
+      shopifySync.push({ ingredientName: push.ingredientName, units: push.units, error: SHOPIFY_UPLOAD_NOT_CONFIRMED });
+      console.warn(`[Deliveries] Shopify stock push NOT sent for ${push.ingredientName} (variant ${push.variantId}): not confirmed on screen`);
+      continue;
+    }
     try {
       const adj = await adjustInventoryLevel(push.variantId, push.units);
       shopifySync.push({ ingredientName: push.ingredientName, units: push.units, newQuantity: adj.newQuantity });

@@ -309,3 +309,4 @@ export function newlyAdded(all: number[], previous: number[] | null | undefined)
 export * from "./shelf-life";
 // Delivery issues reported with photos — short shelf life + damaged (2026-10-16).
 export * from "./delivery-issues";
+export * from "./shopify-upload";

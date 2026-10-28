@@ -30,6 +30,7 @@ import {
   orderShortage, shortLinesOf, shortSignature, undecidedLines, type LineDecision,
   checkShelfLife, londonDeliveryDay, issueEmailToldText, issueLinesOf, newIssueLines, issuePhotoGate, issueLinesMissingCode,
   receivedAfterDamage, reopenDamagedLine, formatReportQty, type DeliveryIssueOutcome, type DamageDisposition,
+  shopifyUploadsOf,
 } from "@workspace/goods-in";
 import { ShelfLifeWarning, ShelfLifeRejectedNote, ShelfLifeRecordNote } from "@/components/deliveries/shelf-life-warning";
 import { DamagePanel, DamageRecordNote, type LineDamage } from "@/components/deliveries/damage-panel";
@@ -38,6 +39,7 @@ import { usePeople } from "@/components/messages/messages-api";
 import { useShortReportSettings, type ShortReportOutcome } from "@/components/deliveries/short-report-api";
 import { ShortReportStep } from "@/components/deliveries/short-report-step";
 import { ShortReportSettingsModal } from "@/components/deliveries/short-report-settings-modal";
+import { ShopifyUploadConfirm } from "@/components/deliveries/shopify-upload-confirm";
 import { LineReceiptStatus, OrderShortBadge } from "@/components/deliveries/receipt-status";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -74,6 +76,12 @@ interface POLine {
   // Packs per pallet (ingredient setting) — for the "1 pallet — 50 packs"
   // reading of pallet orders.
   palletSize?: number | null;
+  /** Linked to a Shopify variant (bought-in brownies): receiving it puts
+   *  stock on the store, after a second confirmation. */
+  shopifyVariantId?: string | null;
+  shopifyProductTitle?: string | null;
+  shopifyVariantTitle?: string | null;
+  shopifyUnitsPerPack?: string | number | null;
 }
 
 interface DeliveryRecordSummary {
@@ -365,6 +373,7 @@ function ReceivingDialog({
   // Short-delivery step (Graeme, 2026-10-15): shown before completing a
   // goods-in that's short, with a note and "Also tell…" people.
   const [dialogStep, setDialogStep] = useState<"lines" | "short">("lines");
+  const [shopifyConfirmOpen, setShopifyConfirmOpen] = useState(false);
   const [shortNote, setShortNote] = useState("");
   /** null = not touched yet → the configured people. */
   const [alsoTell, setAlsoTell] = useState<number[] | null>(null);
@@ -577,8 +586,24 @@ function ReceivingDialog({
     photoGate.ok &&
     allDecided;
 
+  // Shopify-linked lines whose received quantity this save changes — the
+  // same delta the server pushes (it compares with what was saved before).
+  const shopifyUploads = shopifyUploadsOf(lines.map((l) => {
+    const ol = order.lines.find((x) => x.id === l.lineId);
+    return {
+      lineId: l.lineId,
+      name: l.ingredientName,
+      variantId: ol?.shopifyVariantId,
+      productTitle: ol?.shopifyProductTitle,
+      variantTitle: ol?.shopifyVariantTitle,
+      unitsPerPack: ol?.shopifyUnitsPerPack,
+      previousReceived: Number(ol?.quantityReceived ?? 0),
+      newReceived: submitOf(l).quantityReceived,
+    };
+  }));
+
   const receiveMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async ({ shopifyUploadConfirmed }: { shopifyUploadConfirmed: boolean }) => {
       const res = await fetch(`${BASE}/api/deliveries/${order.id}/receive`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -609,6 +634,7 @@ function ReceivingDialog({
           notes: notes || null,
           ...(needsShortStep ? { shortReport: { note: shortNote.trim() || null, alsoTellIds } } : {}),
           issuePhotos: { photoIds: uploadedPhotoIds, allItemsConfirmed: photosConfirmed },
+          shopifyUploadConfirmed,
         }),
       });
       if (!res.ok) {
@@ -676,6 +702,13 @@ function ReceivingDialog({
       onClose();
     },
   });
+
+  // Saving puts Shopify-linked stock on sale, so it goes through the
+  // "type it again" pop-up first (Graeme, 28 Oct 2026).
+  const submit = () => {
+    if (shopifyUploads.length > 0) setShopifyConfirmOpen(true);
+    else receiveMutation.mutate({ shopifyUploadConfirmed: false });
+  };
 
   const handleClose = () => {
     if (dirty && !receiveMutation.isPending) {
@@ -1312,7 +1345,7 @@ function ReceivingDialog({
               </button>
               <button
                 type="button"
-                onClick={() => receiveMutation.mutate()}
+                onClick={submit}
                 disabled={!canReceive || receiveMutation.isPending}
                 className="sm:col-span-2 min-h-[56px] rounded-xl bg-primary text-primary-foreground font-bold text-lg hover:bg-primary/90 inline-flex items-center justify-center gap-2 disabled:opacity-60"
               >
@@ -1323,7 +1356,7 @@ function ReceivingDialog({
             </div>
           ) : (
             <button
-              onClick={() => (needsShortStep ? setDialogStep("short") : receiveMutation.mutate())}
+              onClick={() => (needsShortStep ? setDialogStep("short") : submit())}
               disabled={!canReceive || receiveMutation.isPending}
               className={cn(
                 "w-full min-h-[56px] px-3 py-3 rounded-xl font-bold text-lg text-center flex items-center justify-center gap-2 transition-colors [&>svg]:shrink-0",
@@ -1361,6 +1394,14 @@ function ReceivingDialog({
             </p>
           )}
         </div>
+        {shopifyConfirmOpen && shopifyUploads.length > 0 && (
+          <ShopifyUploadConfirm
+            uploads={shopifyUploads}
+            saving={receiveMutation.isPending}
+            onClose={() => setShopifyConfirmOpen(false)}
+            onConfirm={() => receiveMutation.mutate({ shopifyUploadConfirmed: true }, { onError: () => setShopifyConfirmOpen(false) })}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
