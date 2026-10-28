@@ -27,8 +27,11 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { cn } from "@/lib/utils";
 
 export function EditorDialog({
-  open, onClose, title, dirty, onSaveRequest, entityLabel, widthClassName, noAutoFocus, onCloseAutoFocus, children,
+  open, onClose, title, dirty, onSaveRequest, entityLabel, widthClassName, noAutoFocus, onCloseAutoFocus, fullHeight, children,
 }: {
+  /** Always the full 92dvh, so a tabbed editor doesn't jump in size (and
+   *  its tab bar move) when a shorter tab is opened. */
+  fullHeight?: boolean;
   open: boolean;
   /** Really close (after any unsaved-changes question). */
   onClose: () => void;
@@ -90,6 +93,7 @@ export function EditorDialog({
           onCloseAutoFocus={onCloseAutoFocus}
           className={cn(
             "p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl",
+            fullHeight && "h-[92dvh]",
             "[&>button:last-child]:p-2 [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child>svg]:h-5 [&>button:last-child>svg]:w-5",
             widthClassName ?? "sm:max-w-[min(96vw,1100px)]",
           )}

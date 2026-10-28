@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
 import { toGrams, formatCostPerKg } from "@workspace/units";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,13 +25,13 @@ import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
 import { RecipeColourFields } from "@/components/recipe-colour-fields";
 import { RecipeProductionRoutePanel } from "@/components/recipe-production-route-panel";
 import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
-import { EditorForm } from "@/components/recipe-editor/editor-form";
-import { LineRows } from "@/components/recipe-editor/line-rows";
+import { AfterFirstSaveNote, EDITOR_INPUT, EditorField, EditorSection, EditorTick, EditorTotals, NotesField, RecipeEditorShell, useEditorTabs } from "@/components/recipe-editor/editor-shell";
+import { LinesTable } from "@/components/recipe-editor/lines-table";
 import { useEditorIngredients } from "@/components/recipe-editor/use-editor-ingredients";
 import { recipeIngredientLineCost, recipeSubRecipeLineCost } from "@/lib/recipe-line-cost";
 import { buildRecipeCreatePayload, buildRecipeUpdatePayload } from "@/lib/recipe-editor-payload";
+import { RECIPE_FIELD_TABS, type EditorTabId } from "@/lib/recipe-editor-tabs";
 import { useFormDirty } from "@/components/recipe-editor/use-form-dirty";
-import { scrollToFirstError } from "@/components/recipe-editor/scroll-to-error";
 import { RecipeSwatch } from "@/components/recipe-swatch";
 import { effectiveSecondary, recipeColourStyle } from "@/lib/recipe-colour-style";
 import { recipeQuidKey, withoutQuid } from "@/components/recipe-quid/api";
@@ -289,9 +289,12 @@ function RecipeForm({
   submitRef,
   allTags,
   isDraft = false,
+  panels,
 }: {
   /** Edit mode: the recipe is currently a draft (migration 0142). */
   isDraft?: boolean;
+  /** Edit mode: the self-saving panels for each tab (QUID, Shopify…). */
+  panels?: Partial<Record<EditorTabId, ReactNode>>;
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
@@ -331,7 +334,9 @@ function RecipeForm({
   const draftTickNotice = isEdit ? draftMenuTickNotice(isDraft, { isCoreMenu: wantsCore, isCurrentSpecial: wantsSpecial }) : null;
   const createAsDraft = !isEdit && watch("startAsDraft") === true && !wantsCore && !wantsSpecial;
 
-  const save = handleSubmit(onSubmit, scrollToFirstError);
+  // The tab bar shared with sub-recipes; a refused save opens the tab with the first error.
+  const tabs = useEditorTabs(RECIPE_FIELD_TABS);
+  const save = handleSubmit(onSubmit, tabs.onInvalid);
   useEffect(() => {
     if (submitRef) {
       submitRef.current = save;
@@ -436,381 +441,328 @@ function RecipeForm({
     .filter((i): i is IngredientOption => !!i);
   const lineDefaults = { marinadeForIngredientId: null, marinadeAddAtCooking: false, includeInFillingMix: false, isTopping: false, showInPrep: false, mixingOverage: 0 };
 
+  // Draft → menu: said in the pinned save bar so it's seen from any tab.
+  const draftNotice = draftTickNotice ? (
+    <div className="flex flex-col sm:flex-row sm:items-center gap-2 rounded-xl border-2 border-amber-400/70 bg-amber-50 dark:bg-amber-950/30 px-3 py-2" data-testid="draft-menu-tick-notice">
+      <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
+      <p className="flex-1 text-sm sm:text-base text-amber-950 dark:text-amber-100">{draftTickNotice}</p>
+      <button
+        type="button"
+        onClick={() => {
+          setValue("isCoreMenu", false, { shouldDirty: true });
+          setValue("isCurrentSpecial", false, { shouldDirty: true });
+        }}
+        className="min-h-11 rounded-xl border border-border bg-card px-4 text-sm font-medium hover:bg-secondary/60 transition-colors"
+      >
+        Keep it a draft
+      </button>
+    </div>
+  ) : undefined;
+
+  const err = (m: unknown) => (m ? <span className="text-destructive text-sm">{String(m)}</span> : null);
+
   return (
     <>
       {quickAddDialog}
 
-      {/* Shared layout with the sub-recipe editor (components/recipe-editor). */}
-      <EditorForm
+      {/* The same tabbed editor as sub-recipes (components/recipe-editor/editor-shell). */}
+      <RecipeEditorShell
+        tabs={tabs}
+        errors={errors}
+        fieldTabs={RECIPE_FIELD_TABS}
         onSubmit={save}
-        details={<>
-        {/* Basic fields */}
-        <div className="grid grid-cols-2 gap-4">
-          <div className="col-span-2">
-            <label className="text-sm font-medium mb-1 block">Product Name *</label>
-            <input {...register("name")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. Classic Sourdough Loaf" />
-            {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Category</label>
-            {addingCategory ? (
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newCategoryName}
-                  onChange={e => setNewCategoryName(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddCategory(); } }}
-                  placeholder="New category name…"
-                  className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  autoFocus
-                />
-                <button type="button" onClick={handleAddCategory} className="px-3 py-2 bg-primary text-primary-foreground rounded-lg text-sm font-medium">Add</button>
-                <button type="button" onClick={() => setAddingCategory(false)} className="px-3 py-2 border border-border rounded-lg text-sm">Cancel</button>
-              </div>
-            ) : (
-              <select
-                {...register("category")}
-                onChange={handleCategoryChange}
-                value={watchedCategory ?? ""}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="">Select category…</option>
-                {categoryDefaults.map(d => <option key={d.category} value={d.category}>{d.category}</option>)}
-                {/* Show current value if it's not in categoryDefaults (e.g. already saved on recipe) */}
-                {watchedCategory && !categoryDefaults.find(d => d.category === watchedCategory) && (
-                  <option value={watchedCategory}>{watchedCategory}</option>
+        content={{
+          ingredients: {
+            hint: "The lines and their costs",
+            fields: <>
+              {/* Declared weights — live, spreadsheet-style: every ingredient
+                  + sub-recipe in grams, less cooking loss, ÷ recipe size,
+                  × pack size. Shown without saving, for the label. */}
+              <EditorTotals
+                tiles={[
+                  { label: "Total raw", value: liveWeights.rawG > 0 ? `${Math.round(liveWeights.rawG)} g` : "—", sub: "Sum of the lines" },
+                  { label: "After cooking", value: liveWeights.cookedG > 0 ? `${Math.round(liveWeights.cookedG)} g` : "—", sub: `−${liveWeights.lossPct}% loss` },
+                  { label: "Portion weight", value: liveWeights.portionG > 0 ? `${Math.round(liveWeights.portionG)} g` : "—", sub: liveWeights.servings === 1 ? "1 portion recipe" : `÷ ${liveWeights.servings} portions`, highlight: true },
+                  { label: "Pack weight", value: liveWeights.packG > 0 ? `${Math.round(liveWeights.packG)} g` : "—", sub: `× ${liveWeights.ps} portion${liveWeights.ps !== 1 ? "s" : ""}/pack`, highlight: true },
+                ]}
+                footnote={<span className="inline-flex items-center gap-1"><Scale className="w-3.5 h-3.5" /> Declared weights — live, for labelling. Cooking loss and sizes are on Details.</span>}
+              />
+              <LinesTable
+                form={form}
+                productionTicks
+                costLabel="per portion"
+                qtyNote="cooked qty"
+                ingredients={{
+                  name: "ingredients",
+                  idField: "ingredientId",
+                  options: localIngredients,
+                  onQuickAdd: openQuickAdd,
+                  newRow: () => ({ ingredientId: 0, quantity: 0, ...lineDefaults }),
+                  lineCost: row => recipeIngredientLineCost(row?.quantity, localIngredients.find(i => i.id === Number(row?.ingredientId)), watchedServings),
+                  link: { word: "Linked to", addLabel: "+ Link ingredient", targets: row => linkableIngs.filter(i => i.id !== Number(row?.ingredientId)) },
+                }}
+                subRecipes={{
+                  name: "subRecipes",
+                  idField: "subRecipeId",
+                  options: subRecipes,
+                  upfById: formSubUpfById,
+                  newRow: () => ({ subRecipeId: 0, quantity: 0, ...lineDefaults }),
+                  lineCost: row => recipeSubRecipeLineCost(row?.quantity, subRecipes.find(s => s.id === Number(row?.subRecipeId)), watchedServings),
+                  link: { word: "Linked to", addLabel: "+ Link ingredient", targets: () => linkableIngs },
+                }}
+              />
+            </>,
+          },
+          details: {
+            hint: "Name, sizes, price, menu",
+            fields: <>
+              <EditorSection title="Name and description">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <EditorField label="Product name *" className="md:col-span-2" error={err(errors.name?.message)}>
+                    <input {...register("name")} className={EDITOR_INPUT} placeholder="e.g. Classic Sourdough Loaf" />
+                  </EditorField>
+                  <EditorField
+                    label="Category"
+                    hint={categoryDefaults.length > 0 && watchedCategory && categoryDefaults.find(d => d.category.toLowerCase() === watchedCategory.toLowerCase())
+                      ? <span className="text-primary">Defaults applied from category preset.</span> : undefined}
+                  >
+                    {addingCategory ? (
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={newCategoryName}
+                          onChange={e => setNewCategoryName(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); handleAddCategory(); } }}
+                          placeholder="New category name…"
+                          className={cn(EDITOR_INPUT, "flex-1")}
+                          autoFocus
+                        />
+                        <button type="button" onClick={handleAddCategory} className="min-h-11 px-4 bg-primary text-primary-foreground rounded-lg text-sm font-medium">Add</button>
+                        <button type="button" onClick={() => setAddingCategory(false)} className="min-h-11 px-4 border border-border rounded-lg text-sm">Cancel</button>
+                      </div>
+                    ) : (
+                      <select
+                        {...register("category")}
+                        onChange={handleCategoryChange}
+                        value={watchedCategory ?? ""}
+                        className={EDITOR_INPUT}
+                      >
+                        <option value="">Select category…</option>
+                        {categoryDefaults.map(d => <option key={d.category} value={d.category}>{d.category}</option>)}
+                        {/* Show current value if it's not in categoryDefaults (e.g. already saved on recipe) */}
+                        {watchedCategory && !categoryDefaults.find(d => d.category === watchedCategory) && (
+                          <option value={watchedCategory}>{watchedCategory}</option>
+                        )}
+                        <option value="__add_new__">+ Add new category…</option>
+                      </select>
+                    )}
+                  </EditorField>
+                  <EditorField label="Tags" hint="Free-form labels — drives the search bar & tag filter on the recipes list.">
+                    <Controller
+                      control={control}
+                      name="tags"
+                      render={({ field }) => (
+                        <TagInput
+                          value={field.value ?? []}
+                          onChange={(next) => field.onChange(next)}
+                          suggestions={allTags ?? []}
+                        />
+                      )}
+                    />
+                  </EditorField>
+                  <EditorField label="Description (optional)" className="md:col-span-2">
+                    <textarea {...register("description")} className={cn(EDITOR_INPUT, "min-h-[64px] resize-y")} placeholder="Brief description…" />
+                  </EditorField>
+                </div>
+              </EditorSection>
+
+              <EditorSection title="Size and weight" icon={<Scale className="w-4 h-4 text-primary" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <EditorField label="Output / recipe size *" error={err(errors.servings?.message)}>
+                    <div className="flex gap-2">
+                      <input type="number" step="0.001" {...register("servings")} className={cn(EDITOR_INPUT, "w-24")} />
+                      <input {...register("servingUnit")} className={cn(EDITOR_INPUT, "flex-1 min-w-0")} placeholder="loaf, pack, slice…" />
+                    </div>
+                  </EditorField>
+                  <EditorField label="Pack size (portions)" error={err(errors.packSize?.message)} hint="Blank for products sold by weight — the website then shows nutrition per 100 g only.">
+                    <input type="number" step="1" min="1" placeholder="Blank" {...register("packSize")} className={EDITOR_INPUT} />
+                  </EditorField>
+                  <EditorField label="Shelf life (days)" error={err(errors.shelfLifeDays?.message)} hint="Also sets the use-by printed on its label.">
+                    {/* One source of truth (2026-10-27): the label's use-by comes from here. */}
+                    <input type="number" step="1" min="0" {...register("shelfLifeDays")} className={EDITOR_INPUT} placeholder="e.g. 3" />
+                  </EditorField>
+                  <EditorField label="Cooking loss %" hint="Weight lost during cooking (default 3%).">
+                    <input type="number" step="0.5" min="0" max="50" {...register("cookingLossPercent")} className={EDITOR_INPUT} placeholder="3" />
+                  </EditorField>
+                </div>
+              </EditorSection>
+
+              <EditorSection title="Pack and pricing" icon={<Package className="w-4 h-4 text-primary" />}>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {([["rrp", "RRP (£)"], ["packagingCost", "Packaging cost (£/pack)"], ["labourCost", "Labour cost (£/pack)"]] as const).map(([field, label]) => (
+                    <EditorField key={field} label={label}>
+                      <div className="relative">
+                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-base">£</span>
+                        <input type="number" step="0.01" min="0" {...register(field)} className={cn(EDITOR_INPUT, "pl-7")} placeholder="0.00" />
+                      </div>
+                    </EditorField>
+                  ))}
+                </div>
+                {rrp > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Pack overhead (packaging + labour): <strong className="text-foreground">£{fmt(overhead)}</strong>.
+                    Ingredient costs are worked out from the lines on the Ingredients tab.
+                  </p>
                 )}
-                <option value="__add_new__">+ Add new category…</option>
-              </select>
-            )}
-            {categoryDefaults.length > 0 && watchedCategory && categoryDefaults.find(d => d.category.toLowerCase() === watchedCategory.toLowerCase()) && (
-              <p className="text-xs text-primary mt-0.5">Defaults applied from category preset.</p>
-            )}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Output / Recipe Size *</label>
-            <div className="flex gap-2">
-              <input type="number" step="0.001" {...register("servings")} className="w-24 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-              <input {...register("servingUnit")} className="flex-1 px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="loaf, pack, slice…" />
-            </div>
-            {errors.servings && <span className="text-destructive text-xs">{errors.servings.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Portions per batch *</label>
-            <input type="number" step="1" min="1" {...register("portionsPerBatch")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-            {errors.portionsPerBatch && <span className="text-destructive text-xs">{errors.portionsPerBatch.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Target build time (minutes)</label>
-            <input
-              type="number"
-              step="0.1"
-              min="0.1"
-              max="60"
-              {...register("targetBuildMinutes")}
-              disabled={!canEditBuildTime}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 disabled:opacity-60 disabled:cursor-not-allowed"
-              placeholder="e.g. 6 (blank = use default)"
-            />
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {canEditBuildTime
-                ? "Countdown timer inside the BATCH BUILT button. Blank = use global default."
-                : "Admin/manager only"}
-            </p>
-            {errors.targetBuildMinutes && <span className="text-destructive text-xs">{errors.targetBuildMinutes.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Shelf Life (days)</label>
-            <input type="number" step="1" min="0" {...register("shelfLifeDays")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. 3" />
-            {/* One source of truth (2026-10-27): the label's use-by comes from here. */}
-            <p className="text-xs text-muted-foreground mt-1">Also sets the use-by printed on its label.</p>
-            {errors.shelfLifeDays && <span className="text-destructive text-xs">{errors.shelfLifeDays.message}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Cooking Loss %</label>
-            <input type="number" step="0.5" min="0" max="50" {...register("cookingLossPercent")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="3" />
-            <p className="text-xs text-muted-foreground mt-0.5">Weight lost during cooking (default 3%)</p>
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Builder Filling Trim (g)</label>
-            <input type="number" step="1" min="0" max="500" {...register("builderFillingDeductionGrams")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0" />
-            <p className="text-xs text-muted-foreground mt-0.5">Grams off the filling weight the builders see, per batch. Display only — prep, costing and the printed plan are unchanged.</p>
-            {errors.builderFillingDeductionGrams && <span className="text-destructive text-xs">{String(errors.builderFillingDeductionGrams.message)}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Tin Size</label>
-            <input {...register("tinSize")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. 2lb, 4lb…" />
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Max Batches per Tin</label>
-            <input type="number" step="1" min="1" {...register("maxBatchesPerTin")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="e.g. 4" />
-            {errors.maxBatchesPerTin && <span className="text-destructive text-xs">{String(errors.maxBatchesPerTin.message)}</span>}
-          </div>
-          <div className="col-span-2">
-            <label className="text-sm font-medium mb-1 block">SOP URL</label>
-            <input type="url" {...register("sopUrl")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="https://…" />
-          </div>
-          <div className="col-span-2 flex items-end gap-3">
-            <div className="flex-1 max-w-xs">
-              <label className="text-sm font-medium mb-1 block">Dietary category</label>
-              <select
-                {...register("dietaryCategory")}
-                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              >
-                <option value="">— not set —</option>
-                <option value="meat">Meat</option>
-                <option value="vegetarian">Vegetarian</option>
-              </select>
-              <span className="text-xs text-muted-foreground mt-1 block">Drives the oven-defaults overlay shown on the first batch built.</span>
-            </div>
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Oven temperature override (°C)</label>
-            <input type="number" step="1" min="50" max="450" {...register("ovenTempC")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="blank = profile standard" />
-            {errors.ovenTempC && <span className="text-destructive text-xs">{String(errors.ovenTempC.message)}</span>}
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Oven time override (minutes)</label>
-            <input type="number" step="0.25" min="0.5" max="60" {...register("ovenTimeMinutes")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="blank = profile standard" />
-            {errors.ovenTimeMinutes && <span className="text-destructive text-xs">{String(errors.ovenTimeMinutes.message)}</span>}
-          </div>
-          <p className="col-span-2 text-xs text-muted-foreground -mt-2">
-            Only for recipes that bake differently from the meat / vegetarian standard (e.g. 200°C for 6 minutes). When set, the building station shows a big amber “oven change” reminder on this recipe.
-          </p>
-          <div className="col-span-2 flex items-center gap-4 flex-wrap">
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="isCoreMenu" {...register("isCoreMenu")} className="rounded border-border" />
-              <label htmlFor="isCoreMenu" className="text-sm font-medium">Core Menu Item</label>
-              <span className="text-xs text-muted-foreground">(always shows in Production Fridge stock &amp; calculator)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <input type="checkbox" id="isFridgeProduct" {...register("isFridgeProduct")} className="rounded border-border" />
-              <label htmlFor="isFridgeProduct" className="text-sm font-medium">Fridge Product</label>
-              <span className="text-xs text-muted-foreground">(wrapped into the production fridge — test calzones etc.; sales appear as chilled-dispatch suggestions on Create Plan. Not for frozen / F2F / clearance lines)</span>
-            </div>
-            <div className="flex flex-col gap-1">
-              <div className="flex items-center gap-2">
-                <input type="checkbox" id="isCurrentSpecial" {...register("isCurrentSpecial")} className="rounded border-border" />
-                <label htmlFor="isCurrentSpecial" className="text-sm font-medium">Calzone Club Special</label>
-              </div>
-              <span className="text-xs text-muted-foreground pl-5">"Calzone Club Special" Shopify orders count towards this recipe's sales total.</span>
-              {thisRecipeIsSpecial && (
-                <span className="text-xs text-primary font-medium pl-5">This recipe is currently the Calzone Club Special.</span>
-              )}
-              {!thisRecipeIsSpecial && currentSpecialName && (
-                <span className="text-xs text-amber-600 dark:text-amber-400 pl-5">Currently set to: <strong>{currentSpecialName}</strong>. Enabling this will replace it.</span>
-              )}
-              {!thisRecipeIsSpecial && !currentSpecialName && (
-                <span className="text-xs text-muted-foreground pl-5">No Calzone Club Special is currently set.</span>
-              )}
-            </div>
-            <RecipeColourFields
-              color={watch("color") ?? ""}
-              secondaryColor={watch("secondaryColor") ?? ""}
-              registerColor={register("color")}
-              registerSecondary={register("secondaryColor")}
-              onClearColor={() => setValue("color", "", { shouldDirty: true })}
-              onSetSecondary={(v) => setValue("secondaryColor", v, { shouldDirty: true })}
-            />
-          </div>
-          <div className="col-span-2">
-            <label className="text-sm font-medium mb-1 block">Description (optional)</label>
-            <textarea {...register("description")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[48px] resize-none" placeholder="Brief description…" />
-          </div>
-          <div className="col-span-2">
-            <label className="text-sm font-medium mb-1 block">Tags</label>
-            <Controller
-              control={control}
-              name="tags"
-              render={({ field }) => (
-                <TagInput
-                  value={field.value ?? []}
-                  onChange={(next) => field.onChange(next)}
-                  suggestions={allTags ?? []}
+              </EditorSection>
+
+              <EditorSection title="On the menu">
+                <div className="space-y-3">
+                  <EditorTick id="isCoreMenu" register={register("isCoreMenu")} label="Core menu item" hint="Always shows in Production Fridge stock & calculator." />
+                  <EditorTick
+                    id="isCurrentSpecial"
+                    register={register("isCurrentSpecial")}
+                    label="Calzone Club Special"
+                    hint={<>
+                      "Calzone Club Special" Shopify orders count towards this recipe's sales total.
+                      {thisRecipeIsSpecial && <span className="block text-primary font-medium">This recipe is currently the Calzone Club Special.</span>}
+                      {!thisRecipeIsSpecial && currentSpecialName && <span className="block text-amber-600 dark:text-amber-400">Currently set to: <strong>{currentSpecialName}</strong>. Enabling this will replace it.</span>}
+                      {!thisRecipeIsSpecial && !currentSpecialName && <span className="block">No Calzone Club Special is currently set.</span>}
+                    </>}
+                  />
+                  <EditorTick id="isFridgeProduct" register={register("isFridgeProduct")} label="Fridge product" hint="Wrapped into the production fridge — test calzones etc.; sales appear as chilled-dispatch suggestions on Create Plan. Not for frozen / F2F / clearance lines." />
+                  {!isEdit && (
+                    <label
+                      className={cn(
+                        "flex items-start gap-3 rounded-2xl border-2 p-4 cursor-pointer transition-colors",
+                        createAsDraft ? "border-amber-400/70 bg-amber-50 dark:bg-amber-950/30" : "border-border",
+                        (wantsCore || wantsSpecial) && "opacity-70 cursor-not-allowed",
+                      )}
+                      data-testid="start-as-draft"
+                    >
+                      <input
+                        type="checkbox"
+                        {...register("startAsDraft")}
+                        disabled={wantsCore || wantsSpecial}
+                        checked={createAsDraft}
+                        className="mt-1 w-5 h-5 rounded border-border accent-amber-500"
+                      />
+                      <span className="flex-1">
+                        <span className="text-base font-semibold flex items-center gap-2"><FlaskConical className="w-4 h-4 text-amber-600" /> Start as a draft</span>
+                        <span className="block text-sm text-muted-foreground mt-0.5">
+                          {wantsCore || wantsSpecial
+                            ? "Core menu and Special recipes go straight on the menu — untick them to start this as a draft."
+                            : "Kept out of plans, stock and sales while you work on it. You can still cost it, check its deck and label, and trial it in a test box. Put it on the menu when it's ready."}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                </div>
+              </EditorSection>
+
+              <EditorSection title="Colours">
+                <RecipeColourFields
+                  color={watch("color") ?? ""}
+                  secondaryColor={watch("secondaryColor") ?? ""}
+                  registerColor={register("color")}
+                  registerSecondary={register("secondaryColor")}
+                  onClearColor={() => setValue("color", "", { shouldDirty: true })}
+                  onSetSecondary={(v) => setValue("secondaryColor", v, { shouldDirty: true })}
                 />
-              )}
-            />
-            <span className="text-xs text-muted-foreground mt-1 block">Free-form labels — drives the search bar &amp; tag filter on the recipes list.</span>
-          </div>
-        </div>
+              </EditorSection>
 
-        {/* Pack & Pricing */}
-        <div className="bg-secondary/20 rounded-xl p-4 space-y-3 border border-border/60">
-          <h4 className="text-sm font-semibold flex items-center gap-2"><Package className="w-4 h-4 text-primary" /> Pack & Pricing</h4>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div>
-              <label className="text-xs font-medium mb-1 block text-muted-foreground">Pack Size (portions)</label>
-              <div className="relative">
-                <input type="number" step="1" min="1" placeholder="Blank" {...register("packSize")} className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" />
-              </div>
-              {errors.packSize && <span className="text-destructive text-xs">{errors.packSize.message}</span>}
-              <p className="text-[11px] text-muted-foreground mt-1">Leave blank for products sold by weight — the website then shows nutrition per 100 g only</p>
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block text-muted-foreground">RRP (£)</label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
-                <input type="number" step="0.01" min="0" {...register("rrp")} className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.00" />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block text-muted-foreground">Packaging Cost (£/pack)</label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
-                <input type="number" step="0.01" min="0" {...register("packagingCost")} className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.00" />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium mb-1 block text-muted-foreground">Labour Cost (£/pack)</label>
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">£</span>
-                <input type="number" step="0.01" min="0" {...register("labourCost")} className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.00" />
-              </div>
-            </div>
-          </div>
-          {rrp > 0 && (
-            <p className="text-xs text-muted-foreground">
-              Pack overhead (packaging + labour): <strong className="text-foreground">£{fmt(overhead)}</strong>.
-              Ingredient costs are calculated automatically from the recipe ingredients below.
-            </p>
-          )}
-        </div>
+              <NotesField register={register("notes")} />
+            </>,
+          },
+          production: {
+            hint: "Batches, building, oven",
+            fields: <>
+              <EditorSection title="Batches and building">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                  <EditorField label="Portions per batch *" error={err(errors.portionsPerBatch?.message)}>
+                    <input type="number" step="1" min="1" {...register("portionsPerBatch")} className={EDITOR_INPUT} />
+                  </EditorField>
+                  <EditorField
+                    label="Target build time (minutes)"
+                    error={err(errors.targetBuildMinutes?.message)}
+                    hint={canEditBuildTime ? "Countdown timer inside the BATCH BUILT button. Blank = use global default." : "Admin/manager only"}
+                  >
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0.1"
+                      max="60"
+                      {...register("targetBuildMinutes")}
+                      disabled={!canEditBuildTime}
+                      className={cn(EDITOR_INPUT, "disabled:opacity-60 disabled:cursor-not-allowed")}
+                      placeholder="e.g. 6 (blank = use default)"
+                    />
+                  </EditorField>
+                  <EditorField
+                    label="Builder filling trim (g)"
+                    error={err(errors.builderFillingDeductionGrams?.message)}
+                    hint="Grams off the filling weight the builders see, per batch. Display only — prep, costing and the printed plan are unchanged."
+                  >
+                    <input type="number" step="1" min="0" max="500" {...register("builderFillingDeductionGrams")} className={EDITOR_INPUT} placeholder="0" />
+                  </EditorField>
+                  <EditorField label="Tin size">
+                    <input {...register("tinSize")} className={EDITOR_INPUT} placeholder="e.g. 2lb, 4lb…" />
+                  </EditorField>
+                  <EditorField label="Max batches per tin" error={err(errors.maxBatchesPerTin?.message)}>
+                    <input type="number" step="1" min="1" {...register("maxBatchesPerTin")} className={EDITOR_INPUT} placeholder="e.g. 4" />
+                  </EditorField>
+                </div>
+              </EditorSection>
 
-        </>}
-        beforeLines={<>
-        {/* Declared Weights — live spreadsheet-style calculation. Sums every
-            ingredient + sub-recipe in grams, applies the recipe's cooking-loss
-            %, then divides by portions-per-batch and multiplies by pack size.
-            Updates instantly while editing the recipe so the label weight is
-            visible without saving. */}
-        <div className="bg-emerald-50/40 dark:bg-emerald-950/10 rounded-xl p-4 space-y-2 border border-emerald-200/60 dark:border-emerald-900/40">
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            <h4 className="text-sm font-semibold flex items-center gap-2 text-emerald-900 dark:text-emerald-200">
-              <Scale className="w-4 h-4" /> Declared Weights
-              <span className="text-xs font-normal text-emerald-700/70 dark:text-emerald-300/70">live · for labelling</span>
-            </h4>
-            <span className="text-[11px] text-muted-foreground">
-              {((watchedIngredients?.length ?? 0))} ingredient{(watchedIngredients?.length ?? 0) !== 1 ? "s" : ""}
-              {(watchedSubRecipes?.length ?? 0) > 0 ? ` + ${watchedSubRecipes?.length} sub-recipe${(watchedSubRecipes?.length ?? 0) !== 1 ? "s" : ""}` : ""}
-            </span>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-            <div className="bg-card/60 rounded-lg p-2.5 border border-border/50">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Total raw</p>
-              <p className="font-bold tabular-nums text-base mt-0.5">{liveWeights.rawG > 0 ? `${Math.round(liveWeights.rawG)} g` : "—"}</p>
-              <p className="text-[10px] text-muted-foreground">Sum of ingredients</p>
-            </div>
-            <div className="bg-card/60 rounded-lg p-2.5 border border-border/50">
-              <p className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">After cooking</p>
-              <p className="font-bold tabular-nums text-base mt-0.5">{liveWeights.cookedG > 0 ? `${Math.round(liveWeights.cookedG)} g` : "—"}</p>
-              <p className="text-[10px] text-muted-foreground">−{liveWeights.lossPct}% loss</p>
-            </div>
-            <div className="bg-emerald-100/70 dark:bg-emerald-900/30 rounded-lg p-2.5 border border-emerald-300/70 dark:border-emerald-700/60">
-              <p className="text-[10px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300 font-semibold">Portion weight</p>
-              <p className="font-bold tabular-nums text-base mt-0.5 text-emerald-900 dark:text-emerald-100">{liveWeights.portionG > 0 ? `${Math.round(liveWeights.portionG)} g` : "—"}</p>
-              <p className="text-[10px] text-emerald-800/70 dark:text-emerald-300/70">{liveWeights.servings === 1 ? "1 portion recipe" : `÷ ${liveWeights.servings} portions`}</p>
-            </div>
-            <div className="bg-emerald-100/70 dark:bg-emerald-900/30 rounded-lg p-2.5 border border-emerald-300/70 dark:border-emerald-700/60">
-              <p className="text-[10px] uppercase tracking-wide text-emerald-800 dark:text-emerald-300 font-semibold">Pack weight</p>
-              <p className="font-bold tabular-nums text-base mt-0.5 text-emerald-900 dark:text-emerald-100">{liveWeights.packG > 0 ? `${Math.round(liveWeights.packG)} g` : "—"}</p>
-              <p className="text-[10px] text-emerald-800/70 dark:text-emerald-300/70">× {liveWeights.ps} portion{liveWeights.ps !== 1 ? "s" : ""}/pack</p>
-            </div>
-          </div>
-          {liveWeights.rawG === 0 && (
-            <p className="text-[11px] text-muted-foreground italic">Add ingredients below to see the declared weights.</p>
-          )}
-        </div>
+              <EditorSection
+                title="Oven"
+                description="Only for recipes that bake differently from the meat / vegetarian standard (e.g. 200°C for 6 minutes). When set, the building station shows a big amber “oven change” reminder on this recipe."
+              >
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <EditorField label="Dietary category" hint="Drives the oven-defaults overlay shown on the first batch built.">
+                    <select {...register("dietaryCategory")} className={EDITOR_INPUT}>
+                      <option value="">— not set —</option>
+                      <option value="meat">Meat</option>
+                      <option value="vegetarian">Vegetarian</option>
+                    </select>
+                  </EditorField>
+                  <EditorField label="Oven temperature override (°C)" error={err(errors.ovenTempC?.message)}>
+                    <input type="number" step="1" min="50" max="450" {...register("ovenTempC")} className={EDITOR_INPUT} placeholder="blank = profile standard" />
+                  </EditorField>
+                  <EditorField label="Oven time override (minutes)" error={err(errors.ovenTimeMinutes?.message)}>
+                    <input type="number" step="0.25" min="0.5" max="60" {...register("ovenTimeMinutes")} className={EDITOR_INPUT} placeholder="blank = profile standard" />
+                  </EditorField>
+                </div>
+              </EditorSection>
 
-        </>}
-        lines={[
-          <LineRows
-            key="ingredients"
-            form={form}
-            kind="ingredient"
-            name="ingredients"
-            idField="ingredientId"
-            title={<>Ingredients <span className="font-normal normal-case text-muted-foreground tracking-normal">(cooked qty)</span></>}
-            emptyText="No ingredients added"
-            addLabel="Add ingredient to recipe"
-            options={localIngredients}
-            onQuickAdd={openQuickAdd}
-            newRow={() => ({ ingredientId: 0, quantity: 0, ...lineDefaults })}
-            lineCost={row => recipeIngredientLineCost(row?.quantity, localIngredients.find(i => i.id === Number(row?.ingredientId)), watchedServings)}
-            productionTicks
-            link={{ word: "Linked to", addLabel: "+ Link ingredient", targets: row => linkableIngs.filter(i => i.id !== Number(row?.ingredientId)) }}
-          />,
-          <LineRows
-            key="subRecipes"
-            form={form}
-            kind="subRecipe"
-            name="subRecipes"
-            idField="subRecipeId"
-            tone="accent"
-            title="Sub Recipes"
-            emptyText="No sub recipes added"
-            addLabel="Add sub-recipe to recipe"
-            options={subRecipes}
-            upfById={formSubUpfById}
-            newRow={() => ({ subRecipeId: 0, quantity: 0, ...lineDefaults })}
-            lineCost={row => recipeSubRecipeLineCost(row?.quantity, subRecipes.find(s => s.id === Number(row?.subRecipeId)), watchedServings)}
-            productionTicks
-            link={{ word: "Linked to", addLabel: "+ Link ingredient", targets: () => linkableIngs }}
-          />,
-        ]}
-        notes={register("notes")}
-        beforeSave={<>
-
-        {!isEdit && (
-          <label
-            className={cn(
-              "flex items-start gap-3 rounded-2xl border-2 p-4 cursor-pointer transition-colors",
-              createAsDraft ? "border-amber-400/70 bg-amber-50 dark:bg-amber-950/30" : "border-border",
-              (wantsCore || wantsSpecial) && "opacity-70 cursor-not-allowed",
-            )}
-            data-testid="start-as-draft"
-          >
-            <input
-              type="checkbox"
-              {...register("startAsDraft")}
-              disabled={wantsCore || wantsSpecial}
-              checked={createAsDraft}
-              className="mt-1 w-5 h-5 rounded border-border accent-amber-500"
-            />
-            <span className="flex-1">
-              <span className="text-base font-semibold flex items-center gap-2"><FlaskConical className="w-4 h-4 text-amber-600" /> Start as a draft</span>
-              <span className="block text-sm text-muted-foreground mt-0.5">
-                {wantsCore || wantsSpecial
-                  ? "Core menu and Special recipes go straight on the menu — untick them to start this as a draft."
-                  : "Kept out of plans, stock and sales while you work on it. You can still cost it, check its deck and label, and trial it in a test box. Put it on the menu when it's ready."}
-              </span>
-            </span>
-          </label>
-        )}
-
-        {draftTickNotice && (
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-2xl border-2 border-amber-400/70 bg-amber-50 dark:bg-amber-950/30 p-4" data-testid="draft-menu-tick-notice">
-            <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600" />
-            <p className="flex-1 text-base text-amber-950 dark:text-amber-100">{draftTickNotice}</p>
-            <button
-              type="button"
-              onClick={() => {
-                setValue("isCoreMenu", false, { shouldDirty: true });
-                setValue("isCurrentSpecial", false, { shouldDirty: true });
-              }}
-              className="min-h-11 rounded-xl border border-border bg-card px-4 text-sm font-medium hover:bg-secondary/60 transition-colors"
-            >
-              Keep it a draft
-            </button>
-          </div>
-        )}
-
-        </>}
+              <EditorSection title="Method">
+                <EditorField label="SOP URL">
+                  <input type="url" {...register("sopUrl")} className={EDITOR_INPUT} placeholder="https://…" />
+                </EditorField>
+              </EditorSection>
+            </>,
+            panels: panels?.production,
+          },
+          label: {
+            hint: "Deck, QUID, nutrition",
+            panels: panels?.label ?? (!isEdit
+              ? <AfterFirstSaveNote>The ingredient deck, QUID percentages, nutrition and pack label are worked out from the saved recipe — they appear here once it's created.</AfterFirstSaveNote>
+              : undefined),
+          },
+          more: {
+            hint: "Shopify, barcodes, archive",
+            panels: panels?.more ?? (!isEdit
+              ? <AfterFirstSaveNote>Shopify links, barcodes and archiving are available once the recipe is created.</AfterFirstSaveNote>
+              : undefined),
+          },
+        }}
         save={{
           mode: isEdit ? "edit" : "create",
           dirty,
           saving: isPending,
           label: isEdit ? (draftTickNotice ? "Save and put on the menu" : "Save changes") : createAsDraft ? "Create draft" : "Create recipe",
           onSave: () => { void save(); },
+          notice: draftNotice,
         }}
       />
     </>
@@ -1035,7 +987,7 @@ function EditRecipeDialog({
     : { name: "", category: "", description: "", servings: 1, servingUnit: "portion", notes: "", packSize: 1, rrp: 0, packagingCost: 0, labourCost: 0, portionsPerBatch: 10, targetBuildMinutes: null, shelfLifeDays: undefined, tinSize: "", maxBatchesPerTin: null, sopUrl: "", isCoreMenu: false, isCurrentSpecial: false, isFridgeProduct: false, color: "", secondaryColor: "", cookingLossPercent: 3, builderFillingDeductionGrams: 0, dietaryCategory: null, ovenTempC: null, ovenTimeMinutes: null, tags: [], ingredients: [], subRecipes: [] };
 
   return (
-    <EditorDialog
+    <EditorDialog fullHeight
       open={open}
       onClose={handleClose}
       dirty={formIsDirty}
@@ -1043,7 +995,8 @@ function EditRecipeDialog({
       entityLabel="recipe"
       title={
         <>
-          Edit Recipe
+          {/* Named, like the sub-recipe editor's title. */}
+          {detail ? `Edit Recipe · ${detail.name}` : "Edit Recipe"}
           {isDraftRecipe(detail as ArchiveFields | undefined) && <RecipeDraftBadge className="text-sm font-sans" />}
           {(detail as ArchiveFields | undefined)?.archivedAt && (
             <span className="text-sm font-sans font-medium rounded-full bg-secondary text-muted-foreground px-3 py-1">
@@ -1056,7 +1009,6 @@ function EditRecipeDialog({
           {(isLoading || isFetching) ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
-            <>
               <RecipeForm
                 key={`${id}-${detail?.ingredients?.length}`}
                 defaultValues={defaultValues}
@@ -1084,14 +1036,51 @@ function EditRecipeDialog({
                   }).catch(() => {});
                   updateRecipe.mutate({ id, data: payload }, { onSuccess: () => { fridgeWrite.finally(() => { queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] }); queryClient.invalidateQueries({ queryKey: ["/api/recipes"] }); queryClient.invalidateQueries({ queryKey: recipeQuidKey(id) }); }); onOpenChange(false); } });
                 }}
-              />
-
-              {/* Percentages on the label — automatic QUID, its own autosave */}
-              <RecipeQuidPanel recipeId={id} />
-
+                // The self-saving panels, each on its tab (components/recipe-editor/editor-shell).
+                panels={{
+                  production: <>
               {/* Production route (skip ovens, freezer, Shopify on wrap, KPIs, capacity) */}
               <RecipeProductionRoutePanel recipeId={id} portionsPerBatch={detail?.portionsPerBatch} packSize={(detail as { packSize?: number | string } | undefined)?.packSize} />
-
+                  </>,
+                  label: <>
+              {/* Percentages on the label — automatic QUID, its own autosave */}
+              <RecipeQuidPanel recipeId={id} />
+              {/* Live ingredient deck — reflects the currently SAVED recipe.
+                  Unsaved ingredient edits show after you Save and reopen. */}
+              <div className="mt-4 border-t border-border pt-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <ClipboardList className="w-4 h-4 text-[#7cb342]" />
+                  <h4 className="text-sm font-semibold">Ingredient Deck</h4>
+                </div>
+                <p className="text-xs text-muted-foreground mb-2">Generated from the saved recipe. Save and reopen to see edits reflected.</p>
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">Label LIVE design:</label>
+                  <input
+                    value={labelDesign}
+                    onChange={e => setLabelDesign(e.target.value)}
+                    placeholder="e.g. tck-margherita-back"
+                    className="flex-1 min-w-[200px] px-2.5 py-1.5 text-xs font-mono bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  />
+                  {labelDesign.trim() !== labelDesignSaved.trim() && (
+                    <button
+                      type="button"
+                      onClick={saveLabelDesign}
+                      disabled={labelDesignSaving}
+                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
+                    >
+                      {labelDesignSaving ? "Saving…" : "Save"}
+                    </button>
+                  )}
+                  {labelDesignSaved && labelDesign.trim() === labelDesignSaved.trim() && (
+                    <span className="text-xs text-emerald-600 dark:text-emerald-400">✓ mapped</span>
+                  )}
+                </div>
+                <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
+                <RecipeLabelLink recipeId={id} active={open && !isLoading && !isFetching} />
+              </div>
+              <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
+                  </>,
+                  more: <>
               {/* Shopify Inventory Link */}
               <div className="mt-4 border-t border-border pt-4">
                 <div className="flex items-center gap-2 mb-3">
@@ -1211,44 +1200,8 @@ function EditRecipeDialog({
                 )}
                 {shopifyError && <p className="text-xs text-destructive mt-1">{shopifyError}</p>}
               </div>
-
               {/* Barcodes per linked listing — components/barcodes. */}
               <RecipeBarcodes recipeId={id} active={open} canEdit={canEditShopify} />
-
-              {/* Live ingredient deck — reflects the currently SAVED recipe.
-                  Unsaved ingredient edits show after you Save and reopen. */}
-              <div className="mt-4 border-t border-border pt-4">
-                <div className="flex items-center gap-2 mb-1">
-                  <ClipboardList className="w-4 h-4 text-[#7cb342]" />
-                  <h4 className="text-sm font-semibold">Ingredient Deck</h4>
-                </div>
-                <p className="text-xs text-muted-foreground mb-2">Generated from the saved recipe. Save and reopen to see edits reflected.</p>
-                <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">Label LIVE design:</label>
-                  <input
-                    value={labelDesign}
-                    onChange={e => setLabelDesign(e.target.value)}
-                    placeholder="e.g. tck-margherita-back"
-                    className="flex-1 min-w-[200px] px-2.5 py-1.5 text-xs font-mono bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                  {labelDesign.trim() !== labelDesignSaved.trim() && (
-                    <button
-                      type="button"
-                      onClick={saveLabelDesign}
-                      disabled={labelDesignSaving}
-                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
-                    >
-                      {labelDesignSaving ? "Saving…" : "Save"}
-                    </button>
-                  )}
-                  {labelDesignSaved && labelDesign.trim() === labelDesignSaved.trim() && (
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400">✓ mapped</span>
-                  )}
-                </div>
-                <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
-                <RecipeLabelLink recipeId={id} active={open && !isLoading && !isFetching} />
-              </div>
-              <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
               {canEditShopify && detail && (
                 <RecipeArchiveFooter
                   recipe={{ id, name: detail.name, archivedAt: (detail as ArchiveFields).archivedAt ?? null, archivedByName: (detail as ArchiveFields).archivedByName ?? null, isDraft: (detail as ArchiveFields).isDraft === true }}
@@ -1256,7 +1209,9 @@ function EditRecipeDialog({
                   onMoveToDraft={onMoveToDraft ? () => onMoveToDraft({ id, name: detail.name }) : undefined}
                 />
               )}
-            </>
+                  </>,
+                }}
+              />
           )}
     </EditorDialog>
   );
@@ -2347,7 +2302,7 @@ export default function Recipes() {
       </div>
 
       {/* Add dialog */}
-      <EditorDialog
+      <EditorDialog fullHeight
         open={isAddOpen}
         onClose={() => { setIsAddOpen(false); setDuplicateDefaults(null); setAddDirty(false); }}
         dirty={addDirty}
