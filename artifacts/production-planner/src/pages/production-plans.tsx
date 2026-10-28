@@ -41,7 +41,7 @@ import { mainKitchenItems, pickMergeTarget, type MergeCandidatePlan } from "@wor
 import { useMergeIntoDayPlan } from "@/lib/plan-merge-api";
 import { netTwoPacks, batchesReadyToWrap, packsWrapped } from "@/pages/station/shared/recipe-completion";
 import { useRecipeRoutes } from "@/lib/recipe-routes";
-import { capacityBreakdown, formatCapacityBreakdown, batchesForPacks, packsFromBatches } from "@workspace/production-schedule";
+import { capacityBatchesFor, isMainKitchen, batchesForPacks, packsFromBatches } from "@workspace/production-schedule";
 import { toast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, addDays, parseISO, isWeekend, isToday, startOfWeek, isSameDay, formatDistanceToNow } from "date-fns";
@@ -52,8 +52,10 @@ import { useLocation, useSearch } from "wouter";
 import { applyMacCheeseMinimum } from "@/lib/mac-cheese-minimum";
 import { cn } from "@/lib/utils";
 import { activeRecipes, archivedRecipeIds, draftRecipeIds } from "@/lib/recipe-archive";
-import { batchRange, initialBatchTotal, suggestedBatchTotal, type PlanStartStock } from "@workspace/stock-prediction";
-import { minBatchesForOrders, solveTargetAllocation, type PlanMarginSettings } from "@workspace/plan-margin";
+import { initialBatchTotal, type PlanStartStock } from "@workspace/stock-prediction";
+import type { PlanMarginSettings } from "@workspace/plan-margin";
+import { allocateBatchesToTargets, bagPackEquivalents, distributePlanTotal, rowsBatchTotal, type AllocRecipe, type AllocResult } from "@/lib/plan-batch-total";
+import { PlanTotalBatchesPanel, useScheduleCapacity, type ScheduleCapacityData } from "@/components/plan-total-batches-panel";
 import { MacStockWorking, macStockWorking } from "@/components/mac-cheese-stock-working";
 import { SlowMeatSaveStatus } from "@/components/slow-meat-panel";
 import { PlanChecksRow } from "@/components/plan-checks-row";
@@ -177,6 +179,9 @@ interface PlanItem {
   // Uncapped suggestion while the slow-meat tray limit holds this row below
   // it (lib/slow-meat-plan.ts) — drives the "30 → 24" notice.
   slowMeatCappedFrom?: number;
+  // A scheduled DPT rule's "orders + N batches" for this plan date (from
+  // /calculate's dptSchedule) — kept on the row so a typed total honours it.
+  extraBatchesCap?: number | null;
   tinCount: number | null;
   maxBatchesPerTin: number | null;
   tinSize: string | null;
@@ -231,65 +236,12 @@ interface PlanItem {
   totalSpecialCount: number;
 }
 
-/** Minimal shape allocateBatches needs. `salesPercent` is the surplus weight,
- *  already normalised by the caller (DPT split → live sales → equal).
- *  `stockAfterPacks` is the projected packs left after this horizon's
- *  dispatches with NO production — estimatedFactoryNumber − bag equivalents
- *  − dispatch2 − dispatch3, may be negative; the allocator adds the deficit
- *  production back itself. `demandPacks` (dispatch2 + dispatch3) sets the
- *  row's whole-batch floor: orders + the safety margin (@workspace/plan-margin). */
-interface AllocRecipe {
-  deficitBatches: number;
-  salesPercent: number;
-  packsSold: number;
-  packsPerBatch: number;
-  stockAfterPacks: number;
-  demandPacks: number;
-  /** A scheduled DPT rule's "orders + N batches" for this plan date. */
-  extraBatchesCap?: number | null;
-}
-
-/** The scheduled DPT rule /calculate attached to a row (2026-10-26). */
+/** The scheduled DPT rule /calculate attached to a row (2026-10-26). A plan
+ *  row carries it as `extraBatchesCap` so a typed total still honours it. */
 interface DptScheduleCap { scheduleId: number; extraBatches: number; reason: string | null; startsOn: string; endsOn: string | null }
 const capOf = (row: unknown): number | null =>
-  (row as { dptSchedule?: DptScheduleCap | null }).dptSchedule?.extraBatches ?? null;
-
-/** Target-stock allocation (Graeme, 2026-08-06): the plan should RESULT in
- *  end-of-horizon factory numbers split by the DPT percentages. The solver is
- *  the SAME code the server's /calculate uses (@workspace/plan-margin
- *  solveTargetAllocation), so the screens and the API can never diverge.
- *  Every row is floored at the whole batches that cover its orders + the
- *  safety margin (15 Oct 2026 — a fractional 6.4 batches used to round down
- *  to 6 for a test product). Shared by BOTH plan dialogs. */
-function allocateBatchesToTargets(recipes: AllocRecipe[], capacity: number, margin: PlanMarginSettings): { suggestedBatches: number; surplusBatches: number; targetStockPacks: number | null }[] {
-  const totalPacksSold = recipes.reduce((s, r) => s + r.packsSold, 0);
-  const solved = solveTargetAllocation(recipes.map(r => ({
-    weight: totalPacksSold > 0 ? r.salesPercent : 0,
-    ppb: r.packsPerBatch,
-    proj: r.stockAfterPacks,
-    floorBatches: minBatchesForOrders({
-      demandPacks: r.demandPacks,
-      stockPacks: r.stockAfterPacks + r.demandPacks,
-      packsPerBatch: r.packsPerBatch,
-    }, margin).batches,
-    extraBatchesCap: r.extraBatchesCap ?? null,
-  })), capacity);
-  return recipes.map((r, idx) => ({
-    suggestedBatches: solved.batches[idx],
-    surplusBatches: Math.max(0, solved.batches[idx] - r.deficitBatches),
-    targetStockPacks: solved.targets[idx],
-  }));
-}
-
-/** 2-pack stock consumed by this item's 8-pack bags. A bag is 8 portions, so
- *  it costs (8 / packSize) packs — 4 for a calzone. Derived from packSize
- *  rather than hard-coded, and mirrors `bagPackEquivalents` on the server.
- *  Both formulas must agree: the backend value is what loads, this one is
- *  what recomputes live as the operator edits the batch target. */
-function bagPackEquivalents(item: PlanItem): number {
-  const packSize = item.packSize || 2;
-  return (item.eightPackBagCount ?? 0) * (8 / packSize);
-}
+  (row as { extraBatchesCap?: number | null }).extraBatchesCap
+  ?? (row as { dptSchedule?: DptScheduleCap | null }).dptSchedule?.extraBatches ?? null;
 
 /** Packs this item leaves in the fridge: what it makes, less what goes out as
  *  wholesale bags, less the dispatches still to leave. */
@@ -309,132 +261,6 @@ function computeStockWarning(item: PlanItem): "ok" | "low" | "short" {
   if (surplus < 0) return "short";
   if (surplus <= 10) return "low";
   return "ok";
-}
-
-// ── Rota-driven batch suggestion ────────────────────────────────────────────
-// Imports the plan date's Planday schedule (same source as the morning
-// meeting's Who's On Today) and suggests a total-batches number from two
-// hard business rules: a Dough Prep person on shift unlocks the full daily
-// ceiling (110), no Dough Prep caps it (80). Within that, the factory-number
-// levels decide (Graeme, 16 Oct 2026 — replaces the legacy 1,000-pack
-// ceiling, which once suggested 5 batches): the suggestion follows the
-// forecast's own more/fewer advice and is never below the fewest batches a
-// day (80) or above the cap. Rules: @workspace/stock-prediction
-// batch-advice.ts. Fried-chicken shifts (Frying/Breading) are irrelevant to
-// calzone production and are shown separately, uncounted.
-
-interface ScheduleCapacityData {
-  available: boolean;
-  reason?: string;
-  date?: string;
-  people?: Array<{ name: string; position: string; start: string | null; end: string | null }>;
-  excluded?: Array<{ name: string; position: string; start: string | null; end: string | null }>;
-  teamSize?: number;
-  hasDoughPrep?: boolean;
-  capacityBatches?: number;
-  capacityWithDoughPrep?: number;
-  capacityWithoutDoughPrep?: number;
-}
-
-function ScheduleCapacityPanel({ planDate, items, data, loading, currentTotal, minBatchesPerDay, suggested, onUseSuggestion }: {
-  planDate: string;
-  items: PlanItem[];
-  data: ScheduleCapacityData | null;
-  loading: boolean;
-  currentTotal: number;
-  /** The fewest batches a day (factory levels setting). */
-  minBatchesPerDay: number;
-  /** From suggestedBatchTotal() — null without a rota. */
-  suggested: number | null;
-  onUseSuggestion: (batches: number) => void;
-}) {
-  // The headline (team size, Dough Prep, cap, suggested total) is always
-  // visible — no click needed. Only the person-by-person list hides behind
-  // the toggle.
-  const [open, setOpen] = useState(false);
-
-  const included = items.filter(i => i.included);
-  const totalDeficitBatches = included.reduce((s, i) => s + i.deficitBatches, 0);
-  const range = data?.available ? batchRange(data.capacityBatches ?? 0, minBatchesPerDay) : null;
-
-  return (
-    <div className="border-t border-border pt-2 mt-2 space-y-1.5 text-xs">
-      {loading ? (
-        <div className="flex items-center gap-2 text-muted-foreground py-1"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Fetching the rota…</div>
-      ) : !data || !data.available ? (
-        <div className="flex items-center justify-between text-muted-foreground py-1">
-          <span className="flex items-center gap-1.5"><Users className="w-3.5 h-3.5" /> Rota</span>
-          <span className="truncate max-w-[180px]" title={data?.reason ?? undefined}>{data?.reason ?? "unavailable"}</span>
-        </div>
-      ) : (
-        <>
-          <div className={cn(
-            "rounded-lg px-2.5 py-1.5 flex items-center justify-between gap-2",
-            data.hasDoughPrep ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400" : "bg-amber-500/10 text-amber-700 dark:text-amber-400",
-          )}>
-            <span className="flex items-center gap-1.5 min-w-0">
-              <Users className="w-3.5 h-3.5 flex-shrink-0" />
-              <span className="truncate">{data.teamSize} on shift · {data.hasDoughPrep ? "Dough Prep ✓" : "no Dough Prep"}</span>
-            </span>
-            <span className="font-semibold flex-shrink-0">cap {data.capacityBatches}</span>
-          </div>
-          {range && (
-            <div className="flex items-center justify-between text-muted-foreground">
-              <span>Batches a day (fewest {range.floor} · cap {range.cap})</span>
-              <span className="font-semibold text-foreground">{range.floor === range.cap ? range.cap : `${range.floor}–${range.cap}`}</span>
-            </div>
-          )}
-          {suggested != null && (
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-foreground">Suggested total: {suggested}</span>
-              {suggested === currentTotal ? (
-                <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" /> applied
-                </span>
-              ) : (
-                <button
-                  onClick={() => onUseSuggestion(suggested)}
-                  className="px-2.5 py-1 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
-                >
-                  Use {suggested}
-                </button>
-              )}
-            </div>
-          )}
-          {suggested != null && totalDeficitBatches > suggested && (
-            <p className="flex items-start gap-1.5 text-amber-700 dark:text-amber-400">
-              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              Sales deficits alone need {totalDeficitBatches} batches — above today's cap. Cover the deficits first.
-            </p>
-          )}
-          <button
-            onClick={() => setOpen(!open)}
-            className="w-full flex items-center justify-between text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <span>Team on {planDate.slice(8, 10)}/{planDate.slice(5, 7)}</span>
-            {open ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-          </button>
-          {open && (
-            <>
-              <ul className="space-y-0.5 max-h-36 overflow-y-auto pr-1">
-                {(data.people ?? []).map((p, i) => (
-                  <li key={i} className="flex items-center justify-between gap-2">
-                    <span className="truncate">{p.name}</span>
-                    <span className="text-muted-foreground flex-shrink-0">{p.position}{p.start ? ` · ${p.start}–${p.end ?? ""}` : ""}</span>
-                  </li>
-                ))}
-              </ul>
-              {(data.excluded?.length ?? 0) > 0 && (
-                <p className="text-muted-foreground/70">
-                  Not counted (fried chicken line): {data.excluded!.map(p => p.name).join(", ")}
-                </p>
-              )}
-            </>
-          )}
-        </>
-      )}
-    </div>
-  );
 }
 
 // Small "Updated 2h ago" label under the factory-number input. Re-renders
@@ -1066,6 +892,7 @@ function chilledToPlanItem(s: ChilledSuggestion, prev?: PlanItem): PlanItem {
     deficitBatches: s.deficitBatches,
     surplusBatches: 0,
     targetStockPacks: null,
+    extraBatchesCap: capOf(s),
     stockWarning: stockAfter < 0 ? "short" : stockAfter <= 10 ? "low" : "ok",
     special1Count: 0,
     special2Count: 0,
@@ -1918,22 +1745,11 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       .catch(() => setFactoryConfig(null));
   }, [open]);
 
-  // Rota capacity — fetched eagerly (not on panel expand) so the sidebar can
-  // always show the shift pattern and the suggested total can pre-populate
-  // the batch count without any clicks.
-  const [capacityData, setCapacityData] = useState<ScheduleCapacityData | null>(null);
-  const [capacityLoading, setCapacityLoading] = useState(false);
-  useEffect(() => {
-    if (!open || !planDate) return;
-    let cancelled = false;
-    setCapacityLoading(true);
-    setCapacityData(null);
-    fetch(`/api/production-plans/schedule-capacity?planDate=${planDate}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : { available: false, reason: `HTTP ${r.status}` })
-      .catch(() => ({ available: false, reason: "Request failed" }))
-      .then(d => { if (!cancelled) { setCapacityData(d); setCapacityLoading(false); } });
-    return () => { cancelled = true; };
-  }, [open, planDate]);
+  // Rota capacity — fetched eagerly so the sidebar always shows who's on
+  // and the suggested total can pre-populate the batch count without clicks.
+  const capacityQuery = useScheduleCapacity(planDate, open);
+  const capacityData: ScheduleCapacityData | null = capacityQuery.data ?? null;
+  const capacityLoading = capacityQuery.isLoading;
 
   // Sync date when dialog opens with a selected date
   useEffect(() => {
@@ -1978,8 +1794,18 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     ...r, suggestedBatches: n, batchesTarget: n, tinCount: recalcTins(n, r.maxBatchesPerTin),
   })), []);
   useEffect(() => {
-    if (slowMeat.data) setItems(prev => capForSlowMeat(prev));
-  }, [slowMeat.data, capForSlowMeat]);
+    if (!slowMeat.data) return;
+    setItems(prev => {
+      const capped = capForSlowMeat(prev);
+      if (capped === prev) return prev;
+      // The limit loaded after the total was shared: re-share it so the cut
+      // batches go to the other recipes and the rows still add up to the box
+      // (unless a row has been edited by hand — then "Rows add up to N" shows).
+      const total = overrideRef.current;
+      const handEdited = prev.some(it => it.included && it.isFromDpt && it.batchesTarget !== it.suggestedBatches);
+      return total !== null && !handEdited ? distributeTotalRef.current(prev, total) : capped;
+    });
+  }, [slowMeat.data, capForSlowMeat]); // eslint-disable-line react-hooks/exhaustive-deps
   const slowMeatOver = slowMeat.data ? slowMeatCountForRows(items, slowMeat.data).overLimit : false;
 
   const { data: allRecipes } = useListRecipes({ query: { queryKey: getListRecipesQueryKey(), enabled: open } });
@@ -2204,11 +2030,29 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   // (which also resets totalBatchesOverride) so the suggestion re-applies to
   // the fresh allocation, exactly once per calc load.
   const capacityAutoApplied = useRef(false);
+  // The suggested total for this date (rota + factory levels), worked out
+  // once per calc load — the number the box starts on and "Use N" restores.
+  const [startSuggestion, setStartSuggestion] = useState<number | null>(null);
+  // True once the operator has chosen the total themselves (typed, − / +,
+  // Use N, applied a forecast change). A calc refetch for the SAME date —
+  // window focus, a stock count saved — then keeps their total instead of
+  // snapping back to the suggestion (part of "we can't override it", 28 Oct).
+  const userChoseTotal = useRef(false);
+  const overrideRef = useRef<number | null>(null);
+  overrideRef.current = totalBatchesOverride;
+  const lastCalcDate = useRef<string | null>(null);
+  const distributeTotalRef = useRef<(rows: PlanItem[], total: number) => PlanItem[]>(rows => rows);
 
   useEffect(() => {
     if (!calcData?.recipes) return;
-    setTotalBatchesOverride(null);
-    capacityAutoApplied.current = false;
+    const keepTotal = userChoseTotal.current && lastCalcDate.current === planDate ? overrideRef.current : null;
+    lastCalcDate.current = planDate;
+    if (keepTotal === null) {
+      userChoseTotal.current = false;
+      setTotalBatchesOverride(null);
+      setStartSuggestion(null);
+      capacityAutoApplied.current = false;
+    }
     // Only render core menu recipes by default. Non-core recipes remain
     // available through the "Add Recipe" dropdown below the table for
     // manual inclusion — but the initial table is focused on the core
@@ -2226,7 +2070,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       (q: QueuedProductionRow) => !coreRecipes.some((r: CalcRecipe) => r.recipeId === q.recipeId)
     );
     const queuedBatchesTotal = queuedForPlan.reduce((s: number, q: QueuedProductionRow) => s + q.batches, 0);
-    const capacity = Math.max(0, calcData.totalDailyBatches - queuedBatchesTotal);
+    const capacity = Math.max(0, (keepTotal ?? calcData.totalDailyBatches) - queuedBatchesTotal);
     // Percentages were computed by the backend against the full recipe set,
     // so after filtering to core-only they no longer sum to 100 —
     // allocateBatches would leave capacity on the table (e.g. 69 of 75).
@@ -2297,6 +2141,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
         deficitBatches: r.deficitBatches,
         surplusBatches: alloc[idx].surplusBatches,
         targetStockPacks: alloc[idx].targetStockPacks,
+        extraBatchesCap: capOf(r),
         stockWarning: r.stockWarning,
         special1Count: r.special1Count ?? 0,
         special2Count: r.special2Count ?? 0,
@@ -2331,67 +2176,63 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
         return ai - bi;
       });
     }
-    setItems(capForSlowMeat(newItems));
-  }, [calcData, allocateBatches, savedOrder, capForSlowMeat]);
+    // The operator's own total survives a refetch: re-share it over the fresh
+    // rows unless they've hand-edited a row (their edits were kept above).
+    const handEdited = newItems.some(it => it.included && it.isFromDpt && it.batchesTarget !== it.suggestedBatches);
+    setItems(keepTotal !== null && !handEdited
+      ? distributeTotalRef.current(newItems, keepTotal)
+      : capForSlowMeat(newItems));
+  }, [calcData, allocateBatches, savedOrder, capForSlowMeat]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // The rows the "Total batches" box counts: main-kitchen rows, by the day
+  // capacity they use (buns by their calzone-batch equivalence). Fried
+  // chicken is made elsewhere and sits outside the total.
+  const categoryOfRow = useCallback(
+    (recipeId: number) => calcData?.recipes?.find((r: CalcRecipe) => r.recipeId === recipeId)?.recipeCategory ?? null,
+    [calcData],
+  );
+  const totalOpts = useMemo(() => ({
+    inTotal: (row: PlanItem) => isMainKitchen(categoryOfRow(row.recipeId)),
+    capacityOf: (row: PlanItem) => capacityBatchesFor({
+      category: categoryOfRow(row.recipeId),
+      batchesTarget: row.batchesTarget,
+      calzoneBatchEquivalent: recipeRoutes.routeOf(row.recipeId).calzoneBatchEquivalent,
+    }),
+  }), [categoryOfRow, recipeRoutes.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Share `total` across the ticked rows so they add up to it — the typed
+   *  total always wins (lib/plan-batch-total.ts, Graeme 28 Oct 2026). */
+  const distributeTotal = useCallback((rows: PlanItem[], total: number) => distributePlanTotal(rows, total, planMargin.settings, {
+    ...totalOpts,
+    apply: (item: PlanItem, a: AllocResult): PlanItem => ({
+      ...item,
+      slowMeatCappedFrom: undefined,
+      suggestedBatches: a.suggestedBatches,
+      batchesTarget: a.suggestedBatches,
+      surplusBatches: a.surplusBatches,
+      targetStockPacks: a.targetStockPacks,
+      tinCount: recalcTins(a.suggestedBatches, item.maxBatchesPerTin),
+    }),
+    cap: capForSlowMeat,
+  }), [planMargin.settings, totalOpts, capForSlowMeat]); // eslint-disable-line react-hooks/exhaustive-deps
+  distributeTotalRef.current = distributeTotal;
 
   const applyTotalBatches = useCallback((newTotal: number, opts?: { markDirty?: boolean }) => {
     // Auto-applying the rota suggestion on load must NOT mark the form dirty
     // — otherwise merely opening the dialog would trigger the 30s draft
     // auto-save and the unsaved-work prompt on close.
-    if (opts?.markDirty !== false) isDirty.current = true;
+    if (opts?.markDirty !== false) { isDirty.current = true; userChoseTotal.current = true; }
     setTotalBatchesOverride(newTotal);
     if (!calcData?.recipes) return;
-    // Redistribute across the recipes currently in the dialog (the core menu
-    // set plus any manually-added ones), not the raw backend list — otherwise
-    // batches get allocated to recipes that aren't even shown. Normalise
-    // salesPercent across the present items so the full newTotal is used.
-    setItems(prev => {
-      const dptItems = prev.filter(it => it.isFromDpt);
-      if (dptItems.length === 0) return prev;
-      // Queued test production keeps its fixed batches and eats into the
-      // total first; the balancing below distributes only the remainder.
-      const queuedSum = prev
-        .filter(it => it.included && it.id.startsWith("queued-"))
-        .reduce((s, it) => s + it.batchesTarget, 0);
-      // Same weight preference as the backend and Recalculate Batches:
-      // DPT split → live sales → equal.
-      const sumDpt = dptItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
-      const sumSales = dptItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
-      const fallback = 100 / dptItems.length;
-      const recipesForAlloc: AllocRecipe[] = dptItems.map(it => ({
-        deficitBatches: it.deficitBatches,
-        salesPercent: sumDpt > 0
-          ? ((it.dptPercent ?? 0) / sumDpt) * 100
-          : sumSales > 0 ? (it.salesPercent / sumSales) * 100 : fallback,
-        packsSold: 1,
-        packsPerBatch: it.packsPerBatch,
-        stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
-        demandPacks: it.dispatch2Qty + it.dispatch3Qty,
-        extraBatchesCap: capOf(it),
-      }));
-      const alloc = allocateBatches(recipesForAlloc, Math.max(0, newTotal - queuedSum));
-      return capForSlowMeat(prev.map(item => {
-        if (!item.isFromDpt) return item;
-        const idx = dptItems.findIndex(d => d.id === item.id);
-        if (idx < 0) return item;
-        const suggested = alloc[idx].suggestedBatches;
-        return {
-          ...item,
-          slowMeatCappedFrom: undefined,
-          suggestedBatches: suggested,
-          batchesTarget: suggested,
-          surplusBatches: alloc[idx].surplusBatches,
-          targetStockPacks: alloc[idx].targetStockPacks,
-          tinCount: (() => { if (!item.maxBatchesPerTin || suggested <= 0) return null; const raw = Math.ceil(suggested / item.maxBatchesPerTin); return suggested > 5 ? Math.max(2, raw) : raw; })(),
-        };
-      }));
-    });
-  }, [calcData, allocateBatches, capForSlowMeat]);
+    // Every ticked DPT row is re-shared (hand edits on them are replaced);
+    // queued test production and recipes added by hand keep their batches
+    // and come off the top; unticked rows are left alone.
+    setItems(prev => distributeTotal(prev, newTotal));
+  }, [calcData, distributeTotal]);
 
   const handleTotalBatchesChange = useCallback((newTotal: number) => {
     applyTotalBatches(newTotal);
   }, [applyTotalBatches]);
-
 
   const recalcTins = (batchesTarget: number, maxBatchesPerTin: number | null): number | null => {
     if (!maxBatchesPerTin || batchesTarget <= 0) return null;
@@ -2414,66 +2255,18 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   };
 
   // ── Recalculate Batches ──────────────────────────────────────────────────────
-  // Full redistribute of the daily capacity across the recipes the user has
-  // left in the dialog (included=true). Excluded recipes are untouched.
-  // Any manual batch edits are overwritten — this is intentional per product
-  // decision: the whole point of the button is to re-balance after edits/deletes.
+  // Re-share the Total batches across the recipes the user has left ticked,
+  // exactly as typing the total does. Manual batch edits on DPT rows are
+  // overwritten — the whole point of the button is to re-balance after
+  // edits/deletes. Queued test production and hand-added recipes keep theirs.
   const [recalcFlash, setRecalcFlash] = useState(false);
   const handleRecalculateBatches = useCallback(() => {
-    // Queued test production is deliberate, fixed work — Recalculate must
-    // never zero it (weight-0 rows with no sales deficit would otherwise be
-    // wiped). It keeps its batches and shrinks the pool being rebalanced.
-    const queuedSum = items
-      .filter(it => it.included && it.id.startsWith("queued-"))
-      .reduce((s, it) => s + it.batchesTarget, 0);
-    const includedItems = items.filter(it => it.included && !it.id.startsWith("queued-"));
-    if (includedItems.length === 0) return;
-    // Percentages are computed by the backend against the ORIGINAL set of
-    // recipes, so once you delete a few the remaining percentages no longer
-    // sum to 100 — allocateBatches would then leave a chunk of the daily
-    // capacity unallocated (e.g. 58 of 75 when ~77% remains). Re-normalise
-    // across the still-included recipes so they sum to 100%.
-    // Weight preference mirrors the backend: DPT split first (so a freshly
-    // zeroed DPT immediately drops that recipe's surplus to nothing on
-    // recalculate), live sales next, equal weights as the last resort.
-    const sumDptPercent = includedItems.reduce((s, it) => s + (it.dptPercent ?? 0), 0);
-    const sumSalesPercent = includedItems.reduce((s, it) => s + (it.salesPercent || 0), 0);
-    const fallbackPercent = 100 / includedItems.length;
-    const recipesForAlloc: AllocRecipe[] = includedItems.map(it => ({
-      deficitBatches: it.deficitBatches,
-      salesPercent: sumDptPercent > 0
-        ? ((it.dptPercent ?? 0) / sumDptPercent) * 100
-        : sumSalesPercent > 0
-          ? (it.salesPercent / sumSalesPercent) * 100
-          : fallbackPercent,
-      // allocateBatches only checks `totalPacksSold > 0` to decide whether to
-      // distribute surplus at all — any positive value does the job here.
-      packsSold: 1,
-      packsPerBatch: it.packsPerBatch,
-      stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
-      demandPacks: it.dispatch2Qty + it.dispatch3Qty,
-      extraBatchesCap: capOf(it),
-    }));
-    const alloc = allocateBatches(recipesForAlloc, Math.max(0, effectiveTotalBatches - queuedSum));
+    if (!items.some(it => it.included)) return;
     isDirty.current = true;
-    setItems(prev => capForSlowMeat(prev.map(it => {
-      if (!it.included || it.id.startsWith("queued-")) return it;
-      const idx = includedItems.findIndex(inc => inc.id === it.id);
-      if (idx < 0) return it;
-      const suggested = alloc[idx].suggestedBatches;
-      return {
-        ...it,
-        slowMeatCappedFrom: undefined,
-        suggestedBatches: suggested,
-        batchesTarget: suggested,
-        surplusBatches: alloc[idx].surplusBatches,
-        targetStockPacks: alloc[idx].targetStockPacks,
-        tinCount: recalcTins(suggested, it.maxBatchesPerTin),
-      };
-    })));
+    setItems(prev => distributeTotal(prev, effectiveTotalBatches));
     setRecalcFlash(true);
     setTimeout(() => setRecalcFlash(false), 1500);
-  }, [items, allocateBatches, effectiveTotalBatches, capForSlowMeat]);
+  }, [items, distributeTotal, effectiveTotalBatches]);
 
   const fridgeStockTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   // Last value successfully POSTed to /api/stock-entries per item, so the
@@ -2683,21 +2476,9 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     isDirty.current = true;
     const next = withFactoryChanges(items, rec);
     setItems(next);
-    setTotalBatchesOverride(next.reduce((s, i) => s + (i.included ? i.batchesTarget : 0), 0));
+    userChoseTotal.current = true;
+    setTotalBatchesOverride(Math.round(rowsBatchTotal(next, totalOpts)));
   };
-
-  // Left column "Suggested total": the planned batches, moved by the
-  // forecast's own advice, within [fewest a day, rota cap]
-  // (@workspace/stock-prediction batch-advice.ts).
-  const factoryRec = factory.recommendation;
-  const suggestedTotal = rotaCap != null
-    ? suggestedBatchTotal({
-        currentTotal: plannedTotal,
-        cap: rotaCap,
-        minBatchesPerDay: factory.thresholds.minBatchesPerDay,
-        change: factoryRec ? (factoryRec.direction === "fewer" ? -factoryRec.batches : factoryRec.batches) : 0,
-      })
-    : null;
 
   // Pre-populate Total Batches from the rota (80 / 110) instead of leaving
   // the static DPT default: the cap, unless that would land the fridge at the
@@ -2708,8 +2489,8 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   // value; the input stays fully editable afterwards.
   useEffect(() => {
     if (!open || capacityAutoApplied.current) return;
-    if (!capacityData?.available || !calcData?.recipes) return;
-    if (!factory.data && !factory.loadError) return;
+    if (!calcData?.recipes || capacityLoading) return;
+    if (capacityData?.available && !factory.data && !factory.loadError) return;
     // A non-null override means a total is already chosen — but do NOT mark
     // the auto-apply as consumed here: on a date change this effect can run
     // one commit before the calc effect's reset has re-rendered, and it would
@@ -2718,20 +2499,26 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
     // effect re-runs with override === null and applies normally.
     if (totalBatchesOverride !== null) return;
     if (!items.some(i => i.included)) return;
-    const suggested = initialBatchTotal({
-      cap: capacityData.capacityBatches ?? 0,
-      minBatchesPerDay: factory.thresholds.minBatchesPerDay,
-      currentTotal: plannedTotal,
-      predicted: factory.forecast.predictedEnd,
-      packsPerBatch: factory.packsPerBatch,
-      thresholds: factory.thresholds,
-      pullBack: factory.pullBack,
-    });
+    // No rota for the day → the usual day's total (DPT setting).
+    const suggested = capacityData?.available
+      ? initialBatchTotal({
+          cap: capacityData.capacityBatches ?? 0,
+          minBatchesPerDay: factory.thresholds.minBatchesPerDay,
+          currentTotal: plannedTotal,
+          predicted: factory.forecast.predictedEnd,
+          packsPerBatch: factory.packsPerBatch,
+          thresholds: factory.thresholds,
+          pullBack: factory.pullBack,
+        })
+      : (calcData.totalDailyBatches ?? 0);
     capacityAutoApplied.current = true;
-    if (suggested > 0 && suggested !== (calcData.totalDailyBatches ?? 0)) {
+    if (suggested > 0) {
+      setStartSuggestion(suggested);
+      // Always applied (even when it equals the DPT default) so the rows are
+      // shared by the same rule as a typed total and add up to the box.
       applyTotalBatches(suggested, { markDirty: false });
     }
-  }, [open, capacityData, calcData, items, totalBatchesOverride, applyTotalBatches, factory.data, factory.loadError,
+  }, [open, capacityData, capacityLoading, calcData, items, totalBatchesOverride, applyTotalBatches, factory.data, factory.loadError,
     factory.thresholds, factory.forecast.predictedEnd, factory.packsPerBatch, factory.pullBack, plannedTotal]);
 
   type SubmitOpts = { skipMarginCheck?: boolean; skipFactoryCheck?: boolean; itemsOverride?: PlanItem[]; skipDateClash?: boolean };
@@ -2978,6 +2765,18 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   </p>
                 )}
               </div>
+              {calcData && (
+                <PlanTotalBatchesPanel
+                  planDate={planDate}
+                  total={effectiveTotalBatches}
+                  onTotalChange={handleTotalBatchesChange}
+                  suggested={startSuggestion}
+                  rowsTotal={rowsBatchTotal(items, totalOpts)}
+                  rota={capacityData}
+                  rotaLoading={capacityLoading}
+                  onEditDpt={() => setDptDialogOpen(true)}
+                />
+              )}
               <div>
                 <label className="text-sm font-medium mb-1 block text-muted-foreground">
                   Prep Date <span className="font-normal text-muted-foreground/60">(optional)</span>
@@ -3049,88 +2848,6 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   <span>Julian batch</span>
                   <span className="font-mono font-semibold text-foreground">{julianBatchNumber(planDate)}</span>
                 </div>
-                {calcData && (
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="flex items-center gap-1.5">
-                      Total batches
-                      {/* Opens the DPT editor — same source of truth as the
-                          Settings page, kept inline so the operator doesn't
-                          lose their in-progress plan to navigate away. Styled
-                          as a small grey pill (rather than a bare icon) so
-                          it's discoverable at a glance on iPad. */}
-                      <button
-                        onClick={() => setDptDialogOpen(true)}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground text-[10px] font-medium uppercase tracking-wide hover:bg-secondary/70 transition-colors"
-                        title="Edit DPT settings — total daily batches and per-recipe packs sold"
-                      >
-                        <SlidersHorizontal className="w-2.5 h-2.5" />
-                        Edit DPT
-                      </button>
-                    </span>
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min={0}
-                        value={effectiveTotalBatches === 0 ? "" : effectiveTotalBatches}
-                        onChange={e => handleTotalBatchesChange(e.target.value === "" ? 0 : Math.max(0, Number(e.target.value) || 0))}
-                        onFocus={e => e.currentTarget.select()}
-                        onWheel={e => { if (document.activeElement === e.currentTarget) e.currentTarget.blur(); }}
-                        placeholder="0"
-                        className="w-16 px-1.5 py-0.5 bg-background border border-border rounded-lg text-sm text-center font-semibold text-foreground focus-ring tabular-nums"
-                      />
-                      {totalBatchesOverride !== null && totalBatchesOverride !== calcData.totalDailyBatches && (
-                        <button
-                          onClick={() => handleTotalBatchesChange(calcData.totalDailyBatches)}
-                          className="text-xs text-muted-foreground hover:text-foreground transition-colors underline"
-                          title={`Reset to default (${calcData.totalDailyBatches})`}
-                        >
-                          reset
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {(() => {
-                  // Day capacity used (migration 0202): calzone batches one for
-                  // one, a recipe with an equivalence (buns: 48 packs ≈ 20
-                  // batches) by its equivalence — "90 batches + 48 packs
-                  // Cinnamon Buns (≈20) = 110".
-                  const cap = capacityBreakdown(items.filter(i => i.included).map(i => ({
-                    name: i.recipeName,
-                    category: calcData?.recipes?.find((r: CalcRecipe) => r.recipeId === i.recipeId)?.recipeCategory ?? null,
-                    batchesTarget: i.batchesTarget,
-                    calzoneBatchEquivalent: recipeRoutes.routeOf(i.recipeId).calzoneBatchEquivalent,
-                    portionsPerBatch: i.portionsPerBatch,
-                    packSize: i.packSize,
-                  })));
-                  return (
-                    <div className="text-xs space-y-0.5">
-                      <div className="flex items-center justify-between">
-                        <span>Planned</span>
-                        <span>
-                          <span className={cn("font-semibold", cap.total > effectiveTotalBatches ? "text-red-600 dark:text-red-400" : "text-foreground")}>
-                            {Math.round(cap.total * 10) / 10}
-                          </span>
-                          {" / "}
-                          {effectiveTotalBatches}
-                        </span>
-                      </div>
-                      {cap.equivalents.length > 0 && (
-                        <p className="text-[11px] text-muted-foreground text-right">{formatCapacityBreakdown(cap)}</p>
-                      )}
-                    </div>
-                  );
-                })()}
-                <ScheduleCapacityPanel
-                  planDate={planDate}
-                  items={items}
-                  data={capacityData}
-                  loading={capacityLoading}
-                  currentTotal={effectiveTotalBatches}
-                  minBatchesPerDay={factory.thresholds.minBatchesPerDay}
-                  suggested={suggestedTotal}
-                  onUseSuggestion={handleTotalBatchesChange}
-                />
               </div>
             </div>
 
@@ -3506,6 +3223,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       // through — otherwise the operator would still see their previous
       // typed-in capacity number ghosting on top of the fresh defaults.
       onSaved={() => {
+        userChoseTotal.current = false;
         setTotalBatchesOverride(null);
         refetchCalc();
       }}
@@ -3810,6 +3528,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         tinSize: calc.tinSize ?? it.tinSize,
         sopUrl: calc.sopUrl ?? it.sopUrl,
         isFromDpt: true,
+        extraBatchesCap: capOf(calc),
         fridgeStock: calc.predictedFridgeStock ?? calc.fridgeStock,
         expiringPacks: calc.expiringPacks ?? 0,
         stockCheckedAt: calc.stockCheckedAt,
