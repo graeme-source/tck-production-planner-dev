@@ -17,6 +17,18 @@ export const PIN_REQUIRED_EVENT = "tck:pin-required";
  *  refusal itself still stands — nothing is recorded under a stale session. */
 export const QUIET_REQUEST_HEADER = "X-TCK-Background";
 
+/** The server refused one of your OWN hub records because no PIN was typed
+ *  recently (423 HUB_PIN_REQUIRED, or PEOPLE_PIN_REQUIRED for someone with
+ *  People access — api-server lib/hub-unlock.ts). The Employee Hub listens
+ *  and shuts itself until the PIN is entered again. */
+export const HUB_LOCKED_EVENT = "tck:hub-locked";
+
+export function isHubLockedResponse(status: number, body: unknown): boolean {
+  if (status !== 423 || !body || typeof body !== "object") return false;
+  const code = (body as { code?: unknown }).code;
+  return code === "HUB_PIN_REQUIRED" || code === "PEOPLE_PIN_REQUIRED";
+}
+
 /** True for the server's daily-PIN refusal (not the People private-PIN 423). */
 export function isPinRequiredResponse(status: number, body: unknown): boolean {
   if (status !== 423) return false;
@@ -57,6 +69,7 @@ export function installPinRequiredFetchHook(host: FetchHost = window as unknown 
       try {
         const body = await res.clone().json();
         if (isPinRequiredResponse(res.status, body)) host.dispatchEvent(new Event(PIN_REQUIRED_EVENT));
+        else if (isHubLockedResponse(res.status, body)) host.dispatchEvent(new Event(HUB_LOCKED_EVENT));
       } catch { /* not JSON — not ours */ }
     }
     return res;

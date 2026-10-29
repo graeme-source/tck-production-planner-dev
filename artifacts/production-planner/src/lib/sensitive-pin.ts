@@ -14,7 +14,8 @@
  *
  * `fresh` ignores the unlock window entirely: the Employee Hub asks for the
  * PIN on EVERY entry, however recently it was typed — leaving and coming
- * straight back still asks (Graeme, 2026-09-07). Moving between sections
+ * straight back still asks (Graeme, 2026-09-07; restored 29 Oct 2026 after
+ * the 5-minute window had crept back in). Moving between sections
  * inside the hub is one mount, so it never nags mid-visit; callers must ask
  * once per mount, or the prompt would re-fire the moment it's unlocked.
  */
@@ -46,6 +47,27 @@ export function shouldPromptForSensitivePin(input: {
  * different means a genuinely new entry (a new mount, or a move to another
  * sensitive tab) and the PIN is demanded afresh.
  */
+/**
+ * Is the page open yet, for the visit the gate is on? (Graeme, 29 Oct 2026:
+ * the Employee Hub shows and loads NOTHING until the PIN for this entry is
+ * in — the records never sit in the page behind the PIN pad.)
+ *
+ *   idle    — not asked yet (or the gate is off)
+ *   asked   — the prompt was just raised; its flag may not have rendered yet
+ *   showing — a PIN prompt is up
+ *   open    — the prompt was answered, or none was needed
+ *
+ * "asked" waits for the prompt to SHOW before it can close, so the render
+ * between raising the prompt and it appearing can't open the page.
+ */
+export type PinGatePhase = "idle" | "asked" | "showing" | "open";
+
+export function nextPinGatePhase(phase: PinGatePhase, prompting: boolean): PinGatePhase {
+  if (phase === "asked") return prompting ? "showing" : "asked";
+  if (phase === "showing") return prompting ? "showing" : "open";
+  return phase;
+}
+
 export function shouldDemandPinOnEntry(input: {
   authenticated: boolean;
   enabled: boolean;

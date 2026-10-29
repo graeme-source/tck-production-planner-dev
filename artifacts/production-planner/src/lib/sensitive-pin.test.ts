@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled } from "./sensitive-pin";
+import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled, nextPinGatePhase } from "./sensitive-pin";
 
 const TTL = 5 * 60 * 1000;
 
@@ -108,5 +108,20 @@ describe("financePinGateEnabled (Graeme, 2026-10-27)", () => {
   });
   it("asks once per visit: moving between Finance tabs is the same entry", () => {
     expect(shouldDemandPinOnEntry({ authenticated: true, enabled: true, demandedFor: "finance", entryKey: "finance" })).toBe(false);
+  });
+});
+
+describe("nextPinGatePhase — the hub stays shut until this entry's PIN is in", () => {
+  it("can't open on the render between raising the prompt and it showing", () => {
+    expect(nextPinGatePhase("asked", false)).toBe("asked");
+    expect(nextPinGatePhase("asked", true)).toBe("showing");
+  });
+  it("opens once the prompt is answered", () => {
+    expect(nextPinGatePhase("showing", true)).toBe("showing");
+    expect(nextPinGatePhase("showing", false)).toBe("open");
+  });
+  it("leaves idle and open alone", () => {
+    expect(nextPinGatePhase("idle", true)).toBe("idle");
+    expect(nextPinGatePhase("open", true)).toBe("open");
   });
 });

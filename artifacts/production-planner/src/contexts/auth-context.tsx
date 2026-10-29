@@ -50,7 +50,8 @@ type AuthContextValue = {
   refreshUser: () => Promise<void>;
   /** Prompt for PIN if the sensitive-unlock window has expired. Idempotent — safe to call on every mount.
    *  scope "people" asks for the private PIN when the person has set one. */
-  requireSensitivePin: (opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }) => void;
+  /** True when a PIN prompt is showing (raised now or already up). */
+  requireSensitivePin: (opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }) => boolean;
   /** The People section's private-PIN prompt is showing. */
   peoplePinPrompt: boolean;
   verifyPeoplePin: (pin: string) => Promise<PinResult>;
@@ -704,15 +705,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // recorded feedback) prompt EVERYONE — an admin's left-behind iPad is the
   // one with every employee's records on it. The default keeps the admin
   // exemption for analytics-style pages. Rule + tests: lib/sensitive-pin.ts.
-  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }) => {
-    if (state.status !== "authenticated") return;
-    if (pinLocked || peoplePinPrompt || peoplePinSetupPrompt) return; // already prompting
+  const requireSensitivePin = useCallback((opts?: { includeAdmins?: boolean; fresh?: boolean; scope?: SensitiveScope }): boolean => {
+    if (state.status !== "authenticated") return false;
+    if (pinLocked || peoplePinPrompt || peoplePinSetupPrompt) return true; // already prompting
     // People pages, for someone with People access, need the PRIVATE PIN —
     // its own unlock window, never opened by a station PIN. With no private
     // PIN set yet they get the "set your private PIN" card instead, every
     // time: there is nothing they can type to get in (Graeme, 2026-09-25).
     const mode = peopleGateMode(opts?.scope ?? "general", state.user);
-    if (mode === "setup") { setPeoplePinSetupPrompt(true); return; }
+    if (mode === "setup") { setPeoplePinSetupPrompt(true); return true; }
     const privatePin = mode === "private";
     const prompt = shouldPromptForSensitivePin({
       role: state.user.role,
@@ -721,9 +722,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ttlMs: SENSITIVE_UNLOCK_TTL_MS,
       fresh: opts?.fresh ?? false,
     });
-    if (!prompt) return;
+    if (!prompt) return false;
     if (privatePin) setPeoplePinPrompt(true);
     else setPinLocked(true);
+    return true;
   }, [state, pinLocked, peoplePinPrompt, peoplePinSetupPrompt]);
 
   const verifyPeoplePin = useCallback(async (pin: string): Promise<PinResult> => {

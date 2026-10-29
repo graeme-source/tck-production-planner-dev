@@ -8,5 +8,8 @@ declare module "express-session" {
     /** People section unlocked with the private PIN — sliding window
      *  (lib/people-unlock.ts). Only consulted for users with a private PIN. */
     peopleUnlockedAt?: string;
+    /** A PIN (or password) typed recently — opens your OWN HR records in the
+     *  Employee Hub, sliding window (lib/hub-unlock.ts). */
+    hubUnlockedAt?: string;
   }
 }

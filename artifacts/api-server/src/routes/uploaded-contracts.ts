@@ -27,6 +27,7 @@
  * the employee themself, nobody else. People access alone grants nothing
  * here. A by-id read that isn't yours answers 404, never 403.
  */
+import { requireHubUnlock, hubUnlockPasses } from "../middleware/hub-unlock";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import * as z from "zod";
 import { db, uploadedContractsTable, employmentContractsTable, usersTable } from "@workspace/db";
@@ -131,7 +132,7 @@ router.get("/can-manage", async (req: Request, res: Response) => {
 // ── Employee: mine ─────────────────────────────────────────────────────────
 
 // Takes NO user parameter: the session is the only selector.
-router.get("/mine", async (req: Request, res: Response) => {
+router.get("/mine", requireHubUnlock, async (req: Request, res: Response) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const rows = await db.select(META).from(uploadedContractsTable)
@@ -214,6 +215,7 @@ router.post(
 router.get("/:id", async (req: Request, res: Response) => {
   const found = await loadVisible(req, res);
   if (!found) return;
+  if (found.access !== "manage" && !(await hubUnlockPasses(req, res))) return;
   res.json(found.access === "manage" ? shapeForHr(found.row) : shapeForOwner(found.row));
 });
 
@@ -222,6 +224,7 @@ const FileQuery = z.object({ download: z.enum(["0", "1"]).optional() });
 router.get("/:id/file", validateQuery(FileQuery), async (req: Request, res: Response) => {
   const found = await loadVisible(req, res);
   if (!found) return;
+  if (found.access !== "manage" && !(await hubUnlockPasses(req, res))) return;
   const [file] = await db.select({ data: uploadedContractsTable.data }).from(uploadedContractsTable)
     .where(eq(uploadedContractsTable.id, found.row.id));
   if (!file) { res.status(404).json({ error: "No such contract" }); return; }

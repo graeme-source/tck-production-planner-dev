@@ -117,7 +117,7 @@ async function notifyHr(userIds: readonly number[], subjectUserId: number, viewe
       if (id === viewer.actor.id || id === subjectUserId) continue;
       await db.execute(sql`
         INSERT INTO notifications (user_id, type, message, read)
-        VALUES (${id}, ${"review"}, ${`${viewer.name} shared a private HR note${about} with you — in People`.slice(0, 500)}, false)
+        VALUES (${id}, ${"people_note"}, ${`${viewer.name} shared a private HR note${about} with you — in People`.slice(0, 500)}, false)
       `);
     }
   } catch (err) {

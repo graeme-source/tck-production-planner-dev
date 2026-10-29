@@ -11,12 +11,13 @@
  * email to the accountant. No DB writes — the source of truth is the
  * PDF in their email trail.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, Redirect } from "wouter";
 import { useForm, useFieldArray, Controller } from "react-hook-form";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
+import { HUB_LOCKED_EVENT } from "@/lib/pin-required-fetch";
 import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { PageHeader } from "@/components/page-header";
 import { EmployeeReviewsSection } from "@/components/employee-reviews";
@@ -1216,7 +1217,21 @@ export default function EmployeeHub() {
   // re-ask, and asking again after each unlock would loop the prompt
   // forever (Graeme, 2026-09-07) — the hook now enforces that for every
   // people-data page rather than each one remembering to.
-  useSensitivePinGate({ includeAdmins: true, entryKey: "employee-hub", scope: "people" });
+  //
+  // EVERY entry asks (fresh), however recently a PIN was typed — the
+  // 5-minute window let someone who picked up an iPad just after its owner
+  // unlocked it walk straight in (Graeme, 29 Oct 2026). Nothing below
+  // renders or loads until this entry's PIN is in, and the server refuses
+  // these records too without a PIN typed moments ago (lib/hub-unlock.ts).
+  // If the server shuts them mid-visit (left open past its window), the hub
+  // closes and asks again, then reloads.
+  const [visit, setVisit] = useState(0);
+  useEffect(() => {
+    const onLocked = () => setVisit(v => v + 1);
+    window.addEventListener(HUB_LOCKED_EVENT, onLocked);
+    return () => window.removeEventListener(HUB_LOCKED_EVENT, onLocked);
+  }, []);
+  const hubOpen = useSensitivePinGate({ includeAdmins: true, fresh: true, entryKey: `employee-hub-${visit}`, scope: "people" });
   // Managers write records for anyone; everyone else sees only their own.
   // Who sees the "Whose record?" list rather than just their own record.
   // Identity, not role: the server decides (the founder's per-person People
@@ -1229,7 +1244,9 @@ export default function EmployeeHub() {
   // "Whose record?" list. Everyone's records now live in People — one place
   // per person (Graeme, 2026-09-25) — so that link goes there instead.
   // Tapping the section from inside the hub still shows your OWN record.
-  const cameForEveryone = initialSection === "reviews" && isManager;
+  // A notification about YOUR record says so (&own=1) and stays here.
+  const cameForEveryone = initialSection === "reviews" && isManager
+    && new URLSearchParams(window.location.search).get("own") !== "1";
   const openTodoCount = useMyOpenTodoCount();
 
   const sections: { key: HubSection; label: string; icon: typeof Car }[] = [
@@ -1247,6 +1264,17 @@ export default function EmployeeHub() {
   ];
 
   if (cameForEveryone) return <Redirect to="/people" replace />;
+
+  if (!hubOpen) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="My Employee Hub" description="Enter your PIN to open your hub." />
+        <div className="bg-card border border-border rounded-2xl p-8 text-center text-lg font-semibold text-muted-foreground">
+          Your hub opens once you've entered your PIN.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

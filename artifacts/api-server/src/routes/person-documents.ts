@@ -37,6 +37,7 @@
  * yours answers 404, never 403; removed documents are gone everywhere.
  * Nothing is ever hard-deleted — the table refuses DELETE (migration 0132).
  */
+import { requireHubUnlock } from "../middleware/hub-unlock";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import * as z from "zod";
 import {
@@ -140,7 +141,7 @@ const FileQuery = z.object({ download: z.enum(["0", "1"]).optional() });
 // ── The person themself ────────────────────────────────────────────────────
 
 // Takes NO user parameter: the session is the only selector.
-router.get("/mine", async (req: Request, res: Response) => {
+router.get("/mine", requireHubUnlock, async (req: Request, res: Response) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   try {
@@ -157,7 +158,7 @@ router.get("/mine", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/mine/:id/file", validateQuery(FileQuery), async (req: Request, res: Response) => {
+router.get("/mine/:id/file", requireHubUnlock, validateQuery(FileQuery), async (req: Request, res: Response) => {
   const userId = req.session.userId;
   if (!userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   const id = parseId(req.params["id"]);

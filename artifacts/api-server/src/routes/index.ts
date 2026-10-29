@@ -187,6 +187,7 @@ import peopleAccessRouter from "./people-access";
 import personDocumentsRouter from "./person-documents";
 import peopleReviewsRouter from "./people-reviews";
 import peopleLettersMineRouter from "./people-letters-mine";
+import { requireHubUnlock } from "../middleware/hub-unlock";
 import productLabelsRouter from "./product-labels";
 import productLabelPrintRouter from "./product-label-print";
 import productFrontLabelRouter from "./product-front-label";
@@ -545,7 +546,7 @@ router.use("/staff-emergency-contacts", staffEmergencyContactsRouter);
 // (middleware/people-unlock.ts); everyone else passes straight through to
 // their own record. Read-only since migration 0178: GET /me, the reviews
 // shared with you (reviews themselves are written via /people-reviews).
-router.use("/employee-reviews", requirePeopleUnlock, employeeReviewsRouter);
+router.use("/employee-reviews", requireHubUnlock, employeeReviewsRouter);
 // People — the list and each person's record (routes/people.ts): People
 // access only (403 otherwise, checked inside), private PIN set + unlocked.
 router.use("/people", requirePeopleUnlock, peopleRouter);
@@ -560,7 +561,7 @@ router.use("/person-documents", personDocumentsRouter);
 router.use("/people-reviews", requirePeopleUnlock, peopleReviewsRouter);
 // Letters sent to ME (routes/people-letters-mine.ts): session only, not
 // behind the People PIN — the employee reads and acknowledges their own.
-router.use("/people-letters", peopleLettersMineRouter);
+router.use("/people-letters", requireHubUnlock, peopleLettersMineRouter);
 // Who has People access — the founder's per-person switch in Settings →
 // Team & Access. Admin read, founder-only write, guarded inside the router.
 router.use("/people-access", peopleAccessRouter);

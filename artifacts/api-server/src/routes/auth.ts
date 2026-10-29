@@ -86,6 +86,7 @@ router.post("/login", loginLimiter, validate(LoginBody), async (req, res) => {
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
+  req.session.hubUnlockedAt = req.session.pinVerifiedAt;
   // A fresh sign-in never inherits an earlier People unlock on this browser.
   delete req.session.peopleUnlockedAt;
   const features = await allowedFeatureKeys(user.id);
@@ -278,6 +279,7 @@ router.post("/pin/set", pinSetLimiter, async (req, res) => {
 
   // Setting a new PIN counts as verification
   req.session.pinVerifiedAt = new Date().toISOString();
+  req.session.hubUnlockedAt = req.session.pinVerifiedAt;
   await new Promise<void>((resolve) => req.session.save(() => resolve()));
 
   res.json({ ok: true });
@@ -368,6 +370,7 @@ router.post("/pin/login", loginLimiter, async (req, res) => {
   req.session.userId = user.id;
   req.session.userRole = user.role as "admin" | "manager" | "viewer";
   req.session.pinVerifiedAt = new Date().toISOString();
+  req.session.hubUnlockedAt = req.session.pinVerifiedAt;
   // Station PCs are shared: switching person by PIN must never carry the
   // previous person's People unlock across to the next one.
   delete req.session.peopleUnlockedAt;
@@ -476,6 +479,7 @@ router.post("/pin/verify", loginLimiter, async (req, res) => {
     .where(eq(usersTable.id, userId));
 
   req.session.pinVerifiedAt = new Date().toISOString();
+  req.session.hubUnlockedAt = req.session.pinVerifiedAt;
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "Failed to save session" });
@@ -611,8 +615,9 @@ router.post("/pin/lock", (req, res) => {
   }
 
   req.session.pinVerifiedAt = undefined;
-  // Locking the station locks People too.
+  // Locking the station locks People and your own hub records too.
   delete req.session.peopleUnlockedAt;
+  delete req.session.hubUnlockedAt;
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "Failed to lock session" });

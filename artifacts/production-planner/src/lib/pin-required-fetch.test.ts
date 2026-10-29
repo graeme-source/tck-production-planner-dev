@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { installPinRequiredFetchHook, isPinRequiredResponse, isQuietRequest, PIN_REQUIRED_EVENT, QUIET_REQUEST_HEADER } from "./pin-required-fetch";
+import { installPinRequiredFetchHook, isHubLockedResponse, isPinRequiredResponse, isQuietRequest, PIN_REQUIRED_EVENT, QUIET_REQUEST_HEADER } from "./pin-required-fetch";
 
 describe("isQuietRequest", () => {
   it("finds the header in a plain object, an array or a Headers, any case", () => {
@@ -65,5 +65,14 @@ describe("installPinRequiredFetchHook", () => {
     installPinRequiredFetchHook(h);
     await h.fetch("/api/x");
     expect(events).toHaveLength(1);
+  });
+});
+
+describe("isHubLockedResponse", () => {
+  it("spots the hub's own-record refusals, never the daily work-PIN one", () => {
+    expect(isHubLockedResponse(423, { code: "HUB_PIN_REQUIRED" })).toBe(true);
+    expect(isHubLockedResponse(423, { code: "PEOPLE_PIN_REQUIRED" })).toBe(true);
+    expect(isHubLockedResponse(423, { code: "PIN_REQUIRED" })).toBe(false);
+    expect(isHubLockedResponse(428, { code: "HUB_PIN_REQUIRED" })).toBe(false);
   });
 });

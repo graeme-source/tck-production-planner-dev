@@ -15,6 +15,7 @@
  * contract; the founder gate is the ACCOUNT (same rule as founder-focus),
  * not the role.
  */
+import { requireHubUnlock, hubUnlockPasses } from "../middleware/hub-unlock";
 import { Router, type IRouter, type Request, type Response } from "express";
 import path from "node:path";
 import { db, contractTemplatesTable, employmentContractsTable, usersTable } from "@workspace/db";
@@ -326,7 +327,7 @@ router.get("/founder-signature.png", async (req: Request, res: Response) => {
 
 // Deliberately takes NO user parameter: the session is the only selector, so
 // there is no request shape that can ask for someone else's contract.
-router.get("/mine", async (req: Request, res: Response) => {
+router.get("/mine", requireHubUnlock, async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const rows = await db
@@ -350,6 +351,7 @@ router.get("/:id/signed.pdf", async (req: Request, res: Response) => {
     res.status(404).json({ error: "No such contract" });
     return;
   }
+  if (row.userId === userId && !(await hubUnlockPasses(req, res))) return;
   if (!row.acknowledgedAt) { res.status(400).json({ error: "This contract hasn't been signed yet" }); return; }
 
   let pdf = row.signedPdf;
@@ -374,6 +376,7 @@ router.get("/:id", async (req: Request, res: Response) => {
     res.status(404).json({ error: "No such contract" });
     return;
   }
+  if (row.userId === userId && !(await hubUnlockPasses(req, res))) return;
   res.json(row);
 });
 
@@ -387,7 +390,7 @@ const SignBody = z.object({
 
 // Self-service: the employee signs their own (anyone else's is a 404, and
 // the handler still re-checks the owner).
-router.post("/:id/sign", employmentRecordWrite({ subject: contractOwner, selfService: "sign_own_contract", refuseAs404: true }), validate(SignBody), async (req: Request, res: Response) => {
+router.post("/:id/sign", requireHubUnlock, employmentRecordWrite({ subject: contractOwner, selfService: "sign_own_contract", refuseAs404: true }), validate(SignBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const id = Number(req.params.id);

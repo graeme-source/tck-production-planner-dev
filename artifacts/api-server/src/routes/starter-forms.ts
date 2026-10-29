@@ -13,6 +13,7 @@
  *   - Drafts autosave; signing freezes answers + rendered body + archival
  *     PDF, and DB triggers make signed rows undeletable (migration 0086).
  */
+import { requireHubUnlock, hubUnlockPasses } from "../middleware/hub-unlock";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db, starterFormSubmissionsTable, usersTable } from "@workspace/db";
 import { and, desc, eq } from "drizzle-orm";
@@ -59,7 +60,7 @@ router.get("/definitions", (req: Request, res: Response) => {
 
 // ── Mine ───────────────────────────────────────────────────────────────────
 
-router.get("/mine", async (req: Request, res: Response) => {
+router.get("/mine", requireHubUnlock, async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const rows = await db
@@ -80,7 +81,7 @@ router.get("/mine", async (req: Request, res: Response) => {
 const DraftBody = z.object({ answers: AnswersSchema });
 
 // Autosaved draft — refuses to touch a signed submission.
-router.put("/mine/:formType", ownStarterForms, validate(DraftBody), async (req: Request, res: Response) => {
+router.put("/mine/:formType", requireHubUnlock, ownStarterForms, validate(DraftBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const parsed = FormTypeSchema.safeParse(req.params.formType);
@@ -109,7 +110,7 @@ const SignBody = z.object({
   answers: AnswersSchema,
 });
 
-router.post("/mine/:formType/sign", ownStarterForms, validate(SignBody), async (req: Request, res: Response) => {
+router.post("/mine/:formType/sign", requireHubUnlock, ownStarterForms, validate(SignBody), async (req: Request, res: Response) => {
   const userId = requireSession(req, res);
   if (userId == null) return;
   const parsed = FormTypeSchema.safeParse(req.params.formType);
@@ -193,6 +194,7 @@ router.get("/submission/:id", async (req: Request, res: Response) => {
     res.status(404).json({ error: "No such form" });
     return;
   }
+  if (row.userId === userId && !(await hubUnlockPasses(req, res))) return;
   res.json(row);
 });
 
@@ -206,6 +208,7 @@ router.get("/submission/:id/signed.pdf", async (req: Request, res: Response) => 
     res.status(404).json({ error: "No such form" });
     return;
   }
+  if (row.userId === userId && !(await hubUnlockPasses(req, res))) return;
   if (!row.signedAt || !row.body) { res.status(400).json({ error: "This form hasn't been signed yet" }); return; }
 
   const pdf = await ensureStarterFormPdf({ id: row.id, body: row.body, signedPdf: row.signedPdf });
