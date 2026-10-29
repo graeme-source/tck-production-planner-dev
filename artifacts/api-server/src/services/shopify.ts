@@ -1,4 +1,5 @@
 import { shouldSkipSideEffect, logSkippedSideEffect } from "../lib/app-env";
+import { retryWaitMs, SHOPIFY_RETRY_BUDGET_MS, withShopifyRetry } from "../lib/shopify-retry";
 import { apcTrackingUrl } from "./apc";
 import { withoutCancelledOrders } from "../lib/dispatch-tag";
 // Circular at module level (orders-cache imports shopifyFetchRaw from here)
@@ -46,14 +47,15 @@ async function getAccessToken(): Promise<string> {
 
 async function shopifyPut(path: string, body: unknown) {
   const token = await getAccessToken();
-  const res = await fetch(`${API_BASE}${path}`, {
+  // PUT sets a resource to a value, so sending it twice is harmless.
+  const res = await withShopifyRetry(`PUT ${path}`, true, () => fetch(`${API_BASE}${path}`, {
     method: "PUT",
     headers: {
       "X-Shopify-Access-Token": token,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-  });
+  }));
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`Shopify API error ${res.status}: ${text}`);
@@ -63,14 +65,15 @@ async function shopifyPut(path: string, body: unknown) {
 
 async function shopifyPost(path: string, body: unknown) {
   const token = await getAccessToken();
-  const res = await fetch(`${API_BASE}${path}`, {
+  // A POST creates something (a fulfilment): retried on 429 only, never on a 5xx.
+  const res = await withShopifyRetry(`POST ${path}`, false, () => fetch(`${API_BASE}${path}`, {
     method: "POST",
     headers: {
       "X-Shopify-Access-Token": token,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
-  });
+  }));
 
   if (!res.ok) {
     const text = await res.text();
@@ -106,12 +109,12 @@ export async function shopifyFetchRaw(path: string, params?: Record<string, stri
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
   }
 
-  const res = await fetch(url.toString(), {
+  const res = await withShopifyRetry(`GET ${path}`, true, () => fetch(url.toString(), {
     headers: {
       "X-Shopify-Access-Token": token,
       "Content-Type": "application/json",
     },
-  });
+  }));
 
   if (!res.ok) {
     const text = await res.text();
@@ -135,39 +138,40 @@ async function shopifyFetch(path: string, params?: Record<string, string>) {
  * (e.g. ordersCount) where pulling the full order list via REST would
  * waste memory. Throws on transport, HTTP, or GraphQL errors.
  *
- * Retries once on 429 / 5xx so a transient Shopify hiccup doesn't
- * 502 a user-facing endpoint. Not a general solution — heavy/frequent
- * callers should implement their own throttling.
+ * Retries on 429 / THROTTLED for up to 2 minutes, and on 5xx for reads
+ * (lib/shopify-retry.ts), so a busy moment can't fail a fulfilment.
  */
 /** `apiVersion` for a query that only exists in a newer API (Rollouts are 2026-10). */
 export async function shopifyGraphQL<T>(query: string, variables?: Record<string, unknown>, apiVersion?: string): Promise<T> {
   const token = await getAccessToken();
   const base = apiVersion ? `https://${STORE_DOMAIN}/admin/api/${apiVersion}` : API_BASE;
-  for (let attempt = 1; attempt <= 2; attempt++) {
-    const res = await fetch(`${base}/graphql.json`, {
+  // A query can be re-sent after a 5xx; a mutation only after a 429 or a
+  // THROTTLED answer, both of which mean Shopify did nothing.
+  const isRead = !/^\s*mutation\b/.test(query);
+  const started = Date.now();
+  for (let attempt = 1; ; attempt++) {
+    const res = await withShopifyRetry("GraphQL", isRead, () => fetch(`${base}/graphql.json`, {
       method: "POST",
       headers: {
         "X-Shopify-Access-Token": token,
         "Content-Type": "application/json",
       },
       body: JSON.stringify(variables ? { query, variables } : { query }),
-    });
+    }));
 
     if (!res.ok) {
-      const retry = (res.status === 429 || (res.status >= 500 && res.status < 600)) && attempt === 1;
-      if (retry) {
-        const ra = parseFloat(res.headers.get("Retry-After") || "");
-        const waitMs = Math.min(Number.isFinite(ra) ? ra * 1000 : 500, 3_000);
-        await res.text().catch(() => undefined);
-        await new Promise(r => setTimeout(r, waitMs));
-        continue;
-      }
       const text = await res.text();
       throw new Error(`Shopify GraphQL error ${res.status}: ${text}`);
     }
 
-    const body = (await res.json()) as { data?: T; errors?: Array<{ message: string }> };
+    const body = (await res.json()) as { data?: T; errors?: Array<{ message: string; extensions?: { code?: string } }> };
     if (body.errors && body.errors.length > 0) {
+      const throttled = body.errors.some(e => e.extensions?.code === "THROTTLED");
+      const wait = retryWaitMs(attempt, null);
+      if (throttled && Date.now() - started + wait <= SHOPIFY_RETRY_BUDGET_MS) {
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
       throw new Error(`Shopify GraphQL: ${body.errors.map(e => e.message).join("; ")}`);
     }
     if (!body.data) {
@@ -175,7 +179,6 @@ export async function shopifyGraphQL<T>(query: string, variables?: Record<string
     }
     return body.data;
   }
-  throw new Error("Shopify GraphQL: retries exhausted");
 }
 
 /** Thrown by shopifyGraphQLWrite when this machine must not write to Shopify
@@ -521,12 +524,12 @@ export async function getProducts(): Promise<ShopifyProduct[]> {
     const url = new URL(`${API_BASE}/products.json`);
     Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, v));
 
-    const res = await fetch(url.toString(), {
+    const res = await withShopifyRetry("GET /products.json", true, () => fetch(url.toString(), {
       headers: {
         "X-Shopify-Access-Token": token,
         "Content-Type": "application/json",
       },
-    });
+    }));
 
     if (!res.ok) {
       const text = await res.text();
