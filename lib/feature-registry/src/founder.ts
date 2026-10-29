@@ -96,6 +96,10 @@ export const FOUNDER_TABS = [
   // as Sales & Marketing.
   { href: "/founder/live-offers", label: "Live offers", feature: FOUNDER_FEATURES.sales },
   { href: "/founder/bundle-builder", label: "Bundle builder", feature: FOUNDER_FEATURES.sales },
+  // Bonus calculator (29 Oct 2026): the founder's alone — no feature, so no
+  // grant opens it ("I don't want Tommy to have access to it") — and behind
+  // his private PIN (routes/staff-bonus.ts).
+  { href: "/founder/bonus", label: "Bonus calculator" },
 ] as const satisfies ReadonlyArray<{ href: string; label: string; feature?: FounderFeatureKey }>;
 
 export type FounderTab = (typeof FOUNDER_TABS)[number];

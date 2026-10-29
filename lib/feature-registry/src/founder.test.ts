@@ -99,7 +99,11 @@ describe("allowedFounderTabs", () => {
     allowedFounderTabs({ email, grantedKeys }).map(t => t.href);
 
   it("gives the founder every tab", () => {
-    expect(hrefs(FOUNDER_EMAIL, [])).toEqual(["/founder/numbers", "/founder/focus", "/founder/pnl", "/founder/sales", "/founder/ab-tests", "/founder/floor", "/founder/live-offers", "/founder/bundle-builder"]);
+    expect(hrefs(FOUNDER_EMAIL, [])).toEqual(["/founder/numbers", "/founder/focus", "/founder/pnl", "/founder/sales", "/founder/ab-tests", "/founder/floor", "/founder/live-offers", "/founder/bundle-builder", "/founder/bonus"]);
+  });
+
+  it("never gives anyone else the Bonus calculator, whatever they're granted (29 Oct 2026)", () => {
+    expect(hrefs(TOMMY, ["founder.numbers", "founder.sales", "marketing.approve_emails", "labels.print_back"])).not.toContain("/founder/bonus");
   });
 
   it("gives Tommy Numbers + Sales & Marketing (and its A/B tests tab) only", () => {

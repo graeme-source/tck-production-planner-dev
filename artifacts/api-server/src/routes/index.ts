@@ -127,6 +127,7 @@ import leanCurriculumRouter from "./lean-curriculum";
 import ingredientScrapeRouter from "./ingredient-scrape";
 import upfRouter from "./upf";
 import liveOffersRouter from "./live-offers";
+import staffBonusRouter from "./staff-bonus";
 import formsRouter from "./forms";
 import systemUpdatesRouter from "./system-updates";
 import stationChangesRouter from "./station-changes";
@@ -286,6 +287,8 @@ router.use("/ingredients", ingredientsRouter);
 router.use("/ingredients", ingredientScrapeRouter);
 router.use("/upf", upfRouter);
 router.use("/live-offers", liveOffersRouter);
+// Founder-only, behind his private PIN (routes/staff-bonus.ts).
+router.use("/staff-bonus", staffBonusRouter);
 // Standard prep time (autosaved on its own) — before the main router so its
 // /:id/standard-prep-minutes paths are matched here.
 router.use("/sub-recipes", subRecipePrepTimeRouter);
