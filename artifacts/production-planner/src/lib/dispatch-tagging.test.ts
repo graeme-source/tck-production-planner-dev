@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { boxCategoryOf, isDispatchTagged, ordersForTagging } from "./dispatch-tagging";
+import { boxCategoryOf, isDispatchTagged, ordersForTagging, passesLabelFilter } from "./dispatch-tagging";
 
 const order = (id: number, tags: string) => ({ id, tags });
 
@@ -53,5 +53,31 @@ describe("boxCategoryOf", () => {
 
   it("falls back to 'other' for an untagged order", () => {
     expect(boxCategoryOf(order(11, ""))).toBe("other");
+  });
+});
+
+describe("passesLabelFilter — the packing bench's Labels row", () => {
+  const local = { tags: "local-delivery, large box, dispatch" };
+  const collection = { tags: "collection" };
+  const wholesale = { tags: "wholesale, dispatch" };
+  const small = { tags: "small box, dispatch" };
+
+  it("No label / Booked only ever show courier orders", () => {
+    expect(passesLabelFilter(small, "unbooked", false)).toBe(true);
+    expect(passesLabelFilter(small, "booked", true)).toBe(true);
+    expect(passesLabelFilter(wholesale, "unbooked", false)).toBe(true);
+    // A local delivery never gets a label, so it is neither "No label" nor "Booked".
+    expect(passesLabelFilter(local, "unbooked", false)).toBe(false);
+    expect(passesLabelFilter(local, "booked", true)).toBe(false);
+    expect(passesLabelFilter(collection, "unbooked", false)).toBe(false);
+  });
+
+  it("Local delivery, Collection and Wholesale narrow to that kind of order", () => {
+    expect(passesLabelFilter(local, "local", false)).toBe(true);
+    expect(passesLabelFilter(small, "local", true)).toBe(false);
+    expect(passesLabelFilter(collection, "collection", false)).toBe(true);
+    expect(passesLabelFilter(local, "collection", false)).toBe(false);
+    expect(passesLabelFilter(wholesale, "wholesale", true)).toBe(true);
+    expect(passesLabelFilter(small, "wholesale", true)).toBe(false);
   });
 });

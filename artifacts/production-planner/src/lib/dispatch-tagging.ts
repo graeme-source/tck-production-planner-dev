@@ -66,3 +66,30 @@ export function ordersForTagging<T extends { tags: string }>(orders: T[], scope:
   const untagged = orders.filter(o => !isDispatchTagged(o));
   return scope === "all" ? untagged : untagged.filter(o => boxCategoryOf(o) === scope);
 }
+
+/** The Labels row on the packing bench (Graeme, 29 Oct 2026): how each order
+ *  leaves the building. "No label" and "Booked" are COURIER orders only —
+ *  local deliveries go on the van and collections are handed over, so neither
+ *  ever has an APC label and neither belongs in either count. Wholesale bags
+ *  do go by courier (booked on the large-box code); their button narrows to
+ *  them whether booked or not. */
+export type LabelFilter = "all" | "unbooked" | "booked" | "local" | "collection" | "wholesale";
+
+/** Filters that pick a kind of order rather than a label state — choosing
+ *  one clears the box-size filter, which would otherwise hide them all. */
+export const LABEL_KIND_FILTERS: ReadonlySet<LabelFilter> = new Set<LabelFilter>(["local", "collection", "wholesale"]);
+
+export function isCourierOrder(order: { tags: string }): boolean {
+  return !isLocalDelivery(order) && !isCollection(order);
+}
+
+export function passesLabelFilter(order: { tags: string }, filter: LabelFilter, booked: boolean): boolean {
+  switch (filter) {
+    case "all": return true;
+    case "booked": return isCourierOrder(order) && booked;
+    case "unbooked": return isCourierOrder(order) && !booked;
+    case "local": return boxCategoryOf(order) === "local delivery";
+    case "collection": return isCollection(order);
+    case "wholesale": return boxCategoryOf(order) === "wholesale";
+  }
+}

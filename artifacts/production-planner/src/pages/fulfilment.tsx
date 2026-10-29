@@ -18,9 +18,14 @@ import {
   isDispatchTagged,
   boxCategoryOf,
   ordersForTagging,
+  passesLabelFilter,
+  isCourierOrder,
+  LABEL_KIND_FILTERS,
   type BoxCategory as LibBoxCategory,
+  type LabelFilter,
   type TagScope,
 } from "@/lib/dispatch-tagging";
+import { clampBoxes, localDeliveryBoxLabels, localDeliveryLabelHtml, MAX_LOCAL_BOXES } from "@/lib/local-delivery-label";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { BookingIssuesButton } from "@/components/apc-booking-issues/issues-button";
 import { BookingIssuesReport } from "@/components/apc-booking-issues/issues-report";
@@ -34,6 +39,7 @@ import {
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
   ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame, ShieldCheck,
+  Minus, Plus,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
@@ -141,6 +147,10 @@ const BOX_TABS: { key: BoxCategory; label: string }[] = [
   { key: "collection", label: "Collection" },
   { key: "other", label: "Other" },
 ];
+
+/** Wholesale, local delivery and collection are picked from the Labels row
+ *  (how the order leaves), so the Box size row only offers real box sizes. */
+const BOX_SIZE_ROW_KEYS = new Set<BoxCategory>(["small box", "large box", "other"]);
 
 /** Cycle a chip through untouched → include → exclude → untouched, keeping the
  *  two sets mutually exclusive so a tag can never be both. */
@@ -254,6 +264,15 @@ function printBagLabel(order: ShopifyOrder) {
     </div>
     <script>window.onload = () => { window.print(); };</script>
     </body></html>`);
+  w.document.close();
+}
+
+/** One "LOCAL DELIVERY · #order · BOX 1 OF 2" label per box, in a print
+ *  window like the collection bag label. */
+function printLocalDeliveryLabels(order: ShopifyOrder, boxes: number) {
+  const w = window.open("", "_blank", "width=420,height=640");
+  if (!w) return;
+  w.document.write(localDeliveryLabelHtml(localDeliveryBoxLabels(order, boxes)));
   w.document.close();
 }
 
@@ -1369,9 +1388,11 @@ export default function Fulfilment() {
   // One-shot: applied when the day's orders first land, never again, so a
   // deliberate choice by the operator is never overwritten by a refetch.
   const boxDefaultApplied = useRef(false);
-  // Fourth filter axis, only meaningful when the app books labels itself:
-  // work through the wave a slice at a time by hiding what's already booked.
-  const [labelFilter, setLabelFilter] = useState<"all" | "booked" | "unbooked">("all");
+  // Fourth filter axis: how the order leaves. Courier orders split into No
+  // label / Booked (only meaningful when the app books labels itself) so the
+  // wave can be worked a slice at a time; Local delivery, Collection and
+  // Wholesale narrow to that kind of order (Graeme, 29 Oct 2026).
+  const [labelFilter, setLabelFilter] = useState<LabelFilter>("all");
   // Tri-state chips: a tag/product is either untouched, included, or excluded.
   const [includeTags, setIncludeTags] = useState<Set<string>>(new Set());
   const [excludeTags, setExcludeTags] = useState<Set<string>>(new Set());
@@ -1780,9 +1801,8 @@ export default function Fulfilment() {
     // Box category: empty selection = no category constraint (all).
     if (boxFilter.size > 0 && !boxFilter.has(getOrderCategory(o))) return false;
 
-    // Label state — lets a batch be worked through a slice at a time.
-    if (labelFilter === "booked" && !bookedMap.has(o.id)) return false;
-    if (labelFilter === "unbooked" && bookedMap.has(o.id)) return false;
+    // Label state / how it leaves — lets a batch be worked a slice at a time.
+    if (!passesLabelFilter(o, labelFilter, bookedMap.has(o.id))) return false;
 
     // Exclusions win over everything.
     if ([...excludeTags].some(t => tags.includes(t))) return false;
@@ -2299,6 +2319,10 @@ export default function Fulfilment() {
   // Local and collection orders bypass every courier gate — computed once
   // here so the label gate, completion and auto-complete all agree.
   const activeIsCollection = !!activeOrder && isCollection(activeOrder);
+  // Local delivery box count, for its "Box 1 of N" labels — belongs to the
+  // order it was set on, so the next order starts again at 1.
+  const [localBoxes, setLocalBoxes] = useState<{ orderId: number; n: number } | null>(null);
+  const localBoxCount = activeOrder && localBoxes?.orderId === activeOrder.id ? localBoxes.n : 1;
   const activeIsLocal = (!!activeOrder && isLocalDelivery(activeOrder)) || activeIsCollection;
 
   // True while the packer still owes us a verified APC label for this order.
@@ -3582,6 +3606,37 @@ export default function Fulfilment() {
             </span>
           </div>
         )}
+        {activeIsLocal && !activeIsCollection && (
+          <div className="flex items-center gap-3 flex-wrap rounded-xl border-2 border-teal-300 dark:border-teal-800 bg-card px-4 py-3">
+            <span className="text-base font-bold">Boxes</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setLocalBoxes({ orderId: activeOrder.id, n: clampBoxes(localBoxCount - 1) })}
+                disabled={localBoxCount <= 1}
+                className="w-11 h-11 rounded-xl border-2 border-border flex items-center justify-center disabled:opacity-40"
+                aria-label="One box fewer"
+              >
+                <Minus className="w-5 h-5" />
+              </button>
+              <span className="w-12 text-center text-2xl font-black tabular-nums">{localBoxCount}</span>
+              <button
+                onClick={() => setLocalBoxes({ orderId: activeOrder.id, n: clampBoxes(localBoxCount + 1) })}
+                disabled={localBoxCount >= MAX_LOCAL_BOXES}
+                className="w-11 h-11 rounded-xl border-2 border-border flex items-center justify-center disabled:opacity-40"
+                aria-label="One box more"
+              >
+                <Plus className="w-5 h-5" />
+              </button>
+            </div>
+            <button
+              onClick={() => printLocalDeliveryLabels(activeOrder, localBoxCount)}
+              className="ml-auto px-5 py-3 rounded-xl text-base font-bold bg-teal-600 text-white hover:bg-teal-700 transition-colors flex items-center gap-2"
+            >
+              <Printer className="w-5 h-5" />
+              Print {localBoxCount === 1 ? "box label" : `${localBoxCount} box labels`}
+            </button>
+          </div>
+        )}
 
         {/* ── Reconcile mode: APC label gate ──────────────────────────────
             Blocks picking until the printed label on the box is proven to
@@ -4520,7 +4575,7 @@ export default function Fulfilment() {
                 >
                   All
                 </button>
-                {BOX_TABS.map(tab => {
+                {BOX_TABS.filter(tab => BOX_SIZE_ROW_KEYS.has(tab.key)).map(tab => {
                   const count = boxCounts[tab.key];
                   if (count === 0) return null;
                   const active = boxFilter.has(tab.key);
@@ -4532,6 +4587,8 @@ export default function Fulfilment() {
                         const next = new Set(boxFilter);
                         if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
                         setBoxFilter(next);
+                        // A box size and "Local delivery" etc. would hide everything.
+                        if (LABEL_KIND_FILTERS.has(labelFilter)) setLabelFilter("all");
                       }}
                       className={cn(
                         "px-5 py-3 rounded-xl text-base font-bold transition-colors flex items-center gap-2 border-2",
@@ -4552,31 +4609,48 @@ export default function Fulfilment() {
               </div>
             </div>
 
-            {apcMode === "full" && (
-              <div className="space-y-2">
-                <p className="text-sm font-bold uppercase tracking-widest text-foreground">Labels</p>
-                <div className="flex gap-2 flex-wrap">
-                  {([
-                    { key: "all" as const, label: "All" },
-                    { key: "unbooked" as const, label: `No label (${allUnfulfilledOrders.filter(o => !bookedMap.has(o.id)).length})` },
-                    { key: "booked" as const, label: `Booked (${bookedMap.size})` },
-                  ]).map(opt => (
+            <div className="space-y-2">
+              <p className="text-sm font-bold uppercase tracking-widest text-foreground">Labels</p>
+              <div className="flex gap-2 flex-wrap">
+                {([
+                  { key: "all" as const, label: "All", count: null },
+                  ...(apcMode === "full" ? [
+                    { key: "unbooked" as const, label: "No label (courier)", count: allUnfulfilledOrders.filter(o => isCourierOrder(o) && !bookedMap.has(o.id)).length },
+                    { key: "booked" as const, label: "Booked (courier)", count: allUnfulfilledOrders.filter(o => isCourierOrder(o) && bookedMap.has(o.id)).length },
+                  ] : []),
+                  { key: "local" as const, label: "Local delivery", count: boxCounts["local delivery"] },
+                  { key: "collection" as const, label: "Collection", count: boxCounts.collection },
+                  { key: "wholesale" as const, label: "Wholesale", count: boxCounts.wholesale },
+                ] satisfies { key: LabelFilter; label: string; count: number | null }[]).map(opt => {
+                  const active = labelFilter === opt.key;
+                  return (
                     <button
                       key={opt.key}
-                      onClick={() => setLabelFilter(opt.key)}
+                      onClick={() => {
+                        setLabelFilter(opt.key);
+                        // Local / Collection / Wholesale aren't a box size, so
+                        // a box-size choice would hide every one of them.
+                        if (LABEL_KIND_FILTERS.has(opt.key)) setBoxFilter(new Set());
+                      }}
                       className={cn(
-                        "px-5 py-3 rounded-xl text-base font-bold transition-colors border-2",
-                        labelFilter === opt.key
+                        "px-5 py-3 rounded-xl text-base font-bold transition-colors flex items-center gap-2 border-2",
+                        active
                           ? "bg-primary border-primary text-primary-foreground shadow-sm"
                           : "bg-card border-border text-foreground hover:border-primary/50",
                       )}
                     >
                       {opt.label}
+                      {opt.count != null && (
+                        <span className={cn(
+                          "text-sm font-bold px-2 py-0.5 rounded-full tabular-nums",
+                          active ? "bg-primary-foreground/20" : "bg-secondary",
+                        )}>{opt.count}</span>
+                      )}
                     </button>
-                  ))}
-                </div>
+                  );
+                })}
               </div>
-            )}
+            </div>
 
             {fridgeAvailability && (
               <div className="space-y-2">
