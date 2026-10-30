@@ -74,9 +74,30 @@ const isoOf = (v: unknown): string | null => {
 
 export interface OrderRow extends Record<string, unknown> { id: string; payload: ShopifyOrderPayload }
 
+/** Only the fields ShopifyOrderPayload names (plus what the Numbers revenue
+ *  rules read: refund transactions), built in Postgres. The whole payloads
+ *  for a 92-day window are ~115 MB of JSON (Jun–Sep 2026) and took the
+ *  process to ~0.8 GB; this is a small fraction of that. An absent or
+ *  non-array list comes back as null, exactly as before, so "the mirror
+ *  holds no fulfilment data" (fulfillments == null) still reads the same. */
 async function readMirror(fromUtc: Date, cutoff: Date): Promise<OrderRow[]> {
   const r = await db.execute<OrderRow>(sql`
-    SELECT id::text AS id, payload FROM shopify_orders_cache
+    SELECT id::text AS id, jsonb_build_object(
+      'id', payload->'id', 'name', payload->'name', 'created_at', payload->'created_at',
+      'cancelled_at', payload->'cancelled_at', 'financial_status', payload->'financial_status',
+      'fulfillment_status', payload->'fulfillment_status', 'total_price', payload->'total_price',
+      'total_tax', payload->'total_tax', 'tags', payload->'tags',
+      'line_items', CASE WHEN jsonb_typeof(payload->'line_items') = 'array' THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('requires_shipping', li->'requires_shipping', 'tax_lines', li->'tax_lines')), '[]'::jsonb)
+          FROM jsonb_array_elements(payload->'line_items') li) END,
+      'refunds', CASE WHEN jsonb_typeof(payload->'refunds') = 'array' THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('created_at', x->'created_at', 'processed_at', x->'processed_at', 'transactions', x->'transactions')), '[]'::jsonb)
+          FROM jsonb_array_elements(payload->'refunds') x) END,
+      'fulfillments', CASE WHEN jsonb_typeof(payload->'fulfillments') = 'array' THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('created_at', f->'created_at', 'status', f->'status')), '[]'::jsonb)
+          FROM jsonb_array_elements(payload->'fulfillments') f) END
+    ) AS payload
+      FROM shopify_orders_cache
      WHERE created_at >= ${fromUtc.toISOString()}::timestamptz AND created_at < ${cutoff.toISOString()}::timestamptz
   `);
   return r.rows;
