@@ -21,7 +21,7 @@
  * PIN instead of losing what was typed.
  */
 import { useState } from "react";
-import { AlertTriangle, CalendarDays, ChevronDown, History, Info, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarDays, ChevronDown, History, Info, ListTodo, Undo2 } from "lucide-react";
 import {
   usesField, entryWarning, periodEnd, PERIOD_MONTHS, warningStatusLabel, evidenceLine, meetingChecklist, isFormalHearing, fmtDayIso,
   sortClassifications, sortStages, showTriggerChoice, entryClassification, entryClassIds, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
@@ -37,7 +37,28 @@ import { WhatHappened } from "./what-happened";
 import { TriggerLinkField } from "./trigger-link";
 import { AutoClassTicks } from "./class-ticks";
 
-type Patch = Partial<Omit<RecordEntry, "id" | "history" | "letters" | "writeUp" | "heldAt">>;
+type Patch = Partial<Omit<RecordEntry, "id" | "history" | "letters" | "writeUp" | "heldAt">> & {
+  /** "Put it on my to-do list" — the only way a to-do is made (30 Oct 2026). */
+  meetingTodo?: boolean;
+  reviewTodo?: boolean;
+};
+
+/** Asks before anything goes on a to-do list; says so once it's there. */
+function TodoOptIn({ on, label, onAdd }: { on: boolean; label: string; onAdd: () => Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  if (on) return <p className="text-sm font-semibold text-emerald-700 dark:text-emerald-400 flex items-center gap-1.5"><ListTodo className="w-4 h-4" /> On your to-do list.</p>;
+  return (
+    <button type="button" disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try { await onAdd(); } catch (e) { toast({ title: "Couldn't add it", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); }
+        finally { setBusy(false); }
+      }}
+      className="min-h-11 px-3 rounded-xl border-2 border-border text-base font-bold flex items-center gap-2 text-muted-foreground hover:text-foreground disabled:opacity-50">
+      <ListTodo className="w-4 h-4" /> {label}
+    </button>
+  );
+}
 
 function Block({ title, icon: Icon, children, tone }: { title: string; icon?: typeof Info; children: React.ReactNode; tone?: "warn" }) {
   return (
@@ -222,7 +243,9 @@ export function EntryEditor({ entry, data, onChanged, person }: {
         <AutoText label="Outcome" initial={entry.outcome} rows={3} placeholder="What was decided — e.g. what must improve"
           onSave={v => save({ outcome: v || null })} />
         <AutoDate label="Next review date" initial={entry.nextReviewDate} onSave={v => saveAndRefresh({ nextReviewDate: v })} />
-        <p className="text-sm text-muted-foreground">A next review date puts a to-do on your list for that day.</p>
+        {entry.nextReviewDate && (
+          <TodoOptIn on={!!entry.reviewOnTodoList} label="Put it on my to-do list for that day" onAdd={() => saveAndRefresh({ reviewTodo: true })} />
+        )}
       </Block>
 
       <LettersBlock entry={entry} data={data} person={person} onChanged={onChanged} />
@@ -255,18 +278,30 @@ export function EntryEditor({ entry, data, onChanged, person }: {
               onSave={v => (v ? saveAndRefresh({ meetingDate: v, entryDate: v }) : Promise.reject(new Error("A meeting needs a day.")))} />
             <AutoTime label="Time" initial={entry.meetingTime} onSave={v => save({ meetingTime: v })} />
           </div>
-          <AutoChoice label="Status" value={entry.meetingStatus} columns={3}
-            options={MEETING_STATUSES.map(s => ({ value: s, label: MEETING_STATUS_LABEL[s],
-              hint: s === "booked" ? "Coming up" : s === "held" ? "It happened" : "Not happening — kept on the record" }))}
-            onSave={v => saveAndRefresh({ meetingStatus: v as MeetingStatus })} />
-          <p className="text-sm text-muted-foreground">Adding meeting notes marks it held by itself.</p>
+          {/* No status to pick (Graeme, 30 Oct 2026): it's on the schedule
+              until the notes go on — adding them is what says it happened. */}
+          <p className="text-base font-semibold">
+            {entry.meetingStatus === "held" ? "Held." : entry.meetingStatus === "cancelled" ? "Cancelled — kept on the record."
+              : "On the schedule — add the meeting notes below once it's happened."}
+          </p>
+          {entry.meetingStatus === "booked" && (
+            <div className="flex flex-wrap items-center gap-3">
+              <TodoOptIn on={!!entry.meetingOnTodoList} label="Put it on my to-do list" onAdd={() => saveAndRefresh({ meetingTodo: true })} />
+              <button type="button" onClick={() => void saveAndRefresh({ meetingStatus: "cancelled" })}
+                className="min-h-11 px-2 text-sm font-semibold text-muted-foreground hover:text-destructive hover:underline">Not happening? Mark it cancelled</button>
+            </div>
+          )}
+          {entry.meetingStatus === "cancelled" && (
+            <button type="button" onClick={() => void saveAndRefresh({ meetingStatus: "booked" })}
+              className="min-h-11 px-2 text-sm font-semibold text-primary hover:underline">Put it back on the schedule</button>
+          )}
         </Block>
       ) : (
         <Block title="What it is">
           {classificationField}
           <AutoChoice label="Meeting" value={entry.meetingStatus} allowClear="No meeting — just on the record" columns={2}
             options={MEETING_STATUSES.map(s => ({ value: s, label: MEETING_STATUS_LABEL[s],
-              hint: s === "booked" ? "Coming up — a to-do on your list for the day" : s === "held" ? "It happened" : "Not happening — kept on the record" }))}
+              hint: s === "booked" ? "Coming up" : s === "held" ? "It happened" : "Not happening — kept on the record" }))}
             onSave={v => saveAndRefresh({ meetingStatus: v as MeetingStatus | null, ...(v && !entry.meetingDate ? { meetingDate: entry.entryDate } : {}) })} />
           <div className="grid gap-4 sm:grid-cols-[12rem_minmax(0,1fr)]">
             <AutoDate label="Date" initial={entry.entryDate} onSave={v => save({ entryDate: v ?? undefined })} />

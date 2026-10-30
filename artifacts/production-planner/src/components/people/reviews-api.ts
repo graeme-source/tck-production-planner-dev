@@ -91,6 +91,9 @@ export interface RecordEntry {
   meetingTime: string | null;
   meetingAttendees: string | null;
   meetingChecklist: string[];
+  /** A to-do is linked — only ever made when asked for (30 Oct 2026). */
+  meetingOnTodoList?: boolean;
+  reviewOnTodoList?: boolean;
   createdByName: string | null;
   createdAt: string;
   updatedAt: string;

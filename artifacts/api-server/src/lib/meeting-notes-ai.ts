@@ -19,7 +19,7 @@
  * be the one tool's fields — which a person then reads before saving.
  */
 import { z } from "zod";
-import { ACTION_OWNERS, ANSWERS_TRIGGER, MAX_NOTES_CHARS, type MeetingNotesDraft, type ActionOwner } from "@workspace/people-reviews";
+import { ACTION_OWNERS, ANSWERS_TRIGGER, MAX_NOTES_CHARS, type MeetingNotesDraft, type MeetingPayChange, type ActionOwner } from "@workspace/people-reviews";
 
 export const LIMITS = { title: 120, summary: 4000, what: 300, detail: 2000, bullet: 500, ownerName: 80, items: 20 } as const;
 
@@ -63,9 +63,27 @@ export const MEETING_NOTES_TOOL = {
           required: ["what", "owner"],
         },
       },
-      classification: { type: ["string", "null"], description: "Exactly one label from the list given, if one clearly fits; otherwise null." },
+      classifications: {
+        type: "array",
+        description: "EVERY label from the list given that fits what the meeting was about, best fit first — e.g. a disciplinary meeting that also changed pay gets both. Empty if none clearly fits.",
+        items: { type: "string" },
+      },
+      pay: {
+        type: ["object", "null"],
+        description: "Only if the notes say their rate of pay is changing: the old and new rate and when it starts, in the notes' own words. Otherwise null.",
+        properties: {
+          from: { type: ["string", "null"], description: "The current rate as said, e.g. '£12.21 an hour', or null if not said." },
+          to: { type: "string", description: "The new rate as said, e.g. '£12.75 an hour'." },
+          effectiveOn: { type: ["string", "null"], description: "YYYY-MM-DD the new rate starts, if said, else null." },
+        },
+        required: ["to"],
+      },
+      in_review: {
+        type: "boolean",
+        description: "true ONLY if the notes say the colleague is being put into a review or monitoring period (e.g. as the result of a disciplinary, or for performance or attendance). Otherwise false.",
+      },
     },
-    required: ["title", "summary", "agreements", "objectives", "actions", "classification"],
+    required: ["title", "summary", "agreements", "objectives", "actions", "classifications", "pay", "in_review"],
   },
 } as const;
 
@@ -95,7 +113,9 @@ export function meetingNotesSystemPrompt(ctx: PromptContext): string {
     `The person recording the meeting is ${ctx.recorderFirstName} — their actions have owner "me".`,
     `The colleague whose record this is is ${ctx.colleagueFirstName} — their actions have owner "colleague". Anyone else is "other".`,
     `The meeting took place on ${ctx.meetingDate}. Resolve relative dates ("next Monday", "in two weeks") from that day; give dates as YYYY-MM-DD.`,
-    `For classification, pick exactly one of these labels if one clearly fits, else null: ${ctx.classificationLabels.map(l => JSON.stringify(l)).join(", ")}.`,
+    `For classifications, give every one of these labels that fits, best first (empty if none clearly fits): ${ctx.classificationLabels.map(l => JSON.stringify(l)).join(", ")}.`,
+    "pay: only when the notes say their rate of pay is changing — the old and new rate as said, and the start date. Otherwise null. Never work a rate out yourself.",
+    "in_review: true only when the notes say they are being put into a review or monitoring period. Otherwise false.",
     "The title names the meeting by its main topic (e.g. \"Maternity review meeting\") and never includes anyone's name.",
     "",
     "Three different things — keep them apart:",
@@ -121,7 +141,13 @@ const RawDraft = z.object({
   objectives: z.array(z.unknown()).nullable().optional(),
   actions: z.array(z.unknown()).nullable().optional(),
   classification: looseStr,
+  classifications: z.array(z.unknown()).nullable().optional(),
+  pay: z.unknown().optional(),
+  in_review: z.unknown().optional(),
+  inReview: z.unknown().optional(),
 }).passthrough();
+
+const RawPay = z.object({ from: looseStr, to: looseStr, effectiveOn: looseStr, effective_on: looseStr }).passthrough();
 
 /** An agreement: a bullet string — or, from an older answer shape, { what, detail }. */
 const RawAgreementObject = z.object({ what: looseStr, detail: looseStr, date: looseStr }).passthrough();
@@ -210,9 +236,32 @@ export function parseMeetingDraft(input: unknown, classifications: ReadonlyArray
   let title = clip(r.title, LIMITS.title);
   if (!title) { title = "Meeting notes"; repaired.push("no title — called it Meeting notes"); }
 
-  const wanted = clip(r.classification, 200).toLowerCase();
-  const match = wanted ? classifications.find(c => c.active && c.label.trim().toLowerCase() === wanted) ?? null : null;
-  if (wanted && !match) repaired.push("suggested a classification that isn't on the list — left as it is");
+  // Every label that fits (older answers give one `classification`).
+  const labels = [...(r.classifications ?? []), r.classification]
+    .map(l => (typeof l === "string" ? clip(l, 200).toLowerCase() : ""))
+    .filter(Boolean);
+  const classificationIds: number[] = [];
+  let unknownLabel = false;
+  for (const l of labels) {
+    const c = classifications.find(x => x.active && x.label.trim().toLowerCase() === l);
+    if (!c) unknownLabel = true;
+    else if (!classificationIds.includes(c.id)) classificationIds.push(c.id);
+  }
+  if (unknownLabel) repaired.push("suggested a classification that isn't on the list — left it out");
+
+  // A pay change, only with a new rate; a bad start date is dropped.
+  let pay: MeetingPayChange | null = null;
+  const rawPay = RawPay.safeParse(r.pay);
+  if (r.pay != null && rawPay.success) {
+    const to = clip(rawPay.data.to, 200);
+    if (to) {
+      const said = rawPay.data.effectiveOn ?? rawPay.data.effective_on;
+      const effectiveOn = cleanDate(said);
+      if (said && !effectiveOn) repaired.push("ignored a pay start date that isn't a real day");
+      pay = { from: clip(rawPay.data.from, 200) || null, to, effectiveOn };
+    }
+  }
+  const inReview = (r.in_review ?? r.inReview) === true;
 
   return {
     ok: true,
@@ -223,7 +272,10 @@ export function parseMeetingDraft(input: unknown, classifications: ReadonlyArray
       agreements: agreements.slice(0, LIMITS.items),
       objectives: objectives.slice(0, LIMITS.items),
       actions: actions.slice(0, LIMITS.items),
-      classificationId: match?.id ?? null,
+      classificationId: classificationIds[0] ?? null,
+      classificationIds,
+      pay,
+      inReview,
     },
   };
 }
@@ -258,9 +310,18 @@ export const SaveMeetingNotesBody = z.object({
     owner: z.enum(ACTION_OWNERS),
     ownerName: z.string().max(LIMITS.ownerName).nullable(),
     date: isoDate.nullable(),
-    /** For my own actions: put a discreet to-do on my list. */
+    /** For my own actions: put a discreet to-do on my list — only when
+     *  ticked; never by default (Graeme, 30 Oct 2026). */
     todo: z.boolean().optional(),
   })).max(LIMITS.items),
+  /** The pay change the notes gave (checked by Graeme) — onto the meeting. */
+  pay: z.object({
+    from: z.string().trim().max(200).nullable(),
+    to: z.string().trim().min(1).max(200),
+    effectiveOn: isoDate.nullable(),
+  }).nullable().optional(),
+  /** Put them in review (open) — only ever opens, never closes. */
+  inReview: z.boolean().optional(),
   source: z.object({
     kind: z.enum(["url", "text"]),
     url: z.string().max(2000).nullable(),

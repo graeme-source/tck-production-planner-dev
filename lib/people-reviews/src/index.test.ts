@@ -197,11 +197,15 @@ describe("to-dos", () => {
       .toBe("HR follow-up due — tap here");
   });
   it("create, move, cancel or leave the linked to-do", () => {
-    expect(planTodo({ todoId: null, date: null }, { date: "2026-10-20" })).toBe("create");
-    expect(planTodo({ todoId: 5, date: "2026-10-20", time: "10:00" }, { date: "2026-10-20", time: "10:00" })).toBe("none");
-    expect(planTodo({ todoId: 5, date: "2026-10-20", time: "10:00" }, { date: "2026-10-20", time: "11:00" })).toBe("update");
-    expect(planTodo({ todoId: 5, date: "2026-10-20" }, { date: null })).toBe("cancel");
-    expect(planTodo({ todoId: null, date: null }, { date: null })).toBe("none");
+    expect(planTodo({ todoId: null, date: null }, { date: "2026-10-20" }, true)).toBe("create");
+    expect(planTodo({ todoId: 5, date: "2026-10-20", time: "10:00" }, { date: "2026-10-20", time: "10:00" }, false)).toBe("none");
+    expect(planTodo({ todoId: 5, date: "2026-10-20", time: "10:00" }, { date: "2026-10-20", time: "11:00" }, false)).toBe("update");
+    expect(planTodo({ todoId: 5, date: "2026-10-20" }, { date: null }, false)).toBe("cancel");
+    expect(planTodo({ todoId: null, date: null }, { date: null }, true)).toBe("none");
+  });
+  it("never makes a to-do unless asked (Graeme, 30 Oct 2026)", () => {
+    expect(planTodo({ todoId: null, date: null }, { date: "2026-10-30" }, false)).toBe("none");
+    expect(planTodo({ todoId: null, date: "2026-10-30" }, { date: "2026-11-02" }, false)).toBe("none");
   });
 });
 

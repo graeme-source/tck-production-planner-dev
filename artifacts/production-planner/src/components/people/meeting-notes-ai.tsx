@@ -18,9 +18,14 @@
  *      iPad) so closing the pop-up by accident doesn't lose it.
  *   4. Saved → private to him; "Share with <name>" is the next, separate tap.
  *
+ * Graeme, 2026-10-30: notes pasted when the meeting is scheduled open
+ * straight on the AI's reading (queueNotesForAI). The draft ticks every
+ * classification that fits, fills a pay change and "put them in review"
+ * from the notes, and puts NOTHING on the to-do list unless ticked.
+ *
  * Server: routes/people-meeting-notes.ts (People PIN, the write rule, zod).
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import {
   AlertTriangle, Check, Link2, Loader2, Plus, RotateCcw, Sparkles, Trash2, X,
@@ -55,6 +60,8 @@ interface Held {
   draft: Draft | null;
   source: Source | null;
   repaired: string[];
+  /** Pasted when the meeting was scheduled — read them as soon as it opens. */
+  autoRead?: boolean;
 }
 
 /** Drafts in progress, per meeting, for this tab only (never persisted). */
@@ -65,6 +72,17 @@ const input = "w-full h-12 px-4 rounded-xl border-2 border-border bg-background 
 
 export function hasHeldDraft(entryId: number): boolean {
   return heldDrafts.get(entryId)?.draft != null;
+}
+
+/** Notes pasted while scheduling: the meeting opens on the AI reading them. */
+export function queueNotesForAI(entryId: number, text: string): void {
+  heldDrafts.set(entryId, { url: "", text, draft: null, source: null, repaired: [], autoRead: true });
+}
+
+/** Open the AI panel by itself: a draft in progress, or notes waiting to be read. */
+export function hasHeldWork(entryId: number): boolean {
+  const h = heldDrafts.get(entryId);
+  return h != null && (h.draft != null || h.autoRead === true);
 }
 
 export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
@@ -116,10 +134,24 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       setNotice(null);
       setSource(r.source);
       setRepaired(r.repaired);
-      setDraft({ ...r.draft, objectives: r.draft.objectives ?? [], actions: r.draft.actions.map(a => ({ ...a, todo: a.owner === "me" })) });
+      // Every classification the AI says fits is ticked; nothing goes on a to-do list unless ticked.
+      setDraft({
+        ...r.draft, objectives: r.draft.objectives ?? [], pay: r.draft.pay ?? null, inReview: r.draft.inReview === true,
+        classificationIds: r.draft.classificationIds?.length ? r.draft.classificationIds : undefined,
+        actions: r.draft.actions.map(a => ({ ...a, todo: false })),
+      });
     },
     onError: (e: unknown) => setNotice(e instanceof Error ? e.message : "Couldn't read the notes"),
   });
+
+  // Notes pasted while scheduling: read them straight away, once.
+  const autoReadDone = useRef(false);
+  useEffect(() => {
+    if (autoReadDone.current || !start?.autoRead || start.draft || text.trim().length < 20) return;
+    autoReadDone.current = true;
+    read.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const save = useMutation({
     mutationFn: (d: Draft) => recordSend<{ created: number; todos: number }>("POST", `/entries/${entry.id}/meeting-notes`, {
@@ -129,6 +161,8 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       ...saveDraftParts(d),
       actions: d.actions.map(a => ({ what: a.what, owner: a.owner, ownerName: a.owner === "other" ? (a.ownerName || null) : null, date: a.date || null, todo: a.owner === "me" && a.todo })),
       source,
+      pay: d.pay && d.pay.to.trim() ? { from: d.pay.from?.trim() || null, to: d.pay.to.trim(), effectiveOn: d.pay.effectiveOn || null } : null,
+      inReview: d.inReview === true,
       // Only sent when the question was asked (otherwise left as it is).
       ...(askTrigger ? { answersTrigger: link } : {}),
     }),
@@ -136,7 +170,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
       heldDrafts.delete(entry.id);
       toast({
         title: "Saved to the record — private to you",
-        description: `${r.todos ? `${r.todos} to-do${r.todos === 1 ? "" : "s"} on your list. ` : ""}Share it with ${first} when you're ready.`,
+        description: `${r.todos ? `${r.todos} to-do${r.todos === 1 ? "" : "s"} on your list. ` : ""}Share it with ${first} or HR when you're ready — Share is at the bottom.`,
       });
       onSaved();
     },
@@ -216,7 +250,8 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
   }
 
   // ── Step 2: check the draft, then save ───────────────────────────────────
-  const suggested = classifications.find(c => c.id === draft.classificationId);
+  const suggestedLabels = (draft.classificationIds?.length ? draft.classificationIds : draft.classificationId != null ? [draft.classificationId] : [])
+    .map(id => classifications.find(c => c.id === id)?.label).filter(Boolean).join(", ");
   const nowTicked = entryClassIds(entry);
   const current = entryClassification(entry, classifications);
   // Starts as the AI's suggestion (replacing the meetings default), else as it is now.
@@ -242,7 +277,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
 
       <ClassTicks classifications={classifications.filter(c => c.active || nowTicked.includes(c.id))} value={draftTicks}
         onChange={ids => set({ classificationIds: ids })} label="What's it about?"
-        hint={<>{suggested ? `The AI suggests "${suggested.label}".` : "The AI didn't suggest one."} Now: {current?.label ?? "—"}. Tick all that fit, or leave it.</>} />
+        hint={<>{suggestedLabels ? `Ticked from the notes: ${suggestedLabels}.` : "The AI didn't find one that fits."} Now: {current?.label ?? "—"}. Change any.</>} />
 
       {askTrigger && (
         <div className="space-y-1.5">
@@ -259,6 +294,49 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
           </div>
         </div>
       )}
+
+      <div className="space-y-2">
+        <FieldLabel>Put {first} in review?</FieldLabel>
+        <p className="text-sm text-muted-foreground -mt-1">
+          {draft.inReview ? "The notes say they're going into a review period — " : "The notes don't put them in review — "}
+          change it if that's wrong. It shows on their badge until closed.
+        </p>
+        <div className="grid gap-2 grid-cols-2">
+          <ChoiceButton selected={draft.inReview === true} onClick={() => set({ inReview: true })}>Yes — in review</ChoiceButton>
+          <ChoiceButton selected={draft.inReview !== true} onClick={() => set({ inReview: false })}>No</ChoiceButton>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <FieldLabel>Pay change</FieldLabel>
+        {draft.pay ? (
+          <>
+            <p className="text-sm text-muted-foreground -mt-1">From the notes — saved onto this meeting's pay change. Check the amounts.</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <label className="block space-y-1">
+                <span className="text-sm font-bold">From</span>
+                <input value={draft.pay.from ?? ""} placeholder="e.g. £12.21 an hour" maxLength={200}
+                  onChange={e => set({ pay: { ...draft.pay!, from: e.target.value || null } })} className={input} />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-sm font-bold">To</span>
+                <input value={draft.pay.to} placeholder="e.g. £12.75 an hour" maxLength={200}
+                  onChange={e => set({ pay: { ...draft.pay!, to: e.target.value } })} className={cn(input, "font-bold")} />
+              </label>
+              <label className="block space-y-1">
+                <span className="text-sm font-bold">From when</span>
+                <input type="date" value={draft.pay.effectiveOn ?? ""}
+                  onChange={e => set({ pay: { ...draft.pay!, effectiveOn: e.target.value || null } })} className={cn(input, "text-base font-bold")} />
+              </label>
+            </div>
+            <button type="button" onClick={() => set({ pay: null })}
+              className="h-11 text-base font-semibold text-muted-foreground hover:text-destructive flex items-center gap-1.5"><Trash2 className="w-4 h-4" /> No pay change</button>
+          </>
+        ) : (
+          <button type="button" onClick={() => set({ pay: { from: null, to: "", effectiveOn: null } })}
+            className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> No pay change in the notes — add one</button>
+        )}
+      </div>
 
       <label className="block space-y-1.5">
         <FieldLabel>Summary</FieldLabel>
@@ -331,7 +409,7 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
               </div>
               <div className="grid grid-cols-3 gap-2">
                 {ACTION_OWNERS.map((o: ActionOwner) => (
-                  <button key={o} type="button" onClick={() => upd({ owner: o, todo: o === "me" })} aria-pressed={a.owner === o}
+                  <button key={o} type="button" onClick={() => upd({ owner: o, todo: o === "me" ? a.todo : false })} aria-pressed={a.owner === o}
                     className={cn("h-12 rounded-xl border-2 text-base font-bold", a.owner === o ? "border-primary bg-primary/10 text-primary" : "border-border")}>
                     {o === "me" ? "Me" : o === "colleague" ? first : "Someone else"}
                   </button>
@@ -352,12 +430,12 @@ export function MeetingNotesAI({ entry, data, personName, onSaved, onClose }: {
             </div>
           );
         })}
-        <button type="button" onClick={() => set({ actions: [...draft.actions, { what: "", owner: "me", ownerName: null, date: null, todo: true }] })}
+        <button type="button" onClick={() => set({ actions: [...draft.actions, { what: "", owner: "me", ownerName: null, date: null, todo: false }] })}
           className="h-11 text-base font-semibold text-primary hover:underline flex items-center gap-1.5"><Plus className="w-4 h-4" /> Add an action</button>
       </div>
 
       <p className="text-sm text-muted-foreground">
-        Saving marks the meeting held and keeps the pasted notes{source?.url ? " and the link" : ""} on it, private to you. The write-up stays private to you until you share it — with HR, or with {first} after checking it twice.
+        Saving marks the meeting held and keeps the pasted notes{source?.url ? " and the link" : ""} on it, private to you. Nothing goes on your to-do list unless you ticked it. The write-up stays private until you share it — with {first}, or with HR.
       </p>
 
       <PinnedFooter>

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  whatHappened, whatHappenedText, meetingWrittenUp, meetingNotesRows, actionTodos, recordTodo,
+  whatHappened, whatHappenedText, meetingWrittenUp, meetingNotesRows, actionTodos, tickedActionTodos, recordTodo,
   SUMMARY_TITLE, ACTIONS_TITLE, defaultMeetingClassification, heldByNotes, linkOnly, linkPastedMessage, isWisprFlowLink, cleanSourceLink,
   WISPR_LOGIN_MESSAGE, LINK_ONLY_MESSAGE, AGREEMENT_TITLE, meetingNotesSaveParts, type MeetingNotesDraft,
 } from "./index";
@@ -119,6 +119,13 @@ describe("saving an AI draft", () => {
   it("only my own actions become to-dos; no date sits a week out", () => {
     expect(actionTodos(draft.actions, "2026-10-12")).toEqual([{ date: "2026-10-19" }]);
     expect(actionTodos([{ what: "Book a room", owner: "me", ownerName: null, date: null }], "2026-12-28")).toEqual([{ date: "2027-01-04" }]);
+  });
+  it("no to-do unless ticked — 'HR action due' kept appearing for meetings already done (30 Oct 2026)", () => {
+    const mine = { what: "Send the letter", owner: "me" as const, ownerName: null, date: "2026-11-05" };
+    expect(tickedActionTodos([mine], "2026-10-30")).toEqual([]);
+    expect(tickedActionTodos([{ ...mine, todo: false }], "2026-10-30")).toEqual([]);
+    expect(tickedActionTodos([{ ...mine, todo: true }], "2026-10-30")).toEqual([{ date: "2026-11-05" }]);
+    expect(tickedActionTodos([{ ...mine, owner: "colleague" as const, todo: true }], "2026-10-30")).toEqual([]);
   });
   it("an action to-do is generic — no name, no subject", () => {
     const t = recordTodo({ kind: "action", ownerId: 3, ownerName: "Test Owner", subjectUserId: 41, subjectName: "Test Person", entryId: 9, date: "2026-10-19" });

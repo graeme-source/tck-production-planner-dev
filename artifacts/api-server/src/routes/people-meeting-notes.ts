@@ -19,8 +19,9 @@
  *          "agreement", 0186 — added to the author's private list if the
  *          review already has one), performance objectives, the actions;
  *          the source
- *          kept for audit, the meeting marked held, and a generic to-do for
- *          each of the author's own actions. Never shared automatically —
+ *          kept for audit, the meeting marked held, the pay change and "in
+ *          review" if the notes gave them, and a generic to-do ONLY for each
+ *          action ticked for one (none by default). Never shared automatically —
  *          "Share with <name>" is the existing share-write-up route.
  *
  * Both carry the employmentRecordWrite guard (Graeme, or People access on
@@ -35,7 +36,7 @@ import {
   peopleRecordEntrySourcesTable,
 } from "@workspace/db";
 import {
-  meetingNotesRows, actionTodos, appendAgreementBullets, agreementBullets, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
+  meetingNotesRows, tickedActionTodos, appendAgreementBullets, agreementBullets, recordTodo, meetingStatusChange, reclassify, londonTodayIso, cleanFieldSets,
   linkOnly, linkPastedMessage, cleanSourceLink, MAX_NOTES_CHARS, answersTriggerMessage,
   cleanClassIds, entryClassIds, entryClassification,
   type MeetingStatus, type Classification, type EvidenceKind,
@@ -142,8 +143,14 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
     // What it's about — every classification ticked (0184), first = primary.
     // Ones already on the entry may since have been retired; new ones must be active.
     const before = entryClassIds({ classificationId: entry.classificationId, classificationIds: (await loadEntryClassIds(db, [entry.id])).get(entry.id) });
-    const wanted = b.classificationIds?.length ? cleanClassIds(b.classificationIds)
+    let wanted = b.classificationIds?.length ? cleanClassIds(b.classificationIds)
       : b.classificationId != null ? [b.classificationId] : before;
+    // A pay change shows only under a classification that has the pay
+    // fields — tick the first one that does if none ticked has them.
+    if (b.pay && !wanted.some(id => classifications.find(c => c.id === id)?.fieldSets.includes("pay"))) {
+      const payCls = [...classifications].sort((x, y) => x.sortOrder - y.sortOrder).find(c => c.active && c.fieldSets.includes("pay"));
+      if (payCls) wanted = [...wanted, payCls.id];
+    }
     if (wanted.length === 0 || wanted.some(id => !classifications.some(c => c.id === id && (c.active || before.includes(id))))) {
       res.status(400).json({ error: "No such classification" }); return;
     }
@@ -153,8 +160,8 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
     const subjectName = await personName(entry.userId);
     const rows = meetingNotesRows(b, { me: firstName(viewer.name), colleague: firstName(subjectName) });
     if (rows.length === 0) { res.status(400).json({ error: "There's nothing to save — add a summary or what was agreed." }); return; }
-    const myActions = b.actions.filter(a => a.todo !== false);
-    const todos = actionTodos(myActions, londonTodayIso());
+    // Only the actions ticked "Put it on my to-do list" — none by default.
+    const todos = tickedActionTodos(b.actions, londonTodayIso());
     const now = new Date();
 
     const result = await db.transaction(async tx => {
@@ -181,6 +188,28 @@ router.post("/entries/:id/meeting-notes", onEntry, validate(SaveMeetingNotesBody
         if (change.stampHeldAt) set.heldAt = now;
         if (!entry.meetingDate) set.meetingDate = entry.entryDate;
         await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "meeting_status", detail: change.message });
+      }
+      // It happened, so a to-do for the meeting (if one was asked for) is done.
+      if (entry.meetingTodoId != null) {
+        await tx.execute(sql`
+          UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
+           WHERE id = ${entry.meetingTodoId} AND status = 'open'
+        `);
+        set.meetingTodoId = null;
+      }
+      // The pay change from the notes (Graeme checked it) — onto the meeting.
+      if (b.pay) {
+        set.payFrom = b.pay.from || entry.payFrom;
+        set.payTo = b.pay.to;
+        set.payEffectiveOn = b.pay.effectiveOn ?? entry.payEffectiveOn;
+        await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "edit", detail: "Pay change filled in from the meeting notes" });
+      }
+      // Put in review — only ever opens it; closing is done by hand.
+      if (b.inReview === true && entry.status !== "open") {
+        set.status = "open";
+        set.closedOn = null;
+        if (!entry.reviewStart) set.reviewStart = entry.meetingDate ?? entry.entryDate;
+        await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "open", detail: "Marked open — in review (from the meeting notes)" });
       }
       await tx.update(peopleRecordEntriesTable).set(set).where(eq(peopleRecordEntriesTable.id, entry.id));
       // What was agreed is ONE list per review: if this author already has a

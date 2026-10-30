@@ -401,7 +401,7 @@ export function ShareWriteUp({ entryId, personName, parts, onChanged }: {
   const first = personName.split(" ")[0];
   return (
     <>
-      <ShareButton onClick={() => setOpen(true)} label="Share write-up…" />
+      <ShareButton onClick={() => setOpen(true)} label={`Share with ${first} or HR…`} />
       {open && (
         <ShareDialog heading="Share this write-up" parts={parts} colleagueName={personName}
           current="private" allow={["hr", "colleague"]}

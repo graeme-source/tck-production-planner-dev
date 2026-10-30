@@ -29,8 +29,34 @@ describe("the model's answer", () => {
         objectives: [],
         actions: [{ what: "Send the confirmation letter", owner: "me", ownerName: null, date: "2026-10-19" }],
         classificationId: 7,
+        classificationIds: [7],
+        pay: null,
+        inReview: false,
       },
     });
+  });
+
+  it("ticks every classification that fits, a pay change and 'in review' (Graeme, 30 Oct 2026)", () => {
+    const r = parseMeetingDraft({
+      title: "Disciplinary hearing", summary: "Lateness discussed; pay rise held back.", agreements: [], objectives: [], actions: [],
+      classifications: ["Performance appraisal", "health", "Health", "Not on the list"],
+      pay: { from: "£12.21 an hour", to: "£12.75 an hour", effectiveOn: "2026-11-01" },
+      in_review: true,
+    }, LIST);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.draft.classificationIds).toEqual([1, 7]);
+    expect(r.draft.classificationId).toBe(1);
+    expect(r.draft.pay).toEqual({ from: "£12.21 an hour", to: "£12.75 an hour", effectiveOn: "2026-11-01" });
+    expect(r.draft.inReview).toBe(true);
+    expect(r.repaired).toContain("suggested a classification that isn't on the list — left it out");
+  });
+
+  it("no new rate = no pay change; a bad start date is dropped; in_review must be true itself", () => {
+    const base = { title: "t", summary: "s", agreements: [], actions: [] };
+    expect(parseMeetingDraft({ ...base, pay: { from: "£12", to: " " } }, LIST)).toMatchObject({ ok: true, draft: { pay: null } });
+    const r = parseMeetingDraft({ ...base, pay: { to: "£13 an hour", effectiveOn: "next month" }, in_review: "yes" }, LIST);
+    expect(r).toMatchObject({ ok: true, draft: { pay: { from: null, to: "£13 an hour", effectiveOn: null }, inReview: false } });
   });
 
   it("rejects something that isn't an answer at all", () => {
@@ -122,7 +148,8 @@ describe("the notes are data, not instructions", () => {
     expect(p).toContain("2026-10-12");
   });
   it("the tool can only answer in the draft's fields", () => {
-    expect(Object.keys(MEETING_NOTES_TOOL.input_schema.properties).sort()).toEqual(["actions", "agreements", "classification", "objectives", "summary", "title"]);
+    expect(Object.keys(MEETING_NOTES_TOOL.input_schema.properties).sort())
+      .toEqual(["actions", "agreements", "classifications", "in_review", "objectives", "pay", "summary", "title"]);
   });
   it("agreements are bullet strings; objectives are performance goals, kept apart", () => {
     const props = MEETING_NOTES_TOOL.input_schema.properties;
@@ -169,5 +196,10 @@ describe("request bodies", () => {
     expect(SaveMeetingNotesBody.safeParse({ ...ok, answersTrigger: "sickness" }).success).toBe(true);
     expect(SaveMeetingNotesBody.safeParse({ ...ok, answersTrigger: null }).success).toBe(true);
     expect(SaveMeetingNotesBody.safeParse({ ...ok, answersTrigger: "maternity" }).success).toBe(false);
+    // Pay change and "in review" from the notes: optional; a pay change needs its new rate.
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, pay: { from: null, to: "£12.75 an hour", effectiveOn: "2026-11-01" }, inReview: true }).success).toBe(true);
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, pay: null }).success).toBe(true);
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, pay: { from: "£12", to: " ", effectiveOn: null } }).success).toBe(false);
+    expect(SaveMeetingNotesBody.safeParse({ ...ok, pay: { from: null, to: "£13", effectiveOn: "1 Nov" } }).success).toBe(false);
   });
 });

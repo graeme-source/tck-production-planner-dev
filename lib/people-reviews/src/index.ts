@@ -565,13 +565,17 @@ export function recordTodo(i: TodoInput) {
 
 export type TodoAction = "none" | "create" | "update" | "cancel";
 
-/** What to do to an entry's linked to-do when its date (and time) changes. */
+/** What to do to an entry's linked to-do when its date (and time) changes.
+ *  A to-do is only ever MADE when asked for (`mayCreate` — Graeme, 30 Oct
+ *  2026: "by default, I don't want to add anything to my to-do list… I have
+ *  to take action to add it"); one already made still moves and closes. */
 export function planTodo(
   prev: { todoId: number | null; date: string | null; time?: string | null },
   next: { date: string | null; time?: string | null },
+  mayCreate: boolean,
 ): TodoAction {
   if (!next.date) return prev.todoId != null ? "cancel" : "none";
-  if (prev.todoId == null) return "create";
+  if (prev.todoId == null) return mayCreate ? "create" : "none";
   return prev.date === next.date && (prev.time ?? null) === (next.time ?? null) ? "none" : "update";
 }
 

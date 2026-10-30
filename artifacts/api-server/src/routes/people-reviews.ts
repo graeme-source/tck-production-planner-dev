@@ -429,6 +429,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         payEffectiveOn: e.payEffectiveOn, probationOutcome: e.probationOutcome, probationNewEnd: e.probationNewEnd,
         fitForWork: e.fitForWork, meetingStatus: e.meetingStatus, answersTrigger: e.answersTrigger, heldAt: e.heldAt, meetingType: e.meetingType, meetingDate: e.meetingDate, meetingTime: e.meetingTime,
         meetingAttendees: e.meetingAttendees, meetingChecklist: e.meetingChecklist,
+        meetingOnTodoList: e.meetingTodoId != null, reviewOnTodoList: e.reviewTodoId != null,
         createdByName: e.createdByName, createdAt: e.createdAt, updatedAt: e.updatedAt,
         writeUp: notes.filter(n => n.entryId === e.id),
         sources: sources.filter(x => x.entryId === e.id).map(x => ({
@@ -483,6 +484,10 @@ const EntryFields = z.object({
   meetingTime: hhmm.nullable(),
   meetingAttendees: z.string().max(2000).nullable(),
   meetingChecklist: z.array(z.string().max(60)).max(20),
+  /** "Put it on my to-do list" — to-dos are only made when asked (Graeme,
+   *  30 Oct 2026). One for the booked meeting's day; one for the next review date. */
+  meetingTodo: z.boolean(),
+  reviewTodo: z.boolean(),
 });
 type EntryPatch = Partial<z.infer<typeof EntryFields>>;
 const EntryPatchBody = EntryFields.partial();
@@ -492,12 +497,15 @@ class Refusal extends Error { constructor(public status: number, message: string
 
 /** Keep the linked to-do in step with a date: make, move, or close it. */
 async function syncTodo(tx: Exec, viewer: Viewer, kind: TodoKind, row: EntryRow, subjectName: string,
-  prev: { todoId: number | null; date: string | null; time?: string | null }, next: { date: string | null; time?: string | null }): Promise<number | null> {
-  const action = planTodo(prev, next);
+  prev: { todoId: number | null; date: string | null; time?: string | null }, next: { date: string | null; time?: string | null },
+  opts: { mayCreate: boolean; closeAs?: "cancelled" | "done" }): Promise<number | null> {
+  const action = planTodo(prev, next, opts.mayCreate);
   if (action === "none") return prev.todoId;
   if (action === "cancel") {
+    // Held = it happened, so the to-do is simply done; otherwise it's called off.
+    const prefix = opts.closeAs === "done" ? "" : "Cancelled — ";
     await tx.execute(sql`
-      UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW(), title = 'Cancelled — ' || title
+      UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW(), title = ${prefix} || title
        WHERE id = ${prev.todoId} AND status = 'open'
     `);
     return null;
@@ -632,19 +640,21 @@ async function applyChange(tx: Exec, viewer: Viewer, row: EntryRow, b: EntryPatc
     set.meetingChecklist = cleanChecklist(meetingType, b.meetingChecklist ?? row.meetingChecklist ?? []);
   }
   if (b.nextReviewDate !== undefined) set.nextReviewDate = b.nextReviewDate;
-  const touchesMeeting = b.meetingDate !== undefined || b.meetingTime !== undefined || set.meetingStatus !== undefined;
-  if (touchesMeeting || b.nextReviewDate !== undefined) {
+  const touchesMeeting = b.meetingDate !== undefined || b.meetingTime !== undefined || set.meetingStatus !== undefined || b.meetingTodo === true;
+  if (touchesMeeting || b.nextReviewDate !== undefined || b.reviewTodo === true) {
     const [subject] = await tx.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, row.userId));
     const name = subject?.name ?? "";
     if (touchesMeeting) {
       // No to-do for a cancelled review; un-cancelling brings one back.
       set.meetingTodoId = await syncTodo(tx, viewer, "meeting", row, name,
         { todoId: row.meetingTodoId, date: meetingTodoDate(prevStatus, row.meetingDate), time: row.meetingTime },
-        { date: meetingTodoDate(meetingStatus, b.meetingDate !== undefined ? b.meetingDate : row.meetingDate), time: b.meetingTime !== undefined ? b.meetingTime : row.meetingTime });
+        { date: meetingTodoDate(meetingStatus, b.meetingDate !== undefined ? b.meetingDate : row.meetingDate), time: b.meetingTime !== undefined ? b.meetingTime : row.meetingTime },
+        { mayCreate: b.meetingTodo === true, closeAs: meetingStatus === "held" ? "done" : "cancelled" });
     }
-    if (b.nextReviewDate !== undefined) {
+    if (b.nextReviewDate !== undefined || b.reviewTodo === true) {
+      const nextReview = b.nextReviewDate !== undefined ? b.nextReviewDate : row.nextReviewDate;
       set.reviewTodoId = await syncTodo(tx, viewer, "review", row, name,
-        { todoId: row.reviewTodoId, date: row.nextReviewDate }, { date: b.nextReviewDate });
+        { todoId: row.reviewTodoId, date: row.nextReviewDate }, { date: nextReview }, { mayCreate: b.reviewTodo === true });
     }
   }
 

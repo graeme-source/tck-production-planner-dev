@@ -117,9 +117,11 @@ export function startingMeetingStatus(date: string | null, todayIso: string, alr
   return date != null && date < todayIso ? "held" : "booked";
 }
 
-/** The day the booker's meeting to-do should sit on — none once cancelled. */
+/** The day the booker's meeting to-do should sit on — only while it's still
+ *  coming up. Held or cancelled = none, so a meeting saved as already held
+ *  never lands on a to-do list as "overdue" (Graeme, 30 Oct 2026). */
 export function meetingTodoDate(status: MeetingStatus | null, meetingDate: string | null): string | null {
-  return status === "cancelled" ? null : meetingDate;
+  return status === "booked" ? meetingDate : null;
 }
 
 /** What changing a review's status does to held_at, and the history line. */
@@ -301,7 +303,18 @@ export interface MeetingNotesDraft {
   actions: Array<{ what: string; owner: ActionOwner; ownerName: string | null; date: string | null }>;
   /** A suggestion from the classification list, or null. */
   classificationId: number | null;
+  /** Every classification that fits, best first (0184) — ticked for Graeme
+   *  to check (30 Oct 2026: "tick all of the relevant classifications"). */
+  classificationIds?: number[];
+  /** A change to their rate of pay agreed in the meeting, in the notes' own
+   *  words ("£12.21 an hour") — saved onto the meeting's pay change. */
+  pay?: MeetingPayChange | null;
+  /** The notes say they're being put into a review period (e.g. after a
+   *  disciplinary or for performance) — saved as open, in review. */
+  inReview?: boolean;
 }
+
+export interface MeetingPayChange { from: string | null; to: string; effectiveOn: string | null }
 
 export const SUMMARY_TITLE = "Summary";
 export const ACTIONS_TITLE = "Follow-up actions";
@@ -355,6 +368,13 @@ export function meetingNotesSaveParts(d: Pick<MeetingNotesDraft, "agreements" | 
 
 /** The booker's own actions become discreet to-dos (generic title, no names
  *  — recordTodo kind "action"); one with no date sits a week out. */
+/** The to-dos a saved write-up makes: ONLY your own actions ticked "Put it
+ *  on my to-do list" — never by default (Graeme, 30 Oct 2026: "by default,
+ *  I don't want to add anything to my to-do list"). */
+export function tickedActionTodos(actions: ReadonlyArray<MeetingNotesDraft["actions"][number] & { todo?: boolean }>, todayIso: string): Array<{ date: string }> {
+  return actionTodos(actions.filter(a => a.todo === true), todayIso);
+}
+
 export function actionTodos(actions: MeetingNotesDraft["actions"], todayIso: string): Array<{ date: string }> {
   return actions
     .filter(a => a.owner === "me" && a.what.trim())

@@ -26,6 +26,10 @@ describe("a review is an entry with a meeting status", () => {
     expect(meetingTodoDate("booked", "2026-10-20")).toBe("2026-10-20");
     expect(meetingTodoDate("held", null)).toBeNull();
   });
+  it("a held meeting never sits on a to-do list (saved as held on 29 Oct → 'overdue')", () => {
+    expect(meetingTodoDate("held", "2026-10-29")).toBeNull();
+    expect(meetingTodoDate(null, "2026-10-29")).toBeNull();
+  });
   it("stamps held_at the first time only, and says what changed", () => {
     expect(meetingStatusChange("booked", "held", null)).toEqual({ stampHeldAt: true, message: "Meeting changed from booked to held" });
     expect(meetingStatusChange("held", "cancelled", "2026-10-12T10:00:00Z").stampHeldAt).toBe(false);

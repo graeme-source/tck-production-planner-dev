@@ -9,21 +9,22 @@
  *     never shared; autosaving) come first — they count as written up;
  *   • then the write-up parts (summary, what was agreed, actions — from the
  *     AI or by hand), each private until shared;
- *   • "Add meeting notes (AI)" is the main way in;
+ *   • "Add meeting notes (AI)" is THE way in — the separate by-hand write-up
+ *     went 30 Oct 2026 (Graeme: one schedule, then the notes, then share);
  *   • "Share with <name>" once there's something of yours to share;
  *   • the original notes the AI read, kept for audit — private to whoever
  *     pasted them (the server only sends you your own).
  * Display only merges (whatHappened) — nothing stored is moved or dropped.
  */
 import { useState, type ReactNode } from "react";
-import { AlertTriangle, Check, ChevronDown, FileText, Loader2, Lock, Plus, Sparkles } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, FileText, Loader2, Lock, Sparkles } from "lucide-react";
 import { whatHappened, fmtDayIso } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
 import { AutoText } from "./review-fields";
 import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
-import { ReviewNoteCard, ShareWriteUp, WriteUpComposer } from "./review-notes";
+import { ReviewNoteCard, ShareWriteUp } from "./review-notes";
 import { RecordReadersProvider } from "./share-dialog";
-import { MeetingNotesAI, hasHeldDraft } from "./meeting-notes-ai";
+import { MeetingNotesAI, hasHeldDraft, hasHeldWork } from "./meeting-notes-ai";
 import { PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { useAutosaveSummary } from "@/hooks/autosave-summary";
 import { reviewFooterMode, showShareInFooter, SAVE_SUMMARY_LABEL } from "@/lib/review-footer";
@@ -59,14 +60,13 @@ export function WhatHappened({ entry, data, person, onChanged }: {
 }) {
   const first = person.name.split(" ")[0];
   const w = whatHappened(entry);
-  const [ai, setAi] = useState(() => hasHeldDraft(entry.id));
-  const [byHand, setByHand] = useState(false);
+  const [ai, setAi] = useState(() => hasHeldWork(entry.id));
   const [showSources, setShowSources] = useState(false);
   const cancelled = entry.meetingStatus === "cancelled";
   const myUnshared = w.parts.filter(n => n.visibility !== "shared" && n.authorId === data.viewerId);
   const myPrivate = myUnshared.length > 0;
   const sources = entry.sources ?? [];
-  const mode = reviewFooterMode({ aiOpen: ai, hasDraft: hasHeldDraft(entry.id), byHand: !cancelled && byHand });
+  const mode = reviewFooterMode({ aiOpen: ai, hasDraft: hasHeldDraft(entry.id), byHand: false });
 
   return (
     <RecordReadersProvider readers={data.recordReaders}>
@@ -113,15 +113,6 @@ export function WhatHappened({ entry, data, person, onChanged }: {
         </PinnedFooter>
       )}
 
-      {!cancelled && !ai && (byHand ? (
-        <WriteUpComposer entryId={entry.id} personName={person.name} hideNotes
-          onDone={() => { setByHand(false); onChanged(); }} onCancel={() => setByHand(false)} />
-      ) : (
-        <button type="button" onClick={() => setByHand(true)}
-          className="h-11 text-base font-semibold text-muted-foreground hover:text-foreground hover:underline flex items-center gap-1.5">
-          <Plus className="w-4 h-4" /> Add feedback or an objective by hand
-        </button>
-      ))}
 
       {sources.length > 0 && (
         <div className="rounded-2xl bg-secondary/40 p-3 space-y-2">
