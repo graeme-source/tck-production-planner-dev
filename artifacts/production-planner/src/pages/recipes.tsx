@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback, type ReactNode } from "react";
 import { toGrams, costPerKg, formatCostPerKg } from "@workspace/units";
 import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -25,6 +25,8 @@ import { RecipeQuidPanel } from "@/components/recipe-quid/recipe-quid-panel";
 import { RecipeColourFields } from "@/components/recipe-colour-fields";
 import { RecipeProductionRoutePanel } from "@/components/recipe-production-route-panel";
 import { EditorDialog } from "@/components/recipe-editor/editor-dialog";
+import { ShopifyListingFields } from "@/components/recipe-editor/shopify-listing-fields";
+import { CreateShopifyProductCard } from "@/components/recipe-editor/shopify-product-create";
 import { AfterFirstSaveNote, EDITOR_INPUT, EditorField, EditorSection, EditorTick, EditorTotals, NotesField, RecipeEditorShell, useEditorTabs } from "@/components/recipe-editor/editor-shell";
 import { LinesTable } from "@/components/recipe-editor/lines-table";
 import { useEditorIngredients } from "@/components/recipe-editor/use-editor-ingredients";
@@ -296,11 +298,15 @@ function RecipeForm({
   allTags,
   isDraft = false,
   panels,
+  listingFields,
 }: {
   /** Edit mode: the recipe is currently a draft (migration 0142). */
   isDraft?: boolean;
   /** Edit mode: the self-saving panels for each tab (QUID, Shopify…). */
   panels?: Partial<Record<EditorTabId, ReactNode>>;
+  /** Edit mode: the autosaving Shopify listing description + product photo,
+   *  drawn under the recipe description (components/recipe-editor/shopify-listing-fields). */
+  listingFields?: ReactNode;
   defaultValues: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
@@ -587,12 +593,13 @@ function RecipeForm({
                     />
                   </EditorField>
                   <EditorField
-                    label="Description — shown on the website"
+                    label="Recipe description — the line under the picture"
                     className="md:col-span-2"
-                    hint="When a test box makes or updates this recipe's Shopify product, this becomes its description and the recipe line under its picture on the collection grid (custom.product_recipe). Keep it to a sentence or two."
+                    hint="A sentence or two: what's in it. Goes to the Shopify product's recipe line under its picture on the collection grid (custom.product_recipe). Saved with Save changes. (A test box also uses it as its products' description.)"
                   >
                     <textarea {...register("description")} className={cn(EDITOR_INPUT, "min-h-[64px] resize-y")} placeholder="e.g. Slow-cooked shredded beef and mushrooms in a rich red wine gravy, with extra mature cheddar." />
                   </EditorField>
+                  {listingFields}
                 </div>
               </EditorSection>
 
@@ -844,9 +851,9 @@ function EditRecipeDialog({
   const [shopifyAdding, setShopifyAdding] = useState(false);
   const [shopifyEditing, setShopifyEditing] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    // Load current mappings (now returns array)
+  // Current mappings (now returns array). Also re-run after "Create Shopify
+  // product" links the new 2 Pack to this recipe.
+  const loadShopifyMappings = useCallback(() => {
     setShopifyLoading(true);
     fetch(`/api/recipes/${id}/shopify-mapping`, { credentials: "include" })
       .then(r => r.ok ? r.json() : [])
@@ -858,6 +865,11 @@ function EditRecipeDialog({
       })
       .catch(() => setShopifyMappings([]))
       .finally(() => setShopifyLoading(false));
+  }, [id]);
+
+  useEffect(() => {
+    if (!open) return;
+    loadShopifyMappings();
 
     // Load Shopify products for picker
     setShopifyProductsLoading(true);
@@ -881,7 +893,7 @@ function EditRecipeDialog({
       })
       .catch(() => {})
       .finally(() => setShopifyProductsLoading(false));
-  }, [open, id]);
+  }, [open, id, loadShopifyMappings]);
 
   async function addShopifyMapping() {
     if (!selectedVariant) return;
@@ -1010,6 +1022,7 @@ function EditRecipeDialog({
                 submitRef={submitRef}
                 allTags={allTags}
                 isDraft={isDraftRecipe(detail as ArchiveFields | undefined)}
+                listingFields={<ShopifyListingFields recipeId={id} canEdit={canEditShopify} />}
                 onSubmit={(data) => {
                   // isFridgeProduct rides its own endpoint; a draft with Core
                   // menu / Special ticked is published (lib/recipe-editor-payload).
@@ -1046,6 +1059,8 @@ function EditRecipeDialog({
               <RecipeNutritionSection id={id} active={open && !isLoading && !isFetching} refreshKey={JSON.stringify([detail?.ingredients?.map(i => [i.ingredientId, i.quantity]), detail?.subRecipes?.map(r => [r.subRecipeId, r.quantity]), detail?.servings, detail?.packSize])} />
                   </>,
                   more: <>
+              {/* "Create Shopify product" — preview, then a draft in Shopify linked to this recipe */}
+              <CreateShopifyProductCard recipeId={id} canEdit={canEditShopify} unsavedChanges={formIsDirty} onLinked={loadShopifyMappings} />
               {/* Shopify Inventory Link */}
               <div className="mt-4 border-t border-border pt-4">
                 <div className="flex items-center gap-2 mb-3">
