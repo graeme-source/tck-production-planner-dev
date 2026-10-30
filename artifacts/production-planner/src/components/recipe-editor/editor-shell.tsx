@@ -58,9 +58,10 @@
  *        recipe in Main Prep, made on production day; standard prep time
  *        (edit, saves itself); cook and chill (edit, saves itself)
  * LABEL & NUTRITION
- *   R    QUID percentages (edit, saves itself); ingredient deck + Label
- *        LIVE design mapping (edit, saves itself); pack label link (edit);
- *        nutritional information (edit)
+ *   R    QUID percentages (edit, saves itself); ingredient deck (edit);
+ *        pack label link (edit); nutritional information (edit). The Label
+ *        LIVE design box was removed 30 Oct 2026 — Label LIVE is no longer
+ *        used; recipes.label_live_design_name is kept, just not shown.
  *   S    label declaration name, generated declaration preview + fix
  *        buttons, "On product labels" usage
  * MORE
