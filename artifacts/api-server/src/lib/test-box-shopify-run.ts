@@ -91,16 +91,16 @@ interface Internal {
   }>;
 }
 
-const STANDARD_COOKING = JSON.stringify(headedParagraphsDocument([...STANDARD_COOKING_SECTIONS]));
+export const STANDARD_COOKING = JSON.stringify(headedParagraphsDocument([...STANDARD_COOKING_SECTIONS]));
 const reasonText: Record<string, string> = {
   chosen: "picked by you",
   "copied-from": "the product of the recipe this one was copied from",
   "previous-box": "the last test-box product",
   none: "",
 };
-const link = (p: { productId: string; title: string; status: string; variantTitle?: string }): ProductLink => ({ ...p, adminUrl: shopifyAdminUrl("products", p.productId) });
+export const productLink = (p: { productId: string; title: string; status: string; variantTitle?: string }): ProductLink => ({ ...p, adminUrl: shopifyAdminUrl("products", p.productId) });
 
-async function disclaimerText(): Promise<string | null> {
+export async function disclaimerText(): Promise<string | null> {
   const r = await db.execute<{ value: string | null }>(sql`SELECT value FROM app_settings WHERE key = 'legal_disclaimer_statement'`);
   return r.rows[0]?.value || null;
 }
@@ -151,7 +151,7 @@ export async function buildPlan(
     for (const m of mappings) {
       if (Number(m.recipe_id) !== recipeId) continue;
       const v = variantProducts.get(String(m.shopify_variant_id));
-      if (v && !out.has(v.productId)) out.set(v.productId, link({ productId: v.productId, title: v.title, status: v.status, variantTitle: v.variantTitle }));
+      if (v && !out.has(v.productId)) out.set(v.productId, productLink({ productId: v.productId, title: v.title, status: v.status, variantTitle: v.variantTitle }));
     }
     return [...out.values()];
   };
@@ -244,10 +244,10 @@ export async function buildPlan(
       isDraft: r.isDraft === true,
       action,
       linkedProducts: action === "linked" ? linked : [],
-      createdProduct: mineSnap ? link({ productId: mineSnap.id, title: mineSnap.title, status: mineSnap.status }) : null,
-      possibleMatch: possible ? link({ productId: possible.productId, title: possible.title, status: possible.status }) : null,
+      createdProduct: mineSnap ? productLink({ productId: mineSnap.id, title: mineSnap.title, status: mineSnap.status }) : null,
+      possibleMatch: possible ? productLink({ productId: possible.productId, title: possible.title, status: possible.status }) : null,
       template: template ? {
-        ...link({ productId: template.id, title: template.title, status: template.status }),
+        ...productLink({ productId: template.id, title: template.title, status: template.status }),
         price: template.variants[0]?.price ?? null, imageCount: template.imageCount, reason: reasonText[choice.reason],
       } : null,
       title: r.name,
@@ -406,7 +406,7 @@ export async function runCreate(
         ...base, steps: res.steps,
         outcome: rp.action === "create" ? "created" : "updated",
         message: (rp.action === "create" ? "Made as a draft and linked to the recipe." : "Updated.") + linkNote,
-        product: link({ productId: res.productId, title: res.title, status: res.status }),
+        product: productLink({ productId: res.productId, title: res.title, status: res.status }),
       });
     } catch (err) {
       if (err instanceof ShopifyWritesBlockedError) {

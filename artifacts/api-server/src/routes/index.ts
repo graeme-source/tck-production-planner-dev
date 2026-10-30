@@ -14,6 +14,7 @@ import userToursRouter from "./user-tours";
 import testRequestsRouter from "./test-requests";
 import recipesRouter from "./recipes";
 import recipeArchiveRouter from "./recipe-archive";
+import recipeShopifyProductRouter from "./recipe-shopify-product";
 import recipeColoursRouter from "./recipe-colours";
 import recipeProductionRouteRouter from "./recipe-production-route";
 import recipeQuidRouter from "./recipe-quid";
@@ -302,6 +303,9 @@ router.use("/recipes", recipeColoursRouter);
 // capacity) — before the main router so /production-routes isn't an id.
 router.use("/recipes", recipeProductionRouteRouter);
 router.use("/recipes", recipeArchiveRouter);
+// "Create Shopify product" from a recipe: listing description (+ AI draft),
+// product photo, preview + create (lib/recipe-shopify-product-run.ts).
+router.use("/recipes", recipeShopifyProductRouter);
 // Automatic QUID: /recipes/:id/quid, /quid-terms, /quid-backfill.
 router.use(recipeQuidRouter);
 router.use("/recipes", recipesRouter);
