@@ -72,7 +72,7 @@ const isoOf = (v: unknown): string | null => {
 
 // ── Deferred income ───────────────────────────────────────────────────────
 
-interface OrderRow extends Record<string, unknown> { id: string; payload: ShopifyOrderPayload }
+export interface OrderRow extends Record<string, unknown> { id: string; payload: ShopifyOrderPayload }
 
 async function readMirror(fromUtc: Date, cutoff: Date): Promise<OrderRow[]> {
   const r = await db.execute<OrderRow>(sql`
@@ -104,9 +104,18 @@ async function dispatchRecords(ids: number[]): Promise<{ app: Map<number, string
   return { app, apc };
 }
 
-export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {}): Promise<DeferredIncome> {
-  const cutoff = monthEndCutoff(monthEnd);
-  const fromUtc = new Date(cutoff.getTime() - LOOKBACK_DAYS * 86_400_000);
+/** Orders PAID (created) in [fromUtc, cutoff) from the mirror, each with
+ *  every dispatch record we hold (see the top of this file), ready for
+ *  resolveDispatch. Shared by deferred income and the bonus calculator's
+ *  revenue sent out (lib/sent-out-revenue-load.ts). */
+export interface DispatchOrders {
+  /** The mirror rows: Shopify's own order JSON, by order id. */
+  rows: OrderRow[];
+  orders: DeferralOrder[];
+  warnings: string[];
+}
+
+export async function loadDispatchOrders(fromUtc: Date, cutoff: Date, opts: LoadOptions = {}): Promise<DispatchOrders> {
   const warnings: string[] = [];
   if (opts.shopify !== false) {
     // Brings the mirror up to date and back-fills it to the look-back if it
@@ -114,7 +123,7 @@ export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {
     await ensureOrdersFresh(addDaysToDateString(londonDateString(fromUtc), -1));
   }
   let rows = await readMirror(fromUtc, cutoff);
-  if (rows.length === 0) throw new Error(`No Shopify orders in the mirror for the ${LOOKBACK_DAYS} days to ${monthLabel(monthEnd)}'s end.`);
+  if (rows.length === 0) return { rows, orders: [], warnings };
   let { app, apc } = await dispatchRecords(rows.map(r => Number(r.id)));
 
   // Orders Shopify calls sent, with no fulfilment data saved and no record
@@ -139,6 +148,14 @@ export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {
     appFulfilledAt: app.get(Number(r.id)) ?? null,
     apcCollectionDate: apc.get(Number(r.id)) ?? null,
   }));
+  return { rows, orders, warnings };
+}
+
+export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {}): Promise<DeferredIncome> {
+  const cutoff = monthEndCutoff(monthEnd);
+  const fromUtc = new Date(cutoff.getTime() - LOOKBACK_DAYS * 86_400_000);
+  const { orders, warnings } = await loadDispatchOrders(fromUtc, cutoff, opts);
+  if (orders.length === 0) throw new Error(`No Shopify orders in the mirror for the ${LOOKBACK_DAYS} days to ${monthLabel(monthEnd)}'s end.`);
   const d = computeDeferredIncome(monthEnd, orders);
   d.warnings.push(...warnings);
   return d;
