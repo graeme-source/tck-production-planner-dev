@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { QueuedOrdersReminder } from "@/components/queued-production/orders-reminder";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -2057,6 +2058,8 @@ export default function Orders() {
           ))}
         </select>
       </div>
+
+      <QueuedOrdersReminder />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="rounded-xl border border-border bg-card p-4">

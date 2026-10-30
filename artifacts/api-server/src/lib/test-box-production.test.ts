@@ -38,6 +38,13 @@ describe("packs sold for one delivery date", () => {
     expect(r.orders).toBe(0);
   });
 
+  it("an 8-pack bag of a recipe counts as 4 packs (refunds netted first)", () => {
+    const bag = line({ variantId: "888", quantity: 3, variantTitle: "8 Pack Bag" });
+    const r = packsSoldByRecipe([order({ lineItems: [bag, line({ variantId: "111", quantity: 2 })], refunds: [{ lineItemId: bag.id, quantity: 1 }] })], "2026-10-16",
+      [{ ...recipes[0], eightPackVariantIds: ["888"] }]);
+    expect(r.packs.get(33)).toBe(2 * 4 + 2);
+  });
+
   it("nets off refunded quantities per line, never below zero", () => {
     const a = line({ variantId: "111", quantity: 3 });
     const b = line({ variantId: "111", quantity: 1 });

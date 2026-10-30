@@ -38,6 +38,8 @@ import { DEFAULT_PLAN_MARGIN, minBatchesForOrders, type PlanMarginSettings } fro
 
 /** Shopify's 8-pack bag variant title (same marker as shopify-stock-check.ts). */
 const EIGHT_PACK = "8 pack bag";
+/** Two-packs in one 8-pack bag (same equivalence as dpt-suggestion.ts). */
+const EIGHT_PACK_PACKS = 4;
 
 export interface SalesLine {
   id: string;
@@ -63,6 +65,8 @@ export interface BoxRecipeLinks {
   variantIds: string[];
   /** Products the box created for it (test_box_shopify_products). */
   productIds: string[];
+  /** 8-pack bag variants (recipe_shopify_mappings.eight_pack_variant_id) — one bag = 4 packs. */
+  eightPackVariantIds?: string[];
 }
 
 export type MatchedBy = "mapped" | "title" | "none";
@@ -86,6 +90,7 @@ export function titleWords(s: string): string {
 
 export function packsSoldByRecipe(orders: readonly SalesOrder[], deliveryDate: string, recipes: readonly BoxRecipeLinks[]): SalesCount {
   const byVariant = new Map<string, number>();
+  const bagVariant = new Map<string, number>();
   const byProduct = new Map<string, number>();
   const byTitle = new Map<string, number>();
   const matchedBy = new Map<number, MatchedBy>();
@@ -93,6 +98,7 @@ export function packsSoldByRecipe(orders: readonly SalesOrder[], deliveryDate: s
   for (const r of recipes) {
     packs.set(r.recipeId, 0);
     for (const v of r.variantIds) byVariant.set(String(v), r.recipeId);
+    for (const v of r.eightPackVariantIds ?? []) bagVariant.set(String(v), r.recipeId);
     for (const p of r.productIds) byProduct.set(String(p), r.recipeId);
     const mapped = r.variantIds.length > 0 || r.productIds.length > 0;
     matchedBy.set(r.recipeId, mapped ? "mapped" : "none");
@@ -107,7 +113,8 @@ export function packsSoldByRecipe(orders: readonly SalesOrder[], deliveryDate: s
     for (const rf of o.refunds) refunded.set(String(rf.lineItemId), (refunded.get(String(rf.lineItemId)) ?? 0) + (Number(rf.quantity) || 0));
     let any = false;
     for (const li of o.lineItems) {
-      let recipeId = li.variantId != null ? byVariant.get(String(li.variantId)) : undefined;
+      const bagOf = li.variantId != null ? bagVariant.get(String(li.variantId)) : undefined;
+      let recipeId = bagOf ?? (li.variantId != null ? byVariant.get(String(li.variantId)) : undefined);
       if (recipeId == null && li.productId != null) recipeId = byProduct.get(String(li.productId));
       let viaTitle = false;
       if (recipeId == null && li.title && !(li.variantTitle ?? "").toLowerCase().includes(EIGHT_PACK)) {
@@ -115,7 +122,7 @@ export function packsSoldByRecipe(orders: readonly SalesOrder[], deliveryDate: s
         viaTitle = recipeId != null;
       }
       if (recipeId == null) continue;
-      const net = Math.max(0, (Number(li.quantity) || 0) - (refunded.get(String(li.id)) ?? 0));
+      const net = Math.max(0, (Number(li.quantity) || 0) - (refunded.get(String(li.id)) ?? 0)) * (bagOf != null ? EIGHT_PACK_PACKS : 1);
       if (net === 0) continue;
       packs.set(recipeId, (packs.get(recipeId) ?? 0) + net);
       if (viaTitle) matchedBy.set(recipeId, "title");

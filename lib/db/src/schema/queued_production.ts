@@ -11,7 +11,7 @@
 // Status: queued → planned (landed on a plan) | cancelled. Deleting the plan
 // resets its rows to queued so the batches can land again.
 
-import { pgTable, serial, integer, date, text, timestamp, index } from "drizzle-orm/pg-core";
+import { pgTable, serial, integer, date, text, timestamp, index, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { recipesTable } from "./recipes";
 import { productionPlansTable } from "./production_plans";
@@ -38,3 +38,20 @@ export const queuedProductionTable = pgTable("queued_production", {
 
 export type QueuedProduction = typeof queuedProductionTable.$inferSelect;
 export const insertQueuedProductionSchema = createInsertSchema(queuedProductionTable).omit({ id: true, createdAt: true });
+
+/**
+ * What happened to each ingredient a queued day needs (migration 0346):
+ * 'ordered' (ticked, or ordered through the queue — poId set) or
+ * 'not_needed'. No row = still to order. Objective B.
+ */
+export const queuedIngredientMarksTable = pgTable("queued_ingredient_marks", {
+  productionDate: date("production_date").notNull(),
+  ingredientId: integer("ingredient_id").notNull(),
+  mark: text("mark").notNull(),
+  poId: integer("po_id"),
+  markedByUserId: integer("marked_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  markedByName: text("marked_by_name"),
+  markedAt: timestamp("marked_at").notNull().defaultNow(),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.productionDate, t.ingredientId] }),
+}));

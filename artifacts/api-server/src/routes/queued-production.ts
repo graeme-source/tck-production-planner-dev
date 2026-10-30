@@ -6,7 +6,10 @@
 // Ingredient classification (Graeme, 2026-08-08): anything with a stock
 // check enabled OR a kanban/cam bag is routine — normal ordering handles it.
 // Everything else is a "special" ingredient the queue page lists with its
-// quantity and raises purchase orders for. Orders go through the standard
+// quantity and raises purchase orders for. Since 30 Oct 2026 a routine
+// ingredient is listed too when the test would run it out (counted stock
+// short, or a kanban item the test needs a lot of — the Malbec and crispy
+// bacon were missed): rules in lib/queued-production-rules.ts. Orders go through the standard
 // draft → place PO flow (client calls PATCH /orders/purchase-orders/:id/place
 // after creating drafts here), so supplier lead times / cutoffs and the
 // Orders page's inbound-PO deduction all behave exactly as normal — placing
@@ -21,14 +24,22 @@ import {
   suppliersTable,
   kanbanItemsTable,
   purchaseOrdersTable,
-  purchaseOrderLinesTable, recipePackSizeOrOne
+  purchaseOrderLinesTable, recipePackSizeOrOne, queuedIngredientMarksTable, usersTable,
 } from "@workspace/db";
 import { eq, and, gte, asc, inArray, sql, ne } from "drizzle-orm";
 import * as z from "zod";
 import { londonDateString } from "../lib/london-time";
 import { resolveRecipeIngredients, type ResolvedIngredient } from "../lib/ingredient-resolver";
+import { validate, validateQuery } from "../middleware/validate";
+import { queueSales } from "../lib/queued-production-sales";
+import { RECENT_DAYS, classifyIngredientNeed, outstanding, type IngredientMark } from "../lib/queued-production-rules";
+import { deliverByFor, orderByFor } from "../lib/queued-production-sales";
+import { loadStockLedgers } from "../lib/stock-ledger-data";
+import { expectedAt, rollForward } from "../lib/stock-ledger";
 
 const router: IRouter = Router();
+
+const DAY_MS = 86_400_000;
 
 const UpsertBody = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
@@ -109,6 +120,20 @@ router.post("/", async (req: Request, res: Response) => {
   res.status(201).json({ ok: true });
 });
 
+// GET /sales?productionDate=&deliveryDate=&refresh=1 — packs sold for the
+// delivery this production serves (made Wednesday → Friday's orders unless
+// another delivery date is given), with the suggested batches: sold + 5
+// packs, rounded up to whole batches (queued-production-rules.ts).
+const SalesQuery = z.object({
+  productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  deliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  refresh: z.enum(["0", "1"]).optional(),
+});
+router.get("/sales", validateQuery(SalesQuery), async (_req, res) => {
+  const q = res.locals["query"] as z.infer<typeof SalesQuery>;
+  res.json(await queueSales(q.productionDate, q.deliveryDate ?? null, q.refresh === "1"));
+});
+
 router.patch("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const batches = Math.trunc(Number(req.body?.batches));
@@ -148,9 +173,60 @@ router.get("/ingredients", async (req, res) => {
     return;
   }
   const ingredients = await fetchIngredientsForDate(date);
-  ingredients.sort((a, b) => Number(a.isRoutine) - Number(b.isRoutine) || a.name.localeCompare(b.name));
-  res.json({ ingredients });
+  ingredients.sort((a, b) => STATUS_ORDER[a.status] - STATUS_ORDER[b.status] || a.name.localeCompare(b.name));
+  res.json({ deliverBy: deliverByFor(date), ingredients });
 });
+
+// GET /outstanding — every upcoming queued day with ingredients still to
+// order, for the Orders page: they come up every day until ordered or
+// ticked off (Graeme, 30 Oct 2026).
+router.get("/outstanding", async (_req, res) => {
+  const dates = await db.selectDistinct({ d: queuedProductionTable.productionDate }).from(queuedProductionTable)
+    .where(and(eq(queuedProductionTable.status, "queued"), gte(queuedProductionTable.productionDate, londonDateString())))
+    .orderBy(asc(queuedProductionTable.productionDate));
+  const days = [];
+  for (const { d } of dates) {
+    const lines = (await fetchIngredientsForDate(d)).filter(i => outstanding(i.status, i.remainingToOrder, i.mark));
+    if (lines.length === 0) continue;
+    days.push({
+      productionDate: d,
+      deliverBy: deliverByFor(d),
+      lines: lines.map(i => ({ ingredientId: i.ingredientId, name: i.name, toOrder: i.remainingToOrder, unit: i.unit, supplierName: i.supplierName, orderBy: i.orderBy }))
+        .sort((a, b) => a.orderBy.localeCompare(b.orderBy) || a.name.localeCompare(b.name)),
+    });
+  }
+  res.json({ days });
+});
+
+// PUT /mark — tick an ingredient ordered or not needed for a day, or clear it.
+const MarkBody = z.object({
+  productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  ingredientId: z.number().int().positive(),
+  mark: z.enum(["ordered", "not_needed"]).nullable(),
+});
+router.put("/mark", validate(MarkBody), async (req: Request, res: Response) => {
+  const { productionDate, ingredientId, mark } = MarkBody.parse(req.body);
+  if (mark == null) {
+    await db.delete(queuedIngredientMarksTable).where(and(
+      eq(queuedIngredientMarksTable.productionDate, productionDate), eq(queuedIngredientMarksTable.ingredientId, ingredientId)));
+  } else {
+    await writeMarks(productionDate, [{ ingredientId, mark, poId: null }], req.session.userId ?? null);
+  }
+  res.json({ ok: true });
+});
+
+async function writeMarks(productionDate: string, marks: Array<{ ingredientId: number; mark: IngredientMark; poId: number | null }>, userId: number | null) {
+  if (marks.length === 0) return;
+  const [user] = userId ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)) : [];
+  await db.insert(queuedIngredientMarksTable)
+    .values(marks.map(m => ({ productionDate, ingredientId: m.ingredientId, mark: m.mark, poId: m.poId, markedByUserId: userId, markedByName: user?.name ?? null })))
+    .onConflictDoUpdate({
+      target: [queuedIngredientMarksTable.productionDate, queuedIngredientMarksTable.ingredientId],
+      set: { mark: sql`excluded.mark`, poId: sql`excluded.po_id`, markedByUserId: sql`excluded.marked_by_user_id`, markedByName: sql`excluded.marked_by_name`, markedAt: sql`now()` },
+    });
+}
+
+const STATUS_ORDER = { special: 0, short: 1, check: 2, covered: 3 } as const;
 
 // POST /create-orders — raise DRAFT purchase orders for the special
 // ingredients still needing stock, one PO per supplier, rounded up to whole
@@ -170,17 +246,16 @@ router.post("/create-orders", async (req: Request, res: Response) => {
 
   // Recompute server-side — never trust client quantities.
   const ingredientsRes = await fetchIngredientsForDate(date);
-  const lines = ingredientsRes.filter(i =>
-    !i.isRoutine
-    && i.remainingToOrder > 0
-    && i.supplierId != null
-    && (selected == null || selected.includes(i.ingredientId)),
-  );
+  // Only what's still to order and ticked for today's order; the rest
+  // stays on the list for another day.
+  const wanted = (i: (typeof ingredientsRes)[number]) =>
+    outstanding(i.status, i.remainingToOrder, i.mark) && (selected == null || selected.includes(i.ingredientId));
+  const lines = ingredientsRes.filter(i => wanted(i) && i.supplierId != null);
   if (lines.length === 0) {
-    res.status(409).json({ error: "Nothing left to order — every special ingredient is routine, already inbound, or has no supplier set." });
+    res.status(409).json({ error: "Nothing to order — it's already ordered, not needed, or has no supplier set." });
     return;
   }
-  const missingSupplier = ingredientsRes.filter(i => !i.isRoutine && i.remainingToOrder > 0 && i.supplierId == null);
+  const missingSupplier = ingredientsRes.filter(i => wanted(i) && i.supplierId == null);
 
   const bySupplier = new Map<number, typeof lines>();
   for (const l of lines) {
@@ -216,6 +291,7 @@ router.post("/create-orders", async (req: Request, res: Response) => {
         notes: `Queued test production ${date}`,
       };
     }));
+    await writeMarks(date, supplierLines.map(l => ({ ingredientId: l.ingredientId, mark: "ordered" as const, poId: order.id })), req.session.userId ?? null);
     created.push({
       poId: order.id,
       supplierId,
@@ -224,6 +300,7 @@ router.post("/create-orders", async (req: Request, res: Response) => {
     });
   }
   res.status(201).json({
+    deliverBy: deliverByFor(date),
     created,
     missingSupplier: missingSupplier.map(m => ({ ingredientId: m.ingredientId, name: m.name, required: m.required, unit: m.unit })),
   });
@@ -296,20 +373,59 @@ async function fetchIngredientsForDate(date: string) {
     if (remaining <= 0) continue;
     inboundByIngredient.set(l.ingredientId, (inboundByIngredient.get(l.ingredientId) ?? 0) + remaining);
   }
+  // Running stock and normal weekly use, so a routine ingredient the test
+  // would run out (the Malbec, the crispy bacon) is listed too.
+  const now = new Date();
+  const ledgers = await loadStockLedgers({ since: new Date(now.getTime() - 120 * DAY_MS), until: now, ingredientIds });
+  // Ordered in the last month (a placed order, not one the queue made).
+  const recentSince = new Date(now.getTime() - RECENT_DAYS * DAY_MS);
+  const recentRows = await db.selectDistinct({ ingredientId: purchaseOrderLinesTable.ingredientId })
+    .from(purchaseOrderLinesTable)
+    .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
+    .where(and(
+      inArray(purchaseOrderLinesTable.ingredientId, ingredientIds),
+      inArray(purchaseOrdersTable.status, ["placed", "partially_received", "received"]),
+      gte(sql`COALESCE(${purchaseOrdersTable.placedAt}, ${purchaseOrdersTable.createdAt})`, recentSince),
+      sql`COALESCE(${purchaseOrdersTable.notes}, '') NOT LIKE 'Queued test production%'`,
+    ));
+  const recentlyOrdered = new Set(recentRows.map(r => r.ingredientId));
+  const marks = new Map((await db.select().from(queuedIngredientMarksTable).where(eq(queuedIngredientMarksTable.productionDate, date)))
+    .map(m => [m.ingredientId, m]));
+  const deliverBy = deliverByFor(date);
   return ingredientIds.map(iid => {
     const entry = totals.get(iid)!;
     const info = ingById.get(iid);
     const isRoutine = (info?.stockCheckEnabled ?? false) || kanbanIds.has(iid);
     const required = Math.round(entry.qty * 100) / 100;
     const inbound = Math.round((inboundByIngredient.get(iid) ?? 0) * 100) / 100;
+    const ledger = ledgers.get(iid)?.ledger;
+    const tracked = ledger != null && ledger.coverage !== "untracked";
+    const expected = tracked ? expectedAt(ledger, now.getTime()) : null;
+    const stockNow = expected ? Math.round(Math.max(0, expected.expected) * 100) / 100 : null;
+    const weeklyUse = tracked ? Math.round((rollForward(ledger, now.getTime() - RECENT_DAYS * DAY_MS, now.getTime()).usage * 7 / RECENT_DAYS) * 100) / 100 : null;
+    const need = classifyIngredientNeed({
+      required, inbound, isRoutine, stockNow, weeklyUse,
+      recentlyOrdered: recentlyOrdered.has(iid),
+      recentlyUsed: (weeklyUse ?? 0) > 0,
+    });
+    const m = marks.get(iid);
     return {
+      status: need.status,
+      reason: need.reason,
+      mark: (m?.mark ?? null) as IngredientMark | null,
+      markedBy: m?.markedByName ?? null,
+      markedAt: m?.markedAt ? m.markedAt.toISOString() : null,
+      markedPoId: m?.poId ?? null,
+      orderBy: orderByFor(deliverBy, info?.supplierLeadTimeDays ?? null),
+      stockNow,
+      weeklyUse,
       ingredientId: iid,
       name: info?.name ?? entry.ingredient.ingredientName,
       unit: info?.unit ?? entry.ingredient.unit,
       required,
       isRoutine,
       inbound,
-      remainingToOrder: Math.max(0, Math.round((required - inbound) * 100) / 100),
+      remainingToOrder: need.toOrder,
       supplierId: info?.supplierId ?? null,
       supplierName: info?.supplierName ?? null,
       supplierLeadTimeDays: info?.supplierLeadTimeDays ?? null,
