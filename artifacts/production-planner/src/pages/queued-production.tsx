@@ -45,6 +45,13 @@ export default function QueuedProductionPage() {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [rows]);
 
+  // After queueing: open that day's card and bring it into view.
+  const showQueued = (date: string) => {
+    refetchAll();
+    setExpandedDates(prev => new Set(prev).add(date));
+    setTimeout(() => document.getElementById(`queued-day-${date}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+  };
+
   const toggleDate = (date: string) => setExpandedDates(prev => {
     const next = new Set(prev);
     if (next.has(date)) next.delete(date); else next.add(date);
@@ -61,7 +68,9 @@ export default function QueuedProductionPage() {
         <ArrowLeft className="w-4 h-4" /> Back to Production Plans
       </button>
 
-      <AddQueueForm initialDate={initialDate} onSaved={refetchAll} />
+      {!isLoading && (
+        <AddQueueForm initialDate={initialDate} startOpen={byDate.length === 0} onSaved={showQueued} />
+      )}
 
       {isLoading ? (
         <div className="flex items-center gap-2 text-muted-foreground py-6"><Loader2 className="w-5 h-5 animate-spin" /> Loading queue…</div>
@@ -98,7 +107,7 @@ function DateCard({ date, rows, expanded, onToggle, onChanged }: {
   };
 
   return (
-    <div className="rounded-2xl border border-border bg-card p-4">
+    <div id={`queued-day-${date}`} className="rounded-2xl border-2 border-violet-500/40 bg-card p-4 scroll-mt-4">
       <button onClick={onToggle} className="w-full flex items-center justify-between gap-2 text-left">
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
           <span className="text-lg font-semibold">{format(parseISO(date), "EEEE d MMM yyyy")}</span>

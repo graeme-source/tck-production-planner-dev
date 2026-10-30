@@ -9,7 +9,7 @@
  */
 import { useMemo, useState } from "react";
 import { format, parseISO } from "date-fns";
-import { Loader2, Plus, Sparkles } from "lucide-react";
+import { Loader2, Plus, Sparkles, X } from "lucide-react";
 import { useListRecipes, getListRecipesQueryKey } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { activeRecipes } from "@/lib/recipe-archive";
@@ -21,7 +21,10 @@ const DEFAULT_BATCHES = 5;
 
 interface RecipeOption { id: number; name: string; color?: string | null; portionsPerBatch?: number | string | null; packSize?: number | string | null; archivedAt?: string | null }
 
-export function AddQueueForm({ initialDate, onSaved }: { initialDate: string; onSaved: () => void }) {
+export function AddQueueForm({ initialDate, startOpen, onSaved }: { initialDate: string; startOpen: boolean; onSaved: (date: string) => void }) {
+  // Folds away once something is queued so the queued day is what you see
+  // (Graeme, 30 Oct 2026); open it again to add more.
+  const [open, setOpen] = useState(startOpen);
   const colourStyle = useRecipeColourLookup();
   const [date, setDate] = useState(initialDate);
   const [deliveryOverride, setDeliveryOverride] = useState<string | null>(null);
@@ -59,7 +62,8 @@ export function AddQueueForm({ initialDate, onSaved }: { initialDate: string; on
       await queueBatches(date, selectedIds.map(recipeId => ({ recipeId, batches: selected[recipeId] })));
       toast({ title: `Queued ${selectedIds.length} recipe${selectedIds.length === 1 ? "" : "s"} for ${format(parseISO(date), "EEEE d MMM")}` });
       setSelected({});
-      onSaved();
+      setOpen(false);
+      onSaved(date);
     } catch (err) {
       toast({ title: "Couldn't queue production", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
     } finally {
@@ -68,8 +72,23 @@ export function AddQueueForm({ initialDate, onSaved }: { initialDate: string; on
   };
 
   const soldCount = sales.data?.lines.length ?? 0;
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="w-full min-h-14 rounded-2xl border-2 border-dashed border-border bg-card px-4 text-base font-semibold text-muted-foreground hover:text-foreground flex items-center gap-2">
+        <Plus className="w-5 h-5" /> Add test production
+      </button>
+    );
+  }
+
   return (
     <div className="rounded-2xl border border-border bg-card p-4 space-y-4">
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Add test production</h2>
+        <button type="button" onClick={() => setOpen(false)} aria-label="Close" className="p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-secondary">
+          <X className="w-5 h-5" />
+        </button>
+      </div>
       <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3">
         <label className="block space-y-1">
           <span className="text-sm font-medium text-muted-foreground">Production date</span>
