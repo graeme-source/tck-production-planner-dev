@@ -46,7 +46,8 @@ export function DateIngredients({ date, onOrdersCreated }: { date: string; onOrd
   const done = ingredients.filter(i => i.mark != null);
   const notNeeded = ingredients.filter(i => i.mark == null && !isOutstanding(i));
   const today = toOrder.filter(i => !leftOut.has(i.ingredientId) && i.supplierId != null);
-  const busy = placing || saving || isFetching;
+  // A background refresh never blocks ordering — create() re-reads first.
+  const busy = placing || saving;
 
   const create = async () => {
     setPlacing(true);
@@ -79,7 +80,7 @@ export function DateIngredients({ date, onOrdersCreated }: { date: string; onOrd
     <div className="mt-3 space-y-3 border-t border-border pt-3">
       <div className="flex flex-wrap items-baseline gap-x-3">
         <h3 className="text-base font-semibold">To order <span className="text-muted-foreground font-normal">· delivered by {day(data.deliverBy)}</span></h3>
-        {isFetching && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> updating</span>}
+        {isFetching && !placing && <span className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" /> updating</span>}
       </div>
 
       {toOrder.length === 0 ? (

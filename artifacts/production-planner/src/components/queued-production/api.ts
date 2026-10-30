@@ -24,6 +24,8 @@ export type IngredientOrderStatus = "special" | "short" | "check" | "covered";
 
 export type IngredientMark = "ordered" | "not_needed";
 
+export interface IngredientsResponse { deliverBy: string; ingredients: QueueIngredient[] }
+
 export interface QueueIngredient {
   ingredientId: number;
   name: string;
@@ -90,7 +92,8 @@ export function useQueue() {
 export function useQueueIngredients(date: string) {
   return useQuery({
     queryKey: ingredientsKey(date),
-    queryFn: () => json<{ deliverBy: string; ingredients: QueueIngredient[] }>(`/api/queued-production/ingredients?date=${date}`),
+    queryFn: ({ signal }) => json<IngredientsResponse>(`/api/queued-production/ingredients?date=${date}`, { signal }),
+    refetchOnWindowFocus: false,
   });
 }
 
@@ -115,10 +118,24 @@ export function useMarkIngredient(date: string) {
   return useMutation({
     mutationFn: (v: { ingredientId: number; mark: IngredientMark | null }) =>
       json<{ ok: true }>("/api/queued-production/mark", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productionDate: date, ...v }) }),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: ingredientsKey(date) });
-      qc.invalidateQueries({ queryKey: OUTSTANDING_KEY });
+    // The tick shows at once; nothing else in the list depends on it, so
+    // the list isn't worked out again (that took long enough on live to
+    // look stuck — Graeme, 30 Oct).
+    onMutate: async v => {
+      await qc.cancelQueries({ queryKey: ingredientsKey(date) });
+      const before = qc.getQueryData<IngredientsResponse>(ingredientsKey(date));
+      if (before) {
+        qc.setQueryData<IngredientsResponse>(ingredientsKey(date), {
+          ...before,
+          ingredients: before.ingredients.map(i => i.ingredientId === v.ingredientId
+            ? { ...i, mark: v.mark, markedBy: v.mark ? "you" : null, markedAt: v.mark ? new Date().toISOString() : null }
+            : i),
+        });
+      }
+      return { before };
     },
+    onError: (_e, _v, ctx) => { if (ctx?.before) qc.setQueryData(ingredientsKey(date), ctx.before); },
+    onSettled: () => { qc.invalidateQueries({ queryKey: OUTSTANDING_KEY }); },
   });
 }
 

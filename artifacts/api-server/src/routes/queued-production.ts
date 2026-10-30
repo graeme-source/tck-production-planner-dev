@@ -323,8 +323,10 @@ async function fetchIngredientsForDate(date: string) {
     ));
   if (queued.length === 0) return [];
   const totals = new Map<number, { ingredient: ResolvedIngredient; qty: number }>();
-  for (const q of queued) {
-    const resolved = await resolveRecipeIngredients(q.recipeId, Number(q.portionsPerBatch) || 10, { skipToppings: false });
+  // Recipes resolve side by side — one after another was slow on live.
+  const resolvedAll = await Promise.all(queued.map(q => resolveRecipeIngredients(q.recipeId, Number(q.portionsPerBatch) || 10, { skipToppings: false })));
+  for (const [n, q] of queued.entries()) {
+    const resolved = resolvedAll[n];
     for (const ing of resolved) {
       const entry = totals.get(ing.ingredientId) ?? { ingredient: ing, qty: 0 };
       entry.qty += ing.quantityPerBatch * q.batches;
@@ -333,8 +335,11 @@ async function fetchIngredientsForDate(date: string) {
   }
   const ingredientIds = [...totals.keys()];
   if (ingredientIds.length === 0) return [];
-  const ingRows = await db
-    .select({
+  // Everything below reads independently — run it side by side.
+  const now = new Date();
+  const recentSince = new Date(now.getTime() - RECENT_DAYS * DAY_MS);
+  const [ingRows, kanbanRows, openLines, ledgers, recentRows, markRows] = await Promise.all([
+    db.select({
       id: ingredientsTable.id,
       name: ingredientsTable.name,
       unit: ingredientsTable.unit,
@@ -345,27 +350,37 @@ async function fetchIngredientsForDate(date: string) {
       supplierName: suppliersTable.name,
       supplierLeadTimeDays: suppliersTable.leadTimeDays,
     })
-    .from(ingredientsTable)
-    .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
-    .where(inArray(ingredientsTable.id, ingredientIds));
-  const ingById = new Map(ingRows.map(r => [r.id, r]));
-  const kanbanRows = await db
-    .select({ ingredientId: kanbanItemsTable.ingredientId })
-    .from(kanbanItemsTable)
-    .where(and(
-      inArray(kanbanItemsTable.ingredientId, ingredientIds),
-      ne(kanbanItemsTable.status, "archived"),
-    ));
-  const kanbanIds = new Set(kanbanRows.map(r => r.ingredientId));
-  const openLines = await db
-    .select({
+      .from(ingredientsTable)
+      .leftJoin(suppliersTable, eq(ingredientsTable.supplierId, suppliersTable.id))
+      .where(inArray(ingredientsTable.id, ingredientIds)),
+    db.select({ ingredientId: kanbanItemsTable.ingredientId })
+      .from(kanbanItemsTable)
+      .where(and(inArray(kanbanItemsTable.ingredientId, ingredientIds), ne(kanbanItemsTable.status, "archived"))),
+    db.select({
       ingredientId: purchaseOrderLinesTable.ingredientId,
       quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
       quantityReceived: purchaseOrderLinesTable.quantityReceived,
     })
-    .from(purchaseOrderLinesTable)
-    .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
-    .where(inArray(purchaseOrdersTable.status, ["placed", "partially_received"]));
+      .from(purchaseOrderLinesTable)
+      .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
+      .where(and(inArray(purchaseOrdersTable.status, ["placed", "partially_received"]), inArray(purchaseOrderLinesTable.ingredientId, ingredientIds))),
+    // Running stock and normal weekly use, so a routine ingredient the test
+    // would run out (the Malbec, the crispy bacon) is listed too.
+    loadStockLedgers({ since: new Date(now.getTime() - 120 * DAY_MS), until: now, ingredientIds }),
+    // Ordered in the last month (a placed order, not one the queue made).
+    db.selectDistinct({ ingredientId: purchaseOrderLinesTable.ingredientId })
+      .from(purchaseOrderLinesTable)
+      .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
+      .where(and(
+        inArray(purchaseOrderLinesTable.ingredientId, ingredientIds),
+        inArray(purchaseOrdersTable.status, ["placed", "partially_received", "received"]),
+        gte(sql`COALESCE(${purchaseOrdersTable.placedAt}, ${purchaseOrdersTable.createdAt})`, recentSince),
+        sql`COALESCE(${purchaseOrdersTable.notes}, '') NOT LIKE 'Queued test production%'`,
+      )),
+    db.select().from(queuedIngredientMarksTable).where(eq(queuedIngredientMarksTable.productionDate, date)),
+  ]);
+  const ingById = new Map(ingRows.map(r => [r.id, r]));
+  const kanbanIds = new Set(kanbanRows.map(r => r.ingredientId));
   const inboundByIngredient = new Map<number, number>();
   for (const l of openLines) {
     if (l.ingredientId == null || !totals.has(l.ingredientId)) continue;
@@ -373,24 +388,8 @@ async function fetchIngredientsForDate(date: string) {
     if (remaining <= 0) continue;
     inboundByIngredient.set(l.ingredientId, (inboundByIngredient.get(l.ingredientId) ?? 0) + remaining);
   }
-  // Running stock and normal weekly use, so a routine ingredient the test
-  // would run out (the Malbec, the crispy bacon) is listed too.
-  const now = new Date();
-  const ledgers = await loadStockLedgers({ since: new Date(now.getTime() - 120 * DAY_MS), until: now, ingredientIds });
-  // Ordered in the last month (a placed order, not one the queue made).
-  const recentSince = new Date(now.getTime() - RECENT_DAYS * DAY_MS);
-  const recentRows = await db.selectDistinct({ ingredientId: purchaseOrderLinesTable.ingredientId })
-    .from(purchaseOrderLinesTable)
-    .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
-    .where(and(
-      inArray(purchaseOrderLinesTable.ingredientId, ingredientIds),
-      inArray(purchaseOrdersTable.status, ["placed", "partially_received", "received"]),
-      gte(sql`COALESCE(${purchaseOrdersTable.placedAt}, ${purchaseOrdersTable.createdAt})`, recentSince),
-      sql`COALESCE(${purchaseOrdersTable.notes}, '') NOT LIKE 'Queued test production%'`,
-    ));
   const recentlyOrdered = new Set(recentRows.map(r => r.ingredientId));
-  const marks = new Map((await db.select().from(queuedIngredientMarksTable).where(eq(queuedIngredientMarksTable.productionDate, date)))
-    .map(m => [m.ingredientId, m]));
+  const marks = new Map(markRows.map(m => [m.ingredientId, m]));
   const deliverBy = deliverByFor(date);
   return ingredientIds.map(iid => {
     const entry = totals.get(iid)!;
