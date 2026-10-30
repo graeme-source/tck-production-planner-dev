@@ -16,6 +16,12 @@
  *     (recipe_shopify_products), so a failure part-way through is FINISHED
  *     by the next run, never duplicated.
  * Nothing is ever published or set Active.
+ *
+ * After the product is made (recipe-shopify-product-after.ts, 30 Oct 2026):
+ * the 2 Pack is linked, the recipe's barcode moves onto it and is sent by
+ * the app's one barcode writer, and — when ticked in the window — the back
+ * label is published and the front label switched on, both through the
+ * label page's own server paths (product-label-publish.ts).
  */
 import {
   db, recipesTable, recipeShopifyProductsTable, recipeProductImagesTable, recipePackSizeOrOne,
@@ -26,6 +32,9 @@ import { productPhotoFilename, type ProductPhotoMime } from "@workspace/product-
 import { ShopifyWritesBlockedError } from "../services/shopify";
 import { intArrayLiteral } from "./int-array-literal";
 import { linkVariantToRecipe } from "./recipe-shopify-mapping";
+import { afterListingLinked, barcodePushesSettled, loadGroups } from "./barcode-store";
+import { frontLabelProof, publishRecipeLabel, setFrontLabelDefault } from "./product-label-publish";
+import { afterProductCreated, type AfterCreatePorts, type LabelOutcome } from "./recipe-shopify-product-after";
 import {
   applyRecipeProduct, fetchAccessScopes, fetchProducts, fetchTemplateCandidates, fetchVariantProducts,
   liveFileDeps, setNutritionImage, type FileDeps, type ShopifyPort,
@@ -38,13 +47,22 @@ import {
   nutritionFilename, nutritionImageForRun, nutritionRows, templateSearchQuery, type NutritionRow,
 } from "./test-box-shopify-rules";
 import {
-  MAX_NUTRITION_TARGETS, PACK_VARIANT_TITLE, chooseNutritionTargets, defaultNutritionTicks, nutritionAddChecks, type NutritionTarget,
+  DECK_LEFT_OFF, MAX_NUTRITION_TARGETS, PACK_VARIANT_TITLE, barcodeAfterCreateLine, chooseNutritionTargets, defaultNutritionTicks, nutritionAddChecks,
+  type NutritionTarget, type PackBarcodeState,
 } from "./recipe-shopify-product-rules";
 import { assembleRecipePreview, type PreviewPlan } from "./recipe-shopify-product-preview";
 import type { ListingRecipeData } from "./listing-description-ai";
 
 export { RunRefused };
 export type { RecipeProductPreview } from "./recipe-shopify-product-preview";
+
+/** The recipe's pack barcode as the barcode store holds it — the one the
+ *  label prints (held for the recipe until a listing is linked). */
+async function packBarcodeState(recipeId: number): Promise<PackBarcodeState | null> {
+  const { groups } = await loadGroups(recipeId);
+  const g = groups.find(x => x.kind === "pack");
+  return g ? { barcode: g.barcode, mixed: g.mixed, pending: g.pending, heldProblem: g.heldProblem } : null;
+}
 
 async function mappedVariantIds(recipeIds: number[]): Promise<Array<{ recipe_id: number; shopify_variant_id: string }>> {
   if (!recipeIds.length) return [];
@@ -77,12 +95,13 @@ export async function buildRecipePlan(
   const copiedFrom = copiedFromRecipeId(r.notes);
   const mappings = await mappedVariantIds(copiedFrom != null ? [recipeId, copiedFrom] : [recipeId]);
 
-  const [scopes, candidates, variantProducts, disclaimer, loaded] = await Promise.all([
+  const [scopes, candidates, variantProducts, disclaimer, loaded, barcode] = await Promise.all([
     fetchAccessScopes(port),
     fetchTemplateCandidates(port, templateSearchQuery()),
     fetchVariantProducts(port, mappings.map(m => String(m.shopify_variant_id))),
     disclaimerText(),
     loadContent(recipeId),
+    packBarcodeState(recipeId),
   ]);
   const productsOf = (id: number) => {
     const out = new Map<string, ProductLink>();
@@ -110,6 +129,7 @@ export async function buildRecipePlan(
     },
     made: made ? { shopifyProductId: made.shopifyProductId, state: made.state, lastError: made.lastError } : null,
     photo: photo ?? null,
+    barcode,
     scopes,
     candidates,
     linked: productsOf(recipeId),
@@ -131,13 +151,25 @@ export interface RecipeRunResult {
   product: ProductLink | null;
   steps: string[];
   linkedVariants: string[];
+  /** What happened to the 2 Pack's barcode (null = nothing was linked). */
+  barcode: string | null;
+  /** The ingredient deck was left off (declarations not complete). */
+  deckLeftOff: boolean;
+  backLabel: LabelOutcome | null;
+  frontLabel: LabelOutcome | null;
 }
 
 export interface Actor { id: number; name: string }
 
 export async function runRecipeCreate(
   recipeId: number,
-  opts: { templateProductId?: string | null; nutritionPngBase64?: string },
+  opts: {
+    templateProductId?: string | null; nutritionPngBase64?: string;
+    /** "Publish the back label too": the hash of the proof on screen. */
+    backLabelHash?: string | null;
+    /** "Set up the front label too". */
+    frontLabel?: boolean;
+  },
   user: Actor,
   port: ShopifyPort,
   loadContent: ContentLoader,
@@ -193,18 +225,36 @@ export async function runRecipeCreate(
       });
     }, files);
     if (nutrition.note) res.steps.push(nutrition.note);
+    if (!plan.content.deckDocument) res.steps.push(DECK_LEFT_OFF);
     await db.update(recipeShopifyProductsTable)
       .set({ state: "complete", productTitle: res.title, lastError: null, updatedByName: user.name, updatedAt: new Date() })
       .where(eq(recipeShopifyProductsTable.recipeId, recipeId));
 
     // Link the 2 Pack to the recipe so its sales reach the planner — the same
-    // way the test-box flow does ("keep": never steals another recipe's link).
-    const linkedVariants: string[] = [];
-    const conflicts: string[] = [];
-    for (const v of res.variants) {
-      const l = await linkVariantToRecipe(db, { recipeId, shopifyVariantId: v.id, shopifyProductTitle: res.title, shopifyVariantTitle: v.title, shopifySku: v.sku }, "keep");
-      if (l.linked) linkedVariants.push(v.title); else conflicts.push(v.title);
-    }
+    // way the test-box flow does ("keep": never steals another recipe's link)
+    // — then its barcode, and the labels ticked in the window.
+    const ports: AfterCreatePorts = {
+      link: v => linkVariantToRecipe(db, { recipeId, shopifyVariantId: v.shopifyVariantId, shopifyProductTitle: res.title, shopifyVariantTitle: v.shopifyVariantTitle, shopifySku: v.shopifySku }, "keep"),
+      applyBarcode: async () => {
+        await afterListingLinked(recipeId, user);
+        await barcodePushesSettled(8000);
+        const { groups } = await loadGroups(recipeId);
+        const g = groups.find(x => x.kind === "pack" && !x.pending);
+        return barcodeAfterCreateLine(g ? {
+          barcode: g.barcode, heldProblem: g.heldProblem,
+          variants: g.variants.map(v => ({ pushState: v.push?.state ?? null, pushMessage: v.push?.message ?? null, differentInShopify: v.differentInShopify, shopifyBarcode: v.shopifyBarcode })),
+        } : null);
+      },
+      publishBackLabel: hash => publishRecipeLabel(recipeId, "main", hash, user),
+      setFrontLabel: async () => {
+        // The label page refuses only a label with no name to print.
+        const f = await frontLabelProof(recipeId);
+        if (!f?.canPrint) throw new Error("this recipe has no name to print");
+        await setFrontLabelDefault(recipeId, true);
+      },
+    };
+    const after = await afterProductCreated(ports, { variants: res.variants, backLabelHash: opts.backLabelHash ?? null, frontLabel: opts.frontLabel === true });
+    const { linkedVariants, conflicts } = after;
     const linkNote = conflicts.length
       ? ` The ${conflicts.join(", ")} variant is already linked to another recipe — not changed.`
       : linkedVariants.length ? ` Its ${linkedVariants.join(", ")} is linked to the recipe, so sales reach the planner.` : "";
@@ -214,10 +264,14 @@ export async function runRecipeCreate(
       product: productLink({ productId: res.productId, title: res.title, status: res.status }),
       steps: res.steps,
       linkedVariants,
+      barcode: after.barcode,
+      deckLeftOff: !plan.content.deckDocument,
+      backLabel: after.backLabel,
+      frontLabel: after.frontLabel,
     };
   } catch (err) {
     if (err instanceof ShopifyWritesBlockedError) {
-      return { outcome: "blocked", message: err.message, product: null, steps: [], linkedVariants: [] };
+      return { outcome: "blocked", message: err.message, product: null, steps: [], linkedVariants: [], barcode: null, deckLeftOff: false, backLabel: null, frontLabel: null };
     }
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[recipe-shopify-product] recipe ${recipeId}:`, msg);

@@ -21,18 +21,28 @@ export function recipeContentLoader(req: Request): ContentLoader {
   };
   return async (recipeId: number): Promise<LoadedContent> => {
     const [deck, nutri] = await Promise.all([
-      get<{ deckText: string; mayContainStatement: string | null; isComplete: boolean; missingDeclarations?: string[]; unwrappedDeclarations?: string[] }>(`/api/recipes/${recipeId}/ingredient-deck`),
-      get<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
+      get<{
+        deckText: string; mayContainStatement: string | null; isComplete: boolean; missingDeclarations?: string[]; unwrappedDeclarations?: string[];
+        missingDeclarationDetail?: Array<{ ingredientId: number; name: string }>;
+      }>(`/api/recipes/${recipeId}/ingredient-deck`),
+      get<{
+        per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null;
+        completeness: { missingNutritionals: string[]; missingNutritionalDetail?: Array<{ ingredientId: number; name: string; missing: string[] }> };
+      }>(`/api/recipes/${recipeId}/nutritionals`),
     ]);
+    const declIds = new Map((deck?.missingDeclarationDetail ?? []).map(d => [d.name, d.ingredientId]));
     return {
       deck: deck ? {
         deckText: deck.deckText ?? "", mayContainStatement: deck.mayContainStatement ?? null, isComplete: deck.isComplete === true,
         missing: [...(deck.missingDeclarations ?? []), ...(deck.unwrappedDeclarations ?? [])],
+        missingDetail: (deck.missingDeclarations ?? []).map(name => ({ ingredientId: declIds.get(name) ?? null, name })),
+        unwrapped: deck.unwrappedDeclarations ?? [],
       } : null,
       nutrition: nutri ? {
         per100g: nutri.per100g, perPortion: nutri.perPortion, portionWeightG: nutri.portionWeightG,
         complete: (nutri.completeness?.missingNutritionals?.length ?? 0) === 0,
         missing: nutri.completeness?.missingNutritionals ?? [],
+        missingDetail: nutri.completeness?.missingNutritionalDetail ?? [],
       } : null,
     };
   };

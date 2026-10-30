@@ -14,8 +14,10 @@
  *   DELETE /api/recipes/:id/product-photo            remove it
  *   GET    /api/recipes/:id/shopify-product          already in Shopify? (planner links + one read)
  *   POST   /api/recipes/:id/shopify-product/preview  what WOULD be made — reads only
- *   POST   /api/recipes/:id/shopify-product/create   make the draft (with the nutrition image PNG
- *                                                    drawn in the browser)
+ *   POST   /api/recipes/:id/shopify-product/create   make the draft (with the nutrition image PNG drawn
+ *                                                    in the browser; and, when ticked, the back label
+ *                                                    published + the front label set up — the label
+ *                                                    page's own paths)
  *
  * Who: reading is for anyone signed in; every change, the AI draft and the
  * Shopify preview/create need a manager or admin (as the recipe editor's
@@ -179,6 +181,11 @@ const CreateBody = z.object({
   // The nutrition table as a base64 PNG (≈50 KB; the decoded bytes are
   // checked again by checkNutritionPng before any upload).
   nutritionPngBase64: z.string().min(100).max(800_000, "The nutrition image is too big").nullish(),
+  // "Publish the back label too" — the hash of the back-label proof shown
+  // in the window (the label page's own publish path re-checks it).
+  backLabelHash: z.string().regex(/^[0-9a-f]{64}$/, "Reload the window — the label proof is out of date").nullish(),
+  // "Set up the front label too".
+  frontLabel: z.boolean().optional(),
 });
 router.post("/:id/shopify-product/create", requireManagerOrAdmin, validate(CreateBody), async (req: Request, res: Response) => {
   const id = recipeId(req, res); if (!id) return;
@@ -186,7 +193,10 @@ router.post("/:id/shopify-product/create", requireManagerOrAdmin, validate(Creat
   if (running.has(id)) { res.status(409).json({ error: "Already making this recipe's product — wait for it to finish." }); return; }
   running.add(id);
   try {
-    const result = await runRecipeCreate(id, { templateProductId: b.templateProductId ?? null, nutritionPngBase64: b.nutritionPngBase64 ?? undefined }, await actor(req), liveShopify, recipeContentLoader(req), shopifyWritesBlocked());
+    const result = await runRecipeCreate(id, {
+      templateProductId: b.templateProductId ?? null, nutritionPngBase64: b.nutritionPngBase64 ?? undefined,
+      backLabelHash: b.backLabelHash ?? null, frontLabel: b.frontLabel === true,
+    }, await actor(req), liveShopify, recipeContentLoader(req), shopifyWritesBlocked());
     if (result.outcome === "blocked") { res.status(503).json({ ...result, error: result.message, code: "SHOPIFY_WRITES_BLOCKED" }); return; }
     res.json(result);
   } catch (err) {
