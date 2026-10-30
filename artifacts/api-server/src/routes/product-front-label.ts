@@ -19,13 +19,14 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { FRONT_LABEL_PAGE, FRONT_SECOND_LINE_MAX, MAX_PRINT_COUNT, frontLabelName } from "@workspace/product-labels";
+import { FRONT_LABEL_PAGE, FRONT_SECOND_LINE_MAX, MAX_PRINT_COUNT } from "@workspace/product-labels";
 import { labelsPdf, renderFrontLabel } from "@workspace/product-labels/render";
 import { eq } from "drizzle-orm";
 import { db, productLabelSettingsTable } from "@workspace/db";
 import { validate, validateQuery } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
-import { fonts, loadRecipe, loadSettingsRow, settingsFromRow } from "../lib/product-labels-store";
+import { fonts, loadRecipe } from "../lib/product-labels-store";
+import { frontLabelNameFor, setFrontLabelDefault } from "../lib/product-label-publish";
 
 const router: IRouter = Router();
 
@@ -55,8 +56,8 @@ router.put("/:recipeId/default", requireManagerOrAdmin, validate(DefaultBody), a
   const { on } = req.body as z.infer<typeof DefaultBody>;
   try {
     if (!(await loadRecipe(p.data.recipeId))) { res.status(404).json({ error: "Recipe not found" }); return; }
-    await db.insert(productLabelSettingsTable).values({ recipeId: p.data.recipeId, frontLabelPrinted: on })
-      .onConflictDoUpdate({ target: productLabelSettingsTable.recipeId, set: { frontLabelPrinted: on } });
+    // The one path (also used by "Create Shopify product" on a recipe).
+    await setFrontLabelDefault(p.data.recipeId, on);
     res.json({ ok: true, on });
   } catch (err) {
     console.error("[product-front-label] default:", err);
@@ -64,13 +65,9 @@ router.put("/:recipeId/default", requireManagerOrAdmin, validate(DefaultBody), a
   }
 });
 
-async function nameFor(recipeId: number): Promise<{ id: number; recipeName: string; name: string; isDefault: boolean } | null> {
-  const recipe = await loadRecipe(recipeId);
-  if (!recipe) return null;
-  const row = await loadSettingsRow(recipe.id);
-  const settings = settingsFromRow(row);
-  return { id: recipe.id, recipeName: recipe.name, name: frontLabelName(settings.labelName, recipe.name), isDefault: !!row?.frontLabelPrinted };
-}
+// The name that prints and whether it's the product's front label — shared
+// with "Create Shopify product" (lib/product-label-publish.ts).
+const nameFor = frontLabelNameFor;
 
 router.get("/:recipeId/preview", validateQuery(PreviewQuery), async (req: Request, res: Response) => {
   const p = RecipeParams.safeParse(req.params);

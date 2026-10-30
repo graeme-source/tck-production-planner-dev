@@ -16,6 +16,7 @@ import { db, testBoxesTable, testBoxRecipesTable, testBoxShopifyProductsTable, r
 import { and, asc, eq, sql } from "drizzle-orm";
 import { shopifyAdminUrl, ShopifyWritesBlockedError } from "../services/shopify";
 import { linkVariantToRecipe } from "./recipe-shopify-mapping";
+import { afterListingLinked } from "./barcode-store";
 import { headedParagraphsDocument, ingredientDeckDocument } from "./shopify-rich-text";
 import { intArrayLiteral } from "./int-array-literal";
 import { launchTaskKey } from "./test-box-launch-checklist";
@@ -34,9 +35,18 @@ import {
 
 // ── What the recipe's own data says (deck, nutrition) ───────────────────────
 export interface LoadedContent {
-  deck: { deckText: string; mayContainStatement: string | null; isComplete: boolean; missing: string[] } | null;
+  deck: {
+    deckText: string; mayContainStatement: string | null; isComplete: boolean; missing: string[];
+    /** Per ingredient (sub-recipe ingredients included), for the Create window's warning. */
+    missingDetail?: Array<{ ingredientId: number | null; name: string }>;
+    unwrapped?: string[];
+  } | null;
   /** perPortion / portionWeightG are null for a recipe with no pack size (per 100 g only). */
-  nutrition: { per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; complete: boolean; missing: string[] } | null;
+  nutrition: {
+    per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; complete: boolean; missing: string[];
+    /** Which nutrients each ingredient lacks (computeRecipeNutritionals). */
+    missingDetail?: Array<{ ingredientId: number | null; name: string; missing: string[] }>;
+  } | null;
 }
 export type ContentLoader = (recipeId: number) => Promise<LoadedContent>;
 
@@ -399,6 +409,11 @@ export async function runCreate(
         const r = await linkVariantToRecipe(db, { recipeId: rp.recipeId, shopifyVariantId: vid, shopifyProductTitle: res.title, shopifyVariantTitle: v.title, shopifySku: v.sku }, "keep");
         if (r.linked) base.linkedVariants.push(v.title); else conflicts.push(v.title);
       }
+      // The barcode held for the recipe (Label tab) goes onto the new listing
+      // and is sent by the one barcode writer — as linking on the recipe page does.
+      if (base.linkedVariants.length) {
+        await afterListingLinked(rp.recipeId, user).catch(err => console.error(`[test-box-shopify] barcode after linking recipe ${rp.recipeId} failed:`, err));
+      }
       const linkNote = conflicts.length
         ? ` The ${conflicts.join(", ")} variant is already linked to another recipe — not changed.`
         : toLink.length === 0 ? " No variant could be matched to link — link it on the recipe's Shopify mapping." : "";
@@ -443,6 +458,9 @@ export async function linkExisting(
     if (!v) { conflicts.push(`${vid} (not found in Shopify)`); continue; }
     const r = await linkVariantToRecipe(db, { recipeId, shopifyVariantId: vid, shopifyProductTitle: v.title, shopifyVariantTitle: v.variantTitle }, "keep");
     if (r.linked) linked.push(`${v.title} — ${v.variantTitle}`); else conflicts.push(`${v.title} — ${v.variantTitle} (already linked to another recipe)`);
+  }
+  if (linked.length) {
+    await afterListingLinked(recipeId, user).catch(err => console.error(`[test-box-shopify] barcode after linking recipe ${recipeId} failed:`, err));
   }
   const ticked = await tickEarnedLaunchSteps(boxId, user);
   return { linked, conflicts, ticked };

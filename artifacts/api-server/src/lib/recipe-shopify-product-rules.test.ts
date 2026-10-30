@@ -2,8 +2,46 @@ import { describe, expect, it } from "vitest";
 import {
   PACK_VARIANT_TITLE, decideListingAction, listingChecks, perPackForProduct, photoLine, planVariants, recipeProductTags,
   chooseNutritionTargets, defaultNutritionTicks, nutritionAddChecks,
-  type ListingCheckInput, type NutritionTarget,
+  DECK_LEFT_OFF, barcodeAfterCreateLine, barcodePreviewLine,
+  type ListingCheckInput, type NutritionTarget, type PackBarcodeAfter,
 } from "./recipe-shopify-product-rules";
+
+describe("the barcode line in the Create window", () => {
+  it("held for the recipe (set on the label page) → shown, and it goes on the 2 Pack", () => {
+    const l = barcodePreviewLine("create", { barcode: "5065018206009", mixed: false, pending: true, heldProblem: null });
+    expect(l.code).toBe("5065018206009");
+    expect(l.summary).toMatch(/^5065018206009 — from the label page/);
+    expect(l.summary).toMatch(/never over a different number/);
+  });
+  it("none yet → says where to set it", () => {
+    expect(barcodePreviewLine("create", null)).toEqual({ code: null, summary: "None yet — set one on the Label tab, or type it here" });
+    expect(barcodePreviewLine("create", { barcode: null, mixed: false, pending: true, heldProblem: null }).summary).toMatch(/^None yet/);
+  });
+  it("a held number that couldn't be applied says so; an already-linked recipe isn't changed", () => {
+    expect(barcodePreviewLine("update", { barcode: "1", mixed: false, pending: false, heldProblem: "another product you sell has it" }).summary).toMatch(/another product/);
+    expect(barcodePreviewLine("linked", { barcode: "1", mixed: false, pending: false, heldProblem: null }).summary).toBe("Not changed");
+  });
+});
+
+describe("the barcode line in the result", () => {
+  const g = (state: string | null, extra: Partial<PackBarcodeAfter["variants"][number]> = {}): PackBarcodeAfter => ({
+    barcode: "5065018206009", heldProblem: null,
+    variants: [{ pushState: state, pushMessage: "Shopify writes are switched off", differentInShopify: false, shopifyBarcode: null, ...extra }],
+  });
+  it("sent / sending / waiting / failed each say what happened", () => {
+    expect(barcodeAfterCreateLine(g("sent"))).toBe("Barcode 5065018206009 is on the 2 Pack and sent to Shopify ✓");
+    expect(barcodeAfterCreateLine(g("sending"))).toMatch(/being sent to Shopify now/);
+    expect(barcodeAfterCreateLine(g("waiting"))).toMatch(/not sent yet — Shopify writes are switched off/);
+    expect(barcodeAfterCreateLine(g("failed"))).toMatch(/Retry/);
+  });
+  it("a different number already in Shopify is never overwritten — it's a choice for a person", () => {
+    expect(barcodeAfterCreateLine(g("conflict", { differentInShopify: true, shopifyBarcode: "5000000000000" }))).toMatch(/Shopify has a different number \(5000000000000\)/);
+  });
+  it("no barcode → where to set it", () => {
+    expect(barcodeAfterCreateLine(null)).toMatch(/^No barcode yet/);
+    expect(barcodeAfterCreateLine({ barcode: null, heldProblem: null, variants: [] })).toMatch(/^No barcode yet/);
+  });
+});
 
 describe("tags", () => {
   it("base tags first, then the recipe's own — deduped in any case, blanks dropped", () => {
@@ -71,10 +109,13 @@ describe("what stops the create, and what's worth knowing", () => {
   it("refuses without a listing description", () => {
     expect(listingChecks({ ...ok, listingDescription: "  " }).blocking[0]).toMatch(/no Shopify listing description/);
   });
-  it("refuses with an incomplete deck, listing what's missing", () => {
-    const b = listingChecks({ ...ok, deckComplete: false, deckMissing: ["Mustard", "Flour", "Mustard"] }).blocking;
-    expect(b).toHaveLength(1);
-    expect(b[0]).toMatch(/ingredient deck isn't complete \(Mustard, Flour\)/);
+  it("an incomplete deck WARNS but no longer stops the create (Graeme, 30 Oct 2026) — and says the deck is left off", () => {
+    const c = listingChecks({ ...ok, deckComplete: false, deckMissing: ["Mustard", "Flour", "Mustard"] });
+    expect(c.blocking).toEqual([]);
+    expect(c.warnings).toHaveLength(1);
+    expect(c.warnings[0]).toMatch(/ingredient deck isn't complete \(Mustard, Flour\)/);
+    expect(c.warnings[0]).toContain(DECK_LEFT_OFF);
+    expect(DECK_LEFT_OFF).toBe("Ingredient deck left off — finish the declarations, then use Push to Shopify on the Label tab.");
   });
   it("refuses with no template, or a template without a 2 Pack", () => {
     expect(listingChecks({ ...ok, templateFound: false }).blocking[0]).toMatch(/No template/);

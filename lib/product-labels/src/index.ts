@@ -28,5 +28,6 @@ export * from "./front-label";
 export * from "./small-label";
 export * from "./code128";
 export * from "./ingredient-gaps";
+export * from "./labels-with-product";
 export * from "./nutrition-table";
 export * from "./product-photo";

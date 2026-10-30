@@ -11,6 +11,8 @@ import { applyRecipeProduct, setNutritionImage, type ApplyInput, type FileDeps, 
 import { MF } from "./test-box-shopify-rules";
 import { PACK_VARIANT_TITLE, recipeProductTags } from "./recipe-shopify-product-rules";
 import { assembleRecipePreview, type PreviewInput } from "./recipe-shopify-product-preview";
+import { afterProductCreated, type AfterCreatePorts } from "./recipe-shopify-product-after";
+import { pushBarcodes, type PushSink, type ShopifyBarcodePort } from "./barcode-push";
 
 class BlockedError extends Error {}
 
@@ -207,7 +209,9 @@ describe("the preview", () => {
   it("shows exactly what will be made", () => {
     const { preview: p, price, templateId, existingProductId, content } = assembleRecipePreview(base);
     expect(p.action).toBe("create");
-    expect(p).toMatchObject({ title: "Chicken & Tarragon", status: "DRAFT", productType: "", barcode: expect.stringMatching(/blank/) });
+    expect(p).toMatchObject({ title: "Chicken & Tarragon", status: "DRAFT", productType: "", barcode: { code: null, summary: expect.stringMatching(/^None yet/) } });
+    expect(p.deckLeftOff).toBe(false);
+    expect(p.declarationGaps).toEqual({ items: [], headlines: [] });
     expect(p.tags).toEqual(["show", "no-wholesale", "calzones", "Winter Warmers Test Box"]);
     expect(p.variant).toEqual({ title: "2 Pack", removed: ["8 Pack Bag"] });
     expect(p.price.set).toBe("18.95");
@@ -248,16 +252,49 @@ describe("the preview", () => {
     expect(p.createdProduct).toMatchObject({ productId: "700", lastError: "Shopify refused writing the details" });
   });
 
-  it("no listing description, incomplete deck → blocked; no write_files → nutrition image left off, still makeable otherwise", () => {
-    const { preview: p } = assembleRecipePreview({
-      ...base, scopes: ["write_products"], recipe: { ...base.recipe, listing: " " },
-      loaded: { ...base.loaded, deck: { deckText: "x", mayContainStatement: null, isComplete: false, missing: ["Mustard"] } },
-    });
-    expect(p.blocking.join("\n")).toMatch(/listing description/);
-    expect(p.blocking.join("\n")).toMatch(/deck isn't complete \(Mustard\)/);
+  it("no listing description → blocked; no write_files → nutrition image left off, still makeable otherwise", () => {
+    const { preview: p } = assembleRecipePreview({ ...base, scopes: ["write_products"], recipe: { ...base.recipe, listing: " " } });
+    expect(p.blocking).toHaveLength(1);
+    expect(p.blocking[0]).toMatch(/listing description/);
     expect(p.missingFileScopes).toEqual(["write_files"]);
     expect(p.nutritionImage).toMatchObject({ willAttach: false, summary: expect.stringMatching(/write_files/) });
-    expect(p.metafields.find(m => m.field === "custom.ingredient_deck")!.action).toBe("none");
+  });
+
+  it("missing declarations / nutrition (sub-recipe ingredients too) → an explicit warning per ingredient, NOT blocking; the deck is left off, never partial", () => {
+    const { preview: p, content } = assembleRecipePreview({
+      ...base,
+      loaded: {
+        deck: {
+          deckText: "Dough (**Wheat** Flour), Chicken, Mustard", mayContainStatement: null, isComplete: false, missing: ["Mustard", "Chorizo"],
+          missingDetail: [{ ingredientId: 7, name: "Mustard" }], unwrapped: ["Chorizo"],
+        },
+        nutrition: {
+          per100g: { energyKcal: 200 }, perPortion: null, portionWeightG: null, complete: false, missing: ["Tarragon"],
+          missingDetail: [{ ingredientId: 9, name: "Tarragon", missing: ["fat", "salt"] }],
+        },
+      },
+    });
+    expect(p.blocking).toEqual([]);
+    expect(p.deckLeftOff).toBe(true);
+    expect(content.deckDocument).toBeNull();
+    expect(p.declarationGaps.items.map(g => `${g.name}: ${g.missing.join("; ")}`)).toEqual([
+      "Tarragon: nutrition: fat, salt", "Mustard: no label declaration", "Chorizo: declaration doesn't name the compound ingredient",
+    ]);
+    expect(p.declarationGaps.headlines[0]).toBe(
+      "These aren't complete, so the ingredient deck won't be complete. Ingredient deck left off — finish the declarations, then use Push to Shopify on the Label tab.",
+    );
+    expect(p.declarationGaps.headlines[1]).toMatch(/nutrition image is left off/);
+    // The metafield line says so too; the template has no deck here, so nothing to remove.
+    const deckLine = p.metafields.find(m => m.field === "custom.ingredient_deck")!;
+    expect(deckLine.action).toBe("none");
+    expect(deckLine.summary).toContain("Ingredient deck left off");
+    expect(p.warnings.join("\n")).toMatch(/ingredient deck isn't complete \(Mustard, Chorizo\)/);
+  });
+
+  it("the barcode held for the recipe shows as what goes on the 2 Pack", () => {
+    const { preview: p } = assembleRecipePreview({ ...base, barcode: { barcode: "5065018206009", mixed: false, pending: true, heldProblem: null } });
+    expect(p.barcode.code).toBe("5065018206009");
+    expect(p.barcode.summary).toMatch(/from the label page/);
   });
 
   it("no write_products → the preview says so", () => {
@@ -285,5 +322,103 @@ describe("adding the nutrition table to products that already exist (fake store)
   it("writes nothing with no products, and the write guard stops it", async () => {
     await expect(setNutritionImage(fakeStore().port, fakeFiles().deps, [], nutritionImage)).rejects.toThrow(/No products/);
     await expect(setNutritionImage(fakeStore({ blocked: true }).port, fakeFiles().deps, ["700"], nutritionImage)).rejects.toThrow(/switched off/);
+  });
+});
+
+// ── The create with an incomplete deck, and what follows it (30 Oct 2026) ──
+const incompleteDeck: PreviewInput["loaded"] = {
+  ...base.loaded,
+  deck: { deckText: "Dough, Mustard", mayContainStatement: null, isComplete: false, missing: ["Mustard"], missingDetail: [{ ingredientId: 7, name: "Mustard" }], unwrapped: [] },
+};
+
+/** The barcode writer's Shopify side, reading what the fake store holds. */
+function fakeBarcodeShopify(shopifyBarcode: () => string | null) {
+  const sent: Array<{ productId: string; variants: Array<{ variantId: string; barcode: string }> }> = [];
+  const port: ShopifyBarcodePort = {
+    read: async ids => new Map(ids.map(id => [id, { productId: "700", barcode: shopifyBarcode(), status: "draft", productTitle: "Chicken & Tarragon", variantTitle: "2 Pack" }])),
+    blockedReason: async () => null,
+    write: async (productId, variants) => { sent.push({ productId, variants }); },
+  };
+  const sink: PushSink = { record: async () => {}, log: async () => {} };
+  return { port, sink, sent };
+}
+
+describe("making the product with an incomplete deck (fake store)", () => {
+  it("is allowed, removes the template's deck and writes NO custom.ingredient_deck — never a partial deck", async () => {
+    const { content, preview } = assembleRecipePreview({ ...base, loaded: incompleteDeck });
+    expect(preview.blocking).toEqual([]);
+    const { port, writes } = fakeStore();
+    await applyRecipeProduct(port, { ...input, content }, async () => {}, fakeFiles().deps);
+    const setKeys = writes.filter(w => w.op === "metafieldsSet")
+      .flatMap(w => (w.vars as { metafields: Array<{ key: string }> }).metafields.map(m => m.key));
+    expect(setKeys).not.toContain("ingredient_deck");
+    expect(JSON.stringify(writes.find(w => w.op === "metafieldsDelete")!.vars)).toContain("ingredient_deck");
+  });
+});
+
+describe("after the product is made: link → barcode → labels (fakes, no network, no database)", () => {
+  const hash = "a".repeat(64);
+
+  it("links the 2 Pack, THEN its barcode goes through the one barcode writer to the new variant; then the ticked labels", async () => {
+    const { port, writes } = fakeStore();
+    const made = await applyRecipeProduct(port, input, async () => {}, fakeFiles().deps);
+    // The create cleared the copied barcode, so Shopify has none.
+    const cleared = () => (writes.find(w => w.op === "productVariantsBulkUpdate")!.vars as { variants: Array<{ barcode: string | null }> }).variants[0].barcode;
+    const shop = fakeBarcodeShopify(cleared);
+    const order: string[] = [];
+    const ports: AfterCreatePorts = {
+      link: async v => { order.push(`link ${v.shopifyVariantId}`); return { linked: true }; },
+      // What afterListingLinked does once the held barcode is on the listing.
+      applyBarcode: async () => {
+        order.push("barcode");
+        const [r] = await pushBarcodes([{ variantId: "911", ours: "5065018206009", replaceable: [], clubSpecial: false }], shop.port, shop.sink);
+        return r.message;
+      },
+      publishBackLabel: async h => { order.push(`back ${h}`); return { ok: true, versionNo: 1, publishedByName: "Graeme" }; },
+      setFrontLabel: async () => { order.push("front"); },
+    };
+    const r = await afterProductCreated(ports, { variants: made.variants, backLabelHash: hash, frontLabel: true });
+    expect(order).toEqual(["link 911", "barcode", `back ${hash}`, "front"]);
+    expect(shop.sent).toEqual([{ productId: "700", variants: [{ variantId: "911", barcode: "5065018206009" }] }]);
+    expect(r.linkedVariants).toEqual(["2 Pack"]);
+    expect(r.barcode).toBe("Sent to Shopify");
+    expect(r.backLabel).toMatchObject({ done: true, versionNo: 1 });
+    expect(r.frontLabel).toMatchObject({ done: true });
+  });
+
+  it("a different number already in Shopify is never overwritten", async () => {
+    const shop = fakeBarcodeShopify(() => "5000000000000");
+    const [r] = await pushBarcodes([{ variantId: "911", ours: "5065018206009", replaceable: [], clubSpecial: false }], shop.port, shop.sink);
+    expect(r.outcome).toBe("conflict");
+    expect(shop.sent).toEqual([]);
+  });
+
+  it("nothing linked (another recipe has the variant) → no barcode moved; labels untouched unless ticked; a refused publish is a line, never a failure", async () => {
+    const applyBarcode = vi.fn(async () => "x");
+    const setFrontLabel = vi.fn(async () => {});
+    const r = await afterProductCreated({
+      link: async () => ({ linked: false }),
+      applyBarcode,
+      publishBackLabel: async () => ({ ok: false, status: 422, error: "This label can't go live yet.", blockers: ["Ingredients don't fit."] }),
+      setFrontLabel,
+    }, { variants: [{ id: "911", title: "2 Pack", sku: null }], backLabelHash: hash, frontLabel: false });
+    expect(applyBarcode).not.toHaveBeenCalled();
+    expect(setFrontLabel).not.toHaveBeenCalled();
+    expect(r.conflicts).toEqual(["2 Pack"]);
+    expect(r.barcode).toBeNull();
+    expect(r.frontLabel).toBeNull();
+    expect(r.backLabel).toMatchObject({ done: false, message: expect.stringMatching(/^Back label not published — This label can't go live yet\. Ingredients don't fit\./) });
+  });
+
+  it("a barcode or label step that throws never fails the product", async () => {
+    const r = await afterProductCreated({
+      link: async () => ({ linked: true }),
+      applyBarcode: async () => { throw new Error("database busy"); },
+      publishBackLabel: async () => { throw new Error("render failed"); },
+      setFrontLabel: async () => { throw new Error("this recipe has no name to print"); },
+    }, { variants: [{ id: "911", title: "2 Pack", sku: null }], backLabelHash: hash, frontLabel: true });
+    expect(r.barcode).toMatch(/database busy/);
+    expect(r.backLabel).toMatchObject({ done: false });
+    expect(r.frontLabel).toMatchObject({ done: false, message: expect.stringMatching(/no name to print/) });
   });
 });

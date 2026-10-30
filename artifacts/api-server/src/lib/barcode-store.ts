@@ -620,6 +620,18 @@ export function runPush(targets: PushTarget[], actor: Actor | null): Promise<Pus
   return run;
 }
 
+/** Wait (at most `timeoutMs`) for the pushes queued so far to finish — so
+ *  "Create Shopify product" can say whether its barcode reached Shopify.
+ *  Never throws; a slow push carries on in the background. */
+export async function barcodePushesSettled(timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    pushChain.catch(() => undefined),
+    new Promise<void>(resolve => { timer = setTimeout(resolve, timeoutMs); }),
+  ]);
+  if (timer) clearTimeout(timer);
+}
+
 /** Mark the targets "Sending…" and push in the background — a save in the
  *  app never waits for (or fails because of) Shopify. */
 export async function queuePush(targets: PushTarget[], actor: Actor | null): Promise<void> {

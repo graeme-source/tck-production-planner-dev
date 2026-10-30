@@ -20,7 +20,7 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, pool, recipesTable, usersTable, productLabelTemplatesTable, productLabelSettingsTable } from "@workspace/db";
+import { db, recipesTable, usersTable, productLabelTemplatesTable, productLabelSettingsTable } from "@workspace/db";
 import { and, eq, sql } from "drizzle-orm";
 import {
   resolveBonesWarning, describeCookingTimes, effectiveCookingMode, halveRange, normaliseCookingTiers, resolveCooking,
@@ -28,13 +28,13 @@ import {
   decideStatus, enforceLegalMinimums, labelFormat, labelRoleTitle, legalMinimums, normaliseTemplate, normaliseUseByRule, resolveChilledPeriod,
   STATUS_LABEL, TEMPLATE_PRESETS, WIDTH_ORDER, type LabelRole, type LabelSnapshot, type LabelTemplate,
 } from "@workspace/product-labels";
-import { encodePng } from "@workspace/product-labels/render";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { loadPackBarcodes } from "../lib/barcode-store";
 import { loadCookingData, recipeCookingSuggestion } from "../lib/label-cooking-profile";
 import { rawBody, validate } from "../middleware/validate";
+import { publishRecipeLabel } from "../lib/product-label-publish";
 import {
-  buildCurrentLabel, buildRoleLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fitSummary, fonts, labelPublishBlockers, loadAllLiveVersions,
+  buildCurrentLabel, buildRoleLabel, changesSinceLive, checkFit, deckBlockers, deckWarnings, fonts, labelPublishBlockers, loadAllLiveVersions,
   loadLiveVersion, loadRecipe, loadTemplate, loadTemplateDefaults, proofFormat, renderProof, sampleDates, type CurrentLabel, type LoadedTemplate,
 } from "../lib/product-labels-store";
 
@@ -504,51 +504,11 @@ router.post("/recipes/:id/publish", requireManagerOrAdmin, validate(PublishBody)
   const body = req.body as z.infer<typeof PublishBody>;
   const role: LabelRole = body.role ?? "main";
   try {
-    const recipe = await loadRecipe(p.data.id);
-    if (!recipe) { res.status(404).json({ error: "Recipe not found" }); return; }
-    // Rebuild on the server — never trust what the page sent.
-    const current = await buildRoleLabel(recipe, role);
-    if (!current) { res.status(404).json({ error: `${recipe.name} has no wrapping label.` }); return; }
-    if (current.hash !== body.expectedHash) {
-      res.status(409).json({ error: "The label changed while you were checking it (someone edited the recipe or the template). Look at the new proof and confirm again." });
-      return;
-    }
-    const proof = renderProof(current.snapshot);
-    const blockers = labelPublishBlockers(current, proof);
-    if (blockers.length) { res.status(422).json({ error: "This label can't go live yet.", blockers }); return; }
-    const live = await loadLiveVersion(recipe.id, role);
-    if (live && live.snapshotHash === current.hash) { res.status(409).json({ error: "The live label is already this version." }); return; }
-    const who = await userName(req);
-
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
-      // Serialise publishes of one recipe so version numbers can't collide.
-      await client.query("SELECT pg_advisory_xact_lock($1, $2)", [20261010, recipe.id]);
-      // Each label role has its own version numbers (migration 0310).
-      const { rows } = await client.query<{ next: number }>(
-        "SELECT COALESCE(MAX(version_no), 0) + 1 AS next FROM product_label_versions WHERE recipe_id = $1 AND role = $2", [recipe.id, role],
-      );
-      const versionNo = Number(rows[0].next);
-      await client.query(
-        `INSERT INTO product_label_versions
-           (recipe_id, recipe_name, role, version_no, snapshot, snapshot_hash, fit, template_id, template_version, published_by_id, published_by_name,
-            proof_png, proof_dpi)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-        [recipe.id, recipe.name, role, versionNo, JSON.stringify(current.snapshot), current.hash, JSON.stringify(fitSummary(proof)),
-          current.template.id, current.template.version, who.id, who.name,
-          // The exact image going live (dated today, the publish day) — the
-          // label history shows this, never a later re-draw (migration 0172).
-          Buffer.from(encodePng(proof.bitmap)), proof.layout.dpi],
-      );
-      await client.query("COMMIT");
-      res.json({ ok: true, versionNo, publishedByName: who.name });
-    } catch (err) {
-      await client.query("ROLLBACK").catch(e => console.error("[product-labels] rollback failed:", e));
-      throw err;
-    } finally {
-      client.release();
-    }
+    // The one publish path (lib/product-label-publish.ts) — also used by
+    // "Create Shopify product" on a recipe.
+    const r = await publishRecipeLabel(p.data.id, role, body.expectedHash, await userName(req));
+    if (!r.ok) { res.status(r.status).json({ error: r.error, ...(r.blockers ? { blockers: r.blockers } : {}) }); return; }
+    res.json({ ok: true, versionNo: r.versionNo, publishedByName: r.publishedByName });
   } catch (err) { fail(res, err, "POST /recipes/:id/publish"); }
 });
 

@@ -7,12 +7,14 @@
 import type { ProductSnapshot } from "./test-box-shopify";
 import type { LoadedContent, ProductLink } from "./test-box-shopify-run";
 import { ingredientDeckDocument } from "./shopify-rich-text";
+import { ingredientDeclarationGaps, type IngredientGap } from "@workspace/product-labels";
 import {
-  metafieldPlan, missingFileScopes, missingWriteScopes, nutritionImagePlan, nutritionRows, productPrice,
+  MF, metafieldPlan, missingFileScopes, missingWriteScopes, nutritionImagePlan, nutritionRows, productPrice,
   type MetafieldLine, type NutritionRow, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
 import {
-  PACK_VARIANT_TITLE, decideListingAction, listingChecks, photoLine, planVariants, recipeProductTags, type ListingAction,
+  DECK_INCOMPLETE_HEADLINE, DECK_LEFT_OFF, NUTRITION_INCOMPLETE_HEADLINE, PACK_VARIANT_TITLE, barcodePreviewLine, decideListingAction,
+  listingChecks, photoLine, planVariants, recipeProductTags, type ListingAction, type PackBarcodeState,
 } from "./recipe-shopify-product-rules";
 
 // Mirrored in production-planner components/recipe-editor/shopify-product-create.tsx.
@@ -33,12 +35,18 @@ export interface RecipeProductPreview {
   tags: string[];
   variant: { title: string; removed: string[] };
   price: { set: string | null; summary: string };
-  barcode: string;
+  /** The 2 Pack's barcode: the app's (Label tab, or typed in the window). */
+  barcode: { code: string | null; summary: string };
   listingDescription: string;
   metafields: MetafieldLine[];
   photo: { willAttach: boolean; summary: string; width: number | null; height: number | null };
   nutrition: { complete: boolean; portionWeightG: number | null; rows: NutritionRow[] };
   nutritionImage: { willAttach: boolean; summary: string };
+  /** Ingredients (sub-recipe ones included) missing nutrition or a label
+   *  declaration — the Label tab's own warnings, one line each. */
+  declarationGaps: { items: IngredientGap[]; headlines: string[] };
+  /** The deck isn't complete: custom.ingredient_deck is left empty. */
+  deckLeftOff: boolean;
   warnings: string[];
   blocking: string[];
 }
@@ -51,6 +59,8 @@ export interface PreviewInput {
   /** The product the app made for this recipe before (recipe_shopify_products). */
   made: { shopifyProductId: string; state: string; lastError: string | null } | null;
   photo: { width: number; height: number } | null;
+  /** The recipe's pack barcode as the barcode store holds it (null = none). */
+  barcode?: PackBarcodeState | null;
   scopes: string[];
   candidates: TemplateCandidate[];
   /** Products the recipe's mapped variants belong to. */
@@ -108,6 +118,21 @@ export function assembleRecipePreview(i: PreviewInput): PreviewPlan {
   const fileScopesMissing = missingFileScopes(i.scopes);
   const nutritionImage = nutritionImagePlan({ nutritionComplete: i.loaded.nutrition?.complete ?? false, missingFileScopes: fileScopesMissing });
   const plan = metafieldPlan(content, base?.metafields ?? [], i.standardCooking, nutritionImage);
+  // Never a partial deck: an incomplete one is left off (the template's is
+  // still removed) and goes on later with Push to Shopify on the Label tab.
+  const deckLeftOff = !content.deckDocument;
+  const metafields = plan.lines.map(m => (deckLeftOff && m.field === `${MF.ingredientDeck.namespace}.${MF.ingredientDeck.key}`
+    ? { ...m, summary: `${m.action === "remove" ? "The template's deck is removed. " : ""}${DECK_LEFT_OFF}` }
+    : m));
+  const gapItems = ingredientDeclarationGaps({
+    nutrition: i.loaded.nutrition?.missingDetail ?? [],
+    missingDeclarations: i.loaded.deck?.missingDetail ?? (i.loaded.deck?.missing ?? []).map(name => ({ name })),
+    unwrappedDeclarations: i.loaded.deck?.unwrapped ?? [],
+  });
+  const headlines = [
+    ...(deckLeftOff ? [`${DECK_INCOMPLETE_HEADLINE} ${DECK_LEFT_OFF}`] : []),
+    ...(i.loaded.nutrition && !i.loaded.nutrition.complete ? [NUTRITION_INCOMPLETE_HEADLINE] : []),
+  ];
   const { warnings, blocking } = listingChecks({
     action,
     templateFound: template != null,
@@ -154,9 +179,9 @@ export function assembleRecipePreview(i: PreviewInput): PreviewPlan {
     tags: recipeProductTags(r.tags),
     variant: { title: kept[0]?.title ?? PACK_VARIANT_TITLE, removed: action === "create" ? (vp?.remove ?? []).map(v => v.title) : [] },
     price: { set: price.price, summary: price.summary },
-    barcode: action === "create" ? "Left blank — add the GS1 barcode by hand" : "Not changed",
+    barcode: barcodePreviewLine(action, i.barcode ?? null),
     listingDescription: r.listing?.trim() ?? "",
-    metafields: plan.lines,
+    metafields,
     photo: { ...photoLine(i.photo), width: i.photo?.width ?? null, height: i.photo?.height ?? null },
     nutrition: {
       complete: i.loaded.nutrition?.complete ?? false,
@@ -164,6 +189,8 @@ export function assembleRecipePreview(i: PreviewInput): PreviewPlan {
       rows: i.loaded.nutrition ? nutritionRows(i.loaded.nutrition.per100g, i.loaded.nutrition.perPortion) : [],
     },
     nutritionImage,
+    declarationGaps: { items: action === "linked" ? [] : gapItems, headlines: action === "linked" ? [] : headlines },
+    deckLeftOff: action !== "linked" && deckLeftOff,
     warnings,
     blocking: action === "linked" ? [] : blocking,
   };

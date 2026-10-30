@@ -13,6 +13,14 @@
  *   description — plus anything that stops it. "Create draft in Shopify"
  *   makes it; nothing is ever published.
  *
+ *   The window lists "What goes to Shopify" (barcode included — the app's,
+ *   typed here in the same Barcode box as the label page, then put on the
+ *   2 Pack and sent by the app's barcode sync), warns per ingredient about
+ *   missing nutrition / label declarations (the deck is then left off, never
+ *   partial — Create still allowed), and "Also set up in the app": the back
+ *   label (published) and the front label (switched on), each with a tick —
+ *   shopify-product-labels.tsx (Graeme, 30 Oct 2026).
+ *
  *   Already in Shopify → "Add nutrition table" (Graeme, 30 Oct 2026: products
  *   made before the app could upload files went out without it). Ticks the
  *   recipe's products with no nutrition image; one that has one is only
@@ -23,12 +31,18 @@
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList, Loader2, ShieldAlert, ShoppingBag, X } from "lucide-react";
+import { Link } from "wouter";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList, Loader2, Printer, ShieldAlert, ShoppingBag, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { base64FromDataUrl, nutritionImageLayout, type NutritionImageRow } from "@/lib/nutrition-image";
 import { drawNutritionPng } from "@/lib/nutrition-image-canvas";
 import { AdminLink, Banner, Chip } from "@/components/test-boxes/shopify-products-card";
+import { BarcodeGroupCard } from "@/components/barcodes/recipe-barcodes";
+import { useRecipeBarcodes, type GroupView } from "@/components/barcodes/api";
+import { BackLabelsDialog } from "@/components/product-labels/back-labels-dialog";
+import { FrontLabelsDialog } from "@/components/product-labels/front-labels-dialog";
+import { LabelSetupSection, useLabelSetup } from "./shopify-product-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,12 +66,14 @@ interface Preview {
   tags: string[];
   variant: { title: string; removed: string[] };
   price: { set: string | null; summary: string };
-  barcode: string;
+  barcode: { code: string | null; summary: string };
   listingDescription: string;
   metafields: MetafieldLine[];
   photo: { willAttach: boolean; summary: string; width: number | null; height: number | null };
   nutrition: { complete: boolean; portionWeightG: number | null; rows: NutritionImageRow[] };
   nutritionImage: { willAttach: boolean; summary: string };
+  declarationGaps: { items: Array<{ ingredientId: number | null; name: string; missing: string[] }>; headlines: string[] };
+  deckLeftOff: boolean;
   warnings: string[];
   blocking: string[];
 }
@@ -67,7 +83,11 @@ interface Status {
   started: (ProductLink & { lastError: string | null }) | null;
   shopifyUnreachable: boolean;
 }
-interface RunResult { outcome: "created" | "finished" | "blocked"; message: string; product: ProductLink | null; steps: string[]; linkedVariants: string[] }
+interface LabelOutcome { done: boolean; message: string; versionNo?: number | null }
+interface RunResult {
+  outcome: "created" | "finished" | "blocked"; message: string; product: ProductLink | null; steps: string[]; linkedVariants: string[];
+  barcode: string | null; deckLeftOff: boolean; backLabel: LabelOutcome | null; frontLabel: LabelOutcome | null;
+}
 interface NutritionTarget { productId: string; title: string; status: string; adminUrl: string; hasNutrition: boolean }
 interface NutritionPlan {
   writesBlocked: boolean;
@@ -159,7 +179,7 @@ export function CreateShopifyProductCard({ recipeId, canEdit, unsavedChanges, on
         <>
           {s.state === "none" && (
             <p className="text-sm text-muted-foreground">
-              Makes this recipe's product in Shopify as a <b>draft</b>: its tags, the 2 Pack, the recipe description, nutrition, ingredient deck, listing description and photo — and links it here. You'll see exactly what first.
+              Makes this recipe's product in Shopify as a <b>draft</b>: its tags, the 2 Pack and its barcode, the recipe description, nutrition, ingredient deck, listing description and photo — links it here, and sets up its back and front labels. You'll see exactly what first.
             </p>
           )}
           {unsavedChanges && (
@@ -179,14 +199,28 @@ export function CreateShopifyProductCard({ recipeId, canEdit, unsavedChanges, on
         </>
       )}
 
-      {open && <CreateProductDialog recipeId={recipeId} onClose={() => setOpen(false)} onLinked={onLinked} />}
+      {open && <CreateProductDialog recipeId={recipeId} onClose={() => setOpen(false)} onLinked={onLinked} canEdit={canEdit} />}
       {nutritionOpen && <AddNutritionDialog recipeId={recipeId} onClose={() => setNutritionOpen(false)} />}
     </section>
   );
 }
 
-function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number; onClose: () => void; onLinked: () => void }) {
+/** The barcode line, live from the Barcode box (so a number typed in the
+ *  window shows at once); the preview's own line until that has loaded. */
+function barcodeText(p: Preview, g: GroupView | undefined): { text: string; missing: boolean } {
+  if (p.action === "linked" || !g) return { text: p.barcode.summary, missing: !p.barcode.code };
+  if (g.heldProblem) return { text: g.heldProblem, missing: true };
+  if (!g.barcode) return { text: "None yet — set one on the Label tab, or type it here", missing: true };
+  if (g.barcode === p.barcode.code) return { text: p.barcode.summary, missing: false };
+  return { text: `${g.barcode} — typed here. Put on the 2 Pack when it's linked and sent to Shopify by the app's barcode sync (never over a different number already there)`, missing: false };
+}
+
+function CreateProductDialog({ recipeId, onClose, onLinked, canEdit }: { recipeId: number; onClose: () => void; onLinked: () => void; canEdit: boolean }) {
   const qc = useQueryClient();
+  // The barcode (same box as the label page) and the labels, live.
+  const barcodes = useRecipeBarcodes(recipeId);
+  const packGroup = barcodes.data?.groups.find(g => g.kind === "pack");
+  const labels = useLabelSetup(recipeId);
   const [templateProductId, setTemplateProductId] = useState<string | null>(null);
   const [result, setResult] = useState<RunResult | null>(null);
   const [showNutrition, setShowNutrition] = useState(false);
@@ -214,11 +248,15 @@ function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number
       body: JSON.stringify({
         templateProductId: templateProductId ?? p?.template?.productId ?? null,
         nutritionPngBase64: p?.nutritionImage.willAttach && nutritionPng ? base64FromDataUrl(nutritionPng) : null,
+        ...labels.payload,
       }),
     }, true),
     onSuccess: r => {
       setResult(r);
       void qc.invalidateQueries({ queryKey: shopifyProductKey(recipeId) });
+      void qc.invalidateQueries({ queryKey: ["barcodes"] });
+      void qc.invalidateQueries({ queryKey: ["product-labels"] });
+      void qc.invalidateQueries({ queryKey: ["front-label-preview", recipeId] });
       if (r.linkedVariants.length) onLinked();
     },
   });
@@ -243,7 +281,7 @@ function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number
           {preview.isLoading && <p className="flex items-center gap-2 text-base"><Loader2 className="w-5 h-5 animate-spin" /> Reading Shopify and the recipe — nothing is changed…</p>}
           {preview.error && <p className="text-destructive flex items-center gap-2"><AlertTriangle className="w-5 h-5" /> {(preview.error as Error).message}</p>}
 
-          {result && <Result result={result} />}
+          {result && <Result result={result} recipeId={recipeId} recipeName={p?.recipe.name ?? p?.title ?? "This recipe"} />}
 
           {p && !result && (
             <>
@@ -308,6 +346,7 @@ function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number
                     </div>
                   )}
 
+                  <h3 className="text-lg font-bold">What goes to Shopify</h3>
                   <dl className="grid grid-cols-1 sm:grid-cols-[170px_1fr] gap-x-3 gap-y-1.5 text-base">
                     <dt className="text-muted-foreground">Title</dt><dd className="font-semibold">{p.title}</dd>
                     <dt className="text-muted-foreground">Status</dt><dd>Draft — hidden until you set it Active in Shopify</dd>
@@ -321,13 +360,20 @@ function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number
                     </dd>
                     <dt className="text-muted-foreground">Price</dt>
                     <dd className={cn(p.price.set ? "font-semibold" : "text-amber-700 dark:text-amber-300")}>{p.price.summary}</dd>
-                    <dt className="text-muted-foreground">Barcode</dt><dd>{p.barcode}</dd>
+                    <dt className="text-muted-foreground">Barcode</dt>
+                    <dd className={cn(barcodeText(p, packGroup).missing && "text-amber-700 dark:text-amber-300")}>{barcodeText(p, packGroup).text}</dd>
                     {p.metafields.map(m => (
                       <MetafieldRow key={m.field} m={m} />
                     ))}
                     <dt className="text-muted-foreground">Photo</dt>
                     <dd className={cn("text-sm", !p.photo.willAttach && "text-amber-700 dark:text-amber-300")}>{p.photo.summary}</dd>
                   </dl>
+
+                  {/* The same Barcode box as the label page: checked the same
+                      way (check digit; a number another product holds is
+                      only moved after you confirm), autosaved, held for the
+                      recipe and put on the 2 Pack when Create links it. */}
+                  {packGroup && <BarcodeGroupCard group={packGroup} canEdit={canEdit} />}
 
                   <div className="rounded-2xl border-2 border-border p-3.5 space-y-1">
                     <p className="text-sm font-semibold text-muted-foreground">Product page description (from the Details tab)</p>
@@ -353,6 +399,21 @@ function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number
                       {showNutrition && <NutritionTable n={p.nutrition} />}
                     </div>
                   </div>
+
+                  {(p.declarationGaps.items.length > 0 || p.declarationGaps.headlines.length > 0) && (
+                    <div className="rounded-2xl border-2 border-amber-500/50 bg-amber-500/10 p-3.5 space-y-2 text-amber-900 dark:text-amber-200">
+                      <p className="text-base font-bold flex items-center gap-2"><AlertTriangle className="w-5 h-5" /> Missing nutrition or label declarations</p>
+                      {p.declarationGaps.items.length > 0 && (
+                        <ul className="space-y-0.5 text-sm">
+                          {p.declarationGaps.items.map(g => <li key={`${g.ingredientId ?? ""}:${g.name}`}><b>{g.name}</b> — {g.missing.join("; ")}</li>)}
+                        </ul>
+                      )}
+                      {p.declarationGaps.headlines.map(h => <p key={h} className="text-sm font-semibold">{h}</p>)}
+                      <p className="text-sm">You can still create the product. Fix these on the recipe's <b>Label</b> tab (each ingredient opens from there).</p>
+                    </div>
+                  )}
+
+                  <LabelSetupSection recipeId={recipeId} setup={labels} />
                 </>
               )}
 
@@ -556,10 +617,17 @@ function NutritionTable({ n }: { n: Preview["nutrition"] }) {
   );
 }
 
-function Result({ result }: { result: RunResult }) {
+function Result({ result, recipeId, recipeName }: { result: RunResult; recipeId: number; recipeName: string }) {
+  const [printing, setPrinting] = useState<"back" | "front" | null>(null);
   if (result.outcome === "blocked") {
     return <Banner tone="amber" icon={<ShieldAlert className="w-5 h-5" />}><b>Stopped by the safety switch.</b> {result.message}</Banner>;
   }
+  const line = (ok: boolean, text: string) => (
+    <p className={cn("text-base flex items-start gap-2", !ok && "text-amber-800 dark:text-amber-300")}>
+      {ok ? <Check className="w-5 h-5 mt-0.5 shrink-0 text-emerald-600" /> : <AlertTriangle className="w-5 h-5 mt-0.5 shrink-0" />}<span>{text}</span>
+    </p>
+  );
+  const printBtn = "min-h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold inline-flex items-center gap-2";
   return (
     <div className="space-y-3">
       <p className="text-lg font-bold flex items-center gap-2 flex-wrap">
@@ -567,8 +635,23 @@ function Result({ result }: { result: RunResult }) {
         {result.product && <AdminLink href={result.product.adminUrl}>Open it in Shopify</AdminLink>}
       </p>
       <p className="text-base">{result.message}</p>
+      {result.barcode && line(/✓/.test(result.barcode) || /being sent/.test(result.barcode), result.barcode)}
+      {result.deckLeftOff && line(false, "Ingredient deck left off — finish the declarations, then use Push to Shopify on the Label tab.")}
+      {result.backLabel && line(result.backLabel.done, result.backLabel.message)}
+      {result.frontLabel && line(result.frontLabel.done, result.frontLabel.message)}
+      {(result.backLabel && !result.backLabel.done) || (result.frontLabel && !result.frontLabel.done)
+        ? <Link href={`/labels/${recipeId}`} className="text-sm font-semibold text-primary underline underline-offset-2">Open the recipe's label page</Link>
+        : null}
+      {(result.backLabel?.done || result.frontLabel?.done) && (
+        <div className="flex flex-wrap gap-2">
+          {result.backLabel?.done && <button type="button" onClick={() => setPrinting("back")} className={printBtn}><Printer className="w-4 h-4" /> Print back labels</button>}
+          {result.frontLabel?.done && <button type="button" onClick={() => setPrinting("front")} className={printBtn}><Printer className="w-4 h-4" /> Print front labels</button>}
+        </div>
+      )}
       {result.steps.length > 0 && <ul className="text-sm text-muted-foreground list-disc pl-5 space-y-0.5">{result.steps.map(s => <li key={s}>{s}</li>)}</ul>}
-      <p className="text-sm text-muted-foreground">Still by hand in Shopify: the GS1 barcode, any collection it belongs in, and setting it Active when it launches.</p>
+      <p className="text-sm text-muted-foreground">Still by hand in Shopify: any collection it belongs in, and setting it Active when it launches.</p>
+      {printing === "back" && <BackLabelsDialog recipeId={recipeId} recipeName={recipeName} mode="today" onClose={() => setPrinting(null)} />}
+      {printing === "front" && <FrontLabelsDialog recipeId={recipeId} recipeName={recipeName} onClose={() => setPrinting(null)} />}
     </div>
   );
 }

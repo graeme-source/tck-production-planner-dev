@@ -60,3 +60,69 @@ export function ingredientGapChips(
   }
   return chips;
 }
+
+// ── Missing nutrition and label declarations, per ingredient ────────────────
+// The SAME facts the recipe's Label tab warns about — the nutrition panel's
+// "Missing nutritionals" (computeRecipeNutritionals → missingNutritionalDetail,
+// built with missingNutrients above) and the ingredient deck's "Missing label
+// declarations" / "Compound ingredients not named" (recipe-ingredient-deck.ts)
+// — merged into one line per ingredient, sub-recipe ingredients included.
+// Used by "Create Shopify product" (Graeme, 30 Oct 2026: "flag if there are
+// any nutritional or label declarations missing from any of the ingredients
+// or sub-ingredients … it should explicitly warn me").
+
+export interface IngredientGap {
+  ingredientId: number | null;
+  name: string;
+  /** What's missing, in words: "no nutrition data", "nutrition: fat, salt",
+   *  "no label declaration", "declaration doesn't name the compound ingredient". */
+  missing: string[];
+  nutrition: boolean;
+  declaration: boolean;
+}
+
+/** One line per ingredient with something missing, in the order met
+ *  (nutrition gaps first, then declaration gaps). Merged by id, else name. */
+export function ingredientDeclarationGaps(input: {
+  nutrition?: ReadonlyArray<{ ingredientId?: number | null; name: string; missing: readonly string[] }> | null;
+  missingDeclarations?: ReadonlyArray<{ ingredientId?: number | null; name: string }> | null;
+  unwrappedDeclarations?: readonly string[] | null;
+}): IngredientGap[] {
+  const out: IngredientGap[] = [];
+  const find = (id: number | null | undefined, name: string): IngredientGap => {
+    const key = name.trim().toLowerCase();
+    let g = out.find(x => (id != null && x.ingredientId === id) || x.name.trim().toLowerCase() === key);
+    if (!g) {
+      g = { ingredientId: id ?? null, name: name.trim(), missing: [], nutrition: false, declaration: false };
+      out.push(g);
+    } else if (g.ingredientId == null && id != null) {
+      g.ingredientId = id;
+    }
+    return g;
+  };
+  const add = (g: IngredientGap, text: string) => { if (!g.missing.includes(text)) g.missing.push(text); };
+  const isKey = (k: string): k is NutrientKey => (NUTRIENT_KEYS as readonly string[]).includes(k);
+  for (const n of input.nutrition ?? []) {
+    if (!n.missing.length) continue;
+    const g = find(n.ingredientId, n.name);
+    g.nutrition = true;
+    const known = n.missing.filter(isKey);
+    add(g, known.length >= NUTRIENT_KEYS.length ? "no nutrition data" : `nutrition: ${n.missing.map(k => (isKey(k) ? NUTRIENT_LABEL[k] : k)).join(", ")}`);
+  }
+  for (const d of input.missingDeclarations ?? []) {
+    const g = find(d.ingredientId, d.name);
+    g.declaration = true;
+    add(g, "no label declaration");
+  }
+  for (const name of input.unwrappedDeclarations ?? []) {
+    const g = find(null, name);
+    g.declaration = true;
+    add(g, "declaration doesn't name the compound ingredient");
+  }
+  return out;
+}
+
+/** "Mozzarella — nutrition: fat, salt; no label declaration" */
+export function ingredientGapLine(g: Pick<IngredientGap, "name" | "missing">): string {
+  return `${g.name} — ${g.missing.join("; ")}`;
+}

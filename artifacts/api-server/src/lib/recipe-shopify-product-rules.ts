@@ -17,8 +17,13 @@
  *     recipe description still goes to custom.product_recipe.
  *   - The recipe's product photo is put on the product; the template's
  *     images never come across.
- *   - It refuses to make a product without a listing description or with an
- *     incomplete ingredient deck (the deck push refuses those too).
+ *   - It refuses to make a product without a listing description.
+ *   - An incomplete ingredient deck (or nutrition) WARNS but doesn't stop it
+ *     (Graeme, 30 Oct 2026: "It should still allow me to create the product
+ *     if I want, but tell me"). The deck is then LEFT OFF — never a partial
+ *     deck in custom.ingredient_deck, which could look complete and miss an
+ *     allergen — and goes on later with Push to Shopify on the Label tab
+ *     (which refuses an incomplete deck, as before).
  */
 import { TEST_BOX_BASE_TAGS, perPackValue } from "./test-box-shopify-rules";
 
@@ -115,7 +120,7 @@ export function listingChecks(input: ListingCheckInput): { warnings: string[]; b
     blocking.push("There's no Shopify listing description yet — write it (or Draft with AI) on the Details tab and check it first.");
   }
   if (!input.deckComplete) {
-    blocking.push(`The ingredient deck isn't complete${listOf(input.deckMissing)} — fix it on the Label tab first; a product never goes out without its full deck.`);
+    warnings.push(`The ingredient deck isn't complete${listOf(input.deckMissing)}. ${DECK_LEFT_OFF}`);
   }
   if (!input.recipeDescription?.trim()) {
     warnings.push("The recipe description is empty — custom.product_recipe (the line under the picture) will be left empty. Add it on the Details tab.");
@@ -131,6 +136,71 @@ export function listingChecks(input: ListingCheckInput): { warnings: string[]; b
     warnings.push(`The template has ${input.templateVariantCount} variants — only the ${PACK_VARIANT_TITLE} is kept, the others are removed from the copy.`);
   }
   return { warnings, blocking };
+}
+
+/** Said in the preview, the metafield line and the result when the deck
+ *  isn't complete (Graeme's wording, 30 Oct 2026). */
+export const DECK_LEFT_OFF = "Ingredient deck left off — finish the declarations, then use Push to Shopify on the Label tab.";
+export const DECK_INCOMPLETE_HEADLINE = "These aren't complete, so the ingredient deck won't be complete.";
+export const NUTRITION_INCOMPLETE_HEADLINE = "The nutrition isn't complete, so the nutrition image is left off — finish it, then use Add nutrition table on this card.";
+
+// ── The barcode ─────────────────────────────────────────────────────────────
+// The barcode is the app's (sku_barcodes / recipe_pending_barcodes, set on
+// the Label tab or typed in the Create window — the same box, the same
+// checks). Create never writes it itself: the new 2 Pack is linked, the
+// barcode held for the recipe moves onto it (barcode-store afterListingLinked)
+// and the ONE barcode writer (barcode-push.ts) sends it — never over a
+// different number already in Shopify.
+
+/** The pack barcode as the barcode store holds it for this recipe. */
+export interface PackBarcodeState {
+  barcode: string | null;
+  mixed: boolean;
+  /** Held for the recipe (no listing yet). */
+  pending: boolean;
+  heldProblem: string | null;
+}
+
+/** The preview's barcode line. */
+export function barcodePreviewLine(action: ListingAction, g: PackBarcodeState | null): { code: string | null; summary: string } {
+  if (action === "linked") return { code: g?.barcode ?? null, summary: "Not changed" };
+  if (g?.heldProblem) return { code: null, summary: g.heldProblem };
+  if (g?.mixed) return { code: null, summary: "The recipe's listings hold different barcodes — set the one number on the Label tab, or type it here" };
+  if (!g?.barcode) return { code: null, summary: "None yet — set one on the Label tab, or type it here" };
+  return {
+    code: g.barcode,
+    summary: `${g.barcode} — from the label page. Put on the ${PACK_VARIANT_TITLE} when it's linked and sent to Shopify by the app's barcode sync (never over a different number already there)`,
+  };
+}
+
+/** The pack after the create: what the barcode sync did. */
+export interface PackBarcodeAfter {
+  barcode: string | null;
+  heldProblem: string | null;
+  variants: Array<{ pushState: string | null; pushMessage: string | null; differentInShopify: boolean; shopifyBarcode: string | null }>;
+}
+
+const NO_BARCODE_AFTER = "No barcode yet — set it on the Label tab; it's sent to Shopify from there.";
+
+/** The result's barcode line. */
+export function barcodeAfterCreateLine(g: PackBarcodeAfter | null): string {
+  if (!g) return NO_BARCODE_AFTER;
+  if (g.heldProblem) return g.heldProblem;
+  if (!g.barcode) return NO_BARCODE_AFTER;
+  const v = g.variants[0];
+  const on = `Barcode ${g.barcode} is on the ${PACK_VARIANT_TITLE}`;
+  if (!v) return `${on} in the app.`;
+  if (v.differentInShopify || v.pushState === "conflict") {
+    return `${on} in the app, but Shopify has a different number (${v.shopifyBarcode ?? "?"}) — pick which is right in the Barcode box on the Label tab.`;
+  }
+  switch (v.pushState) {
+    case "sent": return `${on} and sent to Shopify ✓`;
+    case "sending": return `${on} and being sent to Shopify now — the Barcode box on the Label tab shows when it lands.`;
+    case "waiting": return `${on} in the app; not sent yet — ${v.pushMessage ?? "waiting"}. It goes automatically once it can.`;
+    case "failed": return `${on} in the app; not sent — ${v.pushMessage ?? "unknown reason"}. Press Retry in the Barcode box on the Label tab.`;
+    case "skipped": return `${on} in the app; not sent — ${v.pushMessage ?? "skipped"}.`;
+    default: return `${on} in the app.`;
+  }
 }
 
 /** The preview's line for the product photo. */
