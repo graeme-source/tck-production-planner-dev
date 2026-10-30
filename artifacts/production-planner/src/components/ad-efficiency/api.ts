@@ -54,6 +54,23 @@ export function useSaveAdEfficiencySettings() {
   });
 }
 
+/** What "Refresh from Meta" did (routes/meta-ads.ts — never throws; a Meta
+ *  that can't be reached is ok:false with a message). */
+export interface MetaRefreshResult { ok: boolean; ranAt: string; message: string; error: string | null; connected: boolean }
+
+/** Every query that shows ad spend: a sync writes several days at once. */
+const AD_SPEND_KEYS = [["ad-efficiency-spend-sources"], ["founder-ad-spend-range"], ["founder-numbers-trend"], ["meta-ads-status"]] as const;
+
+/** "Refresh from Meta" — the same sync as the Numbers page's Ad Spend panel,
+ *  for the New customers today tile (Graeme, 30 Oct 2026). */
+export function useRefreshFromMeta() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => request<MetaRefreshResult>("/api/meta-ads/refresh", { method: "POST", body: JSON.stringify({}) }),
+    onSuccess: () => Promise.all(AD_SPEND_KEYS.map(queryKey => qc.invalidateQueries({ queryKey: [...queryKey] }))),
+  });
+}
+
 export interface SpendSourceDay {
   date: string;
   /** The day's TOTAL (Meta + Google Ads); null when a channel is missing. */
