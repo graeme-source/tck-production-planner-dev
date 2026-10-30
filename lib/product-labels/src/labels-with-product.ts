@@ -16,6 +16,9 @@ export interface LabelSetupPlan {
   canSetUp: boolean;
   /** Ticked to start with. */
   ticked: boolean;
+  /** It can't be set up because something is wrong (fix it on the label
+   *  page) — not just because it's already done. */
+  refused: boolean;
   /** Plain words for the window: what happens, or why not. */
   reason: string;
 }
@@ -34,18 +37,18 @@ export function backLabelPlan(input: {
 }): LabelSetupPlan {
   const blockers = input.blockers.length ? [...input.blockers] : input.fits ? [] : ["The label doesn't fit."];
   if (blockers.length) {
-    return { canSetUp: false, ticked: false, reason: `Not published — ${blockers.join(" ")} Fix it on the recipe's label page, then press "Update live version" there.` };
+    return { canSetUp: false, ticked: false, refused: true, reason: `Not published — ${blockers.join(" ")} Fix it on the recipe's label page, then press "Update live version" there.` };
   }
   if (input.hasLive && input.matchesLive) {
-    return { canSetUp: false, ticked: false, reason: "The live back label is already this version — nothing to publish. The wrapping station can print it." };
+    return { canSetUp: false, ticked: false, refused: false, reason: "The live back label is already this version — nothing to publish. The wrapping station can print it." };
   }
   if (input.hasLive) {
     return {
-      canSetUp: true, ticked: false,
+      canSetUp: true, ticked: false, refused: false,
       reason: `A live back label already exists${input.liveVersionNo ? ` (version ${input.liveVersionNo})` : ""} and the recipe has changed since. Ticking this updates the live version — exactly like "Update live version" on the label page.`,
     };
   }
-  return { canSetUp: true, ticked: true, reason: "No live back label yet — this one is published, so the wrapping station can print it." };
+  return { canSetUp: true, ticked: true, refused: false, reason: "No live back label yet — this one is published, so the wrapping station can print it." };
 }
 
 /** The front name label (102 × 25 mm, the recipe's label name or name).
@@ -54,10 +57,10 @@ export function backLabelPlan(input: {
  *  label page only refuses one with no name to print (canPrint false). */
 export function frontLabelPlan(input: { isDefault: boolean; canPrint: boolean }): LabelSetupPlan {
   if (!input.canPrint) {
-    return { canSetUp: false, ticked: false, reason: "Not set up — this recipe has no name to print. Give it a name (or a label name on the recipe's label page) first." };
+    return { canSetUp: false, ticked: false, refused: true, reason: "Not set up — this recipe has no name to print. Give it a name (or a label name on the recipe's label page) first." };
   }
   if (input.isDefault) {
-    return { canSetUp: false, ticked: false, reason: "Already set up as the product's front label — the wrapping station shows Print front labels." };
+    return { canSetUp: false, ticked: false, refused: false, reason: "Already set up as the product's front label — the wrapping station shows Print front labels." };
   }
-  return { canSetUp: true, ticked: true, reason: "Switched on as the product's front label, so the wrapping station shows Print front labels as its main button." };
+  return { canSetUp: true, ticked: true, refused: false, reason: "Switched on as the product's front label, so the wrapping station shows Print front labels as its main button." };
 }

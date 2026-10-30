@@ -14,10 +14,11 @@ describe("back label with a new Shopify product (Graeme, 30 Oct 2026)", () => {
     expect(p.reason).toMatch(/Update live version/);
   });
   it("the live label is already this version → nothing to publish", () => {
-    expect(backLabelPlan({ ...ok, hasLive: true, matchesLive: true })).toMatchObject({ canSetUp: false, ticked: false });
+    expect(backLabelPlan({ ...ok, hasLive: true, matchesLive: true })).toMatchObject({ canSetUp: false, ticked: false, refused: false });
   });
   it("doesn't fit → refused, with the reason and where to fix it", () => {
     const p = backLabelPlan({ ...ok, fits: false, blockers: ["Ingredients don't fit at 6 pt."] });
+    expect(p.refused).toBe(true);
     expect(p).toMatchObject({ canSetUp: false, ticked: false });
     expect(p.reason).toMatch(/^Not published — Ingredients don't fit at 6 pt\..*label page/);
     expect(backLabelPlan({ ...ok, fits: false }).reason).toMatch(/doesn't fit/);
@@ -29,9 +30,10 @@ describe("back label with a new Shopify product (Graeme, 30 Oct 2026)", () => {
 
 describe("front label with a new Shopify product", () => {
   it("not set up yet → set up, ticked", () => expect(frontLabelPlan({ isDefault: false, canPrint: true })).toMatchObject({ canSetUp: true, ticked: true }));
-  it("already set up → off, nothing to do", () => expect(frontLabelPlan({ isDefault: true, canPrint: true })).toMatchObject({ canSetUp: false, ticked: false }));
+  it("already set up → off, nothing to do", () => expect(frontLabelPlan({ isDefault: true, canPrint: true })).toMatchObject({ canSetUp: false, ticked: false, refused: false }));
   it("no name to print (won't render) → refused with the reason", () => {
     const p = frontLabelPlan({ isDefault: false, canPrint: false });
+    expect(p.refused).toBe(true);
     expect(p).toMatchObject({ canSetUp: false, ticked: false });
     expect(p.reason).toMatch(/no name to print/);
   });
