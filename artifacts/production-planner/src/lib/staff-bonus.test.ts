@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BONUS_SCHEME as S, bonusFor, bonusLadder, revenueBonus } from "./staff-bonus";
+import { DEFAULT_BONUS_SCHEME as S, bonusFor, bonusLadder, bonusRevenue, dayRangeLabel, monthsAwaitingProfit, revenueBonus } from "./staff-bonus";
+
+describe("each month's figures", () => {
+  it("lists finished months still waiting for their profit, oldest first", () => {
+    const entries = { "2026-08": { profit: 7000, revenueOverride: null }, "2026-09": { profit: null, revenueOverride: 120000 } };
+    expect(monthsAwaitingProfit(["2026-10", "2026-07", "2026-08", "2026-09", "2026-11"], "2026-10", entries)).toEqual(["2026-07", "2026-09"]);
+  });
+  it("counts a loss as entered", () => {
+    expect(monthsAwaitingProfit(["2026-09"], "2026-10", { "2026-09": { profit: -1500, revenueOverride: null } })).toEqual([]);
+  });
+  it("uses a typed revenue over the packed figure, and the packed figure otherwise", () => {
+    expect(bonusRevenue(138450.77, 140000)).toBe(140000);
+    expect(bonusRevenue(138450.77, null)).toBe(138450.77);
+    expect(bonusRevenue(0, null)).toBe(0);
+    expect(bonusRevenue(null, undefined)).toBeNull();
+  });
+  it("labels the days orders went out", () => {
+    expect(dayRangeLabel("2026-09-01", "2026-09-30")).toBe("1 Sep – 30 Sep");
+    expect(dayRangeLabel("2026-10-05", "2026-10-05")).toBe("5 Oct");
+  });
+});
 
 describe("revenueBonus — the table agreed on 27 Oct (minimum £110k, stretch £130k)", () => {
   it.each([

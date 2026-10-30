@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 // No database: nothing here runs a query.
 vi.mock("@workspace/db", () => ({ db: { execute: async () => ({ rows: [] }) }, pool: { query: async () => ({ rows: [] }) } }));
 
-const { default: router, SchemeBody } = await import("./staff-bonus");
+const { default: router, SchemeBody, MonthEntryBody } = await import("./staff-bonus");
 const { requireFounder } = await import("../middleware/founder-access");
 const { requirePeopleUnlock } = await import("../middleware/people-unlock");
 
@@ -24,5 +24,14 @@ describe("bonus calculator API", () => {
     expect(SchemeBody.safeParse({ ...ok, profitFloorPct: 120 }).success).toBe(false);
     expect(SchemeBody.safeParse({ ...ok, atStretch: "500" }).success).toBe(false);
     expect(SchemeBody.safeParse({ ...ok, note: "x" }).success).toBe(false);
+  });
+
+  it("stores a month's profit and revenue override, a loss included, or clears them", () => {
+    expect(MonthEntryBody.safeParse({ profit: 7000 }).success).toBe(true);
+    expect(MonthEntryBody.safeParse({ profit: -2500.5 }).success).toBe(true);
+    expect(MonthEntryBody.safeParse({ revenueOverride: null }).success).toBe(true);
+    expect(MonthEntryBody.safeParse({}).success).toBe(false);
+    expect(MonthEntryBody.safeParse({ profit: "7000" }).success).toBe(false);
+    expect(MonthEntryBody.safeParse({ profit: 1, revenue: 2 }).success).toBe(false);
   });
 });
