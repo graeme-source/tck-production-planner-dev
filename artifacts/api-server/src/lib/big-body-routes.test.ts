@@ -22,6 +22,7 @@ describe("BIG_BODY_JSON_ROUTES", () => {
   it("lets a recipe's product photo and its Shopify create (nutrition PNG) through", () => {
     expect(BIG_BODY_JSON_ROUTES["/api/recipes/:id/product-photo"]).toBe("15mb");
     expect(BIG_BODY_JSON_ROUTES["/api/recipes/:id/shopify-product/create"]).toBe("2mb");
+    expect(BIG_BODY_JSON_ROUTES["/api/recipes/:id/shopify-product/nutrition"]).toBe("2mb");
   });
 
   it("uses absolute /api/ paths (they are matched at app level, before the router)", () => {

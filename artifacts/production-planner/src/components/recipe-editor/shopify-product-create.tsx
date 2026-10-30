@@ -13,12 +13,17 @@
  *   description — plus anything that stops it. "Create draft in Shopify"
  *   makes it; nothing is ever published.
  *
+ *   Already in Shopify → "Add nutrition table" (Graeme, 30 Oct 2026: products
+ *   made before the app could upload files went out without it). Ticks the
+ *   recipe's products with no nutrition image; one that has one is only
+ *   replaced when ticked by hand.
+ *
  * API: routes/recipe-shopify-product.ts. Shapes mirror
  * api-server lib/recipe-shopify-product-preview.ts + -run.ts.
  */
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronDown, ChevronRight, Loader2, ShieldAlert, ShoppingBag, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, ChevronRight, ClipboardList, Loader2, ShieldAlert, ShoppingBag, X } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { base64FromDataUrl, nutritionImageLayout, type NutritionImageRow } from "@/lib/nutrition-image";
@@ -63,6 +68,18 @@ interface Status {
   shopifyUnreachable: boolean;
 }
 interface RunResult { outcome: "created" | "finished" | "blocked"; message: string; product: ProductLink | null; steps: string[]; linkedVariants: string[] }
+interface NutritionTarget { productId: string; title: string; status: string; adminUrl: string; hasNutrition: boolean }
+interface NutritionPlan {
+  writesBlocked: boolean;
+  blockedMessage: string | null;
+  missingScopes: string[];
+  missingFileScopes: string[];
+  products: NutritionTarget[];
+  ticked: string[];
+  nutrition: Preview["nutrition"];
+  blocking: string[];
+}
+interface NutritionRunResult { outcome: "done" | "blocked"; message: string; products: NutritionTarget[] }
 
 const STATUS_LABEL: Record<string, string> = { DRAFT: "Draft", ACTIVE: "Active", ARCHIVED: "Archived", UNLISTED: "Unlisted" };
 
@@ -93,6 +110,7 @@ export function CreateShopifyProductCard({ recipeId, canEdit, unsavedChanges, on
   onLinked: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [nutritionOpen, setNutritionOpen] = useState(false);
   const status = useQuery({
     queryKey: shopifyProductKey(recipeId),
     queryFn: () => call<Status>(`/${recipeId}/shopify-product`),
@@ -121,6 +139,12 @@ export function CreateShopifyProductCard({ recipeId, canEdit, unsavedChanges, on
           ))}
           {s.shopifyUnreachable && <p className="text-sm text-muted-foreground">Couldn't read Shopify just now, so these are the planner's own links.</p>}
           <p className="text-sm text-muted-foreground">Linked to this recipe, so its sales reach the planner. A second product is never made.</p>
+          {canEdit && (
+            <button type="button" onClick={() => setNutritionOpen(true)}
+              className="min-h-12 px-5 rounded-xl border-2 border-border text-base font-semibold hover:bg-secondary inline-flex items-center gap-2">
+              <ClipboardList className="w-5 h-5" /> Add nutrition table
+            </button>
+          )}
         </div>
       )}
 
@@ -156,6 +180,7 @@ export function CreateShopifyProductCard({ recipeId, canEdit, unsavedChanges, on
       )}
 
       {open && <CreateProductDialog recipeId={recipeId} onClose={() => setOpen(false)} onLinked={onLinked} />}
+      {nutritionOpen && <AddNutritionDialog recipeId={recipeId} onClose={() => setNutritionOpen(false)} />}
     </section>
   );
 }
@@ -360,6 +385,138 @@ function CreateProductDialog({ recipeId, onClose, onLinked }: { recipeId: number
                   {create.isPending ? "Making it…" : p?.action === "update" ? "Finish the draft in Shopify" : "Create draft in Shopify"}
                 </button>
               )}
+            </>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** The nutrition table on the recipe's existing Shopify products: preview
+ *  (reads only) → tick → "Put it on". Uploaded once, set on each ticked one. */
+function AddNutritionDialog({ recipeId, onClose }: { recipeId: number; onClose: () => void }) {
+  const [picked, setPicked] = useState<string[] | null>(null);
+  const [result, setResult] = useState<NutritionRunResult | null>(null);
+  const [showNumbers, setShowNumbers] = useState(false);
+  const plan = useQuery({
+    queryKey: ["recipe-shopify-nutrition-preview", recipeId],
+    queryFn: () => call<NutritionPlan>(`/${recipeId}/shopify-product/nutrition/preview`, { method: "POST" }),
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  });
+  const p = plan.data;
+  const ticked = picked ?? p?.ticked ?? [];
+  const toggle = (id: string) => setPicked(ticked.includes(id) ? ticked.filter(x => x !== id) : [...ticked, id]);
+
+  const png = useMemo(() => {
+    if (!p || !p.nutrition.complete) return null;
+    const layout = nutritionImageLayout(p.nutrition.rows, p.nutrition.portionWeightG);
+    if (!layout) return null;
+    try { return drawNutritionPng(layout); } catch { return null; }
+  }, [p]);
+
+  const put = useMutation({
+    mutationFn: () => call<NutritionRunResult>(`/${recipeId}/shopify-product/nutrition`, {
+      method: "POST",
+      body: JSON.stringify({ productIds: ticked, nutritionPngBase64: png ? base64FromDataUrl(png) : "" }),
+    }, true),
+    onSuccess: r => setResult(r),
+  });
+
+  const blockedBy = !p ? null
+    : p.blocking.length && !p.writesBlocked ? p.blocking[0]
+    : !png ? "This page couldn't draw the nutrition table — close and try again."
+    : ticked.length === 0 ? "Tick at least one product."
+    : null;
+  const replacing = p ? p.products.filter(x => x.hasNutrition && ticked.includes(x.productId)).length : 0;
+
+  return (
+    <Dialog open onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] sm:max-w-2xl max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl [&>button:last-child]:hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+          <ClipboardList className="w-6 h-6 text-emerald-600 shrink-0" />
+          <DialogTitle className="flex-1 font-display font-bold text-lg">Add nutrition table</DialogTitle>
+          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close"><X className="w-6 h-6" /></button>
+        </div>
+        <DialogDescription className="sr-only">Put this recipe's nutrition table image on its Shopify products.</DialogDescription>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {plan.isLoading && <p className="flex items-center gap-2 text-base"><Loader2 className="w-5 h-5 animate-spin" /> Reading Shopify and the recipe — nothing is changed…</p>}
+          {plan.error && <p className="text-destructive flex items-center gap-2"><AlertTriangle className="w-5 h-5" /> {(plan.error as Error).message}</p>}
+
+          {result && (result.outcome === "blocked"
+            ? <Banner tone="amber" icon={<ShieldAlert className="w-5 h-5" />}><b>Stopped by the safety switch.</b> {result.message}</Banner>
+            : (
+              <div className="space-y-2">
+                <p className="text-lg font-bold flex items-center gap-2"><Check className="w-6 h-6 text-emerald-600" /> Nutrition table put on</p>
+                <p className="text-base">{result.message}</p>
+                {result.products.map(x => <p key={x.productId} className="text-base flex items-center gap-2 flex-wrap"><b>{x.title}</b> <AdminLink href={x.adminUrl}>Open it in Shopify</AdminLink></p>)}
+              </div>
+            ))}
+
+          {p && !result && (
+            <>
+              {p.writesBlocked && (
+                <Banner tone="amber" icon={<ShieldAlert className="w-5 h-5" />}><b>Shopify writes are switched off on this server.</b> You can see what would happen, but nothing will be put on.</Banner>
+              )}
+              {p.blocking.map(b => <Banner key={b} tone="red" icon={<AlertTriangle className="w-5 h-5" />}>{b}</Banner>)}
+
+              {p.products.length > 0 && (
+                <div className="space-y-2">
+                  <p className="text-base font-bold">Which products?</p>
+                  {p.products.map(x => {
+                    const on = ticked.includes(x.productId);
+                    return (
+                      <label key={x.productId} className={cn("flex items-start gap-3 rounded-2xl border-2 p-3.5 cursor-pointer", on ? "border-emerald-500/50 bg-emerald-500/5" : "border-border")}>
+                        <input type="checkbox" checked={on} onChange={() => toggle(x.productId)} className="w-6 h-6 mt-0.5 accent-emerald-600 shrink-0" />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-base font-semibold">{x.title} <span className="text-sm font-normal text-muted-foreground">({STATUS_LABEL[x.status] ?? x.status})</span></span>
+                          <span className={cn("block text-sm", x.hasNutrition ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>
+                            {x.hasNutrition ? (on ? "Already has a nutrition table — it will be REPLACED" : "Already has a nutrition table — tick to replace it") : "No nutrition table yet"}
+                          </span>
+                        </span>
+                        <AdminLink href={x.adminUrl}>Open</AdminLink>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
+
+              {png && (
+                <div className="space-y-2">
+                  <p className="text-base font-bold">The image that goes on</p>
+                  <img src={png} alt="Nutrition table" className="w-full max-w-[320px] rounded-lg border border-border bg-white" />
+                  <button type="button" onClick={() => setShowNumbers(v => !v)} className="text-sm font-semibold text-primary inline-flex items-center gap-1">
+                    {showNumbers ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />} The numbers
+                  </button>
+                  {showNumbers && <NutritionTable n={p.nutrition} />}
+                </div>
+              )}
+            </>
+          )}
+          {put.error && <p className="text-sm text-destructive flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> {(put.error as Error).message}</p>}
+        </div>
+
+        <div className="border-t border-border px-5 py-3.5 flex items-center gap-3 flex-wrap">
+          {result ? (
+            <>
+              <span className="flex-1" />
+              <button type="button" onClick={onClose} className="min-h-12 px-5 rounded-xl bg-primary text-primary-foreground text-base font-semibold">Done</button>
+            </>
+          ) : (
+            <>
+              <p className="flex-1 text-sm text-muted-foreground min-w-[200px]">{blockedBy ?? (replacing ? `Replaces the table on ${replacing} product${replacing === 1 ? "" : "s"}.` : "Only the nutrition table changes.")}</p>
+              <button type="button" onClick={onClose} className="min-h-12 px-4 rounded-xl border-2 border-border text-base font-semibold hover:bg-secondary">Cancel</button>
+              <button
+                type="button"
+                onClick={() => put.mutate()}
+                disabled={!p || !!blockedBy || put.isPending}
+                className="min-h-12 px-5 rounded-xl bg-emerald-600 text-white text-base font-semibold hover:bg-emerald-700 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {put.isPending && <Loader2 className="w-5 h-5 animate-spin" />}
+                {put.isPending ? "Putting it on…" : `Put it on ${ticked.length || ""} product${ticked.length === 1 ? "" : "s"}`.replace("  ", " ")}
+              </button>
             </>
           )}
         </div>

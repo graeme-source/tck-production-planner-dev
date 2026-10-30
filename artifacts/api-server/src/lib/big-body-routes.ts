@@ -30,4 +30,6 @@ export const BIG_BODY_JSON_ROUTES: Readonly<Record<string, string>> = {
   // "Create Shopify product" on a recipe: its nutrition table PNG (≤800 000
   // base64 characters, checked in the route).
   "/api/recipes/:id/shopify-product/create": "2mb",
+  // …and "Add nutrition table" on a recipe's existing products (same PNG).
+  "/api/recipes/:id/shopify-product/nutrition": "2mb",
 };

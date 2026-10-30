@@ -293,6 +293,23 @@ async function attachNutritionImage(port: ShopifyPort, deps: FileDeps, productId
   }
 }
 
+/** The nutrition table on products that already exist (Graeme, 30 Oct 2026:
+ *  products made before the app could upload files). Uploads the image ONCE
+ *  and points each product's custom.nutritional_info at it in one
+ *  metafieldsSet. Unlike the create run this IS the whole job, so a failure
+ *  throws instead of becoming a step. */
+export async function setNutritionImage(port: ShopifyPort, deps: FileDeps, productIds: string[], image: NonNullable<ApplyInput["nutritionImage"]>): Promise<{ ready: boolean }> {
+  if (productIds.length === 0) throw new Error("No products to put the nutrition table on");
+  const { fileId, ready } = await uploadImageFile(port, deps, image);
+  const s = await port.write<{ metafieldsSet: { userErrors: UserErrors } }>(
+    "metafieldsSet",
+    `mutation($metafields: [MetafieldsSetInput!]!) { metafieldsSet(metafields: $metafields) { metafields { id } userErrors { field message } } }`,
+    { metafields: productIds.map(id => ({ ownerId: productGid(id), namespace: MF.nutrition.namespace, key: MF.nutrition.key, type: MF.nutrition.type, value: fileId })) },
+  );
+  check("attaching the nutrition image", s.metafieldsSet.userErrors);
+  return { ready };
+}
+
 /** Put the recipe's photo on the product's media: staged upload → productUpdate
  *  with `media`. Never fatal, like the nutrition image — except the write
  *  guard, which always stops the run. */

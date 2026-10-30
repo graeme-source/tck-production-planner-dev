@@ -7,7 +7,7 @@ vi.mock("../services/shopify", () => ({
   ShopifyWritesBlockedError: class extends Error {},
 }));
 
-import { applyRecipeProduct, type ApplyInput, type FileDeps, type ProductSnapshot, type ShopifyPort } from "./test-box-shopify";
+import { applyRecipeProduct, setNutritionImage, type ApplyInput, type FileDeps, type ProductSnapshot, type ShopifyPort } from "./test-box-shopify";
 import { MF } from "./test-box-shopify-rules";
 import { PACK_VARIANT_TITLE, recipeProductTags } from "./recipe-shopify-product-rules";
 import { assembleRecipePreview, type PreviewInput } from "./recipe-shopify-product-preview";
@@ -267,5 +267,23 @@ describe("the preview", () => {
   it("a chosen template that has gone from Shopify blocks the create", () => {
     const { preview: p } = assembleRecipePreview({ ...base, choice: { productId: "999", reason: "chosen" } });
     expect(p.blocking[0]).toMatch(/isn't in Shopify any more/);
+  });
+});
+
+describe("adding the nutrition table to products that already exist (fake store)", () => {
+  it("uploads the image once and points every ticked product at it in one call", async () => {
+    const { port, writes } = fakeStore();
+    const { deps, uploads } = fakeFiles();
+    const r = await setNutritionImage(port, deps, ["700", "800"], nutritionImage);
+    expect(r.ready).toBe(true);
+    expect(uploads).toHaveLength(1);
+    expect(writes.map(w => w.op)).toEqual(["stagedUploadsCreate", "fileCreate", "metafieldsSet"]);
+    const set = writes[2].vars as { metafields: Array<{ ownerId: string; namespace: string; key: string; value: string }> };
+    expect(set.metafields.map(m => m.ownerId)).toEqual(["gid://shopify/Product/700", "gid://shopify/Product/800"]);
+    expect(set.metafields.every(m => m.namespace === MF.nutrition.namespace && m.key === MF.nutrition.key && m.value === "gid://shopify/MediaImage/321")).toBe(true);
+  });
+  it("writes nothing with no products, and the write guard stops it", async () => {
+    await expect(setNutritionImage(fakeStore().port, fakeFiles().deps, [], nutritionImage)).rejects.toThrow(/No products/);
+    await expect(setNutritionImage(fakeStore({ blocked: true }).port, fakeFiles().deps, ["700"], nutritionImage)).rejects.toThrow(/switched off/);
   });
 });

@@ -28,15 +28,18 @@ import { intArrayLiteral } from "./int-array-literal";
 import { linkVariantToRecipe } from "./recipe-shopify-mapping";
 import {
   applyRecipeProduct, fetchAccessScopes, fetchProducts, fetchTemplateCandidates, fetchVariantProducts,
-  liveFileDeps, type FileDeps, type ShopifyPort,
+  liveFileDeps, setNutritionImage, type FileDeps, type ShopifyPort,
 } from "./test-box-shopify";
 import {
   STANDARD_COOKING, RunRefused, disclaimerText, productLink, type ContentLoader, type ProductLink,
 } from "./test-box-shopify-run";
 import {
-  chooseTemplate, copiedFromRecipeId, descriptionHtml, nutritionImageForRun, templateSearchQuery,
+  MF, checkNutritionPng, chooseTemplate, copiedFromRecipeId, descriptionHtml, missingFileScopes, missingWriteScopes,
+  nutritionFilename, nutritionImageForRun, nutritionRows, templateSearchQuery, type NutritionRow,
 } from "./test-box-shopify-rules";
-import { PACK_VARIANT_TITLE } from "./recipe-shopify-product-rules";
+import {
+  MAX_NUTRITION_TARGETS, PACK_VARIANT_TITLE, chooseNutritionTargets, defaultNutritionTicks, nutritionAddChecks, type NutritionTarget,
+} from "./recipe-shopify-product-rules";
 import { assembleRecipePreview, type PreviewPlan } from "./recipe-shopify-product-preview";
 import type { ListingRecipeData } from "./listing-description-ai";
 
@@ -282,3 +285,101 @@ export async function listingRecipeData(recipeId: number): Promise<ListingRecipe
   };
 }
 
+
+// ── The nutrition table on products that already exist ─────────────────────
+// Graeme, 30 Oct 2026: "If I add the right [write_files permission], can you
+// do the nutritionals as well?" — for products made before the app could
+// upload files. Same image and metafield as the create run.
+export interface NutritionPlan {
+  recipeName: string;
+  writesBlocked: boolean;
+  blockedMessage: string | null;
+  missingScopes: string[];
+  missingFileScopes: string[];
+  products: NutritionTarget[];
+  /** Ticked to start with: the products with no nutrition table yet. */
+  ticked: string[];
+  nutrition: { complete: boolean; portionWeightG: number | null; rows: NutritionRow[] };
+  blocking: string[];
+}
+
+export async function buildNutritionPlan(recipeId: number, port: ShopifyPort, loadContent: ContentLoader, writesBlocked: boolean): Promise<NutritionPlan> {
+  const [r] = await db.select({ name: recipesTable.name }).from(recipesTable).where(eq(recipesTable.id, recipeId));
+  if (!r) throw new RunRefused(404, "Recipe not found");
+  const mappings = await mappedVariantIds([recipeId]);
+  const [scopes, variantProducts, loaded] = await Promise.all([
+    fetchAccessScopes(port),
+    fetchVariantProducts(port, mappings.map(m => String(m.shopify_variant_id))),
+    loadContent(recipeId),
+  ]);
+  const productIds = [...new Set([...variantProducts.values()].map(v => v.productId))];
+  const snaps = await fetchProducts(port, productIds);
+  const products: NutritionTarget[] = productIds.flatMap(id => {
+    const p = snaps.get(id);
+    if (!p) return [];
+    const hasNutrition = p.metafields.some(m => m.namespace === MF.nutrition.namespace && m.key === MF.nutrition.key && !!m.value?.trim());
+    return [{ ...productLink({ productId: p.id, title: p.title, status: p.status }), hasNutrition }];
+  });
+  const nutrition = {
+    complete: loaded.nutrition?.complete ?? false,
+    portionWeightG: loaded.nutrition?.portionWeightG ?? null,
+    rows: loaded.nutrition ? nutritionRows(loaded.nutrition.per100g, loaded.nutrition.perPortion) : [],
+  };
+  const missing = missingWriteScopes(scopes);
+  const missingFiles = missingFileScopes(scopes);
+  return {
+    recipeName: r.name,
+    writesBlocked,
+    blockedMessage: writesBlocked ? new ShopifyWritesBlockedError("preview").message : null,
+    missingScopes: missing,
+    missingFileScopes: missingFiles,
+    products,
+    ticked: defaultNutritionTicks(products),
+    nutrition,
+    blocking: nutritionAddChecks({
+      nutritionComplete: nutrition.complete, nutritionMissing: loaded.nutrition?.missing ?? [],
+      missingFileScopes: missingFiles, missingWriteScopes: missing, products,
+    }),
+  };
+}
+
+export interface NutritionRunResult {
+  outcome: "done" | "blocked";
+  message: string;
+  products: NutritionTarget[];
+}
+
+export async function runRecipeNutrition(
+  recipeId: number,
+  opts: { productIds: string[]; nutritionPngBase64: string },
+  port: ShopifyPort,
+  loadContent: ContentLoader,
+  writesBlocked: boolean,
+  files: FileDeps = liveFileDeps,
+): Promise<NutritionRunResult> {
+  const plan = await buildNutritionPlan(recipeId, port, loadContent, writesBlocked);
+  // With writes blocked the guard stops it at the first write and says so.
+  const blocking = writesBlocked ? plan.blocking.filter(b => !b.startsWith("Shopify hasn't given")) : plan.blocking;
+  if (blocking.length) throw new RunRefused(422, `${blocking.join(" ")} Nothing was changed.`);
+  const { ids, unknown } = chooseNutritionTargets(plan.products, opts.productIds);
+  if (unknown.length) throw new RunRefused(400, "Those products aren't this recipe's — reload and try again. Nothing was changed.");
+  if (ids.length === 0) throw new RunRefused(400, "Tick at least one product. Nothing was changed.");
+  if (ids.length > MAX_NUTRITION_TARGETS) throw new RunRefused(400, `At most ${MAX_NUTRITION_TARGETS} products at once. Nothing was changed.`);
+  const png = checkNutritionPng(opts.nutritionPngBase64);
+  if (!png.ok) throw new RunRefused(400, `${png.reason}. Nothing was changed.`);
+
+  const done = plan.products.filter(p => ids.includes(p.productId));
+  try {
+    const { ready } = await setNutritionImage(port, files, ids, {
+      bytes: png.bytes, filename: nutritionFilename(plan.recipeName), alt: `${plan.recipeName} nutrition`,
+    });
+    return {
+      outcome: "done",
+      message: `Nutrition table put on ${done.map(p => p.title).join(", ")}.${ready ? "" : " Shopify is still processing the image — it shows in a minute."}`,
+      products: done.map(p => ({ ...p, hasNutrition: true })),
+    };
+  } catch (err) {
+    if (err instanceof ShopifyWritesBlockedError) return { outcome: "blocked", message: err.message, products: [] };
+    throw err;
+  }
+}

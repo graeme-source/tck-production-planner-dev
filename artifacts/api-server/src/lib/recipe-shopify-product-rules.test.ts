@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   PACK_VARIANT_TITLE, decideListingAction, listingChecks, perPackForProduct, photoLine, planVariants, recipeProductTags,
-  type ListingCheckInput,
+  chooseNutritionTargets, defaultNutritionTicks, nutritionAddChecks,
+  type ListingCheckInput, type NutritionTarget,
 } from "./recipe-shopify-product-rules";
 
 describe("tags", () => {
@@ -100,4 +101,27 @@ describe("what stops the create, and what's worth knowing", () => {
 it("the photo line", () => {
   expect(photoLine({ width: 2000, height: 1500 })).toEqual({ willAttach: true, summary: expect.stringContaining("2000 × 1500") });
   expect(photoLine(null).willAttach).toBe(false);
+});
+
+describe("the nutrition table on products that already exist (30 Oct 2026)", () => {
+  const two: NutritionTarget = { productId: "700", title: "Chicken & Tarragon", status: "DRAFT", adminUrl: "u", hasNutrition: false };
+  const core: NutritionTarget = { productId: "800", title: "Chicken & Tarragon 8 Pack", status: "ACTIVE", adminUrl: "u", hasNutrition: true };
+  const ok = { nutritionComplete: true, nutritionMissing: [], missingFileScopes: [], missingWriteScopes: [], products: [two] };
+
+  it("goes ahead with complete nutrition, a linked product and both permissions", () => {
+    expect(nutritionAddChecks(ok)).toEqual([]);
+  });
+  it("says what stops it", () => {
+    expect(nutritionAddChecks({ ...ok, products: [] })[0]).toMatch(/isn't linked to a Shopify product/);
+    expect(nutritionAddChecks({ ...ok, nutritionComplete: false, nutritionMissing: ["salt"] })[0]).toMatch(/nutrition isn't complete \(missing: salt\)/);
+    expect(nutritionAddChecks({ ...ok, missingFileScopes: ["write_files"] })[0]).toMatch(/upload files \(missing: write_files\)/);
+    expect(nutritionAddChecks({ ...ok, missingWriteScopes: ["write_products"] })[0]).toMatch(/change products/);
+  });
+  it("ticks only the products without one — an existing table is replaced only by hand", () => {
+    expect(defaultNutritionTicks([two, core])).toEqual(["700"]);
+  });
+  it("keeps to this recipe's own products, once each", () => {
+    expect(chooseNutritionTargets([two, core], ["700", "700", "800"])).toEqual({ ids: ["700", "800"], unknown: [] });
+    expect(chooseNutritionTargets([two], ["700", "999"])).toEqual({ ids: ["700"], unknown: ["999"] });
+  });
 });

@@ -38,7 +38,7 @@ import { draftListingDescription } from "../services/listing-description-writer"
 import { liveShopify } from "../lib/test-box-shopify";
 import { recipeContentLoader } from "../lib/recipe-shopify-content";
 import {
-  RunRefused, buildRecipePlan, listingRecipeData, recipeShopifyStatus, runRecipeCreate,
+  RunRefused, buildNutritionPlan, buildRecipePlan, listingRecipeData, recipeShopifyStatus, runRecipeCreate, runRecipeNutrition,
 } from "../lib/recipe-shopify-product-run";
 
 const router: IRouter = Router();
@@ -191,6 +191,37 @@ router.post("/:id/shopify-product/create", requireManagerOrAdmin, validate(Creat
     res.json(result);
   } catch (err) {
     fail(res, err, "create");
+  } finally {
+    running.delete(id);
+  }
+});
+
+// ── The nutrition table on products that already exist ─────────────────────
+// (Graeme, 30 Oct 2026 — products made before write_files was granted.)
+router.post("/:id/shopify-product/nutrition/preview", requireManagerOrAdmin, async (req: Request, res: Response) => {
+  const id = recipeId(req, res); if (!id) return;
+  try {
+    res.json(await buildNutritionPlan(id, liveShopify, recipeContentLoader(req), shopifyWritesBlocked()));
+  } catch (err) { fail(res, err, "nutrition preview"); }
+});
+
+const NutritionBody = z.object({
+  productIds: z.array(ShopifyId).min(1, "Tick at least one product").max(25),
+  // The nutrition table as a base64 PNG, drawn in the browser; checked again
+  // by checkNutritionPng before any upload.
+  nutritionPngBase64: z.string().min(100).max(800_000, "The nutrition image is too big"),
+});
+router.post("/:id/shopify-product/nutrition", requireManagerOrAdmin, validate(NutritionBody), async (req: Request, res: Response) => {
+  const id = recipeId(req, res); if (!id) return;
+  const b = NutritionBody.parse(req.body);
+  if (running.has(id)) { res.status(409).json({ error: "Already working on this recipe's product — wait for it to finish." }); return; }
+  running.add(id);
+  try {
+    const result = await runRecipeNutrition(id, b, liveShopify, recipeContentLoader(req), shopifyWritesBlocked());
+    if (result.outcome === "blocked") { res.status(503).json({ ...result, error: result.message, code: "SHOPIFY_WRITES_BLOCKED" }); return; }
+    res.json(result);
+  } catch (err) {
+    fail(res, err, "nutrition");
   } finally {
     running.delete(id);
   }

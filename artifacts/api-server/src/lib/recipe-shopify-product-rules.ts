@@ -139,3 +139,49 @@ export function photoLine(photo: { width: number; height: number } | null): { wi
     ? { willAttach: true, summary: `The recipe's photo (${photo.width} × ${photo.height}) — uploaded to the product's images` }
     : { willAttach: false, summary: "No photo on the recipe — the product is made without a picture (the template's images are never copied)" };
 }
+
+// ── The nutrition table on products that already exist ─────────────────────
+// Graeme, 30 Oct 2026: products made before the app could upload files went
+// out without the nutrition image, and "Create" never runs twice on a linked
+// recipe — so the card offers "Add nutrition table" for them.
+
+/** metafieldsSet takes at most 25 metafields in one call. */
+export const MAX_NUTRITION_TARGETS = 25;
+
+export interface NutritionTarget { productId: string; title: string; status: string; adminUrl: string; hasNutrition: boolean }
+
+/** What stops the nutrition table going on (empty = it can). */
+export function nutritionAddChecks(i: {
+  nutritionComplete: boolean;
+  nutritionMissing: string[];
+  missingFileScopes: string[];
+  missingWriteScopes: string[];
+  products: NutritionTarget[];
+}): string[] {
+  const out: string[] = [];
+  if (i.products.length === 0) out.push("This recipe isn't linked to a Shopify product yet — create it first.");
+  if (!i.nutritionComplete) {
+    out.push(`The recipe's nutrition isn't complete${i.nutritionMissing.length ? ` (missing: ${i.nutritionMissing.join(", ")})` : ""} — finish it on the Label tab first.`);
+  }
+  if (i.missingWriteScopes.length) out.push(`Shopify hasn't given the app permission to change products (missing: ${i.missingWriteScopes.join(", ")}).`);
+  if (i.missingFileScopes.length) out.push(`Shopify hasn't given the app permission to upload files (missing: ${i.missingFileScopes.join(", ")}).`);
+  return out;
+}
+
+/** Ticked to start with: only the products with no nutrition table — one
+ *  already there is only replaced when it's ticked by hand. */
+export function defaultNutritionTicks(products: NutritionTarget[]): string[] {
+  return products.filter(p => !p.hasNutrition).map(p => p.productId);
+}
+
+/** The ticked ids, kept to this recipe's own products, no repeats. */
+export function chooseNutritionTargets(products: NutritionTarget[], requested: string[]): { ids: string[]; unknown: string[] } {
+  const own = new Set(products.map(p => p.productId));
+  const ids: string[] = [];
+  const unknown: string[] = [];
+  for (const id of requested) {
+    if (!own.has(id)) { if (!unknown.includes(id)) unknown.push(id); continue; }
+    if (!ids.includes(id)) ids.push(id);
+  }
+  return { ids, unknown };
+}
