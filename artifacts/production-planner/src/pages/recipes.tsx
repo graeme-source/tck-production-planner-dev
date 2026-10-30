@@ -253,7 +253,6 @@ type SubRecipeOption = {
 // artifacts/api-server/src/routes/recipes.ts) that the generated OpenAPI
 // types don't describe yet.
 type RecipeExtras = {
-  labelLiveDesignName?: string | null;
   isFridgeProduct?: boolean;
   dietaryCategory?: "meat" | "vegetarian" | null;
   ovenTempC?: number | null;
@@ -531,7 +530,7 @@ function RecipeForm({
             </>,
           },
           details: {
-            hint: "Name, sizes, price, menu",
+            hint: "Name, tags, sizes, price, menu",
             fields: <>
               <EditorSection title="Name and description">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -845,39 +844,6 @@ function EditRecipeDialog({
   const [shopifyAdding, setShopifyAdding] = useState(false);
   const [shopifyEditing, setShopifyEditing] = useState(false);
 
-  // Label LIVE design mapping — which pinned design prints this recipe's
-  // ingredient-deck label. Saved separately from the main form (like the
-  // Shopify mapping) so it never interacts with form dirty-state.
-  const [labelDesign, setLabelDesign] = useState("");
-  const [labelDesignSaved, setLabelDesignSaved] = useState("");
-  const [labelDesignSaving, setLabelDesignSaving] = useState(false);
-  useEffect(() => {
-    const v = detail?.labelLiveDesignName;
-    const s = typeof v === "string" ? v : "";
-    setLabelDesign(s);
-    setLabelDesignSaved(s);
-  }, [detail]);
-  async function saveLabelDesign() {
-    setLabelDesignSaving(true);
-    try {
-      const res = await fetch(`/api/recipes/${id}/label-design`, {
-        method: "PUT",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ designName: labelDesign.trim() || null }),
-      });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to save");
-      const row = await res.json() as { labelLiveDesignName: string | null };
-      setLabelDesignSaved(row.labelLiveDesignName ?? "");
-      setLabelDesign(row.labelLiveDesignName ?? "");
-      queryClient.invalidateQueries({ queryKey: [`/api/recipes/${id}`] });
-    } catch {
-      // leave the field as typed; the Save button stays visible for retry
-    } finally {
-      setLabelDesignSaving(false);
-    }
-  }
-
   useEffect(() => {
     if (!open) return;
     // Load current mappings (now returns array)
@@ -1074,28 +1040,6 @@ function EditRecipeDialog({
                   <h4 className="text-sm font-semibold">Ingredient Deck</h4>
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">Generated from the saved recipe. Save and reopen to see edits reflected.</p>
-                <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  <label className="text-xs font-medium text-muted-foreground whitespace-nowrap">Label LIVE design:</label>
-                  <input
-                    value={labelDesign}
-                    onChange={e => setLabelDesign(e.target.value)}
-                    placeholder="e.g. tck-margherita-back"
-                    className="flex-1 min-w-[200px] px-2.5 py-1.5 text-xs font-mono bg-background border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/30"
-                  />
-                  {labelDesign.trim() !== labelDesignSaved.trim() && (
-                    <button
-                      type="button"
-                      onClick={saveLabelDesign}
-                      disabled={labelDesignSaving}
-                      className="px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
-                    >
-                      {labelDesignSaving ? "Saving…" : "Save"}
-                    </button>
-                  )}
-                  {labelDesignSaved && labelDesign.trim() === labelDesignSaved.trim() && (
-                    <span className="text-xs text-emerald-600 dark:text-emerald-400">✓ mapped</span>
-                  )}
-                </div>
                 <RecipeIngredientDeckPanel id={id} active={open && !isLoading && !isFetching} refreshKey={detail?.ingredients?.length} />
                 <RecipeLabelLink recipeId={id} active={open && !isLoading && !isFetching} />
               </div>
