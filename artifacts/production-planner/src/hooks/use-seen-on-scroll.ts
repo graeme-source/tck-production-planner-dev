@@ -1,10 +1,11 @@
 /**
- * Marks an improvement seen once it has been read and scrolled past — the
- * rules are in lib/seen-on-scroll.ts. Fires at most once per card.
+ * Marks an improvement seen once it has sat in view, read to its end, for
+ * about three seconds — or been skimmed and scrolled past. The rules are in
+ * lib/seen-on-scroll.ts. Fires at most once per card.
  *
  * Samples the card's position on every scroll of the box it lives in (one
  * per animation frame) and four times a second while it sits still, so the
- * dwell clock runs while you read and "past" is judged from where the card
+ * clocks run while you read and "in view" / "past" are judged from where the card
  * actually is — not from catching one exact edge-crossing event, which the
  * first version depended on and often missed (Graeme, 16 and 24 Oct).
  */
