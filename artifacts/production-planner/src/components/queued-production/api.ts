@@ -22,7 +22,7 @@ export interface QueueRow {
 
 export type IngredientOrderStatus = "special" | "short" | "check" | "covered";
 
-export type IngredientMark = "ordered" | "not_needed";
+export type IngredientMark = "ordered" | "not_needed" | "queued";
 
 export interface IngredientsResponse { deliverBy: string; ingredients: QueueIngredient[] }
 
@@ -177,16 +177,17 @@ export async function cancelQueueRow(id: number) {
   return json<{ ok: true }>(`/api/queued-production/${id}`, { method: "DELETE" });
 }
 
-export async function createOrders(productionDate: string, ingredientIds: number[]) {
-  return json<{ created: Array<{ poId: number; supplierName: string }>; missingSupplier: Array<{ name: string }> }>("/api/queued-production/create-orders", {
+/** Put ticked ingredients on today's Orders page supplier cards. */
+export async function addToOrders(productionDate: string, ingredientIds: number[]) {
+  return json<{ added: number }>("/api/queued-production/add-to-orders", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productionDate, ingredientIds }),
   });
 }
 
-/** Place a draft for delivery on `deliverBy` (the day before prep). */
-export async function placeOrder(poId: number, deliverBy: string | null) {
-  return json<{ expectedDeliveryDate?: string }>(`/api/orders/purchase-orders/${poId}/place`, {
-    method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(deliverBy ? { expectedDeliveryDate: deliverBy } : {}),
+/** "Not today" on an Orders card: back onto the test list. */
+export async function clearIngredientMark(productionDate: string, ingredientId: number) {
+  return json<{ ok: true }>("/api/queued-production/mark", {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ productionDate, ingredientId, mark: null }),
   });
 }
 

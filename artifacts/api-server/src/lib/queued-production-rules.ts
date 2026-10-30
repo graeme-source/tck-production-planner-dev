@@ -136,10 +136,19 @@ export function classifyIngredientNeed(i: IngredientNeedInput): IngredientNeed {
     : { status: "covered", reason: null, toOrder: 0 };
 }
 
-export type IngredientMark = "ordered" | "not_needed";
+export type IngredientMark = "ordered" | "not_needed" | "queued";
 
 /** Still to order: listed, something to order, and nobody has ticked it
  *  ordered or not needed. */
 export function outstanding(status: IngredientOrderStatus, toOrder: number, mark: IngredientMark | null): boolean {
   return status !== "covered" && toOrder > 0 && mark == null;
+}
+
+/** Packs to order for `qty` of an ingredient: whole packs, then whole cases. */
+export function packsFor(qty: number, packWeight: number, caseSizePacks: number | null): number {
+  if (!(qty > 0)) return 0;
+  const pw = packWeight > 0 ? packWeight : 1;
+  let packs = Math.ceil(Math.round((qty / pw) * 1e6) / 1e6);
+  if (caseSizePacks && caseSizePacks > 0) packs = Math.ceil(packs / caseSizePacks) * caseSizePacks;
+  return packs;
 }

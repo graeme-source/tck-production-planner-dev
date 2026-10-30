@@ -40,8 +40,9 @@ export type QueuedProduction = typeof queuedProductionTable.$inferSelect;
 export const insertQueuedProductionSchema = createInsertSchema(queuedProductionTable).omit({ id: true, createdAt: true });
 
 /**
- * What happened to each ingredient a queued day needs (migration 0346):
- * 'ordered' (ticked, or ordered through the queue — poId set) or
+ * What happened to each ingredient a queued day needs (migrations 0346,
+ * 0347): 'queued' (on today's Orders page supplier card — supplierId,
+ * packs), 'ordered' (ticked, or that supplier's order placed — poId set) or
  * 'not_needed'. No row = still to order. Objective B.
  */
 export const queuedIngredientMarksTable = pgTable("queued_ingredient_marks", {
@@ -49,6 +50,8 @@ export const queuedIngredientMarksTable = pgTable("queued_ingredient_marks", {
   ingredientId: integer("ingredient_id").notNull(),
   mark: text("mark").notNull(),
   poId: integer("po_id"),
+  supplierId: integer("supplier_id"),
+  packs: integer("packs"),
   markedByUserId: integer("marked_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
   markedByName: text("marked_by_name"),
   markedAt: timestamp("marked_at").notNull().defaultNow(),
