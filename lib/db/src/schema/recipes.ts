@@ -9,6 +9,11 @@ export const recipesTable = pgTable("recipes", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
+  // The Shopify product page's description (migration 0345): a paragraph or
+  // two on what the recipe is and why it's special — drafted with AI on the
+  // Details tab and reviewed. `description` stays the short recipe line
+  // (custom.product_recipe metafield).
+  shopifyListingDescription: text("shopify_listing_description"),
   servings: numeric("servings", { precision: 10, scale: 4 }).notNull(),
   servingUnit: text("serving_unit").notNull(),
   category: text("category"),

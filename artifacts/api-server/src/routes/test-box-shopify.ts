@@ -36,8 +36,9 @@ import { shopifyWritesBlocked, ShopifyWritesBlockedError } from "../services/sho
 import { liveShopify, searchProducts } from "../lib/test-box-shopify";
 import { collectionStatus, discountStatus, runCreateCollection, runCreateDiscount } from "../lib/test-box-shopify-launch";
 import {
-  RunRefused, boxRecipeIds, buildPlan, linkExisting, runCreate, type ContentLoader, type LoadedContent,
+  RunRefused, boxRecipeIds, buildPlan, linkExisting, runCreate,
 } from "../lib/test-box-shopify-run";
+import { recipeContentLoader } from "../lib/recipe-shopify-content";
 
 const router: IRouter = Router();
 router.use("/:id/shopify", requireFounderArea("founder.sales"));
@@ -53,39 +54,10 @@ async function actor(req: Request) {
   return { id, name: u?.name ?? "Someone" };
 }
 
-/**
- * The recipe's deck and nutrition straight from the app's own endpoints over
- * loopback (same pattern as push-ingredient-deck and the spec sheet), so the
- * product always says exactly what the recipe page says.
- */
-function contentLoader(req: Request): ContentLoader {
-  const port = process.env["PORT"];
-  const cookie = req.headers.cookie ?? "";
-  const get = async <T>(path: string): Promise<T | null> => {
-    if (!port) return null;
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}${path}`, { headers: { cookie } });
-      return r.ok ? ((await r.json()) as T) : null;
-    } catch { return null; }
-  };
-  return async (recipeId: number): Promise<LoadedContent> => {
-    const [deck, nutri] = await Promise.all([
-      get<{ deckText: string; mayContainStatement: string | null; isComplete: boolean; missingDeclarations?: string[]; unwrappedDeclarations?: string[] }>(`/api/recipes/${recipeId}/ingredient-deck`),
-      get<{ per100g: Record<string, number | null>; perPortion: Record<string, number | null> | null; portionWeightG: number | null; completeness: { missingNutritionals: string[] } }>(`/api/recipes/${recipeId}/nutritionals`),
-    ]);
-    return {
-      deck: deck ? {
-        deckText: deck.deckText ?? "", mayContainStatement: deck.mayContainStatement ?? null, isComplete: deck.isComplete === true,
-        missing: [...(deck.missingDeclarations ?? []), ...(deck.unwrappedDeclarations ?? [])],
-      } : null,
-      nutrition: nutri ? {
-        per100g: nutri.per100g, perPortion: nutri.perPortion, portionWeightG: nutri.portionWeightG,
-        complete: (nutri.completeness?.missingNutritionals?.length ?? 0) === 0,
-        missing: nutri.completeness?.missingNutritionals ?? [],
-      } : null,
-    };
-  };
-}
+/** The recipe's deck and nutrition straight from the app's own endpoints
+ *  (lib/recipe-shopify-content.ts, shared with "Create Shopify product" on a
+ *  recipe), so the product always says exactly what the recipe page says. */
+const contentLoader = recipeContentLoader;
 
 function fail(res: Response, err: unknown, where: string) {
   if (err instanceof RunRefused) { res.status(err.status).json({ error: err.message }); return; }

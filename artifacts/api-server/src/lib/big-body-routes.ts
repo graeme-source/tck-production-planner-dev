@@ -24,4 +24,10 @@ export const BIG_BODY_JSON_ROUTES: Readonly<Record<string, string>> = {
   // Test box → Shopify products: each recipe's nutrition table PNG (≈50 KB,
   // at most 10 recipes × 800 000 base64 characters, checked in the route).
   "/api/test-boxes/:id/shopify/create": "9mb",
+  // A recipe's product photo for Shopify, as base64 (≤10 MB decoded, size
+  // and type re-read from the image header in the route).
+  "/api/recipes/:id/product-photo": "15mb",
+  // "Create Shopify product" on a recipe: its nutrition table PNG (≤800 000
+  // base64 characters, checked in the route).
+  "/api/recipes/:id/shopify-product/create": "2mb",
 };

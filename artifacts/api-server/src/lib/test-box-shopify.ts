@@ -17,6 +17,12 @@
  *     MediaImage until READY) → metafieldsSet custom.nutritional_info — the
  *     nutrition image; needs write_files, and is skipped (never fatal) when
  *     there is no image or the upload fails
+ * Also used by "Create Shopify product" on a recipe (recipe-shopify-product-
+ * run.ts), which additionally sends:
+ *   productVariantsBulkDelete — on the new product, every variant but the 2 Pack
+ *   productUpdate(product: { productType: "" }) — product type blank
+ *   stagedUploadsCreate → POST → productUpdate(media: [...]) — the recipe's
+ *     photo on the product (never fatal)
  * The app's Shopify connection had NEITHER write_products NOR write_discounts
  * on 2026-10-02 (read-only check of currentAppInstallation.accessScopes), so
  * the previews say so and the creates refuse until the scopes are added.
@@ -28,6 +34,7 @@ import { shopifyGraphQL, shopifyGraphQLWrite, shopifyWritesBlocked, ShopifyWrite
 import {
   MF, metafieldPlan, productSearchQuery, type CollectionInfo, type MetafieldRef, type MetafieldValue, type RecipeContent, type TemplateCandidate,
 } from "./test-box-shopify-rules";
+import { planVariants } from "./recipe-shopify-product-rules";
 import type { ExistingDiscount } from "./test-box-discount-rules";
 
 export interface ShopifyPort {
@@ -178,6 +185,16 @@ export interface ApplyInput {
    *  checkNutritionPng). Absent: no image is put on — the template's is
    *  still removed. */
   nutritionImage?: { bytes: Uint8Array; filename: string; alt: string } | null;
+  // ── Used by "Create Shopify product" on a recipe (recipe-shopify-product-
+  //    run.ts); absent for a test box, which behaves exactly as before. ──
+  /** Product type to set — "" keeps the product out of the menu's
+   *  TYPE = Calzones collection. Absent: left as duplicated. */
+  productType?: string;
+  /** On a NEW product, keep only the variant with this title ("2 Pack") and
+   *  delete the rest (rules planVariants). Refuses if there isn't one. */
+  onlyVariantTitled?: string;
+  /** The recipe's product photo, uploaded to the product's media. */
+  productPhoto?: { bytes: Uint8Array; filename: string; alt: string; mimeType: string } | null;
 }
 
 // ── File uploads (the nutrition image) ──────────────────────────────────────
@@ -205,24 +222,32 @@ export interface FileDeps {
 }
 export const liveFileDeps: FileDeps = { upload: liveUploader, sleep: ms => new Promise(r => setTimeout(r, ms)), pollTries: 10 };
 
+/** stagedUploadsCreate → POST the bytes there. Returns the staged file's
+ *  resourceUrl, which fileCreate / product media take as originalSource. */
+async function stageImage(port: ShopifyPort, deps: FileDeps, file: { bytes: Uint8Array; filename: string; mimeType?: string }): Promise<string> {
+  const mimeType = file.mimeType ?? "image/png";
+  const st = await port.write<{ stagedUploadsCreate: { stagedTargets: StagedTarget[] | null; userErrors: UserErrors } }>(
+    "stagedUploadsCreate",
+    `mutation($input: [StagedUploadInput!]!) {
+      stagedUploadsCreate(input: $input) { stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } }
+    }`,
+    { input: [{ resource: "IMAGE", filename: file.filename, mimeType, httpMethod: "POST", fileSize: String(file.bytes.length) }] },
+  );
+  check("the upload slot", st.stagedUploadsCreate.userErrors);
+  const target = st.stagedUploadsCreate.stagedTargets?.[0];
+  if (!target) throw new Error("Shopify didn't give an upload slot");
+  await deps.upload(target, { bytes: file.bytes, filename: file.filename, mimeType });
+  return target.resourceUrl;
+}
+
 /**
  * Upload a PNG to Shopify Files and wait (briefly) for it: stagedUploadsCreate
  * → POST → fileCreate → poll. Returns the MediaImage gid and whether it was
  * READY in time (a file still processing can already be referenced).
  */
 export async function uploadImageFile(port: ShopifyPort, deps: FileDeps, file: { bytes: Uint8Array; filename: string; alt: string }): Promise<{ fileId: string; ready: boolean }> {
-  const st = await port.write<{ stagedUploadsCreate: { stagedTargets: StagedTarget[] | null; userErrors: UserErrors } }>(
-    "stagedUploadsCreate",
-    `mutation($input: [StagedUploadInput!]!) {
-      stagedUploadsCreate(input: $input) { stagedTargets { url resourceUrl parameters { name value } } userErrors { field message } }
-    }`,
-    { input: [{ resource: "IMAGE", filename: file.filename, mimeType: "image/png", httpMethod: "POST", fileSize: String(file.bytes.length) }] },
-  );
-  check("the upload slot", st.stagedUploadsCreate.userErrors);
-  const target = st.stagedUploadsCreate.stagedTargets?.[0];
-  if (!target) throw new Error("Shopify didn't give an upload slot");
-
-  await deps.upload(target, { bytes: file.bytes, filename: file.filename, mimeType: "image/png" });
+  const resourceUrl = await stageImage(port, deps, file);
+  const target = { resourceUrl };
 
   const fc = await port.write<{ fileCreate: { files: Array<{ id: string; fileStatus: string }> | null; userErrors: UserErrors } }>(
     "fileCreate",
@@ -268,6 +293,29 @@ async function attachNutritionImage(port: ShopifyPort, deps: FileDeps, productId
   }
 }
 
+/** Put the recipe's photo on the product's media: staged upload → productUpdate
+ *  with `media`. Never fatal, like the nutrition image — except the write
+ *  guard, which always stops the run. */
+async function attachProductPhoto(port: ShopifyPort, deps: FileDeps, productId: string, photo: NonNullable<ApplyInput["productPhoto"]>): Promise<string> {
+  try {
+    const resourceUrl = await stageImage(port, deps, photo);
+    const r = await port.write<{ productUpdate: { userErrors: UserErrors } }>(
+      "productUpdateMedia",
+      `mutation($product: ProductUpdateInput!, $media: [CreateMediaInput!]) {
+        productUpdate(product: $product, media: $media) { product { id } userErrors { field message } }
+      }`,
+      { product: { id: productGid(productId) }, media: [{ originalSource: resourceUrl, mediaContentType: "IMAGE", alt: photo.alt.slice(0, 500) }] },
+    );
+    check("adding the photo", r.productUpdate.userErrors);
+    return "Uploaded the recipe's photo to the product's images (Shopify may take a minute to show it)";
+  } catch (err) {
+    if (err instanceof ShopifyWritesBlockedError) throw err;
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[recipe-shopify-product] photo for product ${productId}:`, msg);
+    return `Product photo NOT put on: ${msg}. Add it in Shopify by hand.`;
+  }
+}
+
 export interface ApplyResult {
   productId: string;
   title: string;
@@ -308,6 +356,25 @@ export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, o
   const product = (await fetchProducts(port, [productId])).get(productId);
   if (!product) throw new Error("The product isn't in Shopify any more");
 
+  // Recipe flow: a new product keeps only its 2 Pack (no 8 Pack by default).
+  let variants = product.variants;
+  if (input.action === "create" && input.onlyVariantTitled) {
+    const vp = planVariants(product.variants, input.onlyVariantTitled);
+    if (!vp.keep) throw new Error(vp.problem ?? "No variant to keep");
+    if (vp.remove.length) {
+      const d = await port.write<{ productVariantsBulkDelete: { userErrors: UserErrors } }>(
+        "productVariantsBulkDelete",
+        `mutation($productId: ID!, $variantsIds: [ID!]!) {
+          productVariantsBulkDelete(productId: $productId, variantsIds: $variantsIds) { product { id } userErrors { field message } }
+        }`,
+        { productId: productGid(productId), variantsIds: vp.remove.map(v => variantGid(v.id)) },
+      );
+      check("removing the other variants", d.productVariantsBulkDelete.userErrors);
+      steps.push(`Removed the template's other variant${vp.remove.length === 1 ? "" : "s"} (${vp.remove.map(v => v.title).join(", ")}) — only the ${vp.keep.title} is kept`);
+    }
+    variants = [vp.keep];
+  }
+
   // Title, exact tags, description; status DRAFT only on the first make —
   // a re-run never un-publishes a product that has gone live.
   const u = await port.write<{ productUpdate: { userErrors: UserErrors } }>(
@@ -316,19 +383,23 @@ export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, o
     {
       product: {
         id: productGid(productId), title: input.title, tags: input.tags, descriptionHtml: input.descriptionHtml,
+        ...(input.productType !== undefined ? { productType: input.productType } : {}),
         ...(input.action === "create" ? { status: "DRAFT" } : {}),
       },
     },
   );
   check("the product update", u.productUpdate.userErrors);
-  steps.push(input.action === "create" ? "Set title, tags and description; status Draft" : "Updated title, tags and description");
+  steps.push(
+    (input.action === "create" ? "Set title, tags and description; status Draft" : "Updated title, tags and description")
+    + (input.productType === "" ? "; product type blank (kept off the main menu)" : ""),
+  );
 
   // Barcodes blank on a new product (GS1 numbers go on by hand) — never on a
   // re-run, they may have been added since. Price from the recipe's RRP, on
   // a one-variant product only, every run.
   const clearBarcode = input.action === "create";
-  const price = input.price && product.variants.length === 1 ? input.price : null;
-  if (product.variants.length && (clearBarcode || price)) {
+  const price = input.price && variants.length === 1 ? input.price : null;
+  if (variants.length && (clearBarcode || price)) {
     const b = await port.write<{ productVariantsBulkUpdate: { userErrors: UserErrors } }>(
       "productVariantsBulkUpdate",
       `mutation($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
@@ -336,7 +407,7 @@ export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, o
       }`,
       {
         productId: productGid(productId),
-        variants: product.variants.map(v => ({ id: variantGid(v.id), ...(clearBarcode ? { barcode: null } : {}), ...(price ? { price } : {}) })),
+        variants: variants.map(v => ({ id: variantGid(v.id), ...(clearBarcode ? { barcode: null } : {}), ...(price ? { price } : {}) })),
       },
     );
     check(clearBarcode ? "clearing the barcode" : "setting the price", b.productVariantsBulkUpdate.userErrors);
@@ -367,11 +438,18 @@ export async function applyRecipeProduct(port: ShopifyPort, input: ApplyInput, o
   // A fresh nutrition image every run (a re-run replaces the last one).
   if (input.nutritionImage) steps.push(await attachNutritionImage(port, files, productId, input.nutritionImage));
 
+  // The recipe's photo — on a new product, or on a re-run only while the
+  // product still has no image (so finishing a broken run never adds a
+  // second copy).
+  if (input.productPhoto && (input.action === "create" || product.imageCount === 0)) {
+    steps.push(await attachProductPhoto(port, files, productId, input.productPhoto));
+  }
+
   return {
     productId,
     title: input.title,
     status: input.action === "create" ? "DRAFT" : product.status,
-    variants: product.variants.map(v => ({ id: v.id, title: v.title, sku: v.sku })),
+    variants: variants.map(v => ({ id: v.id, title: v.title, sku: v.sku })),
     steps,
   };
 }
