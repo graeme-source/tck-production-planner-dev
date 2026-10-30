@@ -14,7 +14,7 @@ import {
 } from "./test-box-shopify-rules";
 import {
   DECK_INCOMPLETE_HEADLINE, DECK_LEFT_OFF, NUTRITION_INCOMPLETE_HEADLINE, PACK_VARIANT_TITLE, barcodePreviewLine, decideListingAction,
-  listingChecks, photoLine, planVariants, recipeProductTags, type ListingAction, type PackBarcodeState,
+  listingChecks, photoLine, planVariants, recipeProductTags, leftOutTags, type ListingAction, type PackBarcodeState,
 } from "./recipe-shopify-product-rules";
 
 // Mirrored in production-planner components/recipe-editor/shopify-product-create.tsx.
@@ -33,6 +33,8 @@ export interface RecipeProductPreview {
   status: "DRAFT";
   productType: string;
   tags: string[];
+  /** The recipe's tags that aren't sent, and why (Meals, Draft…). */
+  tagsLeftOut: Array<{ tag: string; reason: string }>;
   variant: { title: string; removed: string[] };
   price: { set: string | null; summary: string };
   /** The 2 Pack's barcode: the app's (Label tab, or typed in the window). */
@@ -177,6 +179,7 @@ export function assembleRecipePreview(i: PreviewInput): PreviewPlan {
     status: "DRAFT",
     productType: "",
     tags: recipeProductTags(r.tags),
+    tagsLeftOut: leftOutTags(r.tags),
     variant: { title: kept[0]?.title ?? PACK_VARIANT_TITLE, removed: action === "create" ? (vp?.remove ?? []).map(v => v.title) : [] },
     price: { set: price.price, summary: price.summary },
     barcode: barcodePreviewLine(action, i.barcode ?? null),

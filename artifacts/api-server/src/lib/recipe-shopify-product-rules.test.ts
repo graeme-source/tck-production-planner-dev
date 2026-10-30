@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  PACK_VARIANT_TITLE, decideListingAction, listingChecks, perPackForProduct, photoLine, planVariants, recipeProductTags,
+  PACK_VARIANT_TITLE, decideListingAction, listingChecks, perPackForProduct, photoLine, planVariants, recipeProductTags, leftOutTags,
   chooseNutritionTargets, defaultNutritionTicks, nutritionAddChecks,
   DECK_LEFT_OFF, barcodeAfterCreateLine, barcodePreviewLine,
   type ListingCheckInput, type NutritionTarget, type PackBarcodeAfter,
@@ -44,13 +44,19 @@ describe("the barcode line in the result", () => {
 });
 
 describe("tags", () => {
-  it("base tags first, then the recipe's own — deduped in any case, blanks dropped", () => {
-    expect(recipeProductTags(["Winter Warmers Test Box", "Calzones", " ", "winter warmers test box", "Pie "]))
-      .toEqual(["show", "no-wholesale", "calzones", "Winter Warmers Test Box", "Pie"]);
+  it("show and no-wholesale, then the recipe's own — deduped in any case, blanks dropped", () => {
+    expect(recipeProductTags(["Winter Warmers Test Box", " ", "winter warmers test box", "Pie "]))
+      .toEqual(["show", "no-wholesale", "Winter Warmers Test Box", "Pie"]);
   });
-  it("a recipe with no tags still gets the base tags", () => {
-    expect(recipeProductTags([])).toEqual(["show", "no-wholesale", "calzones"]);
-    expect(recipeProductTags(null)).toEqual(["show", "no-wholesale", "calzones"]);
+  it("a recipe with no tags still gets show and no-wholesale — not the old 'calzones'", () => {
+    expect(recipeProductTags([])).toEqual(["show", "no-wholesale"]);
+    expect(recipeProductTags(null)).toEqual(["show", "no-wholesale"]);
+  });
+  it("never sends Meals (the chicken pie went out with it, 30 Oct 2026) or the other menu/wholesale tags", () => {
+    expect(recipeProductTags(["meals", "Calzones", "current-special", "Wholesale-G", "Draft", "Winter Warmers Test Box"]))
+      .toEqual(["show", "no-wholesale", "Winter Warmers Test Box"]);
+    expect(leftOutTags(["Meals", "Winter Warmers Test Box", "draft", "MEALS"]).map(l => l.tag)).toEqual(["Meals", "draft"]);
+    expect(leftOutTags(["Meals"])[0].reason).toMatch(/main website/);
   });
 });
 

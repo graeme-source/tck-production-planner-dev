@@ -64,6 +64,7 @@ interface Preview {
   status: "DRAFT";
   productType: string;
   tags: string[];
+  tagsLeftOut: Array<{ tag: string; reason: string }>;
   variant: { title: string; removed: string[] };
   price: { set: string | null; summary: string };
   barcode: { code: string | null; summary: string };
@@ -352,7 +353,14 @@ function CreateProductDialog({ recipeId, onClose, onLinked, canEdit }: { recipeI
                     <dt className="text-muted-foreground">Status</dt><dd>Draft — hidden until you set it Active in Shopify</dd>
                     <dt className="text-muted-foreground">Product type</dt><dd>Blank — kept off the website's main menu</dd>
                     <dt className="text-muted-foreground">Tags</dt>
-                    <dd className="flex flex-wrap gap-1.5">{p.tags.map(t => <Chip key={t} tone="emerald">{t}</Chip>)}</dd>
+                    <dd className="space-y-1.5">
+                      <span className="flex flex-wrap gap-1.5">{p.tags.map(t => <Chip key={t} tone="emerald">{t}</Chip>)}</span>
+                      {p.tagsLeftOut.length > 0 && (
+                        <span className="block text-sm text-muted-foreground">
+                          Left out: {p.tagsLeftOut.map(l => `${l.tag} (${l.reason})`).join("; ")}.
+                        </span>
+                      )}
+                    </dd>
                     <dt className="text-muted-foreground">Variant</dt>
                     <dd>
                       Size: <b>{p.variant.title}</b> only

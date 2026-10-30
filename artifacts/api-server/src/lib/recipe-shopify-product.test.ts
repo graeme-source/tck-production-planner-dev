@@ -109,7 +109,7 @@ describe("making a recipe's product (fake store, no network)", () => {
     expect(writes[1].vars).toEqual({ productId: "gid://shopify/Product/700", variantsIds: ["gid://shopify/ProductVariant/910"] });
     // Never "Calzones", always a draft, exactly the tags.
     expect(writes[2].vars).toEqual({ product: {
-      id: "gid://shopify/Product/700", title: "Chicken & Tarragon", tags: ["show", "no-wholesale", "calzones", "Winter Warmers Test Box"],
+      id: "gid://shopify/Product/700", title: "Chicken & Tarragon", tags: ["show", "no-wholesale", "Winter Warmers Test Box"],
       descriptionHtml: "<p>We developed this one…</p>", productType: "", status: "DRAFT",
     } });
     expect(writes[3].vars).toEqual({ productId: "gid://shopify/Product/700", variants: [{ id: "gid://shopify/ProductVariant/911", barcode: null, price: "18.95" }] });
@@ -212,7 +212,7 @@ describe("the preview", () => {
     expect(p).toMatchObject({ title: "Chicken & Tarragon", status: "DRAFT", productType: "", barcode: { code: null, summary: expect.stringMatching(/^None yet/) } });
     expect(p.deckLeftOff).toBe(false);
     expect(p.declarationGaps).toEqual({ items: [], headlines: [] });
-    expect(p.tags).toEqual(["show", "no-wholesale", "calzones", "Winter Warmers Test Box"]);
+    expect(p.tags).toEqual(["show", "no-wholesale", "Winter Warmers Test Box"]);
     expect(p.variant).toEqual({ title: "2 Pack", removed: ["8 Pack Bag"] });
     expect(p.price.set).toBe("18.95");
     expect(price).toBe("18.95");

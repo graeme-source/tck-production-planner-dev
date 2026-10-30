@@ -25,7 +25,7 @@
  *     allergen — and goes on later with Push to Shopify on the Label tab
  *     (which refuses an incomplete deck, as before).
  */
-import { TEST_BOX_BASE_TAGS, perPackValue } from "./test-box-shopify-rules";
+import { perPackValue } from "./test-box-shopify-rules";
 
 /** The one variant a new product keeps (option "Size", as the store uses). */
 export const PACK_VARIANT_TITLE = "2 Pack";
@@ -34,13 +34,43 @@ export const PACK_VARIANT_TITLE = "2 Pack";
 const MAX_TAG_LENGTH = 255;
 const norm = (s: string) => s.trim().toLowerCase();
 
-/** Base tags, then the recipe's own — trimmed, no blanks, no duplicates in
- *  any case (the first spelling wins). */
+/** The only fixed tags a new product gets (Graeme, 30 Oct 2026: "I don't
+ *  want to add any historical tags apart from the no-wholesale one and the
+ *  show one"). Not the test box's "calzones". */
+export const RECIPE_PRODUCT_BASE_TAGS: readonly string[] = ["show", "no-wholesale"];
+
+/** Store tags that put a product somewhere it must not be yet — never sent
+ *  from a recipe, even when the recipe carries them (Graeme, 30 Oct 2026:
+ *  "I definitely don't want meals because that puts it in the main website.
+ *  People can then order it"). Shopify tag names, not product names; the
+ *  reasons are what the Create window shows. */
+export const NEVER_SENT_TAGS: ReadonlyArray<{ tag: string; reason: string }> = [
+  { tag: "Meals", reason: "puts it on the main website menu" },
+  { tag: "calzones", reason: "an old store tag — not added to new products" },
+  { tag: "current-special", reason: "marks the current Club Special — set by the special sync" },
+  { tag: "wholesale-g", reason: "puts it in the wholesale collection" },
+  { tag: "Draft", reason: "the planner's own tag — the product's status is Draft anyway" },
+];
+
+/** Base tags, then the recipe's own minus NEVER_SENT_TAGS — trimmed, no
+ *  blanks, no duplicates in any case (the first spelling wins). */
 export function recipeProductTags(recipeTags: readonly string[] | null | undefined): string[] {
   const out: string[] = [];
-  for (const raw of [...TEST_BOX_BASE_TAGS, ...(recipeTags ?? [])]) {
+  for (const raw of [...RECIPE_PRODUCT_BASE_TAGS, ...(recipeTags ?? [])]) {
     const t = String(raw ?? "").trim().slice(0, MAX_TAG_LENGTH);
-    if (t && !out.some(o => norm(o) === norm(t))) out.push(t);
+    if (!t || NEVER_SENT_TAGS.some(n => norm(n.tag) === norm(t))) continue;
+    if (!out.some(o => norm(o) === norm(t))) out.push(t);
+  }
+  return out;
+}
+
+/** The recipe's tags that are NOT sent, and why — shown in the Create window. */
+export function leftOutTags(recipeTags: readonly string[] | null | undefined): Array<{ tag: string; reason: string }> {
+  const out: Array<{ tag: string; reason: string }> = [];
+  for (const raw of recipeTags ?? []) {
+    const t = String(raw ?? "").trim();
+    const rule = NEVER_SENT_TAGS.find(n => norm(n.tag) === norm(t));
+    if (t && rule && !out.some(o => norm(o.tag) === norm(t))) out.push({ tag: t, reason: rule.reason });
   }
   return out;
 }
