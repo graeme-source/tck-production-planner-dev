@@ -29,3 +29,4 @@ export * from "./small-label";
 export * from "./code128";
 export * from "./ingredient-gaps";
 export * from "./nutrition-table";
+export * from "./product-photo";
