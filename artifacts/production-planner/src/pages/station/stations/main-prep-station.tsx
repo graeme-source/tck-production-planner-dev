@@ -29,7 +29,7 @@ import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep
 import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
-import { mainPrepProgress, progressPct, tasksLine } from "@/lib/prep-progress";
+import { mainPrepProgress, progressPct, tasksLine, linkedRowsAllTicked } from "@/lib/prep-progress";
 import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-session-capture";
 
 export interface MainPrepIngredient {
@@ -434,8 +434,11 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
     // that have already been dealt with. Stock-check requirement only fires
     // for actually-completed items though (the deferred items haven't been
     // touched yet, so stock count is unchanged).
-    const isFullyDone = allTinsResolved && (allTinsDone ? (!activeStockCheck || stockSaved) : true);
-    return { allTinsDone, allTinsResolved, needsStockCheck, stockSaved, isFullyDone, totalTinCount, completedTinCount, deferredTinCount, resolvedTinCount };
+    // Linked tasks (pasta water/salt) must be ticked too before the line
+    // counts as done (issue #361).
+    const linkedTicked = linkedRowsAllTicked(linkedItems[ing.ingredientId], linkedDone);
+    const isFullyDone = allTinsResolved && linkedTicked && (allTinsDone ? (!activeStockCheck || stockSaved) : true);
+    return { allTinsDone, allTinsResolved, needsStockCheck, stockSaved, isFullyDone, linkedTicked, totalTinCount, completedTinCount, deferredTinCount, resolvedTinCount };
   };
 
   const recipeIngredientStatus = (ing: MainPrepIngredient, recipeId: number) => {
@@ -878,7 +881,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                     ? group.items.filter(({ ing, qtyForRecipe: _q }) => {
                         void _q;
                         const rStatus = recipeIngredientStatus(ing, group.recipeId);
-                        return !rStatus.allDone;
+                        return !(rStatus.allDone && linkedRowsAllTicked(linkedItems[ing.ingredientId], linkedDone));
                       })
                     : group.items;
                   if (visibleItems.length === 0) return null;
