@@ -34,8 +34,19 @@ export function orderTags(tags: string): string[] {
   return tags.split(",").map(t => t.trim().toLowerCase()).filter(Boolean);
 }
 
+/** "local-delivery", however it was typed — draft orders get "Local
+ *  Delivery" by hand (#138553, 2 Nov 2026: shown as a courier order needing
+ *  an APC label). Case, spaces and punctuation don't matter, and it can sit inside a longer tag. Same
+ *  rule on the server (api-server lib/dispatch-tag.ts isLocalDeliveryTag). */
+export function isLocalDeliveryTag(tag: string): boolean {
+  // Letters only, any case: "Local Delivery", "local-delivery", "LOCAL_DELIVERY",
+  // "Local. delivery", "Local Delivery – Wed" all count (Graeme, 2 Nov 2026:
+  // "if someone mistypes, we don't want this to go wrong").
+  return tag.toLowerCase().replace(/[^a-z]+/g, "").includes("localdelivery");
+}
+
 export function isLocalDelivery(order: { tags: string }): boolean {
-  return orderTags(order.tags).includes(LOCAL_DELIVERY_TAG);
+  return orderTags(order.tags).some(isLocalDeliveryTag);
 }
 
 export function isCollection(order: { tags: string }): boolean {
@@ -52,7 +63,7 @@ export function boxCategoryOf(order: { tags: string }): BoxCategory {
   // Collection wins over everything — it never leaves the building in a
   // box; then local delivery — however big, it goes on the van.
   if (COLLECTION_TAGS.some(t => tags.includes(t))) return "collection";
-  if (tags.includes(LOCAL_DELIVERY_TAG)) return "local delivery";
+  if (tags.some(isLocalDeliveryTag)) return "local delivery";
   if (tags.includes("wholesale")) return "wholesale";
   if (tags.includes("large box")) return "large box";
   if (tags.includes("small box")) return "small box";

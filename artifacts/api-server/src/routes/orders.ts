@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { loadQueuedOrderItems, markQueuedOrdered } from "../lib/queued-production-orders";
 import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 import {
   db,
@@ -463,6 +464,9 @@ router.get("/calculate", async (req, res) => {
       packName?: string | null;
       splitsAway?: SplitView[];
       splitsIn?: SplitView[];
+      /** Queued test production on this card (lib/queued-production-orders.ts):
+       *  fixed packs included in splitInPacks, so the page's recompute keeps them. */
+      testProduction?: Array<{ productionDate: string; packs: number }>;
     }>;
   }> = {};
 
@@ -930,6 +934,83 @@ router.get("/calculate", async (req, res) => {
     });
   }
 
+  // Queued test production waiting to be ordered (Graeme, 30 Oct 2026) —
+  // added to the supplier's card like a split: fixed packs on top of the
+  // normal order, kept through stock edits (splitInPacks), until that
+  // supplier's order is placed (markQueuedOrdered). Stays every day until then.
+  for (const t of await loadQueuedOrderItems()) {
+    const sid = t.supplierId;
+    if (!supplierOrderMap[sid]) {
+      const supplier = supplierLookup[sid] ?? (await db.select().from(suppliersTable).where(eq(suppliersTable.id, sid)).limit(1))[0];
+      if (!supplier) continue;
+      supplierLookup[sid] ??= supplier;
+      supplierOrderMap[sid] = {
+        supplier: {
+          id: sid,
+          name: supplier.name,
+          contactName: supplier.contactName ?? null,
+          email: supplier.email ?? null,
+          phone: supplier.phone ?? null,
+          orderingPhone: supplier.orderingPhone ?? null,
+          website: supplier.website ?? null,
+          leadTimeDays: supplier.leadTimeDays ?? 1,
+          cutoffTime: supplier.cutoffTime ?? "17:00",
+        },
+        lines: [],
+      };
+    }
+    const lines = supplierOrderMap[sid].lines;
+    const tag = { productionDate: t.productionDate, packs: t.packs };
+    const existing = lines.find(l => l.ingredientId === t.ingredientId);
+    if (existing) {
+      existing.splitInPacks = (existing.splitInPacks ?? 0) + t.packs;
+      existing.testProduction = [...(existing.testProduction ?? []), tag];
+      existing.packsToOrder += t.packs;
+      existing.orderQty = lineQtyForPacks(existing, existing.packsToOrder);
+      existing.belowRequirement = false;
+      continue;
+    }
+    const [d] = await db.select().from(ingredientsTable).where(eq(ingredientsTable.id, t.ingredientId)).limit(1);
+    if (!d) continue;
+    const packWeight = Number(d.packWeight) || 1;
+    const ls = lineStockFor(d.id, d.stockCheckEnabled ?? false);
+    lines.push({
+      ingredientId: d.id,
+      ingredientName: d.name,
+      unit: d.unit ?? "kg",
+      totalRequired: 0,
+      stockOnHand: Math.round(ls.stockOnHand * 100) / 100,
+      surplusTarget: 0,
+      packWeight,
+      costPerPack: Number(d.costPerPack) || 0,
+      supplierPartNumber: d.supplierId === sid ? d.supplierPartNumber ?? null : null,
+      orderQty: packsToBaseQty(t.packs, packWeight),
+      packsToOrder: t.packs,
+      isKanban: false,
+      kanbanFloorPacks: null,
+      stockCounted: d.stockCheckEnabled ?? false,
+      stockBasis: ls.basis,
+      expectedStock: ls.expectedStock,
+      expectedAtLastCount: ls.expectedAtLastCount,
+      orderingUrl: d.supplierId === sid ? d.orderingUrl ?? null : null,
+      lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
+      belowRequirement: false,
+      stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
+      caseSizePacks: null,
+      // A fixed amount: no requirement, surplus, prep or inbound maths.
+      inboundQty: 0,
+      inboundDeliveries: [],
+      prepOutstandingQty: 0,
+      nativeUnit: d.unit ?? "kg",
+      palletSize: positivePalletSize(d.palletSize),
+      orderInPallets: false,
+      palletSizeMissing: false,
+      splitInPacks: t.packs,
+      testProduction: [tag],
+      packName: d.packName ?? null,
+    });
+  }
+
   // Suppliers configured with orderFrequency=weekly + orderDays only place
   // orders on those weekdays — A.D.Maria (Tuesday) was reappearing on every
   // plan because we filtered ingredients by stockCheckDay but never consulted
@@ -1325,6 +1406,8 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
   // Splits from another supplier's order that were on this one are now
   // ordered — they leave "waiting" and can no longer be cancelled (#248).
   await markSplitsPlaced(orderId);
+  // Queued test production on this card is now ordered too.
+  await markQueuedOrdered(orderId, updated.supplierId, placedIngredientIds);
 
   res.json({
     ...updated,
@@ -1416,6 +1499,7 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
     }
 
     await markSplitsPlaced(orderId);
+    await markQueuedOrdered(orderId, updated.supplierId, resubmitIngredientIds);
 
     console.log(`[Orders] Resubmitted PO ${orderId} with ${cleanedLines.length} lines`);
     res.json({

@@ -4,22 +4,31 @@
  * founder.sales grant Tommy has — and behind the private PIN, which the
  * server enforces too (routes/staff-bonus.ts). Maths: lib/staff-bonus.ts.
  *
- * Top: try a month (revenue sent out, profit) and see what's paid and why.
+ * Top: try a month and see what's paid and why. Revenue sent out is worked
+ * out from what was packed that month (30 Oct 2026; rules in api-server
+ * lib/sent-out-revenue.ts), with a typed figure as an override; net
+ * operating profit is typed once signed off in QuickBooks. Both autosave
+ * per month, and finished months without a profit are flagged.
  * Middle: what each revenue level pays and the profit it needs.
  * Bottom: the scheme's own numbers, saved as you type (visible save state).
  * Objective I.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Redirect } from "wouter";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, Loader2, Lock, PiggyBank, RotateCcw, SlidersHorizontal, TableProperties } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, Loader2, Lock, PackageCheck, PiggyBank, RotateCcw, SlidersHorizontal, TableProperties } from "lucide-react";
 import { monthLabel } from "@workspace/revenue-targets";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
+import { useAutosave } from "@/hooks/use-autosave";
 import { FounderNav } from "@/components/founder-nav";
 import { PageHeader } from "@/components/page-header";
+import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
-import { DEFAULT_BONUS_SCHEME, bonusFor, bonusLadder, type BonusScheme } from "@/lib/staff-bonus";
+import {
+  DEFAULT_BONUS_SCHEME, bonusFor, bonusLadder, bonusRevenue, dayRangeLabel, monthsAwaitingProfit,
+  type BonusMonthEntry, type BonusScheme,
+} from "@/lib/staff-bonus";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
@@ -29,6 +38,29 @@ interface SchemeResponse {
   savedAt: string | null;
   thisMonth: string;
   months: Array<{ month: string; minimum: number; stretch: number | null }>;
+  entries?: Record<string, BonusMonthEntry>;
+}
+
+/** GET /api/staff-bonus/month/:month — rules in api-server lib/sent-out-revenue.ts. */
+interface MonthResponse {
+  month: string;
+  sentOut: {
+    incVat: number;
+    orders: number;
+    firstDay: string | null;
+    lastDay: string | null;
+    complete: boolean;
+    warnings: string[];
+  } | null;
+  sentOutError: string | null;
+  entry: BonusMonthEntry;
+}
+
+/** "" → null (cleared); a number → it; anything half-typed ("-") → undefined. */
+function parseMoney(text: string): number | null | undefined {
+  if (text.trim() === "") return null;
+  const n = Number(text);
+  return Number.isFinite(n) ? n : undefined;
 }
 
 class HttpError extends Error { constructor(readonly status: number, msg: string) { super(msg); } }
@@ -77,8 +109,7 @@ function Loaded({ data }: { data: SchemeResponse }) {
   const [month, setMonth] = useState(data.thisMonth);
   const [minimum, setMinimum] = useState(String(monthTargets(data.thisMonth)?.minimum ?? 110000));
   const [stretch, setStretch] = useState(String(monthTargets(data.thisMonth)?.stretch ?? ""));
-  const [revenue, setRevenue] = useState("");
-  const [profit, setProfit] = useState("");
+  const awaiting = monthsAwaitingProfit(data.months.map(m => m.month), data.thisMonth, data.entries ?? {});
 
   const pickMonth = (m: string) => {
     setMonth(m);
@@ -90,10 +121,6 @@ function Loaded({ data }: { data: SchemeResponse }) {
 
   const min = Number(minimum) || 0;
   const str = Number(stretch) || min;
-  const rev = Number(revenue);
-  const pro = Number(profit);
-  const haveMonth = revenue.trim() !== "" && profit.trim() !== "";
-  const result = haveMonth ? bonusFor({ revenue: rev, profit: pro, minimum: min, stretch: str }, scheme) : null;
   const ladder = useMemo(() => (min > 0 ? bonusLadder(min, str, scheme) : []), [min, str, scheme]);
 
   // ── Autosave the scheme ──────────────────────────────────────────────
@@ -128,52 +155,36 @@ function Loaded({ data }: { data: SchemeResponse }) {
               className={cn("min-h-11 px-4 rounded-full border-2 text-base font-semibold",
                 month === m.month ? "border-primary bg-primary text-primary-foreground" : "border-border bg-background hover:bg-secondary/60")}>
               {monthLabel(m.month, { short: true })}
+              {awaiting.includes(m.month) && <span className="ml-1.5 inline-block w-2.5 h-2.5 rounded-full bg-amber-500 align-middle" aria-label="profit to enter" />}
             </button>
           ))}
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <MoneyField label="Revenue sent out" value={revenue} onChange={setRevenue} placeholder="e.g. 125000" big />
-          <MoneyField label="Net operating profit" value={profit} onChange={setProfit} placeholder="e.g. 7000" big hint="Capital spending left out; one-offs you choose to leave out." />
-          <MoneyField label="Minimum target" value={minimum} onChange={setMinimum} />
-          <MoneyField label="Stretch target" value={stretch} onChange={setStretch} placeholder="Not set" />
-        </div>
-        {targetsChanged && (
-          <button type="button" onClick={() => pickMonth(month)} className="text-sm font-semibold text-primary inline-flex items-center gap-1.5">
-            <RotateCcw className="w-4 h-4" /> Back to {monthLabel(month)}'s targets
-          </button>
-        )}
-
-        {result ? (
-          <div className={cn("rounded-2xl border-2 p-5 space-y-3",
-            result.paid > 0 ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30" : "border-border bg-secondary/40")}>
-            <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Bonus paid</p>
-            <p className="text-5xl font-black tabular-nums">{gbp(result.paid)}</p>
-            <p className="text-base">
-              {result.reason === "below-minimum" && <>Revenue is under the {gbp(min)} minimum, so there's no bonus.</>}
-              {result.reason === "full" && <>Revenue earns {gbp(result.revenueBonus)}, and there's {gbp(result.room)} of profit above the {scheme.profitFloorPct}% we keep, so it's paid in full.</>}
-              {result.reason === "cut-by-profit" && <>Revenue earns {gbp(result.revenueBonus)}, but only {gbp(result.room)} of profit is above the {scheme.profitFloorPct}% we keep, so it's cut to that.</>}
-              {result.reason === "no-profit-room" && <>Revenue earns {gbp(result.revenueBonus)}, but profit isn't above the {scheme.profitFloorPct}% we keep ({gbp(result.profitFloor)}), so nothing is paid.</>}
-            </p>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              <Stat label="Revenue earns" value={gbp(result.revenueBonus)} />
-              <Stat label={`${scheme.profitFloorPct}% we keep`} value={gbp(result.profitFloor)} />
-              <Stat label="Room above it" value={gbp(result.room)} />
-              <Stat label={`Cost with ${scheme.employerNiPct}% NI`} value={gbp(result.cost)} />
-            </div>
-            {rev >= min && str > min && (
-              <div>
-                <div className="h-3 rounded-full bg-secondary overflow-hidden">
-                  <div className="h-full bg-primary" style={{ width: `${Math.round(result.progress * 100)}%` }} />
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">{Math.round(result.progress * 100)}% of the way from minimum to stretch</p>
-              </div>
-            )}
-          </div>
-        ) : (
-          <p className="text-base text-muted-foreground rounded-xl border-2 border-dashed border-border px-4 py-5">
-            Type the month's revenue sent out and its net operating profit to see the bonus.
+        {awaiting.length > 0 && (
+          <p className="text-sm font-semibold text-amber-700 dark:text-amber-400">
+            Profit to enter: {awaiting.map(m => monthLabel(m, { short: true })).join(", ")}
           </p>
         )}
+        <MonthFigures
+          key={month}
+          month={month}
+          isFuture={month > data.thisMonth}
+          min={min}
+          str={str}
+          scheme={scheme}
+          targets={(
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <MoneyField label="Minimum target" value={minimum} onChange={setMinimum} />
+                <MoneyField label="Stretch target" value={stretch} onChange={setStretch} placeholder="Not set" />
+              </div>
+              {targetsChanged && (
+                <button type="button" onClick={() => pickMonth(month)} className="text-sm font-semibold text-primary inline-flex items-center gap-1.5">
+                  <RotateCcw className="w-4 h-4" /> Back to {monthLabel(month)}'s targets
+                </button>
+              )}
+            </>
+          )}
+        />
       </section>
 
       {/* ── What it pays ── */}
@@ -239,25 +250,189 @@ function Loaded({ data }: { data: SchemeResponse }) {
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          Revenue means orders sent out that month. Under the minimum there's no bonus; it climbs from the minimum bonus to the stretch bonus, then adds the extra for every step above stretch up to the most it pays. It's never paid from profit below the share we always keep.
+          Revenue is what we packed and sent that month, after refunds. Profit leaves out capital spending and one-offs you choose to leave out. Under the minimum there's no bonus; it climbs from the minimum bonus to the stretch bonus, then adds the extra for every step above stretch up to the most it pays. It's never paid from profit below the share we always keep.
         </p>
       </section>
     </div>
   );
 }
 
-function MoneyField({ label, value, onChange, placeholder, big, hint }: {
-  label: string; value: string; onChange: (v: string) => void; placeholder?: string; big?: boolean; hint?: string;
+// ── One month: revenue sent out (worked out) + profit (typed) + the bonus ──
+
+function MonthFigures({ month, isFuture, min, str, scheme, targets }: {
+  month: string; isFuture: boolean; min: number; str: number; scheme: BonusScheme; targets: ReactNode;
+}) {
+  const q = useQuery({
+    queryKey: ["staff-bonus-month", month],
+    queryFn: async (): Promise<MonthResponse> => {
+      const r = await fetch(`${BASE}/api/staff-bonus/month/${month}`, { credentials: "include" });
+      if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
+      return r.json();
+    },
+    staleTime: 5 * 60_000,
+  });
+  if (q.isPending) {
+    return (
+      <>
+        <div className="rounded-xl border-2 border-dashed border-border px-4 py-5 flex items-center gap-2 text-base text-muted-foreground">
+          <Loader2 className="w-5 h-5 animate-spin" /> Adding up what we packed in {monthLabel(month)}…
+        </div>
+        {targets}
+      </>
+    );
+  }
+  if (q.isError) {
+    return (
+      <>
+        <p className="text-destructive text-base">Couldn't load {monthLabel(month)}: {q.error.message}</p>
+        {targets}
+      </>
+    );
+  }
+  return <MonthLoaded data={q.data} isFuture={isFuture} min={min} str={str} scheme={scheme} targets={targets} />;
+}
+
+function MonthLoaded({ data, isFuture, min, str, scheme, targets }: {
+  data: MonthResponse; isFuture: boolean; min: number; str: number; scheme: BonusScheme; targets: ReactNode;
+}) {
+  const qc = useQueryClient();
+  const month = data.month;
+  const [profit, setProfit] = useState(data.entry.profit != null ? String(data.entry.profit) : "");
+  const [override, setOverride] = useState(data.entry.revenueOverride != null ? String(data.entry.revenueOverride) : "");
+  const [showOverride, setShowOverride] = useState(data.entry.revenueOverride != null);
+
+  const saveEntry = async (patch: { profit?: number | null; revenueOverride?: number | null }) => {
+    const r = await fetch(`${BASE}/api/staff-bonus/month/${month}`, {
+      method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+    });
+    if (!r.ok) throw new Error(((await r.json().catch(() => ({}))) as { error?: string }).error ?? `HTTP ${r.status}`);
+    const body = (await r.json()) as { entry: BonusMonthEntry };
+    qc.setQueryData<MonthResponse>(["staff-bonus-month", month], old => (old ? { ...old, entry: body.entry } : old));
+    // The "profit to enter" months come with the scheme.
+    void qc.invalidateQueries({ queryKey: ["staff-bonus-scheme"] });
+  };
+  const profitSave = useAutosave((v: number | null) => saveEntry({ profit: v }));
+  const overrideSave = useAutosave((v: number | null) => saveEntry({ revenueOverride: v }));
+
+  const onProfit = (text: string) => {
+    setProfit(text);
+    const v = parseMoney(text);
+    if (v !== undefined) profitSave.schedule(v);
+  };
+  const onOverride = (text: string) => {
+    setOverride(text);
+    const v = parseMoney(text);
+    if (v !== undefined) overrideSave.schedule(v);
+  };
+  const backToPacked = () => {
+    setOverride("");
+    setShowOverride(false);
+    overrideSave.schedule(null);
+    void overrideSave.flush();
+  };
+
+  const s = data.sentOut;
+  const typed = parseMoney(override);
+  const usingOverride = typed != null;
+  const rev = bonusRevenue(s?.incVat, typed ?? null);
+  const pro = parseMoney(profit);
+  const result = rev != null && pro != null ? bonusFor({ revenue: rev, profit: pro, minimum: min, stretch: str }, scheme) : null;
+
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <span className="block text-sm font-semibold">Revenue sent out</span>
+          <div className={cn("h-14 rounded-xl border-2 border-border bg-secondary/40 px-3 flex items-center gap-2 text-2xl font-bold tabular-nums",
+            usingOverride && "opacity-50 line-through")}>
+            <PackageCheck className="w-5 h-5 text-primary shrink-0" />
+            {s ? gbp(s.incVat) : isFuture ? <span className="text-base font-semibold text-muted-foreground">Not started</span> : "—"}
+          </div>
+          {s && (
+            <span className="block text-xs text-muted-foreground">
+              {s.orders > 0 && s.firstDay && s.lastDay
+                ? <>from {s.orders.toLocaleString("en-GB")} order{s.orders === 1 ? "" : "s"} packed {dayRangeLabel(s.firstDay, s.lastDay)}{s.complete ? "" : " so far"}</>
+                : "No orders packed yet"}
+            </span>
+          )}
+          {s?.warnings[0] && <span className="block text-xs font-semibold text-amber-700 dark:text-amber-400">{s.warnings[0]}</span>}
+          {data.sentOutError && <span className="block text-xs font-semibold text-destructive">Couldn't work it out: {data.sentOutError}</span>}
+          {showOverride ? (
+            <div className="pt-1 space-y-1">
+              <MoneyField label="Your figure (used instead)" value={override} onChange={onOverride} onBlur={() => void overrideSave.flush()}
+                status={<SaveChip state={overrideSave.state} error={overrideSave.error} onRetry={() => void overrideSave.flush()} />} />
+              <button type="button" onClick={backToPacked} className="min-h-11 text-sm font-semibold text-primary inline-flex items-center gap-1.5">
+                <RotateCcw className="w-4 h-4" /> Use the packed figure
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setShowOverride(true)} className="min-h-11 text-sm font-semibold text-muted-foreground underline">
+              Type a figure instead
+            </button>
+          )}
+        </div>
+        <MoneyField label="Net operating profit" value={profit} onChange={onProfit} onBlur={() => void profitSave.flush()}
+          placeholder="e.g. 7000" big hint="Enter once signed off in QuickBooks"
+          status={<SaveChip state={profitSave.state} error={profitSave.error} onRetry={() => void profitSave.flush()} />} />
+      </div>
+      {targets}
+      {result && rev != null ? <BonusResultCard result={result} rev={rev} min={min} str={str} scheme={scheme} /> : (
+        <p className="text-base text-muted-foreground rounded-xl border-2 border-dashed border-border px-4 py-5">
+          {rev == null ? "Type a revenue figure to try this month." : "Enter the month's net operating profit to see the bonus."}
+        </p>
+      )}
+    </>
+  );
+}
+
+function BonusResultCard({ result, rev, min, str, scheme }: {
+  result: ReturnType<typeof bonusFor>; rev: number; min: number; str: number; scheme: BonusScheme;
+}) {
+  return (
+    <div className={cn("rounded-2xl border-2 p-5 space-y-3",
+      result.paid > 0 ? "border-emerald-400 bg-emerald-50 dark:bg-emerald-950/30" : "border-border bg-secondary/40")}>
+      <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Bonus paid</p>
+      <p className="text-5xl font-black tabular-nums">{gbp(result.paid)}</p>
+      <p className="text-base">
+        {result.reason === "below-minimum" && <>Revenue is under the {gbp(min)} minimum, so there's no bonus.</>}
+        {result.reason === "full" && <>Revenue earns {gbp(result.revenueBonus)}, and there's {gbp(result.room)} of profit above the {scheme.profitFloorPct}% we keep, so it's paid in full.</>}
+        {result.reason === "cut-by-profit" && <>Revenue earns {gbp(result.revenueBonus)}, but only {gbp(result.room)} of profit is above the {scheme.profitFloorPct}% we keep, so it's cut to that.</>}
+        {result.reason === "no-profit-room" && <>Revenue earns {gbp(result.revenueBonus)}, but profit isn't above the {scheme.profitFloorPct}% we keep ({gbp(result.profitFloor)}), so nothing is paid.</>}
+      </p>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <Stat label="Revenue earns" value={gbp(result.revenueBonus)} />
+        <Stat label={`${scheme.profitFloorPct}% we keep`} value={gbp(result.profitFloor)} />
+        <Stat label="Room above it" value={gbp(result.room)} />
+        <Stat label={`Cost with ${scheme.employerNiPct}% NI`} value={gbp(result.cost)} />
+      </div>
+      {rev >= min && str > min && (
+        <div>
+          <div className="h-3 rounded-full bg-secondary overflow-hidden">
+            <div className="h-full bg-primary" style={{ width: `${Math.round(result.progress * 100)}%` }} />
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">{Math.round(result.progress * 100)}% of the way from minimum to stretch</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MoneyField({ label, value, onChange, onBlur, placeholder, big, hint, status }: {
+  label: string; value: string; onChange: (v: string) => void; onBlur?: () => void; placeholder?: string; big?: boolean; hint?: string; status?: ReactNode;
 }) {
   return (
     <label className="block space-y-1">
-      <span className="block text-sm font-semibold">{label}</span>
+      <span className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-sm font-semibold">{label}</span>
+        {status}
+      </span>
       <span className="relative block">
         <span className={cn("absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground", big ? "text-xl" : "text-base")}>£</span>
         <input
           inputMode="decimal"
           value={value}
           onChange={e => onChange(e.target.value.replace(/[^\d.-]/g, ""))}
+          onBlur={onBlur}
           placeholder={placeholder}
           className={cn("w-full rounded-xl border-2 border-border bg-background pl-8 pr-3 tabular-nums outline-none focus:border-primary",
             big ? "h-14 text-2xl font-bold" : "h-12 text-lg font-semibold")}

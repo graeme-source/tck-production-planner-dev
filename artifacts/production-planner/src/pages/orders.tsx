@@ -1,4 +1,5 @@
 import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
+import { clearIngredientMark, OUTSTANDING_KEY } from "@/components/queued-production/api";
 import { QueuedOrdersReminder } from "@/components/queued-production/orders-reminder";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -34,7 +35,9 @@ import {
   ScanLine,
   Copy,
   Scissors,
+  FlaskConical,
 } from "lucide-react";
+import { format, parseISO } from "date-fns";
 import { OrderSplitDialog, OrderSplitsWaiting, useCancelOrderSplit, type OrderSplit } from "@/components/order-split-dialog";
 import { splitDateLabel } from "@workspace/business-days";
 import { QrScanner } from "@/components/qr-scanner";
@@ -170,6 +173,9 @@ type OrderLine = SurplusLineFields & {
   // splitAwayPacks / splitInPacks (SurplusLineFields), for the line's notes.
   splitsAway?: OrderSplit[];
   splitsIn?: OrderSplit[];
+  /** Queued test production on this card — fixed packs, included in
+   *  splitInPacks (components/queued-production, 30 Oct 2026). */
+  testProduction?: Array<{ productionDate: string; packs: number }>;
   /** What one pack is called — "box", "roll" (#327). Null = pack. */
   packName?: string | null;
 };
@@ -2488,6 +2494,28 @@ export default function Orders() {
                                   className="text-xs font-medium underline underline-offset-2 text-muted-foreground hover:text-destructive"
                                 >
                                   Cancel split
+                                </button>
+                              </span>
+                            ))}
+                            {(line.testProduction ?? []).map(tp => (
+                              <span key={`test-${tp.productionDate}`} className="flex flex-wrap items-center gap-1.5 mt-1">
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold bg-violet-500/15 text-violet-700 dark:text-violet-300">
+                                  <FlaskConical className="w-3 h-3" /> Test production {format(parseISO(tp.productionDate), "EEE d MMM")} — {tp.packs} {packNoun(line.unit, tp.packs, line.packName)}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    try {
+                                      await clearIngredientMark(tp.productionDate, line.ingredientId);
+                                      refreshCalc();
+                                      queryClient.invalidateQueries({ queryKey: OUTSTANDING_KEY });
+                                    } catch (err) {
+                                      toast({ title: "Couldn't take it off", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
+                                    }
+                                  }}
+                                  className="text-xs font-medium underline underline-offset-2 text-muted-foreground hover:text-foreground"
+                                >
+                                  Not today
                                 </button>
                               </span>
                             ))}

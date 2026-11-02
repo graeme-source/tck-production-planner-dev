@@ -16,10 +16,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { ArrowLeft, ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
-import { toast } from "@/hooks/use-toast";
-import { QUEUE_KEY, cancelQueueRow, makesLabel, useQueue, useQueueSales, type QueueRow } from "@/components/queued-production/api";
+import { QUEUE_KEY, makesLabel, useQueue, useQueueSales, type QueueRow } from "@/components/queued-production/api";
 import { AddQueueForm } from "@/components/queued-production/add-queue-form";
-import { QueueRowItem } from "@/components/queued-production/queue-row";
+import { QueueRowItem, removeQueueRow } from "@/components/queued-production/queue-row";
 import { DateIngredients } from "@/components/queued-production/date-ingredients";
 
 export default function QueuedProductionPage() {
@@ -45,6 +44,13 @@ export default function QueuedProductionPage() {
     return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
   }, [rows]);
 
+  // After queueing: open that day's card and bring it into view.
+  const showQueued = (date: string) => {
+    refetchAll();
+    setExpandedDates(prev => new Set(prev).add(date));
+    setTimeout(() => document.getElementById(`queued-day-${date}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 400);
+  };
+
   const toggleDate = (date: string) => setExpandedDates(prev => {
     const next = new Set(prev);
     if (next.has(date)) next.delete(date); else next.add(date);
@@ -61,7 +67,9 @@ export default function QueuedProductionPage() {
         <ArrowLeft className="w-4 h-4" /> Back to Production Plans
       </button>
 
-      <AddQueueForm initialDate={initialDate} onSaved={refetchAll} />
+      {!isLoading && (
+        <AddQueueForm initialDate={initialDate} startOpen={byDate.length === 0} onSaved={showQueued} />
+      )}
 
       {isLoading ? (
         <div className="flex items-center gap-2 text-muted-foreground py-6"><Loader2 className="w-5 h-5 animate-spin" /> Loading queue…</div>
@@ -87,18 +95,8 @@ function DateCard({ date, rows, expanded, onToggle, onChanged }: {
   const totalBatches = rows.reduce((s, r) => s + r.batches, 0);
   const allPlanned = rows.every(r => r.status === "planned");
 
-  const remove = async (row: QueueRow) => {
-    if (!window.confirm(`Remove ${row.recipeName} (${row.batches} batches) from the ${format(parseISO(row.productionDate), "EEE d MMM")} queue?`)) return;
-    try {
-      await cancelQueueRow(row.id);
-      onChanged();
-    } catch (err) {
-      toast({ title: "Couldn't remove it", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
-    }
-  };
-
   return (
-    <div className="rounded-2xl border border-border bg-card p-4">
+    <div id={`queued-day-${date}`} className="rounded-2xl border-2 border-violet-500/40 bg-card p-4 scroll-mt-4">
       <button onClick={onToggle} className="w-full flex items-center justify-between gap-2 text-left">
         <span className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
           <span className="text-lg font-semibold">{format(parseISO(date), "EEEE d MMM yyyy")}</span>
@@ -116,7 +114,7 @@ function DateCard({ date, rows, expanded, onToggle, onChanged }: {
         <div className="mt-3 space-y-2">
           <div className="grid gap-2 grid-cols-1 xl:grid-cols-2">
             {rows.map(row => (
-              <QueueRowItem key={row.id} row={row} sale={saleByRecipe.get(row.recipeId)} deliveryLabel={deliveryLabel} onRemove={() => void remove(row)} />
+              <QueueRowItem key={row.id} row={row} sale={saleByRecipe.get(row.recipeId)} deliveryLabel={deliveryLabel} onRemove={() => void removeQueueRow(row, onChanged)} />
             ))}
           </div>
           <DateIngredients date={date} onOrdersCreated={onChanged} />

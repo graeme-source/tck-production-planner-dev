@@ -11,6 +11,8 @@
  * The scheduled Claude Code session talks to routes/issue-pipeline-machine.ts
  * instead, with a bearer token; nothing here accepts that token.
  */
+import { buildRequestView, readBuildRequest, writeBuildRequest } from "../lib/fix-queue-build-request";
+import { pressBuildNow } from "../lib/fix-queue-build-request-rules";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { db, usersTable, issueTriageTable, issueTriageEventsTable, issueFixNoticesTable, andonIssuesTable, andonCommentsTable, type IssueTriage } from "@workspace/db";
@@ -187,6 +189,18 @@ router.get("/review", requireFounder, async (req, res) => {
 // How many cards have a reply from the reporter Graeme hasn't read, and who
 // from (21 Oct 2026). Cheap: one query over the events of cards whose
 // reporter replied after the read mark.
+// "Build approved fixes now" (2 Nov 2026): the reviewer on Graeme's Mac
+// checks this every ten minutes and, when pressed, builds every approved
+// card at once for that day's 3:05pm deploy (lib/fix-queue-build-request*).
+router.get("/review/build-now", requireFounder, async (_req, res) => {
+  res.json(await buildRequestView());
+});
+router.post("/review/build-now", requireFounder, validate(z.object({}).passthrough()), async (req, res) => {
+  const { next, changed } = pressBuildNow(await readBuildRequest(), new Date().toISOString(), await sessionUserName(req.session.userId!));
+  if (changed) await writeBuildRequest(next);
+  res.json(await buildRequestView());
+});
+
 router.get("/review/unread", requireFounder, async (_req, res) => {
   try {
     const rows = await db.execute<{ triage_id: number; andon_issue_id: number; n: number; name: string | null }>(sql`

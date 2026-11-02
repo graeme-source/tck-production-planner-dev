@@ -72,11 +72,32 @@ const isoOf = (v: unknown): string | null => {
 
 // ── Deferred income ───────────────────────────────────────────────────────
 
-interface OrderRow extends Record<string, unknown> { id: string; payload: ShopifyOrderPayload }
+export interface OrderRow extends Record<string, unknown> { id: string; payload: ShopifyOrderPayload }
 
+/** Only the fields ShopifyOrderPayload names (plus what the Numbers revenue
+ *  rules read: refund transactions), built in Postgres. The whole payloads
+ *  for a 92-day window are ~115 MB of JSON (Jun–Sep 2026) and took the
+ *  process to ~0.8 GB; this is a small fraction of that. An absent or
+ *  non-array list comes back as null, exactly as before, so "the mirror
+ *  holds no fulfilment data" (fulfillments == null) still reads the same. */
 async function readMirror(fromUtc: Date, cutoff: Date): Promise<OrderRow[]> {
   const r = await db.execute<OrderRow>(sql`
-    SELECT id::text AS id, payload FROM shopify_orders_cache
+    SELECT id::text AS id, jsonb_build_object(
+      'id', payload->'id', 'name', payload->'name', 'created_at', payload->'created_at',
+      'cancelled_at', payload->'cancelled_at', 'financial_status', payload->'financial_status',
+      'fulfillment_status', payload->'fulfillment_status', 'total_price', payload->'total_price',
+      'total_tax', payload->'total_tax', 'tags', payload->'tags',
+      'line_items', CASE WHEN jsonb_typeof(payload->'line_items') = 'array' THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('requires_shipping', li->'requires_shipping', 'tax_lines', li->'tax_lines')), '[]'::jsonb)
+          FROM jsonb_array_elements(payload->'line_items') li) END,
+      'refunds', CASE WHEN jsonb_typeof(payload->'refunds') = 'array' THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('created_at', x->'created_at', 'processed_at', x->'processed_at', 'transactions', x->'transactions')), '[]'::jsonb)
+          FROM jsonb_array_elements(payload->'refunds') x) END,
+      'fulfillments', CASE WHEN jsonb_typeof(payload->'fulfillments') = 'array' THEN (
+        SELECT COALESCE(jsonb_agg(jsonb_build_object('created_at', f->'created_at', 'status', f->'status')), '[]'::jsonb)
+          FROM jsonb_array_elements(payload->'fulfillments') f) END
+    ) AS payload
+      FROM shopify_orders_cache
      WHERE created_at >= ${fromUtc.toISOString()}::timestamptz AND created_at < ${cutoff.toISOString()}::timestamptz
   `);
   return r.rows;
@@ -104,9 +125,18 @@ async function dispatchRecords(ids: number[]): Promise<{ app: Map<number, string
   return { app, apc };
 }
 
-export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {}): Promise<DeferredIncome> {
-  const cutoff = monthEndCutoff(monthEnd);
-  const fromUtc = new Date(cutoff.getTime() - LOOKBACK_DAYS * 86_400_000);
+/** Orders PAID (created) in [fromUtc, cutoff) from the mirror, each with
+ *  every dispatch record we hold (see the top of this file), ready for
+ *  resolveDispatch. Shared by deferred income and the bonus calculator's
+ *  revenue sent out (lib/sent-out-revenue-load.ts). */
+export interface DispatchOrders {
+  /** The mirror rows: Shopify's own order JSON, by order id. */
+  rows: OrderRow[];
+  orders: DeferralOrder[];
+  warnings: string[];
+}
+
+export async function loadDispatchOrders(fromUtc: Date, cutoff: Date, opts: LoadOptions = {}): Promise<DispatchOrders> {
   const warnings: string[] = [];
   if (opts.shopify !== false) {
     // Brings the mirror up to date and back-fills it to the look-back if it
@@ -114,7 +144,7 @@ export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {
     await ensureOrdersFresh(addDaysToDateString(londonDateString(fromUtc), -1));
   }
   let rows = await readMirror(fromUtc, cutoff);
-  if (rows.length === 0) throw new Error(`No Shopify orders in the mirror for the ${LOOKBACK_DAYS} days to ${monthLabel(monthEnd)}'s end.`);
+  if (rows.length === 0) return { rows, orders: [], warnings };
   let { app, apc } = await dispatchRecords(rows.map(r => Number(r.id)));
 
   // Orders Shopify calls sent, with no fulfilment data saved and no record
@@ -139,6 +169,14 @@ export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {
     appFulfilledAt: app.get(Number(r.id)) ?? null,
     apcCollectionDate: apc.get(Number(r.id)) ?? null,
   }));
+  return { rows, orders, warnings };
+}
+
+export async function loadDeferredIncome(monthEnd: string, opts: LoadOptions = {}): Promise<DeferredIncome> {
+  const cutoff = monthEndCutoff(monthEnd);
+  const fromUtc = new Date(cutoff.getTime() - LOOKBACK_DAYS * 86_400_000);
+  const { orders, warnings } = await loadDispatchOrders(fromUtc, cutoff, opts);
+  if (orders.length === 0) throw new Error(`No Shopify orders in the mirror for the ${LOOKBACK_DAYS} days to ${monthLabel(monthEnd)}'s end.`);
   const d = computeDeferredIncome(monthEnd, orders);
   d.warnings.push(...warnings);
   return d;

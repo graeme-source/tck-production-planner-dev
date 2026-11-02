@@ -34,6 +34,7 @@ import { validate, validateQuery } from "../middleware/validate";
 import { queueSales } from "../lib/queued-production-sales";
 import { RECENT_DAYS, classifyIngredientNeed, outstanding, type IngredientMark } from "../lib/queued-production-rules";
 import { deliverByFor, orderByFor } from "../lib/queued-production-sales";
+import { packsFor } from "../lib/queued-production-orders";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
 import { expectedAt, rollForward } from "../lib/stock-ledger";
 
@@ -198,7 +199,8 @@ router.get("/outstanding", async (_req, res) => {
   res.json({ days });
 });
 
-// PUT /mark — tick an ingredient ordered or not needed for a day, or clear it.
+// PUT /mark — tick an ingredient ordered or not needed for a day, or clear it
+// (clearing a 'queued' one takes it off the Orders page: "Not today").
 const MarkBody = z.object({
   productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   ingredientId: z.number().int().positive(),
@@ -215,98 +217,49 @@ router.put("/mark", validate(MarkBody), async (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
-async function writeMarks(productionDate: string, marks: Array<{ ingredientId: number; mark: IngredientMark; poId: number | null }>, userId: number | null) {
+async function writeMarks(productionDate: string, marks: Array<{ ingredientId: number; mark: IngredientMark; poId: number | null; supplierId?: number | null; packs?: number | null }>, userId: number | null) {
   if (marks.length === 0) return;
   const [user] = userId ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)) : [];
   await db.insert(queuedIngredientMarksTable)
-    .values(marks.map(m => ({ productionDate, ingredientId: m.ingredientId, mark: m.mark, poId: m.poId, markedByUserId: userId, markedByName: user?.name ?? null })))
+    .values(marks.map(m => ({ productionDate, ingredientId: m.ingredientId, mark: m.mark, poId: m.poId, supplierId: m.supplierId ?? null, packs: m.packs ?? null, markedByUserId: userId, markedByName: user?.name ?? null })))
     .onConflictDoUpdate({
       target: [queuedIngredientMarksTable.productionDate, queuedIngredientMarksTable.ingredientId],
-      set: { mark: sql`excluded.mark`, poId: sql`excluded.po_id`, markedByUserId: sql`excluded.marked_by_user_id`, markedByName: sql`excluded.marked_by_name`, markedAt: sql`now()` },
+      set: { mark: sql`excluded.mark`, poId: sql`excluded.po_id`, supplierId: sql`excluded.supplier_id`, packs: sql`excluded.packs`, markedByUserId: sql`excluded.marked_by_user_id`, markedByName: sql`excluded.marked_by_name`, markedAt: sql`now()` },
     });
 }
 
 const STATUS_ORDER = { special: 0, short: 1, check: 2, covered: 3 } as const;
 
-// POST /create-orders — raise DRAFT purchase orders for the special
-// ingredients still needing stock, one PO per supplier, rounded up to whole
-// packs (and whole cases where the ingredient is cased). The client then
-// places each through the standard PATCH /orders/purchase-orders/:id/place,
-// which applies the supplier's normal lead time / cutoff — override the
-// delivery date there as usual for fresh items.
-router.post("/create-orders", async (req: Request, res: Response) => {
-  const date = String(req.body?.productionDate ?? "");
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    res.status(400).json({ error: "productionDate required (YYYY-MM-DD)" });
-    return;
-  }
-  const selected: number[] | null = Array.isArray(req.body?.ingredientIds)
-    ? req.body.ingredientIds.map(Number).filter(Number.isInteger)
-    : null;
-
+// POST /add-to-orders — put the ticked ingredients on today's Orders page
+// supplier cards (Graeme, 30 Oct 2026: "as if a kanban's been pulled for that
+// item with that quantity"), to be ordered with the normal orders. Nothing
+// is placed here: placing the supplier's order on the Orders page marks
+// them ordered (lib/queued-production-orders.ts). It used to create and
+// place purchase orders directly, which skipped telling the suppliers.
+const AddToOrdersBody = z.object({
+  productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  ingredientIds: z.array(z.number().int().positive()).min(1),
+});
+router.post("/add-to-orders", validate(AddToOrdersBody), async (req: Request, res: Response) => {
+  const { productionDate, ingredientIds } = AddToOrdersBody.parse(req.body);
   // Recompute server-side — never trust client quantities.
-  const ingredientsRes = await fetchIngredientsForDate(date);
-  // Only what's still to order and ticked for today's order; the rest
-  // stays on the list for another day.
-  const wanted = (i: (typeof ingredientsRes)[number]) =>
-    outstanding(i.status, i.remainingToOrder, i.mark) && (selected == null || selected.includes(i.ingredientId));
-  const lines = ingredientsRes.filter(i => wanted(i) && i.supplierId != null);
+  const lines = (await fetchIngredientsForDate(productionDate))
+    .filter(i => ingredientIds.includes(i.ingredientId) && outstanding(i.status, i.remainingToOrder, i.mark) && i.supplierId != null);
   if (lines.length === 0) {
-    res.status(409).json({ error: "Nothing to order — it's already ordered, not needed, or has no supplier set." });
+    res.status(409).json({ error: "Nothing to add — it's already on the orders, ordered, not needed, or has no supplier." });
     return;
   }
-  const missingSupplier = ingredientsRes.filter(i => wanted(i) && i.supplierId == null);
-
-  const bySupplier = new Map<number, typeof lines>();
-  for (const l of lines) {
-    const list = bySupplier.get(l.supplierId!) ?? [];
-    list.push(l);
-    bySupplier.set(l.supplierId!, list);
-  }
-
-  const created: Array<{ poId: number; supplierId: number; supplierName: string; lineCount: number }> = [];
-  for (const [supplierId, supplierLines] of bySupplier) {
-    const [order] = await db.insert(purchaseOrdersTable).values({
-      supplierId,
-      status: "draft",
-      notes: `Queued test production for ${date}`,
-    }).returning();
-    await db.insert(purchaseOrderLinesTable).values(supplierLines.map(l => {
-      // Round up to whole packs, then whole cases, like the Orders page.
-      let orderQty = l.remainingToOrder;
-      if (l.packWeight > 0) {
-        let packs = Math.ceil(l.remainingToOrder / l.packWeight);
-        if (l.caseSizePacks && l.caseSizePacks > 0) {
-          packs = Math.ceil(packs / l.caseSizePacks) * l.caseSizePacks;
-        }
-        orderQty = Math.round(packs * l.packWeight * 100) / 100;
-      }
-      return {
-        purchaseOrderId: order.id,
-        ingredientId: l.ingredientId,
-        quantityRequired: String(l.remainingToOrder),
-        quantityOrdered: String(orderQty),
-        quantityReceived: "0",
-        unit: l.unit,
-        notes: `Queued test production ${date}`,
-      };
-    }));
-    await writeMarks(date, supplierLines.map(l => ({ ingredientId: l.ingredientId, mark: "ordered" as const, poId: order.id })), req.session.userId ?? null);
-    created.push({
-      poId: order.id,
-      supplierId,
-      supplierName: supplierLines[0].supplierName ?? `Supplier #${supplierId}`,
-      lineCount: supplierLines.length,
-    });
-  }
-  res.status(201).json({
-    deliverBy: deliverByFor(date),
-    created,
-    missingSupplier: missingSupplier.map(m => ({ ingredientId: m.ingredientId, name: m.name, required: m.required, unit: m.unit })),
-  });
+  await writeMarks(productionDate, lines.map(l => ({
+    ingredientId: l.ingredientId,
+    mark: "queued" as const,
+    poId: null,
+    supplierId: l.supplierId,
+    packs: packsFor(l.remainingToOrder, l.packWeight, l.caseSizePacks),
+  })), req.session.userId ?? null);
+  res.status(201).json({ added: lines.length });
 });
 
-// Shared by GET /ingredients and POST /create-orders so order creation
+// Shared by GET /ingredients and POST /add-to-orders so order creation
 // always works from freshly computed requirements.
 async function fetchIngredientsForDate(date: string) {
   const queued = await db

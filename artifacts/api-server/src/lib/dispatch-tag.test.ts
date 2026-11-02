@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   isDispatchTagged,
   isCollectionOrder,
+  isLocalDeliveryOrder,
+  isLocalDeliveryTag,
   isPartOfDespatchWave,
   needsDispatchApproval,
 } from "./dispatch-tag";
@@ -92,5 +94,19 @@ describe("collections are not part of the despatch wave", () => {
   // hand-tagged it in Shopify.
   it("ignores a hand-added dispatch tag on a collection", () => {
     expect(isPartOfDespatchWave("2026-09-04, Collection, dispatch")).toBe(false);
+  });
+});
+
+describe("local delivery on the server, however the tag was typed (#138553)", () => {
+  it("'Local Delivery' typed on a draft order is a local delivery: never booked with APC", () => {
+    expect(isLocalDeliveryOrder("2026-11-03, Large Box, Local Delivery, production, wholesale")).toBe(true);
+    expect(isLocalDeliveryOrder("local-delivery")).toBe(true);
+    expect(isLocalDeliveryOrder("Local_Delivery")).toBe(true);
+  });
+  it("any case, spacing or punctuation, even inside a longer tag; nothing else counts", () => {
+    expect(isLocalDeliveryTag("LOCAL  delivery")).toBe(true);
+    expect(isLocalDeliveryTag("Local Delivery – Wed")).toBe(true);
+    expect(isLocalDeliveryOrder("small box, dispatch, 2026-11-03")).toBe(false);
+    expect(isLocalDeliveryOrder("")).toBe(false);
   });
 });

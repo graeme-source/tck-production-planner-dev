@@ -9,12 +9,13 @@
  */
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { format, parseISO } from "date-fns";
 import { Check, ChevronDown, ChevronUp, Loader2, ShoppingCart, Undo2, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  OUTSTANDING_KEY, batchSaveKey, createOrders, ingredientsKey, isOutstanding, placeOrder,
+  OUTSTANDING_KEY, addToOrders, batchSaveKey, ingredientsKey, isOutstanding,
   useBatchesSaving, useMarkIngredient, useQueueIngredients, type QueueIngredient,
 } from "./api";
 
@@ -31,6 +32,7 @@ function waitForSaves(qc: ReturnType<typeof useQueryClient>, date: string): Prom
 
 export function DateIngredients({ date, onOrdersCreated }: { date: string; onOrdersCreated: () => void }) {
   const qc = useQueryClient();
+  const [, navigate] = useLocation();
   const { data, isLoading, isFetching } = useQueueIngredients(date);
   const saving = useBatchesSaving(date);
   const markIt = useMarkIngredient(date);
@@ -49,28 +51,22 @@ export function DateIngredients({ date, onOrdersCreated }: { date: string; onOrd
   // A background refresh never blocks ordering — create() re-reads first.
   const busy = placing || saving;
 
+  // Onto today's supplier cards on the Orders page — ordered there with the
+  // normal orders, not placed from here (Graeme, 30 Oct 2026).
   const create = async () => {
     setPlacing(true);
     try {
       await waitForSaves(qc, date);
       await qc.refetchQueries({ queryKey: ingredientsKey(date) });
-      const body = await createOrders(date, today.map(i => i.ingredientId));
-      const deliverBy = data.deliverBy >= todayIso() ? data.deliverBy : null;
-      const placed: string[] = [];
-      for (const po of body.created) {
-        try {
-          const p = await placeOrder(po.poId, deliverBy);
-          placed.push(`${po.supplierName}${p.expectedDeliveryDate ? ` — ${day(p.expectedDeliveryDate)}` : ""}`);
-        } catch {
-          placed.push(`${po.supplierName} (draft — place it in Orders)`);
-        }
-      }
-      toast({ title: `Ordered from ${placed.length} supplier${placed.length === 1 ? "" : "s"}`, description: placed.join("; ") });
+      const body = await addToOrders(date, today.map(i => i.ingredientId));
+      toast({ title: `${body.added} added to today's orders` });
       qc.invalidateQueries({ queryKey: ingredientsKey(date) });
       qc.invalidateQueries({ queryKey: OUTSTANDING_KEY });
+      qc.invalidateQueries({ queryKey: ["order-calculate"] });
       onOrdersCreated();
+      navigate("/orders");
     } catch (err) {
-      toast({ title: "Couldn't create orders", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
+      toast({ title: "Couldn't add to today's orders", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
     } finally {
       setPlacing(false);
     }
@@ -99,14 +95,14 @@ export function DateIngredients({ date, onOrdersCreated }: { date: string; onOrd
         <button onClick={() => void create()} disabled={busy}
           className="min-h-12 px-4 py-2 rounded-xl bg-primary text-primary-foreground text-base font-semibold hover:bg-primary/90 disabled:opacity-50 flex items-center gap-2">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ShoppingCart className="w-4 h-4" />}
-          {saving ? "Saving batches…" : `Order ${today.length} now`}
+          {saving ? "Saving batches…" : `Add ${today.length} to today's orders`}
         </button>
       )}
 
-      <Fold title={`Ordered or not needed (${done.length})`} hidden={done.length === 0}>
+      <Fold title={`On today's orders, ordered or not needed (${done.length})`} hidden={done.length === 0}>
         {done.map(i => (
           <div key={i.ingredientId} className="flex items-center justify-between gap-3 text-sm py-1">
-            <span>{i.name} <span className="text-muted-foreground">· {i.mark === "ordered" ? "ordered" : "not needed"}{i.markedBy ? ` by ${i.markedBy.split(" ")[0]}` : ""}{i.markedAt ? ` ${day(i.markedAt.slice(0, 10))}` : ""}</span></span>
+            <span>{i.name} <span className="text-muted-foreground">· {i.mark === "ordered" ? "ordered" : i.mark === "queued" ? "on today's orders" : "not needed"}{i.markedBy ? ` by ${i.markedBy.split(" ")[0]}` : ""}{i.markedAt ? ` ${day(i.markedAt.slice(0, 10))}` : ""}</span></span>
             <button onClick={() => markIt.mutate({ ingredientId: i.ingredientId, mark: null })} className="px-2 py-1 rounded-lg text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
               <Undo2 className="w-3.5 h-3.5" /> Undo
             </button>

@@ -85,6 +85,36 @@ export function bonusFor(input: { revenue: number; profit: number; minimum: numb
   };
 }
 
+/** What's been typed for a month (routes/staff-bonus.ts MonthEntry). */
+export interface BonusMonthEntry {
+  profit: number | null;
+  revenueOverride: number | null;
+}
+
+/** Finished months (before `thisMonth`) whose net operating profit hasn't
+ *  been entered yet — it's typed once signed off in QuickBooks, about two
+ *  weeks into the next month. Oldest first. */
+export function monthsAwaitingProfit(
+  months: readonly string[], thisMonth: string, entries: Readonly<Record<string, BonusMonthEntry | undefined>>,
+): string[] {
+  return months.filter(m => m < thisMonth && entries[m]?.profit == null).sort();
+}
+
+/** The revenue the bonus uses: a typed override if there is one, else the
+ *  figure worked out from what was packed. null = neither yet. */
+export function bonusRevenue(packed: number | null | undefined, override: number | null | undefined): number | null {
+  if (override != null && Number.isFinite(override)) return override;
+  return packed != null && Number.isFinite(packed) ? packed : null;
+}
+
+const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "1 Sep – 30 Sep" (or one day alone) from YYYY-MM-DD days. */
+export function dayRangeLabel(first: string, last: string): string {
+  const day = (d: string) => `${Number(d.slice(8, 10))} ${SHORT_MONTHS[Number(d.slice(5, 7)) - 1] ?? ""}`;
+  return first === last ? day(first) : `${day(first)} – ${day(last)}`;
+}
+
 /** Revenue points for the "what it pays" table: the minimum, quarters to
  *  stretch, then each step above stretch until the cap. */
 export function bonusLadder(minimum: number, stretch: number, s: BonusScheme): Array<{ revenue: number; bonus: number; profitNeeded: number }> {

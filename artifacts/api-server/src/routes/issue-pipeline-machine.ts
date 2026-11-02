@@ -15,6 +15,8 @@
  * Graeme's decisions are never written from here: approve / reject / reply
  * live in routes/issue-pipeline.ts behind the founder session gate.
  */
+import { buildRequestView, readBuildRequest, writeBuildRequest } from "../lib/fix-queue-build-request";
+import { claimBuild, finishBuild } from "../lib/fix-queue-build-request-rules";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
 import { db, andonIssuesTable, issueTriageTable, issueTriageEventsTable, type IssueTriage } from "@workspace/db";
@@ -530,6 +532,27 @@ router.post("/issues/:andonIssueId/note", validate(noteBody), async (req, res) =
     console.error("[issue-pipeline] note failed:", err instanceof Error ? err.message : String(err));
     res.status(500).json({ error: "Failed to post the note" });
   }
+});
+
+// "Build approved fixes now" — the reviewer's side (2 Nov 2026). GET is
+// the ten-minute check; claim makes sure only one run builds; finish
+// records what was built so the button can say so.
+router.get("/build-request", async (_req, res) => {
+  res.json(await buildRequestView());
+});
+router.post("/build-request/claim", validate(z.object({}).passthrough()), async (_req, res) => {
+  const claimed = claimBuild(await readBuildRequest(), new Date().toISOString());
+  if (!claimed) { res.status(409).json({ error: "No build waiting", ...(await buildRequestView()) }); return; }
+  await writeBuildRequest(claimed);
+  res.json(await buildRequestView());
+});
+const finishBuildBody = z.object({ note: z.string().min(1).max(2000) });
+router.post("/build-request/finish", validate(finishBuildBody), async (req, res) => {
+  const { note } = finishBuildBody.parse(req.body);
+  const done = finishBuild(await readBuildRequest(), new Date().toISOString(), note);
+  if (!done) { res.status(409).json({ error: "No build to finish", ...(await buildRequestView()) }); return; }
+  await writeBuildRequest(done);
+  res.json(await buildRequestView());
 });
 
 // Anything else under /machine is a typo, not a reason to fall through to

@@ -315,6 +315,14 @@ export function dispatchTrust(coverage: Record<DispatchState, number>): Dispatch
   return { sent, exact, estimated, unknown, exactPct, trustworthy, summary };
 }
 
+/** A value from this order without its VAT, using the order's own tax
+ *  share (almost all TCK food is zero-rated). Shared with the bonus
+ *  calculator's revenue sent out (lib/sent-out-revenue.ts). */
+export function exVatOf(value: number, o: Pick<DeferralOrder, "totalPrice" | "totalTax">): number {
+  const taxShare = o.totalPrice > 0 ? Math.min(1, Math.max(0, o.totalTax / o.totalPrice)) : 0;
+  return round2(value * (1 - taxShare));
+}
+
 /** Refunds (money back) by the cut-off. */
 function refundedBy(o: DeferralOrder, cutoffMs: number): number {
   return o.refunds.filter(r => Date.parse(r.at) < cutoffMs).reduce((n, r) => n + r.amount, 0);
@@ -357,8 +365,7 @@ export function computeDeferredIncome(monthEnd: string, orders: readonly Deferra
       if (!tag || tag <= monthEnd) { add(staleUnsent, value); continue; }
     }
 
-    const taxShare = o.totalPrice > 0 ? Math.min(1, Math.max(0, o.totalTax / o.totalPrice)) : 0;
-    const ex = round2(value * (1 - taxShare));
+    const ex = exVatOf(value, o);
     const later = !!o.cancelledAt || o.refunds.some(x => Date.parse(x.at) >= cutoffMs && x.amount > 0);
     if (later) add(laterCancelled, value);
     // Only not_yet and the dated sources get here (unknown and
