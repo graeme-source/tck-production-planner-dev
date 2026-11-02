@@ -20,6 +20,7 @@
 //    the same Shopify product as the 2-pack), since eight_pack_variant_id is not
 //    populated. Unmappable lines are skipped, never guessed.
 
+import { DATE_TAG_RE, PRODUCTION_TAG, firstDateTag, hasWholesaleTag, isProcessedOrder } from "../lib/wholesale-order-tags";
 import { Router, type IRouter } from "express";
 import { db, productionPlanItemsTable } from "@workspace/db";
 import { inArray, sql } from "drizzle-orm";
@@ -41,9 +42,6 @@ import { greetingNameOf } from "../lib/order-reschedule";
 
 const router: IRouter = Router();
 
-const PRODUCTION_TAG = "production";
-const WHOLESALE_TAG = "wholesale";
-const DATE_TAG_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SCAN_DAYS_BACK = 30;
 const QUEUE_TTL_MS = 60_000;
 
@@ -68,16 +66,6 @@ function deliveryDateOptions(earliestWorkDay: string, count: number): string[] {
   return out;
 }
 
-function firstDateTag(tags: string): string | null {
-  for (const t of tags.split(",").map(t => t.trim())) if (DATE_TAG_RE.test(t)) return t;
-  return null;
-}
-function hasProductionTag(tags: string): boolean {
-  return tags.split(",").map(t => t.trim().toLowerCase()).includes(PRODUCTION_TAG);
-}
-function hasWholesaleTag(tags: string): boolean {
-  return tags.split(",").map(t => t.trim().toLowerCase()).includes(WHOLESALE_TAG);
-}
 // The bag-line rule and the product-title → recipe map are shared with the
 // despatch decrement (lib/eight-pack-bags.ts, lib/eight-pack-recipe-map.ts),
 // so the bags put on a plan are exactly the bags taken out of the fridge.
@@ -155,7 +143,9 @@ router.get("/queue", async (_req, res) => {
     };
 
     const queueOrders = orders
-      .filter(o => !hasProductionTag(o.tags))
+      // Processed = "production" AND a delivery date (lib/wholesale-order-tags.ts):
+      // "production" alone (copied onto a draft order, #138553) must not hide it.
+      .filter(o => !isProcessedOrder(o.tags))
       .flatMap(o => {
         const eightPackLines = (o.line_items ?? []).filter(is8PackLine);
         // An order qualifies if it contains 8-pack bags, OR it's tagged "wholesale".
@@ -309,7 +299,7 @@ router.post("/process", async (req, res) => {
     // Re-fetch live so we tag against current tags and current line items.
     const order = await getOrderById(orderId);
     if (!order) { res.status(404).json({ error: "Order not found" }); return; }
-    if (hasProductionTag(order.tags)) { res.status(409).json({ error: "Order is already tagged 'production'." }); return; }
+    if (isProcessedOrder(order.tags)) { res.status(409).json({ error: "Order is already processed (it has a delivery date and 'production')." }); return; }
 
     const lines = (order.line_items ?? []).filter(is8PackLine);
     if (lines.length === 0) {
