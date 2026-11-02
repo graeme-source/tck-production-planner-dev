@@ -11,6 +11,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { SupplierAccountNumberField } from "@/components/supplier-account-number-field";
+import { SUPPLIER_CARD_ACTIONS_ROW, SUPPLIER_CARD_EDIT_BUTTON, SUPPLIER_CARD_DELETE_BUTTON } from "@/lib/supplier-card-actions";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -658,18 +659,20 @@ export default function Suppliers() {
               <div className="w-10 h-10 rounded-xl bg-primary/10 text-primary flex items-center justify-center flex-shrink-0">
                 <Building2 className="w-5 h-5" />
               </div>
-              <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <div className={SUPPLIER_CARD_ACTIONS_ROW}>
                 <button
                   onClick={() => setEditingItem(supplier as SupplierItem)}
-                  className="p-2 text-muted-foreground hover:text-foreground hover:bg-secondary/50 rounded-lg transition-colors"
+                  className={SUPPLIER_CARD_EDIT_BUTTON}
                   title="Edit"
+                  aria-label={`Edit ${supplier.name}`}
                 >
                   <Edit2 className="w-4 h-4" />
                 </button>
                 <button
                   onClick={() => { if (confirm(`Delete "${supplier.name}"?`)) deleteSupplier.mutate({ id: supplier.id }); }}
-                  className="p-2 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+                  className={SUPPLIER_CARD_DELETE_BUTTON}
                   title="Delete"
+                  aria-label={`Delete ${supplier.name}`}
                 >
                   <Trash2 className="w-4 h-4" />
                 </button>
