@@ -70,6 +70,7 @@ import { NotificationBell } from "@/components/notification-bell";
 import { MessagesButton } from "@/components/messages/messages-button";
 import { CurrentUserBadge } from "@/components/current-user-badge";
 import { PageSopButton } from "@/components/page-sop-rail";
+import { TOP_BAR_ACTIONS_CLASS, TOP_BAR_CLASS } from "@/lib/top-bar-layout";
 import { useUnseenImprovementCount } from "@/hooks/use-unseen-improvements";
 import { useFixQueueUnread } from "@/components/fix-queue-conversation";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
@@ -1180,7 +1181,7 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: (
   const phone = usePhoneHeader();
 
   return (
-    <header className="min-h-[56px] border-b border-border bg-background/80 backdrop-blur-md flex items-center px-4 md:px-5 xl:px-8 gap-3 z-10 min-w-0">
+    <header className={TOP_BAR_CLASS}>
       {/* Always visible: opens the drawer on phones, collapses/restores the
           sidebar on tablet/desktop — one obvious place to get the menu back. */}
       <button
@@ -1250,8 +1251,10 @@ function TopBar({ onMenu, fallbackTitle, onOpenSops, showMessages }: { onMenu: (
               station's messages too. Not for external accountants. */}
           {showMessages && <MessagesButton at={pageStations ?? []} />}
           <NotificationBell />
+          {/* The page's own buttons drop to a second row rather than run
+              off the edge (#359) — see lib/top-bar-layout.ts. */}
           {header?.action && (
-            <div className="flex-shrink-0">
+            <div className={TOP_BAR_ACTIONS_CLASS}>
               {header.action}
             </div>
           )}
