@@ -16,6 +16,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BellOff, ExternalLink, Lightbulb, Loader2, PlusCircle, RotateCcw } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { feedTimestamp } from "@/lib/feed-time";
+import { BoldText } from "@/components/bold-text";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -129,7 +130,7 @@ export function ImprovementSuggestions({ status }: { status: "suggested" | "dism
               <div>
                 <p className="text-xs font-bold uppercase tracking-wide text-blue-700 dark:text-blue-300">Improvement idea · {s.station}</p>
                 <h3 className="text-lg font-bold leading-snug">{s.title}</h3>
-                {s.description && s.description !== s.title && <p className="text-base text-muted-foreground line-clamp-3 whitespace-pre-wrap">{s.description}</p>}
+                {s.description && s.description !== s.title && <p className="text-base text-muted-foreground line-clamp-3 whitespace-pre-wrap"><BoldText text={s.description} /></p>}
                 <p className="text-sm text-muted-foreground mt-1">
                   Logged by {s.submittedByName ?? "someone"} · {feedTimestamp(s.createdAt)}
                   {s.status === "dismissed" && s.decidedBy ? ` · dismissed by ${s.decidedBy}${s.decidedAt ? ` ${feedTimestamp(s.decidedAt)}` : ""}` : ""}

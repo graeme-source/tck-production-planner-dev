@@ -3,10 +3,11 @@
 // improvement completely, but not other people's"). The server applies the
 // same rule (canEditImprovement in @workspace/db); a refusal or failure shows
 // the server's reason, never silence.
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Pencil, Check, X, AlertCircle } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
+import { BoldButton } from "@/components/bold-text";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -17,6 +18,7 @@ export function ImprovementEditText({ id, title, description }: {
   const [open, setOpen] = useState(false);
   const [draftTitle, setDraftTitle] = useState(title);
   const [draftDescription, setDraftDescription] = useState(description);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -62,15 +64,20 @@ export function ImprovementEditText({ id, title, description }: {
           className="mt-1 w-full h-14 px-4 rounded-2xl border-2 border-border bg-background text-lg focus:outline-none focus:ring-2 focus:ring-primary/40"
         />
       </label>
-      <label className="block">
-        <span className="text-base font-bold">What changed</span>
+      <div>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <label htmlFor={`improvement-${id}-description`} className="text-base font-bold">What changed</label>
+          <BoldButton textareaRef={descriptionRef} value={draftDescription} onChange={setDraftDescription} />
+        </div>
         <textarea
+          id={`improvement-${id}-description`}
+          ref={descriptionRef}
           value={draftDescription}
           onChange={e => setDraftDescription(e.target.value)}
           rows={4}
           className="mt-1 w-full px-4 py-3 rounded-2xl border-2 border-border bg-background text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
         />
-      </label>
+      </div>
       {/* Visible save state: unsaved / saving / the server's reason. */}
       <p className={save.isError ? "text-base font-semibold text-destructive flex items-center gap-1.5" : "text-sm text-muted-foreground"}>
         {save.isError

@@ -16,6 +16,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import type React from "react";
 import { ImprovementFeedMedia } from "@/components/improvement-feed-media";
+import { BoldText } from "@/components/bold-text";
 import { useLocation, Link } from "wouter";
 import { TimingFlag, recipeTimingHref } from "@/components/timing-flag";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -3157,7 +3158,7 @@ function ImprovementsFeedList({ limit }: { limit: number }) {
                 <p className="text-2xl font-semibold leading-snug">{imp.title}</p>
                 <p className="text-lg text-muted-foreground mt-0.5">
                   {who ? `By ${who}` : "Team effort"}
-                  {imp.description && imp.description !== imp.title ? ` — ${imp.description}` : ""}
+                  {imp.description && imp.description !== imp.title ? <> — <BoldText text={imp.description} /></> : null}
                 </p>
               </div>
             </div>

@@ -19,6 +19,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Lightbulb, CheckCircle2, Camera, Loader2, X, ArrowRight, ListChecks, ThumbsUp } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { DictateButton } from "@/components/dictate-button";
+import { BoldButton } from "@/components/bold-text";
 import { releaseDictation } from "@/hooks/use-voice-input";
 import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
@@ -45,6 +46,7 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
   const [mode, setMode] = useState<Mode>(startMode);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const [busy, setBusy] = useState(false);
   const [duplicates, setDuplicates] = useState<Array<{ id: number; title: string }>>([]);
   const [beforeTaken, setBeforeTaken] = useState(false);
@@ -514,9 +516,13 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
                 <label className="text-sm font-medium text-muted-foreground">
                   Anything to add? (optional)
                 </label>
-                <DictateButton value={description} onChange={setDescription} context="note" />
+                <div className="flex items-center gap-2">
+                  <BoldButton textareaRef={descriptionRef} value={description} onChange={setDescription} />
+                  <DictateButton value={description} onChange={setDescription} context="note" />
+                </div>
               </div>
               <textarea
+                ref={descriptionRef}
                 value={description}
                 onChange={e => setDescription(e.target.value)}
                 rows={2}
