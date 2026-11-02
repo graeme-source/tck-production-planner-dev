@@ -48,3 +48,38 @@ export const KANBAN_SHEET_OPTIONS: { sheet: KanbanSheet; title: string; detail: 
     detail: "The same A5 card in the middle of an A4 sheet, with corner marks to trim on.",
   },
 ];
+
+/**
+ * How the dialog hands the PDF over (fix-queue #365, Jane Miles 27 Oct).
+ *
+ * Opened from its home-screen icon, the app runs without Safari's toolbar,
+ * so the new-tab PDF fills the screen with no Share or Print button — there
+ * was no way to print. On an iPad, or whenever the app runs from its icon,
+ * the PDF goes to the share sheet instead (it has Print). Desktops keep the
+ * plain new-tab link, which prints fine there.
+ */
+export type KanbanPrintMethod = "share" | "link";
+
+export interface KanbanPrintEnv {
+  /** Running from the home-screen icon (display-mode standalone). */
+  standalone: boolean;
+  /** An iPad — including iPadOS reporting itself as a Mac. */
+  ipad: boolean;
+  /** navigator.share can take a PDF file. */
+  canShareFiles: boolean;
+}
+
+export function kanbanPrintMethod(env: KanbanPrintEnv): KanbanPrintMethod {
+  if (!env.canShareFiles) return "link";
+  return env.standalone || env.ipad ? "share" : "link";
+}
+
+/** iPadOS 13+ says "Macintosh" in its user agent; touch points give it away. */
+export function looksLikeIpad(userAgent: string, maxTouchPoints: number): boolean {
+  return /iPad/.test(userAgent) || (/Macintosh/.test(userAgent) && maxTouchPoints > 1);
+}
+
+/** File name for the shared PDF, e.g. "kanban-card-a5.pdf" / "kanban-cards-a4.pdf". */
+export function kanbanPdfFileName(count: number, sheet: KanbanSheet): string {
+  return `kanban-card${count === 1 ? "" : "s"}-${sheet}.pdf`;
+}
