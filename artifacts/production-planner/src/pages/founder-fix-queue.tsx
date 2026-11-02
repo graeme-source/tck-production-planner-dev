@@ -26,6 +26,7 @@ import {
   FixQueueSearch, FixQueueThread, ReporterRepliedStrip, useFixQueueUnread, type FixQueueThreadHandle,
 } from "@/components/fix-queue-conversation";
 import { DictateButton } from "@/components/dictate-button";
+import { FixQueueBuildNow } from "@/components/fix-queue-build-now";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
@@ -789,6 +790,9 @@ export default function FounderFixQueue() {
         Claude reviews every app issue the team reports and recommends what to do.{" "}
         <span className="font-semibold text-foreground">Nothing gets built without your approval.</span>
       </p>
+
+      {/* After a review session: build every approved card now (2 Nov 2026). */}
+      <FixQueueBuildNow />
 
       {/* Find a card in ANY tab — one that moved is never lost (2026-10-13). */}
       <FixQueueSearch value={search} onChange={setSearch} />
