@@ -20,10 +20,10 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { db, ingredientsTable, suppliersTable, storageLocationsTable, ingredientStorageLocationsTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { validateQuery } from "../middleware/validate";
 import { KANBAN_SHEETS, type KanbanSheet } from "../lib/kanban-card-layout";
-import { kanbanCardText } from "../lib/kanban-card-text";
+import { kanbanCardText, kanbanLocationsLabel, type KanbanLocationParts } from "../lib/kanban-card-text";
 import { qrPayload } from "../lib/qr-code";
 
 const router: IRouter = Router();
@@ -59,12 +59,16 @@ router.get("/pdf", validateQuery(PdfQuery), async (_req, res) => {
     const supplierName = new Map(suppliers.map((s) => [s.id, s.name]));
 
     const locRows = await db
-      .select({ ingredientId: ingredientStorageLocationsTable.ingredientId, name: storageLocationsTable.name })
+      .select({
+        ingredientId: ingredientStorageLocationsTable.ingredientId, name: storageLocationsTable.name,
+        rackLabel: ingredientStorageLocationsTable.rackLabel, shelfLabel: ingredientStorageLocationsTable.shelfLabel,
+      })
       .from(ingredientStorageLocationsTable)
       .innerJoin(storageLocationsTable, eq(storageLocationsTable.id, ingredientStorageLocationsTable.locationId))
-      .where(inArray(ingredientStorageLocationsTable.ingredientId, ids));
-    const locations = new Map<number, string[]>();
-    for (const l of locRows) locations.set(l.ingredientId, [...(locations.get(l.ingredientId) ?? []), l.name]);
+      .where(inArray(ingredientStorageLocationsTable.ingredientId, ids))
+      .orderBy(asc(ingredientStorageLocationsTable.id));
+    const locations = new Map<number, KanbanLocationParts[]>();
+    for (const l of locRows) locations.set(l.ingredientId, [...(locations.get(l.ingredientId) ?? []), l]);
 
     const byId = new Map(rows.map((r) => [r.id, r]));
     // Cards come out in the order asked for (the page's own sort order).
@@ -80,7 +84,7 @@ router.get("/pdf", validateQuery(PdfQuery), async (_req, res) => {
         kanbanOrderAmount: row.kanbanOrderAmount != null ? Number(row.kanbanOrderAmount) : null,
         supplier: row.supplierId != null ? supplierName.get(row.supplierId) ?? null : null,
         supplierPartNumber: row.supplierPartNumber ?? null,
-        location: locations.get(row.id)?.join(", ") || null,
+        location: kanbanLocationsLabel(locations.get(row.id) ?? []),
         packName: row.packName ?? null,
       });
       return [{ ...text, qrText: qrPayload("ingredient", row.id) }];

@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, ingredientsTable, suppliersTable, ingredientStorageLocationsTable, storageLocationsTable } from "@workspace/db";
-import { eq, sql, inArray, isNull, isNotNull } from "drizzle-orm";
+import { asc, eq, sql, inArray, isNull, isNotNull } from "drizzle-orm";
 import { CreateIngredientBody, UpdateIngredientBody } from "@workspace/api-zod";
 import { detectAllergens, ALLERGEN_DISPLAY } from "@workspace/allergens";
 import { validate } from "../middleware/validate";
@@ -8,6 +8,7 @@ import { reconcileRecipesUsing } from "../lib/quid-store";
 import { declarationToStore } from "../lib/ingredient-declaration";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { generateQrCode } from "../lib/qr-code";
+import { kanbanLocationsLabel } from "../lib/kanban-card-text";
 import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
 import { pgErrorCode, FOREIGN_KEY_VIOLATION, ingredientInUseMessage } from "../lib/ingredient-in-use";
 import { shouldAutoClassify, classifyDeclaration, novaColumns } from "../lib/upf-classify";
@@ -383,11 +384,13 @@ router.get("/:id/kanban-card", async (req, res) => {
   }
 
   const locRows = await db
-    .select({ name: storageLocationsTable.name })
+    .select({ name: storageLocationsTable.name, rackLabel: ingredientStorageLocationsTable.rackLabel, shelfLabel: ingredientStorageLocationsTable.shelfLabel })
     .from(ingredientStorageLocationsTable)
     .innerJoin(storageLocationsTable, eq(ingredientStorageLocationsTable.locationId, storageLocationsTable.id))
-    .where(eq(ingredientStorageLocationsTable.ingredientId, id));
-  const location = locRows.map(l => l.name).join(", ") || null;
+    .where(eq(ingredientStorageLocationsTable.ingredientId, id))
+    .orderBy(asc(ingredientStorageLocationsTable.id));
+  // Same wording as the printed PDF card, rack and shelf included (#357).
+  const location = kanbanLocationsLabel(locRows);
 
   res.json({
     id: row.id,
