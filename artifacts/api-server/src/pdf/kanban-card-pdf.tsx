@@ -10,8 +10,8 @@
 import { Document, Page, View, Text, Svg, Path, Line, StyleSheet, renderToBuffer } from "@react-pdf/renderer";
 import QRCode from "qrcode";
 import {
-  FACE_CONTENT_PADDING_MM, kanbanNameFontSize, kanbanSheetLayout, mm, qrModulesPath,
-  type KanbanSheet, type Rect,
+  FACE_CONTENT_PADDING_MM, KANBAN_FRONT_BORDER_PT, KANBAN_FRONT_MM, KANBAN_FRONT_TYPE, kanbanFrontLayout, kanbanSheetLayout, kanbanWordPieces, mm, qrModulesPath,
+  type KanbanFrontFieldLayout, type KanbanSheet, type Rect,
 } from "../lib/kanban-card-layout";
 import type { KanbanCardText } from "../lib/kanban-card-text";
 
@@ -26,17 +26,24 @@ const CREAM = "#fffdf0";
 const RULE = "#d6c38c";
 const AMBER = "#ffbe23";
 
+const T = KANBAN_FRONT_TYPE;
+const FM = KANBAN_FRONT_MM;
+
 const s = StyleSheet.create({
   abs: { position: "absolute" },
   header: { backgroundColor: GREEN, color: "#ffffff" },
-  name: { fontFamily: "Helvetica-Bold", lineHeight: 1.1 },
-  subtitle: { fontSize: 7, letterSpacing: 1, marginTop: 2, opacity: 0.9 },
-  fieldLabel: { fontSize: 6.5, fontFamily: "Helvetica-Bold", color: GREEN, letterSpacing: 0.8, marginBottom: 2 },
-  fieldValue: { fontSize: 10.5, fontFamily: "Helvetica-Bold", color: DARK_GREEN },
-  fieldPart: { fontSize: 8.5, fontFamily: "Helvetica", color: "#3f6212" },
-  field: { borderBottomWidth: 0.75, borderBottomColor: RULE, paddingBottom: 3, marginBottom: 5 },
-  footer: { backgroundColor: DARK_GREEN, color: CREAM, fontSize: 6.5, letterSpacing: 1, textAlign: "center", fontFamily: "Helvetica-Bold" },
-  qrLabel: { fontSize: 6, color: GREEN, letterSpacing: 0.5, marginTop: 3, textAlign: "center", fontFamily: "Helvetica-Bold" },
+  // Front-face sizes come from lib/kanban-card-layout.ts (#353): the same
+  // numbers the fit maths uses, so what is drawn is what was measured.
+  // maxLines + ellipsis is the backstop: the fit maths already sizes text to
+  // fit, so only absurd text (hundreds of characters) is ever cut.
+  name: { fontFamily: "Helvetica-Bold", lineHeight: T.nameLineHeight, maxLines: T.nameMaxLines, textOverflow: "ellipsis" },
+  subtitle: { fontSize: T.subtitlePt, lineHeight: T.lineHeight, letterSpacing: 1, marginTop: mm(FM.subtitleGap), opacity: 0.9 },
+  fieldLabel: { fontSize: T.labelPt, lineHeight: T.lineHeight, fontFamily: "Helvetica-Bold", color: GREEN, letterSpacing: 0.8, marginBottom: mm(FM.labelGap) },
+  fieldValue: { fontFamily: "Helvetica-Bold", color: DARK_GREEN, lineHeight: T.valueLineHeight, maxLines: T.valueMaxLines, textOverflow: "ellipsis" },
+  fieldPart: { fontSize: T.partPt, lineHeight: T.lineHeight, fontFamily: "Helvetica", color: "#3f6212", maxLines: 1, textOverflow: "ellipsis" },
+  field: { borderBottomWidth: 0.75, borderBottomColor: RULE, paddingBottom: mm(FM.fieldRulePad) },
+  footer: { backgroundColor: DARK_GREEN, color: CREAM, fontSize: T.footerPt, letterSpacing: 1, textAlign: "center", fontFamily: "Helvetica-Bold" },
+  qrLabel: { fontSize: T.qrLabelPt, color: GREEN, letterSpacing: 0.5, marginTop: 3, textAlign: "center", fontFamily: "Helvetica-Bold" },
   backTitle: { fontSize: 20, fontFamily: "Helvetica-Bold", color: DARK_GREEN, letterSpacing: 1.5, textAlign: "center" },
   backSub: { fontSize: 10, color: DARK_GREEN, marginTop: 6, textAlign: "center" },
   backName: { fontSize: 13, fontFamily: "Helvetica-Bold", color: DARK_GREEN, marginTop: 10, paddingVertical: 5, paddingHorizontal: 14, backgroundColor: "#ffd97a", borderRadius: 6, textAlign: "center" },
@@ -58,41 +65,42 @@ function QrVector({ text, size }: { text: string; size: number }) {
   );
 }
 
-function Field({ label, value, extra }: { label: string; value: string; extra?: string | null }) {
+function Field({ field }: { field: KanbanFrontFieldLayout }) {
   return (
     <View style={s.field}>
-      <Text style={s.fieldLabel}>{label.toUpperCase()}</Text>
-      <Text style={s.fieldValue}>
-        {value}
-        {extra ? <Text style={s.fieldPart}>{`  ·  Part # ${extra}`}</Text> : null}
-      </Text>
+      <Text style={s.fieldLabel}>{field.label.toUpperCase()}</Text>
+      <Text style={[s.fieldValue, { fontSize: field.valuePt }]} hyphenationCallback={kanbanWordPieces}>{field.value}</Text>
+      {field.part ? <Text style={s.fieldPart} hyphenationCallback={kanbanWordPieces}>{`Part # ${field.part}`}</Text> : null}
     </View>
   );
 }
 
-function Front({ card, fill }: { card: KanbanCardPdfCard; fill: Rect }) {
+function Front({ card, fill, sheet }: { card: KanbanCardPdfCard; fill: Rect; sheet: KanbanSheet }) {
   const pad = mm(FACE_CONTENT_PADDING_MM);
-  const footerH = mm(7);
-  const qrSize = mm(52);
+  const qrSize = mm(FM.qrSize);
+  const layout = kanbanFrontLayout(card.name, [
+    { label: "Pull when using last", value: card.pullWhen, part: null },
+    { label: "Order amount", value: card.orderAmount, part: null },
+    { label: "Location", value: card.location, part: null },
+    { label: "Supplier", value: card.supplier, part: card.partNumber },
+  ], sheet);
   return (
-    <View style={[s.abs, box(fill), { backgroundColor: CREAM, borderWidth: 1.5, borderColor: GREEN }]}>
-      <View style={[s.header, { paddingHorizontal: pad, paddingTop: mm(4), paddingBottom: mm(3.5) }]}>
-        <Text style={[s.name, { fontSize: kanbanNameFontSize(card.name) }]}>{card.name}</Text>
+    <View style={[s.abs, box(fill), { backgroundColor: CREAM, borderWidth: KANBAN_FRONT_BORDER_PT, borderColor: GREEN, flexDirection: "column" }]}>
+      <View style={[s.header, { paddingHorizontal: pad, paddingTop: mm(FM.headerPadTop), paddingBottom: mm(FM.headerPadBottom) }]}>
+        <Text style={[s.name, { fontSize: layout.namePt }]} hyphenationCallback={kanbanWordPieces}>{card.name}</Text>
         <Text style={s.subtitle}>KANBAN CARD — THE CALZONE KITCHEN</Text>
       </View>
-      <View style={{ flexDirection: "row", paddingHorizontal: pad, paddingTop: mm(3.5) }}>
-        <View style={{ flex: 1, paddingRight: mm(4) }}>
-          <Field label="Pull when using last" value={card.pullWhen} />
-          <Field label="Order amount" value={card.orderAmount} />
-          <Field label="Location" value={card.location} />
-          <Field label="Supplier" value={card.supplier} extra={card.partNumber} />
+      <View style={{ flex: 1, flexDirection: "row", paddingHorizontal: pad, paddingTop: mm(FM.bodyPadTop), paddingBottom: mm(FM.bodyPadBottom) }}>
+        {/* The four fields spread down the whole face, not bunched at the top. */}
+        <View style={{ flex: 1, paddingRight: mm(FM.qrGap), justifyContent: "space-between" }}>
+          {layout.fields.map((f) => <Field key={f.label} field={f} />)}
         </View>
-        <View style={{ width: qrSize, alignItems: "center" }}>
+        <View style={{ width: qrSize, alignItems: "center", justifyContent: "center" }}>
           <QrVector text={card.qrText} size={qrSize} />
           <Text style={s.qrLabel}>SCAN TO PULL</Text>
         </View>
       </View>
-      <View style={[s.abs, s.footer, { left: 0, right: 0, bottom: 0, height: footerH, paddingTop: mm(2.2) }]}>
+      <View style={[s.footer, { height: mm(FM.footerHeight), justifyContent: "center" }]}>
         <Text>PULL — SCAN QR OR NOTIFY MANAGER</Text>
       </View>
     </View>
@@ -160,7 +168,7 @@ function CardPage({ card, sheet }: { card: KanbanCardPdfCard; sheet: KanbanSheet
   const L = kanbanSheetLayout(sheet);
   return (
     <Page size={[L.page.width, L.page.height]} style={{ position: "relative", backgroundColor: "#ffffff" }}>
-      <Front card={card} fill={L.frontFill} />
+      <Front card={card} fill={L.frontFill} sheet={sheet} />
       <Back card={card} fill={L.backFill} />
       <SheetGuides sheet={sheet} />
       <Text style={[s.abs, s.foldText, { left: L.card.x + mm(0.8), top: L.fold.y1 - mm(2.4) }]}>fold</Text>

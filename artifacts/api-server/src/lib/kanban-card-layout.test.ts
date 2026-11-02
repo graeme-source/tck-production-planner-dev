@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import QRCode from "qrcode";
-import { kanbanNameFontSize, kanbanSheetLayout, mm, pageSize, PAPER_PT, qrModulesPath } from "./kanban-card-layout";
+import {
+  boldTextWidthPt, fitFontSize, KANBAN_FRONT_TYPE, kanbanFrontLayout, kanbanNameFontSize, kanbanSheetLayout, kanbanWordPieces, mm, pageSize,
+  PAPER_PT, qrModulesPath, wrappedLineCount, type KanbanFrontField,
+} from "./kanban-card-layout";
 
 describe("paper sizes in points", () => {
   it("A5 is 419.53 x 595.28 pt portrait and swaps for landscape", () => {
@@ -98,8 +101,114 @@ describe("qrModulesPath", () => {
 
 describe("kanbanNameFontSize", () => {
   it("shrinks long names so they never push the fields off the card", () => {
-    expect(kanbanNameFontSize("Salt")).toBe(24);
-    expect(kanbanNameFontSize("x".repeat(30))).toBeLessThan(24);
-    expect(kanbanNameFontSize("x".repeat(80))).toBe(11);
+    expect(kanbanNameFontSize("Salt")).toBe(KANBAN_FRONT_TYPE.nameMaxPt);
+    expect(kanbanNameFontSize("Mature cheddar cheese, grated, free-flowing, 2 kg bag, from the wholesale cash and carry")).toBeLessThan(KANBAN_FRONT_TYPE.nameMaxPt);
+    expect(kanbanNameFontSize("x".repeat(200))).toBe(KANBAN_FRONT_TYPE.nameMinPt);
+  });
+});
+
+describe("text measuring", () => {
+  it("uses real Helvetica-Bold widths (W is wider than i)", () => {
+    expect(boldTextWidthPt("W", 10)).toBeCloseTo(9.44, 2);
+    expect(boldTextWidthPt("i", 10)).toBeCloseTo(2.78, 2);
+  });
+
+  it("word-wraps, and breaks a word longer than the line", () => {
+    expect(wrappedLineCount("Salt", 20, 300)).toBe(1);
+    const w = boldTextWidthPt("Salt", 20);
+    expect(wrappedLineCount("Salt Salt Salt", 20, w * 2.5)).toBe(2);
+    expect(wrappedLineCount("x".repeat(100), 20, 100)).toBeGreaterThan(5);
+  });
+
+  it("ordinary words are never split; a run-on code gets break points so it can wrap", () => {
+    expect(kanbanWordPieces("Wholesale")).toEqual(["Wholesale"]);
+    const pieces = kanbanWordPieces("y".repeat(40));
+    expect(pieces.length).toBeGreaterThan(1);
+    expect(pieces.join("")).toBe("y".repeat(40));
+  });
+
+  it("fitFontSize picks the biggest size that fits, never below the minimum", () => {
+    expect(fitFontSize("Salt", { maxPt: 20, minPt: 10, widthPt: 300, maxLines: 1 })).toBe(20);
+    const size = fitFontSize("Walk-in fridge, top shelf, left", { maxPt: 20, minPt: 10, widthPt: 150, maxLines: 1 });
+    expect(size).toBeLessThan(20);
+    expect(wrappedLineCount("Walk-in fridge, top shelf, left", size, 150)).toBe(1);
+    expect(fitFontSize("x".repeat(500), { maxPt: 20, minPt: 10, widthPt: 100, maxLines: 2 })).toBe(10);
+  });
+});
+
+// Issue #353: printed on A5 the card text was too small to read.
+describe("kanban front face is readable and still fits (#353)", () => {
+  const fieldsOf = (pull: string, order: string, location: string, supplier: string, part: string | null): KanbanFrontField[] => [
+    { label: "Pull when using last", value: pull, part: null },
+    { label: "Order amount", value: order, part: null },
+    { label: "Location", value: location, part: null },
+    { label: "Supplier", value: supplier, part },
+  ];
+
+  it("type is ~1.5-1.7x the old sizes (labels 6.5, values 10.5, part 8.5, footer 6.5, QR 6)", () => {
+    const T = KANBAN_FRONT_TYPE;
+    expect(T.labelPt).toBeGreaterThanOrEqual(9);
+    expect(T.valueMaxPt).toBeGreaterThanOrEqual(16);
+    expect(T.partPt).toBeGreaterThanOrEqual(12);
+    expect(T.footerPt).toBeGreaterThanOrEqual(9);
+    expect(T.qrLabelPt).toBeGreaterThanOrEqual(9);
+  });
+
+  it("a typical card prints every value at full size, on one line, and fits the face", () => {
+    for (const sheet of ["a5", "a4"] as const) {
+      const L = kanbanFrontLayout("Salt", fieldsOf("2 packs", "6 packs", "Dry store", "Brakes", "SALT-25"), sheet);
+      expect(L.fits).toBe(true);
+      expect(L.namePt).toBe(KANBAN_FRONT_TYPE.nameMaxPt);
+      for (const f of L.fields) {
+        expect(f.valuePt).toBe(KANBAN_FRONT_TYPE.valueMaxPt);
+        expect(f.valueLines).toBe(1);
+      }
+      expect(L.fieldsHeight).toBeLessThanOrEqual(L.fieldsAvailableHeight);
+    }
+  });
+
+  it("long names and long values shrink/wrap but never run off the face", () => {
+    const L = kanbanFrontLayout(
+      "Mature cheddar cheese, grated, free-flowing, 2 kg bag (Wholesale)",
+      fieldsOf("12 boxes of 6 x 2 kg bags", "48 boxes of 6 x 2 kg bags", "Walk-in fridge 2, top shelf, back left corner", "Bidfood Foodservice Wholesale Ltd", "BF-1234567-XL-2KG"),
+    );
+    expect(L.fits).toBe(true);
+    expect(L.fieldsHeight).toBeLessThanOrEqual(L.fieldsAvailableHeight);
+    expect(L.nameLines).toBeLessThanOrEqual(KANBAN_FRONT_TYPE.nameMaxLines);
+    expect(wrappedLineCount(L.fields[0].label, KANBAN_FRONT_TYPE.labelPt, L.fieldColumnWidth)).toBe(1);
+    for (const f of L.fields) {
+      expect(f.valueLines).toBeLessThanOrEqual(KANBAN_FRONT_TYPE.valueMaxLines);
+      expect(f.valuePt).toBeGreaterThanOrEqual(KANBAN_FRONT_TYPE.valueMinPt);
+    }
+  });
+
+  it("absurd text (hundreds of characters) is cut at two lines, never drawn off the face", () => {
+    const L = kanbanFrontLayout("x".repeat(300), fieldsOf("y".repeat(200), "y".repeat(200), "y".repeat(200), "y".repeat(200), "z".repeat(100)));
+    expect(L.fits).toBe(true);
+    expect(L.nameClipped).toBe(true);
+    expect(L.nameLines).toBe(KANBAN_FRONT_TYPE.nameMaxLines);
+    for (const f of L.fields) {
+      expect(f.clipped).toBe(true);
+      expect(f.valueLines).toBe(KANBAN_FRONT_TYPE.valueMaxLines);
+    }
+  });
+
+  it("a medium-long name stays on one big line; a long one wraps to two, smaller lines", () => {
+    const typical = fieldsOf("2 packs", "6 packs", "Dry store", "Brakes", "SALT-25");
+    const medium = kanbanFrontLayout("Mature cheddar, grated, 2 kg bag", typical);
+    expect(medium.nameLines).toBe(1);
+    expect(medium.namePt).toBeGreaterThanOrEqual(KANBAN_FRONT_TYPE.nameOneLineMinPt);
+    const long = kanbanFrontLayout("Chopped tomatoes in tomato juice, 2.5 kg tin", typical);
+    expect(long.nameLines).toBe(2);
+    expect(long.namePt).toBeLessThanOrEqual(KANBAN_FRONT_TYPE.nameTwoLineMaxPt);
+    expect(long.fits).toBe(true);
+    for (const f of long.fields) expect(f.valuePt).toBe(KANBAN_FRONT_TYPE.valueMaxPt);
+  });
+
+  it("every field label fits on one line beside the QR code", () => {
+    const L = kanbanFrontLayout("Salt", fieldsOf("1", "1", "x", "x", null));
+    for (const f of L.fields) {
+      expect(wrappedLineCount(f.label.toUpperCase(), KANBAN_FRONT_TYPE.labelPt, L.fieldColumnWidth)).toBe(1);
+    }
   });
 });
