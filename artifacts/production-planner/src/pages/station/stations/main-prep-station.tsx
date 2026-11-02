@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import type { SopAmountsContext } from "@/lib/sop-amounts";
+import { prepRowSopAttachTargets } from "@/lib/prep-row-sop-attach";
 import { format, parseISO } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
@@ -566,9 +567,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   };
 
   // SOPs attached to these ingredients — ingredient-level plus recipe-scoped
-  // (burger beef can carry a different SOP per recipe). Sub-recipe rows are
-  // skipped: their ids live in a different table, so an ingredient-keyed
-  // lookup would collide (follow-up: a 'sub_recipe' target type).
+  // (burger beef can carry a different SOP per recipe). Sub-recipe rows'
+  // ids live in a different table, so they load from a second endpoint
+  // (sub_recipe target type) — the Bases & Sauces pattern (issue #362).
   const sopIngredientIds = [...new Set(ingredients.filter(i => !i.isSubRecipe).map(i => i.ingredientId))].sort((a, b) => a - b);
   const sopLinksKey = ["sop-links-ingredients", sopIngredientIds.join(",")];
   const { data: sopLinksByIngredient } = useQuery<Record<number, Array<SopLink & { scope: "ingredient" | "recipe"; recipeId: number | null }>>>({
@@ -580,11 +581,22 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       return res.json();
     },
   });
+  const subRecipeSopIds = [...new Set(ingredients.filter(i => i.isSubRecipe).map(i => i.ingredientId))].sort((a, b) => a - b);
+  const subRecipeSopKey = ["sop-links-sub-recipes", "main_prep", subRecipeSopIds.join(",")];
+  const { data: sopLinksBySubRecipe } = useQuery<Record<number, SopLink[]>>({
+    queryKey: subRecipeSopKey,
+    enabled: subRecipeSopIds.length > 0,
+    queryFn: async () => {
+      const res = await fetch(`/api/standards/links/for-sub-recipes?ids=${subRecipeSopIds.join(",")}&station=main_prep`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load SOP links");
+      return res.json();
+    },
+  });
   const sopViewer = useSopViewer();
   // Links relevant to a row within one recipe's group: ingredient-level ones
-  // plus those scoped to THAT recipe.
+  // plus those scoped to THAT recipe. Sub-recipe rows: their own links.
   const sopLinksFor = (ingredientId: number, recipeId: number | null, isSubRecipe?: boolean): SopLink[] => {
-    if (isSubRecipe) return [];
+    if (isSubRecipe) return sopLinksBySubRecipe?.[ingredientId] ?? [];
     const all = sopLinksByIngredient?.[ingredientId] ?? [];
     return all.filter(l => l.scope === "ingredient" || recipeId == null || l.recipeId === recipeId);
   };
@@ -1106,28 +1118,21 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           )}
                           {/* Linked SOPs — the how-to travels with the prep
                               item. Recipe-scoped chips carry the recipe name;
-                              attach offers Everywhere or a single recipe. */}
-                          {!ing.isSubRecipe && (
-                            <div className="mt-2">
-                              <SopChips
-                                links={sopLinksByIngredient?.[ing.ingredientId] ?? []}
-                                // The SOP opens with this row's own numbers in it
-                                // (issue #340) — the same figures shown above.
-                                onOpen={(id, where) => sopViewer.open(id, where, prepRowSopAmounts(ing, linkedItems[ing.ingredientId]))}
-                                attach={[
-                                  { targetType: "ingredient", a: ing.ingredientId, text: "main_prep", label: "Everywhere", subject: ing.ingredientName },
-                                  ...[...new Map(ing.recipes.map(r => [r.recipeId, r.recipeName])).entries()].map(([recipeId, recipeName]) => ({
-                                    targetType: "recipe_ingredient" as const,
-                                    a: recipeId,
-                                    b: ing.ingredientId,
-                                    text: "main_prep",
-                                    label: `Only ${recipeName}`,
-                                  })),
-                                ]}
-                                queryKeysToInvalidate={[sopLinksKey]}
-                              />
-                            </div>
-                          )}
+                              attach offers Everywhere or a single recipe.
+                              Sub-recipe rows attach to the sub-recipe itself
+                              (issue #362). */}
+                          <div className="mt-2">
+                            <SopChips
+                              links={ing.isSubRecipe
+                                ? sopLinksBySubRecipe?.[ing.ingredientId] ?? []
+                                : sopLinksByIngredient?.[ing.ingredientId] ?? []}
+                              // The SOP opens with this row's own numbers in it
+                              // (issue #340) — the same figures shown above.
+                              onOpen={(id, where) => sopViewer.open(id, where, prepRowSopAmounts(ing, ing.isSubRecipe ? undefined : linkedItems[ing.ingredientId]))}
+                              attach={prepRowSopAttachTargets(ing, "main_prep")}
+                              queryKeysToInvalidate={[ing.isSubRecipe ? subRecipeSopKey : sopLinksKey]}
+                            />
+                          </div>
                         </div>
                         {ing.isBottle && ing.bottlesNeeded ? (
                           <div className="ml-4 flex-shrink-0 text-right">
