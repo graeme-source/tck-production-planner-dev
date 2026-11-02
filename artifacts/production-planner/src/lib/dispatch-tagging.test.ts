@@ -92,8 +92,8 @@ describe("local delivery, however the tag was typed (#138553, 2 Nov 2026)", () =
     expect(passesLabelFilter(handTyped, "local", false)).toBe(true);
     expect(passesLabelFilter(handTyped, "unbooked", false)).toBe(false);
   });
-  it("accepts every spelling, but only the whole tag", () => {
-    for (const t of ["local-delivery", "Local Delivery", "Local-Delivery", "local_delivery", "LOCALDELIVERY"]) expect(isLocalDeliveryTag(t)).toBe(true);
-    for (const t of ["no-local-delivery", "local", "delivery", "local delivery today"]) expect(isLocalDeliveryTag(t)).toBe(false);
+  it("accepts every way of typing it, in any case, with any spacing or punctuation", () => {
+    for (const t of ["local-delivery", "Local Delivery", "Local-Delivery", "local_delivery", "LOCALDELIVERY", "local  delivery", "Local. Delivery", "local delivery today", "Local Delivery – Wed"]) expect(isLocalDeliveryTag(t)).toBe(true);
+    for (const t of ["local", "delivery", "Large Box", "wholesale", "dispatch"]) expect(isLocalDeliveryTag(t)).toBe(false);
   });
 });

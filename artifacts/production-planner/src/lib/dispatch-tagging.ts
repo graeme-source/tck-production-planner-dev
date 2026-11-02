@@ -36,10 +36,13 @@ export function orderTags(tags: string): string[] {
 
 /** "local-delivery", however it was typed — draft orders get "Local
  *  Delivery" by hand (#138553, 2 Nov 2026: shown as a courier order needing
- *  an APC label). Spaces, hyphens, underscores and case don't matter. Same
+ *  an APC label). Case, spaces and punctuation don't matter, and it can sit inside a longer tag. Same
  *  rule on the server (api-server lib/dispatch-tag.ts isLocalDeliveryTag). */
 export function isLocalDeliveryTag(tag: string): boolean {
-  return tag.trim().toLowerCase().replace(/[\s_-]+/g, "") === "localdelivery";
+  // Letters only, any case: "Local Delivery", "local-delivery", "LOCAL_DELIVERY",
+  // "Local. delivery", "Local Delivery – Wed" all count (Graeme, 2 Nov 2026:
+  // "if someone mistypes, we don't want this to go wrong").
+  return tag.toLowerCase().replace(/[^a-z]+/g, "").includes("localdelivery");
 }
 
 export function isLocalDelivery(order: { tags: string }): boolean {

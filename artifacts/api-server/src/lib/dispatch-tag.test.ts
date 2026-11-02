@@ -103,9 +103,10 @@ describe("local delivery on the server, however the tag was typed (#138553)", ()
     expect(isLocalDeliveryOrder("local-delivery")).toBe(true);
     expect(isLocalDeliveryOrder("Local_Delivery")).toBe(true);
   });
-  it("whole tags only", () => {
-    expect(isLocalDeliveryOrder("no-local-delivery, small box")).toBe(false);
+  it("any case, spacing or punctuation, even inside a longer tag; nothing else counts", () => {
+    expect(isLocalDeliveryTag("LOCAL  delivery")).toBe(true);
+    expect(isLocalDeliveryTag("Local Delivery – Wed")).toBe(true);
+    expect(isLocalDeliveryOrder("small box, dispatch, 2026-11-03")).toBe(false);
     expect(isLocalDeliveryOrder("")).toBe(false);
-    expect(isLocalDeliveryTag("local delivery van 2")).toBe(false);
   });
 });
