@@ -147,4 +147,34 @@ describe("Klaviyo's other statuses (Graeme, 2026-10-16)", () => {
     expect(snap.status).toBe("Scheduled");
     expect(snap.subject).toBe("Ending tonight");
   });
+
+  // Issue #343: Tommy schedules then pauses an email until Graeme approves it.
+  it("keeps a paused email on its day as scheduled", () => {
+    expect(calendarStatus("Paused")).toBe("Scheduled");
+    const paused = {
+      id: "p", relationships: { "campaign-messages": { data: [{ id: "mp" }] } },
+      attributes: {
+        name: "Monday email", status: "Paused", send_time: null, scheduled_at: null,
+        send_strategy: { method: "static", options_static: { datetime: "2026-10-26T08:00:00+00:00" } },
+      },
+    };
+    const res = campaignsToCalendar({ audienceNames: new Map(), campaigns: [paused], messages: [msg("mp", "Monday")], from: "2026-10-01", to: "2026-10-31" });
+    expect(res.map(e => [e.id, e.status, e.date])).toEqual([["p", "Scheduled", "2026-10-26"]]);
+  });
+
+  it("puts a Smart Send Time or throttled draft on its day", () => {
+    const draft = (id: string, send_strategy: object) => ({
+      id, relationships: { "campaign-messages": { data: [] } },
+      attributes: { name: id, status: "Draft", send_time: null, scheduled_at: null, send_strategy },
+    });
+    const res = campaignsToCalendar({
+      audienceNames: new Map(), messages: [],
+      campaigns: [
+        draft("sto", { method: "smart_send_time", options_sto: { date: "2026-10-26" } }),
+        draft("thr", { method: "throttled", options_throttled: { datetime: "2026-10-27T10:00:00+00:00" } }),
+      ],
+      from: "2026-10-01", to: "2026-10-31",
+    });
+    expect(res.map(e => [e.id, e.date])).toEqual([["sto", "2026-10-26"], ["thr", "2026-10-27"]]);
+  });
 });
