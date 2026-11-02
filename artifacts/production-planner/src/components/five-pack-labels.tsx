@@ -5,12 +5,17 @@
  * printer. "See the labels" shows each flavour's label and how many print.
  * Sits on every dessert report card (packing station, opening checklist,
  * fulfilment). API: /api/dessert-labels.
+ *
+ * "Print some" (fix-queue #374): a − / + per flavour, starting at each
+ * flavour's day's quantity, for a second packing run. The server caps each
+ * flavour at its day's quantity, so it can't over-print.
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronDown, Loader2, Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
+import { LabelCountStepper } from "./label-count-stepper";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -30,6 +35,9 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [printed, setPrinted] = useState(false);
+  const [someOpen, setSomeOpen] = useState(false);
+  const [some, setSome] = useState<Record<string, number>>({});
+  const [printedSome, setPrintedSome] = useState<number | null>(null);
   const q = useQuery<FivePackLabels>({
     queryKey: ["five-pack-labels", tag],
     queryFn: async () => {
@@ -43,20 +51,26 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
   const d = q.data;
   const missing = (d?.lines ?? []).filter(l => !l.barcode).length;
 
-  const print = async () => {
+  // Same key the server uses: the variant, else the flavour's name.
+  const keyOf = (l: { variantId: string | null; productTitle: string }) => l.variantId ?? l.productTitle;
+  const someCounts: Record<string, number> = Object.fromEntries((d?.lines ?? []).map(l => [keyOf(l), Math.min(l.quantity, Math.max(0, some[keyOf(l)] ?? l.quantity))]));
+  const someTotal = Object.values(someCounts).reduce((t, n) => t + n, 0);
+
+  /** No counts = every label for the day (the one-tap default). */
+  const print = async (counts?: Record<string, number>) => {
     setError(null);
     // Open the tab on the tap itself: iPad Safari blocks one opened after an await.
     const tab = window.open("", "_blank");
     setBusy(true);
     try {
       const res = await fetch(`${BASE}/api/dessert-labels/print`, {
-        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tag }),
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(counts ? { tag, counts } : { tag }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
       if (tab) tab.location.href = url;
       else { const a = document.createElement("a"); a.href = url; a.download = `5-pack-labels-${tag}.pdf`; a.click(); }
-      setPrinted(true);
+      if (counts) setPrintedSome(Object.values(counts).reduce((t, n) => t + n, 0)); else setPrinted(true);
     } catch (e) {
       tab?.close();
       setError(e instanceof Error ? e.message : "Couldn't make the labels");
@@ -70,7 +84,7 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
   return (
     <div className="mt-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={print} disabled={busy} data-tour="five-pack-labels"
+        <button type="button" onClick={() => print()} disabled={busy} data-tour="five-pack-labels"
           className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
           {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : printed ? <Check className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
           {printed ? "Print again" : `Print all ${d.total} 5-pack labels`}
@@ -79,7 +93,30 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
           className="h-12 px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:bg-secondary inline-flex items-center gap-1">
           See the labels <ChevronDown className={cn("w-4 h-4 transition-transform", open && "rotate-180")} />
         </button>
+        <button type="button" onClick={() => setSomeOpen(o => !o)} aria-expanded={someOpen}
+          className="h-12 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary inline-flex items-center gap-1">
+          Print some <ChevronDown className={cn("w-4 h-4 transition-transform", someOpen && "rotate-180")} />
+        </button>
       </div>
+      {someOpen && (
+        <div className="space-y-2 pt-1">
+          {d.lines.map(l => (
+            <div key={keyOf(l)} className="flex flex-wrap items-center justify-between gap-2 rounded-xl ring-1 ring-border px-3 py-2">
+              <span className="font-semibold">{l.productTitle}</span>
+              <LabelCountStepper value={someCounts[keyOf(l)] ?? 0} min={0} max={l.quantity} label={`${l.productTitle} 5-pack labels`}
+                onChange={n => setSome(s => ({ ...s, [keyOf(l)]: n }))} />
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center gap-3">
+            <button type="button" onClick={() => print(someCounts)} disabled={busy || someTotal < 1}
+              className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
+              {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
+              Print {someTotal} 5-pack label{someTotal === 1 ? "" : "s"}
+            </button>
+            {printedSome !== null && <span className="text-sm text-emerald-700 dark:text-emerald-400 font-semibold inline-flex items-center gap-1"><Check className="w-4 h-4" /> Sent {printedSome}</span>}
+          </div>
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         Use by {d.useBy} ({d.useByDays} days from today). Print at Actual size on the 102 × 25 mm label printer.
         {missing > 0 && <span className="text-amber-700 dark:text-amber-300 font-semibold"> {missing} flavour{missing === 1 ? " has" : "s have"} no barcode — {missing === 1 ? "it prints" : "they print"} without one.</span>}
