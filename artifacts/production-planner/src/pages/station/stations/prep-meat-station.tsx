@@ -23,6 +23,9 @@ import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-repl
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
 import { StationStockChecks } from "../shared/station-stock-checks";
 import { StockCheckButton } from "../shared/stock-check-entry";
+import { ForceStockCheckModal } from "../shared/force-stock-check-modal";
+import { pendingForcedStockChecks } from "../shared/forced-stock-check";
+import { useAuth } from "@/contexts/auth-context";
 import { MixExtraNote } from "../shared/mix-extra-note";
 import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
 import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
@@ -71,6 +74,8 @@ function usePrepMeatCompletions(planId: number) {
 // ──────────────────────────────────────────────────────────────────────────────
 export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const { toast } = useToast();
+  const { state: authState } = useAuth();
+  const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
   const [hideCompleted, setHideCompleted] = useState(false);
   // A rub/marinade sub-recipe tapped on a meat row — opens the replenish
@@ -112,6 +117,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   // Stock check state
   const [stockValues, setStockValues] = useState<Record<number, string>>({});
+  // The "Stock check required" pop-up waits for the first load of saved
+  // counts, and Skip puts it off for this visit (issue #360).
+  const [stockValuesLoaded, setStockValuesLoaded] = useState(false);
+  const [skippedStockCheckIds, setSkippedStockCheckIds] = useState<Set<number>>(new Set());
   const stockCheckRef = useRef<HTMLDivElement>(null);
   const checkDate = nextPlan?.planDate ?? plan.planDate;
 
@@ -136,6 +145,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
             if (c.quantity != null && c.quantity !== "") serverVals[c.ingredientId] = String(parseFloat(c.quantity));
           }
           setStockValues(serverVals);
+          setStockValuesLoaded(true);
         }
       })
       .catch(err => { console.warn("[RawMeat] Stock checks fetch failed:", err); });
@@ -176,6 +186,43 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   // task (trays as detail); the shared helper the dashboard tile and
   // Prepping For hub use, fed the same responses (13 Oct).
   const progress = rawMeatProgress({ recipes, completions });
+
+  // "Stock check required" pop-up, as on Main Prep (issue #360): for the
+  // person who ticked the last tray of a meat whose count is due and not
+  // saved. One entry per meat across every recipe it's in.
+  const forcedStockChecks = (() => {
+    const byMeat = new Map<number, { ing: PrepIngredientDetail; trays: number; ticked: number }>();
+    for (const r of recipes) {
+      for (const ing of r.ingredients) {
+        if (!ing.isRawMeat || !ing.trayCount) continue;
+        const agg = byMeat.get(ing.ingredientId) ?? { ing, trays: 0, ticked: 0 };
+        agg.trays += ing.trayCount;
+        for (let tn = 1; tn <= ing.trayCount; tn++) if (isCompleted(ing.ingredientId, r.recipeId, tn)) agg.ticked++;
+        byMeat.set(ing.ingredientId, agg);
+      }
+    }
+    const lastTickedBy = (ingredientId: number): number | null => {
+      let latest: PrepTrayCompletion | null = null;
+      for (const c of completions) {
+        if (c.ingredientId === ingredientId && (!latest || c.completedAt > latest.completedAt)) latest = c;
+      }
+      return latest?.userId ?? null;
+    };
+    return pendingForcedStockChecks(
+      [...byMeat.values()].map(({ ing, trays, ticked }) => ({
+        ingredientId: ing.ingredientId,
+        ingredientName: ing.ingredientName,
+        unit: ing.unit,
+        packWeight: ing.packWeight,
+        dueToday: stockCheckActiveToday(ing),
+        allTicked: trays > 0 && ticked >= trays,
+        counted: stockValues[ing.ingredientId] !== undefined && stockValues[ing.ingredientId] !== "",
+        lastTickedByUserId: lastTickedBy(ing.ingredientId),
+      })),
+      { currentUserId, countsLoaded: stockValuesLoaded, skippedIds: skippedStockCheckIds },
+    );
+  })();
+  const forcedStockCheck = forcedStockChecks[0] ?? null;
   const overallPct = progressPct(progress);
   const prepTarget = prepTargetOf(nextPlan, plan);
   const tabs = (
@@ -335,6 +382,23 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   return (
     <div className="space-y-4">
+      {forcedStockCheck && (
+        <ForceStockCheckModal
+          ingredient={forcedStockCheck}
+          checkDate={checkDate}
+          isDraft={isDraft}
+          onSaved={native => {
+            setStockValues(v => ({ ...v, [forcedStockCheck.ingredientId]: String(native) }));
+            fetchStockChecks();
+          }}
+          onSkip={() => {
+            const id = forcedStockCheck.ingredientId;
+            setSkippedStockCheckIds(prev => new Set(prev).add(id));
+            toast({ title: "Stock check skipped", description: "You can still log it from the Stock Check tab." });
+          }}
+          remainingCount={forcedStockChecks.length}
+        />
+      )}
       {isDraft && nextPlan?.planId != null && nextPlan?.planDate && (
         <PrepDraftBanner
           planId={nextPlan.planId}
