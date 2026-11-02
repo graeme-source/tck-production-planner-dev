@@ -145,3 +145,52 @@ export function createDictationRegistry<R extends { stop: () => void; abort?: ()
     releaseAll: () => { for (const r of [...active]) hardStop(r); },
   };
 }
+
+/** The bits of a SpeechRecognitionResultList the joiner reads. */
+export interface RecognitionResultLike {
+  isFinal: boolean;
+  [index: number]: { transcript: string } | undefined;
+}
+export interface RecognitionResultListLike {
+  length: number;
+  [index: number]: RecognitionResultLike | undefined;
+}
+
+/** Adds a piece of speech onto text, with one space between when neither
+ *  side already has one (Safari sends phrases without a leading space). */
+function joinSpeech(text: string, piece: string): string {
+  if (!piece) return text;
+  if (!text) return piece;
+  if (/\s$/.test(text) || /^\s/.test(piece)) return text + piece;
+  return `${text} ${piece}`;
+}
+
+/**
+ * Fix-queue #372 (Major, 29 Oct, iPad): dictation repeated the same words
+ * over and over. Every recognition update carries the WHOLE result list for
+ * the session — every finished phrase so far plus the one still being heard
+ * — and the hook used to add each finished phrase onto its running text
+ * again on every update, so phrase 1 appeared once, then twice, then three
+ * times. This rebuilds the text from the full list every time instead, so
+ * calling it again with the same (or a longer) list never repeats anything.
+ *
+ * `final` is what's been settled; `interim` is the guess still in progress
+ * (shown in the box, never committed).
+ */
+export function readRecognitionResults(results: RecognitionResultListLike): { final: string; interim: string } {
+  let final = "";
+  let interim = "";
+  for (let i = 0; i < results.length; i++) {
+    const result = results[i];
+    const transcript = result?.[0]?.transcript ?? "";
+    if (result?.isFinal) final = joinSpeech(final, transcript);
+    else interim = joinSpeech(interim, transcript);
+  }
+  return { final, interim };
+}
+
+/** What the text box shows: the text that was there before dictation
+ *  started (kept once), then the settled speech, then the live guess. */
+export function composeDictatedText(startingText: string, final: string, interim = ""): string {
+  return joinSpeech(joinSpeech(startingText, final), interim).trimStart();
+}
