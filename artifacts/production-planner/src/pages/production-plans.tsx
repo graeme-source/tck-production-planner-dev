@@ -31,6 +31,7 @@ import {
   FlaskConical, Printer, X, ChevronDown, ChevronUp, PoundSterling, ShieldCheck, RotateCcw,
   Menu, MoreHorizontal, Lock, Unlock, SlidersHorizontal, Users,
 } from "lucide-react";
+import { DayQueuePanel } from "@/components/queued-production/day-queue-panel";
 import { AddRecipeToPlanDialog } from "@/components/add-recipe-to-plan-dialog";
 import { useFriedChickenPrepDays } from "@/components/fried-chicken/api";
 import { AddDoughToPlanDialog } from "@/components/add-dough-to-plan-dialog";
@@ -6571,6 +6572,9 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
           </div>
         )}
 
+        {/* Queued test production for a day with no plan yet — see, edit,
+            remove or open it here (components/queued-production). */}
+        {selectedDayPlans.length === 0 && <DayQueuePanel date={selectedDateKey} />}
         {selectedDayPlans.length === 0 ? (
           <div className={cn(
             "rounded-2xl border border-dashed border-border bg-card flex flex-col items-center justify-center text-muted-foreground",

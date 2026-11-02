@@ -8,9 +8,22 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Loader2, Trash2, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { RecipeSwatch, useRecipeColourLookup } from "@/components/recipe-swatch";
-import { makesLabel, useSaveBatches, type QueueRow, type SalesLine } from "./api";
+import { format, parseISO } from "date-fns";
+import { toast } from "@/hooks/use-toast";
+import { cancelQueueRow, makesLabel, useSaveBatches, type QueueRow, type SalesLine } from "./api";
 
 const SAVE_AFTER_MS = 600;
+
+/** Confirm, then take one recipe off a day's queue. */
+export async function removeQueueRow(row: QueueRow, onRemoved: () => void) {
+  if (!window.confirm(`Remove ${row.recipeName} (${row.batches} batches) from the ${format(parseISO(row.productionDate), "EEE d MMM")} queue?`)) return;
+  try {
+    await cancelQueueRow(row.id);
+    onRemoved();
+  } catch (err) {
+    toast({ title: "Couldn't remove it", description: err instanceof Error ? err.message : "Try again", variant: "destructive" });
+  }
+}
 
 export function QueueRowItem({ row, sale, deliveryLabel, onRemove }: {
   row: QueueRow;
