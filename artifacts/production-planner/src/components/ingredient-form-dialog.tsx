@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
 import { PackNameField } from "@/components/pack-name-field";
+import { StorageLocationField } from "@/components/storage-location-field";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey, useListIngredients } from "@workspace/api-client-react";
 import { findLikelyDuplicates, duplicateWarning } from "@/lib/ingredient-duplicates";
@@ -1376,6 +1377,12 @@ export function IngredientFormDialog({
                 : <p className="text-xs text-muted-foreground">Save the ingredient first to set a different surplus for each delivery day.</p>}
             </div>
           )}
+
+          {/* Where it lives — printed on the kanban card (#357). Autosaves
+              on its own endpoint, so it needs a saved item. */}
+          {editingItem?.id
+            ? <StorageLocationField ingredientId={editingItem.id} />
+            : <p className="text-xs text-muted-foreground">Save the item first to set its storage location (printed on the kanban card).</p>}
 
           <div className="flex items-center gap-3 py-1">
             <label className="relative inline-flex items-center cursor-pointer">
