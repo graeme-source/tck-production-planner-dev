@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { mixingTinLabel } from "@/lib/mixing-tin-label";
 import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
@@ -2127,11 +2128,12 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
         const perBatchKg = [...filling.fillingIngredients, ...filling.fillingSubRecipes]
           .reduce((sum, l) => sum + (kgOrNull(l.qtyPerBatch, l.unit) ?? 0), 0);
         const dayTargetKg = perBatchKg * target;
+        const tinLabel = mixingTinLabel(tinsComplete, tinsTarget);
         return (
         <div className="border-t border-primary/20 bg-primary/5">
           <div className="px-4 py-2 flex items-center justify-between">
             <p className="text-sm font-medium text-primary">
-              Filling Mix — Tin {tinsComplete + 1} of {tinsTarget}
+              {tinLabel.heading}
             </p>
             {mismatchCount > 0 && (
               <span className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 bg-amber-100 dark:bg-amber-900/30 rounded px-2 py-0.5">
@@ -2217,14 +2219,23 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             })}
           </div>
 
-          {!completing && !completeFailed && (
+          {tinLabel.allDone && !completing && (
+            <div className="px-4 pb-3">
+              <div className="w-full py-3.5 rounded-lg bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 font-bold text-base flex items-center justify-center gap-2">
+                <Check className="w-5 h-5" />
+                {tinLabel.heading}
+              </div>
+            </div>
+          )}
+
+          {!tinLabel.allDone && !completing && !completeFailed && (
             <div className="px-4 pb-3">
               <button
                 onClick={onAutoComplete}
                 className="w-full py-3.5 rounded-lg bg-emerald-600 text-white font-bold text-base hover:bg-emerald-700 transition-colors flex items-center justify-center gap-2"
               >
                 <Check className="w-5 h-5" />
-                Complete Tin {tinsComplete + 1}
+                {tinLabel.completeLabel}
               </button>
             </div>
           )}
@@ -2238,14 +2249,14 @@ function MixingOverviewRow({ item, isActive, isComplete, isDraggable, hasFilling
             </div>
           )}
 
-          {completeFailed && !completing && (
+          {!tinLabel.allDone && completeFailed && !completing && (
             <div className="px-4 pb-3">
               <button
                 onClick={onAutoComplete}
                 className="w-full py-2.5 rounded-lg bg-red-600 text-white font-semibold text-sm hover:bg-red-700 transition-colors flex items-center justify-center gap-2"
               >
                 <RotateCcw className="w-4 h-4" />
-                Retry — Complete Tin {tinsComplete + 1}
+                Retry — {tinLabel.completeLabel}
               </button>
             </div>
           )}
