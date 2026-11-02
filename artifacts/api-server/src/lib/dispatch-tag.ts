@@ -23,6 +23,19 @@ export function isDispatchTagged(tags: string | null | undefined): boolean {
  *  production-planner/src/lib/dispatch-tagging.ts. */
 export const COLLECTION_TAGS = ["collections", "collection", "collection order"];
 
+/** True when the order goes on our van rather than by courier. The tag is
+ *  "local-delivery", but it's typed by hand on draft orders as "Local
+ *  Delivery" (#138553, 2 Nov 2026 — it was booked and gated as a courier
+ *  order), so spaces, hyphens, underscores and case don't matter. Whole tags
+ *  only. Same rule on the packing page (production-planner
+ *  lib/dispatch-tagging.ts isLocalDeliveryTag). */
+export function isLocalDeliveryTag(tag: string): boolean {
+  return tag.trim().toLowerCase().replace(/[\s_-]+/g, "") === "localdelivery";
+}
+export function isLocalDeliveryOrder(tags: string | null | undefined): boolean {
+  return (tags ?? "").split(",").some(isLocalDeliveryTag);
+}
+
 /** True when the order is collected from the unit rather than despatched.
  *  Whole tags only, so "no-collection" or "collections-team" never count. */
 export function isCollectionOrder(tags: string | null | undefined): boolean {

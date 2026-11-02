@@ -14,6 +14,7 @@ import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import {
   LOCAL_DELIVERY_TAG,
   isLocalDelivery,
+  isLocalDeliveryTag,
   isCollection,
   isDispatchTagged,
   boxCategoryOf,
@@ -1906,7 +1907,7 @@ export default function Fulfilment() {
   // Every tag / product actually present in today's orders — the operator only
   // ever sees things that are really there, so no typing and no stale options.
   const availableTags = [...new Set(
-    allUnfulfilledOrders.flatMap(orderTagList).filter(t => t !== "dispatch" && !BOX_CATEGORIES.includes(t)),
+    allUnfulfilledOrders.flatMap(orderTagList).filter(t => t !== "dispatch" && !BOX_CATEGORIES.includes(t) && !isLocalDeliveryTag(t)),
   )].sort();
 
   const availableProducts = (() => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { boxCategoryOf, isDispatchTagged, ordersForTagging, passesLabelFilter } from "./dispatch-tagging";
+import { boxCategoryOf, isCourierOrder, isDispatchTagged, isLocalDelivery, isLocalDeliveryTag, ordersForTagging, passesLabelFilter } from "./dispatch-tagging";
 
 const order = (id: number, tags: string) => ({ id, tags });
 
@@ -79,5 +79,21 @@ describe("passesLabelFilter — the packing bench's Labels row", () => {
     expect(passesLabelFilter(local, "collection", false)).toBe(false);
     expect(passesLabelFilter(wholesale, "wholesale", true)).toBe(true);
     expect(passesLabelFilter(small, "wholesale", true)).toBe(false);
+  });
+});
+
+describe("local delivery, however the tag was typed (#138553, 2 Nov 2026)", () => {
+  // A wholesale draft order typed by hand: "Local Delivery" with a space.
+  const handTyped = { id: 138553, tags: "2026-11-03, Large Box, Local Delivery, production, wholesale, wholesale-vip" };
+  it("is a local delivery: on the van, not a courier order, no APC label gate", () => {
+    expect(isLocalDelivery(handTyped)).toBe(true);
+    expect(isCourierOrder(handTyped)).toBe(false);
+    expect(boxCategoryOf(handTyped)).toBe("local delivery");
+    expect(passesLabelFilter(handTyped, "local", false)).toBe(true);
+    expect(passesLabelFilter(handTyped, "unbooked", false)).toBe(false);
+  });
+  it("accepts every spelling, but only the whole tag", () => {
+    for (const t of ["local-delivery", "Local Delivery", "Local-Delivery", "local_delivery", "LOCALDELIVERY"]) expect(isLocalDeliveryTag(t)).toBe(true);
+    for (const t of ["no-local-delivery", "local", "delivery", "local delivery today"]) expect(isLocalDeliveryTag(t)).toBe(false);
   });
 });

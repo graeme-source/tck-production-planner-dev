@@ -20,7 +20,7 @@ import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure, isDataFixableFailure } from "../lib/apc-failure-tags";
 import { settledOrders } from "../lib/order-age";
-import { isDispatchTagged, isCollectionOrder, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
+import { isDispatchTagged, isCollectionOrder, isLocalDeliveryTag, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
 import { reusableConsignmentFor, reusableConsignmentsFor, peekReusableConsignment, reuseContext, liveStatusOf, markCancelledInApc, staleProblemForWaybill, collectionDateForInsert, supersedeOrderConsignments, refreshTodaysTrackingInBackground } from "../lib/apc-consignment-ledger";
@@ -2117,7 +2117,7 @@ async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: R
     // the unit in a brown paper bag and must never get a consignment
     // (Graeme, 2026-08-28).
     // Local deliveries go on the van — they must never get a consignment.
-    if (tags.includes("local-delivery")) {
+    if (tags.some(isLocalDeliveryTag)) {
       localDeliveries.push(row);
       continue;
     }
@@ -2296,7 +2296,7 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
         });
         continue;
       }
-      if (tagsLower.includes("local-delivery")) {
+      if (tagsLower.some(isLocalDeliveryTag)) {
         results.push({ orderId: order.id, orderName: order.name, adminUrl: shopifyAdminOrderUrl(order.id), status: "skipped", reason: "Local delivery — no courier label" });
         continue;
       }
@@ -2834,7 +2834,7 @@ router.post("/orders/:id/complete", requireFulfilmentAccess, async (req: Request
       .map(t => t.trim().toLowerCase());
     // Collections and local deliveries never have a consignment: the bag
     // stays in the fridge / the box goes on the van.
-    localDelivery = tagsLower.includes("local-delivery")
+    localDelivery = tagsLower.some(isLocalDeliveryTag)
       || isCollectionOrder(order?.tags);
     if (!localDelivery) {
       res.status(400).json({ error: `consignmentNumber is required when apc_mode is "${apcMode}"` });
