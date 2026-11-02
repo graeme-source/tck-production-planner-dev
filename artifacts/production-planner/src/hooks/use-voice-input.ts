@@ -7,6 +7,8 @@ import {
   type DictationCapability,
   type DictationPlatform,
   createDictationRegistry,
+  readRecognitionResults,
+  composeDictatedText,
 } from "@/lib/dictation-support";
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
@@ -139,22 +141,18 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
     recognition.continuous = true;
     recognition.interimResults = true;
 
+    // Read once, when this session starts — a later start() reads the box
+    // afresh, so a new session never re-adds the previous session's words.
     const startingText = mode === "append" ? (getCurrentValue?.() ?? "") : "";
-    const needsSpace = startingText.length > 0 && !startingText.endsWith(" ");
-    const prefix = startingText + (needsSpace ? " " : "");
+    // The settled speech for THIS session, rebuilt from the full result list
+    // on every update — never added onto (fix-queue #372: that repeated
+    // every earlier phrase each time a new one was heard).
     let finalText = "";
 
     recognition.onresult = (event) => {
-      let interim = "";
-      for (let i = 0; i < event.results.length; i++) {
-        const result = event.results[i];
-        if (result.isFinal) {
-          finalText += result[0].transcript;
-        } else {
-          interim += result[0].transcript;
-        }
-      }
-      onTranscript((prefix + finalText + interim).trimStart());
+      const { final, interim } = readRecognitionResults(event.results);
+      finalText = final;
+      onTranscript(composeDictatedText(startingText, finalText, interim));
     };
 
     recognition.onerror = (event) => {
@@ -170,7 +168,7 @@ export function useVoiceInput({ onTranscript, onFinished, mode = "append", getCu
       // Only when something was actually heard — onend also fires on abort
       // and on a permission refusal, and there's nothing to tidy then.
       const spoken = finalText.trim();
-      if (spoken.length > 0) onFinishedRef.current?.((prefix + finalText).trimStart());
+      if (spoken.length > 0) onFinishedRef.current?.(composeDictatedText(startingText, finalText));
     };
 
     recognitionRef.current = recognition;
