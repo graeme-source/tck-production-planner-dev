@@ -676,7 +676,7 @@ function ChaseSupplierBlock({ line }: { line: FinLine }) {
         body: JSON.stringify({ toEmail: chaseTo.trim(), subject: chaseSubject.trim(), message: chaseMessage }),
       }),
     onSuccess: () => {
-      toast({ title: "Chase email sent", description: `Sent to ${chaseTo.trim()} — replies go to accounts@, and a copy is in the accounts mailbox.` });
+      toast({ title: "Chase email sent", description: `Sent to ${chaseTo.trim()} — replies go to accounts@.` });
       setChaseOpen(false);
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
@@ -722,7 +722,7 @@ function ChaseSupplierBlock({ line }: { line: FinLine }) {
               />
             </div>
             <p className="text-xs text-muted-foreground">
-              Sends from The Calzone Kitchen — Accounts; replies and a copy go to accounts@thecalzonekitchen.co.uk.
+              Sends from The Calzone Kitchen — Accounts; replies go to accounts@thecalzonekitchen.co.uk.
             </p>
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => setChaseOpen(false)}>Cancel</Button>
