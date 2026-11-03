@@ -9,6 +9,7 @@ import {
 } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { computeMixExtras, mixExtraFor, mixExtraPerBatch, subRecipeComponentExtras, type MixLine } from "./mix-extra";
+import { readThrough } from "./request-read-cache";
 
 export interface ResolvedIngredient {
   ingredientId: number;
@@ -51,18 +52,20 @@ export async function resolveSubRecipeIngredients(
 ): Promise<ResolvedIngredient[]> {
   if (ancestorPath.has(subRecipeId)) return [];
 
-  const subRecipe = await db
+  // Reads go through the per-request cache (lib/request-read-cache.ts):
+  // a no-op unless the route opted in, as /orders/calculate does (#376).
+  const subRecipe = await readThrough(`resolver:sub-yield:${subRecipeId}`, () => db
     .select({ yield: subRecipesTable.yield })
     .from(subRecipesTable)
     .where(eq(subRecipesTable.id, subRecipeId))
-    .limit(1);
+    .limit(1));
 
   const yieldVal = subRecipe.length > 0 ? Number(subRecipe[0].yield) : 0;
   if (yieldVal === 0) return [];
 
   const effectiveScale = scale / yieldVal;
 
-  const directIngredients = await db
+  const directIngredients = await readThrough(`resolver:sub-ingredients:${subRecipeId}`, () => db
     .select({
       ingredientId: subRecipeIngredientsTable.ingredientId,
       quantity: subRecipeIngredientsTable.quantity,
@@ -86,7 +89,7 @@ export async function resolveSubRecipeIngredients(
     })
     .from(subRecipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
-    .where(eq(subRecipeIngredientsTable.subRecipeId, subRecipeId));
+    .where(eq(subRecipeIngredientsTable.subRecipeId, subRecipeId)));
 
   const isTopLevel = ancestorPath.size === 0;
   const results: ResolvedIngredient[] = directIngredients.map((row) => ({
@@ -114,13 +117,13 @@ export async function resolveSubRecipeIngredients(
     isSubMarinadeComponent: isTopLevel && row.marinadeForIngredientId != null,
   }));
 
-  const nestedSubRecipes = await db
+  const nestedSubRecipes = await readThrough(`resolver:sub-nested:${subRecipeId}`, () => db
     .select({
       componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
       quantity: subRecipeSubRecipesTable.quantity,
     })
     .from(subRecipeSubRecipesTable)
-    .where(eq(subRecipeSubRecipesTable.subRecipeId, subRecipeId));
+    .where(eq(subRecipeSubRecipesTable.subRecipeId, subRecipeId)));
 
   ancestorPath.add(subRecipeId);
   for (const nested of nestedSubRecipes) {
@@ -153,7 +156,7 @@ export async function resolveRecipeIngredients(
   const skipToppings = options?.skipToppings ?? false;
   const mixBatches = Number(options?.mixExtraBatches) || 0;
 
-  const directIngredients = await db
+  const directIngredients = await readThrough(`resolver:recipe-ingredients:${recipeId}`, () => db
     .select({
       lineId: recipeIngredientsTable.id,
       ingredientId: recipeIngredientsTable.ingredientId,
@@ -181,9 +184,9 @@ export async function resolveRecipeIngredients(
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
-    .where(eq(recipeIngredientsTable.recipeId, recipeId));
+    .where(eq(recipeIngredientsTable.recipeId, recipeId)));
 
-  const recipeSubRecipes = await db
+  const recipeSubRecipes = await readThrough(`resolver:recipe-subs:${recipeId}`, () => db
     .select({
       lineId: recipeSubRecipesTable.id,
       subRecipeId: recipeSubRecipesTable.subRecipeId,
@@ -196,7 +199,7 @@ export async function resolveRecipeIngredients(
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
-    .where(eq(recipeSubRecipesTable.recipeId, recipeId));
+    .where(eq(recipeSubRecipesTable.recipeId, recipeId)));
 
   // Mix +g for the whole recipe (marinade splits need every line, toppings
   // included), only when the caller is totalling a real plan item.

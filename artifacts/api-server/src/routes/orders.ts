@@ -22,6 +22,7 @@ import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { markSplitsPlaced, splitsForCalculate, type SplitView } from "../lib/order-splits";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
 import { createStageTimer } from "../lib/stage-timer";
+import { readCacheMiddleware } from "../lib/request-read-cache";
 import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
@@ -37,6 +38,8 @@ async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunc
 }
 
 const router: IRouter = Router();
+// /calculate reads each recipe and sub-recipe once per request (#376).
+router.use("/calculate", readCacheMiddleware);
 
 const FREEZER_LOCATIONS = ["production_freezer", "raw_freezer"];
 

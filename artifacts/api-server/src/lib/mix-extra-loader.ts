@@ -7,9 +7,11 @@
 import { db, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { computeMixExtras, type MixExtras, type MixLine } from "./mix-extra";
+import { readThrough } from "./request-read-cache";
 
 export async function loadRecipeMixLines(recipeId: number): Promise<MixLine[]> {
-  const ingRows = await db
+  // Per-request cache (lib/request-read-cache.ts; a no-op unless the route opted in).
+  const ingRows = await readThrough(`mix-lines:ingredients:${recipeId}`, () => db
     .select({
       lineId: recipeIngredientsTable.id,
       itemId: recipeIngredientsTable.ingredientId,
@@ -21,8 +23,8 @@ export async function loadRecipeMixLines(recipeId: number): Promise<MixLine[]> {
     })
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
-    .where(eq(recipeIngredientsTable.recipeId, recipeId));
-  const subRows = await db
+    .where(eq(recipeIngredientsTable.recipeId, recipeId)));
+  const subRows = await readThrough(`mix-lines:subs:${recipeId}`, () => db
     .select({
       lineId: recipeSubRecipesTable.id,
       itemId: recipeSubRecipesTable.subRecipeId,
@@ -34,7 +36,7 @@ export async function loadRecipeMixLines(recipeId: number): Promise<MixLine[]> {
     })
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
-    .where(eq(recipeSubRecipesTable.recipeId, recipeId));
+    .where(eq(recipeSubRecipesTable.recipeId, recipeId)));
   const toLine = (kind: MixLine["kind"]) => (r: typeof ingRows[number]): MixLine => ({
     kind,
     lineId: r.lineId,
