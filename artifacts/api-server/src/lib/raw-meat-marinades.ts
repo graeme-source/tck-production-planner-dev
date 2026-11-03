@@ -41,6 +41,7 @@ import { subMarinadeTotalGrams, subMarinadeExactGrams } from "./sub-recipe-marin
 import { toGrams } from "@workspace/units";
 import { mixExtraFor, roundMixExtra, type MixExtras } from "./mix-extra";
 import { loadRecipeMixExtras } from "./mix-extra-loader";
+import { readThrough } from "./request-read-cache";
 
 export interface RawMeatMarinade {
   rawMeatIngredientId: number;
@@ -76,7 +77,9 @@ export async function loadRawMeatMarinades(input: {
     : null;
 
   const marinadeTargetAlias = alias(ingredientsTable, "marinadeTarget");
-  const marinadeIngRows = await db
+  // Row reads go through the per-request cache (lib/request-read-cache.ts):
+  // a no-op unless the route opted in, as /orders/calculate does (#376).
+  const marinadeIngRows = await readThrough(`marinades:recipe-ingredients:${recipeId}`, () => db
     .select({
       lineId: recipeIngredientsTable.id,
       ingredientId: recipeIngredientsTable.ingredientId,
@@ -90,7 +93,7 @@ export async function loadRawMeatMarinades(input: {
     .from(recipeIngredientsTable)
     .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
     .leftJoin(marinadeTargetAlias, eq(recipeIngredientsTable.marinadeForIngredientId, marinadeTargetAlias.id))
-    .where(eq(recipeIngredientsTable.recipeId, recipeId));
+    .where(eq(recipeIngredientsTable.recipeId, recipeId)));
 
   for (const mr of marinadeIngRows) {
     if (!mr.marinadeForIngredientId) continue;
@@ -114,7 +117,7 @@ export async function loadRawMeatMarinades(input: {
   }
 
   const marinadeSubTargetAlias = alias(ingredientsTable, "marinadeSubTarget");
-  const marinadeSubRows = await db
+  const marinadeSubRows = await readThrough(`marinades:recipe-subs:${recipeId}`, () => db
     .select({
       lineId: recipeSubRecipesTable.id,
       subRecipeId: recipeSubRecipesTable.subRecipeId,
@@ -128,7 +131,7 @@ export async function loadRawMeatMarinades(input: {
     .from(recipeSubRecipesTable)
     .leftJoin(subRecipesTable, eq(recipeSubRecipesTable.subRecipeId, subRecipesTable.id))
     .leftJoin(marinadeSubTargetAlias, eq(recipeSubRecipesTable.marinadeForIngredientId, marinadeSubTargetAlias.id))
-    .where(eq(recipeSubRecipesTable.recipeId, recipeId));
+    .where(eq(recipeSubRecipesTable.recipeId, recipeId)));
 
   for (const sr of marinadeSubRows) {
     if (!sr.marinadeForIngredientId) continue;
@@ -157,7 +160,7 @@ export async function loadRawMeatMarinades(input: {
   // recipe's usage of the sub over its yield.
   {
     const marinadeInnerTarget = alias(ingredientsTable, "marinadeInnerTarget");
-    const usedSubs = await db
+    const usedSubs = await readThrough(`marinades:used-subs:${recipeId}`, () => db
       .select({
         lineId: recipeSubRecipesTable.id,
         subRecipeId: recipeSubRecipesTable.subRecipeId,
@@ -169,7 +172,7 @@ export async function loadRawMeatMarinades(input: {
       .where(and(
         eq(recipeSubRecipesTable.recipeId, recipeId),
         isNull(recipeSubRecipesTable.marinadeForIngredientId),
-      ));
+      )));
 
     for (const us of usedSubs) {
       if (us.subRecipeId == null) continue;
@@ -191,7 +194,7 @@ export async function loadRawMeatMarinades(input: {
           ? roundMixExtra(subMarinadeExactGrams({ ...scale, componentQty, unit }) - subMarinadeExactGrams({ ...noExtraScale, componentQty, unit }))
           : 0;
 
-      const innerIngRows = await db
+      const innerIngRows = await readThrough(`marinades:sub-ingredients:${us.subRecipeId}`, () => db
         .select({
           ingredientId: subRecipeIngredientsTable.ingredientId,
           ingredientName: ingredientsTable.name,
@@ -204,7 +207,7 @@ export async function loadRawMeatMarinades(input: {
         .from(subRecipeIngredientsTable)
         .leftJoin(ingredientsTable, eq(subRecipeIngredientsTable.ingredientId, ingredientsTable.id))
         .leftJoin(marinadeInnerTarget, eq(subRecipeIngredientsTable.marinadeForIngredientId, marinadeInnerTarget.id))
-        .where(eq(subRecipeIngredientsTable.subRecipeId, us.subRecipeId));
+        .where(eq(subRecipeIngredientsTable.subRecipeId, us.subRecipeId)));
 
       for (const mr of innerIngRows) {
         if (!mr.marinadeForIngredientId) continue;
@@ -224,7 +227,7 @@ export async function loadRawMeatMarinades(input: {
 
       const innerSubTarget = alias(ingredientsTable, "marinadeInnerSubTarget");
       const innerSubAlias = alias(subRecipesTable, "marinadeInnerSub");
-      const innerSubRows = await db
+      const innerSubRows = await readThrough(`marinades:sub-subs:${us.subRecipeId}`, () => db
         .select({
           componentSubRecipeId: subRecipeSubRecipesTable.componentSubRecipeId,
           componentName: innerSubAlias.name,
@@ -237,7 +240,7 @@ export async function loadRawMeatMarinades(input: {
         .from(subRecipeSubRecipesTable)
         .leftJoin(innerSubAlias, eq(subRecipeSubRecipesTable.componentSubRecipeId, innerSubAlias.id))
         .leftJoin(innerSubTarget, eq(subRecipeSubRecipesTable.marinadeForIngredientId, innerSubTarget.id))
-        .where(eq(subRecipeSubRecipesTable.subRecipeId, us.subRecipeId));
+        .where(eq(subRecipeSubRecipesTable.subRecipeId, us.subRecipeId)));
 
       for (const mr of innerSubRows) {
         if (!mr.marinadeForIngredientId) continue;
@@ -261,7 +264,7 @@ export async function loadRawMeatMarinades(input: {
     const oldMarinadeIngAlias = alias(ingredientsTable, "marinadeIng");
     const oldMarinadeSubAlias = alias(subRecipesTable, "marinadeSub");
     const oldRawMeatAlias = alias(ingredientsTable, "oldRawMeat");
-    const oldMarinadeRows = await db
+    const oldMarinadeRows = await readThrough(`marinades:legacy:${recipeId}`, () => db
       .select({
         rawMeatIngredientId: recipeMeatMarinadesTable.rawMeatIngredientId,
         marinadeIngredientId: recipeMeatMarinadesTable.marinadeIngredientId,
@@ -275,7 +278,7 @@ export async function loadRawMeatMarinades(input: {
       .leftJoin(oldMarinadeIngAlias, eq(recipeMeatMarinadesTable.marinadeIngredientId, oldMarinadeIngAlias.id))
       .leftJoin(oldMarinadeSubAlias, eq(recipeMeatMarinadesTable.marinadeSubRecipeId, oldMarinadeSubAlias.id))
       .leftJoin(oldRawMeatAlias, eq(recipeMeatMarinadesTable.rawMeatIngredientId, oldRawMeatAlias.id))
-      .where(eq(recipeMeatMarinadesTable.recipeId, recipeId));
+      .where(eq(recipeMeatMarinadesTable.recipeId, recipeId)));
 
     for (const mr of oldMarinadeRows) {
       if (mr.rawMeatCategory !== "raw_meat") continue;
