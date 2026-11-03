@@ -202,6 +202,26 @@ router.patch("/lines/:id", requireFinanceAccess, validate(lineStatusSchema), asy
   }
 });
 
+// Posted in QuickBooks, ticked by hand (Graeme, 2026-11-03): the sync spots
+// most, but the accounts team know what they've posted. Posted is separate
+// from done — a posted line can still be waiting for its invoice.
+const postedSchema = z.object({ posted: z.boolean() });
+router.patch("/lines/:id/posted", requireFinanceAccess, validate(postedSchema), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { posted } = req.body as z.infer<typeof postedSchema>;
+    const [row] = await db.update(finLinesTable)
+      .set({ postedDetectedAt: posted ? new Date() : null, updatedAt: new Date() })
+      .where(eq(finLinesTable.id, id))
+      .returning({ id: finLinesTable.id, postedDetectedAt: finLinesTable.postedDetectedAt });
+    if (!row) { res.status(404).json({ error: "Line not found" }); return; }
+    res.json(row);
+  } catch (err) {
+    console.error("[finance] posted update error:", err);
+    res.status(500).json({ error: "Failed to update posted" });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Manual lines (Graeme, 2026-09-28): the finance team adds a transaction by
 // hand — paid from another bank account, or missing from the card export.

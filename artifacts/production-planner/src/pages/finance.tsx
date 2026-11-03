@@ -65,6 +65,8 @@ type FinLine = {
   lastChasedAt: string | null;
   /** Set when the QuickBooks sync matched this line to a posted transaction. */
   qboTxnId: number | null;
+  /** When it was found (sync) or ticked (accounts team) as posted; null = not posted. */
+  postedDetectedAt: string | null;
 };
 
 type FinVendor = {
@@ -136,6 +138,12 @@ const FILTERS = [
   { key: "all", label: "All" },
 ] as const;
 
+const POSTED_FILTERS = [
+  { key: "any", label: "Posted or not" },
+  { key: "posted", label: "Posted" },
+  { key: "not_posted", label: "Not posted" },
+] as const;
+
 /**
  * Finance: the founder's and the accountants' only (Graeme, 2026-10-26 — not
  * managers, not other admins; the server enforces it). Two tabs: outstanding
@@ -184,6 +192,7 @@ function InvoicesTab() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
+  const [postedFilter, setPostedFilter] = useState<(typeof POSTED_FILTERS)[number]["key"]>("any");
   const [search, setSearch] = useState("");
   const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -226,6 +235,8 @@ function InvoicesTab() {
     if (filter === "outstanding") out = lines.filter((l) => l.status === "open" || l.status === "identified");
     else if (filter === "matched") out = lines.filter((l) => l.status === "matched");
     else if (filter === "done") out = lines.filter((l) => l.status === "done" || l.status === "not_needed");
+    if (postedFilter === "posted") out = out.filter((l) => l.postedDetectedAt);
+    else if (postedFilter === "not_posted") out = out.filter((l) => !l.postedDetectedAt);
     const q = search.trim().toLowerCase();
     if (q) {
       out = out.filter((l) => {
@@ -235,7 +246,7 @@ function InvoicesTab() {
       });
     }
     return out;
-  }, [data, filter, search]);
+  }, [data, filter, postedFilter, search]);
 
   const outstandingTotal = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -310,6 +321,12 @@ function InvoicesTab() {
         </Button>
         {FILTERS.map((f) => (
           <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
+            {f.label}
+          </Button>
+        ))}
+        <span className="w-px h-6 bg-border mx-1" aria-hidden />
+        {POSTED_FILTERS.map((f) => (
+          <Button key={f.key} size="sm" variant={postedFilter === f.key ? "default" : "outline"} onClick={() => setPostedFilter(f.key)}>
             {f.label}
           </Button>
         ))}
@@ -499,6 +516,11 @@ function LineRow({
             <div className="font-semibold tabular-nums">£{Number(line.amount).toFixed(2)}</div>
           </div>
           <Badge className={`${status.tone} shrink-0`}>{status.label}</Badge>
+          {!(line.status === "done" && line.qboTxnId) && (
+            <Badge variant="outline" className={`shrink-0 ${line.postedDetectedAt ? "text-indigo-700 border-indigo-300" : "text-muted-foreground"}`}>
+              {line.postedDetectedAt ? "Posted" : "Not posted"}
+            </Badge>
+          )}
           {docs.length > 0 && <Paperclip className="h-4 w-4 text-emerald-600 shrink-0" />}
           {line.chaseCount > 0 && line.status !== "done" && (
             <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">chased {line.chaseCount}×</Badge>
@@ -511,6 +533,7 @@ function LineRow({
       {expanded && (
         <CardContent className="border-t pt-4 space-y-4">
           {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
+          <PostedToggle line={line} />
           <DocumentsBlock line={line} docs={docs} />
           {line.status !== "done" && line.status !== "not_needed" && <SupplierFieldsBlock line={line} />}
           {line.status !== "done" && line.status !== "not_needed" && <AddFileControl line={line} />}
@@ -1070,6 +1093,33 @@ function VendorBlock({ vendor }: { vendor: FinVendor }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Posted in QuickBooks yes/no — saves on tap with visible state. Separate
+ *  from done: a posted line can still be waiting for its invoice. */
+function PostedToggle({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (posted: boolean) =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/posted`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ posted }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onError: (e: Error) => toast({ title: "Couldn't save posted", description: e.message, variant: "destructive" }),
+  });
+  const posted = save.isPending ? Boolean(save.variables) : Boolean(line.postedDetectedAt);
+  return (
+    <div className="flex items-center gap-3">
+      <Switch id={`posted-${line.id}`} checked={posted} onCheckedChange={(v) => save.mutate(v)} disabled={save.isPending} />
+      <Label htmlFor={`posted-${line.id}`} className="text-sm">Posted in QuickBooks</Label>
+      <span className="text-xs text-muted-foreground">
+        {save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? "Saved" : ""}
+      </span>
     </div>
   );
 }
