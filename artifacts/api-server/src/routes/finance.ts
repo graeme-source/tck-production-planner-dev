@@ -26,6 +26,7 @@ import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 import { buildChaseEmail } from "../lib/finance/chase-email";
+import { autoCompleteIfReady, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -183,6 +184,7 @@ router.patch("/lines/:id", requireFinanceAccess, validate(lineStatusSchema), asy
     const id = Number(req.params.id);
     const { status, statusNote } = req.body as z.infer<typeof lineStatusSchema>;
     const done = status === "done" || status === "not_needed";
+    const [before] = await db.select({ status: finLinesTable.status, statusNote: finLinesTable.statusNote }).from(finLinesTable).where(eq(finLinesTable.id, id));
     const [row] = await db
       .update(finLinesTable)
       .set({
@@ -195,6 +197,17 @@ router.patch("/lines/:id", requireFinanceAccess, validate(lineStatusSchema), asy
       .where(eq(finLinesTable.id, id))
       .returning();
     if (!row) { res.status(404).json({ error: "Line not found" }); return; }
+    // Who did it, when (Graeme, 2026-11-03), and marking it done files its
+    // invoice(s) in the Invoices library, stamped with who posted it.
+    const userId = req.session.userId ?? null;
+    if (before && before.status !== status) {
+      const action = status === "done" ? "marked_done" : status === "not_needed" ? "marked_not_needed"
+        : (before.status === "done" || before.status === "not_needed") ? "reopened" : `status_${status}`;
+      await logFinEvent("line", id, action, userId, { from: before.status, to: status, note: statusNote ?? null });
+      if (status === "done") await ingestLineDocuments(id, userId);
+    } else if (before && (before.statusNote ?? null) !== (statusNote ?? null)) {
+      await logFinEvent("line", id, "note_saved", userId, { note: statusNote ?? null });
+    }
     res.json(row);
   } catch (err) {
     console.error("[finance] line update error:", err);
@@ -215,7 +228,9 @@ router.patch("/lines/:id/posted", requireFinanceAccess, validate(postedSchema), 
       .where(eq(finLinesTable.id, id))
       .returning({ id: finLinesTable.id, postedDetectedAt: finLinesTable.postedDetectedAt });
     if (!row) { res.status(404).json({ error: "Line not found" }); return; }
-    res.json(row);
+    await logFinEvent("line", id, posted ? "ticked_posted" : "unticked_posted", req.session.userId);
+    const autoDone = posted ? await autoCompleteIfReady(id, req.session.userId ?? null, "ticked_posted") : false;
+    res.json({ ...row, autoDone });
   } catch (err) {
     console.error("[finance] posted update error:", err);
     res.status(500).json({ error: "Failed to update posted" });
@@ -264,6 +279,7 @@ router.post("/lines", requireFinanceAccess, validate(manualLineSchema), async (r
       })
       .returning();
     refreshSuggestions().catch((e) => console.error("[finance] suggestion refresh failed:", e));
+    await logFinEvent("line", row.id, "added_by_hand", req.session.userId, { amount: row.amount, descriptor: row.descriptor });
     res.status(201).json(row);
   } catch (err) {
     console.error("[finance] manual line error:", err);
@@ -385,7 +401,9 @@ router.post("/lines/:id/documents", requireFinanceAccess, upload.single("file"),
       .set({ status: "matched", updatedAt: new Date() })
       .where(and(eq(finLinesTable.id, lineId), inArray(finLinesTable.status, ["open", "identified"])));
 
-    res.json(doc);
+    await logFinEvent("line", lineId, "document_added", req.session.userId, { fileName: name, documentId: doc.id });
+    const autoDone = await autoCompleteIfReady(lineId, req.session.userId ?? null, "vat_invoice_attached");
+    res.json({ ...doc, autoDone });
   } catch (err: any) {
     if (err?.code === "LIMIT_FILE_SIZE") { res.status(413).json({ error: "File too large (15MB max)" }); return; }
     console.error("[finance] document upload error:", err);
@@ -400,9 +418,11 @@ router.patch("/documents/:id", requireFinanceAccess, validate(docKindSchema), as
   const id = Number(req.params.id);
   const { docKind } = req.body as z.infer<typeof docKindSchema>;
   const [row] = await db.update(finDocumentsTable).set({ docKind }).where(eq(finDocumentsTable.id, id))
-    .returning({ id: finDocumentsTable.id, docKind: finDocumentsTable.docKind });
+    .returning({ id: finDocumentsTable.id, docKind: finDocumentsTable.docKind, lineId: finDocumentsTable.lineId });
   if (!row) { res.status(404).json({ error: "Document not found" }); return; }
-  res.json(row);
+  await logFinEvent("line", row.lineId, "document_relabelled", req.session.userId, { documentId: id, docKind });
+  const autoDone = docKind === "invoice" ? await autoCompleteIfReady(row.lineId, req.session.userId ?? null, "relabelled_vat_invoice") : false;
+  res.json({ ...row, autoDone });
 });
 
 // Supplier contact + order reference on a line — editable by hand; the
@@ -450,6 +470,7 @@ router.post("/lines/:id/chase", requireFinanceAccess, validate(chaseSchema), asy
       updatedAt: new Date(),
     }).where(eq(finLinesTable.id, id));
 
+    await logFinEvent("line", id, "chased", req.session.userId, { to: toEmail, subject });
     res.json({ ok: true, chaseCount: (line.chaseCount ?? 0) + 1 });
   } catch (err) {
     console.error("[finance] chase email error:", err);
@@ -574,7 +595,9 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
       }
     }
 
-    res.json({ documentId: doc.id, extracted: info });
+    await logFinEvent("line", match.lineId, "document_attached_from_email", req.session.userId, { documentId: doc.id });
+    const autoDone = await autoCompleteIfReady(match.lineId, req.session.userId ?? null, "vat_invoice_attached");
+    res.json({ documentId: doc.id, extracted: info, autoDone });
   } catch (err) {
     console.error("[finance] confirm match error:", err);
     res.status(500).json({ error: "Failed to confirm match" });

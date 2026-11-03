@@ -176,6 +176,7 @@ import googleAdsIngestRouter from "./google-ads-ingest";
 import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
 import financeRouter from "./finance";
+import financeInvoicesRouter from "./finance-invoices";
 import cashFlowRouter from "./cash-flow";
 import payrollRouter from "./payroll";
 import featuresRouter from "./features";
@@ -437,6 +438,8 @@ router.use("/stock-control", stockControlRouter);
 router.use("/founder-panels", founderPanelsRouter);
 // Finance / VAT reconciliation — access gated inside the router (admin or
 // isBookkeeper); mailbox settings admin-only at the route layer.
+// Finance → Invoices library (2026-11-03); same access as Finance, checked inside.
+router.use("/finance/invoices", financeInvoicesRouter);
 router.use("/finance", financeRouter);
 // Finance → Cash flow (2026-10-26); same access as Finance, checked inside.
 router.use("/cash-flow", cashFlowRouter);

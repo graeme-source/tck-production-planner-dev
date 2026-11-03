@@ -21,3 +21,12 @@ export function describeImapLoginError(err: unknown): string {
   }
   return `Login failed: ${e.responseText || e.message || "unknown error"}`;
 }
+
+
+/** Done, by definition (Graeme, 2026-11-03): posted in QuickBooks AND a VAT
+ *  invoice attached. A line that's both closes itself; a line already
+ *  closed (done or not needed) is left alone. */
+export function isReadyToClose(line: { status: string; postedDetectedAt: Date | null }, hasVatInvoice: boolean): boolean {
+  return (line.status === "open" || line.status === "identified" || line.status === "matched")
+    && line.postedDetectedAt != null && hasVatInvoice;
+}
