@@ -959,7 +959,7 @@ export function Layout({ children }: { children: ReactNode }) {
         {/* The page and, when open, the team list dock beside it — the page
             narrows to make room, like the left menu (Graeme, 2026-10-20). */}
         <div className="flex-1 flex min-h-0">
-        <div id="app-main-scroll" ref={mainScrollRef} className={cn("flex-1 min-w-0 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative", !accountantOnly && quickActionsHandleStyle(pointerKind) === "tab" && "pr-14 md:pr-14")}>
+        <div id="app-main-scroll" ref={mainScrollRef} className={cn("flex-1 min-w-0 overflow-y-auto overscroll-contain p-4 md:p-8 pb-[200px] relative", quickActionsHandleStyle(pointerKind) === "tab" && "pr-14 md:pr-14")}>
           {/* Weekly lean lesson reminder — every main page, until completed.
               Not for accountants: they're external, the lean curriculum and
               the rest of the team machinery aren't theirs (Graeme,
@@ -992,7 +992,9 @@ export function Layout({ children }: { children: ReactNode }) {
           additionally gets recipe-design + memory powers; staff get a
           read-only look-up assistant (enforced server-side, not just
           here). Accountants get neither the dock nor the to-do machinery. */}
-      {!accountantOnly && <QuickActionsDock />}
+      {/* Accountants get the dock too, but only Improvement + Report issue
+          (Graeme, 2026-11-03). */}
+      <QuickActionsDock accountantOnly={accountantOnly} />
       {/* Weekly sales-derived DPT refresh — renders nothing except for
           managers/admins in the week it's due. */}
       <DptSuggestionPrompt />
@@ -1012,7 +1014,12 @@ export function Layout({ children }: { children: ReactNode }) {
  * mounted on the visitor kiosk or print views: the kiosk is handed to
  * members of the public, so app nav must stay unreachable there.
  */
-export function QuickActionsDock() {
+export function QuickActionsDock({ accountantOnly = false }: {
+  /** Finance accountants (isBookkeeper, not admin): just "Improvement" and
+   *  "Report issue" — none of the kitchen actions, lists or pop-ups
+   *  (Graeme, 2026-11-03). */
+  accountantOnly?: boolean;
+} = {}) {
   const { state } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
   const [assistantOpen, setAssistantOpen] = useState(false);
@@ -1029,6 +1036,26 @@ export function QuickActionsDock() {
   const canReportIncident = user?.role === "admin" || user?.role === "manager";
 
   if (!user) return null;
+
+  if (accountantOnly) {
+    return (
+      <>
+        <QuickActionsPanel
+          only={["improvement", "issue"]}
+          assistantOpen={false}
+          onOpenAssistant={() => {}}
+          onOpenTodos={() => {}}
+          onOpenImprovement={() => setImprovementOpen(true)}
+          onOpenIssue={() => setIssueOpen(true)}
+          onOpenKanban={() => {}}
+          onOpenDefect={() => {}}
+          onOpenWishList={() => {}}
+        />
+        <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
+        <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
+      </>
+    );
+  }
 
   return (
     <>
@@ -1079,7 +1106,9 @@ export function QuickActionsDock() {
 // opens it. ALWAYS starts
 // shut: a shared iPad must never greet the next person with it open
 // (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
-function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenWishList, onOpenIncident }: {
+function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenWishList, onOpenIncident }: {
+  /** Show just these actions (and no team lists) — the accountants' dock. */
+  only?: string[];
   assistantOpen: boolean;
   onOpenAssistant: () => void;
   onOpenTodos: () => void;
@@ -1108,6 +1137,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
   // often not the person standing there (2026-10-14: kept hidden).
   const [location] = useLocation();
   const onStation = /\/station\//.test(location);
+  const limited = only != null;
   // Report accident / incident (Graeme, 2026-10-13): asks "Is it an
   // accident or an incident?" and starts that report straight away
   // (report-incident-modal.tsx). Managers and admins only — the parent
@@ -1128,7 +1158,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
     { key: "wish-list", label: `Add to ${WISH_LIST_NAME}`, hint: WISH_LIST_SUBTITLE, icon: Gift, tone: "bg-pink-500 text-white shadow-pink-500/30", onClick: run(onOpenWishList) },
     { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: "bg-violet-500 text-white shadow-violet-500/30", onClick: run(onOpenKanban) },
     { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: JaneAvatar, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
-  ];
+  ].map(a => (only && !only.includes(a.key) ? { ...a, hidden: true } : a));
 
   return (
     <>
@@ -1136,9 +1166,11 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
         open={open}
         onOpenChange={onOpenChange}
         title="Quick actions"
-        tabLabel={`Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue,${canReportIncident ? " Report accident / incident," : ""} ${REPORT_DEFECT_LABEL}, Add to ${WISH_LIST_NAME}, Pull kanban, Ask ${ASSISTANT_NAME}`}
+        tabLabel={limited
+          ? "Quick actions — swipe left from the right of the screen (or tap here) to open: Improvement, Report issue"
+          : `Quick actions — swipe left from the right of the screen (or tap here) to open: My to-dos, Improvement, Report issue,${canReportIncident ? " Report accident / incident," : ""} ${REPORT_DEFECT_LABEL}, Add to ${WISH_LIST_NAME}, Pull kanban, Ask ${ASSISTANT_NAME}`}
         highlightTab={tour.active && tour.step === "try"}
-        badge={openTodoCount}
+        badge={limited ? undefined : openTodoCount}
         edgeSwipeEnabled={swipeAllowed}
       >
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1162,7 +1194,7 @@ function QuickActionsPanel({ assistantOpen, onOpenAssistant, onOpenTodos, onOpen
         </div>
         {/* A list opens in the docked panel, not the full page (Graeme,
             2026-10-20); "All lists" still goes to the page. */}
-        {!onStation && <TeamListsPanelSection onNavigate={() => setOpen(false)} onOpenList={id => { setOpen(false); openDock(id); }} />}
+        {!onStation && !limited && <TeamListsPanelSection onNavigate={() => setOpen(false)} onOpenList={id => { setOpen(false); openDock(id); }} />}
       </SwipePanel>
       <SwipePanelTourCard tour={tour} />
     </>
