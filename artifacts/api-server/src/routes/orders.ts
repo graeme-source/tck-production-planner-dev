@@ -24,6 +24,7 @@ import { loadStockLedgers } from "../lib/stock-ledger-data";
 import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
+import { PLACED_ORDER_STATUSES, suppliersOrderedToday, type OrderedTodaySupplier } from "../lib/ordered-today";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
   let role = (req.session as any).userRole;
@@ -38,6 +39,26 @@ async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunc
 const router: IRouter = Router();
 
 const FREEZER_LOCATIONS = ["production_freezer", "raw_freezer"];
+
+/** Suppliers we placed an order with today (London) — lib/ordered-today.ts. */
+async function loadOrderedToday(): Promise<OrderedTodaySupplier[]> {
+  const rows = await db
+    .select({
+      id: purchaseOrdersTable.id,
+      supplierId: purchaseOrdersTable.supplierId,
+      supplierName: suppliersTable.name,
+      status: purchaseOrdersTable.status,
+      placedAt: purchaseOrdersTable.placedAt,
+      origin: purchaseOrdersTable.origin,
+    })
+    .from(purchaseOrdersTable)
+    .leftJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
+    .where(and(
+      inArray(purchaseOrdersTable.status, [...PLACED_ORDER_STATUSES]),
+      gte(purchaseOrdersTable.placedAt, londonStartOfDay()),
+    ));
+  return suppliersOrderedToday(rows, londonDateString(), d => londonDateString(d));
+}
 
 router.get("/calculate", async (req, res) => {
   const planId = Number(req.query.planId);
@@ -148,9 +169,15 @@ router.get("/calculate", async (req, res) => {
     };
   }
 
+  // Ordered today → no automatic card for that supplier today, only what
+  // the team adds back by hand (Fix queue #351/#384). Sent to the page for
+  // its "Ordered today: …" line.
+  const orderedToday = await loadOrderedToday();
+  const orderedTodayIds = new Set(orderedToday.map(s => s.supplierId));
+
   const ingredientIds = Object.keys(ingredientMap).map(Number);
   if (ingredientIds.length === 0) {
-    res.json({ planId, planName: plan[0].name, planDate: plan[0].planDate, suppliers: [] });
+    res.json({ planId, planName: plan[0].name, planDate: plan[0].planDate, suppliers: [], orderedToday });
     return;
   }
 
@@ -850,6 +877,13 @@ router.get("/calculate", async (req, res) => {
   for (const sid of Object.keys(supplierOrderMap)) {
     if (supplierOrderMap[Number(sid)].lines.length === 0) delete supplierOrderMap[Number(sid)];
   }
+  // Ordered today (Fix queue #351/#384, Graeme: "if we've placed an order
+  // that day, it shouldn't come back up that day unless we manually choose
+  // to add it back"): drop the supplier's automatic card — suggestions, the
+  // past-cutoff "new separate order" lines and pulled kanbans alike. Pulled
+  // kanbans stay queued and come up tomorrow. Splits below still land:
+  // someone chose those by hand.
+  for (const sid of orderedTodayIds) delete supplierOrderMap[sid];
 
   // Splits due IN today (or overdue and still not placed) join the target
   // supplier's order as a fixed amount, marked "Split from Express, Mon".
@@ -940,6 +974,8 @@ router.get("/calculate", async (req, res) => {
   // supplier's order is placed (markQueuedOrdered). Stays every day until then.
   for (const t of await loadQueuedOrderItems()) {
     const sid = t.supplierId;
+    // Ordered today: waits for tomorrow's card, like a pulled kanban.
+    if (orderedTodayIds.has(sid)) continue;
     if (!supplierOrderMap[sid]) {
       const supplier = supplierLookup[sid] ?? (await db.select().from(suppliersTable).where(eq(suppliersTable.id, sid)).limit(1))[0];
       if (!supplier) continue;
@@ -1040,13 +1076,14 @@ router.get("/calculate", async (req, res) => {
 
   const suppliers = Object.values(supplierOrderMap).sort((a, b) => a.supplier.name.localeCompare(b.supplier.name));
 
-  console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${placedKeys.size} already placed, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
+  console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${placedKeys.size} already placed, ${orderedToday.length} ordered today, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
 
   res.json({
     planId,
     planName: plan[0].name,
     planDate: plan[0].planDate,
     suppliers,
+    orderedToday,
   });
 
   } catch (err) {
