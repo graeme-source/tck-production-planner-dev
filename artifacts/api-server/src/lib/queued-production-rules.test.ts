@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyIngredientNeed, outstanding, packsPerBatch, suggestQueueBatches } from "./queued-production-rules";
+import { classifyIngredientNeed, outstanding, packsPerBatch, queuedRawQuantity, suggestQueueBatches } from "./queued-production-rules";
 
 describe("suggested batches from sales (sold + 5, whole batches)", () => {
   it("Graeme's example: 91 sold at 10 packs a batch → 96 → 10 batches = 100 packs", () => {
@@ -72,5 +72,17 @@ describe("which ingredients the queue lists to order", () => {
     expect(outstanding("special", 2, "not_needed")).toBe(false);
     expect(outstanding("special", 0, null)).toBe(false);
     expect(outstanding("covered", 5, null)).toBe(false);
+  });
+});
+
+// Regression (3 Nov 2026): the queued list asked for 12 kg of chicken thighs
+// (cooked) where Raw Meat prep needed 18.76 kg raw — cook ratio 0.64.
+describe("queuedRawQuantity", () => {
+  it("asks for the raw weight of anything that cooks down", () => {
+    expect(queuedRawQuantity(12 / 19, 19, 0.64)).toBeCloseTo(18.75, 6);
+  });
+  it("leaves everything else as it is", () => {
+    expect(queuedRawQuantity(0.5, 10, null)).toBe(5);
+    expect(queuedRawQuantity(0.5, 10, 1)).toBe(5);
   });
 });

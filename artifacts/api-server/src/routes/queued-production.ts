@@ -32,7 +32,7 @@ import { londonDateString } from "../lib/london-time";
 import { resolveRecipeIngredients, type ResolvedIngredient } from "../lib/ingredient-resolver";
 import { validate, validateQuery } from "../middleware/validate";
 import { queueSales } from "../lib/queued-production-sales";
-import { RECENT_DAYS, classifyIngredientNeed, outstanding, type IngredientMark } from "../lib/queued-production-rules";
+import { RECENT_DAYS, classifyIngredientNeed, outstanding, queuedRawQuantity, type IngredientMark } from "../lib/queued-production-rules";
 import { deliverByFor, orderByFor } from "../lib/queued-production-sales";
 import { packsFor } from "../lib/queued-production-orders";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
@@ -277,12 +277,14 @@ async function fetchIngredientsForDate(date: string) {
   if (queued.length === 0) return [];
   const totals = new Map<number, { ingredient: ResolvedIngredient; qty: number }>();
   // Recipes resolve side by side — one after another was slow on live.
-  const resolvedAll = await Promise.all(queued.map(q => resolveRecipeIngredients(q.recipeId, Number(q.portionsPerBatch) || 10, { skipToppings: false })));
+  // Mix +g included, as on the Orders page — it's used on the day too.
+  const resolvedAll = await Promise.all(queued.map(q => resolveRecipeIngredients(q.recipeId, Number(q.portionsPerBatch) || 10, { skipToppings: false, mixExtraBatches: q.batches })));
   for (const [n, q] of queued.entries()) {
     const resolved = resolvedAll[n];
     for (const ing of resolved) {
       const entry = totals.get(ing.ingredientId) ?? { ingredient: ing, qty: 0 };
-      entry.qty += ing.quantityPerBatch * q.batches;
+      // Bought raw: cooked ÷ cook ratio (chicken thighs 0.64 → 12 kg cooked = 18.75 kg raw).
+      entry.qty += queuedRawQuantity(ing.quantityPerBatch, q.batches, ing.processingRatio);
       totals.set(ing.ingredientId, entry);
     }
   }
