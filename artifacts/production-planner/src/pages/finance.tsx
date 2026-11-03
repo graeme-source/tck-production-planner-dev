@@ -5,6 +5,7 @@ import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { InvoicesLibraryPanel, HistoryList, FilePreview } from "@/pages/finance-invoices";
+import { InvoiceDropPanel } from "@/pages/finance-invoice-drop";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -306,6 +307,8 @@ function InvoicesTab() {
 
   return (
     <div className="space-y-6">
+      <InvoiceDropPanel />
+
       {/* Summary + upload */}
       <div className="grid gap-4 md:grid-cols-3">
         <Card>

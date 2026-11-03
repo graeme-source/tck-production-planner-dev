@@ -1,4 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
+import { cookedToRaw } from "@workspace/units";
 import {
   db,
   checklistTemplatesTable,
@@ -1159,9 +1160,11 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       const batches = item.batchesTarget ?? 0;
       if (batches <= 0 || item.recipeId == null) continue;
       const resolved = await resolveRecipeIngredients(item.recipeId, Number(item.portionsPerBatch) || 10, { skipToppings: true, mixExtraBatches: batches });
+      // Pulled from the freezer = stock = RAW weight: cooked ÷ cook ratio,
+      // as for every buy/stock number (Graeme, 2026-11-03).
       const duckPerBatch = resolved
         .filter(i => i.ingredientName.toLowerCase().includes("duck"))
-        .reduce((s, i) => s + i.quantityPerBatch, 0);
+        .reduce((s, i) => s + cookedToRaw(i.quantityPerBatch, i.processingRatio), 0);
       if (duckPerBatch <= 0) continue;
       const kg = Math.round(duckPerBatch * batches * 100) / 100;
       perRecipe.push({ recipeName: item.recipeName ?? `Recipe #${item.recipeId}`, batches, kg });

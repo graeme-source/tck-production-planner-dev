@@ -755,7 +755,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 Dotted underline, not hover-only — iPad. */}
                             {m.marinadeSubRecipeId != null ? (
                               <button
-                                onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name })}
+                                onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name, required: { qty: m.totalGrams, unit: "g" } })}
                                 className="underline decoration-dotted underline-offset-2 text-primary font-medium hover:decoration-solid text-left"
                                 title={`Replenish ${name} without leaving this screen`}
                               >
@@ -805,7 +805,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                             {m.marinadeSubRecipeId != null ? (
                               <span>
                                 <button
-                                  onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name })}
+                                  onClick={() => setReplenishTarget({ subRecipeId: m.marinadeSubRecipeId!, name, required: { qty: m.totalGrams, unit: "g" } })}
                                   className="underline decoration-dotted underline-offset-2 hover:decoration-solid"
                                   title={`Replenish ${name} without leaving this screen`}
                                 >

@@ -36,6 +36,8 @@
  *      covered  — normal ordering covers it.
  */
 
+import { cookedToRaw } from "@workspace/units";
+
 /** Extra packs on top of the packs sold, before rounding up to whole batches. */
 export const QUEUE_EXTRA_PACKS = 5;
 
@@ -151,4 +153,14 @@ export function packsFor(qty: number, packWeight: number, caseSizePacks: number 
   let packs = Math.ceil(Math.round((qty / pw) * 1e6) / 1e6);
   if (caseSizePacks && caseSizePacks > 0) packs = Math.ceil(packs / caseSizePacks) * caseSizePacks;
   return packs;
+}
+
+/** What a queued batch run needs to BUY of one ingredient: recipe
+ *  quantities are on a cooked basis, so anything that shrinks when cooked
+ *  (processingRatio < 1) is bought raw — cooked ÷ ratio, exactly as the
+ *  Orders page and Raw Meat prep work it out. Without this the queued list
+ *  asked for 12 kg of chicken thighs where prep needed 18.76 kg raw
+ *  (ratio 0.64; Graeme, 3 Nov 2026). */
+export function queuedRawQuantity(quantityPerBatch: number, batches: number, processingRatio: number | null): number {
+  return cookedToRaw(quantityPerBatch * batches, processingRatio);
 }

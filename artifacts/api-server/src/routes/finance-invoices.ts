@@ -8,7 +8,8 @@ import { validate } from "../middleware/validate";
 import { resolveFinanceAccess } from "./finance";
 import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMimeFor, periodRange, sha256Of, supplierHintFromPath } from "../lib/finance/invoice-library";
 import { storedFileHeaders } from "../lib/finance/posted-rules";
-import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, refreshDuplicate } from "../lib/finance/invoice-store";
+import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
+import { attachInvoiceToLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
 
 // Finance → Invoices: the searchable library of every invoice we hold
 // (Graeme, 3 Nov 2026). Same access as the rest of Finance. Append-only —
@@ -275,6 +276,89 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
   } catch (err) {
     console.error("[finance] invoice upload error:", err);
     res.status(500).json({ error: "Upload failed part-way — what arrived before the error is kept. Try again: files already in are skipped." });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Outstanding → "Drop an invoice" (Graeme, 3 Nov 2026): file it, read it
+// now, and put forward the transaction it belongs to. Nothing is attached
+// until someone presses "Yes, attach".
+
+function receiveOne(req: Request, res: Response, next: NextFunction) {
+  upload.single("file")(req, res, (err: unknown) => {
+    if (!err) { next(); return; }
+    if ((err as { code?: string }).code === "LIMIT_FILE_SIZE") { res.status(413).json({ error: `That file is over ${MAX_UPLOAD_MB} MB.` }); return; }
+    console.error("[finance] find-transaction receive error:", err);
+    res.status(400).json({ error: "The file didn't arrive in one piece — try again." });
+  });
+}
+
+async function invoiceSummary(id: number) {
+  const [inv] = await db.select({
+    id: finInvoicesTable.id, fileName: finInvoicesTable.fileName, fileMime: finInvoicesTable.fileMime,
+    supplierName: finInvoicesTable.supplierName, invoiceDate: finInvoicesTable.invoiceDate,
+    invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount,
+    vatAmount: finInvoicesTable.vatAmount, docKind: finInvoicesTable.docKind,
+    readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote, lineId: finInvoicesTable.lineId,
+  }).from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
+  return inv ?? null;
+}
+
+async function attachedLine(lineId: number | null) {
+  if (!lineId) return null;
+  const [l] = await db.select({ id: finLinesTable.id, lineDate: finLinesTable.lineDate, descriptor: finLinesTable.descriptor, amount: finLinesTable.amount, status: finLinesTable.status })
+    .from(finLinesTable).where(eq(finLinesTable.id, lineId));
+  return l ?? null;
+}
+
+router.post("/find-transaction", requireFinanceAccess, receiveOne, async (req: Request, res: Response) => {
+  try {
+    const file = req.file;
+    if (!file) { res.status(400).json({ error: "No file uploaded" }); return; }
+    const name = file.originalname || "invoice";
+    const mime = invoiceMimeFor(name) ?? (file.mimetype === "application/pdf" || file.mimetype.startsWith("image/") ? file.mimetype : null);
+    if (!mime) { res.status(415).json({ error: `${name} isn't a PDF or a photo.` }); return; }
+    const userId = req.session.userId ?? null;
+    const r = await addInvoiceFile({ bytes: new Uint8Array(file.buffer), mime, name, sourcePath: name, source: "upload", uploadedBy: userId });
+    if (!r.duplicate) {
+      await logFinEvent("invoice", r.id, "uploaded", userId, { via: "outstanding_find_transaction" });
+      await refreshDuplicate(r.id);
+    }
+    await readInvoiceNow(r.id);
+    const invoice = await invoiceSummary(r.id);
+    const already = await attachedLine(invoice?.lineId ?? null);
+    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false }); return; }
+    res.json({ invoice, alreadyAttached: null, ...(await suggestLinesForInvoice(r.id)) });
+  } catch (err) {
+    console.error("[finance] find-transaction error:", err);
+    res.status(500).json({ error: "Couldn't look for the transaction — try again." });
+  }
+});
+
+// Look again after the details read off the invoice were corrected.
+router.get("/:id/transactions", requireFinanceAccess, async (req: Request, res: Response) => {
+  try {
+    const invoice = await invoiceSummary(Number(req.params.id));
+    if (!invoice) { res.status(404).json({ error: "Invoice not found" }); return; }
+    const already = await attachedLine(invoice.lineId);
+    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false }); return; }
+    res.json({ invoice, alreadyAttached: null, ...(await suggestLinesForInvoice(invoice.id)) });
+  } catch (err) {
+    console.error("[finance] invoice transactions error:", err);
+    res.status(500).json({ error: "Couldn't look for the transaction — try again." });
+  }
+});
+
+const attachSchema = z.object({ lineId: z.number().int().positive() });
+router.post("/:id/attach", requireFinanceAccess, validate(attachSchema), async (req: Request, res: Response) => {
+  try {
+    const { lineId } = req.body as z.infer<typeof attachSchema>;
+    const r = await attachInvoiceToLine(Number(req.params.id), lineId, req.session.userId ?? null);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
+    res.json(r);
+  } catch (err) {
+    console.error("[finance] invoice attach error:", err);
+    res.status(500).json({ error: "Couldn't attach it — try again." });
   }
 });
 
