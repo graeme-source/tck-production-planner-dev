@@ -1,7 +1,7 @@
 import { db, finLinesTable, finMatchesTable, finVendorsTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, isNotNull, isNull, like, sql } from "drizzle-orm";
 import { BACKLOG_ROWS, backlogDedupeHash } from "./backlog-seed";
-import { SHEET_ROWS_2026_11, sheetRowNote, sheetRowPosted, sheetRowDedupeHash } from "./backlog-reset-2026-11";
+import { SHEET_ROWS_2026_11, sheetRowNote, sheetRowPosted, sheetRowDedupeHash, sheetNotesByDedupeHash } from "./backlog-reset-2026-11";
 import { normaliseMerchant } from "./merchant-normalise";
 import { runMailboxSync, refreshSuggestions } from "./mailbox-sync";
 import { runQboSync } from "./qbo";
@@ -107,6 +107,41 @@ export async function resetFinanceBacklogIfNeeded(): Promise<void> {
   refreshSuggestions().catch((e) => console.error("[finance] suggestion refresh after reset failed:", e));
 }
 
+/** One-time fix (Graeme, 3 Nov 2026): the QuickBooks sync used to close
+ *  lines it found posted, and closed 19 of the freshly loaded sheet lines
+ *  minutes after the reset. Posted no longer closes a line, so reopen every
+ *  line the sync closed (done, QuickBooks-linked, no person marked it done,
+ *  sync's note) and put the sheet note back. The Posted tick and the
+ *  QuickBooks link stay. Run once. */
+export async function reopenQboClosedLinesIfNeeded(): Promise<void> {
+  const KEY = "finance_reopen_qbo_closed_2026_11_03";
+  const done = await db.execute(sql`SELECT key FROM _migrations_done WHERE key = ${KEY}`);
+  if ((done as any).rows?.length > 0) return;
+
+  const notes = sheetNotesByDedupeHash();
+  const reopened = await db.transaction(async (tx) => {
+    const closed = await tx.select({ id: finLinesTable.id, dedupeHash: finLinesTable.dedupeHash })
+      .from(finLinesTable)
+      .where(and(
+        eq(finLinesTable.status, "done"),
+        isNotNull(finLinesTable.qboTxnId),
+        isNull(finLinesTable.doneBy),
+        like(finLinesTable.statusNote, "Posted in QuickBooks (%"),
+      ));
+    for (const line of closed) {
+      await tx.update(finLinesTable).set({
+        status: "open",
+        statusNote: notes.has(line.dedupeHash) ? notes.get(line.dedupeHash)! : "Posted in QuickBooks — still needs invoice",
+        doneAt: null,
+        updatedAt: new Date(),
+      }).where(eq(finLinesTable.id, line.id));
+    }
+    await tx.execute(sql`INSERT INTO _migrations_done (key) VALUES (${KEY})`);
+    return closed.length;
+  });
+  console.log(`[finance] Reopened ${reopened} lines the QuickBooks sync had closed (posted no longer closes a line)`);
+}
+
 /** Hourly mailbox sync. Self-gates: a no-op until a mailbox is configured. */
 export function startFinanceMailboxTimer(): void {
   const run = () =>
@@ -124,8 +159,8 @@ export function startFinanceMailboxTimer(): void {
       .then((o) => {
         if (o.error && o.error !== "QuickBooks is not connected" && o.error !== "Sync already running") {
           console.error("[finance] QBO sync:", o.error);
-        } else if (o.purchases + o.bills > 0 || o.linesClosed > 0) {
-          console.log(`[finance] QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed`);
+        } else if (o.purchases + o.bills > 0 || o.linesMarkedPosted > 0) {
+          console.log(`[finance] QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesMarkedPosted} lines marked posted`);
         }
       })
       .catch((e) => console.error("[finance] QBO sync failed:", e));
