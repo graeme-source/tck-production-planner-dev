@@ -18,6 +18,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Banknote,
   Download,
@@ -139,10 +140,21 @@ const FILTERS = [
 ] as const;
 
 const POSTED_FILTERS = [
-  { key: "any", label: "Posted or not" },
+  { key: "any", label: "Either" },
   { key: "posted", label: "Posted" },
   { key: "not_posted", label: "Not posted" },
 ] as const;
+
+// Sorting (Graeme, 2026-11-03): supplier A–Z, transaction date, amount.
+const SORTS = [
+  { key: "date_desc", label: "Date — newest first" },
+  { key: "date_asc", label: "Date — oldest first" },
+  { key: "name_asc", label: "Supplier A–Z" },
+  { key: "name_desc", label: "Supplier Z–A" },
+  { key: "amount_desc", label: "Amount — highest first" },
+  { key: "amount_asc", label: "Amount — lowest first" },
+] as const;
+type SortKey = (typeof SORTS)[number]["key"];
 
 /**
  * Finance: the founder's and the accountants' only (Graeme, 2026-10-26 — not
@@ -193,6 +205,7 @@ function InvoicesTab() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
   const [postedFilter, setPostedFilter] = useState<(typeof POSTED_FILTERS)[number]["key"]>("any");
+  const [sort, setSort] = useState<SortKey>("date_desc");
   const [search, setSearch] = useState("");
   const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -245,8 +258,19 @@ function InvoicesTab() {
           .some((v) => v && String(v).toLowerCase().includes(q));
       });
     }
-    return out;
-  }, [data, filter, postedFilter, search]);
+    // The name sorted on is the one the row shows.
+    const name = (l: FinLine) => ((l.vendorId ? data?.vendors[l.vendorId]?.name : null) ?? l.merchant ?? l.descriptor).toLowerCase();
+    const byDate = (a: FinLine, b: FinLine) => a.lineDate.localeCompare(b.lineDate) || a.id - b.id;
+    const cmp: Record<SortKey, (a: FinLine, b: FinLine) => number> = {
+      date_desc: (a, b) => byDate(b, a),
+      date_asc: byDate,
+      name_asc: (a, b) => name(a).localeCompare(name(b)) || byDate(b, a),
+      name_desc: (a, b) => name(b).localeCompare(name(a)) || byDate(b, a),
+      amount_desc: (a, b) => Number(b.amount) - Number(a.amount) || byDate(b, a),
+      amount_asc: (a, b) => Number(a.amount) - Number(b.amount) || byDate(b, a),
+    };
+    return [...out].sort(cmp[sort]);
+  }, [data, filter, postedFilter, sort, search]);
 
   const outstandingTotal = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -314,39 +338,51 @@ function InvoicesTab() {
         </Card>
       </div>
 
-      {/* Filter tabs + search */}
-      <div className="flex gap-2 flex-wrap items-center">
-        <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
-          <Plus className="h-4 w-4 mr-1" /> Add a transaction
-        </Button>
-        {FILTERS.map((f) => (
-          <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
-            {f.label}
+      {/* Filters, sort + search */}
+      <div className="space-y-2">
+        <div className="flex gap-2 flex-wrap items-center">
+          <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Add a transaction
           </Button>
-        ))}
-        <span className="w-px h-6 bg-border mx-1" aria-hidden />
-        {POSTED_FILTERS.map((f) => (
-          <Button key={f.key} size="sm" variant={postedFilter === f.key ? "default" : "outline"} onClick={() => setPostedFilter(f.key)}>
-            {f.label}
-          </Button>
-        ))}
-        <div className="relative flex-1 min-w-[200px] max-w-sm ml-auto">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search supplier, amount, card, note…"
-            className="pl-9"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label="Clear search"
-            >
-              <XCircle className="h-4 w-4" />
-            </button>
-          )}
+          <span className="text-xs font-medium text-muted-foreground ml-1">Show</span>
+          {FILTERS.map((f) => (
+            <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
+              {f.label}
+            </Button>
+          ))}
+          <div className="relative flex-1 min-w-[200px] ml-auto">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search supplier, amount, card, note…"
+              className="pl-9"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <XCircle className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <span className="text-xs font-medium text-muted-foreground">Posted in QuickBooks</span>
+          {POSTED_FILTERS.map((f) => (
+            <Button key={f.key} size="sm" variant={postedFilter === f.key ? "default" : "outline"} onClick={() => setPostedFilter(f.key)}>
+              {f.label}
+            </Button>
+          ))}
+          <span className="text-xs font-medium text-muted-foreground ml-auto">Sort</span>
+          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+            <SelectTrigger className="w-56" aria-label="Sort transactions"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {SORTS.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
