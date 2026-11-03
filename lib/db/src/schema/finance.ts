@@ -91,6 +91,8 @@ export const finLinesTable = pgTable("fin_lines", {
   // Set when the QuickBooks sync matches this line to a posted
   // transaction — the "ruled out, already posted" signal.
   qboTxnId: integer("qbo_txn_id"),
+  // When we learned it's posted in QuickBooks — by the sync, or ticked by
+  // the accounts team. Drives the Posted / Not posted filter; null = not posted.
   postedDetectedAt: timestamp("posted_detected_at"),
   // sha256 over source|dates|amount|descriptor|card — makes re-uploads of
   // overlapping exports safe (dedupe on conflict).

@@ -25,7 +25,7 @@ import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
 import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
-import { ACCOUNTS_MAILBOX } from "../lib/accounts-email";
+import { buildChaseEmail } from "../lib/finance/chase-email";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -199,6 +199,26 @@ router.patch("/lines/:id", requireFinanceAccess, validate(lineStatusSchema), asy
   } catch (err) {
     console.error("[finance] line update error:", err);
     res.status(500).json({ error: "Failed to update line" });
+  }
+});
+
+// Posted in QuickBooks, ticked by hand (Graeme, 2026-11-03): the sync spots
+// most, but the accounts team know what they've posted. Posted is separate
+// from done — a posted line can still be waiting for its invoice.
+const postedSchema = z.object({ posted: z.boolean() });
+router.patch("/lines/:id/posted", requireFinanceAccess, validate(postedSchema), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { posted } = req.body as z.infer<typeof postedSchema>;
+    const [row] = await db.update(finLinesTable)
+      .set({ postedDetectedAt: posted ? new Date() : null, updatedAt: new Date() })
+      .where(eq(finLinesTable.id, id))
+      .returning({ id: finLinesTable.id, postedDetectedAt: finLinesTable.postedDetectedAt });
+    if (!row) { res.status(404).json({ error: "Line not found" }); return; }
+    res.json(row);
+  } catch (err) {
+    console.error("[finance] posted update error:", err);
+    res.status(500).json({ error: "Failed to update posted" });
   }
 });
 
@@ -405,10 +425,8 @@ router.patch("/lines/:id/supplier", requireFinanceAccess, validate(supplierPatch
   res.json({ ok: true });
 });
 
-// Chase the supplier for a VAT invoice. Sends from the accounts identity
-// (via the verified notify. subdomain — the apex isn't verified in Resend),
-// with replies AND a blind copy landing in accounts@thecalzonekitchen.co.uk,
-// so the accounts mailbox holds the whole thread. Every chase is counted on
+// Chase the supplier for a VAT invoice (email built in lib/finance/chase-email:
+// from the accounts identity, replies to accounts@, no copy). Every chase is counted on
 // the line — "have I already emailed them?" is answered by the button
 // itself, which is the pain this exists to kill (Graeme, 2026-09-10).
 const chaseSchema = z.object({
@@ -423,20 +441,7 @@ router.post("/lines/:id/chase", requireFinanceAccess, validate(chaseSchema), asy
     const [line] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, id));
     if (!line) { res.status(404).json({ error: "Line not found" }); return; }
 
-    const html = `<div style="font-family:sans-serif;max-width:560px;color:#333">${message
-      .split(/\n{2,}/)
-      .map(pa => `<p>${pa.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br/>")}</p>`)
-      .join("")}</div>`;
-    await sendEmail({
-      to: toEmail,
-      subject,
-      html,
-      text: message,
-      fromName: "The Calzone Kitchen — Accounts",
-      fromEmail: "accounts@notify.thecalzonekitchen.co.uk",
-      replyTo: ACCOUNTS_MAILBOX,
-      bcc: [ACCOUNTS_MAILBOX],
-    });
+    await sendEmail(buildChaseEmail({ toEmail, subject, message }));
 
     await db.update(finLinesTable).set({
       supplierEmail: line.supplierEmail ?? toEmail,
