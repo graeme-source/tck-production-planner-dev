@@ -1145,8 +1145,8 @@ function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: s
             )}
           </>
         ) : (
-          // Reopening keeps the QuickBooks link, and the sync never closes a
-          // linked line again — so it stays open until the invoice is in.
+          // Reopening keeps the QuickBooks link; the sync never closes lines
+          // (it only ticks Posted), so it stays open until the invoice is in.
           <Button
             size="sm"
             variant="outline"
@@ -1189,8 +1189,12 @@ function AdminPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ emailAddress: email, password, ...(scanSince ? { scanSince } : {}) }),
       }),
-    onSuccess: () => {
-      toast({ title: "Mailbox saved", description: "Password stored encrypted. Run a sync to start indexing." });
+    onSuccess: (r: { login?: { ok: boolean; reason?: string } }) => {
+      if (r.login && !r.login.ok) {
+        toast({ title: "Saved, but the login didn't work", description: r.login.reason, variant: "destructive" });
+      } else {
+        toast({ title: "Password works — mailbox connected", description: "Logged in to the mailbox. Run a sync to pick up new emails." });
+      }
       setPassword("");
       queryClient.invalidateQueries({ queryKey: ["/api/finance/mailbox"] });
     },
@@ -1216,7 +1220,7 @@ function AdminPanel() {
   const qboSync = useMutation({
     mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/sync`, { method: "POST" }),
     onSuccess: () => {
-      toast({ title: "QuickBooks sync started", description: "Posted transactions will close their card lines as it runs." });
+      toast({ title: "QuickBooks sync started", description: "Card lines it finds in QuickBooks are ticked Posted — they stay open until the invoice is in." });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/qbo/status"] });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
@@ -1349,7 +1353,7 @@ function AdminPanel() {
           </div>
           <div className="flex gap-2 mt-3 flex-wrap">
             <Button size="sm" onClick={() => saveMailbox.mutate()} disabled={saveMailbox.isPending || !email || !password}>
-              {saveMailbox.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} Save connection
+              {saveMailbox.isPending && <Loader2 className="h-4 w-4 animate-spin mr-1" />} {saveMailbox.isPending ? "Checking the password…" : "Save connection"}
             </Button>
             <Button size="sm" variant="outline" onClick={() => syncNow.mutate()} disabled={syncNow.isPending || !mailbox.data}>
               {syncNow.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <RefreshCw className="h-4 w-4 mr-1" />} Sync now
@@ -1442,7 +1446,7 @@ function AdminPanel() {
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
                 Not connected. Connecting lets the app see which transactions are already
-                posted and close their card lines automatically — read-only, it never
+                posted and tick them Posted (they stay open until the invoice is in) — read-only, it never
                 changes anything in QuickBooks.
               </p>
               <Button size="sm" asChild>
