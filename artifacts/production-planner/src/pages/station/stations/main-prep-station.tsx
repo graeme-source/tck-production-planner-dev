@@ -1071,7 +1071,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                                 popup, prep list stays put. */}
                             {ing.isSubRecipe && (
                               <button
-                                onClick={() => setReplenishTarget({ subRecipeId: ing.ingredientId, name: ing.ingredientName })}
+                                onClick={() => setReplenishTarget({ subRecipeId: ing.ingredientId, name: ing.ingredientName, required: { qty: ing.totalQty, unit: ing.unit } })}
                                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-primary/40 text-primary text-sm font-semibold hover:bg-primary/10 transition-colors"
                                 title={`Replenish ${ing.ingredientName} without leaving this screen`}
                               >

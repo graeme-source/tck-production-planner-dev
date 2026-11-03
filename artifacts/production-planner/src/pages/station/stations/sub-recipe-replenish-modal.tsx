@@ -26,6 +26,9 @@ const SubRecipeMakeFlow = React.lazy(() =>
 export interface ReplenishTarget {
   subRecipeId: number;
   name: string;
+  /** Today's amount from the prep row, in the row's own unit — the popup
+   *  offers (and starts on) "Exactly today's need". */
+  required?: { qty: number; unit: string };
 }
 
 export function SubRecipeReplenishModal({ target, onClose, timing }: {
@@ -88,6 +91,7 @@ export function SubRecipeReplenishModal({ target, onClose, timing }: {
                 planRequirements={[]}
                 allSubRecipes={allSubRecipes}
                 initialSubRecipeId={target.subRecipeId}
+                requiredAmount={target.required}
                 onClose={onClose}
                 timing={timing}
               />

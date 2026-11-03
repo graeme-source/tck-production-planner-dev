@@ -1,7 +1,7 @@
 import { formatBatches } from "../shared/format-batches";
 import { prepTinTileLabel, recipeNameWithTinSize } from "../shared/prep-tin-labels";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
-import { toGrams, formatPrepWeight, packsToOpen } from "@workspace/units";
+import { toGrams, formatPrepWeight, packsToOpen, exactBatchMultiplier, formatBatchMultiplier } from "@workspace/units";
 import {
   useListSubRecipes,
   useGetSubRecipe,
@@ -105,7 +105,7 @@ function ScaledIngredientChecklist({
   /** When set, component rows (sub-recipes inside this sub-recipe) carry a
    *  "Make" affordance that opens the replenish modal for that component
    *  without leaving the checklist. */
-  onReplenishComponent?: (subRecipeId: number, name: string) => void;
+  onReplenishComponent?: (subRecipeId: number, name: string, required?: { qty: number; unit: string }) => void;
 }) {
   const allItems = scaledChecklistItems(ingredients, subRecipeComponents);
 
@@ -145,8 +145,8 @@ function ScaledIngredientChecklist({
                 <span
                   role="button"
                   tabIndex={0}
-                  onClick={e => { e.stopPropagation(); onReplenishComponent(item.componentSubRecipeId!, item.label); }}
-                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onReplenishComponent(item.componentSubRecipeId!, item.label); } }}
+                  onClick={e => { e.stopPropagation(); onReplenishComponent(item.componentSubRecipeId!, item.label, { qty: item.qty * batches, unit: item.unit }); }}
+                  onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.stopPropagation(); e.preventDefault(); onReplenishComponent(item.componentSubRecipeId!, item.label, { qty: item.qty * batches, unit: item.unit }); } }}
                   className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-primary/40 text-primary text-xs font-semibold hover:bg-primary/10 align-middle"
                 >
                   Make
@@ -183,7 +183,8 @@ type SubReplenishMode = "plan" | "standalone";
 interface SubReplenishState {
   phase: "pick" | "stock_check" | "batch_pick" | "checklist" | "done";
   sr: SubRecipePlanRequirement | null;
-  batchMultiplier: 1 | 2 | 4 | "custom";
+  /** "exact" = exactly today's need (requiredAmount ÷ yield, unrounded). */
+  batchMultiplier: 1 | 2 | 3 | 4 | "custom" | "exact";
   customBatches: number;
   stockOnHand: string;
   batches: number;
@@ -202,6 +203,7 @@ export function SubRecipeMakeFlow({
   onOpenSop,
   sopQueryKey,
   initialSubRecipeId,
+  requiredAmount,
   onReplenishComponent,
   timing,
 }: {
@@ -214,9 +216,13 @@ export function SubRecipeMakeFlow({
    *  entry point for the replenish modal — a rub clicked on a prep row
    *  shouldn't make anyone search a list they already know the answer to. */
   initialSubRecipeId?: number;
+  /** What the prep screen says is needed today ("8.32 kg"), when opened from
+   *  a prep row: offers — and starts on — "Exactly today's need", the
+   *  multiplier that makes exactly that (Graeme, 2026-11-03). */
+  requiredAmount?: { qty: number; unit: string };
   /** Passed through to the checklist: lets component rows open a replenish
    *  modal for the component sub-recipe. */
-  onReplenishComponent?: (subRecipeId: number, name: string) => void;
+  onReplenishComponent?: (subRecipeId: number, name: string, required?: { qty: number; unit: string }) => void;
   /** Sub-recipes already marked complete for this plan (plan mode only). */
   completedIds?: Set<number>;
   /** Direct tick on a pick-list row — mark done/undone without running the
@@ -262,7 +268,9 @@ export function SubRecipeMakeFlow({
     if (mode === "plan") {
       setState(s => ({ ...s, phase: "stock_check", sr }));
     } else {
-      setState(s => ({ ...s, phase: "batch_pick", sr, batchMultiplier: 1, customBatches: 1 }));
+      // Opened from a prep row with today's amount: start on "exactly that".
+      const startExact = requiredAmount != null && sr.subRecipeId === initialSubRecipeId;
+      setState(s => ({ ...s, phase: "batch_pick", sr, batchMultiplier: startExact ? "exact" : 1, customBatches: 1 }));
     }
   };
 
@@ -324,8 +332,15 @@ export function SubRecipeMakeFlow({
   }, [state.sr, state.phase]);
 
   const sr = loadedDetail ?? state.sr;
-  const effectiveBatches = state.batchMultiplier === "custom" ? state.customBatches : state.batchMultiplier;
   const yieldPerBatch = sr?.yield ?? 1;
+  // Only for the sub-recipe the prep row named — a component picked later
+  // from inside the flow has no "today's need" of its own.
+  const exactMultiplier = requiredAmount && sr && sr.subRecipeId === initialSubRecipeId
+    ? exactBatchMultiplier(requiredAmount.qty, requiredAmount.unit, sr.yield, sr.yieldUnit)
+    : null;
+  const effectiveBatches = state.batchMultiplier === "custom" ? state.customBatches
+    : state.batchMultiplier === "exact" ? (exactMultiplier ?? 1)
+    : state.batchMultiplier;
   const totalYield = yieldPerBatch * effectiveBatches;
 
   const netNeeded = (() => {
@@ -627,7 +642,23 @@ export function SubRecipeMakeFlow({
           <div>
             <p className="text-base font-semibold mb-3">Number of mixes</p>
             <div className="flex items-center gap-2 flex-wrap">
-              {([1, 2, 4] as const).map(m => (
+              {exactMultiplier != null && (
+                <button
+                  onClick={() => setState(s => ({ ...s, batchMultiplier: "exact" }))}
+                  className={cn(
+                    "px-5 py-3 rounded-xl text-base font-bold border-2 transition-all text-left leading-tight",
+                    state.batchMultiplier === "exact"
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-primary/50 text-primary hover:bg-primary/10"
+                  )}
+                >
+                  Exactly today's need
+                  <span className="block text-sm font-semibold opacity-90">
+                    {formatPrepWeight(requiredAmount!.qty, requiredAmount!.unit)} · {formatBatchMultiplier(exactMultiplier)}
+                  </span>
+                </button>
+              )}
+              {([1, 2, 3, 4] as const).map(m => (
                 <button
                   key={m}
                   onClick={() => setState(s => ({ ...s, batchMultiplier: m }))}
@@ -689,7 +720,9 @@ export function SubRecipeMakeFlow({
             className="w-full py-4 rounded-2xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 transition-colors flex items-center justify-center gap-2"
           >
             <Beaker className="w-5 h-5" />
-            Start Making {effectiveBatches} Mix{effectiveBatches !== 1 ? "es" : ""}
+            {Number.isInteger(effectiveBatches)
+              ? <>Start Making {effectiveBatches} Mix{effectiveBatches !== 1 ? "es" : ""}</>
+              : <>Start Making {formatPrepWeight(totalYield, sr.yieldUnit)} ({formatBatchMultiplier(effectiveBatches)})</>}
           </button>
         </div>
       </div>
@@ -1413,7 +1446,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     sopLinksBySubRecipe={sopLinksBySubRecipe}
                     onOpenSop={sopViewer.open}
                     sopQueryKey={subRecipeSopKey}
-                    onReplenishComponent={(subRecipeId, name) => setReplenishTarget({ subRecipeId, name })}
+                    onReplenishComponent={(subRecipeId, name, required) => setReplenishTarget({ subRecipeId, name, required })}
                     timing={isDraft ? undefined : { planId: targetPlanId, station: "prep_bases" }}
                   />
                 )}
