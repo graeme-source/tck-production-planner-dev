@@ -106,3 +106,9 @@ export function sheetRowDedupeHash(row: SheetRow, index: number): string {
   const key = ["backlog_2026_11", row.date, row.value, row.supplier.toUpperCase(), row.ref, String(index)].join("|");
   return createHash("sha256").update(key).digest("hex");
 }
+
+/** dedupe hash → the sheet note, to restore lines the QuickBooks sync closed
+ *  (and overwrote the note of) right after the reset went live. */
+export function sheetNotesByDedupeHash(): Map<string, string | null> {
+  return new Map(SHEET_ROWS_2026_11.map((row, i) => [sheetRowDedupeHash(row, i), sheetRowNote(row)]));
+}

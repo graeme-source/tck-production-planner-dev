@@ -3524,9 +3524,10 @@ async function startup() {
 
     // Finance / VAT reconciliation — one-time backlog seed (guarded) and the
     // hourly mailbox sync (no-op until a mailbox is configured in the app).
-    const { seedFinanceBacklogIfNeeded, resetFinanceBacklogIfNeeded, startFinanceMailboxTimer } = await import("./lib/finance/startup");
+    const { seedFinanceBacklogIfNeeded, resetFinanceBacklogIfNeeded, reopenQboClosedLinesIfNeeded, startFinanceMailboxTimer } = await import("./lib/finance/startup");
     await seedFinanceBacklogIfNeeded();
     await resetFinanceBacklogIfNeeded();
+    await reopenQboClosedLinesIfNeeded();
     startFinanceMailboxTimer();
   } catch (err) {
     console.error(

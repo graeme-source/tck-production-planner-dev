@@ -3,6 +3,7 @@ import { simpleParser } from "mailparser";
 import { db, finEmailIndexTable, finLinesTable, finMailboxTable, finMatchesTable, finVendorsTable } from "@workspace/db";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { openSecret } from "./secret-box";
+import { describeImapLoginError } from "./posted-rules";
 import { extractAmounts } from "./amounts";
 import { suggestMatches, extractRefTokens, type EmailForMatch, type LineForMatch } from "./matching";
 
@@ -464,6 +465,25 @@ export async function fetchAttachmentForMessage(
 /** Full email preview for a suggestion — fetched live from the mailbox,
  *  shown transiently, never stored. Raced against a timeout because the
  *  server's route to one.com can be starved (Railway tar-pit). */
+/** Log in and straight back out — used on Save, so a wrong password shows
+ *  at once instead of an hour later as a sync error. */
+export async function testMailboxLogin(host: string, user: string, pass: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const client = new ImapFlow({ host, port: 993, secure: true, auth: { user, pass }, logger: false, socketTimeout: 20_000 });
+  client.on("error", () => undefined);
+  try {
+    const login = client.connect().then(() => ({ ok: true as const }));
+    const timeout = new Promise<{ ok: false; reason: string }>((resolve) =>
+      setTimeout(() => resolve({ ok: false, reason: describeImapLoginError({ code: "ETIMEDOUT" }) }), 20_000).unref?.());
+    const result = await Promise.race([login, timeout]);
+    if (result.ok) await client.logout().catch(() => undefined);
+    return result;
+  } catch (err) {
+    return { ok: false, reason: describeImapLoginError(err) };
+  } finally {
+    try { client.close(); } catch { /* closed */ }
+  }
+}
+
 export async function fetchEmailPreview(
   folder: string,
   uid: number

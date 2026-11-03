@@ -3,6 +3,7 @@ import { db, finLinesTable, finQboConnectionTable, finQboTxnsTable } from "@work
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { sealSecret, openSecret, SecretUnreadableError } from "./secret-box";
 import { merchantsLooselyMatch } from "./merchant-normalise";
+import { postedLinkFields } from "./posted-rules";
 
 // Read-only QuickBooks Online connection (docs/vat-reconciliation/PLAN.md,
 // revived 2026-08-28 by Graeme: "rule out transactions we already have
@@ -175,7 +176,8 @@ interface QboTxn {
 export interface QboSyncOutcome {
   purchases: number;
   bills: number;
-  linesClosed: number;
+  /** Open lines newly found posted in QuickBooks (ticked Posted, left open). */
+  linesMarkedPosted: number;
   linesImported?: number;
   error?: string;
 }
@@ -184,11 +186,12 @@ let qboSyncRunning = false;
 
 /**
  * Pull posted Purchases + Bills updated since the cursor, mirror them, and
- * close any open card line that unambiguously matches one — the "already
- * posted, ruled out" signal.
+ * tick Posted on any open card line that unambiguously matches one. Lines
+ * are never closed for being posted: posted-without-invoice is exactly what
+ * the list exists to chase (Graeme, 2026-11-03).
  */
 export async function runQboSync(): Promise<QboSyncOutcome> {
-  if (qboSyncRunning) return { purchases: 0, bills: 0, linesClosed: 0, error: "Sync already running" };
+  if (qboSyncRunning) return { purchases: 0, bills: 0, linesMarkedPosted: 0, error: "Sync already running" };
   qboSyncRunning = true;
   try {
     return await doQboSync();
@@ -200,7 +203,7 @@ export async function runQboSync(): Promise<QboSyncOutcome> {
       : err instanceof Error ? err.message : String(err);
     const [conn] = await db.select({ id: finQboConnectionTable.id }).from(finQboConnectionTable).limit(1);
     if (conn) await db.update(finQboConnectionTable).set({ lastError: msg, updatedAt: new Date() }).where(eq(finQboConnectionTable.id, conn.id));
-    return { purchases: 0, bills: 0, linesClosed: 0, error: msg };
+    return { purchases: 0, bills: 0, linesMarkedPosted: 0, error: msg };
   } finally {
     qboSyncRunning = false;
   }
@@ -208,7 +211,7 @@ export async function runQboSync(): Promise<QboSyncOutcome> {
 
 async function doQboSync(): Promise<QboSyncOutcome> {
   const [conn] = await db.select().from(finQboConnectionTable).limit(1);
-  if (!conn) return { purchases: 0, bills: 0, linesClosed: 0, error: "QuickBooks is not connected" };
+  if (!conn) return { purchases: 0, bills: 0, linesMarkedPosted: 0, error: "QuickBooks is not connected" };
 
   // Cursor with a 2-day overlap: LastUpdatedTime comparisons are safe to
   // repeat (upserts), missing an update is not.
@@ -244,7 +247,7 @@ async function doQboSync(): Promise<QboSyncOutcome> {
   }
 
   const linesImported = await autoImportQboLines();
-  const linesClosed = await closePostedLines();
+  const linesMarkedPosted = await markPostedLines();
 
   await db.update(finQboConnectionTable).set({
     syncCursor: syncStartedAt,
@@ -253,16 +256,9 @@ async function doQboSync(): Promise<QboSyncOutcome> {
     updatedAt: new Date(),
   }).where(eq(finQboConnectionTable.id, conn.id));
 
-  return { purchases, bills, linesClosed, linesImported };
+  return { purchases, bills, linesMarkedPosted, linesImported };
 }
 
-/**
- * Match open card lines to mirrored posted transactions. Deliberately
- * conservative: exact amount (to the penny), transaction date within 3
- * days, and — when both sides have a usable name — a loose merchant match.
- * A line with MORE than one candidate stays open (wrongly closing a line
- * whose invoice is missing is the exact failure this app exists to stop).
- */
 /**
  * Indirect Capital-on-Tap import (Graeme, 2026-09-12): purchases paid from
  * the configured QBO account become finance lines automatically — the CSV
@@ -273,7 +269,7 @@ async function doQboSync(): Promise<QboSyncOutcome> {
  * given on this path, and the line's whole job is collecting the VAT
  * invoice. Where an existing line (e.g. from an earlier CSV) already
  * covers the purchase, it's linked rather than duplicated — same
- * conservative amount+date matcher as closePostedLines.
+ * conservative amount+date matcher as markPostedLines.
  */
 export async function autoImportQboLines(): Promise<number> {
   const [conn] = await db.select().from(finQboConnectionTable).limit(1);
@@ -296,6 +292,8 @@ export async function autoImportQboLines(): Promise<number> {
   for (const t of candidates) {
     // Adopt an existing unlinked line first (exact amount, ±3 days, single
     // candidate) so CSV-era lines don't get duplicated during transition.
+    // markPostedLines below uses the same conservative matcher: exact amount,
+    // date within 3 days, a loose merchant match where both sides have a name.
     const from = new Date(`${t.txn_date}T00:00:00Z`); from.setUTCDate(from.getUTCDate() - 3);
     const to = new Date(`${t.txn_date}T00:00:00Z`); to.setUTCDate(to.getUTCDate() + 3);
     const existing = await db
@@ -327,10 +325,9 @@ export async function autoImportQboLines(): Promise<number> {
   return imported;
 }
 
-export async function closePostedLines(): Promise<number> {
-  // Lines already linked to a QBO transaction (the auto-import path) are
-  // skipped: posted is a given there, and marking them done would defeat
-  // the invoice-collection workflow they exist for.
+export async function markPostedLines(): Promise<number> {
+  // Lines already linked to a QBO transaction are skipped: the link is set
+  // once and never re-decided.
   const openLines = await db
     .select()
     .from(finLinesTable)
@@ -340,7 +337,7 @@ export async function closePostedLines(): Promise<number> {
     ));
   if (openLines.length === 0) return 0;
 
-  let closed = 0;
+  let marked = 0;
   for (const line of openLines) {
     const anchor = line.authDate ?? line.lineDate;
     const from = new Date(`${anchor}T00:00:00Z`); from.setUTCDate(from.getUTCDate() - 3);
@@ -362,18 +359,12 @@ export async function closePostedLines(): Promise<number> {
     const pool = nameFiltered.length > 0 ? nameFiltered : candidates;
     if (pool.length !== 1) continue;
 
-    const match = pool[0];
-    await db.update(finLinesTable).set({
-      status: "done",
-      statusNote: `Posted in QuickBooks (${match.entityType}${match.docNumber ? ` ${match.docNumber}` : ""}${match.vendorName ? ` — ${match.vendorName}` : ""})`,
-      qboTxnId: match.id,
-      postedDetectedAt: new Date(),
-      doneAt: new Date(),
-      updatedAt: new Date(),
-    }).where(eq(finLinesTable.id, line.id));
-    closed++;
+    await db.update(finLinesTable)
+      .set(postedLinkFields(line, pool[0].id, new Date()))
+      .where(eq(finLinesTable.id, line.id));
+    marked++;
   }
-  return closed;
+  return marked;
 }
 
 /** Non-secret status for the admin panel. */

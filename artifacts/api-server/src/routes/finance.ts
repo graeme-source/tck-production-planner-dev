@@ -20,7 +20,7 @@ import { isFounderEmail } from "@workspace/feature-registry";
 import { parseCotCsv } from "../lib/finance/cot-csv";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
-import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview } from "../lib/finance/mailbox-sync";
+import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview, testMailboxLogin } from "../lib/finance/mailbox-sync";
 import { extractSupplierInfo } from "../lib/finance/extract-supplier-info";
 import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
@@ -668,7 +668,12 @@ router.put("/mailbox", requireFounder, validate(mailboxSchema), async (req: Requ
     } else {
       await db.insert(finMailboxTable).values({ emailAddress, passwordEnc: sealed, scanSince: scanSince ?? null });
     }
-    res.json({ ok: true });
+    // Check the login now (Graeme, 2026-11-03: "how do I know whether it's
+    // the right password?"). Saved either way; a refusal shows as lastError.
+    const [box] = await db.select({ id: finMailboxTable.id, imapHost: finMailboxTable.imapHost }).from(finMailboxTable).limit(1);
+    const login = await testMailboxLogin(box.imapHost, emailAddress, password);
+    if (!login.ok) await db.update(finMailboxTable).set({ lastError: login.reason }).where(eq(finMailboxTable.id, box.id));
+    res.json({ ok: true, login });
   } catch (err) {
     console.error("[finance] mailbox save error:", err);
     res.status(500).json({ error: "Failed to save mailbox settings" });
@@ -765,7 +770,7 @@ router.get("/qbo/callback", async (req: Request, res: Response) => {
     await exchangeCode(code, realmId);
     // First sync in the background; the admin lands back on Finance.
     runQboSync()
-      .then((o) => console.log(`[finance] first QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed${o.error ? ` (error: ${o.error})` : ""}`))
+      .then((o) => console.log(`[finance] first QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesMarkedPosted} lines marked posted${o.error ? ` (error: ${o.error})` : ""}`))
       .catch((e) => console.error("[finance] first QBO sync failed:", e));
     res.redirect("/finance");
   } catch (err) {
@@ -778,7 +783,7 @@ router.post("/qbo/sync", requireFounder, async (_req: Request, res: Response) =>
   runQboSync()
     .then((o) => {
       if (o.error) console.error("[finance] QBO sync finished with error:", o.error);
-      else console.log(`[finance] QBO sync done: ${o.purchases} purchases, ${o.bills} bills, ${o.linesClosed} lines closed`);
+      else console.log(`[finance] QBO sync done: ${o.purchases} purchases, ${o.bills} bills, ${o.linesMarkedPosted} lines marked posted`);
     })
     .catch((err) => console.error("[finance] QBO sync crashed:", err));
   res.json({ started: true });
