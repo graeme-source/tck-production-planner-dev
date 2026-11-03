@@ -800,6 +800,22 @@ router.get("/qbo/callback", async (req: Request, res: Response) => {
   }
 });
 
+// "Check QuickBooks now" for the whole finance team (Graeme, 2026-11-03):
+// after posting, flush it through instead of waiting for the hourly run.
+// Waits for the result so the button can say what it found; whoever
+// pressed it is recorded on each line it closes.
+router.post("/qbo/check-now", requireFinanceAccess, validate(z.object({})), async (req: Request, res: Response) => {
+  try {
+    const o = await runQboSync(req.session.userId ?? null);
+    if (o.error === "Sync already running") { res.status(409).json({ error: "A QuickBooks check is already running — try again in a minute." }); return; }
+    if (o.error) { res.status(502).json({ error: o.error }); return; }
+    res.json({ purchases: o.purchases, bills: o.bills, linesMarkedPosted: o.linesMarkedPosted, linesAutoDone: o.linesAutoDone ?? 0 });
+  } catch (err) {
+    console.error("[finance] QuickBooks check-now error:", err);
+    res.status(500).json({ error: "The QuickBooks check failed — try again." });
+  }
+});
+
 router.post("/qbo/sync", requireFounder, async (_req: Request, res: Response) => {
   runQboSync()
     .then((o) => {

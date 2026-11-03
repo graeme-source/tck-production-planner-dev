@@ -250,6 +250,22 @@ function InvoicesTab() {
     onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
 
+  // "Check QuickBooks now" (Graeme, 2026-11-03): after posting, the team
+  // flushes it through instead of waiting for the hourly check.
+  const qboCheck = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/check-now`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }) as Promise<{ linesMarkedPosted: number; linesAutoDone: number }>,
+    onSuccess: (r) => {
+      toast(r.linesMarkedPosted === 0
+        ? { title: "QuickBooks checked — nothing new found posted", description: "If you've just posted something, check the amount and date match the card line, or tick Posted on the line." }
+        : { title: `QuickBooks checked: ${r.linesMarkedPosted} marked posted`, description: r.linesAutoDone ? `${r.linesAutoDone} had their VAT invoice — done and filed in Invoices.` : "None had a VAT invoice attached yet, so they stay open." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't check QuickBooks", description: e.message, variant: "destructive" }),
+  });
+
   const data = linesQuery.data;
   const filtered = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -352,6 +368,11 @@ function InvoicesTab() {
         <div className="flex gap-2 flex-wrap items-center">
           <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
             <Plus className="h-4 w-4 mr-1" /> Add a transaction
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
+            title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
+            {qboCheck.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+            {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
           </Button>
           <span className="text-xs font-medium text-muted-foreground ml-1">Show</span>
           {FILTERS.map((f) => (

@@ -674,6 +674,7 @@ const ACTION_LABELS: Record<string, (d: Record<string, any>) => string> = {
   unmarked_not_duplicate: () => "Unmarked as a different invoice",
   document_relabelled: (d) => `File relabelled${d.docKind ? ` as ${d.docKind === "invoice" ? "VAT invoice" : String(d.docKind).replace(/_/g, " ")}` : ""}`,
   auto_done: () => "Marked done automatically: posted with a VAT invoice",
+  found_posted_in_quickbooks: () => "Found posted in QuickBooks",
   marked_done: () => "Transaction marked done",
   marked_not_needed: () => "Transaction marked not needed",
   reopened: () => "Transaction reopened",

@@ -4,7 +4,7 @@ import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { sealSecret, openSecret, SecretUnreadableError } from "./secret-box";
 import { merchantsLooselyMatch } from "./merchant-normalise";
 import { postedLinkFields } from "./posted-rules";
-import { autoCompleteIfReady } from "./invoice-store";
+import { autoCompleteIfReady, logFinEvent } from "./invoice-store";
 
 // Read-only QuickBooks Online connection (docs/vat-reconciliation/PLAN.md,
 // revived 2026-08-28 by Graeme: "rule out transactions we already have
@@ -179,6 +179,8 @@ export interface QboSyncOutcome {
   bills: number;
   /** Open lines newly found posted in QuickBooks (ticked Posted, left open). */
   linesMarkedPosted: number;
+  /** Of those, how many already had their VAT invoice — closed and filed. */
+  linesAutoDone?: number;
   linesImported?: number;
   error?: string;
 }
@@ -191,11 +193,13 @@ let qboSyncRunning = false;
  * are never closed for being posted: posted-without-invoice is exactly what
  * the list exists to chase (Graeme, 2026-11-03).
  */
-export async function runQboSync(): Promise<QboSyncOutcome> {
+/** triggeredBy: the person who pressed "Check QuickBooks now" — recorded on
+ *  each line it closes. Null for the hourly run. */
+export async function runQboSync(triggeredBy: number | null = null): Promise<QboSyncOutcome> {
   if (qboSyncRunning) return { purchases: 0, bills: 0, linesMarkedPosted: 0, error: "Sync already running" };
   qboSyncRunning = true;
   try {
-    return await doQboSync();
+    return await doQboSync(triggeredBy);
   } catch (err) {
     // The stored QuickBooks login can't be read after the encryption key
     // changes (2026-10-26: SESSION_SECRET rotated) — say what fixes it.
@@ -210,7 +214,7 @@ export async function runQboSync(): Promise<QboSyncOutcome> {
   }
 }
 
-async function doQboSync(): Promise<QboSyncOutcome> {
+async function doQboSync(triggeredBy: number | null): Promise<QboSyncOutcome> {
   const [conn] = await db.select().from(finQboConnectionTable).limit(1);
   if (!conn) return { purchases: 0, bills: 0, linesMarkedPosted: 0, error: "QuickBooks is not connected" };
 
@@ -248,7 +252,7 @@ async function doQboSync(): Promise<QboSyncOutcome> {
   }
 
   const linesImported = await autoImportQboLines();
-  const linesMarkedPosted = await markPostedLines();
+  const { marked: linesMarkedPosted, autoDone: linesAutoDone } = await markPostedLines(triggeredBy);
 
   await db.update(finQboConnectionTable).set({
     syncCursor: syncStartedAt,
@@ -257,7 +261,7 @@ async function doQboSync(): Promise<QboSyncOutcome> {
     updatedAt: new Date(),
   }).where(eq(finQboConnectionTable.id, conn.id));
 
-  return { purchases, bills, linesMarkedPosted, linesImported };
+  return { purchases, bills, linesMarkedPosted, linesAutoDone, linesImported };
 }
 
 /**
@@ -326,7 +330,7 @@ export async function autoImportQboLines(): Promise<number> {
   return imported;
 }
 
-export async function markPostedLines(): Promise<number> {
+export async function markPostedLines(triggeredBy: number | null = null): Promise<{ marked: number; autoDone: number }> {
   // Lines already linked to a QBO transaction are skipped: the link is set
   // once and never re-decided.
   const openLines = await db
@@ -336,9 +340,10 @@ export async function markPostedLines(): Promise<number> {
       inArray(finLinesTable.status, ["open", "identified", "matched"]),
       sql`${finLinesTable.qboTxnId} IS NULL`,
     ));
-  if (openLines.length === 0) return 0;
+  if (openLines.length === 0) return { marked: 0, autoDone: 0 };
 
   let marked = 0;
+  let autoDone = 0;
   for (const line of openLines) {
     const anchor = line.authDate ?? line.lineDate;
     const from = new Date(`${anchor}T00:00:00Z`); from.setUTCDate(from.getUTCDate() - 3);
@@ -364,10 +369,11 @@ export async function markPostedLines(): Promise<number> {
       .set(postedLinkFields(line, pool[0].id, new Date()))
       .where(eq(finLinesTable.id, line.id));
     marked++;
+    await logFinEvent("line", line.id, "found_posted_in_quickbooks", triggeredBy, { qboTxnId: pool[0].id });
     // Posted + a VAT invoice already attached = done (Graeme, 2026-11-03).
-    await autoCompleteIfReady(line.id, null, "found_posted_in_quickbooks");
+    if (await autoCompleteIfReady(line.id, triggeredBy, "found_posted_in_quickbooks")) autoDone++;
   }
-  return marked;
+  return { marked, autoDone };
 }
 
 /** Non-secret status for the admin panel. */
