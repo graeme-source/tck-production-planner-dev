@@ -21,6 +21,7 @@ import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredien
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { markSplitsPlaced, splitsForCalculate, type SplitView } from "../lib/order-splits";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
+import { createStageTimer } from "../lib/stage-timer";
 import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
 import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
@@ -47,6 +48,8 @@ router.get("/calculate", async (req, res) => {
   }
 
   try {
+  // One line per request in the logs with each stage's ms (Fix queue #376).
+  const timer = createStageTimer(`[orders/calculate] plan ${planId}`);
 
   const plan = await db
     .select({ id: productionPlansTable.id, planDate: productionPlansTable.planDate, name: productionPlansTable.name, status: productionPlansTable.status })
@@ -108,6 +111,8 @@ router.get("/calculate", async (req, res) => {
       ingredientMap[iid].totalRequired += rawQty;
     }
   }
+
+  timer.mark("recipes");
 
   // Stock-checked ingredients that no recipe on today's plan uses (e.g. Duck
   // on a week with no duck recipes) would otherwise vanish from the orders
@@ -326,6 +331,7 @@ router.get("/calculate", async (req, res) => {
   // count + deliveries − usage since (lib/stock-ledger*.ts). Ticked tins are
   // then already off that figure, so its still-to-prep counts only unticked
   // tins: "now" is passed as its checked-at (isTinOutstanding).
+  timer.mark("stock");
   const ledgerNow = new Date();
   const stockLedgers = await loadStockLedgers({ since: new Date(ledgerNow.getTime() - 120 * 86_400_000), until: ledgerNow });
   const lineStockByIngredient: Record<number, OrderLineStock> = {};
@@ -339,6 +345,7 @@ router.get("/calculate", async (req, res) => {
       toLondonDate: ms => londonDateString(new Date(ms)),
       selectedPlanId: planId,
     }));
+  timer.mark("ledger");
   const prepCheckedAt: Record<number, string | undefined> = { ...stockCheckTimestamps };
   for (const iid of ingredientIds) {
     if (lineStockFor(iid, ingredientLookup[iid]?.stockCheckEnabled ?? false).outstandingPrepFromNow) {
@@ -352,6 +359,8 @@ router.get("/calculate", async (req, res) => {
     const remaining = Math.round((qty - (selectedPlanShare[Number(iidStr)] ?? 0)) * 100) / 100;
     if (remaining > 0) prepOutstandingByIngredient[Number(iidStr)] = remaining;
   }
+
+  timer.mark("prep");
 
   // Scanned kanbans queue for the day they were scanned — but if no order was
   // generated that day (weekend, missed run), they must NOT vanish. Carry
@@ -756,6 +765,8 @@ router.get("/calculate", async (req, res) => {
     }
   }
 
+  timer.mark("lines");
+
   // ── "Split with another supplier" (#248 + #328) ─────────────────────────
   // Packs split AWAY from a line on this plan come off it — today's supplier
   // keeps the rest, before and after its order is placed.
@@ -1039,6 +1050,8 @@ router.get("/calculate", async (req, res) => {
   }
 
   const suppliers = Object.values(supplierOrderMap).sort((a, b) => a.supplier.name.localeCompare(b.supplier.name));
+  timer.mark("extras");
+  console.log(timer.line());
 
   console.log(`[Orders] Calculate for plan ${planId}: ${Object.keys(ingredientMap).length} ingredients resolved, ${ingredientIds.length} looked up, ${placedKeys.size} already placed, ${suppliers.length} suppliers with orders: ${suppliers.map(s => `${s.supplier.name} (${s.lines.length} lines)`).join(", ")}`);
 
