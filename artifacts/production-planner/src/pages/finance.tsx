@@ -149,6 +149,16 @@ const FILTERS = [
   { key: "all", label: "All" },
 ] as const;
 
+/** What each section's total means, under its count on the tab. */
+const SECTION_NOTES: Record<(typeof FILTERS)[number]["key"], string> = {
+  outstanding: "awaiting documents",
+  matched: "ready for the bookkeeper",
+  done: "done",
+  all: "in total",
+};
+
+const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
 const POSTED_FILTERS = [
   { key: "any", label: "Either" },
   { key: "posted", label: "Posted" },
@@ -301,55 +311,26 @@ function InvoicesTab() {
     return [...out].sort(cmp[sort]);
   }, [data, filter, postedFilter, sort, search]);
 
-  const sectionCounts = useMemo(() => {
+  const sections = useMemo(() => {
     const lines = data?.lines ?? [];
+    const sum = (ls: FinLine[]) => ({ count: ls.length, total: ls.reduce((s, l) => s + Number(l.amount), 0) });
     return {
-      outstanding: lines.filter((l) => l.status === "open" || l.status === "identified").length,
-      matched: lines.filter((l) => l.status === "matched").length,
-      done: lines.filter((l) => l.status === "done" || l.status === "not_needed").length,
-      all: lines.length,
-    } satisfies Record<(typeof FILTERS)[number]["key"], number>;
+      outstanding: sum(lines.filter((l) => l.status === "open" || l.status === "identified")),
+      matched: sum(lines.filter((l) => l.status === "matched")),
+      done: sum(lines.filter((l) => l.status === "done" || l.status === "not_needed")),
+      all: sum(lines),
+    } satisfies Record<(typeof FILTERS)[number]["key"], { count: number; total: number }>;
   }, [data]);
 
-  const outstandingTotal = useMemo(() => {
-    const lines = data?.lines ?? [];
-    return lines
-      .filter((l) => l.status === "open" || l.status === "identified")
-      .reduce((s, l) => s + Number(l.amount), 0);
-  }, [data]);
 
   return (
     <div className="space-y-6">
-      <InvoiceDropPanel />
-
-      {/* Summary + upload */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Inbox className="h-4 w-4" /> Outstanding</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">
-              {(data?.lines ?? []).filter((l) => l.status === "open" || l.status === "identified").length}
-            </div>
-            <div className="text-sm text-muted-foreground">£{outstandingTotal.toFixed(2)} awaiting documents</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><FileText className="h-4 w-4" /> Documents found</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">{(data?.lines ?? []).filter((l) => l.status === "matched").length}</div>
-            <div className="text-sm text-muted-foreground">ready for the bookkeeper</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Upload className="h-4 w-4" /> Card statement</CardTitle>
-          </CardHeader>
-          <CardContent
-            className={`space-y-2 rounded-b-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
+      {/* Drop an invoice beside the card statement upload (Graeme, 2026-11-03:
+          one row, far less height; the counts live on the tabs below). */}
+      <InvoiceDropPanel
+        companion={
+          <Card
+            className={`h-full rounded-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
             onDragLeave={() => setCsvDragOver(false)}
             onDrop={(e) => {
@@ -359,32 +340,38 @@ function InvoicesTab() {
               if (f) uploadMutation.mutate(f);
             }}
           >
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) uploadMutation.mutate(f);
-                e.target.value = "";
-              }}
-            />
-            <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending} className="w-full">
-              {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-              Upload Capital on Tap CSV
-            </Button>
-            <p className="text-xs text-muted-foreground">Or drop the file anywhere on this card. Safe to re-upload overlapping exports — duplicates are ignored.</p>
-          </CardContent>
-        </Card>
-      </div>
+            <CardContent className="p-4 h-full flex flex-col xl:flex-row xl:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold flex items-start gap-2"><Upload className="h-4 w-4 mt-1 shrink-0 text-primary" /> Card statement</div>
+                <div className="text-xs text-muted-foreground">Capital on Tap CSV — drop it here. Re-uploading overlapping exports is safe.</div>
+              </div>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadMutation.mutate(f);
+                  e.target.value = "";
+                }}
+              />
+              <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending} className="shrink-0 self-start xl:self-auto">
+                {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+                Upload CSV
+              </Button>
+            </CardContent>
+          </Card>
+        }
+      />
 
       {/* Section tabs, then that section's action + Filter / Sort, then search
           (Graeme, 2026-11-03: make it obvious which section you're in). */}
       <div className="space-y-3">
-        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-2xl bg-secondary/70 p-1">
+        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {FILTERS.map((f) => {
             const active = filter === f.key;
+            const { count, total } = sections[f.key];
             return (
               <button
                 key={f.key}
@@ -392,13 +379,18 @@ function InvoicesTab() {
                 aria-selected={active}
                 onClick={() => setFilter(f.key)}
                 className={cn(
-                  "rounded-xl px-3 py-3 text-sm lg:text-base font-semibold whitespace-nowrap transition-colors flex items-center justify-center gap-2",
-                  active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                  "rounded-2xl border-2 px-3 py-2.5 text-center transition-colors",
+                  active
+                    ? "bg-primary border-primary text-primary-foreground shadow-md"
+                    : "bg-white dark:bg-card border-border text-foreground shadow-sm hover:border-primary/60 hover:bg-primary/5",
                 )}
               >
-                {f.label}
-                <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-background")}>
-                  {sectionCounts[f.key]}
+                <span className="flex items-center justify-center gap-2 text-sm lg:text-base font-semibold whitespace-nowrap">
+                  {f.label}
+                  <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{count}</span>
+                </span>
+                <span className={cn("block text-xs mt-0.5 tabular-nums", active ? "text-primary-foreground/85" : "text-muted-foreground")}>
+                  {gbp(total)} {SECTION_NOTES[f.key]}
                 </span>
               </button>
             );
@@ -438,7 +430,7 @@ function InvoicesTab() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" aria-label="Sort transactions">
-                  <ArrowUpDown className="h-4 w-4 mr-1" /> Sort<span className="hidden sm:inline">: {SORTS.find((o) => o.key === sort)?.label}</span>
+                  <ArrowUpDown className="h-4 w-4 mr-1" /><span>Sort<span className="hidden sm:inline">: {SORTS.find((o) => o.key === sort)?.label}</span></span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-60">
