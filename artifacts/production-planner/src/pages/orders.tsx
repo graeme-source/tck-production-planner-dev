@@ -202,6 +202,9 @@ type CalculateResponse = {
   planName: string;
   planDate: string;
   suppliers: SupplierOrder[];
+  /** Suppliers ordered today — the calc gives them no card today, so the
+   *  page lists them and a tap adds one back by hand (#351/#384). */
+  orderedToday?: Array<{ supplierId: number; supplierName: string; orderIds: number[] }>;
 };
 
 type PurchaseOrder = {
@@ -1753,6 +1756,9 @@ export default function Orders() {
   const dismissedPendingSuppliers = allPendingSuppliers.filter(s =>
     dismissedSupplierIds.has(s.supplier.id) && !reopenedSupplierIds.has(s.supplier.id)
   );
+  // Ordered today and not added back by hand yet (#351/#384).
+  const pendingCardIds = new Set(pendingSuppliers.map(s => s.supplier.id));
+  const orderedTodayWithoutCard = (calculated?.orderedToday ?? []).filter(s => !pendingCardIds.has(s.supplierId));
   const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
   const totalPlacedForPlan = placedForPlan.length;
 
@@ -2221,6 +2227,27 @@ export default function Orders() {
       {/* Splits saved for another supplier's order day (#248 + #328) —
           cancellable here until that order is placed. */}
       {viewFilter === "pending" && <OrderSplitsWaiting onChanged={refreshCalc} />}
+
+      {/* Ordered today → no automatic card today (#351/#384). Tapping a
+          name is "Add supplier order" for that supplier. */}
+      {viewFilter === "pending" && orderedTodayWithoutCard.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+          <span>Ordered today:</span>
+          {orderedTodayWithoutCard.map((s, i) => (
+            <span key={s.supplierId}>
+              <button
+                type="button"
+                onClick={() => handleAddManualSupplier({ id: s.supplierId, name: s.supplierName })}
+                className="py-1 font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                title={`Add an order for ${s.supplierName}`}
+              >
+                {s.supplierName}
+              </button>
+              {" "}({s.orderIds.map(id => `#${id}`).join(", ")}){i < orderedTodayWithoutCard.length - 1 ? "," : ""}
+            </span>
+          ))}
+        </div>
+      )}
 
       {viewFilter === "pending" && !calcLoading && pendingSuppliers.length === 0 && selectedPlanId && (
         <div className="text-center py-12 text-muted-foreground">
@@ -3141,9 +3168,15 @@ export default function Orders() {
                     toast({ title: "Couldn't add kanban", description: body.error ?? "Scan failed.", variant: "destructive" });
                     return;
                   }
+                  // Supplier already ordered today: the kanban waits for
+                  // tomorrow's card unless they add the supplier back (#351).
+                  const orderedTodayAlready = (calculated?.orderedToday ?? []).some(s => s.supplierId === body.supplierId);
                   toast({
-                    title: body.alreadyQueued ? "Already on today's order" : "Added to today's order",
-                    description: `${body.ingredientName} — ${body.orderQty} ${body.unitLabel}${body.supplierName ? ` from ${body.supplierName}` : ""}`,
+                    title: orderedTodayAlready ? "Queued for tomorrow"
+                      : body.alreadyQueued ? "Already on today's order" : "Added to today's order",
+                    description: orderedTodayAlready
+                      ? `${body.ingredientName} — ${body.supplierName ?? "this supplier"} was already ordered today. Tap the name under "Ordered today" to add it now.`
+                      : `${body.ingredientName} — ${body.orderQty} ${body.unitLabel}${body.supplierName ? ` from ${body.supplierName}` : ""}`,
                   });
                   queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
                   setScanKanbanOpen(false);
