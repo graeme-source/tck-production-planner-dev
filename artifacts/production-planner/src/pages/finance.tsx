@@ -1020,10 +1020,10 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
   // is presumed the invoice, a bare email an order confirmation).
   const [attachKinds, setAttachKinds] = useState<Record<number, string>>({});
   const decide = useMutation({
-    mutationFn: ({ id, action, docKind }: { id: number; action: "confirm" | "reject"; docKind?: string }) =>
+    mutationFn: ({ id, action, docKind, attachmentIndex }: { id: number; action: "confirm" | "reject"; docKind?: string; attachmentIndex?: number }) =>
       jsonFetch(`${BASE}/api/finance/matches/${id}/${action}`, {
         method: "POST",
-        ...(docKind ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind }) } : {}),
+        ...(docKind ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind, attachmentIndex }) } : {}),
       }),
     onSuccess: (r: { autoDone?: boolean }, vars) => {
       if (r?.autoDone) { toast(AUTO_DONE_TOAST); queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }); return; }
@@ -1109,6 +1109,11 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
               <Button size="sm" variant="outline" onClick={() => openFullEmail(m.id)}>
                 <Mail className="h-4 w-4 mr-1" /> Read the full email
               </Button>
+              <EmailAttachments
+                matchId={m.id}
+                busy={decide.isPending}
+                onAttach={(attachmentIndex, docKind) => decide.mutate({ id: m.id, action: "confirm", docKind, attachmentIndex })}
+              />
             </div>
           )}
           </div>
@@ -1131,9 +1136,13 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
               ) : (
                 <>
                   {(fullEmail.attachments?.length ?? 0) > 0 && (
-                    <p className="text-xs text-muted-foreground mb-3">
-                      Attachments: {fullEmail.attachments!.map((a) => a.filename).join(", ")}
-                    </p>
+                    <div className="mb-4">
+                      <EmailAttachments
+                        matchId={fullEmail.matchId}
+                        busy={decide.isPending}
+                        onAttach={(attachmentIndex, docKind) => { decide.mutate({ id: fullEmail.matchId, action: "confirm", docKind, attachmentIndex }); setFullEmail(null); }}
+                      />
+                    </div>
                   )}
                   <pre className="whitespace-pre-wrap text-sm font-sans">{fullEmail.text || "(no text content)"}</pre>
                 </>
@@ -1142,6 +1151,63 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+type EmailAttachment = { index: number; filename: string; contentType: string; size: number; previewable: boolean };
+
+/** The files on a suggested email, each previewable and attachable on its
+ *  own (Graeme, 2026-11-03): an "order confirmation" email often carries the
+ *  VAT invoice — the thing we're actually after. */
+function EmailAttachments({ matchId, busy, onAttach }: { matchId: number; busy: boolean; onAttach: (attachmentIndex: number, docKind: string) => void }) {
+  const email = useQuery<{ attachments?: EmailAttachment[] }>({
+    queryKey: ["/api/finance/matches", matchId, "email"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/matches/${matchId}/email`),
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+  const [open, setOpen] = useState<number | null>(null);
+  const files = email.data?.attachments ?? [];
+
+  if (email.isLoading) return <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking the email's attachments…</div>;
+  if (email.isError) return <p className="text-xs text-destructive">{(email.error as Error).message}</p>;
+  if (files.length === 0) return <p className="text-xs text-muted-foreground">No files attached to this email.</p>;
+
+  return (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Attached to this email — look for the VAT invoice
+      </div>
+      {files.map((f) => {
+        const url = `${BASE}/api/finance/matches/${matchId}/attachments/${f.index}`;
+        return (
+          <div key={f.index} className="rounded-xl border bg-background p-3 space-y-2">
+            <div className="flex items-start gap-2">
+              <Paperclip className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0 break-words text-sm font-medium">{f.filename}</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {f.previewable ? (
+                <Button size="sm" variant="outline" onClick={() => setOpen(open === f.index ? null : f.index)}>
+                  {open === f.index ? "Hide" : "Preview"}
+                </Button>
+              ) : (
+                <Button size="sm" variant="outline" asChild>
+                  <a href={`${url}?download=1`}><Download className="h-4 w-4 mr-1" /> Download</a>
+                </Button>
+              )}
+              <Button size="sm" onClick={() => onAttach(f.index, "invoice")} disabled={busy}>
+                <CheckCircle2 className="h-4 w-4 mr-1" /> Attach as VAT invoice
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => onAttach(f.index, "order_confirmation")} disabled={busy}>
+                Attach as order confirmation
+              </Button>
+            </div>
+            {open === f.index && <FilePreview url={url} mime={f.contentType} name={f.filename} />}
+          </div>
+        );
+      })}
     </div>
   );
 }
