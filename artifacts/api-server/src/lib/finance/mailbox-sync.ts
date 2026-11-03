@@ -1,4 +1,5 @@
 import { ImapFlow } from "imapflow";
+import { attachmentMime, listedAttachments, type EmailAttachmentInfo } from "./email-attachments";
 import { simpleParser } from "mailparser";
 import { db, finEmailIndexTable, finLinesTable, finMailboxTable, finMatchesTable, finVendorsTable } from "@workspace/db";
 import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
@@ -383,7 +384,10 @@ export interface FetchedEmailMeta {
 
 export async function fetchAttachmentForMessage(
   folder: string,
-  uid: number
+  uid: number,
+  /** Which attachment (position in the email) — chosen from the preview,
+   *  e.g. the VAT invoice riding along with an order confirmation. */
+  attachmentIndex?: number,
 ): Promise<{ fileName: string; mime: string; content: Buffer; emailMeta: FetchedEmailMeta } | null> {
   const [box] = await db.select().from(finMailboxTable).limit(1);
   if (!box) return null;
@@ -414,6 +418,16 @@ export async function fetchAttachmentForMessage(
         text: parsed.text || (typeof parsed.html === "string" ? parsed.html.replace(/<[^>]+>/g, " ") : ""),
         html: typeof parsed.html === "string" ? parsed.html : null,
       };
+      if (attachmentIndex !== undefined) {
+        const chosen = parsed.attachments[attachmentIndex];
+        if (!chosen) return null;
+        return {
+          fileName: chosen.filename || `attachment-${attachmentIndex + 1}`,
+          mime: attachmentMime(chosen.contentType, chosen.filename),
+          content: Buffer.from(chosen.content),
+          emailMeta,
+        };
+      }
       const pdf = parsed.attachments.find(
         (a) => a.contentType === "application/pdf" || (a.filename ?? "").toLowerCase().endsWith(".pdf")
       );
@@ -487,7 +501,7 @@ export async function testMailboxLogin(host: string, user: string, pass: string)
 export async function fetchEmailPreview(
   folder: string,
   uid: number
-): Promise<{ subject: string | null; from: string | null; date: string | null; text: string; attachments: Array<{ filename: string; contentType: string }> } | null> {
+): Promise<{ subject: string | null; from: string | null; date: string | null; text: string; attachments: EmailAttachmentInfo[] } | null> {
   const [box] = await db.select().from(finMailboxTable).limit(1);
   if (!box) return null;
   const client = new ImapFlow({
@@ -512,7 +526,7 @@ export async function fetchEmailPreview(
           from: parsed.from?.text ?? null,
           date: parsed.date?.toISOString() ?? null,
           text: (parsed.text ?? "").slice(0, 20_000),
-          attachments: parsed.attachments.map((a) => ({ filename: a.filename ?? "attachment", contentType: a.contentType })),
+          attachments: listedAttachments(parsed.attachments),
         };
       } finally {
         lock.release();

@@ -532,7 +532,8 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
     const [emailRow] = await db.select().from(finEmailIndexTable).where(eq(finEmailIndexTable.id, match.emailIndexId));
     if (!emailRow) { res.status(404).json({ error: "Email no longer indexed" }); return; }
 
-    const attachment = await fetchAttachmentForMessage(emailRow.folder, emailRow.imapUid);
+    const attachmentIndex = Number.isInteger(req.body?.attachmentIndex) && req.body.attachmentIndex >= 0 ? Number(req.body.attachmentIndex) : undefined;
+    const attachment = await fetchAttachmentForMessage(emailRow.folder, emailRow.imapUid, attachmentIndex);
     if (!attachment) {
       res.status(502).json({ error: "Could not fetch the email content — try again, or upload the document manually" });
       return;
@@ -554,7 +555,7 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
         fileName: attachment.fileName,
         fileSizeBytes: attachment.content.length,
         sha256: createHash("sha256").update(attachment.content).digest("hex"),
-        docSource: attachment.mime === "application/pdf" ? "imap_attachment" : "email_body_render",
+        docSource: attachment.mime === "application/pdf" || attachmentIndex !== undefined ? "imap_attachment" : "email_body_render",
         sourceRef: `${emailRow.folder}:${emailRow.imapUid}`,
         docKind: requestedKind,
         uploadedBy: req.session.userId ?? null,
@@ -592,7 +593,7 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
       }
     }
 
-    await logFinEvent("line", match.lineId, "document_attached_from_email", req.session.userId, { documentId: doc.id });
+    await logFinEvent("line", match.lineId, "document_attached_from_email", req.session.userId, { documentId: doc.id, fileName: attachment.fileName, docKind: requestedKind });
     await clearSuggestionsIfInvoiced(match.lineId);
     const autoDone = await autoCompleteIfReady(match.lineId, req.session.userId ?? null, "vat_invoice_attached");
     res.json({ documentId: doc.id, extracted: info, autoDone });
@@ -621,6 +622,31 @@ router.get("/matches/:id/email", requireFinanceAccess, async (req: Request, res:
   } catch (err) {
     console.error("[finance] email preview error:", err);
     res.status(500).json({ error: "Failed to load the email" });
+  }
+});
+
+// One attachment of a suggested email, to look at before attaching (Graeme,
+// 2026-11-03: an "order confirmation" email often carries the VAT invoice).
+// Fetched live, never stored until someone attaches it.
+router.get("/matches/:id/attachments/:index", requireFinanceAccess, async (req: Request, res: Response) => {
+  try {
+    const index = Number(req.params.index);
+    if (!Number.isInteger(index) || index < 0) { res.status(400).json({ error: "Bad attachment" }); return; }
+    const [match] = await db.select().from(finMatchesTable).where(eq(finMatchesTable.id, Number(req.params.id)));
+    if (!match) { res.status(404).json({ error: "Match not found" }); return; }
+    const [emailRow] = await db.select().from(finEmailIndexTable).where(eq(finEmailIndexTable.id, match.emailIndexId));
+    if (!emailRow) { res.status(404).json({ error: "Email no longer indexed" }); return; }
+    const file = await Promise.race([
+      fetchAttachmentForMessage(emailRow.folder, emailRow.imapUid, index),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 45_000).unref?.()),
+    ]);
+    // Shown inside the preview frame, so plain words rather than JSON.
+    if (!file) { res.status(502).type("html").send(`<p style="font-family:sans-serif;padding:16px;color:#555">Couldn't fetch that attachment from the mailbox just now — press Hide and Preview again in a moment.</p>`); return; }
+    for (const [k, v] of Object.entries(storedFileHeaders(file.mime, file.content, file.fileName, req.query.download === "1"))) res.setHeader(k, v);
+    res.end(file.content);
+  } catch (err) {
+    console.error("[finance] email attachment error:", err);
+    res.status(500).json({ error: "Failed to load the attachment" });
   }
 });
 
