@@ -4,6 +4,7 @@ import { Link, Redirect, useLocation } from "wouter";
 import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
+import { InvoicesLibraryPanel, HistoryList } from "@/pages/finance-invoices";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -18,6 +19,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
   Banknote,
   Download,
@@ -123,6 +125,10 @@ async function jsonFetch(url: string, init?: RequestInit) {
   return body;
 }
 
+/** Done = posted in QuickBooks + a VAT invoice attached (Graeme, 2026-11-03):
+ *  the server closes the line itself and says so with autoDone. */
+const AUTO_DONE_TOAST = { title: "Done — posted with a VAT invoice", description: "Moved to Completed and filed in Invoices." };
+
 const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
   open: { label: "Needs invoice", tone: "bg-amber-100 text-amber-900" },
   identified: { label: "Identified", tone: "bg-blue-100 text-blue-900" },
@@ -139,10 +145,21 @@ const FILTERS = [
 ] as const;
 
 const POSTED_FILTERS = [
-  { key: "any", label: "Posted or not" },
+  { key: "any", label: "Either" },
   { key: "posted", label: "Posted" },
   { key: "not_posted", label: "Not posted" },
 ] as const;
+
+// Sorting (Graeme, 2026-11-03): supplier A–Z, transaction date, amount.
+const SORTS = [
+  { key: "date_desc", label: "Date — newest first" },
+  { key: "date_asc", label: "Date — oldest first" },
+  { key: "name_asc", label: "Supplier A–Z" },
+  { key: "name_desc", label: "Supplier Z–A" },
+  { key: "amount_desc", label: "Amount — highest first" },
+  { key: "amount_asc", label: "Amount — lowest first" },
+] as const;
+type SortKey = (typeof SORTS)[number]["key"];
 
 /**
  * Finance: the founder's and the accountants' only (Graeme, 2026-10-26 — not
@@ -162,16 +179,19 @@ export default function FinancePage() {
   if (!user) return null;
   const allowed = founder || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
   if (!allowed) return <Redirect to="/" />;
-  const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : location.startsWith("/finance/payroll") ? "payroll" : "invoices";
+  const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : location.startsWith("/finance/payroll") ? "payroll"
+    : location.startsWith("/finance/invoices") ? "library" : "invoices";
   return (
     <div className="space-y-5">
       <PageHeader title="Finance" description={tab === "cash-flow"
         ? "The bank balance day by day: Shopify payouts in, QuickBooks bills out on their due dates, and anything you add."
+        : tab === "library"
+        ? "Every invoice we hold: drop a zip of invoices, and every transaction marked done files its invoice here too. Search by supplier, financial year, period or dates."
         : tab === "payroll"
         ? "The monthly payroll report from Planday (25th to 24th): hours, pay, sick days, joiners and leavers — download or email it."
         : "Every card transaction that still needs its invoice or receipt. Upload the Capital on Tap export; the app hunts the mailbox and stores what it finds."} />
-      <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit" aria-label="Finance">
-        {[{ href: "/finance", label: "Outstanding invoices", key: "invoices" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
+      <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit max-w-full overflow-x-auto" aria-label="Finance">
+        {[{ href: "/finance/invoices", label: "Invoices", key: "library" }, { href: "/finance", label: "Outstanding invoices", key: "invoices" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
           <Link key={t.key} href={t.href}
             className={cn("px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors",
               tab === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60")}>
@@ -179,7 +199,7 @@ export default function FinancePage() {
           </Link>
         ))}
       </nav>
-      {tab === "cash-flow" ? <CashFlowPanel /> : tab === "payroll" ? <PayrollPanel /> : <InvoicesTab />}
+      {tab === "cash-flow" ? <CashFlowPanel /> : tab === "payroll" ? <PayrollPanel /> : tab === "library" ? <InvoicesLibraryPanel /> : <InvoicesTab />}
     </div>
   );
 }
@@ -193,6 +213,7 @@ function InvoicesTab() {
   const queryClient = useQueryClient();
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("outstanding");
   const [postedFilter, setPostedFilter] = useState<(typeof POSTED_FILTERS)[number]["key"]>("any");
+  const [sort, setSort] = useState<SortKey>("date_desc");
   const [search, setSearch] = useState("");
   const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -245,8 +266,19 @@ function InvoicesTab() {
           .some((v) => v && String(v).toLowerCase().includes(q));
       });
     }
-    return out;
-  }, [data, filter, postedFilter, search]);
+    // The name sorted on is the one the row shows.
+    const name = (l: FinLine) => ((l.vendorId ? data?.vendors[l.vendorId]?.name : null) ?? l.merchant ?? l.descriptor).toLowerCase();
+    const byDate = (a: FinLine, b: FinLine) => a.lineDate.localeCompare(b.lineDate) || a.id - b.id;
+    const cmp: Record<SortKey, (a: FinLine, b: FinLine) => number> = {
+      date_desc: (a, b) => byDate(b, a),
+      date_asc: byDate,
+      name_asc: (a, b) => name(a).localeCompare(name(b)) || byDate(b, a),
+      name_desc: (a, b) => name(b).localeCompare(name(a)) || byDate(b, a),
+      amount_desc: (a, b) => Number(b.amount) - Number(a.amount) || byDate(b, a),
+      amount_asc: (a, b) => Number(a.amount) - Number(b.amount) || byDate(b, a),
+    };
+    return [...out].sort(cmp[sort]);
+  }, [data, filter, postedFilter, sort, search]);
 
   const outstandingTotal = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -314,39 +346,51 @@ function InvoicesTab() {
         </Card>
       </div>
 
-      {/* Filter tabs + search */}
-      <div className="flex gap-2 flex-wrap items-center">
-        <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
-          <Plus className="h-4 w-4 mr-1" /> Add a transaction
-        </Button>
-        {FILTERS.map((f) => (
-          <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
-            {f.label}
+      {/* Filters, sort + search */}
+      <div className="space-y-2">
+        <div className="flex gap-2 flex-wrap items-center">
+          <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Add a transaction
           </Button>
-        ))}
-        <span className="w-px h-6 bg-border mx-1" aria-hidden />
-        {POSTED_FILTERS.map((f) => (
-          <Button key={f.key} size="sm" variant={postedFilter === f.key ? "default" : "outline"} onClick={() => setPostedFilter(f.key)}>
-            {f.label}
-          </Button>
-        ))}
-        <div className="relative flex-1 min-w-[200px] max-w-sm ml-auto">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search supplier, amount, card, note…"
-            className="pl-9"
-          />
-          {search && (
-            <button
-              onClick={() => setSearch("")}
-              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-              aria-label="Clear search"
-            >
-              <XCircle className="h-4 w-4" />
-            </button>
-          )}
+          <span className="text-xs font-medium text-muted-foreground ml-1">Show</span>
+          {FILTERS.map((f) => (
+            <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
+              {f.label}
+            </Button>
+          ))}
+          <div className="relative flex-1 min-w-[200px] ml-auto">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search supplier, amount, card, note…"
+              className="pl-9"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                aria-label="Clear search"
+              >
+                <XCircle className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+        </div>
+        <div className="flex gap-2 flex-wrap items-center">
+          <span className="text-xs font-medium text-muted-foreground">Posted in QuickBooks</span>
+          {POSTED_FILTERS.map((f) => (
+            <Button key={f.key} size="sm" variant={postedFilter === f.key ? "default" : "outline"} onClick={() => setPostedFilter(f.key)}>
+              {f.label}
+            </Button>
+          ))}
+          <span className="text-xs font-medium text-muted-foreground ml-auto">Sort</span>
+          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+            <SelectTrigger className="w-56" aria-label="Sort transactions"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {SORTS.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -543,6 +587,10 @@ function LineRow({
           {line.status !== "done" && line.status !== "not_needed" && <ChaseSupplierBlock line={line} />}
           {vendor && <VendorBlock vendor={vendor} />}
           <StatusButtons line={line} onStatus={onStatus} />
+          <details className="border-t pt-3">
+            <summary className="cursor-pointer text-sm font-medium">Who did what, when</summary>
+            <div className="mt-2"><HistoryList type="line" id={line.id} /></div>
+          </details>
         </CardContent>
       )}
     </Card>
@@ -633,8 +681,8 @@ function AddFileControl({ line }: { line: FinLine }) {
       form.append("docKind", uploadKind);
       return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
     },
-    onSuccess: () => {
-      toast({ title: `${DOC_KINDS.find(k => k.value === uploadKind)?.label ?? "Document"} stored` });
+    onSuccess: (r: { autoDone?: boolean }) => {
+      toast(r.autoDone ? AUTO_DONE_TOAST : { title: `${DOC_KINDS.find(k => k.value === uploadKind)?.label ?? "Document"} stored` });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
     onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
@@ -775,8 +823,8 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
       form.append("docKind", "invoice");
       return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
     },
-    onSuccess: () => {
-      toast({ title: "Document stored" });
+    onSuccess: (r: { autoDone?: boolean }) => {
+      toast(r.autoDone ? AUTO_DONE_TOAST : { title: "Document stored" });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
     },
     onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
@@ -788,7 +836,10 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ docKind }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onSuccess: (r: { autoDone?: boolean }) => {
+      if (r.autoDone) toast(AUTO_DONE_TOAST);
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
     onError: (e: Error) => toast({ title: "Couldn't change the type", description: e.message, variant: "destructive" }),
   });
 
@@ -888,7 +939,8 @@ function SuggestionsBlock({ lineId }: { lineId: number }) {
         method: "POST",
         ...(docKind ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind }) } : {}),
       }),
-    onSuccess: (_r, vars) => {
+    onSuccess: (r: { autoDone?: boolean }, vars) => {
+      if (r?.autoDone) { toast(AUTO_DONE_TOAST); queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }); return; }
       toast({
         title: vars.action === "confirm"
           ? `Attached as ${DOC_KINDS.find(k => k.value === vars.docKind)?.label?.toLowerCase() ?? "document"}`
@@ -1109,7 +1161,10 @@ function PostedToggle({ line }: { line: FinLine }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ posted }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onSuccess: (r: { autoDone?: boolean }) => {
+      if (r.autoDone) toast(AUTO_DONE_TOAST);
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
     onError: (e: Error) => toast({ title: "Couldn't save posted", description: e.message, variant: "destructive" }),
   });
   const posted = save.isPending ? Boolean(save.variables) : Boolean(line.postedDetectedAt);
@@ -1118,7 +1173,7 @@ function PostedToggle({ line }: { line: FinLine }) {
       <Switch id={`posted-${line.id}`} checked={posted} onCheckedChange={(v) => save.mutate(v)} disabled={save.isPending} />
       <Label htmlFor={`posted-${line.id}`} className="text-sm">Posted in QuickBooks</Label>
       <span className="text-xs text-muted-foreground">
-        {save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? "Saved" : ""}
+        {save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? "Saved" : "Done by itself once it's posted and has a VAT invoice."}
       </span>
     </div>
   );

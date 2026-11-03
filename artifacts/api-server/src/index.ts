@@ -3529,6 +3529,8 @@ async function startup() {
     await resetFinanceBacklogIfNeeded();
     await reopenQboClosedLinesIfNeeded();
     startFinanceMailboxTimer();
+    const { startInvoiceReaderTimer } = await import("./lib/finance/invoice-store");
+    startInvoiceReaderTimer();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

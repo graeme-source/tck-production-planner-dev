@@ -4,6 +4,7 @@ import { and, eq, gte, inArray, lte, sql } from "drizzle-orm";
 import { sealSecret, openSecret, SecretUnreadableError } from "./secret-box";
 import { merchantsLooselyMatch } from "./merchant-normalise";
 import { postedLinkFields } from "./posted-rules";
+import { autoCompleteIfReady } from "./invoice-store";
 
 // Read-only QuickBooks Online connection (docs/vat-reconciliation/PLAN.md,
 // revived 2026-08-28 by Graeme: "rule out transactions we already have
@@ -363,6 +364,8 @@ export async function markPostedLines(): Promise<number> {
       .set(postedLinkFields(line, pool[0].id, new Date()))
       .where(eq(finLinesTable.id, line.id));
     marked++;
+    // Posted + a VAT invoice already attached = done (Graeme, 2026-11-03).
+    await autoCompleteIfReady(line.id, null, "found_posted_in_quickbooks");
   }
   return marked;
 }

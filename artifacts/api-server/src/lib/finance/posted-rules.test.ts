@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { postedLinkFields, describeImapLoginError } from "./posted-rules";
+import { postedLinkFields, describeImapLoginError, isReadyToClose } from "./posted-rules";
 import { SHEET_ROWS_2026_11, sheetNotesByDedupeHash, sheetRowDedupeHash, sheetRowNote } from "./backlog-reset-2026-11";
 
 // Regression (Graeme, 2026-11-03): the QuickBooks sync closed 19 freshly
@@ -37,5 +37,18 @@ describe("describeImapLoginError", () => {
   });
   it("falls back to the server's own words", () => {
     expect(describeImapLoginError({ message: "Command failed", responseText: "Too many connections" })).toBe("Login failed: Too many connections");
+  });
+});
+
+describe("isReadyToClose — done = posted + VAT invoice", () => {
+  const posted = new Date("2026-11-03T10:00:00Z");
+  it("closes only when both are true", () => {
+    expect(isReadyToClose({ status: "matched", postedDetectedAt: posted }, true)).toBe(true);
+    expect(isReadyToClose({ status: "open", postedDetectedAt: posted }, false)).toBe(false);
+    expect(isReadyToClose({ status: "matched", postedDetectedAt: null }, true)).toBe(false);
+  });
+  it("leaves closed lines alone", () => {
+    expect(isReadyToClose({ status: "done", postedDetectedAt: posted }, true)).toBe(false);
+    expect(isReadyToClose({ status: "not_needed", postedDetectedAt: posted }, true)).toBe(false);
   });
 });

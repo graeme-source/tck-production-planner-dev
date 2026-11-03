@@ -178,6 +178,60 @@ export const finMailboxTable = pgTable("fin_mailbox", {
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// Finance → Invoices library (migration 0349, Graeme 2026-11-03). Append-only.
+export const finInvoiceUploadsTable = pgTable("fin_invoice_uploads", {
+  id: serial("id").primaryKey(),
+  fileName: text("file_name").notNull(),
+  filesFound: integer("files_found").notNull().default(0),
+  filesAdded: integer("files_added").notNull().default(0),
+  duplicates: integer("duplicates").notNull().default(0),
+  skipped: jsonb("skipped").$type<string[]>().notNull().default([]),
+  uploadedBy: integer("uploaded_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export const finInvoicesTable = pgTable("fin_invoices", {
+  id: serial("id").primaryKey(),
+  fileBlob: bytea("file_blob").notNull(),
+  fileMime: text("file_mime").notNull(),
+  fileName: text("file_name").notNull(),
+  sourcePath: text("source_path"),
+  fileSizeBytes: integer("file_size_bytes").notNull(),
+  sha256: text("sha256").notNull().unique(),
+  source: text("source").notNull(), // 'upload' | 'transaction'
+  uploadId: integer("upload_id"),
+  lineId: integer("line_id"),
+  documentId: integer("document_id"),
+  supplierName: text("supplier_name"),
+  vendorId: integer("vendor_id"),
+  invoiceDate: date("invoice_date"),
+  invoiceNumber: text("invoice_number"),
+  totalAmount: numeric("total_amount", { precision: 12, scale: 2 }),
+  vatAmount: numeric("vat_amount", { precision: 12, scale: 2 }),
+  currency: text("currency").notNull().default("GBP"),
+  docKind: text("doc_kind").notNull().default("invoice"),
+  notes: text("notes"),
+  readStatus: text("read_status").notNull().default("pending"), // pending | done | failed | not_available
+  readNote: text("read_note"),
+  uploadedBy: integer("uploaded_by"),
+  postedBy: integer("posted_by"),
+  postedAt: timestamp("posted_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// Who did what, when, to a finance record ('invoice' | 'line').
+export const finEventsTable = pgTable("fin_events", {
+  id: serial("id").primaryKey(),
+  entityType: text("entity_type").notNull(),
+  entityId: integer("entity_id").notNull(),
+  action: text("action").notNull(),
+  detail: jsonb("detail").$type<Record<string, unknown>>().notNull().default({}),
+  userId: integer("user_id"),
+  userName: text("user_name"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export type FinVendor = typeof finVendorsTable.$inferSelect;
 export type FinLine = typeof finLinesTable.$inferSelect;
 export type FinDocument = typeof finDocumentsTable.$inferSelect;
