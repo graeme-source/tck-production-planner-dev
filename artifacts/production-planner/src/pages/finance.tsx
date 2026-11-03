@@ -21,8 +21,11 @@ import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuLabel, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import {
+  ArrowUpDown,
   Banknote,
+  Filter as FilterIcon,
   Download,
   ExternalLink,
   CheckCircle2,
@@ -298,6 +301,16 @@ function InvoicesTab() {
     return [...out].sort(cmp[sort]);
   }, [data, filter, postedFilter, sort, search]);
 
+  const sectionCounts = useMemo(() => {
+    const lines = data?.lines ?? [];
+    return {
+      outstanding: lines.filter((l) => l.status === "open" || l.status === "identified").length,
+      matched: lines.filter((l) => l.status === "matched").length,
+      done: lines.filter((l) => l.status === "done" || l.status === "not_needed").length,
+      all: lines.length,
+    } satisfies Record<(typeof FILTERS)[number]["key"], number>;
+  }, [data]);
+
   const outstandingTotal = useMemo(() => {
     const lines = data?.lines ?? [];
     return lines
@@ -366,56 +379,94 @@ function InvoicesTab() {
         </Card>
       </div>
 
-      {/* Filters, sort + search */}
-      <div className="space-y-2">
-        <div className="flex gap-2 flex-wrap items-center">
-          <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Add a transaction
-          </Button>
-          <Button size="sm" variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
-            title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
-            {qboCheck.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-            {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
-          </Button>
-          <span className="text-xs font-medium text-muted-foreground ml-1">Show</span>
-          {FILTERS.map((f) => (
-            <Button key={f.key} size="sm" variant={filter === f.key ? "default" : "outline"} onClick={() => setFilter(f.key)}>
-              {f.label}
-            </Button>
-          ))}
-          <div className="relative flex-1 min-w-[200px] ml-auto">
-            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search supplier, amount, card, note…"
-              className="pl-9"
-            />
-            {search && (
+      {/* Section tabs, then that section's action + Filter / Sort, then search
+          (Graeme, 2026-11-03: make it obvious which section you're in). */}
+      <div className="space-y-3">
+        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-2xl bg-secondary/70 p-1">
+          {FILTERS.map((f) => {
+            const active = filter === f.key;
+            return (
               <button
-                onClick={() => setSearch("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
+                key={f.key}
+                role="tab"
+                aria-selected={active}
+                onClick={() => setFilter(f.key)}
+                className={cn(
+                  "rounded-xl px-3 py-3 text-sm lg:text-base font-semibold whitespace-nowrap transition-colors flex items-center justify-center gap-2",
+                  active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                )}
               >
-                <XCircle className="h-4 w-4" />
+                {f.label}
+                <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-background")}>
+                  {sectionCounts[f.key]}
+                </span>
               </button>
-            )}
+            );
+          })}
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {filter === "outstanding" && (
+            <Button variant="secondary" onClick={() => setAdding(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Add a transaction
+            </Button>
+          )}
+          {filter === "matched" && (
+            <Button variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
+              title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
+              {qboCheck.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+              {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
+            </Button>
+          )}
+          <div className="ml-auto flex gap-2">
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant={postedFilter === "any" ? "outline" : "default"}>
+                  <FilterIcon className="h-4 w-4 mr-1" />
+                  {postedFilter === "any" ? "Filter" : `Filter: ${POSTED_FILTERS.find((p) => p.key === postedFilter)?.label}`}
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuLabel>Posted in QuickBooks</DropdownMenuLabel>
+                <DropdownMenuRadioGroup value={postedFilter} onValueChange={(v) => setPostedFilter(v as typeof postedFilter)}>
+                  {POSTED_FILTERS.map((f) => (
+                    <DropdownMenuRadioItem key={f.key} value={f.key} className="py-2">{f.key === "any" ? "Either (no filter)" : f.label}</DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" aria-label="Sort transactions">
+                  <ArrowUpDown className="h-4 w-4 mr-1" /> Sort<span className="hidden sm:inline">: {SORTS.find((o) => o.key === sort)?.label}</span>
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-60">
+                <DropdownMenuRadioGroup value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+                  {SORTS.map((o) => <DropdownMenuRadioItem key={o.key} value={o.key} className="py-2">{o.label}</DropdownMenuRadioItem>)}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
-        <div className="flex gap-2 flex-wrap items-center">
-          <span className="text-xs font-medium text-muted-foreground">Posted in QuickBooks</span>
-          {POSTED_FILTERS.map((f) => (
-            <Button key={f.key} size="sm" variant={postedFilter === f.key ? "default" : "outline"} onClick={() => setPostedFilter(f.key)}>
-              {f.label}
-            </Button>
-          ))}
-          <span className="text-xs font-medium text-muted-foreground ml-auto">Sort</span>
-          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
-            <SelectTrigger className="w-56" aria-label="Sort transactions"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              {SORTS.map((o) => <SelectItem key={o.key} value={o.key}>{o.label}</SelectItem>)}
-            </SelectContent>
-          </Select>
+
+        <div className="relative">
+          <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search supplier, amount, card, note…"
+            className="pl-12 pr-10 h-12 text-base bg-white dark:bg-card shadow-sm"
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <XCircle className="h-5 w-5" />
+            </button>
+          )}
         </div>
       </div>
 
