@@ -21,7 +21,6 @@ import { eq } from "drizzle-orm";
 import {
   MAX_STANDING_ORDER_PACKS,
   parseStandingWeekdays,
-  standingDaysSupplierSkips,
   standingOrderFrom,
   standingOrderLabel,
 } from "@workspace/business-days";
@@ -70,11 +69,11 @@ async function load(id: number) {
     unit: row.unit,
     packWeight: Number(row.packWeight) || 0,
     packName: row.packName ?? null,
-    supplier: row.supplierId != null ? { id: row.supplierId, name: row.supplierName } : null,
-    // Chosen days the supplier's card never shows on (weekly supplier).
-    supplierSkipsDays: standingDaysSupplierSkips(s.weekdays, row.supplierId != null
-      ? { orderFrequency: row.orderFrequency, orderDays: row.orderDays }
-      : null),
+    // Order days let the card warn about a chosen day the supplier's card
+    // never shows on (standingDaysSupplierSkips, weekly suppliers).
+    supplier: row.supplierId != null
+      ? { id: row.supplierId, name: row.supplierName, orderFrequency: row.orderFrequency, orderDays: row.orderDays }
+      : null,
   };
 }
 
