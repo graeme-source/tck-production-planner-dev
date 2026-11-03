@@ -78,13 +78,18 @@ export async function addInvoiceFile(f: NewInvoiceFile): Promise<{ id: number; d
   }).onConflictDoNothing({ target: finInvoicesTable.sha256 }).returning({ id: finInvoicesTable.id });
   if (row) return { id: row.id, duplicate: false };
 
-  const [existing] = await db.select({ id: finInvoicesTable.id, lineId: finInvoicesTable.lineId })
+  const [existing] = await db.select({ id: finInvoicesTable.id, lineId: finInvoicesTable.lineId, postedAt: finInvoicesTable.postedAt })
     .from(finInvoicesTable).where(eq(finInvoicesTable.sha256, sha256));
   if (f.lineId && !existing.lineId) {
     await db.update(finInvoicesTable).set({
       lineId: f.lineId, documentId: f.documentId ?? null,
       postedBy: f.postedBy ?? null, postedAt: f.postedAt ?? null, updatedAt: new Date(),
     }).where(eq(finInvoicesTable.id, existing.id));
+  } else if (f.lineId && existing.lineId === f.lineId && !existing.postedAt && f.postedAt) {
+    // Attached from Outstanding ("Drop an invoice") before the line was
+    // done: the link is there, so just stamp who posted it and when.
+    await db.update(finInvoicesTable).set({ postedBy: f.postedBy ?? null, postedAt: f.postedAt, updatedAt: new Date() })
+      .where(eq(finInvoicesTable.id, existing.id));
   }
   return { id: existing.id, duplicate: true };
 }
@@ -240,6 +245,15 @@ async function readPendingInvoices(): Promise<void> {
     if (!inv) return;
     await readOneInvoice(inv.id, inv.mime, inv.size);
   }
+}
+
+/** Read one invoice straight away (someone is waiting on the answer)
+ *  rather than leaving it for the background reader. */
+export async function readInvoiceNow(id: number): Promise<void> {
+  const [inv] = await db.select({ mime: finInvoicesTable.fileMime, size: finInvoicesTable.fileSizeBytes, readStatus: finInvoicesTable.readStatus })
+    .from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
+  if (!inv || inv.readStatus !== "pending") return;
+  await readOneInvoice(id, inv.mime, inv.size);
 }
 
 async function readOneInvoice(id: number, mime: string, size: number): Promise<void> {
