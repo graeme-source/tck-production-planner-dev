@@ -31,6 +31,13 @@ describe("sub-recipe progress (issue #378)", () => {
     expect(loadProgress(s, k)).toEqual(progress);
   });
 
+  it("keeps the 3x and 'exactly today's need' choices from the Replenish pop-up", () => {
+    const exact = parseProgress(JSON.stringify({ ...progress, batches: 0.11, batchMultiplier: "exact" }));
+    expect(exact?.batchMultiplier).toBe("exact");
+    expect(exact?.batches).toBe(0.11);
+    expect(parseProgress(JSON.stringify({ ...progress, batchMultiplier: 3 }))?.batchMultiplier).toBe(3);
+  });
+
   it("drops progress saved on another day when saving", () => {
     const s = memStore();
     const old = progressKey(1, "2026-11-01", 59);

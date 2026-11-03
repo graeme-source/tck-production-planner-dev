@@ -13,7 +13,7 @@ export const PROGRESS_KEY_PREFIX = "tck.subRecipeProgress.";
 
 export interface SubRecipeProgress {
   batches: number;
-  batchMultiplier: 1 | 2 | 4 | "custom";
+  batchMultiplier: 1 | 2 | 3 | 4 | "custom" | "exact";
   customBatches: number;
   stockOnHand: string;
   checked: string[];
@@ -39,7 +39,7 @@ export function parseProgress(raw: string | null): SubRecipeProgress | null {
     if (!v || typeof v !== "object") return null;
     const batches = Number(v.batches);
     if (!Number.isFinite(batches) || batches <= 0) return null;
-    const multiplier = [1, 2, 4, "custom"].includes(v.batchMultiplier) ? v.batchMultiplier : 1;
+    const multiplier = [1, 2, 3, 4, "custom", "exact"].includes(v.batchMultiplier) ? v.batchMultiplier : 1;
     const custom = Number(v.customBatches);
     return {
       batches,
