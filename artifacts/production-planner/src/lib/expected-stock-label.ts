@@ -67,9 +67,10 @@ export function stockBoxStartsBlank(line: StockBoxLine): boolean {
 /** Kanban items nobody stock-checks get no "Record stock check" button on
  *  Orders — the kanban card drives the order (Graeme, 20 Oct 2026, #336:
  *  "No button at all. We don't need to stock check kanban items"). Kanban
- *  items that ARE stock-checked keep it. */
-export function showsStockCheckButton(line: { isKanban?: boolean; stockCounted?: boolean }): boolean {
-  return !(line.isKanban && line.stockCounted !== true);
+ *  items that ARE stock-checked keep it. The same goes for a standing
+ *  weekly order (#348): the day drives the order, not a count. */
+export function showsStockCheckButton(line: { isKanban?: boolean; stockCounted?: boolean; standingOrder?: unknown }): boolean {
+  return !((line.isKanban || !!line.standingOrder) && line.stockCounted !== true);
 }
 
 /** Leaving the box saves a count — except when nothing was typed into a

@@ -66,6 +66,7 @@ import kanbanCardsRouter from "./kanban-cards";
 import ordersRouter from "./orders";
 import supplierPricingRouter from "./supplier-pricing";
 import orderSplitsRouter from "./order-splits";
+import standingOrdersRouter from "./standing-orders";
 import deliveriesRouter from "./deliveries";
 import unexpectedDeliveriesRouter from "./unexpected-deliveries";
 import shortDeliveryReportsRouter from "./short-delivery-reports";
@@ -417,6 +418,8 @@ router.use("/orders", ordersRouter);
 router.use("/supplier-pricing", supplierPricingRouter);
 // "Split with another supplier" on an Orders line (#248 + #328).
 router.use("/order-splits", orderSplitsRouter);
+// Standing weekly orders — "Automatically order every Friday" (#348).
+router.use("/standing-orders", standingOrdersRouter);
 // Unexpected deliveries first: the deliveries router's GET /:id would
 // otherwise read "unexpected" as a purchase-order id.
 router.use("/deliveries/unexpected", unexpectedDeliveriesRouter);

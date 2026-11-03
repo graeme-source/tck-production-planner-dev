@@ -94,6 +94,37 @@ export function mergeCounts(counts: CountEvent[]): CountEvent[] {
   return out;
 }
 
+/** The two latest counts (after merging) — all the Orders page reads:
+ *  expectedAt() starts from the latest, and the latest countVariances()
+ *  entry compares it with the one before (Fix queue #376). */
+export function latestTwoCounts(counts: CountEvent[]): CountEvent[] {
+  return mergeCounts(counts).slice(-2);
+}
+
+/** The earliest moment a ledger trimmed to its two latest counts still
+ *  needs receipts and usage from (exclusive): the earlier of those counts.
+ *  Null when never counted — then no receipt or usage matters at all. */
+export function ledgerNeedsEventsAfter(counts: CountEvent[]): number | null {
+  const keep = latestTwoCounts(counts);
+  return keep.length > 0 ? keep[0].at : null;
+}
+
+/** The ledger cut down to its two latest counts and the receipts/usage
+ *  after the earlier one. expectedAt() and the LAST countVariances() entry
+ *  come out exactly as from the full ledger; older variances are gone. Lets
+ *  the Orders page skip months of history it never reads. */
+export function trimLedgerToLatestCounts(ledger: IngredientLedger): IngredientLedger {
+  const counts = latestTwoCounts(ledger.counts);
+  if (counts.length === 0) return { counts: [], receipts: [], usage: [], coverage: ledger.coverage };
+  const from = counts[0].at;
+  return {
+    counts,
+    receipts: ledger.receipts.filter(r => r.at > from),
+    usage: ledger.usage.filter(u => u.at > from),
+    coverage: ledger.coverage,
+  };
+}
+
 export type UsageBySource = Partial<Record<UsageSource, number>>;
 
 export interface RollForward {

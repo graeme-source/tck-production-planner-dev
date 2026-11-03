@@ -500,6 +500,7 @@ router.post("/scan", async (req, res) => {
     ingredientName: ing.name,
     orderQty,
     unitLabel,
+    supplierId: ing.supplierId ?? null,
     supplierName,
     orderDayTarget: today,
   });

@@ -40,3 +40,4 @@ export function toISODate(d: Date): string {
 
 export * from "./delivery-surplus";
 export * from "./order-split";
+export * from "./standing-order";

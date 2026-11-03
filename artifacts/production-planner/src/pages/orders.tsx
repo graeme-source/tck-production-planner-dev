@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { clearIngredientMark, OUTSTANDING_KEY } from "@/components/queued-production/api";
 import { QueuedOrdersReminder } from "@/components/queued-production/orders-reminder";
+import { StandingOrderChip } from "@/components/standing-order-chip";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -176,6 +177,9 @@ type OrderLine = SurplusLineFields & {
   /** Queued test production on this card — fixed packs, included in
    *  splitInPacks (components/queued-production, 30 Oct 2026). */
   testProduction?: Array<{ productionDate: string; packs: number }>;
+  /** Standing weekly order due today (#348) — "Every Fri" and its fixed
+   *  packs, a floor on this line (standingFloorPacks, SurplusLineFields). */
+  standingOrder?: { label: string; packs: number };
   /** What one pack is called — "box", "roll" (#327). Null = pack. */
   packName?: string | null;
 };
@@ -203,6 +207,9 @@ type CalculateResponse = {
   planName: string;
   planDate: string;
   suppliers: SupplierOrder[];
+  /** Suppliers ordered today — the calc gives them no card today, so the
+   *  page lists them and a tap adds one back by hand (#351/#384). */
+  orderedToday?: Array<{ supplierId: number; supplierName: string; orderIds: number[] }>;
 };
 
 type PurchaseOrder = {
@@ -1759,6 +1766,9 @@ export default function Orders() {
   const dismissedPendingSuppliers = allPendingSuppliers.filter(s =>
     dismissedSupplierIds.has(s.supplier.id) && !reopenedSupplierIds.has(s.supplier.id)
   );
+  // Ordered today and not added back by hand yet (#351/#384).
+  const pendingCardIds = new Set(pendingSuppliers.map(s => s.supplier.id));
+  const orderedTodayWithoutCard = (calculated?.orderedToday ?? []).filter(s => !pendingCardIds.has(s.supplierId));
   const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
   const totalPlacedForPlan = placedForPlan.length;
 
@@ -2228,6 +2238,27 @@ export default function Orders() {
           cancellable here until that order is placed. */}
       {viewFilter === "pending" && <OrderSplitsWaiting onChanged={refreshCalc} />}
 
+      {/* Ordered today → no automatic card today (#351/#384). Tapping a
+          name is "Add supplier order" for that supplier. */}
+      {viewFilter === "pending" && orderedTodayWithoutCard.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+          <span>Ordered today:</span>
+          {orderedTodayWithoutCard.map((s, i) => (
+            <span key={s.supplierId}>
+              <button
+                type="button"
+                onClick={() => handleAddManualSupplier({ id: s.supplierId, name: s.supplierName })}
+                className="py-1 font-medium text-foreground underline underline-offset-2 hover:text-primary"
+                title={`Add an order for ${s.supplierName}`}
+              >
+                {s.supplierName}
+              </button>
+              {" "}({s.orderIds.map(id => `#${id}`).join(", ")}){i < orderedTodayWithoutCard.length - 1 ? "," : ""}
+            </span>
+          ))}
+        </div>
+      )}
+
       {viewFilter === "pending" && !calcLoading && pendingSuppliers.length === 0 && selectedPlanId && (
         <div className="text-center py-12 text-muted-foreground">
           No pending orders. All supplier orders have been placed or no ingredients need ordering.
@@ -2519,6 +2550,17 @@ export default function Orders() {
                                 </button>
                               </span>
                             ))}
+                            {line.standingOrder && (
+                              <StandingOrderChip
+                                ingredientId={line.ingredientId}
+                                ingredientName={line.ingredientName}
+                                label={line.standingOrder.label}
+                                packs={line.standingOrder.packs}
+                                unit={line.unit}
+                                packName={line.packName}
+                                onSkipped={refreshCalc}
+                              />
+                            )}
                             {(line.splitsAway ?? []).map(sp => (
                               <span key={`away-${sp.id}`} className="flex items-center gap-1 mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">
                                 <Scissors className="w-3 h-3" />
@@ -2561,9 +2603,11 @@ export default function Orders() {
                               ) : !showsStockCheckButton(line) && !line.stockDirty ? (
                                 <span
                                   className="text-[10px] text-muted-foreground"
-                                  title="Kanban item: no stock check needed. The kanban card drives the order. To count it, tick Requires Stock Check on the ingredient."
+                                  title={line.isKanban
+                                    ? "Kanban item: no stock check needed. The kanban card drives the order. To count it, tick Requires Stock Check on the ingredient."
+                                    : "Standing weekly order: no stock check needed. It comes up on its day whatever the stock. To count it, tick Requires Stock Check on the ingredient."}
                                 >
-                                  Kanban — no stock check needed
+                                  {line.isKanban ? "Kanban" : "Weekly order"} — no stock check needed
                                 </span>
                               ) : line.lastStockCheckAt ? (() => {
                                 const d = new Date(line.lastStockCheckAt);
@@ -3147,9 +3191,15 @@ export default function Orders() {
                     toast({ title: "Couldn't add kanban", description: body.error ?? "Scan failed.", variant: "destructive" });
                     return;
                   }
+                  // Supplier already ordered today: the kanban waits for
+                  // tomorrow's card unless they add the supplier back (#351).
+                  const orderedTodayAlready = (calculated?.orderedToday ?? []).some(s => s.supplierId === body.supplierId);
                   toast({
-                    title: body.alreadyQueued ? "Already on today's order" : "Added to today's order",
-                    description: `${body.ingredientName} — ${body.orderQty} ${body.unitLabel}${body.supplierName ? ` from ${body.supplierName}` : ""}`,
+                    title: orderedTodayAlready ? "Queued for tomorrow"
+                      : body.alreadyQueued ? "Already on today's order" : "Added to today's order",
+                    description: orderedTodayAlready
+                      ? `${body.ingredientName} — ${body.supplierName ?? "this supplier"} was already ordered today. Tap the name under "Ordered today" to add it now.`
+                      : `${body.ingredientName} — ${body.orderQty} ${body.unitLabel}${body.supplierName ? ` from ${body.supplierName}` : ""}`,
                   });
                   queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
                   setScanKanbanOpen(false);

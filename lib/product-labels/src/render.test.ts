@@ -137,7 +137,8 @@ describe("the default template with a real deck", () => {
     expect(renderLabel(layout, fonts, true).height).toBeGreaterThan(751);
     const proof = proofLabel(s, { printDate: "2026-10-10", productionDate: "2026-10-10" }, fonts);
     expect(proof.overflowPng).not.toBeNull();
-  });
+    // ~2 s alone, but over 5 s when the machine is busy (the 3:05pm deploy runs the full suite).
+  }, 30_000);
 });
 
 describe("nothing prints inside the margin", () => {

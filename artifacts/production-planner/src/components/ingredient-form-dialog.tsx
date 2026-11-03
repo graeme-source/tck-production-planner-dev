@@ -20,6 +20,7 @@ import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loa
 import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
+import { StandingOrderField } from "@/components/standing-order-field";
 import { PackNameField } from "@/components/pack-name-field";
 import { StorageLocationField } from "@/components/storage-location-field";
 import type { Ingredient } from "@workspace/api-client-react";
@@ -1418,7 +1419,16 @@ export function IngredientFormDialog({
                 <input type="number" step="0.1" min="0" {...register("kanbanOrderAmount")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 50" />
                 <p className="text-xs text-muted-foreground mt-1">Quantity to order when card is pulled.</p>
               </div>
+              {/* Standing weekly order (#348) — autosaves on its own
+                  endpoint, so it needs a saved ingredient. */}
+              {editingItem?.id
+                ? <StandingOrderField ingredientId={editingItem.id} kanbanEnabled />
+                : <p className="text-xs text-muted-foreground">Save the item first to have it ordered automatically every week.</p>}
             </div>
+          )}
+          {/* Kanban switched off but a weekly order still set: keep it visible. */}
+          {!watchedKanbanEnabled && editingItem?.id && (
+            <StandingOrderField ingredientId={editingItem.id} kanbanEnabled={false} />
           )}
 
           {isIngredient && (
