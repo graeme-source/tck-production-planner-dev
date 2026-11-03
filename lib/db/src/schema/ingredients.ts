@@ -97,6 +97,12 @@ export const ingredientsTable = pgTable("ingredients", {
   kanbanQuantity: numeric("kanban_quantity", { precision: 10, scale: 4 }).notNull().default("0"),
   kanbanUnit: text("kanban_unit").notNull().default("weight"),
   kanbanOrderAmount: numeric("kanban_order_amount", { precision: 10, scale: 4 }),
+  // Standing weekly order (Fix queue #348): ISO weekdays (1 = Mon … 7 = Sun)
+  // it's put on the Orders page, with a fixed number of supplier packs.
+  // NULL / empty / no packs = off. Read only through the standing-order
+  // helpers in @workspace/business-days. Migration 0348. Objective C.
+  standingOrderWeekdays: integer("standing_order_weekdays").array(),
+  standingOrderPacks: integer("standing_order_packs"),
   perishable: boolean("perishable").notNull().default(true),
   palletSize: integer("pallet_size"),
   energyKj: numeric("energy_kj", { precision: 10, scale: 2 }),
