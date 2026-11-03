@@ -35,6 +35,8 @@ import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
 import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, tasksLine } from "@/lib/prep-progress";
 import { usePrepSessionCapture, type PrepSessionStation } from "@/hooks/use-prep-session-capture";
+import { londonToday } from "@/lib/hours-worked-view";
+import { browserStore, clearProgress, loadProgress, progressKey, saveProgress } from "@/lib/sub-recipe-progress";
 
 interface SubRecipePlanRequirement {
   subRecipeId: number;
@@ -189,6 +191,8 @@ interface SubReplenishState {
   stockOnHand: string;
   batches: number;
   checked: Set<string>;
+  /** The checklist came back from ticks saved earlier on this iPad (#378). */
+  resumed?: boolean;
 }
 
 export function SubRecipeMakeFlow({
@@ -263,8 +267,21 @@ export function SubRecipeMakeFlow({
     sessionTiming.focus(makingId != null ? [{ subRecipeId: makingId }] : []);
   }, [sessionTiming, makingId]);
 
+  // Part-made progress is remembered on this iPad for the day (issue #378):
+  // a sign-out on a break or a reload used to wipe every tick.
+  const progressKeyFor = (subRecipeId: number) => progressKey(timing?.planId, londonToday(), subRecipeId);
+
   const selectSr = (sr: SubRecipePlanRequirement) => {
     setLoadedDetail(null);
+    const saved = loadProgress(browserStore(), progressKeyFor(sr.subRecipeId));
+    if (saved) {
+      setState(s => ({
+        ...s, phase: "checklist", sr,
+        batches: saved.batches, batchMultiplier: saved.batchMultiplier, customBatches: saved.customBatches,
+        stockOnHand: saved.stockOnHand, checked: new Set(saved.checked), resumed: true,
+      }));
+      return;
+    }
     if (mode === "plan") {
       setState(s => ({ ...s, phase: "stock_check", sr }));
     } else {
@@ -377,10 +394,31 @@ export function SubRecipeMakeFlow({
   const startChecklist = () => {
     if (mode === "plan") {
       const batches = autoBatches ?? 1;
-      setState(s => ({ ...s, phase: "checklist", batches, checked: new Set() }));
+      setState(s => ({ ...s, phase: "checklist", batches, checked: new Set(), resumed: false }));
     } else {
-      setState(s => ({ ...s, phase: "checklist", batches: effectiveBatches, checked: new Set() }));
+      setState(s => ({ ...s, phase: "checklist", batches: effectiveBatches, checked: new Set(), resumed: false }));
     }
+  };
+
+  const checklistKey = state.phase === "checklist" && state.sr ? progressKeyFor(state.sr.subRecipeId) : null;
+  useEffect(() => {
+    if (!checklistKey) return;
+    saveProgress(browserStore(), checklistKey, {
+      batches: state.batches,
+      batchMultiplier: state.batchMultiplier,
+      customBatches: state.customBatches,
+      stockOnHand: state.stockOnHand,
+      checked: Array.from(state.checked),
+    });
+  }, [checklistKey, state.batches, state.batchMultiplier, state.customBatches, state.stockOnHand, state.checked]);
+
+  const startAgain = () => {
+    if (!state.sr) return;
+    clearProgress(browserStore(), progressKeyFor(state.sr.subRecipeId));
+    setState(s => ({
+      ...s, phase: mode === "plan" ? "stock_check" : "batch_pick",
+      stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set(), resumed: false,
+    }));
   };
 
   const toggleItem = (key: string) => {
@@ -404,7 +442,7 @@ export function SubRecipeMakeFlow({
 
   const back = () => {
     setLoadedDetail(null);
-    setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set() }));
+    setState(s => ({ ...s, phase: "pick", sr: null, stockOnHand: "", batchMultiplier: 1, customBatches: 1, checked: new Set(), resumed: false }));
   };
 
   if (state.phase === "done") {
@@ -450,6 +488,14 @@ export function SubRecipeMakeFlow({
             <p className="text-base text-muted-foreground">
               {state.batches} mix{state.batches !== 1 ? "es" : ""} · Total yield: {formatPrepWeight(yieldPerBatch * state.batches, sr?.yieldUnit)}
             </p>
+            {state.resumed && (
+              <div className="mt-1.5 flex flex-wrap items-center gap-2 text-sm">
+                <span className="px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium">Carried on from earlier</span>
+                <button onClick={startAgain} className="min-h-[44px] px-3 rounded-lg border border-border hover:bg-secondary/60 font-medium">
+                  Start again
+                </button>
+              </div>
+            )}
             {sr && (
               <div className="mt-1.5">
                 <SopChips
@@ -494,6 +540,7 @@ export function SubRecipeMakeFlow({
                 onClick={() => {
                   if (state.sr) {
                     onDone?.(state.sr.subRecipeId, state.batches);
+                    clearProgress(browserStore(), progressKeyFor(state.sr.subRecipeId));
                     sessionTiming.made({
                       subRecipeId: state.sr.subRecipeId,
                       batches: state.batches,
@@ -597,7 +644,10 @@ export function SubRecipeMakeFlow({
             // as a normal completion, then jumps to the done screen.
             <button
               onClick={() => {
-                if (state.sr) onDone?.(state.sr.subRecipeId, 0);
+                if (state.sr) {
+                  onDone?.(state.sr.subRecipeId, 0);
+                  clearProgress(browserStore(), progressKeyFor(state.sr.subRecipeId));
+                }
                 setState(s => ({ ...s, phase: "done", batches: 0 }));
               }}
               className="w-full py-4 rounded-2xl bg-emerald-500 text-white font-bold text-base hover:bg-emerald-600 transition-colors flex items-center justify-center gap-2"

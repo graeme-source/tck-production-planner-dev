@@ -29,7 +29,12 @@ export interface RawCampaign {
     status: string;
     send_time: string | null;
     scheduled_at: string | null;
-    send_strategy?: { method?: string; options_static?: { datetime?: string | null } | null } | null;
+    send_strategy?: {
+      method?: string;
+      options_static?: { datetime?: string | null } | null;
+      options_sto?: { date?: string | null } | null;
+      options_throttled?: { datetime?: string | null } | null;
+    } | null;
     updated_at?: string | null;
     audiences?: { included?: string[]; excluded?: string[] };
   };
@@ -43,11 +48,15 @@ export interface RawMessage { id: string; attributes: { content?: { subject?: st
  * Klaviyo called "Queued without Recipients" (scheduled, audience worked
  * out at send time) never showed or auto-linked, so its plan stayed linked
  * to the deleted clone it replaced.
+ * Graeme, 2026-11-02 (issue #343): Tommy schedules an email then pauses it
+ * in Klaviyo so it only goes once Graeme approves. "Paused" fell through to
+ * null, so the email vanished from its day. It still has its send time, so
+ * it shows on that day as scheduled.
  */
 export function calendarStatus(raw: string): KlaviyoCalendarEmail["status"] | null {
   switch (raw) {
     case "Draft": return "Draft";
-    case "Scheduled": case "Queued without Recipients": case "Preparing to schedule": return "Scheduled";
+    case "Scheduled": case "Queued without Recipients": case "Preparing to schedule": case "Paused": return "Scheduled";
     case "Sending": case "Adding Recipients": case "Preparing to send": case "Sending Segments": return "Sending";
     case "Sent": case "Variations Sent": return "Sent";
     default: return null;
@@ -58,10 +67,18 @@ export function londonDay(iso: string): string {
   return new Date(iso).toLocaleDateString("en-CA", { timeZone: "Europe/London" });
 }
 
+/** The day the send strategy is set for: a fixed time, a Smart Send Time
+ *  day (date only, so 09:00 UTC that day) or a throttled start. */
+function strategySendAt(a: RawCampaign["attributes"]): string | null {
+  const s = a.send_strategy;
+  const sto = s?.options_sto?.date;
+  return s?.options_static?.datetime ?? s?.options_throttled?.datetime ?? (sto ? `${sto.slice(0, 10)}T09:00:00+00:00` : null);
+}
+
 /** When a campaign sends (or, for a draft, is set to send). */
 export function campaignSendAt(a: RawCampaign["attributes"]): string | null {
-  if (a.status === "Draft") return a.send_strategy?.options_static?.datetime ?? null;
-  return a.send_time ?? a.scheduled_at ?? null;
+  if (a.status === "Draft") return strategySendAt(a);
+  return a.send_time ?? a.scheduled_at ?? strategySendAt(a);
 }
 
 /** Sent campaigns open on their report; drafts in the editor; scheduled

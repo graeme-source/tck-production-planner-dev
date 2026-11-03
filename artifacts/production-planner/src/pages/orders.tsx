@@ -59,6 +59,7 @@ import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo 
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
 import { useNow } from "@/hooks/use-now";
 import { orderForSupplierSearch } from "@/lib/search-word-groups";
+import { filterAddItemIngredients } from "@/lib/add-item-filter";
 import { formatCount, kanbanOrderPacks, nativeToStockCount, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
 import { StockCheckDialog, StockCheckTrigger } from "@/pages/station/shared/stock-check-entry";
 import { londonToday } from "@/lib/station-training";
@@ -522,6 +523,8 @@ export default function Orders() {
   // ingredient assigned to that supplier so operators can add one-off
   // manual lines without waiting for an auto-calc.
   const [addItemDialog, setAddItemDialog] = useState<{ supplierId: number; supplierName: string } | null>(null);
+  // Type-to-filter in the Add item dialog (fix-queue #377 / #342).
+  const [addItemSearch, setAddItemSearch] = useState("");
 
   // "Split with another supplier" (#248 + #328): the line being split.
   const [splitDialog, setSplitDialog] = useState<{ supplierId: number; supplierName: string; line: EditableLine } | null>(null);
@@ -1336,9 +1339,10 @@ export default function Orders() {
     retry: false,
   });
 
-  // No search box in an order (Graeme, 2026-10-10: "there are never enough
-  // items to search them") — the whole list shows.
-  const filteredAddItemIngredients = addItemIngredients;
+  // The 10 Oct removal was meant for the order lines themselves; the Add
+  // item picker gets its search back (Graeme, 2026-11-02, #377) because
+  // big suppliers list 100+ ingredients.
+  const filteredAddItemIngredients = filterAddItemIngredients(addItemIngredients, addItemSearch);
 
   // Miscellaneous one-off line — operator types a description + qty instead
   // of picking a real ingredient. Used for samples, packaging trials, etc.
@@ -1390,6 +1394,7 @@ export default function Orders() {
     setExpandedSuppliers(prev => new Set([...prev, supplierId]));
     setMiscForm({ description: "", quantity: "1", unit: "each" });
     setAddItemDialog(null);
+    setAddItemSearch("");
    
   };
 
@@ -1436,6 +1441,7 @@ export default function Orders() {
     });
     setExpandedSuppliers(prev => new Set([...prev, supplierId]));
     setAddItemDialog(null);
+    setAddItemSearch("");
    
   };
 
@@ -3423,7 +3429,7 @@ export default function Orders() {
       {/* Issue 4: per-supplier Add Item picker */}
       <Dialog
         open={!!addItemDialog}
-        onOpenChange={open => { if (!open) { setAddItemDialog(null); setMiscForm({ description: "", quantity: "1", unit: "each" }); } }}
+        onOpenChange={open => { if (!open) { setAddItemDialog(null); setAddItemSearch(""); setMiscForm({ description: "", quantity: "1", unit: "each" }); } }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
@@ -3488,6 +3494,29 @@ export default function Orders() {
               </div>
             </details>
 
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground pointer-events-none" />
+              <input
+                type="search"
+                value={addItemSearch}
+                onChange={e => setAddItemSearch(e.target.value)}
+                placeholder="Search this supplier's items…"
+                aria-label="Search this supplier's items"
+                autoComplete="off"
+                className="w-full h-12 pl-10 pr-12 rounded-lg border border-border bg-background text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
+              />
+              {addItemSearch && (
+                <button
+                  type="button"
+                  onClick={() => setAddItemSearch("")}
+                  aria-label="Clear search"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
             <div className="max-h-80 overflow-y-auto space-y-1 -mx-1 px-1">
               {addItemLoading && (
                 <p className="text-center py-8 text-sm text-muted-foreground flex items-center justify-center gap-2">
@@ -3507,7 +3536,7 @@ export default function Orders() {
               )}
               {!addItemLoading && !addItemError && filteredAddItemIngredients.length === 0 && (
                 <p className="text-center py-8 text-sm text-muted-foreground">
-                  {addItemIngredients.length === 0 ? "This supplier has no ingredients assigned." : "No ingredients to add."}
+                  {addItemIngredients.length === 0 ? "This supplier has no ingredients assigned." : addItemSearch.trim() ? "No items match your search." : "No ingredients to add."}
                 </p>
               )}
               {!addItemLoading && filteredAddItemIngredients.map(ing => {

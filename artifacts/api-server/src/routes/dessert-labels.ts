@@ -8,7 +8,9 @@
  * scans at packing. One tap prints every label for a delivery day in one PDF.
  *
  *   GET  /?tag=YYYY-MM-DD   the day's 5-packs by variant, with proofs
- *   POST /print { tag }     one PDF: each flavour's label × its count
+ *   POST /print { tag, counts? }   one PDF: each flavour's label × its count
+ *        (counts = { variantId-or-title: n } for "Print some", each capped
+ *        at that flavour's day's quantity — fix-queue #374)
  *   PUT  /settings { useByDays }   managers/admins
  *   GET  /despatch?tag=, POST /despatch/print   cinnamon bun despatch labels (below)
  *
@@ -34,6 +36,7 @@ import { getOrdersByTag, getProductsByTag } from "../services/shopify";
 import { scanQueueBarcodes } from "../lib/barcode-store";
 import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 import { shortError } from "../lib/finance/cash-flow";
+import { cappedLabelCount, fivePackLabelCopies } from "../lib/dessert-label-counts";
 
 const router: IRouter = Router();
 router.use(requireFulfilmentAccess);
@@ -86,13 +89,21 @@ router.get("/", validateQuery(TagQuery), async (_req: Request, res: Response) =>
   }
 });
 
-router.post("/print", validate(TagQuery), async (req: Request, res: Response) => {
-  const { tag } = req.body as z.infer<typeof TagQuery>;
+/** "Print some" (fix-queue #374): optional per-flavour counts; the orders
+ *  still cap each one, so the page can choose fewer but never more. */
+const FivePackPrintBody = TagQuery.extend({
+  counts: z.record(z.string(), z.number().int().min(0).max(MAX_PRINT_COUNT)).optional(),
+});
+
+router.post("/print", validate(FivePackPrintBody), async (req: Request, res: Response) => {
+  const { tag, counts } = req.body as z.infer<typeof FivePackPrintBody>;
   try {
     const useBy = formatLabelDate(addDays(londonDateString(), await useByDays()));
     const lines = await linesFor(tag);
     if (!lines.length) { res.status(409).json({ error: "No 5-packs on these orders." }); return; }
-    const runs = lines.map(l => ({ bitmap: render(l, useBy).bitmap, copies: l.quantity }));
+    const chosen = fivePackLabelCopies(lines, counts);
+    if (!chosen.length) { res.status(409).json({ error: "Choose at least one label to print." }); return; }
+    const runs = chosen.map(l => ({ bitmap: render(l, useBy).bitmap, copies: l.copies }));
     const pdf = labelRunsPdf({ runs, dpi: SMALL_LABEL_PAGE.dpi, title: `5-pack labels ${tag}` });
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="5-pack-labels-${tag}.pdf"`);
@@ -113,7 +124,8 @@ router.post("/print", validate(TagQuery), async (req: Request, res: Response) =>
 // unless the live label still matches the recipe (as at wrapping).
 //
 //   GET  /despatch?tag=YYYY-MM-DD            each line: its recipe, count, ready or why not
-//   POST /despatch/print { tag, recipeId }   one PDF: that recipe's label × its count
+//   POST /despatch/print { tag, recipeId, count? }   one PDF: that recipe's label × its count
+//        (count = "Print some", capped at the day's total — fix-queue #374)
 
 /** Shopify variant → recipe, through the recipe ↔ Shopify link (pack,
  *  wonky and 8-pack variants), as the stock and P&L code reads it. */
@@ -181,13 +193,17 @@ router.get("/despatch", validateQuery(TagQuery), async (_req: Request, res: Resp
   }
 });
 
-const DespatchPrintBody = TagQuery.extend({ recipeId: z.number().int().positive() });
+const DespatchPrintBody = TagQuery.extend({
+  recipeId: z.number().int().positive(),
+  /** "Print some" (fix-queue #374) — capped at the day's total below. */
+  count: z.number().int().min(1).max(MAX_PRINT_COUNT).optional(),
+});
 
 router.post("/despatch/print", validate(DespatchPrintBody), async (req: Request, res: Response) => {
-  const { tag, recipeId } = req.body as z.infer<typeof DespatchPrintBody>;
+  const { tag, recipeId, count: requested } = req.body as z.infer<typeof DespatchPrintBody>;
   try {
-    // The count comes from the orders, never from the page.
-    const count = Math.min(MAX_PRINT_COUNT, despatchLabelCount(await despatchLines(tag), recipeId));
+    // The orders set the ceiling; the page may only ask for fewer ("Print some").
+    const count = Math.min(MAX_PRINT_COUNT, cappedLabelCount(despatchLabelCount(await despatchLines(tag), recipeId), requested));
     if (count < 1) { res.status(409).json({ error: "None of these on the orders for that day." }); return; }
     const d = await despatchLabel(recipeId);
     if (!d.ready) { res.status(409).json({ error: d.message }); return; }

@@ -45,7 +45,11 @@ export function WishListAlert() {
   const one = items.length === 1;
 
   return createPortal(
-    <div className="fixed inset-0 z-[60] bg-black/75 flex items-center justify-center p-3 md:p-8">
+    // pointer-events-auto is load-bearing: this can land over a MODAL Radix
+    // dialog (Create Production Plan, #375, 2 Nov 2026), and Radix puts
+    // pointer-events:none on the whole body while one is open. Without it the
+    // pop-up paints on top but every tap falls through, so nobody can close it.
+    <div className="pointer-events-auto fixed inset-0 z-[60] bg-black/75 flex items-center justify-center p-3 md:p-8">
       <div
         role="alertdialog"
         aria-modal="true"

@@ -6,6 +6,8 @@ import {
   micBlockedHelp,
   speechErrorMessage,
   osDictationTip,
+  readRecognitionResults,
+  composeDictatedText,
 } from "./dictation-support";
 
 const UA = {
@@ -102,5 +104,76 @@ describe("freeing the microphone before the camera (Graeme, 2026-10-15)", () => 
     reg.active.add({ stop: () => {}, abort: () => { throw new Error("InvalidStateError"); } });
     expect(() => reg.releaseAll()).not.toThrow();
     expect(reg.active.size).toBe(0);
+  });
+});
+
+// Fix-queue #372: dictation repeated earlier phrases on every update.
+describe("readRecognitionResults + composeDictatedText (no repeated words)", () => {
+  const r = (transcript: string, isFinal: boolean) => ({ isFinal, 0: { transcript } });
+  const list = (...items: ReturnType<typeof r>[]) => Object.assign([...items], { length: items.length });
+
+  /** Plays a session's updates through the joiner the way the hook does,
+   *  returning what the box shows after each one. */
+  function play(startingText: string, updates: ReturnType<typeof list>[]) {
+    return updates.map(u => {
+      const { final, interim } = readRecognitionResults(u);
+      return composeDictatedText(startingText, final, interim);
+    });
+  }
+
+  it("the same growing result list fed twice never repeats a phrase", () => {
+    const shown = play("", [
+      list(r("the fridge", true)),
+      list(r("the fridge", true)),
+      list(r("the fridge", true), r(" door is broken", true)),
+      list(r("the fridge", true), r(" door is broken", true)),
+      list(r("the fridge", true), r(" door is broken", true), r(" again", true)),
+    ]);
+    expect(shown).toEqual([
+      "the fridge",
+      "the fridge",
+      "the fridge door is broken",
+      "the fridge door is broken",
+      "the fridge door is broken again",
+    ]);
+    expect(shown.at(-1)!.match(/fridge/g)).toHaveLength(1);
+  });
+
+  it("interim text is shown but not committed, and turns final only once", () => {
+    const updates = [
+      list(r("the oven", false)),
+      list(r("the oven is", false)),
+      list(r("the oven is hot", true)),
+      list(r("the oven is hot", true), r(" today", false)),
+      list(r("the oven is hot", true), r(" today", true)),
+    ];
+    expect(readRecognitionResults(updates[1])).toEqual({ final: "", interim: "the oven is" });
+    expect(play("", updates)).toEqual([
+      "the oven",
+      "the oven is",
+      "the oven is hot",
+      "the oven is hot today",
+      "the oven is hot today",
+    ]);
+  });
+
+  it("keeps text already in the box exactly once, with a space before the speech", () => {
+    const shown = play("Notes:", [
+      list(r("first", true)),
+      list(r("first", true), r("second", false)),
+      list(r("first", true), r("second", true)),
+    ]);
+    expect(shown).toEqual(["Notes: first", "Notes: first second", "Notes: first second"]);
+    expect(composeDictatedText("Notes: ", "first")).toBe("Notes: first");
+    expect(composeDictatedText("", "")).toBe("");
+  });
+
+  it("a restarted session starts from the box as it stands and adds only its own speech", () => {
+    // Session 1 ends with "hello there" in the box; session 2's result list
+    // starts empty again and must not re-add session 1's words.
+    const [, end1] = play("", [list(r("hello", false)), list(r("hello there", true))]);
+    expect(end1).toBe("hello there");
+    const session2 = play(end1, [list(r("more words", false)), list(r("more words", true))]);
+    expect(session2).toEqual(["hello there more words", "hello there more words"]);
   });
 });

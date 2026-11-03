@@ -26,6 +26,7 @@ import {
 } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { DictateButton } from "@/components/dictate-button";
+import { BoldText } from "@/components/bold-text";
 import { feedTimestamp } from "@/lib/feed-time";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -261,7 +262,7 @@ export function ImprovementThreadPanel({ improvementId, title, open, onClose }: 
                       </p>
                       <p className="text-lg font-bold mt-1 break-words">{e.title}</p>
                       {e.description && e.description !== e.title && (
-                        <p className="text-base mt-1 whitespace-pre-wrap break-words">{e.description}</p>
+                        <p className="text-base mt-1 whitespace-pre-wrap break-words"><BoldText text={e.description} /></p>
                       )}
                       <Thumbs photos={e.photos} onOpen={setLightbox} />
                     </div>

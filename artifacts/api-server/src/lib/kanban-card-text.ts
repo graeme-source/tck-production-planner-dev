@@ -42,6 +42,34 @@ export function kanbanUnitLabel(kanbanUnit: string, unit: string, qty: number, p
   }
 }
 
+/** One storage assignment as it reads on a card — "Dry Store · Rack A1 ·
+ *  Top shelf" (#357). Rack and shelf are free text typed by the team, so a
+ *  label that already says "rack"/"shelf" is left alone; a bare code gets the
+ *  word in front ("Rack A1", "Shelf 3"); a bare word reads naturally
+ *  ("Top shelf"). Blank parts are dropped. */
+export interface KanbanLocationParts {
+  name: string;
+  rackLabel: string | null;
+  shelfLabel: string | null;
+}
+
+const hasDigit = (v: string) => /\d/.test(v);
+
+export function kanbanLocationLabel(l: KanbanLocationParts): string {
+  const name = l.name.trim();
+  const rack = l.rackLabel?.trim() ?? "";
+  const shelf = l.shelfLabel?.trim() ?? "";
+  const parts = [name];
+  if (rack) parts.push(/\brack\b/i.test(rack) ? rack : `Rack ${rack}`);
+  if (shelf) parts.push(/\bshelf\b/i.test(shelf) ? shelf : hasDigit(shelf) || shelf.length <= 2 ? `Shelf ${shelf}` : `${shelf} shelf`);
+  return parts.filter(Boolean).join(" · ");
+}
+
+/** Every assignment for one item, in order, as one card line. */
+export function kanbanLocationsLabel(locations: KanbanLocationParts[]): string | null {
+  return locations.map(kanbanLocationLabel).filter(Boolean).join(", ") || null;
+}
+
 const fmtQty = (n: number): string => (Number.isInteger(n) ? String(n) : String(Math.round(n * 1000) / 1000));
 
 export function kanbanCardText(c: KanbanCardSource): KanbanCardText {

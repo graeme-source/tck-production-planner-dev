@@ -28,6 +28,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { ImprovementsTab } from "@/pages/reports";
 import { ImprovementAttachments } from "@/components/improvement-attachments";
 import { ImprovementEditText } from "@/components/improvement-edit-text";
+import { BoldButton, BoldText } from "@/components/bold-text";
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import { ImprovementFeedMedia, improvementMediaUrl } from "@/components/improvement-feed-media";
@@ -792,6 +793,7 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
   const queryClient = useQueryClient();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const [alreadyDone, setAlreadyDone] = useState(true);
   // "Done with…" (Graeme, 2026-09-24) — you're ticked; add whoever helped.
   const { state: auth } = useAuth();
@@ -858,8 +860,12 @@ function LogImprovement({ onDone, onCancel }: { onDone: (id: number) => void; on
       </div>
 
       <div>
-        <label className="text-lg font-bold mb-2 block">Anything to add? <span className="font-normal text-muted-foreground">(optional)</span></label>
+        <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
+          <label className="text-lg font-bold block">Anything to add? <span className="font-normal text-muted-foreground">(optional)</span></label>
+          <BoldButton textareaRef={descriptionRef} value={description} onChange={setDescription} />
+        </div>
         <textarea
+          ref={descriptionRef}
           value={description}
           onChange={e => setDescription(e.target.value)}
           rows={3}
@@ -1054,7 +1060,7 @@ function ImprovementDetail({ id, onBack, isManager, isAdmin, initialThreadOpen =
         </div>
         <h1 className="text-3xl font-bold leading-snug break-words">{item.title}</h1>
         {item.description && item.description !== item.title && (
-          <p className="text-xl leading-relaxed mt-3 whitespace-pre-wrap">{item.description}</p>
+          <p className="text-xl leading-relaxed mt-3 whitespace-pre-wrap"><BoldText text={item.description} /></p>
         )}
         <p className="text-base text-muted-foreground mt-3">
           Logged by {item.submittedByName ?? "someone"}

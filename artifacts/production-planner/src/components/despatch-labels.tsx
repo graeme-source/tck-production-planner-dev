@@ -8,12 +8,17 @@
  * published (or changed since) = no button, just what to do and a link to
  * its label page. Sits on every dessert report (packing station, opening
  * checklist, fulfilment). API: /api/dessert-labels/despatch.
+ *
+ * "Print some" (fix-queue #374): a − / + number starting at the day's total
+ * for a second packing run; the server caps it at the day's total.
  */
 import { useState } from "react";
 import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Check, Loader2, Printer } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Loader2, Printer } from "lucide-react";
 import { formatLabelDate } from "@workspace/product-labels";
+import { cn } from "@/lib/utils";
+import { LabelCountStepper } from "./label-count-stepper";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -47,6 +52,9 @@ export function DespatchLabelsButton({ tag, title }: { tag: string; title: strin
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [printed, setPrinted] = useState(false);
+  const [someOpen, setSomeOpen] = useState(false);
+  const [some, setSome] = useState<number | null>(null);
+  const [printedSome, setPrintedSome] = useState<number | null>(null);
   const line = q.data?.lines.find(l => l.title === title);
   // Lines with no recipe link (or a dessert with no label at all) show nothing.
   if (!line || line.recipeId == null || line.count < 1) return null;
@@ -61,7 +69,10 @@ export function DespatchLabelsButton({ tag, title }: { tag: string; title: strin
     );
   }
 
-  const print = async () => {
+  const someCount = Math.min(line.count, Math.max(1, some ?? line.count));
+
+  /** No count = the whole day (the one-tap default). */
+  const print = async (count?: number) => {
     setError(null);
     // Open the tab on the tap itself: iPad Safari blocks one opened after an await.
     const tab = window.open("", "_blank");
@@ -69,13 +80,13 @@ export function DespatchLabelsButton({ tag, title }: { tag: string; title: strin
     try {
       const res = await fetch(`${BASE}/api/dessert-labels/despatch/print`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ tag, recipeId: line.recipeId }),
+        body: JSON.stringify({ tag, recipeId: line.recipeId, ...(count !== undefined ? { count } : {}) }),
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? `HTTP ${res.status}`);
       const url = URL.createObjectURL(await res.blob());
       if (tab) tab.location.href = url;
       else { const a = document.createElement("a"); a.href = url; a.download = `despatch-labels-${tag}.pdf`; a.click(); }
-      setPrinted(true);
+      if (count === undefined) setPrinted(true); else setPrintedSome(count);
     } catch (e) {
       tab?.close();
       setError(e instanceof Error ? e.message : "Couldn't make the labels");
@@ -86,11 +97,28 @@ export function DespatchLabelsButton({ tag, title }: { tag: string; title: strin
 
   return (
     <div className="mt-2 space-y-1">
-      <button type="button" onClick={print} disabled={busy}
-        className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
-        {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : printed ? <Check className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
-        {printed ? "Print again" : `Print ${line.count} label${line.count === 1 ? "" : "s"}`}
-      </button>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" onClick={() => print()} disabled={busy}
+          className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
+          {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : printed ? <Check className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
+          {printed ? "Print again" : `Print ${line.count} label${line.count === 1 ? "" : "s"}`}
+        </button>
+        <button type="button" onClick={() => setSomeOpen(o => !o)} aria-expanded={someOpen}
+          className="h-12 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary inline-flex items-center gap-1">
+          Print some <ChevronDown className={cn("w-4 h-4 transition-transform", someOpen && "rotate-180")} />
+        </button>
+      </div>
+      {someOpen && (
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <LabelCountStepper value={someCount} min={1} max={line.count} onChange={setSome} label={`${line.recipeName ?? title} labels`} />
+          <button type="button" onClick={() => print(someCount)} disabled={busy}
+            className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
+            Print {someCount} label{someCount === 1 ? "" : "s"}
+          </button>
+          {printedSome !== null && <span className="text-sm text-emerald-700 dark:text-emerald-400 font-semibold inline-flex items-center gap-1"><Check className="w-4 h-4" /> Sent {printedSome}</span>}
+        </div>
+      )}
       <p className="text-xs text-muted-foreground">
         The {line.recipeName} despatch label{line.dates?.useBy ? `, use by ${formatLabelDate(line.dates.useBy)}` : ""}, dated today. Print at Actual size (no “fit to page”).
       </p>
