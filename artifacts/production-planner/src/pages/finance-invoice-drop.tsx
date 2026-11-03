@@ -216,7 +216,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
             <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
               Attached to {item.attachedTo.supplier}, {money(item.attachedTo.amount)} on {ukDate(item.attachedTo.lineDate)}.
-              {item.autoDone ? " It was already posted in QuickBooks, so it's done and filed in Invoices." : " It's now under Document found."}
+              {item.autoDone ? " It was already posted in QuickBooks, so it's done and filed in Invoices." : " It's now under To be processed."}
             </div>
           </div>
         )}

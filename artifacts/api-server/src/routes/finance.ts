@@ -26,7 +26,7 @@ import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 import { buildChaseEmail } from "../lib/finance/chase-email";
-import { storedFileHeaders } from "../lib/finance/posted-rules";
+import { NO_VAT_REASONS, storedFileHeaders } from "../lib/finance/posted-rules";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
@@ -253,6 +253,52 @@ const manualLineSchema = z.object({
     .refine(v => Math.abs(v) < 1_000_000, "Amount looks too large"),
   paidFrom: z.string().trim().max(120).optional().nullable(),
   note: z.string().trim().max(2000).optional().nullable(),
+});
+
+// "No VAT invoice" (Graeme, 2026-11-03) — the one control that replaced
+// "Not needed". DLA = a personal purchase on a business card; Other = say
+// why. Either way it goes to the bookkeeper's To be processed list with
+// its posting instruction (no VAT reclaim) and closes itself once posted.
+// Undo puts it back to needing an invoice.
+const noVatSchema = z.object({
+  reason: z.enum(NO_VAT_REASONS).nullable(),
+  note: z.string().trim().max(2000).optional().nullable(),
+}).refine((b) => b.reason !== "other" || !!b.note, { message: "Say why there's no VAT invoice" });
+router.patch("/lines/:id/no-vat", requireFinanceAccess, validate(noVatSchema), async (req: Request, res: Response) => {
+  try {
+    const lineId = Number(req.params.id);
+    const { reason, note } = req.body as z.infer<typeof noVatSchema>;
+    const [line] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, lineId));
+    if (!line) { res.status(404).json({ error: "Line not found" }); return; }
+    const now = new Date();
+    if (reason) {
+      await db.update(finLinesTable).set({
+        noVatReason: reason,
+        ...(note ? { statusNote: note } : {}),
+        status: line.status === "open" || line.status === "identified" ? "matched" : line.status,
+        updatedAt: now,
+      }).where(eq(finLinesTable.id, lineId));
+      // Nothing to find in the mailbox for it any more.
+      await db.update(finMatchesTable).set({ state: "cleared", decidedAt: now })
+        .where(and(eq(finMatchesTable.lineId, lineId), eq(finMatchesTable.state, "suggested")));
+    } else {
+      const [doc] = await db.select({ id: finDocumentsTable.id }).from(finDocumentsTable).where(eq(finDocumentsTable.lineId, lineId)).limit(1);
+      await db.update(finLinesTable).set({
+        noVatReason: null,
+        status: line.status === "matched" && !doc ? "open" : line.status,
+        updatedAt: now,
+      }).where(eq(finLinesTable.id, lineId));
+    }
+    await logFinEvent("line", lineId, reason ? `marked_no_vat_${reason}` : "unmarked_no_vat", req.session.userId, { was: line.noVatReason, note: note ?? null });
+    // Never closed here, even if it's already posted: every line must reach
+    // the bookkeeper with its classification (Graeme, 2026-11-03), and one
+    // posted BEFORE it was marked may have been posted with VAT. It closes
+    // when they post it (QuickBooks found / Posted ticked) or press Mark done.
+    res.json({ ok: true, autoDone: false });
+  } catch (err) {
+    console.error("[finance] no-vat error:", err);
+    res.status(500).json({ error: "Failed to save" });
+  }
 });
 
 router.post("/lines", requireFinanceAccess, validate(manualLineSchema), async (req: Request, res: Response) => {

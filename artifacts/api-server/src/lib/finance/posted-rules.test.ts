@@ -42,6 +42,11 @@ describe("describeImapLoginError", () => {
 
 describe("isReadyToClose — done = posted + VAT invoice", () => {
   const posted = new Date("2026-11-03T10:00:00Z");
+  it("closes a DLA purchase once it's posted, with no invoice", () => {
+    expect(isReadyToClose({ status: "matched", postedDetectedAt: posted, noVatReason: "dla" }, false)).toBe(true);
+    expect(isReadyToClose({ status: "matched", postedDetectedAt: null, noVatReason: "dla" }, false)).toBe(false);
+    expect(isReadyToClose({ status: "done", postedDetectedAt: posted, noVatReason: "dla" }, false)).toBe(false);
+  });
   it("closes only when both are true", () => {
     expect(isReadyToClose({ status: "matched", postedDetectedAt: posted }, true)).toBe(true);
     expect(isReadyToClose({ status: "open", postedDetectedAt: posted }, false)).toBe(false);

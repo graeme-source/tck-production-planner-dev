@@ -74,7 +74,20 @@ type FinLine = {
   qboTxnId: number | null;
   /** When it was found (sync) or ticked (accounts team) as posted; null = not posted. */
   postedDetectedAt: string | null;
+  /** Will never have a VAT invoice: "dla" or "other" (reason in statusNote). */
+  noVatReason: string | null;
 };
+
+/** What the bookkeeper is told to do with a line that has no VAT invoice. */
+function noVatInstruction(line: FinLine): { pill: string; title: string; body: string } | null {
+  if (line.noVatReason === "dla") {
+    return { pill: "DLA", title: "DLA — please post to the Director's Loan Account", body: "Personal purchase on a business card. No VAT reclaim." };
+  }
+  if (line.noVatReason) {
+    return { pill: "No VAT invoice", title: "No VAT invoice — post without VAT", body: `${line.statusNote ?? "No reason given"}. No VAT reclaim.` };
+  }
+  return null;
+}
 
 type FinVendor = {
   id: number;
@@ -144,7 +157,9 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
 
 const FILTERS = [
   { key: "outstanding", label: "Outstanding" },
-  { key: "matched", label: "Document found" },
+  // The bookkeeper's queue: a VAT invoice attached, or the team has said
+  // there won't be one and how to post it (Graeme, 2026-11-03).
+  { key: "matched", label: "To be processed" },
   { key: "done", label: "Completed" },
   { key: "all", label: "All" },
 ] as const;
@@ -604,13 +619,16 @@ function LineRow({
     : STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
   const hasInvoiceDoc = docs.some(d => d.docKind === "invoice");
   const hasConfirmationDoc = docs.some(d => d.docKind === "order_confirmation");
-  const status = (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
+  const noVat = noVatInstruction(line);
+  const status = noVat && line.status !== "done" && line.status !== "not_needed"
+    ? { label: noVat.pill, tone: "bg-violet-600 text-white" }
+    : (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
     ? { label: "Invoice attached", tone: "bg-emerald-100 text-emerald-900" }
     : (line.status === "matched" || line.status === "identified") && hasConfirmationDoc
       ? { label: "Order confirmation attached", tone: "bg-sky-100 text-sky-900" }
       : baseStatus;
   return (
-    <Card>
+    <Card className={noVat ? "border-2 border-violet-300 bg-violet-50/70 dark:bg-violet-950/20" : undefined}>
       <button className="w-full text-left" onClick={onToggle}>
         <div className="flex items-center gap-3 px-4 py-3">
           {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
@@ -644,7 +662,7 @@ function LineRow({
       </button>
       {expanded && (
         <CardContent className="border-t pt-4 space-y-4">
-          {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
+          {noVat ? <NoVatPanel line={line} info={noVat} /> : line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
           <PostedToggle line={line} />
           {/* The VAT invoice, big and shown straight away — the thing the
               accounts team check (Graeme, 2026-11-03). */}
@@ -664,15 +682,16 @@ function LineRow({
             </div>
           ))}
           <DocumentsBlock line={line} docs={docs} />
-          {line.status !== "done" && line.status !== "not_needed" && <SupplierFieldsBlock line={line} />}
-          {line.status !== "done" && line.status !== "not_needed" && <AddFileControl line={line} />}
+          {/* Hunting for an invoice only matters while one is expected. */}
+          {line.status !== "done" && line.status !== "not_needed" && !noVat && <SupplierFieldsBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && !noVat && <AddFileControl line={line} />}
           {/* Once the VAT invoice is in, mailbox suggestions are just noise. */}
-          {(line.status === "open" || line.status === "identified" || line.status === "matched") && !hasInvoiceDoc && (
+          {(line.status === "open" || line.status === "identified" || line.status === "matched") && !hasInvoiceDoc && !noVat && (
             <SuggestionsBlock lineId={line.id} />
           )}
-          {line.status !== "done" && line.status !== "not_needed" && <ChaseSupplierBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && !noVat && <ChaseSupplierBlock line={line} />}
           {vendor && <VendorBlock vendor={vendor} />}
-          <StatusButtons line={line} onStatus={onStatus} />
+          <StatusButtons line={line} hasInvoiceDoc={hasInvoiceDoc} onStatus={onStatus} />
           <details className="border-t pt-3">
             <summary className="cursor-pointer text-sm font-medium">Who did what, when</summary>
             <div className="mt-2"><HistoryList type="line" id={line.id} /></div>
@@ -1323,7 +1342,7 @@ function PostedToggle({ line }: { line: FinLine }) {
   );
 }
 
-function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: string, note?: string | null) => void }) {
+function StatusButtons({ line, hasInvoiceDoc, onStatus }: { line: FinLine; hasInvoiceDoc: boolean; onStatus: (status: string, note?: string | null) => void }) {
   const [note, setNote] = useState(line.statusNote ?? "");
   const isClosed = line.status === "done" || line.status === "not_needed";
   return (
@@ -1336,9 +1355,7 @@ function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: s
             <Button size="sm" onClick={() => onStatus("done", note || null)}>
               <CheckCircle2 className="h-4 w-4 mr-1" /> Mark done
             </Button>
-            <Button size="sm" variant="outline" onClick={() => onStatus("not_needed", note || null)}>
-              Not needed
-            </Button>
+            {!line.noVatReason && !hasInvoiceDoc && <NoVatControl line={line} />}
             {note !== (line.statusNote ?? "") && (
               <Button size="sm" variant="ghost" onClick={() => onStatus(line.status, note || null)}>Save note</Button>
             )}
@@ -1356,6 +1373,83 @@ function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: s
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** The instruction to the bookkeeper on a line with no VAT invoice, and the
+ *  way back if it does need one after all. */
+function NoVatPanel({ line, info }: { line: FinLine; info: { title: string; body: string } }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const undo = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/lines/${line.id}/no-vat`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: null }),
+    }),
+    onSuccess: () => { toast({ title: "Back to needing a VAT invoice" }); queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }); },
+    onError: (e: Error) => toast({ title: "Couldn't change it", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <div className="rounded-2xl bg-violet-600 text-white p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-lg font-semibold">{info.title}</div>
+        <div className="text-sm text-white/90">{info.body}</div>
+      </div>
+      {line.status !== "done" && line.status !== "not_needed" && (
+        <Button size="sm" variant="secondary" onClick={() => undo.mutate()} disabled={undo.isPending} className="shrink-0">
+          It does need a VAT invoice
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The one control for "this will never have a VAT invoice" (Graeme,
+ *  2026-11-03 — it replaced "Not needed"): DLA, or another reason. The line
+ *  goes to To be processed with its posting instruction. */
+function NoVatControl({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [other, setOther] = useState(false);
+  const [reason, setReason] = useState("");
+  const mark = useMutation({
+    mutationFn: (body: { reason: "dla" | "other"; note?: string }) => jsonFetch(`${BASE}/api/finance/lines/${line.id}/no-vat`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }),
+    onSuccess: () => {
+      toast({ title: "Sent to the bookkeeper", description: line.postedDetectedAt
+        ? "It's under To be processed — already posted, so they'll check it went to the right place and mark it done."
+        : "It's under To be processed with the posting instruction. It closes once they've posted it." });
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
+  });
+  if (!open) {
+    return <Button size="sm" variant="outline" onClick={() => setOpen(true)}>No VAT invoice</Button>;
+  }
+  return (
+    <div className="w-full rounded-xl border-2 border-violet-300 bg-violet-50 dark:bg-violet-950/20 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold flex-1">Why is there no VAT invoice?</span>
+        <Button size="icon" variant="ghost" onClick={() => setOpen(false)} aria-label="Cancel"><XCircle className="h-4 w-4" /></Button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button className="bg-violet-600 hover:bg-violet-700 text-white" onClick={() => mark.mutate({ reason: "dla" })} disabled={mark.isPending}>
+          DLA — personal purchase on a business card
+        </Button>
+        <Button variant="outline" onClick={() => setOther(true)} disabled={mark.isPending}>Another reason</Button>
+      </div>
+      {other && (
+        <div className="flex flex-wrap gap-2">
+          <Input className="flex-1 min-w-[220px] bg-white dark:bg-card" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. supplier isn't VAT registered" autoFocus />
+          <Button onClick={() => mark.mutate({ reason: "other", note: reason.trim() })} disabled={!reason.trim() || mark.isPending}>
+            Send to the bookkeeper
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

@@ -94,6 +94,10 @@ export const finLinesTable = pgTable("fin_lines", {
   // When we learned it's posted in QuickBooks — by the sync, or ticked by
   // the accounts team. Drives the Posted / Not posted filter; null = not posted.
   postedDetectedAt: timestamp("posted_detected_at"),
+  // Will never have a VAT invoice (migration 0351): 'dla' = personal
+  // purchase on a business card, post to the Director's Loan Account, no
+  // VAT reclaim; 'other' = reason in statusNote. NULL = needs a VAT invoice.
+  noVatReason: text("no_vat_reason"),
   // sha256 over source|dates|amount|descriptor|card — makes re-uploads of
   // overlapping exports safe (dedupe on conflict).
   dedupeHash: text("dedupe_hash").notNull().unique(),
