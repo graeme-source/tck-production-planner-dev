@@ -1,6 +1,7 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { loadQueuedOrderItems, markQueuedOrdered } from "../lib/queued-production-orders";
-import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, type SurplusByDeliveryWeekday } from "@workspace/business-days";
+import { loadDueStandingOrders, markStandingOrdered } from "../lib/standing-orders";
+import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, packsWithStandingFloor, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 import {
   db,
   productionPlansTable,
@@ -494,6 +495,11 @@ router.get("/calculate", async (req, res) => {
       /** Queued test production on this card (lib/queued-production-orders.ts):
        *  fixed packs included in splitInPacks, so the page's recompute keeps them. */
       testProduction?: Array<{ productionDate: string; packs: number }>;
+      /** Standing weekly order due today (#348, lib/standing-orders.ts):
+       *  "Every Fri" and its fixed packs — a floor on this line, not extra.
+       *  standingFloorPacks lets the page's stock-edit recompute keep it. */
+      standingOrder?: { label: string; packs: number };
+      standingFloorPacks?: number;
     }>;
   }> = {};
 
@@ -1047,6 +1053,92 @@ router.get("/calculate", async (req, res) => {
     });
   }
 
+  // Standing weekly orders due today (Fix queue #348) — "Automatically order
+  // every Friday". The fixed packs go on the item's line whatever the stock,
+  // marked "Every Fri", until an order with it is placed today
+  // (markStandingOrdered) or someone presses "Not today". The packs are a
+  // FLOOR, never added on: if the stock maths or a pulled kanban already
+  // asks for more, that's what's ordered (packsWithStandingFloor). An item
+  // already on any card (e.g. a kanban routed elsewhere) gets the floor
+  // there; otherwise it joins its own supplier's card.
+  for (const st of await loadDueStandingOrders(today)) {
+    const tag = { label: st.label, packs: st.packs };
+    const existing = Object.values(supplierOrderMap)
+      .flatMap(so => so.lines)
+      .find(l => l.ingredientId === st.ingredientId);
+    if (existing) {
+      // Split-in / queued test packs stay on top, as on the page (suggestedPacks).
+      const inPacks = existing.splitInPacks ?? 0;
+      const before = Math.max(0, existing.packsToOrder - inPacks);
+      existing.packsToOrder = packsWithStandingFloor(before, st.packs) + inPacks;
+      existing.orderQty = lineQtyForPacks(existing, existing.packsToOrder);
+      existing.standingOrder = tag;
+      existing.standingFloorPacks = st.packs;
+      existing.belowRequirement = false;
+      continue;
+    }
+    const sid = st.supplierId;
+    if (!sid) continue;
+    if (!supplierOrderMap[sid]) {
+      const supplier = supplierLookup[sid] ?? (await db.select().from(suppliersTable).where(eq(suppliersTable.id, sid)).limit(1))[0];
+      if (!supplier) continue;
+      supplierLookup[sid] ??= supplier;
+      supplierOrderMap[sid] = {
+        supplier: {
+          id: sid,
+          name: supplier.name,
+          contactName: supplier.contactName ?? null,
+          email: supplier.email ?? null,
+          phone: supplier.phone ?? null,
+          orderingPhone: supplier.orderingPhone ?? null,
+          website: supplier.website ?? null,
+          leadTimeDays: supplier.leadTimeDays ?? 1,
+          cutoffTime: supplier.cutoffTime ?? "17:00",
+        },
+        lines: [],
+      };
+    }
+    const [d] = await db.select().from(ingredientsTable).where(eq(ingredientsTable.id, st.ingredientId)).limit(1);
+    if (!d) continue;
+    const packWeight = Number(d.packWeight) || 1;
+    const ls = lineStockFor(d.id, d.stockCheckEnabled ?? false);
+    supplierOrderMap[sid].lines.push({
+      ingredientId: d.id,
+      ingredientName: d.name,
+      unit: d.unit ?? "kg",
+      totalRequired: 0,
+      stockOnHand: Math.round(ls.stockOnHand * 100) / 100,
+      surplusTarget: 0,
+      packWeight,
+      costPerPack: Number(d.costPerPack) || 0,
+      supplierPartNumber: d.supplierPartNumber ?? null,
+      orderQty: packsToBaseQty(st.packs, packWeight),
+      packsToOrder: st.packs,
+      isKanban: false,
+      kanbanFloorPacks: null,
+      stockCounted: d.stockCheckEnabled ?? false,
+      stockBasis: ls.basis,
+      expectedStock: ls.expectedStock,
+      expectedAtLastCount: ls.expectedAtLastCount,
+      orderingUrl: d.orderingUrl ?? null,
+      lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
+      belowRequirement: false,
+      stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
+      // A fixed amount: no requirement, surplus, prep, inbound or case maths.
+      caseSizePacks: null,
+      inboundQty: 0,
+      inboundDeliveries: [],
+      prepOutstandingQty: 0,
+      nativeUnit: d.unit ?? "kg",
+      palletSize: positivePalletSize(d.palletSize),
+      orderInPallets: false,
+      palletSizeMissing: false,
+      standingOrder: tag,
+      standingFloorPacks: st.packs,
+      packName: d.packName ?? null,
+    });
+  }
+
   // Suppliers configured with orderFrequency=weekly + orderDays only place
   // orders on those weekdays — A.D.Maria (Tuesday) was reappearing on every
   // plan because we filtered ingredients by stockCheckDay but never consulted
@@ -1445,6 +1537,8 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
   await markSplitsPlaced(orderId);
   // Queued test production on this card is now ordered too.
   await markQueuedOrdered(orderId, updated.supplierId, placedIngredientIds);
+  // Standing weekly orders due today are ordered — not back until next time (#348).
+  await markStandingOrdered(orderId, placedIngredientIds);
 
   res.json({
     ...updated,
@@ -1537,6 +1631,7 @@ router.patch("/purchase-orders/:id/resubmit", async (req, res) => {
 
     await markSplitsPlaced(orderId);
     await markQueuedOrdered(orderId, updated.supplierId, resubmitIngredientIds);
+    await markStandingOrdered(orderId, resubmitIngredientIds);
 
     console.log(`[Orders] Resubmitted PO ${orderId} with ${cleanedLines.length} lines`);
     res.json({

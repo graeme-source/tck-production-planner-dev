@@ -1,6 +1,7 @@
 import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { clearIngredientMark, OUTSTANDING_KEY } from "@/components/queued-production/api";
 import { QueuedOrdersReminder } from "@/components/queued-production/orders-reminder";
+import { StandingOrderChip } from "@/components/standing-order-chip";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -175,6 +176,9 @@ type OrderLine = SurplusLineFields & {
   /** Queued test production on this card — fixed packs, included in
    *  splitInPacks (components/queued-production, 30 Oct 2026). */
   testProduction?: Array<{ productionDate: string; packs: number }>;
+  /** Standing weekly order due today (#348) — "Every Fri" and its fixed
+   *  packs, a floor on this line (standingFloorPacks, SurplusLineFields). */
+  standingOrder?: { label: string; packs: number };
   /** What one pack is called — "box", "roll" (#327). Null = pack. */
   packName?: string | null;
 };
@@ -2540,6 +2544,17 @@ export default function Orders() {
                                 </button>
                               </span>
                             ))}
+                            {line.standingOrder && (
+                              <StandingOrderChip
+                                ingredientId={line.ingredientId}
+                                ingredientName={line.ingredientName}
+                                label={line.standingOrder.label}
+                                packs={line.standingOrder.packs}
+                                unit={line.unit}
+                                packName={line.packName}
+                                onSkipped={refreshCalc}
+                              />
+                            )}
                             {(line.splitsAway ?? []).map(sp => (
                               <span key={`away-${sp.id}`} className="flex items-center gap-1 mt-1 text-xs font-medium text-sky-700 dark:text-sky-300">
                                 <Scissors className="w-3 h-3" />
@@ -2582,9 +2597,11 @@ export default function Orders() {
                               ) : !showsStockCheckButton(line) && !line.stockDirty ? (
                                 <span
                                   className="text-[10px] text-muted-foreground"
-                                  title="Kanban item: no stock check needed. The kanban card drives the order. To count it, tick Requires Stock Check on the ingredient."
+                                  title={line.isKanban
+                                    ? "Kanban item: no stock check needed. The kanban card drives the order. To count it, tick Requires Stock Check on the ingredient."
+                                    : "Standing weekly order: no stock check needed. It comes up on its day whatever the stock. To count it, tick Requires Stock Check on the ingredient."}
                                 >
-                                  Kanban — no stock check needed
+                                  {line.isKanban ? "Kanban" : "Weekly order"} — no stock check needed
                                 </span>
                               ) : line.lastStockCheckAt ? (() => {
                                 const d = new Date(line.lastStockCheckAt);
