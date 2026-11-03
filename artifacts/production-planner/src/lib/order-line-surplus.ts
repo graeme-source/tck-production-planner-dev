@@ -12,7 +12,7 @@
  * day's surplus (Graeme, 14 Oct 2026). Lines without the setting, or
  * without the inputs (kanban-only / manual / misc lines), come back as-is.
  */
-import { packsAfterSplits, surplusFor, surplusLabel, toISODate, type SurplusByDeliveryWeekday } from "@workspace/business-days";
+import { packsAfterSplits, packsWithStandingFloor, surplusFor, surplusLabel, toISODate, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 
 export type SurplusLineFields = {
   totalRequired: number;
@@ -36,6 +36,10 @@ export type SurplusLineFields = {
    *  supplier's order (taken off) and fixed packs moved in (added on). */
   splitAwayPacks?: number;
   splitInPacks?: number;
+  /** Standing weekly order due today (#348): its fixed packs are a floor
+   *  on the line (packsWithStandingFloor), applied after split-away packs
+   *  and before split-in / queued test packs, as /orders/calculate does. */
+  standingFloorPacks?: number | null;
 };
 
 export function suggestedPacks(line: SurplusLineFields, stock: number): number {
@@ -44,8 +48,10 @@ export function suggestedPacks(line: SurplusLineFields, stock: number): number {
   if (line.isKanban && (line.kanbanFloorPacks ?? 0) > 0) packs = Math.max(packs, line.kanbanFloorPacks ?? 0);
   const caseSizePacks = line.caseSizePacks ?? 0;
   if (caseSizePacks > 0 && packs > 0) packs = Math.ceil(packs / caseSizePacks) * caseSizePacks;
-  // Splits apply last, exactly as /orders/calculate applies them.
-  return packsAfterSplits(packs, line.splitAwayPacks, line.splitInPacks);
+  // Splits apply last, exactly as /orders/calculate applies them — with a
+  // standing weekly order's floor between the packs split away and in.
+  const afterAway = packsAfterSplits(packs, line.splitAwayPacks, 0);
+  return packsWithStandingFloor(afterAway, line.standingFloorPacks) + Math.max(0, Number(line.splitInPacks) || 0);
 }
 
 /** True when moving the delivery date can change this line's surplus. */

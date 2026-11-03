@@ -29,6 +29,29 @@ describe("suggestedPacks", () => {
   });
 });
 
+describe("suggestedPacks with a standing weekly order (#348)", () => {
+  // Bananas on the AB Fruits order every Friday: 2 boxes, nothing else asks for them.
+  const bananas: SurplusLineFields = { totalRequired: 0, surplusTarget: 0, packWeight: 1, isKanban: false, standingFloorPacks: 2 };
+
+  it("a stock edit keeps the standing packs on a standing-only line", () => {
+    expect(suggestedPacks(bananas, 0)).toBe(2);
+    expect(suggestedPacks(bananas, 50)).toBe(2);
+  });
+
+  it("is a floor, not added on: a bigger stock suggestion wins", () => {
+    expect(suggestedPacks({ ...chicken, standingFloorPacks: 3 }, 4)).toBe(8);
+    expect(suggestedPacks({ ...chicken, standingFloorPacks: 10 }, 4)).toBe(10);
+  });
+
+  it("split-in / queued test packs stay on top of the floor", () => {
+    expect(suggestedPacks({ ...bananas, splitInPacks: 3 }, 0)).toBe(5);
+  });
+
+  it("no standing order: unchanged maths", () => {
+    expect(suggestedPacks({ ...chicken, splitAwayPacks: 2, splitInPacks: 1 }, 4)).toBe(7);
+  });
+});
+
 describe("withDeliverySurplus", () => {
   it("moving the delivery to Thursday drops the surplus to 30%", () => {
     const thu = withDeliverySurplus(chicken, new Date(2026, 9, 15));

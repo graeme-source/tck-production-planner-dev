@@ -52,4 +52,9 @@ describe("Record stock check button on Orders (#336)", () => {
     expect(showsStockCheckButton({ isKanban: false, stockCounted: true })).toBe(true);
     expect(showsStockCheckButton({ isKanban: false })).toBe(true);
   });
+  it("no button on a standing weekly order nobody counts — the day drives it (#348)", () => {
+    const standingOrder = { label: "Every Fri", packs: 2 };
+    expect(showsStockCheckButton({ isKanban: false, stockCounted: false, standingOrder })).toBe(false);
+    expect(showsStockCheckButton({ isKanban: false, stockCounted: true, standingOrder })).toBe(true);
+  });
 });
