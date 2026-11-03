@@ -30,3 +30,22 @@ export function isReadyToClose(line: { status: string; postedDetectedAt: Date | 
   return (line.status === "open" || line.status === "identified" || line.status === "matched")
     && line.postedDetectedAt != null && hasVatInvoice;
 }
+
+
+/** Headers for serving a stored finance file. Files come from anywhere, so
+ *  the response is sandboxed — EXCEPT a genuine PDF (by its bytes, not its
+ *  claimed type): Chrome and Edge refuse to show a PDF under a sandbox and
+ *  offer a download instead (a colleague couldn't preview invoices, Graeme
+ *  2026-11-03). nosniff means a non-PDF can never be shown as one. */
+export function storedFileHeaders(mime: string, bytes: Uint8Array, fileName: string, download: boolean): Record<string, string> {
+  const isRealPdf = mime === "application/pdf" && bytes.length >= 5
+    && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46 && bytes[4] === 0x2d; // "%PDF-"
+  const headers: Record<string, string> = {
+    "Content-Type": mime || "application/octet-stream",
+    "Content-Length": String(bytes.length),
+    "Content-Disposition": `${download ? "attachment" : "inline"}; filename="${(fileName || "document").replace(/["\r\n]/g, "")}"`,
+    "X-Content-Type-Options": "nosniff",
+  };
+  if (!isRealPdf) headers["Content-Security-Policy"] = "sandbox";
+  return headers;
+}
