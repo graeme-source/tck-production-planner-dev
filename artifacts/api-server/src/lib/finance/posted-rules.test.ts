@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { postedLinkFields, describeImapLoginError, isReadyToClose } from "./posted-rules";
+import { postedLinkFields, describeImapLoginError, isReadyToClose, storedFileHeaders } from "./posted-rules";
 import { SHEET_ROWS_2026_11, sheetNotesByDedupeHash, sheetRowDedupeHash, sheetRowNote } from "./backlog-reset-2026-11";
 
 // Regression (Graeme, 2026-11-03): the QuickBooks sync closed 19 freshly
@@ -50,5 +50,22 @@ describe("isReadyToClose — done = posted + VAT invoice", () => {
   it("leaves closed lines alone", () => {
     expect(isReadyToClose({ status: "done", postedDetectedAt: posted }, true)).toBe(false);
     expect(isReadyToClose({ status: "not_needed", postedDetectedAt: posted }, true)).toBe(false);
+  });
+});
+
+// Regression (2026-11-03): a colleague's Chrome offered a download instead of
+// showing the invoice, because every file was served with CSP sandbox.
+describe("storedFileHeaders", () => {
+  const enc = (t: string) => new TextEncoder().encode(t);
+  it("lets a genuine PDF show in any browser", () => {
+    const h = storedFileHeaders("application/pdf", enc("%PDF-1.7 ..."), "inv.pdf", false);
+    expect(h["Content-Security-Policy"]).toBeUndefined();
+    expect(h["Content-Disposition"]).toBe('inline; filename="inv.pdf"');
+    expect(h["X-Content-Type-Options"]).toBe("nosniff");
+  });
+  it("keeps the sandbox on anything else, including a fake PDF", () => {
+    expect(storedFileHeaders("application/pdf", enc("<html><script>"), "x.pdf", false)["Content-Security-Policy"]).toBe("sandbox");
+    expect(storedFileHeaders("image/png", enc("\x89PNG"), "x.png", false)["Content-Security-Policy"]).toBe("sandbox");
+    expect(storedFileHeaders("text/html", enc("<html>"), "x.html", true)["Content-Disposition"]).toMatch(/^attachment/);
   });
 });

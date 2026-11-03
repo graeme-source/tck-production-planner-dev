@@ -193,3 +193,30 @@ export function normaliseInvoiceReading(raw: unknown): InvoiceReading {
     docKind: typeof r.doc_kind === "string" && KINDS.has(r.doc_kind) ? r.doc_kind as InvoiceReading["docKind"] : "invoice",
   };
 }
+
+// ---------------------------------------------------------------------------
+// The same invoice as a different file (migration 0350).
+
+/** Supplier name for comparing: case, punctuation and company suffixes
+ *  don't matter ("Aluxo Ltd." = "ALUXO LIMITED"). */
+export function normaliseSupplierForMatch(name: string | null | undefined): string | null {
+  if (!name) return null;
+  const s = name.toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\b(ltd|limited|plc|llp|llc|inc|uk|co|company|the)\b/g, " ")
+    .replace(/\s+/g, " ").trim();
+  return s || null;
+}
+
+/** Two invoices are the same invoice when this key matches: supplier +
+ *  invoice number, or — with no number — supplier + date + total. Null =
+ *  not enough read off it to say. */
+export function invoiceDuplicateKey(i: { supplierName: string | null; invoiceNumber: string | null; invoiceDate: string | null; totalAmount: string | null }): string | null {
+  const supplier = normaliseSupplierForMatch(i.supplierName);
+  if (!supplier) return null;
+  const number = i.invoiceNumber?.toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/(^|[A-Z])0+(?=\d)/g, "$1");
+  if (number) return `${supplier}|#${number}`;
+  if (i.invoiceDate && i.totalAmount != null) return `${supplier}|${i.invoiceDate}|${Number(i.totalAmount).toFixed(2)}`;
+  return null;
+}

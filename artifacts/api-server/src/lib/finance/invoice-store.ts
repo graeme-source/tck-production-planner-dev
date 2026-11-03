@@ -1,11 +1,11 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import {
-  db, finDocumentsTable, finEventsTable, finInvoicesTable, finLinesTable, finVendorsTable, usersTable,
+  db, finDocumentsTable, finEventsTable, finInvoicesTable, finLinesTable, finMatchesTable, finVendorsTable, usersTable,
 } from "@workspace/db";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../ai/claude";
 import { claudeCanRead } from "../uploaded-contract-access";
-import { INVOICE_READ_PROMPT, INVOICE_READ_TOOL, normaliseInvoiceReading, sha256Of } from "./invoice-library";
+import { INVOICE_READ_PROMPT, INVOICE_READ_TOOL, invoiceDuplicateKey, normaliseInvoiceReading, sha256Of } from "./invoice-library";
 import { isReadyToClose } from "./posted-rules";
 
 // Finance → Invoices library: storing files, the who-did-what log, the
@@ -113,6 +113,7 @@ export async function ingestLineDocuments(lineId: number, userId: number | null)
       supplierName: supplier, vendorId: line.vendorId, invoiceDate: line.lineDate, totalAmount: line.amount,
       lineId, documentId: d.id, postedBy: userId, postedAt: now, uploadedBy: d.uploadedBy,
     });
+    if (!r.duplicate) await refreshDuplicate(r.id);
     await logFinEvent("invoice", r.id, r.duplicate ? "linked_to_transaction" : "added_from_transaction", userId, {
       lineId, supplier, amount: line.amount, transactionDate: line.lineDate, fileName: d.fileName,
     });
@@ -144,6 +145,30 @@ export async function autoCompleteIfReady(lineId: number, userId: number | null,
   return true;
 }
 
+/** Once a line has its VAT invoice, the mailbox suggestions are noise
+ *  (Graeme, 2026-11-03): clear the open ones. Rejected/confirmed stay. */
+export async function clearSuggestionsIfInvoiced(lineId: number): Promise<number> {
+  const [inv] = await db.select({ id: finDocumentsTable.id }).from(finDocumentsTable)
+    .where(and(eq(finDocumentsTable.lineId, lineId), eq(finDocumentsTable.docKind, "invoice"), isNull(finDocumentsTable.supersededBy)))
+    .limit(1);
+  if (!inv) return 0;
+  const cleared = await db.update(finMatchesTable).set({ state: "cleared", decidedAt: new Date() })
+    .where(and(eq(finMatchesTable.lineId, lineId), eq(finMatchesTable.state, "suggested")))
+    .returning({ id: finMatchesTable.id });
+  return cleared.length;
+}
+
+/** Boot: clear suggestions on every line that already has a VAT invoice. */
+export async function clearSuggestionsOnInvoicedLines(): Promise<number> {
+  const rows = (await db.execute<{ id: number }>(sql`
+    UPDATE fin_matches m SET state = 'cleared', decided_at = NOW()
+     WHERE m.state = 'suggested'
+       AND EXISTS (SELECT 1 FROM fin_documents d WHERE d.line_id = m.line_id AND d.doc_kind = 'invoice' AND d.superseded_by IS NULL)
+    RETURNING m.id
+  `) as any).rows ?? [];
+  return rows.length;
+}
+
 /** Boot sweep: close any line that already met the rule before it existed. */
 export async function autoCompleteReadyLines(): Promise<number> {
   const rows = (await db.execute<{ id: number }>(sql`
@@ -154,6 +179,43 @@ export async function autoCompleteReadyLines(): Promise<number> {
   let n = 0;
   for (const r of rows) if (await autoCompleteIfReady(r.id, null, "posted_and_invoice_already")) n++;
   return n;
+}
+
+// ---------------------------------------------------------------------------
+// The same invoice as a different file (Graeme, 2026-11-03: "make sure we
+// can't double-upload the same invoice"). The earliest copy is the
+// original; later ones point at it and drop out of the library view.
+
+export async function refreshDuplicate(id: number): Promise<number | null> {
+  const [inv] = await db.select({
+    supplierName: finInvoicesTable.supplierName, invoiceNumber: finInvoicesTable.invoiceNumber,
+    invoiceDate: finInvoicesTable.invoiceDate, totalAmount: finInvoicesTable.totalAmount,
+    notDuplicate: finInvoicesTable.notDuplicate, duplicateOfId: finInvoicesTable.duplicateOfId,
+  }).from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
+  if (!inv) return null;
+  const key = invoiceDuplicateKey(inv);
+  let original: number | null = null;
+  if (key && !inv.notDuplicate) {
+    const [o] = await db.select({ id: finInvoicesTable.id }).from(finInvoicesTable)
+      .where(and(eq(finInvoicesTable.dupKey, key), isNull(finInvoicesTable.duplicateOfId), sql`${finInvoicesTable.id} < ${id}`))
+      .orderBy(asc(finInvoicesTable.id)).limit(1);
+    original = o?.id ?? null;
+  }
+  await db.update(finInvoicesTable).set({ dupKey: key, duplicateOfId: original }).where(eq(finInvoicesTable.id, id));
+  if (original && original !== inv.duplicateOfId) {
+    await logFinEvent("invoice", id, "flagged_duplicate", null, { of: original, key });
+  }
+  return original;
+}
+
+/** Boot: key every read invoice and flag duplicates among them, oldest first. */
+export async function sweepDuplicates(): Promise<number> {
+  const rows = await db.select({ id: finInvoicesTable.id }).from(finInvoicesTable)
+    .where(and(sql`${finInvoicesTable.readStatus} <> 'pending'`, isNull(finInvoicesTable.dupKey)))
+    .orderBy(asc(finInvoicesTable.id));
+  let flagged = 0;
+  for (const r of rows) if (await refreshDuplicate(r.id)) flagged++;
+  return flagged;
 }
 
 // ---------------------------------------------------------------------------
@@ -219,6 +281,7 @@ async function readOneInvoice(id: number, mime: string, size: number): Promise<v
     if (r.vatAmount) fields.vatAmount = r.vatAmount;
     await finish("done", null, fields);
     await logFinEvent("invoice", id, "read", null, { by: CLAUDE_MODELS.sonnet, ...r });
+    await refreshDuplicate(id);
   } catch (err) {
     console.error(`[finance] invoice ${id} read failed:`, err instanceof Error ? err.message : err);
     await finish("failed", "Couldn't read it automatically — fill the details in by hand, or press Read again.");
@@ -229,10 +292,18 @@ async function readOneInvoice(id: number, mime: string, size: number): Promise<v
 /** Boot: pick up anything left pending by a restart, then check every 10 min. */
 export function startInvoiceReaderTimer(): void {
   setTimeout(() => {
+    clearSuggestionsOnInvoicedLines()
+      .then((n) => { if (n > 0) console.log(`[finance] cleared ${n} mailbox suggestions on lines that already have a VAT invoice`); })
+      .catch((e) => console.error("[finance] suggestion clear sweep failed:", e));
     autoCompleteReadyLines()
       .then((n) => { if (n > 0) console.log(`[finance] ${n} lines were posted with a VAT invoice — marked done`); })
       .catch((e) => console.error("[finance] auto-complete sweep failed:", e));
   }, 20_000).unref();
+  setTimeout(() => {
+    sweepDuplicates()
+      .then((n) => { if (n > 0) console.log(`[finance] ${n} invoices flagged as the same invoice as an earlier one`); })
+      .catch((e) => console.error("[finance] duplicate sweep failed:", e));
+  }, 30_000).unref();
   setTimeout(kickInvoiceReader, 60_000).unref();
   setInterval(kickInvoiceReader, 10 * 60_000).unref();
 }

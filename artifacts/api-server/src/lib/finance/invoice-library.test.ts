@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { zipSync, strToU8 } from "fflate";
 import {
   extractInvoiceFiles, invoiceMimeFor, supplierHintFromPath, financialYearOfDate, financialYearRange,
-  periodOf, periodRange, normaliseInvoiceReading,
+  periodOf, periodRange, normaliseInvoiceReading, invoiceDuplicateKey, normaliseSupplierForMatch,
 } from "./invoice-library";
 
 const pdf = strToU8("%PDF-1.4 fake");
@@ -80,5 +80,24 @@ describe("normaliseInvoiceReading", () => {
   it("turns unreadable values into nulls, never junk", () => {
     const r = normaliseInvoiceReading({ invoice_date: "18/08/2026", total_amount: "lots", doc_kind: "menu", currency: "pounds" });
     expect(r).toMatchObject({ invoiceDate: null, totalAmount: null, docKind: "invoice", currency: "GBP", supplierName: null });
+  });
+});
+
+describe("same invoice as a different file", () => {
+  const base = { supplierName: "Aluxo Ltd.", invoiceNumber: "INV-002214", invoiceDate: "2026-08-18", totalAmount: "79.49" };
+  it("matches on supplier + invoice number, whatever the formatting", () => {
+    expect(invoiceDuplicateKey(base)).toBe(invoiceDuplicateKey({ ...base, supplierName: "ALUXO LIMITED", invoiceNumber: "inv 2214", totalAmount: "80.00" }));
+    expect(invoiceDuplicateKey(base)).not.toBe(invoiceDuplicateKey({ ...base, invoiceNumber: "INV-2215" }));
+    expect(invoiceDuplicateKey(base)).not.toBe(invoiceDuplicateKey({ ...base, supplierName: "Screwfix" }));
+  });
+  it("falls back to supplier + date + total when there's no number", () => {
+    const a = { ...base, invoiceNumber: null };
+    expect(invoiceDuplicateKey(a)).toBe("aluxo|2026-08-18|79.49");
+    expect(invoiceDuplicateKey({ ...a, totalAmount: "79.50" })).not.toBe(invoiceDuplicateKey(a));
+  });
+  it("won't guess without a supplier or enough detail", () => {
+    expect(invoiceDuplicateKey({ ...base, supplierName: null })).toBeNull();
+    expect(invoiceDuplicateKey({ supplierName: "Aluxo", invoiceNumber: null, invoiceDate: null, totalAmount: "1.00" })).toBeNull();
+    expect(normaliseSupplierForMatch("The Range & Co")).toBe("range and");
   });
 });

@@ -187,6 +187,7 @@ export const finInvoiceUploadsTable = pgTable("fin_invoice_uploads", {
   duplicates: integer("duplicates").notNull().default(0),
   skipped: jsonb("skipped").$type<string[]>().notNull().default([]),
   uploadedBy: integer("uploaded_by"),
+  status: text("status").notNull().default("done"), // 'open' while the browser is still sending parts
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
@@ -216,6 +217,11 @@ export const finInvoicesTable = pgTable("fin_invoices", {
   uploadedBy: integer("uploaded_by"),
   postedBy: integer("posted_by"),
   postedAt: timestamp("posted_at"),
+  // Same invoice as an earlier one (supplier + number, or supplier + date +
+  // total) — hidden from the library unless asked for (migration 0350).
+  duplicateOfId: integer("duplicate_of_id"),
+  notDuplicate: boolean("not_duplicate").notNull().default(false),
+  dupKey: text("dup_key"), // invoiceDuplicateKey(), for the indexed lookup
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

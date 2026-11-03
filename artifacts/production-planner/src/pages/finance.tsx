@@ -4,7 +4,7 @@ import { Link, Redirect, useLocation } from "wouter";
 import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
-import { InvoicesLibraryPanel, HistoryList } from "@/pages/finance-invoices";
+import { InvoicesLibraryPanel, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -23,6 +23,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import {
   Banknote,
   Download,
+  ExternalLink,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
@@ -249,6 +250,22 @@ function InvoicesTab() {
     onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
   });
 
+  // "Check QuickBooks now" (Graeme, 2026-11-03): after posting, the team
+  // flushes it through instead of waiting for the hourly check.
+  const qboCheck = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/check-now`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }) as Promise<{ linesMarkedPosted: number; linesAutoDone: number }>,
+    onSuccess: (r) => {
+      toast(r.linesMarkedPosted === 0
+        ? { title: "QuickBooks checked — nothing new found posted", description: "If you've just posted something, check the amount and date match the card line, or tick Posted on the line." }
+        : { title: `QuickBooks checked: ${r.linesMarkedPosted} marked posted`, description: r.linesAutoDone ? `${r.linesAutoDone} had their VAT invoice — done and filed in Invoices.` : "None had a VAT invoice attached yet, so they stay open." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't check QuickBooks", description: e.message, variant: "destructive" }),
+  });
+
   const data = linesQuery.data;
   const filtered = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -351,6 +368,11 @@ function InvoicesTab() {
         <div className="flex gap-2 flex-wrap items-center">
           <Button size="sm" variant="secondary" onClick={() => setAdding(true)}>
             <Plus className="h-4 w-4 mr-1" /> Add a transaction
+          </Button>
+          <Button size="sm" variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
+            title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
+            {qboCheck.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+            {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
           </Button>
           <span className="text-xs font-medium text-muted-foreground ml-1">Show</span>
           {FILTERS.map((f) => (
@@ -569,7 +591,7 @@ function LineRow({
           {line.chaseCount > 0 && line.status !== "done" && (
             <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">chased {line.chaseCount}×</Badge>
           )}
-          {suggestionCount > 0 && line.status !== "done" && (
+          {suggestionCount > 0 && line.status !== "done" && !hasInvoiceDoc && (
             <Badge variant="outline" className="shrink-0"><Mail className="h-3 w-3 mr-1" />{suggestionCount}</Badge>
           )}
         </div>
@@ -578,10 +600,28 @@ function LineRow({
         <CardContent className="border-t pt-4 space-y-4">
           {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
           <PostedToggle line={line} />
+          {/* The VAT invoice, big and shown straight away — the thing the
+              accounts team check (Graeme, 2026-11-03). */}
+          {docs.filter((d) => d.docKind === "invoice").map((d) => (
+            <div key={d.id} className="rounded-2xl border-2 border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/20 p-3 space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Badge className="bg-emerald-600 text-white">VAT invoice</Badge>
+                <span className="font-medium truncate flex-1 min-w-0">{d.fileName}</span>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={`${BASE}/api/finance/documents/${d.id}/file`} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4 mr-1" /> Open in a new tab</a>
+                </Button>
+                <Button size="sm" variant="outline" asChild>
+                  <a href={`${BASE}/api/finance/documents/${d.id}/file?download=1`}><Download className="h-4 w-4 mr-1" /> Download</a>
+                </Button>
+              </div>
+              <FilePreview url={`${BASE}/api/finance/documents/${d.id}/file`} mime={d.fileMime} name={d.fileName} className="h-[60dvh]" />
+            </div>
+          ))}
           <DocumentsBlock line={line} docs={docs} />
           {line.status !== "done" && line.status !== "not_needed" && <SupplierFieldsBlock line={line} />}
           {line.status !== "done" && line.status !== "not_needed" && <AddFileControl line={line} />}
-          {(line.status === "open" || line.status === "identified" || line.status === "matched") && (
+          {/* Once the VAT invoice is in, mailbox suggestions are just noise. */}
+          {(line.status === "open" || line.status === "identified" || line.status === "matched") && !hasInvoiceDoc && (
             <SuggestionsBlock lineId={line.id} />
           )}
           {line.status !== "done" && line.status !== "not_needed" && <ChaseSupplierBlock line={line} />}
@@ -892,7 +932,7 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
           'self' lesson). */}
       {preview && (
         <div className="fixed inset-0 z-[150] bg-black/60 flex items-center justify-center p-4" onClick={() => setPreview(null)}>
-          <div className="bg-background rounded-2xl w-full max-w-4xl h-[85vh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-background rounded-2xl w-full max-w-4xl h-[85vh] max-h-[92dvh] flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-3 px-4 py-3 border-b">
               <FileText className="h-4 w-4 shrink-0" />
               <span className="font-medium truncate flex-1">{preview.fileName}</span>
@@ -905,17 +945,9 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
                 <XCircle className="h-4 w-4" />
               </Button>
             </div>
-            {preview.fileMime.startsWith("image/") ? (
-              <div className="flex-1 overflow-auto flex items-center justify-center bg-secondary/30 p-4">
-                <img src={`${BASE}/api/finance/documents/${preview.id}/file`} alt={preview.fileName} className="max-w-full max-h-full object-contain" />
-              </div>
-            ) : (
-              <iframe
-                src={`${BASE}/api/finance/documents/${preview.id}/file`}
-                title={preview.fileName}
-                className="flex-1 w-full border-0"
-              />
-            )}
+            <div className="flex-1 overflow-auto p-3">
+              <FilePreview url={`${BASE}/api/finance/documents/${preview.id}/file`} mime={preview.fileMime} name={preview.fileName} className="h-full max-h-none" />
+            </div>
           </div>
         </div>
       )}

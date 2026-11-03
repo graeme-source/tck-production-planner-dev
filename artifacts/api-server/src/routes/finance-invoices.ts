@@ -1,12 +1,14 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import multer from "multer";
 import { z } from "zod/v4";
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/pg-core";
 import { db, finEventsTable, finInvoiceUploadsTable, finInvoicesTable, finLinesTable, usersTable } from "@workspace/db";
 import { validate } from "../middleware/validate";
 import { resolveFinanceAccess } from "./finance";
 import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMimeFor, periodRange, sha256Of, supplierHintFromPath } from "../lib/finance/invoice-library";
-import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount } from "../lib/finance/invoice-store";
+import { storedFileHeaders } from "../lib/finance/posted-rules";
+import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, refreshDuplicate } from "../lib/finance/invoice-store";
 
 // Finance → Invoices: the searchable library of every invoice we hold
 // (Graeme, 3 Nov 2026). Same access as the rest of Finance. Append-only —
@@ -19,31 +21,52 @@ async function requireFinanceAccess(req: Request, res: Response, next: NextFunct
   res.status(403).json({ error: "Finance access required" });
 }
 
-// A year of invoices in one zip can be big; files are held in memory only
-// while they're unpacked into the database.
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 300 * 1024 * 1024, files: 50 } });
+// Zips are normally unpacked in the browser and sent in small batches (so
+// size never matters and nothing times out); a zip sent whole still works
+// up to this size.
+const MAX_UPLOAD_MB = 300;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024, files: 200 } });
 
-/** The date an invoice is filed under: its own date, else the day it arrived. */
-const effectiveDate = sql<string>`coalesce(${finInvoicesTable.invoiceDate}, ${finInvoicesTable.createdAt}::date)`;
+/** Multer refuses an oversized file before the route runs — say so plainly
+ *  instead of a bare 500 (what happened to Graeme's big zip, 3 Nov). */
+function receiveFiles(req: Request, res: Response, next: NextFunction) {
+  upload.array("files", 200)(req, res, (err: unknown) => {
+    if (!err) { next(); return; }
+    const code = (err as { code?: string }).code;
+    if (code === "LIMIT_FILE_SIZE") { res.status(413).json({ error: `A file is over ${MAX_UPLOAD_MB} MB. Refresh the page and try again — the page now unpacks zips itself, so any size works.` }); return; }
+    if (code === "LIMIT_FILE_COUNT") { res.status(413).json({ error: "Too many files in one go — send fewer at a time." }); return; }
+    console.error("[finance] invoice upload receive error:", err);
+    res.status(400).json({ error: "The upload didn't arrive in one piece — try again." });
+  });
+}
 
 const listQuery = z.object({
   q: z.string().trim().max(200).optional(),
-  fy: z.string().regex(/^\d{4}\/\d{2}$/).optional(),
+  // A financial year, "none" (not dated yet), or absent = every year.
+  fy: z.union([z.string().regex(/^\d{4}\/\d{2}$/), z.literal("none")]).optional(),
   period: z.coerce.number().int().min(1).max(12).optional(),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   source: z.enum(["upload", "transaction"]).optional(),
+  // Same invoice as an earlier one: hidden unless asked for.
+  duplicates: z.enum(["hide", "only"]).optional(),
+  // Just the year tabs (first visit, to open on the latest year).
+  yearsOnly: z.literal("1").optional(),
 });
+
+/** FY start year of the invoice's own date ("2025" for 2025/26). */
+const fyStartYear = sql<number>`extract(year from (${finInvoicesTable.invoiceDate} - interval '3 months'))::int`;
 
 router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
   try {
     const parsed = listQuery.safeParse(req.query);
     if (!parsed.success) { res.status(400).json({ error: "Bad search" }); return; }
     const f = parsed.data;
-    const where: SQL[] = [];
+    // Filters that apply to the year counts too (everything but the year).
+    const common: SQL[] = [];
     if (f.q) {
       const like = `%${f.q.replace(/[%_]/g, "\\$&")}%`;
-      where.push(or(
+      common.push(or(
         ilike(finInvoicesTable.supplierName, like),
         ilike(finInvoicesTable.invoiceNumber, like),
         ilike(finInvoicesTable.fileName, like),
@@ -52,24 +75,27 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
         sql`${finInvoicesTable.totalAmount}::text = ${f.q.replace(/[£,]/g, "")}`,
       )!);
     }
-    if (f.fy && f.period) {
-      const r = periodRange(f.fy, f.period);
-      where.push(sql`${effectiveDate} BETWEEN ${r.from} AND ${r.to}`);
-    } else if (f.fy) {
-      const r = financialYearRange(f.fy);
-      where.push(sql`${effectiveDate} BETWEEN ${r.from} AND ${r.to}`);
-    }
-    if (f.from) where.push(sql`${effectiveDate} >= ${f.from}`);
-    if (f.to) where.push(sql`${effectiveDate} <= ${f.to}`);
-    if (f.source) where.push(eq(finInvoicesTable.source, f.source));
+    if (f.source) common.push(eq(finInvoicesTable.source, f.source));
+    common.push(f.duplicates === "only" ? isNotNull(finInvoicesTable.duplicateOfId) : isNull(finInvoicesTable.duplicateOfId));
 
-    const rows = await db.select({
+    const where = [...common];
+    if (f.fy === "none") where.push(isNull(finInvoicesTable.invoiceDate));
+    else if (f.fy) {
+      const r = f.period ? periodRange(f.fy, f.period) : financialYearRange(f.fy);
+      where.push(sql`${finInvoicesTable.invoiceDate} BETWEEN ${r.from} AND ${r.to}`);
+    }
+    if (f.from) where.push(sql`${finInvoicesTable.invoiceDate} >= ${f.from}`);
+    if (f.to) where.push(sql`${finInvoicesTable.invoiceDate} <= ${f.to}`);
+
+    const original = alias(finInvoicesTable, "original");
+    const rows = f.yearsOnly ? [] : await db.select({
       id: finInvoicesTable.id,
       fileName: finInvoicesTable.fileName,
       fileMime: finInvoicesTable.fileMime,
       sourcePath: finInvoicesTable.sourcePath,
       fileSizeBytes: finInvoicesTable.fileSizeBytes,
       source: finInvoicesTable.source,
+      uploadId: finInvoicesTable.uploadId,
       lineId: finInvoicesTable.lineId,
       supplierName: finInvoicesTable.supplierName,
       invoiceDate: finInvoicesTable.invoiceDate,
@@ -84,13 +110,18 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
       uploadedBy: finInvoicesTable.uploadedBy,
       postedBy: finInvoicesTable.postedBy,
       postedAt: finInvoicesTable.postedAt,
+      duplicateOfId: finInvoicesTable.duplicateOfId,
+      duplicateOf: sql<{ supplierName: string | null; invoiceNumber: string | null; invoiceDate: string | null; fileName: string; sourcePath: string | null } | null>`
+        CASE WHEN ${original.id} IS NULL THEN NULL ELSE json_build_object(
+          'supplierName', ${original.supplierName}, 'invoiceNumber', ${original.invoiceNumber},
+          'invoiceDate', ${original.invoiceDate}, 'fileName', ${original.fileName}, 'sourcePath', ${original.sourcePath}) END`,
       createdAt: finInvoicesTable.createdAt,
       updatedAt: finInvoicesTable.updatedAt,
-      filedOn: effectiveDate,
     }).from(finInvoicesTable)
-      .where(where.length ? and(...where) : undefined)
-      .orderBy(desc(effectiveDate), desc(finInvoicesTable.id))
-      .limit(2000);
+      .leftJoin(original, eq(original.id, finInvoicesTable.duplicateOfId))
+      .where(and(...where))
+      .orderBy(sql`${finInvoicesTable.invoiceDate} DESC NULLS FIRST`, desc(finInvoicesTable.id))
+      .limit(5000);
 
     const userIds = [...new Set(rows.flatMap((r) => [r.uploadedBy, r.postedBy]).filter((v): v is number => v != null))];
     const users = userIds.length
@@ -98,18 +129,30 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
       : [];
     const names = new Map(users.map((u) => [u.id, u.name]));
 
-    // Every financial year we hold anything in, for the year picker.
-    const years = await db.selectDistinct({ d: sql<string>`date_trunc('month', ${effectiveDate})::date::text` }).from(finInvoicesTable);
-    const financialYears = [...new Set(years.map((y) => financialYearOfDate(y.d)))].sort().reverse();
+    // How many (and how much) in each financial year for the same search —
+    // the year tabs. "none" = not dated yet (still being read, or unreadable).
+    const yearRows = await db.select({
+      start: fyStartYear,
+      n: sql<number>`count(*)::int`,
+      total: sql<string>`coalesce(sum(${finInvoicesTable.totalAmount}), 0)::text`,
+    }).from(finInvoicesTable).where(and(...common)).groupBy(fyStartYear);
+    const years = yearRows.map((y) => ({
+      fy: y.start == null ? "none" : `${y.start}/${String((y.start + 1) % 100).padStart(2, "0")}`,
+      n: y.n,
+      total: y.total,
+    })).sort((a, b) => (a.fy === "none" ? -1 : b.fy === "none" ? 1 : b.fy.localeCompare(a.fy)));
+
+    const [dups] = await db.select({ n: sql<number>`count(*)::int` }).from(finInvoicesTable).where(isNotNull(finInvoicesTable.duplicateOfId));
 
     res.json({
       invoices: rows.map((r) => ({
         ...r,
-        financialYear: financialYearOfDate(r.filedOn),
+        financialYear: r.invoiceDate ? financialYearOfDate(r.invoiceDate) : null,
         uploadedByName: r.uploadedBy ? names.get(r.uploadedBy) ?? null : null,
         postedByName: r.postedBy ? names.get(r.postedBy) ?? null : null,
       })),
-      financialYears,
+      years,
+      duplicateCount: dups?.n ?? 0,
       pendingReads: await pendingInvoiceCount(),
     });
   } catch (err) {
@@ -118,50 +161,120 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
   }
 });
 
-// Drop zips, PDFs or photos. Zips are unpacked; only PDFs and images are kept.
-router.post("/upload", requireFinanceAccess, upload.array("files", 50), async (req: Request, res: Response) => {
+// Which of these files (by sha256) are already in the library — the page
+// asks before sending, so a re-dropped zip costs nothing.
+const checkSchema = z.object({ hashes: z.array(z.string().regex(/^[0-9a-f]{64}$/)).max(5000) });
+router.post("/check", requireFinanceAccess, validate(checkSchema), async (req: Request, res: Response) => {
+  const { hashes } = req.body as z.infer<typeof checkSchema>;
+  if (hashes.length === 0) { res.json({ existing: [] }); return; }
+  const rows = await db.select({ sha256: finInvoicesTable.sha256 }).from(finInvoicesTable).where(inArray(finInvoicesTable.sha256, hashes));
+  res.json({ existing: rows.map((r) => r.sha256) });
+});
+
+// One upload = one batch, sent in parts. Start it, send parts to /upload
+// with its id, then finish it with what the page skipped.
+const startSchema = z.object({ fileName: z.string().trim().min(1).max(500), filesFound: z.number().int().min(0).max(100000) });
+router.post("/uploads", requireFinanceAccess, validate(startSchema), async (req: Request, res: Response) => {
+  const { fileName, filesFound } = req.body as z.infer<typeof startSchema>;
+  const [batch] = await db.insert(finInvoiceUploadsTable)
+    .values({ fileName, filesFound, uploadedBy: req.session.userId ?? null, status: "open" })
+    .returning({ id: finInvoiceUploadsTable.id });
+  res.json(batch);
+});
+
+const finishSchema = z.object({ duplicates: z.number().int().min(0), skipped: z.array(z.string().max(500)).max(5000) });
+router.post("/uploads/:id/finish", requireFinanceAccess, validate(finishSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const { duplicates, skipped } = req.body as z.infer<typeof finishSchema>;
+  const [added] = await db.select({ n: sql<number>`count(*)::int` }).from(finInvoicesTable).where(eq(finInvoicesTable.uploadId, id));
+  const [row] = await db.update(finInvoiceUploadsTable).set({
+    status: "done",
+    filesAdded: added?.n ?? 0,
+    duplicates: sql`${finInvoiceUploadsTable.duplicates} + ${duplicates}`,
+    skipped: sql`${finInvoiceUploadsTable.skipped} || ${JSON.stringify(skipped)}::jsonb`,
+  }).where(eq(finInvoiceUploadsTable.id, id)).returning({ id: finInvoiceUploadsTable.id });
+  if (!row) { res.status(404).json({ error: "Upload not found" }); return; }
+  res.json({ ok: true, filesAdded: added?.n ?? 0 });
+});
+
+// Every upload and what it actually added (counted from the library, so an
+// upload that broke half-way still shows the truth).
+router.get("/uploads", requireFinanceAccess, async (_req: Request, res: Response) => {
+  const rows = await db.select({
+    id: finInvoiceUploadsTable.id,
+    fileName: finInvoiceUploadsTable.fileName,
+    filesFound: finInvoiceUploadsTable.filesFound,
+    duplicates: finInvoiceUploadsTable.duplicates,
+    skipped: finInvoiceUploadsTable.skipped,
+    status: finInvoiceUploadsTable.status,
+    createdAt: finInvoiceUploadsTable.createdAt,
+    uploadedByName: usersTable.name,
+    added: sql<number>`(SELECT count(*)::int FROM fin_invoices i WHERE i.upload_id = ${finInvoiceUploadsTable.id})`,
+    lastAddedAt: sql<string | null>`(SELECT max(i.created_at) FROM fin_invoices i WHERE i.upload_id = ${finInvoiceUploadsTable.id})`,
+  }).from(finInvoiceUploadsTable)
+    .leftJoin(usersTable, eq(usersTable.id, finInvoiceUploadsTable.uploadedBy))
+    .orderBy(desc(finInvoiceUploadsTable.id)).limit(50);
+  res.json({ uploads: rows });
+});
+
+// Receive files: PDFs/photos (the page's batches, with uploadId) or whole
+// zips (unpacked here). Only PDFs and images are kept.
+router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, res: Response) => {
   try {
     const incoming = (req.files as Express.Multer.File[] | undefined) ?? [];
     if (incoming.length === 0) { res.status(400).json({ error: "No files uploaded" }); return; }
     const userId = req.session.userId ?? null;
     const summary = { filesFound: 0, filesAdded: 0, duplicates: 0, skipped: [] as string[] };
-    const batchName = incoming.map((f) => f.originalname).join(", ").slice(0, 500);
-    const [batch] = await db.insert(finInvoiceUploadsTable).values({ fileName: batchName, uploadedBy: userId }).returning({ id: finInvoiceUploadsTable.id });
+    // Paths inside the zip, sent alongside each file by the page.
+    const paths: string[] = (() => { try { return JSON.parse(String(req.body?.paths ?? "[]")); } catch { return []; } })();
+    let batchId = Number(req.body?.uploadId) || null;
+    if (batchId) {
+      const [b] = await db.select({ id: finInvoiceUploadsTable.id }).from(finInvoiceUploadsTable).where(eq(finInvoiceUploadsTable.id, batchId));
+      if (!b) { res.status(404).json({ error: "Upload not found" }); return; }
+    } else {
+      const batchName = incoming.map((f) => f.originalname).join(", ").slice(0, 500);
+      const [b] = await db.insert(finInvoiceUploadsTable).values({ fileName: batchName, uploadedBy: userId }).returning({ id: finInvoiceUploadsTable.id });
+      batchId = b.id;
+    }
 
-    for (const file of incoming) {
+    for (const [i, file] of incoming.entries()) {
       const name = file.originalname || "upload";
+      const path = typeof paths[i] === "string" && paths[i] ? paths[i] : name;
       const bytes = new Uint8Array(file.buffer);
       const found = /\.zip$/i.test(name) || file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed"
         ? extractInvoiceFiles(bytes, `${name}/`)
         : (() => {
             const mime = invoiceMimeFor(name) ?? (file.mimetype === "application/pdf" || file.mimetype.startsWith("image/") ? file.mimetype : null);
             return mime
-              ? { files: [{ path: name, name, mime, bytes, sha256: sha256Of(bytes) }], skipped: [] as string[] }
-              : { files: [], skipped: [`${name} (not a zip, PDF or photo)`] };
+              ? { files: [{ path, name: path.split("/").pop() || name, mime, bytes, sha256: sha256Of(bytes) }], skipped: [] as string[] }
+              : { files: [], skipped: [`${path} (not a zip, PDF or photo)`] };
           })();
       summary.skipped.push(...found.skipped);
       for (const f of found.files) {
         summary.filesFound++;
         const r = await addInvoiceFile({
           bytes: f.bytes, mime: f.mime, name: f.name, sourcePath: f.path, source: "upload",
-          uploadId: batch.id, uploadedBy: userId, supplierName: supplierHintFromPath(f.path),
+          uploadId: batchId, uploadedBy: userId, supplierName: supplierHintFromPath(f.path),
         });
         if (r.duplicate) summary.duplicates++;
         else {
           summary.filesAdded++;
-          await logFinEvent("invoice", r.id, "uploaded", userId, { from: name, path: f.path });
+          await logFinEvent("invoice", r.id, "uploaded", userId, { path: f.path, uploadId: batchId });
         }
       }
     }
+    // Running totals on the batch (a batch sent in parts adds up as it goes).
     await db.update(finInvoiceUploadsTable).set({
-      filesFound: summary.filesFound, filesAdded: summary.filesAdded, duplicates: summary.duplicates, skipped: summary.skipped,
-    }).where(eq(finInvoiceUploadsTable.id, batch.id));
+      filesAdded: sql`${finInvoiceUploadsTable.filesAdded} + ${summary.filesAdded}`,
+      duplicates: sql`${finInvoiceUploadsTable.duplicates} + ${summary.duplicates}`,
+      skipped: sql`${finInvoiceUploadsTable.skipped} || ${JSON.stringify(summary.skipped)}::jsonb`,
+      ...(Number(req.body?.uploadId) ? {} : { filesFound: summary.filesFound }),
+    }).where(eq(finInvoiceUploadsTable.id, batchId));
     if (summary.filesAdded > 0) kickInvoiceReader();
-    res.json(summary);
-  } catch (err: any) {
-    if (err?.code === "LIMIT_FILE_SIZE") { res.status(413).json({ error: "That file is over 300 MB — split the zip into smaller ones." }); return; }
+    res.json({ ...summary, uploadId: batchId });
+  } catch (err) {
     console.error("[finance] invoice upload error:", err);
-    res.status(500).json({ error: "Upload failed — nothing after the error was stored. Try again." });
+    res.status(500).json({ error: "Upload failed part-way — what arrived before the error is kept. Try again: files already in are skipped." });
   }
 });
 
@@ -172,12 +285,8 @@ router.get("/:id/file", requireFinanceAccess, async (req: Request, res: Response
       .from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
     if (!inv) { res.status(404).json({ error: "No file" }); return; }
     const buf = Buffer.isBuffer(inv.blob) ? inv.blob : Buffer.from(inv.blob as any);
-    res.setHeader("Content-Type", inv.mime || "application/octet-stream");
-    res.setHeader("Content-Length", String(buf.length));
-    res.setHeader("Content-Disposition", `${req.query.download === "1" ? "attachment" : "inline"}; filename="${inv.name.replace(/["\r\n]/g, "")}"`);
-    // Files come from anywhere — sandbox the response, as for documents.
-    res.setHeader("Content-Security-Policy", "sandbox");
-    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Sandboxed unless it's a genuine PDF (so Chrome/Edge show it inline).
+    for (const [k, v] of Object.entries(storedFileHeaders(inv.mime, buf, inv.name, req.query.download === "1"))) res.setHeader(k, v);
     res.end(buf);
   } catch (err) {
     console.error("[finance] invoice file error:", err);
@@ -220,11 +329,25 @@ router.patch("/:id", requireFinanceAccess, validate(editSchema), async (req: Req
     if (Object.keys(updates).length === 0) { res.json({ ok: true, changed: 0 }); return; }
     await db.update(finInvoicesTable).set({ ...updates, updatedAt: new Date() }).where(eq(finInvoicesTable.id, id));
     await logFinEvent("invoice", id, "edited", req.session.userId, { changes });
+    await refreshDuplicate(id);
     res.json({ ok: true, changed: Object.keys(updates).length });
   } catch (err) {
     console.error("[finance] invoice edit error:", err);
     res.status(500).json({ error: "Failed to save" });
   }
+});
+
+// "It's not the same invoice" — or undo that.
+const notDupSchema = z.object({ notDuplicate: z.boolean() });
+router.patch("/:id/duplicate", requireFinanceAccess, validate(notDupSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  const { notDuplicate } = req.body as z.infer<typeof notDupSchema>;
+  const [row] = await db.update(finInvoicesTable).set({ notDuplicate, updatedAt: new Date() })
+    .where(eq(finInvoicesTable.id, id)).returning({ id: finInvoicesTable.id });
+  if (!row) { res.status(404).json({ error: "Invoice not found" }); return; }
+  await refreshDuplicate(id);
+  await logFinEvent("invoice", id, notDuplicate ? "marked_not_duplicate" : "unmarked_not_duplicate", req.session.userId);
+  res.json({ ok: true });
 });
 
 // Ask the reader to try again (after a failure, or a wrong reading).

@@ -26,7 +26,8 @@ import { sendEmail } from "../lib/email";
 import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, runQboSync, autoImportQboLines } from "../lib/finance/qbo";
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 import { buildChaseEmail } from "../lib/finance/chase-email";
-import { autoCompleteIfReady, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
+import { storedFileHeaders } from "../lib/finance/posted-rules";
+import { autoCompleteIfReady, clearSuggestionsIfInvoiced, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -402,6 +403,7 @@ router.post("/lines/:id/documents", requireFinanceAccess, upload.single("file"),
       .where(and(eq(finLinesTable.id, lineId), inArray(finLinesTable.status, ["open", "identified"])));
 
     await logFinEvent("line", lineId, "document_added", req.session.userId, { fileName: name, documentId: doc.id });
+    await clearSuggestionsIfInvoiced(lineId);
     const autoDone = await autoCompleteIfReady(lineId, req.session.userId ?? null, "vat_invoice_attached");
     res.json({ ...doc, autoDone });
   } catch (err: any) {
@@ -421,6 +423,7 @@ router.patch("/documents/:id", requireFinanceAccess, validate(docKindSchema), as
     .returning({ id: finDocumentsTable.id, docKind: finDocumentsTable.docKind, lineId: finDocumentsTable.lineId });
   if (!row) { res.status(404).json({ error: "Document not found" }); return; }
   await logFinEvent("line", row.lineId, "document_relabelled", req.session.userId, { documentId: id, docKind });
+  if (docKind === "invoice") await clearSuggestionsIfInvoiced(row.lineId);
   const autoDone = docKind === "invoice" ? await autoCompleteIfReady(row.lineId, req.session.userId ?? null, "relabelled_vat_invoice") : false;
   res.json({ ...row, autoDone });
 });
@@ -484,14 +487,8 @@ router.get("/documents/:id/file", requireFinanceAccess, async (req: Request, res
     const [doc] = await db.select().from(finDocumentsTable).where(eq(finDocumentsTable.id, id));
     if (!doc || !doc.fileBlob) { res.status(404).json({ error: "No file" }); return; }
     const buf = Buffer.isBuffer(doc.fileBlob) ? doc.fileBlob : Buffer.from(doc.fileBlob as any);
-    const filename = (doc.fileName || "document").replace(/["\r\n]/g, "");
-    const disposition = req.query.download === "1" ? "attachment" : "inline";
-    res.setHeader("Content-Type", doc.fileMime || "application/octet-stream");
-    res.setHeader("Content-Length", String(buf.length));
-    res.setHeader("Content-Disposition", `${disposition}; filename="${filename}"`);
-    // Documents come from arbitrary external senders — sandbox the response.
-    res.setHeader("Content-Security-Policy", "sandbox");
-    res.setHeader("X-Content-Type-Options", "nosniff");
+    // Sandboxed unless it's a genuine PDF (so Chrome/Edge show it inline).
+    for (const [k, v] of Object.entries(storedFileHeaders(doc.fileMime, buf, doc.fileName, req.query.download === "1"))) res.setHeader(k, v);
     res.end(buf);
   } catch (err) {
     console.error("[finance] document download error:", err);
@@ -596,6 +593,7 @@ router.post("/matches/:id/confirm", requireFinanceAccess, async (req: Request, r
     }
 
     await logFinEvent("line", match.lineId, "document_attached_from_email", req.session.userId, { documentId: doc.id });
+    await clearSuggestionsIfInvoiced(match.lineId);
     const autoDone = await autoCompleteIfReady(match.lineId, req.session.userId ?? null, "vat_invoice_attached");
     res.json({ documentId: doc.id, extracted: info, autoDone });
   } catch (err) {
@@ -799,6 +797,22 @@ router.get("/qbo/callback", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[finance] qbo callback error:", err);
     res.status(500).send(`QuickBooks connection failed: ${err instanceof Error ? err.message : "unknown error"}. Go back to Finance and try again.`);
+  }
+});
+
+// "Check QuickBooks now" for the whole finance team (Graeme, 2026-11-03):
+// after posting, flush it through instead of waiting for the hourly run.
+// Waits for the result so the button can say what it found; whoever
+// pressed it is recorded on each line it closes.
+router.post("/qbo/check-now", requireFinanceAccess, validate(z.object({})), async (req: Request, res: Response) => {
+  try {
+    const o = await runQboSync(req.session.userId ?? null);
+    if (o.error === "Sync already running") { res.status(409).json({ error: "A QuickBooks check is already running — try again in a minute." }); return; }
+    if (o.error) { res.status(502).json({ error: o.error }); return; }
+    res.json({ purchases: o.purchases, bills: o.bills, linesMarkedPosted: o.linesMarkedPosted, linesAutoDone: o.linesAutoDone ?? 0 });
+  } catch (err) {
+    console.error("[finance] QuickBooks check-now error:", err);
+    res.status(500).json({ error: "The QuickBooks check failed — try again." });
   }
 });
 
