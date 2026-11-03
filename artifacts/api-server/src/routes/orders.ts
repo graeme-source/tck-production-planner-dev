@@ -333,7 +333,7 @@ router.get("/calculate", async (req, res) => {
   // tins: "now" is passed as its checked-at (isTinOutstanding).
   timer.mark("stock");
   const ledgerNow = new Date();
-  const stockLedgers = await loadStockLedgers({ since: new Date(ledgerNow.getTime() - 120 * 86_400_000), until: ledgerNow });
+  const stockLedgers = await loadStockLedgers({ since: new Date(ledgerNow.getTime() - 120 * 86_400_000), until: ledgerNow, latestCountsOnly: true });
   const lineStockByIngredient: Record<number, OrderLineStock> = {};
   const lineStockFor = (iid: number, stockCheckEnabled: boolean): OrderLineStock =>
     (lineStockByIngredient[iid] ??= orderLineStock({

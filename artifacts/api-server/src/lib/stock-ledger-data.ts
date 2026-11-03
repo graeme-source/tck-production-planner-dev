@@ -37,6 +37,8 @@ import {
 } from "./stock-usage-rules";
 import {
   isSystemStockNote,
+  ledgerNeedsEventsAfter,
+  trimLedgerToLatestCounts,
   type CountEvent,
   type IngredientLedger,
   type ReceiptEvent,
@@ -191,6 +193,14 @@ export async function loadStockLedgers(opts: {
   until?: Date;
   /** Default: every stock-checked or kanban ingredient. */
   ingredientIds?: number[];
+  /** Orders page (Fix queue #376): each ledger keeps only its two latest
+   *  counts and the receipts/usage after the earlier one — all expectedAt()
+   *  and the latest countVariances() entry read (trimLedgerToLatestCounts).
+   *  Prep ticks and batches from before every ingredient's window are
+   *  never worked through, so months of tray/sub-recipe loading are
+   *  skipped. Counts are still read back to `since`, so the figures come
+   *  out exactly the same. */
+  latestCountsOnly?: boolean;
 }): Promise<Map<number, LoadedLedger>> {
   const until = opts.until ?? new Date();
   const sinceIso = opts.since.toISOString();
@@ -272,6 +282,24 @@ export async function loadStockLedgers(opts: {
     out.get(Number(r.ingredient_id))?.ledger.counts.push({ at: ms(r.checked_at), qty: Number(r.qty) });
   }
 
+  // latestCountsOnly: per ingredient, usage at or before this moment is
+  // never read (never counted → none is). Ticks, batches and waste older
+  // than every ingredient's window aren't loaded at all; the SQL bound
+  // keeps 2 days' slack (timestamp time zones), the exact cut is `needed`.
+  const needsAfter = new Map<number, number>();
+  let eventsSinceIso = sinceIso;
+  let earliestNeeded = -Infinity;
+  if (opts.latestCountsOnly) {
+    for (const [iid, entry] of out) {
+      const after = ledgerNeedsEventsAfter(entry.ledger.counts);
+      if (after != null) needsAfter.set(iid, after);
+    }
+    earliestNeeded = needsAfter.size > 0 ? Math.min(...needsAfter.values()) : until.getTime();
+    eventsSinceIso = new Date(Math.max(opts.since.getTime(), earliestNeeded - 2 * 86_400_000)).toISOString();
+  }
+  const needed = (iid: number, at: number): boolean =>
+    !opts.latestCountsOnly || at > (needsAfter.get(iid) ?? Infinity);
+
   const addUsage = (iid: number, ev: UsageEvent) => {
     if (!(ev.qty > 0)) return;
     out.get(iid)?.ledger.usage.push(ev);
@@ -285,7 +313,7 @@ export async function loadStockLedgers(opts: {
     FROM prep_completions
     WHERE ingredient_id IS NOT NULL
     GROUP BY plan_id, recipe_id, ingredient_id, tin_number
-    HAVING MIN(completed_at) >= ${sinceIso}::timestamptz AND MIN(completed_at) <= ${untilIso}::timestamptz
+    HAVING MIN(completed_at) >= ${eventsSinceIso}::timestamptz AND MIN(completed_at) <= ${untilIso}::timestamptz
   `);
   const ticks = ticksRes.rows as Array<{ plan_id: number; recipe_id: number; ingredient_id: number; tin_number: number; completed_at: string }>;
 
@@ -295,7 +323,7 @@ export async function loadStockLedgers(opts: {
     JOIN production_plan_items pi ON pi.id = bc.plan_item_id
     WHERE bc.station_type IN ('mixing', 'building_1', 'building_2', 'fried_chicken')
       AND pi.recipe_id IS NOT NULL
-      AND bc.completed_at >= ${sinceIso}::timestamptz AND bc.completed_at <= ${untilIso}::timestamptz
+      AND bc.completed_at >= ${eventsSinceIso}::timestamptz AND bc.completed_at <= ${untilIso}::timestamptz
   `);
   const batches = batchRes.rows as Array<{ station_type: string; completed_at: string; partial_packs: number | null; plan_id: number; recipe_id: number; batches_target: number }>;
 
@@ -327,11 +355,13 @@ export async function loadStockLedgers(opts: {
     for (const o of ovRes.rows as any[]) tinOverrides.set(`${o.plan_id}_${o.recipe_id}_${o.ingredient_id}`, Number(o.tin_count));
   }
 
-  // Raw Meat station trays per plan item, loaded once (#320) — the same
+  // Raw Meat station trays, loaded once per recipe run (#320) — the same
   // trays the station ticks and the Orders page's "still to prep" counts.
+  // They depend only on the recipe, portions and batches, so plans with the
+  // same run share one load (#376: it was ~20 queries for every plan).
   const trayCache = new Map<string, Promise<Map<number, number | null>>>();
-  const traysFor = (planId: number, recipeId: number, portionsPerBatch: number, batchesTarget: number) => {
-    const key = `${planId}_${recipeId}`;
+  const traysFor = (recipeId: number, portionsPerBatch: number, batchesTarget: number) => {
+    const key = `${recipeId}_${portionsPerBatch}_${batchesTarget}`;
     let p = trayCache.get(key);
     if (!p) { p = loadRawMeatTrays({ recipeId, portionsPerBatch, batchesTarget }); trayCache.set(key, p); }
     return p;
@@ -347,8 +377,11 @@ export async function loadStockLedgers(opts: {
     for (const line of shape.direct) {
       if (line.ingredientId !== Number(t.ingredient_id) || line.marinadeFor != null) continue;
       if (lineChannel(line, shape) !== "prep") continue;
+      // Nothing this tick feeds (the ingredient or its marinades) is read.
+      if (!needed(line.ingredientId, at)
+        && !shape.direct.some(m => m.marinadeFor === line.ingredientId && needed(m.ingredientId, at))) continue;
       const rawMeatTrays = line.category === "raw_meat"
-        ? (await traysFor(Number(t.plan_id), Number(t.recipe_id), shape.portionsPerBatch, item.batches)).get(line.ingredientId) ?? null
+        ? (await traysFor(Number(t.recipe_id), shape.portionsPerBatch, item.batches)).get(line.ingredientId) ?? null
         : null;
       const tinCount = prepUnitCount({
         batchesTarget: item.batches,
@@ -388,6 +421,7 @@ export async function loadStockLedgers(opts: {
     const shape = shapes.get(Number(b.recipe_id));
     if (!shape) continue;
     const at = ms(b.completed_at);
+    if (at <= earliestNeeded) continue; // no ingredient reads it (latestCountsOnly)
     const planId = Number(b.plan_id);
     const station: "mixing" | "build" = b.station_type === "mixing" ? "mixing" : "build";
     const fraction = station === "mixing" ? 1 : builtBatchFraction(b.partial_packs, shape.portionsPerBatch, shape.packSize);
@@ -424,7 +458,7 @@ export async function loadStockLedgers(opts: {
     SELECT ingredient_id, quantity::float8 AS qty, quantity_unit, created_at FROM defects
     WHERE deleted_at IS NULL AND item_kind = 'ingredient' AND ingredient_id IN (${list})
       AND quantity > 0
-      AND created_at >= ${sinceIso}::timestamptz AND created_at <= ${untilIso}::timestamptz
+      AND created_at >= ${eventsSinceIso}::timestamptz AND created_at <= ${untilIso}::timestamptz
   `);
   for (const w of wasteRes.rows as any[]) {
     const iid = Number(w.ingredient_id);
@@ -432,5 +466,8 @@ export async function loadStockLedgers(opts: {
     if (qty != null) addUsage(iid, { at: ms(w.created_at), qty, source: "waste", planId: null });
   }
 
+  if (opts.latestCountsOnly) {
+    for (const entry of out.values()) entry.ledger = trimLedgerToLatestCounts(entry.ledger);
+  }
   return out;
 }
