@@ -110,6 +110,14 @@ export function planDeclarationWraps(rows: Array<{ id: number; name: string; lab
   return out;
 }
 
+/** No real wording: blank, or a stand-in such as "<UNKNOWN>" (Graeme,
+ *  2026-11-04: the red wine gravy label published with one, which hid what
+ *  the ingredient was and any allergen in it). */
+export function declarationIsMissing(declaration: string | null | undefined): boolean {
+  const text = declaration?.trim();
+  return !text || /<[^>]*>/.test(text) || /^(unknown|n\/?a|tbc|tbd)\.?$/i.test(text);
+}
+
 /** A deck problem with a named ingredient that someone can fix in its
  *  edit dialog. "missing" = no declaration at all; "unwrapped" = a bare
  *  component list (only possible for data saved before auto-wrap). */
@@ -126,9 +134,9 @@ export function declarationIssues(items: Array<{ ingredientId: number | null | u
   const unwrapped = new Map<number, DeclarationIssue>();
   for (const i of items) {
     if (i.ingredientId == null) continue;
-    if (!i.labelDeclaration || !i.labelDeclaration.trim()) {
+    if (declarationIsMissing(i.labelDeclaration)) {
       if (!missing.has(i.ingredientId)) missing.set(i.ingredientId, { kind: "missing", ingredientId: i.ingredientId, name: i.name });
-    } else if (declarationNeedsWrapper(i.labelDeclaration)) {
+    } else if (declarationNeedsWrapper(i.labelDeclaration!)) {
       if (!unwrapped.has(i.ingredientId)) unwrapped.set(i.ingredientId, { kind: "unwrapped", ingredientId: i.ingredientId, name: i.name });
     }
   }

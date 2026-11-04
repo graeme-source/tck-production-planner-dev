@@ -10,7 +10,7 @@
  */
 import { db, recipeIngredientsTable, recipeSubRecipesTable, ingredientsTable, subRecipesTable, subRecipeIngredientsTable, subRecipeSubRecipesTable, appSettingsTable, recipeQuidComponentsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
-import { ALLERGEN_DISPLAY, allergenMismatch, declarationNeedsWrapper, declarationIssues } from "@workspace/allergens";
+import { ALLERGEN_DISPLAY, allergenMismatch, declarationIsMissing, declarationNeedsWrapper, declarationIssues } from "@workspace/allergens";
 import { toGrams } from "@workspace/units";
 import { buildDeck } from "./ingredient-deck";
 
@@ -269,14 +269,14 @@ export async function buildRecipeIngredientDeck(recipeId: number, opts: DeckOpti
   const allergenMismatches = [...mismatchById.values()];
 
   const missingDeclarations = [
-    ...directItems.filter(i => !i.labelDeclaration).map(i => i.name),
-    ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration).map(i => i.name)),
+    ...directItems.filter(i => declarationIsMissing(i.labelDeclaration)).map(i => i.name),
+    ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => declarationIsMissing(i.labelDeclaration)).map(i => i.name)),
   ];
   // Ids alongside the names so the client can link each one straight to
   // the ingredient's edit dialog.
   const missingDeclarationDetail = [
-    ...directItems.filter(i => !i.labelDeclaration),
-    ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => !i.labelDeclaration)),
+    ...directItems.filter(i => declarationIsMissing(i.labelDeclaration)),
+    ...subRecipeGroups.flatMap(g => g.ingredients.filter(i => declarationIsMissing(i.labelDeclaration))),
   ]
     .filter(i => i.ingredientId != null)
     .map(i => ({ ingredientId: i.ingredientId, name: i.name }));

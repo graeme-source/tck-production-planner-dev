@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { declarationIssues, declarationNeedsWrapper, labelNameFor, planDeclarationWraps, wrapDeclaration } from "./declaration";
+import { declarationIsMissing, declarationIssues, declarationNeedsWrapper, labelNameFor, planDeclarationWraps, wrapDeclaration } from "./declaration";
 
 describe("labelNameFor — the ingredient's name as a label reads it", () => {
   it("drops pack-size, supplier and prep notes in trailing brackets", () => {
@@ -61,6 +61,18 @@ describe("planDeclarationWraps — the one-off tidy for existing data", () => {
       { id: 4, name: "Pepperoni", labelDeclaration: "Pepperoni (Pork, Salt)" },
     ]);
     expect(plan).toEqual([{ id: 1, name: "Salted Butter", before: "Butter (MILK), Salt", after: "Salted Butter (Butter (MILK), Salt)" }]);
+  });
+});
+
+describe("declarationIsMissing — a stand-in is not a declaration", () => {
+  it("catches blanks and placeholders such as <UNKNOWN>", () => {
+    for (const v of [null, undefined, "", "  ", "<UNKNOWN>", "Red wine (<UNKNOWN>)", "unknown", "TBC", "n/a"]) expect(declarationIsMissing(v), String(v)).toBe(true);
+  });
+  it("leaves real wording alone, even with the word in it", () => {
+    for (const v of ["Red wine (sulphites)", "WHEAT Flour", "Unknown Pleasures Ale (BARLEY)"]) expect(declarationIsMissing(v), v).toBe(false);
+  });
+  it("blocks the ingredient with a fix link", () => {
+    expect(declarationIssues([{ ingredientId: 7, name: "Red wine", labelDeclaration: "<UNKNOWN>" }])).toEqual([{ kind: "missing", ingredientId: 7, name: "Red wine" }]);
   });
 });
 
