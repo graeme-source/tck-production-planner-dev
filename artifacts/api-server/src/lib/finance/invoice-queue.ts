@@ -1,8 +1,8 @@
-import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import { db, finInvoicesTable } from "@workspace/db";
+import { and, asc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
+import { db, finEventsTable, finInvoicesTable } from "@workspace/db";
 import { attachInvoiceToLine, rankForInvoice, waitingLines, type SuggestedLine } from "./invoice-attach";
 import { logFinEvent } from "./invoice-store";
-import { pickCertainMatches } from "./invoice-to-line";
+import { pickCertainMatches, rankLinesForInvoice, withoutRejected } from "./invoice-to-line";
 import { runQboSync } from "./qbo";
 
 // Add an invoice once (Graeme, 4 Nov 2026): one dropped on Outstanding before
@@ -102,6 +102,38 @@ export async function rejectLineForInvoice(invoiceId: number, lineId: number, us
 export async function takeOutOfQueue(invoiceId: number, userId: number | null): Promise<void> {
   await db.update(finInvoicesTable).set({ awaitingTransactionAt: null, updatedAt: new Date() }).where(eq(finInvoicesTable.id, invoiceId));
   await logFinEvent("invoice", invoiceId, "taken_out_of_queue", userId);
+}
+
+/** One-time catch-up (Graeme, 4 Nov 2026): the transactions already on
+ *  Outstanding against the invoices already in the library. An invoice with a
+ *  real candidate joins the queue, then the normal rules decide. Safe to run
+ *  twice; what someone took out of the queue stays out. */
+export async function matchFromLibrary(userId: number | null): Promise<{ matched: number; autoDone: number; toCheck: number }> {
+  const library = await db.select({
+    id: finInvoicesTable.id, supplierName: finInvoicesTable.supplierName, invoiceDate: finInvoicesTable.invoiceDate,
+    invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount, rejectedLineIds: finInvoicesTable.rejectedLineIds,
+  }).from(finInvoicesTable).where(and(
+    isNull(finInvoicesTable.lineId),
+    isNull(finInvoicesTable.duplicateOfId),
+    isNull(finInvoicesTable.awaitingTransactionAt),
+    eq(finInvoicesTable.docKind, "invoice"),
+    eq(finInvoicesTable.readStatus, "done"),
+    notExists(db.select({ one: sql`1` }).from(finEventsTable).where(and(
+      eq(finEventsTable.entityType, "invoice"),
+      eq(finEventsTable.entityId, finInvoicesTable.id),
+      eq(finEventsTable.action, "taken_out_of_queue"),
+    ))),
+  ));
+  const lines = await waitingLines();
+  const worthQueuing = library.filter((inv) => rankLinesForInvoice(inv, withoutRejected(lines, inv.rejectedLineIds))
+    .some((s) => (s.evidence.amount && s.evidence.supplier) || s.evidence.reference));
+  if (worthQueuing.length > 0) {
+    await db.update(finInvoicesTable).set({ awaitingTransactionAt: new Date(), updatedAt: new Date() })
+      .where(inArray(finInvoicesTable.id, worthQueuing.map((i) => i.id)));
+  }
+  const { matched, autoDone } = await matchQueuedInvoices(userId);
+  const { check } = await invoiceQueue();
+  return { matched, autoDone, toCheck: check.length };
 }
 
 export interface AfterImport {
