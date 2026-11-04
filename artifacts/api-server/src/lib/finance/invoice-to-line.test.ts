@@ -102,13 +102,14 @@ describe("a strong match", () => {
     expect(ranked).toHaveLength(1);
     expect(isStrongMatch(ranked[0])).toBe(false);
     expect(isConfidentPick(ranked)).toBe(false);
-    expect(ranked[0].doubts).toContain("£54.69 more than the invoice");
+    expect(ranked[0].mismatches).toEqual(["Amount is £54.69 more than the invoice"]);
   });
 
   it("is claimed when the amount, supplier and date all agree", () => {
     const ranked = rankLinesForInvoice(inv, [charge({ amount: "95.31" })]);
     expect(isStrongMatch(ranked[0])).toBe(true);
     expect(isConfidentPick(ranked)).toBe(true);
+    expect(ranked[0].mismatches).toEqual([]);
     expect(ranked[0].doubts).toEqual([]);
   });
 
@@ -116,6 +117,19 @@ describe("a strong match", () => {
     const ranked = rankLinesForInvoice(inv, [charge({ amount: "95.31", lineDate: "2026-10-10" })]);
     expect(isConfidentPick(ranked)).toBe(false);
     expect(ranked[0].doubts).toContain("charged 25 days before the invoice date");
+  });
+
+  it("names the supplier problem even when the amount agrees", () => {
+    const s = scoreInvoiceAgainstLine(
+      { ...inv, invoiceNumber: null, totalAmount: "150.00" },
+      line({ amount: "150.00", descriptor: "ADOBE", merchant: "ADOBE", vendorName: "Adobe", lineDate: "2026-11-03" }),
+    );
+    expect(s?.mismatches).toEqual(["Supplier is different: invoice says Anthropic, PBC, transaction says Adobe"]);
+  });
+
+  it("flags a total that wasn't read rather than staying quiet", () => {
+    const [s] = rankLinesForInvoice({ ...inv, totalAmount: null }, [charge({ amount: "150.00" })]);
+    expect(s.mismatches).toEqual(["Invoice total wasn't read"]);
   });
 
   it("puts the same amount ahead of a closer date at the wrong amount", () => {

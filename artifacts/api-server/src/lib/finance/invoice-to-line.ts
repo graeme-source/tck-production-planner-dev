@@ -32,7 +32,10 @@ export interface LineSuggestion {
   strength: MatchStrength;
   daysApart: number | null;
   reasons: string[];
-  /** What doesn't agree, in words, so a weak guess can't pass for a match. */
+  /** The amount or supplier doesn't agree: always put in front of a person
+   *  as "Transaction doesn't match" (Graeme, 4 Nov 2026). */
+  mismatches: string[];
+  /** Lesser things to check, such as the date. */
   doubts: string[];
   evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean };
 }
@@ -66,6 +69,7 @@ function supplierMatches(supplier: string, line: LineCandidate): boolean {
 
 export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidate): LineSuggestion | null {
   const reasons: string[] = [];
+  const mismatches: string[] = [];
   const doubts: string[] = [];
   let points = 0;
 
@@ -76,12 +80,14 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
   if (amountHit) { points += 45; reasons.push(`same amount, £${Number(line.amount).toFixed(2)}`); }
   else if (inv.totalAmount) {
     const over = Number(line.amount) - Number(inv.totalAmount);
-    doubts.push(`£${Math.abs(over).toFixed(2)} ${over > 0 ? "more" : "less"} than the invoice`);
-  } else doubts.push("invoice total not read");
+    mismatches.push(`Amount is £${Math.abs(over).toFixed(2)} ${over > 0 ? "more" : "less"} than the invoice`);
+  } else mismatches.push("Invoice total wasn't read");
 
   const nameHit = !!inv.supplierName && supplierMatches(inv.supplierName, line);
   if (nameHit) { points += 30; reasons.push(`same supplier`); }
-  else doubts.push("different supplier name");
+  else mismatches.push(inv.supplierName
+    ? `Supplier is different: invoice says ${inv.supplierName}, transaction says ${line.vendorName ?? line.merchant ?? line.descriptor}`
+    : "Invoice supplier wasn't read");
 
   // A supplier's invoice and its card charge can sit either side of each
   // other — paid at checkout and invoiced later, or billed monthly in
@@ -112,7 +118,7 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
 
   const signals = (amountHit ? 1 : 0) + (nameHit ? 1 : 0) + (dateClose ? 1 : 0) + (refHit ? 1 : 0);
   return {
-    lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons, doubts,
+    lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons, mismatches, doubts,
     evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit },
   };
 }
