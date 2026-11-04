@@ -17,7 +17,6 @@ export const issueTriageTable = pgTable("issue_triage", {
   objective: text("objective"),
   blastRadius: text("blast_radius").notNull().default("low"), // low | medium | high
   confidence: text("confidence").notNull().default("medium"), // high | medium | low
-  noGoZone: boolean("no_go_zone").notNull().default(false),
   behaviourChange: boolean("behaviour_change").notNull().default(false),
   questionForGraeme: text("question_for_graeme"),
   /** Claude's draft message to the reporter (migration 0120) — pre-fills

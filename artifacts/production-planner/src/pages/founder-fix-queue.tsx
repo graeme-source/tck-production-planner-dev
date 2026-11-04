@@ -16,7 +16,7 @@ import { Link, Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ClipboardCheck, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Hourglass, Loader2,
-  MessageCircleQuestion, MessageSquareReply, MessageSquareText, OctagonAlert, RotateCcw, Scale, Send, Video, Wrench, X, XCircle,
+  MessageCircleQuestion, MessageSquareReply, MessageSquareText, RotateCcw, Scale, Send, Video, Wrench, X, XCircle,
 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
@@ -218,9 +218,6 @@ function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, s
       {/* Chips */}
       <div className="flex flex-wrap items-center gap-2">
         <Chip className={LANE_STYLES[t.lane]}>{LANE_LABELS[t.lane]}</Chip>
-        {t.noGoZone && (
-          <Chip className="bg-red-600 text-white"><OctagonAlert className="w-3.5 h-3.5" /> No-go zone — ships on its own</Chip>
-        )}
         {t.behaviourChange && (
           <Chip className="bg-amber-500 text-white"><Scale className="w-3.5 h-3.5" /> Changes agreed behaviour — your call first</Chip>
         )}

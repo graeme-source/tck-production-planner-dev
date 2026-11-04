@@ -106,9 +106,6 @@ The end state: the team improves the system themselves — by *reporting*, not b
 - **Two approval tiers.** *Restoring* agreed behaviour (data loss, wrong maths) =
   defect: Claude drafts, founder approves the diff. *Changing* behaviour = decision
   needed **before** any code is written.
-- **No-go zones get special handling.** Order engine, plan calculator, stock
-  mutations, Shopify writes, schema changes: always a fuller summary, never shipped
-  in a batch with other changes.
 - **Every fix carries a regression test** — the suite is the system's immune memory
   (quality built in, not inspected in).
 - **Small, separately-revertable batches**; Railway rollback stays one click away.
@@ -134,7 +131,7 @@ this section is the contract it is written against.
 - **`issue_triage`** — ONE current recommendation per andon issue (unique
   `andon_issue_id`): `lane` (defect · data_fix · understanding · improvement ·
   needs_info · not_app), `verdict_summary`, `explanation` (markdown),
-  `proposed_fix`, `objective`, `blast_radius`, `confidence`, `no_go_zone`,
+  `proposed_fix`, `objective`, `blast_radius`, `confidence`,
   `behaviour_change`, `question_for_graeme`, `related_issue_ids`, `cause_tag`,
   `status` (proposed · approved · rejected · in_progress · fixed · wont_fix),
   `awaiting_retriage` (Graeme replied with a question), decision fields,
@@ -158,7 +155,7 @@ middleware is the only door. Bodies are zod-validated (400 with
 |---|---|
 | `GET /issues?area=app&includeTriaged=false&includeResolved=false&since=ISO&limit=100` | Open app issues, newest first, each with reporter, severity, station, description, report context, acknowledged/resolved state, comments, attachment metadata + `url`, and its `triage` row (or null). Default = only issues with no triage row **or** where Graeme replied (`triage.awaitingRetriage`). `area`: `app` (area `system` or station "App / iPad"), `factory`, `unspecified` (pre-2026-08-27 reports), `all`. |
 | `GET /attachments/:id` | The photo/video bytes. |
-| `POST /triage` | Write a recommendation: `{ andonIssueId, lane, verdictSummary, explanation?, proposedFix?, objective?, blastRadius, confidence, noGoZone, behaviourChange, questionForGraeme?, relatedIssueIds?, causeTag?, triagedBy?, force? }`. 201 created / 200 refined. A still-`proposed` row is updated freely (and its reply flag cleared). **Once decided (approved/rejected/in_progress/fixed/wont_fix) → 409** with `currentStatus`; `force: true` resets it to `proposed` for a fresh decision, old decision kept in history. |
+| `POST /triage` | Write a recommendation: `{ andonIssueId, lane, verdictSummary, explanation?, proposedFix?, objective?, blastRadius, confidence, behaviourChange, questionForGraeme?, relatedIssueIds?, causeTag?, triagedBy?, force? }`. 201 created / 200 refined. A still-`proposed` row is updated freely (and its reply flag cleared). **Once decided (approved/rejected/in_progress/fixed/wont_fix) → 409** with `currentStatus`; `force: true` resets it to `proposed` for a fresh decision, old decision kept in history. |
 | `GET /approved?status=approved` | The work queue (oldest approval first), `{ items: [{ triage, issue }] }`. `status` may also be `in_progress` or `fixed`. |
 | `POST /triage/:id/status` | `{ status: in_progress\|fixed\|wont_fix, fixRef?, note?, actor? }`. Only approved work moves: proposed/rejected → 409. `fixed` needs `fixRef` (branch/commit/PR); `wont_fix` needs `note`. |
 | `POST /triage/:id/resolve-issue` | **After Graeme has deployed.** `{ whatChanged, testPath?, alsoResolveRelated?, actor? }`. Only for `fixed`, once. Resolves the andon issue (as `"<decider> (Fix queue)"`), comments on it "Your report changed this — here's what's different: …", sends the reporter a bell notification and queues their full-screen notice. `testPath` must be an in-app path starting with a single `/` (no URLs, no `/api`). `alsoResolveRelated` also closes clustered duplicates that have no triage row of their own. |
@@ -277,8 +274,8 @@ Graeme's "deploy", and `resolve-issue` still only happens once it's live.
    and the data; check repeats with `includeResolved=true&includeTriaged=true`;
    look at photos via `/attachments/:id`.
 2. `POST /triage` with a plain-English one-sentence verdict, the evidence, the
-   proposed change, the objective, and honest `noGoZone` / `behaviourChange`
-   flags. If unsure, lane `needs_info` and ask in `questionForGraeme`. Answer
+   proposed change, the objective, and an honest `behaviourChange`
+   flag. If unsure, lane `needs_info` and ask in `questionForGraeme`. Answer
    Graeme's replies (`triage.decisionNote` when `awaitingRetriage`) by
    re-triaging.
 3. `GET /approved` → fix each on its own review branch (one per cause-cluster,
@@ -301,8 +298,6 @@ Graeme asked for that specific test** — never by default on a deploy. See
   objective on every recommendation.
 - `behaviourChange: true` whenever the report implies changing agreed
   behaviour — that is a decision **before** any code.
-- `noGoZone: true` for the order engine, plan calculator, stock mutations,
-  Shopify writes and schema changes — fuller summary, never batched.
 - Nothing unapproved is worked on (the API enforces it). Never `force` a
   re-triage over a decision without new evidence, and say what's new.
 - Never mark `fixed` without a regression test on the branch; never call

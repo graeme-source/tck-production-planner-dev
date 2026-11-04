@@ -208,7 +208,6 @@ const triageBody = z.object({
   objective: z.string().trim().max(40).nullable().optional(),
   blastRadius: z.enum(LEVELS),
   confidence: z.enum(LEVELS),
-  noGoZone: z.boolean(),
   behaviourChange: z.boolean(),
   questionForGraeme: z.string().trim().max(2000).nullable().optional(),
   /** Draft message to the reporter — step-by-step instructions when they can
@@ -243,7 +242,6 @@ router.post("/triage", validate(triageBody), async (req, res) => {
       objective: b.objective || null,
       blastRadius: b.blastRadius,
       confidence: b.confidence,
-      noGoZone: b.noGoZone,
       behaviourChange: b.behaviourChange,
       questionForGraeme: b.questionForGraeme || null,
       suggestedReply: b.suggestedReply || null,
