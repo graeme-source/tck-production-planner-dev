@@ -144,6 +144,16 @@ router.get("/lines", requireFinanceAccess, async (req: Request, res: Response) =
           .from(finDocumentsTable)
           .where(inArray(finDocumentsTable.lineId, lineIds))
       : [];
+    // An invoice attached to several charges: how many it's on, for the bookkeeper.
+    const invoiceRefs = [...new Set(docs.flatMap((d) => (d.sourceRef?.startsWith("invoice:") ? [d.sourceRef] : [])))];
+    const shared = invoiceRefs.length
+      ? await db
+          .select({ sourceRef: finDocumentsTable.sourceRef, n: sql<number>`count(*)::int` })
+          .from(finDocumentsTable)
+          .where(inArray(finDocumentsTable.sourceRef, invoiceRefs))
+          .groupBy(finDocumentsTable.sourceRef)
+      : [];
+    const coversLines = new Map(shared.map((r) => [r.sourceRef, r.n]));
     const suggestions = lineIds.length
       ? await db
           .select({ lineId: finMatchesTable.lineId, n: sql<number>`count(*)::int` })
@@ -158,7 +168,7 @@ router.get("/lines", requireFinanceAccess, async (req: Request, res: Response) =
 
     res.json({
       lines,
-      documentsByLine: groupBy(docs, (d) => d.lineId),
+      documentsByLine: groupBy(docs.map((d) => ({ ...d, coversLines: coversLines.get(d.sourceRef) ?? 1 })), (d) => d.lineId),
       suggestionCounts: Object.fromEntries(suggestions.map((s) => [s.lineId, s.n])),
       vendors: Object.fromEntries(vendors.map((v) => [v.id, v])),
     });

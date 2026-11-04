@@ -103,10 +103,11 @@ type FinVendor = {
   detailsConfirmed: boolean;
 };
 
-type FinDocMeta = { id: number; lineId: number; fileName: string; docKind: string; docSource: string; sourceRef: string | null; fileMime: string; createdAt: string };
+type FinDocMeta = { id: number; lineId: number; fileName: string; docKind: string; docSource: string; sourceRef: string | null; coversLines?: number; fileMime: string; createdAt: string };
 
 /** The library invoice a document on a line came from, if it did. */
 const invoiceIdOf = (d: FinDocMeta) => /^invoice:(\d+)$/.exec(d.sourceRef ?? "")?.[1] ?? null;
+const coversSeveral = (d: FinDocMeta) => (d.coversLines ?? 1) > 1;
 
 // What a stored document IS — drives whether a line still needs chasing
 // (an order confirmation is evidence you bought it, not a VAT invoice).
@@ -710,6 +711,7 @@ function LineRow({
               <div className="flex items-center gap-2 flex-wrap">
                 <Badge className="bg-emerald-600 text-white">VAT invoice</Badge>
                 <span className="font-medium truncate flex-1 min-w-0">{d.fileName}</span>
+                {coversSeveral(d) && <span className="text-xs text-muted-foreground whitespace-nowrap">covers {d.coversLines} transactions</span>}
                 <Button size="sm" variant="outline" asChild>
                   <a href={`${BASE}/api/finance/documents/${d.id}/file`} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4 mr-1" /> Open in a new tab</a>
                 </Button>
@@ -987,11 +989,11 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
     onError: (e: Error) => toast({ title: "Couldn't change the type", description: e.message, variant: "destructive" }),
   });
   const takeOff = useMutation({
-    mutationFn: (invoiceId: string) => jsonFetch(`${BASE}/api/finance/invoices/${invoiceId}/detach`, {
+    mutationFn: (d: FinDocMeta) => jsonFetch(`${BASE}/api/finance/invoices/${invoiceIdOf(d)}/detach`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
     }),
-    onSuccess: () => {
-      toast({ title: "Back in the invoice queue", description: "It won't be matched to this transaction again." });
+    onSuccess: (_r, d) => {
+      toast({ title: "Back in the invoice queue", description: coversSeveral(d) ? `Taken off all ${d.coversLines} transactions.` : "It won't be matched to this transaction again." });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
     },
@@ -1023,6 +1025,7 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
             >
               <FileText className="h-4 w-4" />
               <span className="max-w-[220px] truncate">{d.fileName}</span>
+              {coversSeveral(d) && <span className="text-xs text-muted-foreground whitespace-nowrap">covers {d.coversLines} transactions</span>}
             </button>
             <select
               value={d.docKind}
@@ -1041,7 +1044,7 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
             </a>
             {invoiceIdOf(d) && (
               <button
-                onClick={() => takeOff.mutate(invoiceIdOf(d)!)}
+                onClick={() => takeOff.mutate(d)}
                 disabled={takeOff.isPending}
                 className="px-2.5 py-1.5 border-l hover:bg-accent text-xs text-muted-foreground"
               >

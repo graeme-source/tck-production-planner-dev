@@ -7,8 +7,9 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { FilePreview } from "@/pages/finance-invoices";
+import { MatchOptions, type InvoiceMatches, type Suggestion } from "@/pages/finance-invoice-match";
 import { InvoiceQueuePanel } from "@/pages/finance-invoice-queue";
-import { CheckCircle2, Eye, FileText, Loader2, Search as SearchIcon, Upload, X } from "lucide-react";
+import { Eye, FileText, Loader2, Search as SearchIcon, Upload, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -31,24 +32,9 @@ export type ReadInvoice = {
   readNote: string | null;
 };
 
-export type Suggestion = {
-  lineId: number;
-  lineDate: string;
-  supplier: string;
-  descriptor: string;
-  amount: string;
-  cardLast4: string | null;
-  cardholder: string | null;
-  posted: boolean;
-  strength: "weak" | "medium" | "strong" | "very_strong";
-  reasons: string[];
-};
-
-type FindResult = {
+type FindResult = InvoiceMatches & {
   invoice: ReadInvoice | null;
   alreadyAttached: { id: number; lineDate: string; descriptor: string; amount: string } | null;
-  suggestions: Suggestion[];
-  confident: boolean;
 };
 
 type Item = {
@@ -152,7 +138,6 @@ export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
 function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss: () => void; onChange: (p: Partial<Item>) => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const [showOthers, setShowOthers] = useState(false);
   const [showFile, setShowFile] = useState(false);
   // Once someone starts correcting the details, the boxes stay put even
   // when a match turns up halfway through.
@@ -160,15 +145,19 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
   const inv = item.result?.invoice ?? null;
   const unread = inv ? inv.readStatus === "failed" || inv.readStatus === "not_available" : false;
 
+  const post = (path: string, body: object = {}) => jsonFetch(`${BASE}/api/finance/invoices/${inv!.id}/${path}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  });
+
   const attach = useMutation({
-    mutationFn: (s: Suggestion) => jsonFetch(`${BASE}/api/finance/invoices/${inv!.id}/attach`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lineId: s.lineId }),
-    }) as Promise<{ autoDone: boolean }>,
-    onSuccess: (r, s) => {
+    mutationFn: (lines: Suggestion[]) => post("attach", { lineIds: lines.map((l) => l.lineId) }) as Promise<{ attached: number; autoDone: number }>,
+    onSuccess: (r, lines) => {
       // The card's job is done, so it goes (Graeme, 4 Nov 2026).
       toast({
-        title: `Attached to ${s.supplier}, ${money(s.amount)}`,
-        description: r.autoDone ? "It was already posted in QuickBooks, so it's done and filed in Invoices." : "It's now under To be processed.",
+        title: lines.length === 1 ? `Attached to ${lines[0].supplier}, ${money(lines[0].amount)}` : `Attached to ${lines.length} ${lines[0].supplier} transactions`,
+        description: r.autoDone === r.attached ? "Already posted in QuickBooks, so it's done and filed in Invoices."
+          : r.autoDone > 0 ? `${r.autoDone} already posted went to Completed. The rest are under To be processed.`
+          : "It's now under To be processed.",
       });
       onDismiss();
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
@@ -183,7 +172,24 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
     onError: (e: Error) => toast({ title: "Couldn't look again", description: e.message, variant: "destructive" }),
   });
 
-  const [top, ...others] = item.result?.suggestions ?? [];
+  const reject = useMutation({
+    mutationFn: (lineId: number) => post("reject-line", { lineId }),
+    onSuccess: () => lookAgain.mutate(),
+    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
+  });
+
+  const leaveQueue = useMutation({
+    mutationFn: () => post("leave-queue"),
+    onSuccess: () => {
+      toast({ title: "Taken out of the queue", description: "It's still in Invoices." });
+      onDismiss();
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
+  });
+
+  const hasOptions = (item.result?.suggestions.length ?? 0) > 0;
+  const busy = attach.isPending || reject.isPending || leaveQueue.isPending || lookAgain.isPending;
 
   return (
     <Card>
@@ -223,64 +229,23 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
             <p className="text-sm text-muted-foreground">
               Already attached to {item.result.alreadyAttached.descriptor}, {money(item.result.alreadyAttached.amount)} on {ukDate(item.result.alreadyAttached.lineDate)} — nothing to do.
             </p>
-          ) : !top ? (
-            <p className="text-sm">
-              {unread
-                ? "Couldn't read it automatically — type the supplier, date and total below and it will look again."
-                : "No transaction for this yet. It's queued and will be matched when the card statement comes in. If something was read wrong, correct it below."}
-            </p>
-          ) : (
+          ) : inv && (
             <div className="space-y-3">
-              <SuggestionBox
-                s={top}
-                heading={item.result.confident ? "I think it's this one" : "Closest match — check it's right"}
-                primary
-                busy={attach.isPending}
-                onAttach={() => attach.mutate(top)}
-              />
+              {unread && !inv.totalAmount && <p className="text-sm">Couldn't read it automatically: type the supplier, date and total below and it will look again.</p>}
+              <MatchOptions invoice={inv} matches={item.result} busy={busy} onAttach={(lines) => attach.mutate(lines)} onReject={(id) => reject.mutate(id)} />
               <div className="flex flex-wrap gap-2">
-                {others.length > 0 && (
-                  <Button variant="outline" size="sm" onClick={() => setShowOthers((v) => !v)}>
-                    {showOthers ? "Hide the others" : `Not this one — show ${others.length} other${others.length === 1 ? "" : "s"}`}
-                  </Button>
-                )}
-                {!editing && (
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Details wrong? Correct them</Button>
-                )}
+                {!editing && hasOptions && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Details wrong? Correct them</Button>}
+                <Button variant="ghost" size="sm" disabled={busy} onClick={() => leaveQueue.mutate()}>No card transaction</Button>
               </div>
-              {showOthers && others.map((s) => (
-                <SuggestionBox key={s.lineId} s={s} heading="Or this one?" busy={attach.isPending} onAttach={() => attach.mutate(s)} />
-              ))}
             </div>
           )
         )}
 
-        {item.state === "ready" && inv && !item.result?.alreadyAttached && (editing || !top) && (
+        {item.state === "ready" && inv && !item.result?.alreadyAttached && (editing || !hasOptions) && (
           <DetailsEditor invoice={inv} onSaved={() => { setEditing(true); lookAgain.mutate(); }} busy={lookAgain.isPending} />
         )}
       </CardContent>
     </Card>
-  );
-}
-
-export function SuggestionBox({ s, heading, primary, busy, onAttach }: { s: Suggestion; heading: string; primary?: boolean; busy: boolean; onAttach: () => void }) {
-  return (
-    <div className={cn("rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center gap-3", primary ? "border-primary/50 bg-primary/5" : "bg-secondary/30")}>
-      <div className="flex-1 min-w-0">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{heading}</div>
-        <div className="text-base font-semibold break-words">{s.supplier}</div>
-        <div className="text-sm break-words">
-          {money(s.amount)} on {ukDate(s.lineDate)}
-          {s.cardLast4 ? ` · card ${s.cardLast4}` : ""}{s.cardholder ? ` · ${s.cardholder}` : ""}
-          {s.posted ? " · posted in QuickBooks" : ""}
-        </div>
-        <div className="text-xs text-muted-foreground mt-1">{s.reasons.join(" · ")}</div>
-      </div>
-      <Button size={primary ? "lg" : "default"} variant={primary ? "default" : "outline"} onClick={onAttach} disabled={busy}>
-        {busy ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-        {primary ? "Yes, attach" : "Attach this one"}
-      </Button>
-    </div>
   );
 }
 

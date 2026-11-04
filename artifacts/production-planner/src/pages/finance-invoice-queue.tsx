@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { DetailsEditor, jsonFetch, money, SuggestionBox, ukDate, type ReadInvoice, type Suggestion } from "@/pages/finance-invoice-drop";
+import { DetailsEditor, jsonFetch, money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
+import { MatchOptions, type InvoiceMatches } from "@/pages/finance-invoice-match";
 import { FilePreview } from "@/pages/finance-invoices";
 import { ChevronDown, ChevronRight, Eye } from "lucide-react";
 
@@ -13,7 +14,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 // Outstanding and hasn't got a transaction yet. The undeniable matches attach
 // themselves, so this shows only what needs a person, and what's still waiting.
 
-type QueueEntry = { invoice: ReadInvoice; suggestions: Suggestion[]; confident: boolean };
+type QueueEntry = InvoiceMatches & { invoice: ReadInvoice };
 type InvoiceQueue = { check: QueueEntry[]; waiting: QueueEntry[] };
 
 const QUEUE_KEY = ["/api/finance/invoices", "queue"];
@@ -63,10 +64,9 @@ export function InvoiceQueuePanel({ hiddenIds }: { hiddenIds: number[] }) {
 function QueueRow({ entry }: { entry: QueueEntry }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { invoice: inv, suggestions } = entry;
+  const { invoice: inv } = entry;
   const [showFile, setShowFile] = useState(false);
   const [editing, setEditing] = useState(false);
-  const [top] = suggestions;
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: QUEUE_KEY });
     queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
@@ -77,7 +77,7 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
   const fail = (title: string) => (e: Error) => toast({ title, description: e.message, variant: "destructive" });
 
   const attach = useMutation({
-    mutationFn: (lineId: number) => post("attach", { lineId }),
+    mutationFn: (lineIds: number[]) => post("attach", { lineIds }),
     onSuccess: refresh,
     onError: fail("Couldn't attach it"),
   });
@@ -102,13 +102,12 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
           {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"} · {inv.totalAmount ? money(inv.totalAmount) : "total not read"}
           {inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""}
         </div>
-        {unread && <div className="text-sm text-destructive">Couldn't be read: correct the details so it can be matched.</div>}
+        {unread && !inv.totalAmount && <div className="text-sm text-destructive">Couldn't be read: correct the details so it can be matched.</div>}
       </div>
 
-      {top && <SuggestionBox s={top} heading="Is it this one?" primary busy={busy} onAttach={() => attach.mutate(top.lineId)} />}
+      <MatchOptions invoice={inv} matches={entry} busy={busy} onAttach={(lines) => attach.mutate(lines.map((l) => l.lineId))} onReject={(id) => reject.mutate(id)} />
 
       <div className="flex flex-wrap gap-2">
-        {top && <Button variant="outline" size="sm" disabled={busy} onClick={() => reject.mutate(top.lineId)}>Not this one</Button>}
         <Button variant="ghost" size="sm" onClick={() => setShowFile((v) => !v)}><Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide invoice" : "View invoice"}</Button>
         <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>Correct details</Button>
         <Button variant="ghost" size="sm" disabled={busy} onClick={() => leave.mutate()}>No card transaction</Button>

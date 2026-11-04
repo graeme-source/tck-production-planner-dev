@@ -1,8 +1,8 @@
 import { and, asc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
 import { db, finEventsTable, finInvoicesTable } from "@workspace/db";
-import { attachInvoiceToLine, rankForInvoice, waitingLines, type SuggestedLine } from "./invoice-attach";
+import { attachInvoiceToLine, rankForInvoice, waitingLines, type InvoiceMatches } from "./invoice-attach";
 import { logFinEvent } from "./invoice-store";
-import { pickCertainMatches, rankLinesForInvoice, withoutRejected } from "./invoice-to-line";
+import { chargesThatAddUp, pickCertainMatches, rankLinesForInvoice, withoutRejected } from "./invoice-to-line";
 import { runQboSync } from "./qbo";
 
 // Add an invoice once (Graeme, 4 Nov 2026): one dropped on Outstanding before
@@ -72,11 +72,12 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
 }
 
 type QueuedRow = Awaited<ReturnType<typeof queuedInvoices>>[number];
-export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds">; suggestions: SuggestedLine[]; confident: boolean };
+export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds"> } & InvoiceMatches;
 
-/** `check` has a transaction with the same amount or reference for someone to
- *  look at; `waiting` has nothing that good yet. A shared supplier alone isn't
- *  worth interrupting anyone: it describes every invoice from a regular. */
+/** `check` has a transaction with the same amount or reference, or charges
+ *  that add up to it, for someone to look at; `waiting` has nothing that good
+ *  yet. A shared supplier alone isn't worth interrupting anyone: it describes
+ *  every invoice from a regular. */
 export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: QueueEntry[] }> {
   await settleAttachedByHand();
   const invoices = await queuedInvoices();
@@ -84,8 +85,8 @@ export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: Qu
   const check: QueueEntry[] = [];
   const waiting: QueueEntry[] = [];
   for (const { rejectedLineIds, ...invoice } of invoices) {
-    const ranked = rankForInvoice({ ...invoice, rejectedLineIds }, lines, 3);
-    const worthChecking = ranked.suggestions.some((s) => s.evidence.amount || s.evidence.reference);
+    const ranked = rankForInvoice({ ...invoice, rejectedLineIds }, lines);
+    const worthChecking = !!ranked.addsUp || ranked.suggestions.some((s) => s.evidence.amount || s.evidence.reference);
     (worthChecking ? check : waiting).push({ invoice, ...ranked });
   }
   return { check, waiting };
@@ -125,8 +126,10 @@ export async function matchFromLibrary(userId: number | null): Promise<{ matched
     ))),
   ));
   const lines = await waitingLines();
-  const worthQueuing = library.filter((inv) => rankLinesForInvoice(inv, withoutRejected(lines, inv.rejectedLineIds))
-    .some((s) => (s.evidence.amount && s.evidence.supplier) || s.evidence.reference));
+  const worthQueuing = library.filter((inv) => {
+    const open = withoutRejected(lines, inv.rejectedLineIds);
+    return !!chargesThatAddUp(inv, open) || rankLinesForInvoice(inv, open).some((s) => (s.evidence.amount && s.evidence.supplier) || s.evidence.reference);
+  });
   if (worthQueuing.length > 0) {
     await db.update(finInvoicesTable).set({ awaitingTransactionAt: new Date(), updatedAt: new Date() })
       .where(inArray(finInvoicesTable.id, worthQueuing.map((i) => i.id)));

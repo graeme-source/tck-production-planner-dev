@@ -9,7 +9,7 @@ import { resolveFinanceAccess } from "./finance";
 import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMimeFor, periodRange, sha256Of, supplierHintFromPath } from "../lib/finance/invoice-library";
 import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
-import { attachInvoiceToLine, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
+import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
 import { invoiceQueue, matchFromLibrary, queueInvoice, rejectLineForInvoice, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
 // Finance → Invoices: the searchable library of every invoice we hold
@@ -328,7 +328,7 @@ router.post("/find-transaction", requireFinanceAccess, receiveOne, async (req: R
     await readInvoiceNow(r.id);
     const invoice = await invoiceSummary(r.id);
     const already = await attachedLine(invoice?.lineId ?? null);
-    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false }); return; }
+    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false, addsUp: null }); return; }
     // Add it once: from here it waits for its transaction, found or not.
     await queueInvoice(r.id);
     res.json({ invoice, alreadyAttached: null, ...(await suggestLinesForInvoice(r.id)) });
@@ -362,7 +362,7 @@ router.get("/:id/transactions", requireFinanceAccess, async (req: Request, res: 
     const invoice = await invoiceSummary(Number(req.params.id));
     if (!invoice) { res.status(404).json({ error: "Invoice not found" }); return; }
     const already = await attachedLine(invoice.lineId);
-    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false }); return; }
+    if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false, addsUp: null }); return; }
     res.json({ invoice, alreadyAttached: null, ...(await suggestLinesForInvoice(invoice.id)) });
   } catch (err) {
     console.error("[finance] invoice transactions error:", err);
@@ -370,11 +370,11 @@ router.get("/:id/transactions", requireFinanceAccess, async (req: Request, res: 
   }
 });
 
-const attachSchema = z.object({ lineId: z.number().int().positive() });
+const attachSchema = z.object({ lineIds: z.array(z.number().int().positive()).min(1).max(40) });
 router.post("/:id/attach", requireFinanceAccess, validate(attachSchema), async (req: Request, res: Response) => {
   try {
-    const { lineId } = req.body as z.infer<typeof attachSchema>;
-    const r = await attachInvoiceToLine(Number(req.params.id), lineId, req.session.userId ?? null);
+    const { lineIds } = req.body as z.infer<typeof attachSchema>;
+    const r = await attachInvoiceToLines(Number(req.params.id), lineIds, req.session.userId ?? null);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     res.json(r);
   } catch (err) {

@@ -32,6 +32,8 @@ export interface LineSuggestion {
   strength: MatchStrength;
   daysApart: number | null;
   reasons: string[];
+  /** What doesn't agree, in words, so a weak guess can't pass for a match. */
+  doubts: string[];
   evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean };
 }
 
@@ -64,6 +66,7 @@ function supplierMatches(supplier: string, line: LineCandidate): boolean {
 
 export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidate): LineSuggestion | null {
   const reasons: string[] = [];
+  const doubts: string[] = [];
   let points = 0;
 
   const amountHit = !!inv.totalAmount && (
@@ -71,9 +74,14 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
     (line.originalAmount ? amountsEqual(inv.totalAmount, line.originalAmount) : false)
   );
   if (amountHit) { points += 45; reasons.push(`same amount, £${Number(line.amount).toFixed(2)}`); }
+  else if (inv.totalAmount) {
+    const over = Number(line.amount) - Number(inv.totalAmount);
+    doubts.push(`£${Math.abs(over).toFixed(2)} ${over > 0 ? "more" : "less"} than the invoice`);
+  } else doubts.push("invoice total not read");
 
   const nameHit = !!inv.supplierName && supplierMatches(inv.supplierName, line);
   if (nameHit) { points += 30; reasons.push(`same supplier`); }
+  else doubts.push("different supplier name");
 
   // A supplier's invoice and its card charge can sit either side of each
   // other — paid at checkout and invoiced later, or billed monthly in
@@ -83,8 +91,9 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
   const dateClose = days !== null && Math.abs(days) <= 7;
   if (days !== null) {
     points += dateClose ? 15 : Math.abs(days) <= 31 ? 8 : 2;
-    reasons.push(days === 0 ? "charged the same day" : `charged ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ${days > 0 ? "after" : "before"} the invoice date`);
-  }
+    const when = days === 0 ? "charged the same day" : `charged ${Math.abs(days)} day${Math.abs(days) === 1 ? "" : "s"} ${days > 0 ? "after" : "before"} the invoice date`;
+    (dateClose ? reasons : doubts).push(when);
+  } else doubts.push("invoice date not read");
 
   let refHit = false;
   const invoiceTokens = inv.invoiceNumber ? extractRefTokens(inv.invoiceNumber) : [];
@@ -103,32 +112,67 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
 
   const signals = (amountHit ? 1 : 0) + (nameHit ? 1 : 0) + (dateClose ? 1 : 0) + (refHit ? 1 : 0);
   return {
-    lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons,
+    lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons, doubts,
     evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit },
   };
 }
 
-/** Best first: most signals, then score, then the nearest date — which is
- *  what tells this month's invoice from last month's at the same price. */
+/** Best first: the amount agreeing beats everything, then most signals, then
+ *  score, then the nearest date, which tells this month's invoice from last
+ *  month's at the same price. */
 export function rankLinesForInvoice(inv: InvoiceForMatch, lines: LineCandidate[], limit = 5): LineSuggestion[] {
   return lines
     .map((l) => scoreInvoiceAgainstLine(inv, l))
     .filter((s): s is LineSuggestion => s !== null && s.signals >= 1)
     .sort((a, b) =>
+      Number(b.evidence.amount) - Number(a.evidence.amount) ||
       b.signals - a.signals ||
       b.score - a.score ||
       Math.abs(a.daysApart ?? 999) - Math.abs(b.daysApart ?? 999))
     .slice(0, limit);
 }
 
-/** Confident enough to put forward as "I think it's this one": the amount
- *  and supplier both agree, and nothing else ranks level with it. */
+/** A strong match (Graeme, 4 Nov 2026): the amount is the same at minimum, the
+ *  supplier agrees, and the date is close or the reference is on both. */
+export const isStrongMatch = (s: LineSuggestion): boolean =>
+  s.evidence.amount && s.evidence.supplier && (s.evidence.date || s.evidence.reference);
+
+/** Confident enough to put forward as "I think it's this one": a strong match
+ *  that nothing else ranks level with. */
 export function isConfidentPick(ranked: LineSuggestion[]): boolean {
   const [top, next] = ranked;
-  if (!top || top.signals < 2) return false;
+  if (!top || !isStrongMatch(top)) return false;
   if (!next) return true;
   return top.signals > next.signals || top.score > next.score ||
     Math.abs(top.daysApart ?? 999) < Math.abs(next.daysApart ?? 999);
+}
+
+const MOST_CHARGES_TO_ADD_UP = 40;
+const MOST_TOTALS_TO_TRY = 100_000;
+
+/**
+ * One invoice paid in several card charges, such as a monthly Google invoice
+ * charged at each spend threshold: the supplier's charges that come to exactly
+ * the invoice total, nearest the invoice date first. Only ever put to a person.
+ */
+export function chargesThatAddUp(inv: InvoiceForMatch, lines: LineCandidate[]): number[] | null {
+  const target = Math.round(Number(inv.totalAmount ?? 0) * 100);
+  if (target <= 0) return null;
+  const charges = lines
+    .map((l) => ({ id: l.id, pence: Math.round(Number(l.amount) * 100), match: scoreInvoiceAgainstLine(inv, l) }))
+    .filter((c) => c.match?.evidence.supplier && c.pence > 0 && c.pence < target)
+    .sort((a, b) => Math.abs(a.match?.daysApart ?? 999) - Math.abs(b.match?.daysApart ?? 999))
+    .slice(0, MOST_CHARGES_TO_ADD_UP);
+  const reached = new Map<number, number[]>([[0, []]]);
+  for (const c of charges) {
+    for (const [sum, ids] of [...reached]) {
+      const next = sum + c.pence;
+      if (next > target || reached.has(next)) continue;
+      if (reached.size >= MOST_TOTALS_TO_TRY) return null;
+      reached.set(next, [...ids, c.id]);
+    }
+  }
+  return reached.get(target) ?? null;
 }
 
 export interface QueuedInvoice extends InvoiceForMatch {

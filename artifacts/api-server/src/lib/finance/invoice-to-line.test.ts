@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isConfidentPick, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
+import { chargesThatAddUp, isConfidentPick, isStrongMatch, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
 
 const line = (over: Partial<LineCandidate>): LineCandidate => ({
   id: 1, lineDate: "2026-10-06", authDate: null, descriptor: "SP ALUXO LTD", merchant: "ALUXO",
@@ -90,5 +90,68 @@ describe("pickCertainMatches", () => {
 
   it("never goes back to a transaction someone said it isn't", () => {
     expect(pickCertainMatches([invoice({ rejectedLineIds: [11] })], [line({ id: 11 })])).toEqual([]);
+  });
+});
+
+describe("a strong match", () => {
+  const inv = { supplierName: "Anthropic, PBC", invoiceDate: "2026-11-04", invoiceNumber: "DCT4LIGD-0003", totalAmount: "95.31" };
+  const charge = (over: Partial<LineCandidate>) => line({ descriptor: "ANTHROPIC", merchant: "ANTHROPIC", vendorName: "Anthropic", lineDate: "2026-11-03", ...over });
+
+  it("is not claimed for the right supplier at the wrong amount (the Anthropic £150 card)", () => {
+    const ranked = rankLinesForInvoice(inv, [charge({ amount: "150.00", lineDate: "2026-10-28" })]);
+    expect(ranked).toHaveLength(1);
+    expect(isStrongMatch(ranked[0])).toBe(false);
+    expect(isConfidentPick(ranked)).toBe(false);
+    expect(ranked[0].doubts).toContain("£54.69 more than the invoice");
+  });
+
+  it("is claimed when the amount, supplier and date all agree", () => {
+    const ranked = rankLinesForInvoice(inv, [charge({ amount: "95.31" })]);
+    expect(isStrongMatch(ranked[0])).toBe(true);
+    expect(isConfidentPick(ranked)).toBe(true);
+    expect(ranked[0].doubts).toEqual([]);
+  });
+
+  it("is not claimed when the date is far off, and says so", () => {
+    const ranked = rankLinesForInvoice(inv, [charge({ amount: "95.31", lineDate: "2026-10-10" })]);
+    expect(isConfidentPick(ranked)).toBe(false);
+    expect(ranked[0].doubts).toContain("charged 25 days before the invoice date");
+  });
+
+  it("puts the same amount ahead of a closer date at the wrong amount", () => {
+    const ranked = rankLinesForInvoice(inv, [
+      charge({ id: 1, amount: "150.00", lineDate: "2026-11-04" }),
+      charge({ id: 2, amount: "95.31", lineDate: "2026-10-20" }),
+    ]);
+    expect(ranked[0].lineId).toBe(2);
+  });
+});
+
+describe("chargesThatAddUp", () => {
+  const inv = { supplierName: "Google", invoiceDate: "2026-11-01", invoiceNumber: null, totalAmount: "500.00" };
+  const charge = (id: number, amount: string, over: Partial<LineCandidate> = {}) =>
+    line({ id, amount, descriptor: "GOOGLE ADS", merchant: "GOOGLE", vendorName: "Google", lineDate: "2026-10-20", ...over });
+
+  it("finds the supplier's charges that make up the invoice", () => {
+    const ids = chargesThatAddUp(inv, [charge(1, "200.00"), charge(2, "175.50"), charge(3, "124.50"), charge(4, "60.00")]);
+    expect(ids?.sort()).toEqual([1, 2, 3]);
+  });
+
+  it("doesn't count another supplier's charge", () => {
+    expect(chargesThatAddUp(inv, [charge(1, "250.00"), charge(2, "250.00", { descriptor: "ALUXO", merchant: "ALUXO", vendorName: "Aluxo" })])).toBeNull();
+  });
+
+  it("uses each charge once and needs more than one", () => {
+    expect(chargesThatAddUp(inv, [charge(1, "250.00")])).toBeNull();
+    expect(chargesThatAddUp(inv, [charge(1, "500.00")])).toBeNull();
+  });
+
+  it("ignores refunds and an invoice with no total", () => {
+    expect(chargesThatAddUp(inv, [charge(1, "600.00"), charge(2, "-100.00")])).toBeNull();
+    expect(chargesThatAddUp({ ...inv, totalAmount: null }, [charge(1, "250.00"), charge(2, "250.00")])).toBeNull();
+  });
+
+  it("handles pennies exactly", () => {
+    expect(chargesThatAddUp({ ...inv, totalAmount: "0.30" }, [charge(1, "0.10"), charge(2, "0.20")])?.sort()).toEqual([1, 2]);
   });
 });
