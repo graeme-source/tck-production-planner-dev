@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chargesThatAddUp, isConfidentPick, isStrongMatch, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
+import { chargesThatAddUp, isConfidentPick, isStrongMatch, isWorthChecking, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
 
 const line = (over: Partial<LineCandidate>): LineCandidate => ({
   id: 1, lineDate: "2026-10-06", authDate: null, descriptor: "SP ALUXO LTD", merchant: "ALUXO",
@@ -167,5 +167,38 @@ describe("chargesThatAddUp", () => {
 
   it("handles pennies exactly", () => {
     expect(chargesThatAddUp({ ...inv, totalAmount: "0.30" }, [charge(1, "0.10"), charge(2, "0.20")])?.sort()).toEqual([1, 2]);
+  });
+});
+
+describe("what's worth someone's time", () => {
+  const inv = { supplierName: "Amazon Business EU", invoiceDate: "2026-09-15", invoiceNumber: "GB68ER0DABEI", totalAmount: "63.11" };
+  const charge = (id: number, amount: string, lineDate: string, cardLast4: string) =>
+    line({ id, amount, lineDate, cardLast4, descriptor: "AMAZON", merchant: "AMAZON", vendorName: "Amazon Marketplace" });
+
+  it("no longer adds up unrelated charges (the Amazon £63.11 card)", () => {
+    expect(chargesThatAddUp(inv, [
+      charge(1, "13.28", "2026-10-02", "7859"), charge(2, "8.99", "2026-10-13", "3465"), charge(3, "8.99", "2026-10-20", "3465"),
+      charge(4, "11.58", "2026-10-23", "7859"), charge(5, "6.99", "2026-10-27", "7859"), charge(6, "13.28", "2026-10-27", "7859"),
+    ])).toBeNull();
+  });
+
+  it("won't mix cards, even on the right dates", () => {
+    expect(chargesThatAddUp({ ...inv, totalAmount: "20.00" }, [charge(1, "10.00", "2026-09-10", "7859"), charge(2, "10.00", "2026-09-12", "3465")])).toBeNull();
+  });
+
+  it("still adds up charges on one card before the invoice", () => {
+    expect(chargesThatAddUp({ ...inv, totalAmount: "20.00" }, [charge(1, "10.00", "2026-09-01", "3465"), charge(2, "10.00", "2026-09-12", "3465")])?.sort()).toEqual([1, 2]);
+  });
+
+  it("leaves the same amount a month later out of the check list", () => {
+    const later = scoreInvoiceAgainstLine({ ...inv, invoiceNumber: null, totalAmount: "11.58", invoiceDate: "2026-09-23" }, charge(1, "11.58", "2026-10-23", "7859"));
+    expect(isWorthChecking(later!)).toBe(false);
+    const close = scoreInvoiceAgainstLine({ ...inv, invoiceNumber: null, totalAmount: "11.58", invoiceDate: "2026-10-15" }, charge(1, "11.58", "2026-10-23", "7859"));
+    expect(isWorthChecking(close!)).toBe(true);
+  });
+
+  it("leaves a matching amount from another supplier out", () => {
+    const s = scoreInvoiceAgainstLine({ ...inv, invoiceNumber: null, totalAmount: "11.58", invoiceDate: "2026-10-22" }, line({ amount: "11.58", lineDate: "2026-10-23" }));
+    expect(s && isWorthChecking(s)).toBe(false);
   });
 });

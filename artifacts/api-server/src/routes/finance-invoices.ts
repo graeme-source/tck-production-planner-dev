@@ -10,7 +10,7 @@ import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMi
 import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
 import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
-import { invoiceQueue, matchFromLibrary, queueInvoice, rejectLineForInvoice, takeOutOfQueue } from "../lib/finance/invoice-queue";
+import { invoiceQueue, queueInvoice, rejectLineForInvoice, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
 // Finance → Invoices: the searchable library of every invoice we hold
 // (Graeme, 3 Nov 2026). Same access as the rest of Finance. Append-only —
@@ -344,15 +344,6 @@ router.get("/queue", requireFinanceAccess, async (_req: Request, res: Response) 
   } catch (err) {
     console.error("[finance] invoice queue error:", err);
     res.status(500).json({ error: "Couldn't load the invoice queue" });
-  }
-});
-
-router.post("/match-library", requireFinanceAccess, validate(z.object({})), async (req: Request, res: Response) => {
-  try {
-    res.json(await matchFromLibrary(req.session.userId ?? null));
-  } catch (err) {
-    console.error("[finance] match from library error:", err);
-    res.status(500).json({ error: "Couldn't match from the library — try again." });
   }
 });
 

@@ -6,6 +6,7 @@ import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { InvoicesLibraryPanel, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { InvoiceDropPanel } from "@/pages/finance-invoice-drop";
+import { UndoUploadButton } from "@/pages/finance-upload-undo";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -309,23 +310,6 @@ function InvoicesTab() {
     onError: (e: Error) => toast({ title: "Couldn't check QuickBooks", description: e.message, variant: "destructive" }),
   });
 
-  // One-time catch-up (Graeme, 2026-11-04): take this button out once it's
-  // been run; from then on matching happens by itself.
-  const libraryMatch = useMutation({
-    mutationFn: () => jsonFetch(`${BASE}/api/finance/invoices/match-library`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-    }) as Promise<{ matched: number; autoDone: number; toCheck: number }>,
-    onSuccess: (r) => {
-      toast({
-        title: `${r.matched} invoice${r.matched === 1 ? "" : "s"} matched from the library`,
-        description: `${r.autoDone} already posted, so now Completed. ${r.matched - r.autoDone} under To be processed. ${r.toCheck} to check.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
-    },
-    onError: (e: Error) => toast({ title: "Couldn't match from the library", description: e.message, variant: "destructive" }),
-  });
-
   const data = linesQuery.data;
   const filtered = useMemo(() => {
     const lines = data?.lines ?? [];
@@ -449,12 +433,7 @@ function InvoicesTab() {
               <Plus className="h-4 w-4 mr-1" /> Add a transaction
             </Button>
           )}
-          {filter === "outstanding" && (
-            <Button variant="outline" onClick={() => libraryMatch.mutate()} disabled={libraryMatch.isPending}>
-              {libraryMatch.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <FileText className="h-4 w-4 mr-1" />}
-              {libraryMatch.isPending ? "Matching…" : "Match from library"}
-            </Button>
-          )}
+          {filter === "outstanding" && <UndoUploadButton />}
           {filter === "matched" && (
             <Button variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
               title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">

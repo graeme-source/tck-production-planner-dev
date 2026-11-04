@@ -23,6 +23,7 @@ export interface LineCandidate {
   amount: string;
   originalAmount: string | null;
   orderReference: string | null;
+  cardLast4?: string | null;
 }
 
 export interface LineSuggestion {
@@ -143,6 +144,14 @@ export function rankLinesForInvoice(inv: InvoiceForMatch, lines: LineCandidate[]
 export const isStrongMatch = (s: LineSuggestion): boolean =>
   s.evidence.amount && s.evidence.supplier && (s.evidence.date || s.evidence.reference);
 
+const CHECK_WINDOW_DAYS = 14;
+
+/** Likely enough to ask someone about (Graeme, 4 Nov 2026: the list filled up
+ *  with transactions that clearly didn't match): the reference is on both, or
+ *  the same amount from the same supplier within a fortnight. */
+export const isWorthChecking = (s: LineSuggestion): boolean =>
+  s.evidence.reference || (s.evidence.amount && s.evidence.supplier && Math.abs(s.daysApart ?? Infinity) <= CHECK_WINDOW_DAYS);
+
 /** Confident enough to put forward as "I think it's this one": a strong match
  *  that nothing else ranks level with. */
 export function isConfidentPick(ranked: LineSuggestion[]): boolean {
@@ -156,19 +165,31 @@ export function isConfidentPick(ranked: LineSuggestion[]): boolean {
 const MOST_CHARGES_TO_ADD_UP = 40;
 const MOST_TOTALS_TO_TRY = 100_000;
 
+/** An invoice can't be paid long after it's dated, whatever a sum says. */
+const MOST_DAYS_CHARGED_AFTER = 7;
+
 /**
  * One invoice paid in several card charges, such as a monthly Google invoice
- * charged at each spend threshold: the supplier's charges that come to exactly
- * the invoice total, nearest the invoice date first. Only ever put to a person.
+ * charged at each spend threshold: the supplier's charges ON ONE CARD, up to a
+ * week after the invoice date, that come to exactly its total, nearest the
+ * date first. Mixed cards or later charges are a coincidence of the sums
+ * (Graeme, 4 Nov 2026). Only ever put to a person.
  */
 export function chargesThatAddUp(inv: InvoiceForMatch, lines: LineCandidate[]): number[] | null {
   const target = Math.round(Number(inv.totalAmount ?? 0) * 100);
   if (target <= 0) return null;
   const charges = lines
-    .map((l) => ({ id: l.id, pence: Math.round(Number(l.amount) * 100), match: scoreInvoiceAgainstLine(inv, l) }))
-    .filter((c) => c.match?.evidence.supplier && c.pence > 0 && c.pence < target)
-    .sort((a, b) => Math.abs(a.match?.daysApart ?? 999) - Math.abs(b.match?.daysApart ?? 999))
-    .slice(0, MOST_CHARGES_TO_ADD_UP);
+    .map((l) => ({ id: l.id, card: l.cardLast4 ?? null, pence: Math.round(Number(l.amount) * 100), match: scoreInvoiceAgainstLine(inv, l) }))
+    .filter((c) => c.match?.evidence.supplier && c.pence > 0 && c.pence < target && (c.match.daysApart ?? 0) <= MOST_DAYS_CHARGED_AFTER)
+    .sort((a, b) => Math.abs(a.match?.daysApart ?? 999) - Math.abs(b.match?.daysApart ?? 999));
+  for (const card of new Set(charges.map((c) => c.card))) {
+    const found = addUpTo(target, charges.filter((c) => c.card === card).slice(0, MOST_CHARGES_TO_ADD_UP));
+    if (found) return found;
+  }
+  return null;
+}
+
+function addUpTo(target: number, charges: Array<{ id: number; pence: number }>): number[] | null {
   const reached = new Map<number, number[]>([[0, []]]);
   for (const c of charges) {
     for (const [sum, ids] of [...reached]) {

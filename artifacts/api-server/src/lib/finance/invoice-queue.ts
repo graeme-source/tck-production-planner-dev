@@ -1,8 +1,8 @@
-import { and, asc, eq, inArray, isNotNull, isNull, notExists, sql } from "drizzle-orm";
-import { db, finEventsTable, finInvoicesTable } from "@workspace/db";
+import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { db, finInvoicesTable } from "@workspace/db";
 import { attachInvoiceToLine, rankForInvoice, waitingLines, type InvoiceMatches } from "./invoice-attach";
 import { logFinEvent } from "./invoice-store";
-import { chargesThatAddUp, pickCertainMatches, rankLinesForInvoice, withoutRejected } from "./invoice-to-line";
+import { isWorthChecking, pickCertainMatches } from "./invoice-to-line";
 import { runQboSync } from "./qbo";
 
 // Add an invoice once (Graeme, 4 Nov 2026): one dropped on Outstanding before
@@ -74,10 +74,10 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
 type QueuedRow = Awaited<ReturnType<typeof queuedInvoices>>[number];
 export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds"> } & InvoiceMatches;
 
-/** `check` has a transaction with the same amount or reference, or charges
- *  that add up to it, for someone to look at; `waiting` has nothing that good
- *  yet. A shared supplier alone isn't worth interrupting anyone: it describes
- *  every invoice from a regular. */
+/** `check` has something likely enough to be worth someone's time
+ *  (isWorthChecking), or charges that add up to it; `waiting` has nothing that
+ *  good yet. A shared supplier alone isn't worth interrupting anyone: it
+ *  describes every invoice from a regular. */
 export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: QueueEntry[] }> {
   await settleAttachedByHand();
   const invoices = await queuedInvoices();
@@ -86,7 +86,7 @@ export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: Qu
   const waiting: QueueEntry[] = [];
   for (const { rejectedLineIds, ...invoice } of invoices) {
     const ranked = rankForInvoice({ ...invoice, rejectedLineIds }, lines);
-    const worthChecking = !!ranked.addsUp || ranked.suggestions.some((s) => s.evidence.amount || s.evidence.reference);
+    const worthChecking = !!ranked.addsUp || ranked.suggestions.some(isWorthChecking);
     (worthChecking ? check : waiting).push({ invoice, ...ranked });
   }
   return { check, waiting };
@@ -103,40 +103,6 @@ export async function rejectLineForInvoice(invoiceId: number, lineId: number, us
 export async function takeOutOfQueue(invoiceId: number, userId: number | null): Promise<void> {
   await db.update(finInvoicesTable).set({ awaitingTransactionAt: null, updatedAt: new Date() }).where(eq(finInvoicesTable.id, invoiceId));
   await logFinEvent("invoice", invoiceId, "taken_out_of_queue", userId);
-}
-
-/** One-time catch-up (Graeme, 4 Nov 2026): the transactions already on
- *  Outstanding against the invoices already in the library. An invoice with a
- *  real candidate joins the queue, then the normal rules decide. Safe to run
- *  twice; what someone took out of the queue stays out. */
-export async function matchFromLibrary(userId: number | null): Promise<{ matched: number; autoDone: number; toCheck: number }> {
-  const library = await db.select({
-    id: finInvoicesTable.id, supplierName: finInvoicesTable.supplierName, invoiceDate: finInvoicesTable.invoiceDate,
-    invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount, rejectedLineIds: finInvoicesTable.rejectedLineIds,
-  }).from(finInvoicesTable).where(and(
-    isNull(finInvoicesTable.lineId),
-    isNull(finInvoicesTable.duplicateOfId),
-    isNull(finInvoicesTable.awaitingTransactionAt),
-    eq(finInvoicesTable.docKind, "invoice"),
-    eq(finInvoicesTable.readStatus, "done"),
-    notExists(db.select({ one: sql`1` }).from(finEventsTable).where(and(
-      eq(finEventsTable.entityType, "invoice"),
-      eq(finEventsTable.entityId, finInvoicesTable.id),
-      eq(finEventsTable.action, "taken_out_of_queue"),
-    ))),
-  ));
-  const lines = await waitingLines();
-  const worthQueuing = library.filter((inv) => {
-    const open = withoutRejected(lines, inv.rejectedLineIds);
-    return !!chargesThatAddUp(inv, open) || rankLinesForInvoice(inv, open).some((s) => (s.evidence.amount && s.evidence.supplier) || s.evidence.reference);
-  });
-  if (worthQueuing.length > 0) {
-    await db.update(finInvoicesTable).set({ awaitingTransactionAt: new Date(), updatedAt: new Date() })
-      .where(inArray(finInvoicesTable.id, worthQueuing.map((i) => i.id)));
-  }
-  const { matched, autoDone } = await matchQueuedInvoices(userId);
-  const { check } = await invoiceQueue();
-  return { matched, autoDone, toCheck: check.length };
 }
 
 export interface AfterImport {

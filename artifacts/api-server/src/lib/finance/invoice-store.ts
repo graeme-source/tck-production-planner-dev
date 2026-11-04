@@ -15,7 +15,7 @@ import { isReadyToClose } from "./posted-rules";
 /** Record who did what to a finance record, and when. Never throws: a
  *  failed log line must not undo the action it describes. */
 export async function logFinEvent(
-  entityType: "invoice" | "line",
+  entityType: "invoice" | "line" | "upload",
   entityId: number,
   action: string,
   userId: number | null | undefined,
