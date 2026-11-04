@@ -72,7 +72,8 @@ export const ingredientFormSchema = z.object({
   stockCheckEnabled: z.boolean().optional(),
   stockCheckFrequency: z.enum(["daily", "weekly"]).optional(),
   stockCheckDay: z.string().optional(),
-  surplusPercent: z.coerce.number().min(0).optional(),
+  // Blank = the 10% default; a typed 0 is a real 0% (#387).
+  surplusPercent: nullableNumber((n) => n.min(0)),
   surplusMode: z.enum(["percent", "absolute"]).optional(),
   surplusAbsoluteQty: nullableNumber((n) => n.min(0)),
   shelfLifeDays: nullableNumber((n) => n.int().positive()),
