@@ -17,7 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Loader2, MessageSquareReply } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { ImprovementSuggestions, useNoAction } from "@/components/fix-queue-extras";
+import { ImprovementSuggestions, JaneChecks, useNoAction } from "@/components/fix-queue-extras";
 import { FixQueueSearch, useFixQueueUnread } from "@/components/fix-queue-conversation";
 import { FixCard, SNOOZE_OPTIONS, type DecisionAction } from "@/components/fix-queue-card";
 import { FixQueueBuildNow } from "@/components/fix-queue-build-now";
@@ -326,6 +326,7 @@ export default function FounderFixQueue() {
 
       {/* Ideas from the improvements board that look like app changes —
           suggestions only, Graeme adds or dismisses each one. */}
+      {!q && tab === "proposed" && <JaneChecks />}
       {!q && tab === "proposed" && <ImprovementSuggestions status="suggested" />}
       {!q && tab === "no_action" && <ImprovementSuggestions status="dismissed" />}
 

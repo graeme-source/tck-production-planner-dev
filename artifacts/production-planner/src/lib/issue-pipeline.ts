@@ -101,6 +101,8 @@ export interface FixQueueItem {
   /** Approved with "Send and fix it this way" (2026-10-15): Claude builds it
    *  from Graeme's words on its next run, without asking again. */
   fixNow?: boolean;
+  /** People who pressed "Keep me posted" rather than report it again. */
+  followers?: number;
   related: Array<{ id: number; description: string | null; station: string | null; reporterName: string | null; createdAt: string | null; resolvedAt: string | null; triageStatus: TriageStatus | null }>;
 }
 

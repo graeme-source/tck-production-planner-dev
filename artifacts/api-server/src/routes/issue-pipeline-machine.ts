@@ -50,6 +50,7 @@ import {
   recordEvent,
   creditImprovementIfDue,
   resolveIssueWithNotice,
+  tellReportWatchers,
   triageByIssueId,
   type ResolveOutcome,
 } from "../lib/issue-pipeline-data";
@@ -390,6 +391,7 @@ router.post("/triage/:id/status", validate(statusBody), async (req, res) => {
         updatedAt: new Date(),
       }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
       await recordEvent(tx, row, `status:${b.status}`, b.actor, b.note ?? null);
+      if (b.status === "fixed" && current.status !== "fixed") await tellReportWatchers(tx, row.andonIssueId, "built");
       return { status: 200 as const, triage: row };
     });
     if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }

@@ -139,6 +139,8 @@ this section is the contract it is written against.
 - **`issue_triage_events`** — append-only history; every triage write,
   decision, reply, status move, resolve and reporter acknowledgement, with a
   snapshot of the row. A forced re-triage never loses Graeme's decision.
+- **`andon_issue_followers`, `issue_report_checks`** — see "Keeping people in
+  the loop" below (migration 0352).
 - **`issue_fix_notices`** — the reporter's full-screen "Your report has been
   fixed — please test it" pop-up; records which button they pressed and when.
 
@@ -283,6 +285,31 @@ Graeme's "deploy", and `resolve-issue` still only happens once it's live.
    `fixRef`. Never push, merge or deploy.
 4. When Graeme says a fix is deployed → `resolve-issue` with `whatChanged` in
    the reporter's language and a `testPath` where they can try it.
+
+### Keeping people in the loop, AI Jane's check (2026-11-04)
+
+Graeme: reporters weren't hearing that fixes were under way, and the same
+thing was reported two or three times. Reporters only heard on a direct
+message or once a fix was live. Now:
+
+- **Progress on the bell** (`tellReportWatchers`): "a fix has been approved"
+  on approve or "Send and fix it this way", "built, goes live in the next
+  update" when the reviewer marks it `fixed`. The full-screen pop-up stays for
+  "it's live, please test it".
+- **AI Jane checks app reports before they're filed** (`POST /api/issue-check`,
+  `lib/issue-report-check.ts`; not safety or factory reports). She searches
+  reports (`search_reports`) and the feature guide (`lib/ai/app-guide.ts`,
+  `search_app_guide`) and answers: already possible (with the page),
+  already reported (where it's up to, "Keep me posted"), one question, or new.
+  `checkedAnswer` only accepts a report or page her search returned, otherwise
+  it's filed as new. Any failure files the report. "Report it anyway" is
+  always there.
+- **Followers** (`andon_issue_followers`): "Keep me posted" adds someone to the
+  bell notes and the "fixed, please test" pop-up. A follower's typed reply to
+  that pop-up reaches the card through the same path as the reporter's.
+- **Nothing hidden**: every check is logged (`issue_report_checks`) and shown
+  on To review under "What AI Jane answered before it got here".
+- **Keep `lib/ai/app-guide.ts` current** when a page or feature changes.
 
 ### Forced testing (2026-10-10)
 

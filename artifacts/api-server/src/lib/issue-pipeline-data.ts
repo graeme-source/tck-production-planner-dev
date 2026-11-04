@@ -8,6 +8,7 @@ import {
   db,
   andonIssuesTable,
   andonCommentsTable,
+  andonIssueFollowersTable,
   notificationsTable,
   issueTriageTable,
   issueTriageEventsTable,
@@ -17,8 +18,8 @@ import {
 } from "@workspace/db";
 import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
-  classifyIssueArea, improvementDoneAt, isImprovementDue, isRepeatOfEarlierRequest, noticeQuote, reporterConversation, reporterResponsePlan,
-  type IssueAreaClass, type NoticeAckAction, type TriageStatus,
+  classifyIssueArea, improvementDoneAt, isImprovementDue, isRepeatOfEarlierRequest, noticeQuote, reportProgressMessage, reporterConversation, reporterResponsePlan,
+  type IssueAreaClass, type NoticeAckAction, type ReportStage, type TriageStatus,
 } from "./issue-pipeline-rules";
 import { pinLeadCredit } from "./improvement-credits-data";
 
@@ -211,27 +212,51 @@ export async function resolveIssueWithNotice(
   ].filter(Boolean).join("\n\n");
   await tx.insert(andonCommentsTable).values({ andonId: issue.id, userId: null, userName: "Fix queue", comment: commentText });
 
+  // The reporter and anyone who pressed "Keep me posted".
   let noticeQueued = false;
-  if (issue.reportedBy) {
-    const label = CATEGORY_LABELS[issue.category] ?? issue.category;
+  const label = CATEGORY_LABELS[issue.category] ?? issue.category;
+  for (const userId of await reportWatchers(tx, issue)) {
     await tx.insert(notificationsTable).values({
-      userId: issue.reportedBy,
+      userId,
       type: "resolved",
-      message: `Your report was fixed: ${label} - ${issue.station}. Please test it.`,
+      message: `${userId === issue.reportedBy ? "Your report was fixed" : "A report you're following was fixed"}: ${label} - ${issue.station}. Please test it.`,
       andonIssueId: issue.id,
     });
     const inserted = await tx.insert(issueFixNoticesTable).values({
       andonIssueId: issue.id,
       triageId: opts.triageId,
-      userId: issue.reportedBy,
+      userId,
       quote: noticeQuote(issue.description, `${label} issue at ${issue.station}`),
       whatChanged: opts.whatChanged,
       testPath: opts.testPath,
     }).onConflictDoNothing().returning({ id: issueFixNoticesTable.id });
-    noticeQueued = inserted.length > 0;
+    if (userId === issue.reportedBy) noticeQueued = inserted.length > 0;
   }
 
   return { issueId: issue.id, resolvedNow, noticeQueued, reporterId: issue.reportedBy };
+}
+
+/** Everyone to tell about a report: who reported it, and who asked to follow it. */
+async function reportWatchers(tx: Db, issue: Pick<AndonRow, "id" | "reportedBy">): Promise<number[]> {
+  const followers = await tx.select({ userId: andonIssueFollowersTable.userId }).from(andonIssueFollowersTable)
+    .where(eq(andonIssueFollowersTable.andonIssueId, issue.id));
+  return [...new Set([...(issue.reportedBy ? [issue.reportedBy] : []), ...followers.map(f => f.userId)])];
+}
+
+/**
+ * A bell note to everyone watching a report as it moves along (Graeme,
+ * 2026-11-04: "when something's getting fixed I don't think they're finding
+ * out"). Quiet: the bell, not a full-screen pop-up. That stays for "it's live,
+ * please test it", when there's something to do.
+ */
+export async function tellReportWatchers(tx: Db, issueId: number, stage: ReportStage): Promise<number> {
+  const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, issueId));
+  if (!issue) return 0;
+  const watchers = await reportWatchers(tx, issue);
+  if (watchers.length === 0) return 0;
+  const message = reportProgressMessage(stage, noticeQuote(issue.description, issue.station, 80));
+  await tx.insert(notificationsTable).values(watchers.map(userId => ({ userId, type: "comment", message, andonIssueId: issueId })));
+  return watchers.length;
 }
 
 /**

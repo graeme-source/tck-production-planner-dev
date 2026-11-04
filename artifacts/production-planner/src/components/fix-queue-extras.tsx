@@ -168,3 +168,45 @@ export function ImprovementSuggestions({ status }: { status: "suggested" | "dism
     </section>
   );
 }
+
+type JaneCheck = {
+  id: number; userName: string | null; description: string; outcome: string; reply: string; path: string | null;
+  matchedIssueId: number | null; result: string | null; filedIssueId: number | null; createdAt: string;
+};
+
+const CHECK_OUTCOME: Record<string, string> = { already_possible: "Already possible", already_reported: "Already reported", new: "New" };
+const CHECK_RESULT: Record<string, string> = { resolved: "went to the page", followed: "keeping posted", reported: "reported it anyway" };
+
+/** What AI Jane told people before their reports reached this queue, so an
+ *  answer that stopped a report can still be seen and judged (2026-11-04). */
+export function JaneChecks() {
+  const q = useQuery<{ items: JaneCheck[] }>({
+    queryKey: ["issue-pipeline", "jane-checks"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/issue-check/recent`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const items = (q.data?.items ?? []).filter(c => c.outcome !== "new");
+  if (items.length === 0) return null;
+  return (
+    <details className="rounded-2xl border-2 border-border bg-card px-4 py-3">
+      <summary className="cursor-pointer font-bold">What AI Jane answered before it got here · {items.length}</summary>
+      <div className="mt-3 space-y-2">
+        {items.map(c => (
+          <div key={c.id} className="rounded-xl bg-secondary/40 p-3 text-sm space-y-1">
+            <p className="font-semibold whitespace-pre-wrap break-words">{c.description}</p>
+            <p className="whitespace-pre-wrap break-words">{c.reply}</p>
+            <p className="text-xs text-muted-foreground">
+              {c.userName ?? "Someone"} · {feedTimestamp(c.createdAt)} · {CHECK_OUTCOME[c.outcome] ?? c.outcome}
+              {c.matchedIssueId ? ` #${c.matchedIssueId}` : ""}{c.path ? ` ${c.path}` : ""}{c.result ? ` · ${CHECK_RESULT[c.result] ?? c.result}` : " · no answer yet"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}
+

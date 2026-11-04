@@ -16,6 +16,7 @@
 // rather than making anyone re-type it in the other modal.
 
 import { useState, useRef } from "react";
+import { useLocation } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { Factory, Tablet, ShieldAlert, Camera, Image as ImageIcon, Loader2, X, ArrowRight, Lightbulb, CheckCircle2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,6 +24,7 @@ import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 import { DictateButton } from "@/components/dictate-button";
 import { releaseDictation } from "@/hooks/use-voice-input";
+import { JaneCheckPanel, runJaneCheck, reportCheckResult, type JaneAnswer, type JaneTurn } from "@/components/jane-report-check";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -36,6 +38,12 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   const [alsoImprovement, setAlsoImprovement] = useState(false);
   const [busy, setBusy] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
+  // AI Jane looks first on app reports (Graeme, 2026-11-04): already reported,
+  // already possible, or new. She can never stop a report being filed.
+  const [, navigate] = useLocation();
+  const [chat, setChat] = useState<JaneTurn[]>([]);
+  const [answer, setAnswer] = useState<JaneAnswer | null>(null);
+  const [checkId, setCheckId] = useState<number | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const deviceRef = useRef<HTMLInputElement>(null);
 
@@ -43,11 +51,29 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
 
   const reset = () => {
     setArea(null); setDescription(""); setIsSafety(false); setAlsoImprovement(false);
-    setFiles([]); setBusy(false);
+    setFiles([]); setBusy(false); setChat([]); setAnswer(null); setCheckId(null);
   };
   const close = () => { reset(); onClose(); };
 
-  const submit = async () => {
+  /** Ask Jane; a real answer shows, anything else files the report. */
+  const askJane = async (turns: JaneTurn[]) => {
+    setBusy(true);
+    setChat(turns);
+    const { answer: reply, checkId: id } = await runJaneCheck(turns);
+    if (!reply || reply.outcome === "new") { await submit(id); return; }
+    setChat([...turns, { role: "assistant", text: reply.message }]);
+    setAnswer(reply);
+    setCheckId(id);
+    setBusy(false);
+  };
+
+  const report = () => {
+    // Safety never waits, and factory problems go straight to the team.
+    if (area === "system" && !isSafety) void askJane([{ role: "user", text: description.trim() }]);
+    else void submit(null);
+  };
+
+  const submit = async (fromCheck: number | null) => {
     if (!description.trim() || !area) return;
     setBusy(true);
     try {
@@ -68,6 +94,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
       });
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't report it");
       const issue = await res.json();
+      if (fromCheck != null) void reportCheckResult(fromCheck, "reported", issue.id);
 
       let improvementId: number | null = null;
       if (alsoImprovement) {
@@ -147,7 +174,21 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
           </button>
         </div>
 
-        {area === null ? (
+        {answer ? (
+          <JaneCheckPanel
+            chat={chat}
+            answer={answer}
+            busy={busy}
+            onReply={text => { setAnswer(null); void askJane([...chat, { role: "user", text }]); }}
+            onReportAnyway={() => void submit(checkId)}
+            onShowMe={() => { if (checkId != null) void reportCheckResult(checkId, "resolved"); const path = answer.path; close(); if (path) navigate(path); }}
+            onKeepPosted={() => {
+              if (checkId != null) void reportCheckResult(checkId, "followed");
+              toast({ title: "You'll be kept posted", description: "We'll tell you when it's fixed. You don't need to report it again." });
+              close();
+            }}
+          />
+        ) : area === null ? (
           <div className="space-y-3">
             <button
               onClick={() => setArea("factory")}
@@ -292,12 +333,12 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
                 Back
               </button>
               <button
-                onClick={submit}
+                onClick={report}
                 disabled={!description.trim() || busy}
                 className="h-16 sm:h-14 rounded-2xl bg-primary text-primary-foreground text-xl sm:text-lg font-bold flex items-center justify-center gap-3 disabled:opacity-50 active:scale-[0.99] transition-all shadow-lg shadow-primary/20 sm:order-2"
               >
                 {busy ? <Loader2 className="w-6 h-6 animate-spin" /> : <ArrowRight className="w-6 h-6" />}
-                Report it
+                {busy && area === "system" && chat.length > 0 ? "Jane's checking…" : "Report it"}
               </button>
             </div>
           </>

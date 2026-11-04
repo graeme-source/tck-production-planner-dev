@@ -725,3 +725,13 @@ export function noticeAckVerdict(
   if (notice.acknowledgedAt) return { ok: false, status: 409, error: "Already acknowledged" };
   return { ok: true };
 }
+
+export type ReportStage = "approved" | "built";
+
+/** The bell note as a report moves along (Graeme, 2026-11-04). */
+export function reportProgressMessage(stage: ReportStage, quote: string): string {
+  return stage === "approved"
+    ? `A fix has been approved for "${quote}". We'll tell you when it's live.`
+    : `The fix for "${quote}" is built and goes live in the next update.`;
+}
+

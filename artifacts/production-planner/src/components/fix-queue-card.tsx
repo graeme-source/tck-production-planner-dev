@@ -235,6 +235,8 @@ export function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAc
         {showTab && item.tab && <Chip className="bg-primary text-primary-foreground">In: {QUEUE_TAB_LABELS[item.tab]}</Chip>}
         {repliedBack && <Chip className="bg-emerald-600 text-white"><MessageSquareReply className="w-3.5 h-3.5" /> {unreadLabel(firstName, unread)}</Chip>}
         {status !== "proposed" && <Chip className="bg-secondary text-foreground">{STATUS_LABELS[status]}</Chip>}
+        {(item.followers ?? 0) > 0 && <Chip className="bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200">{item.followers} more waiting on this</Chip>}
+        {item.related.length > 0 && <Chip className="bg-secondary text-foreground">{item.related.length} related report{item.related.length === 1 ? "" : "s"}</Chip>}
         <span className="ml-auto text-xs text-muted-foreground">#{t.andonIssueId} · {issue ? feedTimestamp(issue.createdAt) : feedTimestamp(t.triagedAt)}</span>
       </div>
 

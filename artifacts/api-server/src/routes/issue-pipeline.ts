@@ -15,7 +15,7 @@ import { buildRequestView, readBuildRequest, writeBuildRequest } from "../lib/fi
 import { pressBuildNow } from "../lib/fix-queue-build-request-rules";
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { db, usersTable, issueTriageTable, issueTriageEventsTable, issueFixNoticesTable, andonIssuesTable, andonCommentsTable, type IssueTriage } from "@workspace/db";
+import { db, usersTable, issueTriageTable, issueTriageEventsTable, issueFixNoticesTable, andonIssueFollowersTable, andonIssuesTable, andonCommentsTable, type IssueTriage } from "@workspace/db";
 import { desc, eq, inArray, sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { requireFounder } from "../middleware/founder-access";
@@ -52,6 +52,7 @@ import {
   pendingNoticesFor,
   recordEvent,
   recordReporterResponse,
+  tellReportWatchers,
   triageByIssueId,
 } from "../lib/issue-pipeline-data";
 import { decideSuggestion, listSuggestions, scanNewIdeas } from "../lib/improvement-suggestions-data";
@@ -144,6 +145,11 @@ router.get("/review", requireFounder, async (req, res) => {
     ]);
     const issueById = new Map(issues.map(i => [i.id, i]));
     const relatedById = new Map(relatedRows.map(r => [r.id, r]));
+    // People who pressed "Keep me posted" instead of reporting it again.
+    const followerRows = rows.length === 0 ? [] : await db.select({ id: andonIssueFollowersTable.andonIssueId, n: sql<number>`count(*)::int` })
+      .from(andonIssueFollowersTable).where(inArray(andonIssueFollowersTable.andonIssueId, rows.map(r => r.andonIssueId)))
+      .groupBy(andonIssueFollowersTable.andonIssueId);
+    const followers = new Map(followerRows.map(f => [f.id, f.n]));
 
     const items = rows.map(t => {
       const thread = buildThread(eventsByTriage.get(t.id) ?? []);
@@ -162,6 +168,7 @@ router.get("/review", requireFounder, async (req, res) => {
         // Approved with "Send and fix it this way" — the card says Claude
         // builds it on its next run.
         fixNow: t.status === "approved" && approvedToFix(eventsByTriage.get(t.id) ?? []),
+        followers: followers.get(t.andonIssueId) ?? 0,
         related: t.relatedIssueIds.map(id => {
           const r = relatedById.get(id);
           return r
@@ -291,7 +298,10 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
         const reopened = reopenNote(plan, fixNow);
         if (reopened) await recordEvent(tx, row, "reopened", name, reopened);
         await recordEvent(tx, row, "replied", name, note);
-        if (fixNow) await recordEvent(tx, row, "approved_to_fix", name, null);
+        if (fixNow) {
+          await recordEvent(tx, row, "approved_to_fix", name, null);
+          await tellReportWatchers(tx, row.andonIssueId, "approved");
+        }
       } else {
         const to: TriageStatus = action === "approve" ? "approved" : "rejected";
         if (!canReviewMove(from, to)) return { status: 409 as const, error: `Can't ${action} a '${from}' recommendation`, triage: current };
@@ -300,6 +310,7 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
           reporterReplyAt: null, founderReadAt: new Date(),
         }).where(eq(issueTriageTable.id, id)).returning() as [IssueTriage];
         await recordEvent(tx, row, to, name, note);
+        if (to === "approved" && !row.noActionNeeded) await tellReportWatchers(tx, row.andonIssueId, "approved");
       }
       return { status: 200 as const, triage: row };
     });

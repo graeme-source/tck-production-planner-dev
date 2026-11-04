@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, boolean, integer, jsonb, index, uniqueIndex, date } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, boolean, integer, jsonb, index, primaryKey, uniqueIndex, date } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { andonIssuesTable } from "./improvements_and_andon";
@@ -100,6 +100,29 @@ export const issueFixNoticesTable = pgTable("issue_fix_notices", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
   acknowledgedAt: timestamp("acknowledged_at"),
   ackAction: text("ack_action"), // test_now | later
+});
+
+/** People told about a report's progress as well as its reporter ("Keep me
+ *  posted" when AI Jane found it was already reported; migration 0352). */
+export const andonIssueFollowersTable = pgTable("andon_issue_followers", {
+  andonIssueId: integer("andon_issue_id").notNull().references(() => andonIssuesTable.id, { onDelete: "cascade" }),
+  userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => [primaryKey({ columns: [t.andonIssueId, t.userId] })]);
+
+/** Every check AI Jane does before an app report is filed (migration 0352). */
+export const issueReportChecksTable = pgTable("issue_report_checks", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  description: text("description").notNull(),
+  outcome: text("outcome").notNull(), // already_possible | already_reported | new
+  reply: text("reply").notNull(),
+  path: text("path"),
+  matchedIssueId: integer("matched_issue_id").references(() => andonIssuesTable.id, { onDelete: "set null" }),
+  result: text("result"), // resolved | followed | reported
+  filedIssueId: integer("filed_issue_id").references(() => andonIssuesTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export type IssueTriage = typeof issueTriageTable.$inferSelect;
