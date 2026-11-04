@@ -17,6 +17,7 @@ import {
   ChevronDown,
   ChevronUp,
   ExternalLink,
+  StickyNote,
   Truck,
   Filter,
   Search,
@@ -39,6 +40,8 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import { SupplierNotesDialog } from "@/components/supplier-notes-dialog";
+import { useOrderEmailTemplate } from "@/hooks/use-order-email-template";
 import { OrderSplitDialog, OrderSplitsWaiting, useCancelOrderSplit, type OrderSplit } from "@/components/order-split-dialog";
 import { splitDateLabel } from "@workspace/business-days";
 import { QrScanner } from "@/components/qr-scanner";
@@ -66,6 +69,8 @@ import { londonToday } from "@/lib/station-training";
 import { UsedInLink } from "@/components/ingredient-usage-dialog";
 import {
   buildOrderMessage,
+  orderEmailSubject,
+  type OrderMessageExtras,
   costPerUnitLabel,
   hydratePlacedLine,
   lineTotal,
@@ -381,16 +386,16 @@ function inboundQtyLabel(qty: number, unit: string, packWeight: number): string 
 
 // Build a mailto: link that pre-fills an order email to the supplier — opens
 // in whatever mail client the operator's machine uses.
-function buildOrderMailto(supplierName: string, email: string, lines: EditableLine[], deliveryDateText: string): string {
-  const subject = `Order from The Calzone Kitchen — delivery ${deliveryDateText}`;
-  const body = buildOrderMessage(supplierName, lines, deliveryDateText);
+function buildOrderMailto(supplierName: string, email: string, lines: EditableLine[], deliveryDateText: string, extras: OrderMessageExtras): string {
+  const subject = orderEmailSubject(supplierName, deliveryDateText, extras);
+  const body = buildOrderMessage(supplierName, lines, deliveryDateText, extras);
   return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
 
 // Build a wa.me WhatsApp link with the same order message. The number is
 // stripped to digits only (international format, no +); returns null if there
 // aren't enough digits to be a usable number.
-function buildOrderWhatsApp(orderingPhone: string, supplierName: string, lines: EditableLine[], deliveryDateText: string): string | null {
+function buildOrderWhatsApp(orderingPhone: string, supplierName: string, lines: EditableLine[], deliveryDateText: string, extras: OrderMessageExtras): string | null {
   const digits = orderingPhone.replace(/\D/g, "");
   if (digits.length < 7) return null;
   const text = buildOrderMessage(supplierName, lines, deliveryDateText);
@@ -402,8 +407,8 @@ function buildOrderWhatsApp(orderingPhone: string, supplierName: string, lines: 
 // WhatsApp has no way to pre-target a specific group, so this is the closest
 // option: one extra tap to choose the group. (Most reliable in the WhatsApp
 // mobile/desktop app; the contact picker can be flaky on WhatsApp Web.)
-function buildOrderWhatsAppShare(supplierName: string, lines: EditableLine[], deliveryDateText: string): string {
-  const text = buildOrderMessage(supplierName, lines, deliveryDateText);
+function buildOrderWhatsAppShare(supplierName: string, lines: EditableLine[], deliveryDateText: string, extras: OrderMessageExtras): string {
+  const text = buildOrderMessage(supplierName, lines, deliveryDateText, extras);
   return `https://wa.me/?text=${encodeURIComponent(text)}`;
 }
 
@@ -646,7 +651,7 @@ export default function Orders() {
   // the button can flash "Copied" for a moment.
   const [copiedOrderSupplierId, setCopiedOrderSupplierId] = useState<number | null>(null);
   const copyOrderText = async (supplierId: number, supplierName: string, lines: EditableLine[], deliveryText: string) => {
-    const text = buildOrderMessage(supplierName, lines, deliveryText);
+    const text = buildOrderMessage(supplierName, lines, deliveryText, messageExtras(supplierId));
     try {
       await navigator.clipboard.writeText(text);
       setCopiedOrderSupplierId(supplierId);
@@ -678,6 +683,8 @@ export default function Orders() {
     minimumOrderValue?: number | null;
     /** Orders go by email: the card's main button is Email order. */
     orderByEmail?: boolean;
+    accountNumber?: string | null;
+    notes?: string | null;
   }>>({
     queryKey: ["suppliers-directory"],
     queryFn: async () => {
@@ -687,6 +694,12 @@ export default function Orders() {
     },
   });
   const supplierDirectory = new Map(pickerSuppliers.map(s => [s.id, s]));
+  const { data: orderEmailTemplate } = useOrderEmailTemplate();
+  const messageExtras = (supplierId: number): OrderMessageExtras => {
+    const s = supplierDirectory.get(supplierId);
+    return { template: orderEmailTemplate, contactName: s?.contactName, accountNumber: s?.accountNumber };
+  };
+  const [notesFor, setNotesFor] = useState<{ id: number; name: string; notes: string | null } | null>(null);
 
   // Primary + secondary supplier pack prices per ingredient (Graeme,
   // 2026-10-01). Prices every line at the supplier whose card it sits on, and
@@ -2305,15 +2318,15 @@ export default function Orders() {
         // the website, and it's the only Email order button on the card.
         const ordersByEmail = supplierDirectory.get(so.supplier.id)?.orderByEmail === true;
         const emailHref = orderableLines.length > 0
-          ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText)
+          ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
           : null;
         const whatsAppHref = so.supplier.orderingPhone && orderableLines.length > 0
-          ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText)
+          ? buildOrderWhatsApp(so.supplier.orderingPhone, so.supplier.name, orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
           : null;
         // No-number share so the order can go to a WhatsApp group (operator
         // picks the chat). Available whenever there are items to order.
         const whatsAppShareHref = orderableLines.length > 0
-          ? buildOrderWhatsAppShare(so.supplier.name, orderableLines, orderDeliveryText)
+          ? buildOrderWhatsAppShare(so.supplier.name, orderableLines, orderDeliveryText, messageExtras(so.supplier.id))
           : null;
 
         return (
@@ -2878,6 +2891,14 @@ export default function Orders() {
                     )}
                   </div>
                   <div className="flex flex-wrap items-center justify-end gap-2 ml-auto">
+                    <button
+                      type="button"
+                      onClick={() => setNotesFor({ id: so.supplier.id, name: so.supplier.name, notes: supplierDirectory.get(so.supplier.id)?.notes ?? null })}
+                      className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
+                    >
+                      <StickyNote className="w-4 h-4" />
+                      Supplier notes
+                    </button>
                     {isReopened && canManageOrders && reopenedPOId && (
                       <button
                         onClick={() => setDeleteOrderConfirm({ poId: reopenedPOId, supplierId: so.supplier.id, supplierName: so.supplier.name })}
@@ -3222,6 +3243,8 @@ export default function Orders() {
           )}
         </DialogContent>
       </Dialog>
+
+      {notesFor && <SupplierNotesDialog supplier={notesFor} canEdit={canManageOrders} onClose={() => setNotesFor(null)} />}
 
       <Dialog open={kanbanSearchOpen} onOpenChange={open => { setKanbanSearchOpen(open); if (!open) { setKanbanSearch(""); setSelectedKanbanIds(new Set()); setKanbanSupplierOverrides({}); } }}>
         <DialogContent className="max-w-4xl w-[95vw] max-h-[90vh] flex flex-col">

@@ -18,6 +18,7 @@ import {
   palletPrice,
   positivePalletSize,
 } from "@workspace/units";
+import { DEFAULT_ORDER_EMAIL_TEMPLATE, fillOrderEmailBody, fillOrderEmailText, type OrderEmailTemplate } from "./order-email-template";
 
 export type OrderLineForText = {
   ingredientName: string;
@@ -86,23 +87,41 @@ export function lineOrderQty(line: OrderLineForText): string {
   return `${(line.editedPacks * line.packWeight).toLocaleString("en-GB")} ${line.unit}`;
 }
 
+/** What the order wording can use beyond the order itself. */
+export interface OrderMessageExtras {
+  template?: OrderEmailTemplate;
+  contactName?: string | null;
+  accountNumber?: string | null;
+}
+
+function orderItemLine(l: OrderLineForText, t: OrderEmailTemplate): string {
+  const part = t.showPartNumber && l.supplierPartNumber ? ` [${l.supplierPartNumber}]` : "";
+  const size = t.showPackSize ? packSizeLabel(l) : "—";
+  const pack = size !== "—" ? ` (${size})` : "";
+  const price = t.showPrice && l.costPerPack > 0 ? ` at £${l.costPerPack.toFixed(2)} per ${packNoun(l.unit, 1, l.packName)}` : "";
+  return `- ${lineOrderQty(l)} × ${l.ingredientName}${part}${pack}${price}`;
+}
+
 /** The shared plain-text order message used by the email, WhatsApp and
- *  "Copy order" buttons. */
-export function buildOrderMessage(supplierName: string, lines: OrderLineForText[], deliveryDateText: string): string {
-  const itemLines = lines.map(l => {
-    const part = l.supplierPartNumber ? ` [${l.supplierPartNumber}]` : "";
-    return `- ${lineOrderQty(l)} × ${l.ingredientName}${part}`;
-  }).join("\n");
-  return [
-    `Hi ${supplierName},`,
-    ``,
-    `Please could we order the following for delivery on ${deliveryDateText}:`,
-    ``,
-    itemLines,
-    ``,
-    `Many thanks,`,
-    `The Calzone Kitchen`,
-  ].join("\n");
+ *  "Copy order" buttons, in the wording set on the template. */
+export function buildOrderMessage(supplierName: string, lines: OrderLineForText[], deliveryDateText: string, extras: OrderMessageExtras = {}): string {
+  const template = extras.template ?? DEFAULT_ORDER_EMAIL_TEMPLATE;
+  return fillOrderEmailBody(template, {
+    supplier: supplierName,
+    contact: extras.contactName?.trim() || supplierName,
+    accountNumber: extras.accountNumber,
+    deliveryDate: deliveryDateText,
+    items: lines.map(l => orderItemLine(l, template)).join("\n"),
+  });
+}
+
+export function orderEmailSubject(supplierName: string, deliveryDateText: string, extras: OrderMessageExtras = {}): string {
+  return fillOrderEmailText((extras.template ?? DEFAULT_ORDER_EMAIL_TEMPLATE).subject, {
+    supplier: supplierName,
+    contact: extras.contactName?.trim() || supplierName,
+    accountNumber: extras.accountNumber,
+    deliveryDate: deliveryDateText,
+  });
 }
 
 /** Pack Size column: the pack size in the item's real unit ("36 each",

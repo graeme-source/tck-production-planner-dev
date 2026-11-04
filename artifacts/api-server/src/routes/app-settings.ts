@@ -8,7 +8,7 @@ import { isFounderManagedSetting } from "@workspace/revenue-targets";
 const router: IRouter = Router();
 
 const STATION_KEY_PREFIXES = ["mozz_load_confirmed_", "checklist_done_", "station_assignment_", "schedule_break_anchors_"];
-const MANAGER_KEY_PREFIXES = ["mac_cheese_extra_packs_"];
+const MANAGER_KEY_PREFIXES = ["mac_cheese_extra_packs_", "order_email_template"];
 
 async function requireAuthForWrite(req: Request, res: Response, next: NextFunction) {
   if (req.method === "GET") { next(); return; }

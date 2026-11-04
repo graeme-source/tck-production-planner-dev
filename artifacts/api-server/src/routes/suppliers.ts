@@ -101,6 +101,18 @@ router.patch("/:id/account-number", requireManagerOrAdmin, validate(AccountNumbe
   res.json(row);
 });
 
+// The notes on their own, autosaved from the Orders page (Graeme, 2026-11-04).
+const NotesBody = z.object({ notes: z.string().max(10000) });
+router.patch("/:id/notes", requireManagerOrAdmin, validate(NotesBody), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Bad supplier id" }); return; }
+  const notes = (req.body as z.infer<typeof NotesBody>).notes.trim() || null;
+  const [row] = await db.update(suppliersTable).set({ notes }).where(eq(suppliersTable.id, id))
+    .returning({ id: suppliersTable.id, notes: suppliersTable.notes });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
 router.delete("/:id", async (req, res) => {
   const id = Number(req.params.id);
   await db.delete(suppliersTable).where(eq(suppliersTable.id, id));

@@ -1,6 +1,6 @@
 import { Link } from "wouter";
 import { PageHeader } from "@/components/page-header";
-import { Tag, Wrench, Printer, Barcode } from "lucide-react";
+import { Tag, Wrench, Printer, Barcode, Mail } from "lucide-react";
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Tools landing page
@@ -45,6 +45,15 @@ const TOOLS: Tool[] = [
     Icon: Barcode,
     iconBg: "bg-lime-50 dark:bg-lime-950/30",
     iconColor: "text-lime-700 dark:text-lime-400",
+  },
+  {
+    href: "/inventory/tools/order-email-template",
+    label: "Order email template",
+    description:
+      "The wording of the orders sent to suppliers: change it, and choose what shows on each item.",
+    Icon: Mail,
+    iconBg: "bg-sky-50 dark:bg-sky-950/30",
+    iconColor: "text-sky-600 dark:text-sky-400",
   },
 ];
 

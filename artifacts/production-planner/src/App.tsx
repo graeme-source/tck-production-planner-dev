@@ -27,6 +27,7 @@ import LabelLiveTest from "@/pages/label-live-test";
 import Ingredients from "@/pages/ingredients";
 import Inventory from "@/pages/inventory";
 import ToolsPage from "@/pages/tools";
+import OrderEmailTemplatePage from "@/pages/order-email-template";
 import LabelPrinterPage from "@/pages/label-printer";
 import LabelStockCheck from "@/pages/label-stock-check";
 import SubRecipes from "@/pages/sub-recipes";
@@ -216,6 +217,7 @@ function Router() {
               <Route path="/label-live-test" component={LabelLiveTest} />
               <Route path="/inventory" component={Inventory} />
               <Route path="/inventory/tools" component={ToolsPage} />
+              <Route path="/inventory/tools/order-email-template" component={OrderEmailTemplatePage} />
               <Route path="/inventory/tools/label-printer" component={LabelPrinterPage} />
               <Route path="/inventory/tools/label-stock-check" component={LabelStockCheck} />
               <Route path="/ingredients">{() => <Redirect to="/inventory?tab=ingredients" />}</Route>
