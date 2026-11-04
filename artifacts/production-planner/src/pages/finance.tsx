@@ -74,7 +74,20 @@ type FinLine = {
   qboTxnId: number | null;
   /** When it was found (sync) or ticked (accounts team) as posted; null = not posted. */
   postedDetectedAt: string | null;
+  /** Will never have a VAT invoice: "dla" or "other" (reason in statusNote). */
+  noVatReason: string | null;
 };
+
+/** What the bookkeeper is told to do with a line that has no VAT invoice. */
+function noVatInstruction(line: FinLine): { pill: string; title: string; body: string } | null {
+  if (line.noVatReason === "dla") {
+    return { pill: "DLA", title: "DLA — please post to the Director's Loan Account", body: "Personal purchase on a business card. No VAT reclaim." };
+  }
+  if (line.noVatReason) {
+    return { pill: "No VAT invoice", title: "No VAT invoice — post without VAT", body: `${line.statusNote ?? "No reason given"}. No VAT reclaim.` };
+  }
+  return null;
+}
 
 type FinVendor = {
   id: number;
@@ -144,10 +157,22 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
 
 const FILTERS = [
   { key: "outstanding", label: "Outstanding" },
-  { key: "matched", label: "Document found" },
+  // The bookkeeper's queue: a VAT invoice attached, or the team has said
+  // there won't be one and how to post it (Graeme, 2026-11-03).
+  { key: "matched", label: "To be processed" },
   { key: "done", label: "Completed" },
   { key: "all", label: "All" },
 ] as const;
+
+/** What each section's total means, under its count on the tab. */
+const SECTION_NOTES: Record<(typeof FILTERS)[number]["key"], string> = {
+  outstanding: "awaiting documents",
+  matched: "ready for the bookkeeper",
+  done: "done",
+  all: "in total",
+};
+
+const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const POSTED_FILTERS = [
   { key: "any", label: "Either" },
@@ -301,55 +326,26 @@ function InvoicesTab() {
     return [...out].sort(cmp[sort]);
   }, [data, filter, postedFilter, sort, search]);
 
-  const sectionCounts = useMemo(() => {
+  const sections = useMemo(() => {
     const lines = data?.lines ?? [];
+    const sum = (ls: FinLine[]) => ({ count: ls.length, total: ls.reduce((s, l) => s + Number(l.amount), 0) });
     return {
-      outstanding: lines.filter((l) => l.status === "open" || l.status === "identified").length,
-      matched: lines.filter((l) => l.status === "matched").length,
-      done: lines.filter((l) => l.status === "done" || l.status === "not_needed").length,
-      all: lines.length,
-    } satisfies Record<(typeof FILTERS)[number]["key"], number>;
+      outstanding: sum(lines.filter((l) => l.status === "open" || l.status === "identified")),
+      matched: sum(lines.filter((l) => l.status === "matched")),
+      done: sum(lines.filter((l) => l.status === "done" || l.status === "not_needed")),
+      all: sum(lines),
+    } satisfies Record<(typeof FILTERS)[number]["key"], { count: number; total: number }>;
   }, [data]);
 
-  const outstandingTotal = useMemo(() => {
-    const lines = data?.lines ?? [];
-    return lines
-      .filter((l) => l.status === "open" || l.status === "identified")
-      .reduce((s, l) => s + Number(l.amount), 0);
-  }, [data]);
 
   return (
     <div className="space-y-6">
-      <InvoiceDropPanel />
-
-      {/* Summary + upload */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Inbox className="h-4 w-4" /> Outstanding</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">
-              {(data?.lines ?? []).filter((l) => l.status === "open" || l.status === "identified").length}
-            </div>
-            <div className="text-sm text-muted-foreground">£{outstandingTotal.toFixed(2)} awaiting documents</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><FileText className="h-4 w-4" /> Documents found</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-semibold">{(data?.lines ?? []).filter((l) => l.status === "matched").length}</div>
-            <div className="text-sm text-muted-foreground">ready for the bookkeeper</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-muted-foreground flex items-center gap-2"><Upload className="h-4 w-4" /> Card statement</CardTitle>
-          </CardHeader>
-          <CardContent
-            className={`space-y-2 rounded-b-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
+      {/* Drop an invoice beside the card statement upload (Graeme, 2026-11-03:
+          one row, far less height; the counts live on the tabs below). */}
+      <InvoiceDropPanel
+        companion={
+          <Card
+            className={`h-full rounded-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
             onDragLeave={() => setCsvDragOver(false)}
             onDrop={(e) => {
@@ -359,32 +355,38 @@ function InvoicesTab() {
               if (f) uploadMutation.mutate(f);
             }}
           >
-            <input
-              ref={fileInput}
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) uploadMutation.mutate(f);
-                e.target.value = "";
-              }}
-            />
-            <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending} className="w-full">
-              {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-              Upload Capital on Tap CSV
-            </Button>
-            <p className="text-xs text-muted-foreground">Or drop the file anywhere on this card. Safe to re-upload overlapping exports — duplicates are ignored.</p>
-          </CardContent>
-        </Card>
-      </div>
+            <CardContent className="p-4 h-full flex flex-col xl:flex-row xl:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold flex items-start gap-2"><Upload className="h-4 w-4 mt-1 shrink-0 text-primary" /> Card statement</div>
+                <div className="text-xs text-muted-foreground">Capital on Tap CSV — drop it here. Re-uploading overlapping exports is safe.</div>
+              </div>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadMutation.mutate(f);
+                  e.target.value = "";
+                }}
+              />
+              <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending} className="shrink-0 self-start xl:self-auto">
+                {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+                Upload CSV
+              </Button>
+            </CardContent>
+          </Card>
+        }
+      />
 
       {/* Section tabs, then that section's action + Filter / Sort, then search
           (Graeme, 2026-11-03: make it obvious which section you're in). */}
       <div className="space-y-3">
-        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 sm:grid-cols-4 gap-1 rounded-2xl bg-secondary/70 p-1">
+        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           {FILTERS.map((f) => {
             const active = filter === f.key;
+            const { count, total } = sections[f.key];
             return (
               <button
                 key={f.key}
@@ -392,13 +394,18 @@ function InvoicesTab() {
                 aria-selected={active}
                 onClick={() => setFilter(f.key)}
                 className={cn(
-                  "rounded-xl px-3 py-3 text-sm lg:text-base font-semibold whitespace-nowrap transition-colors flex items-center justify-center gap-2",
-                  active ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:bg-background/70 hover:text-foreground",
+                  "rounded-2xl border-2 px-3 py-2.5 text-center transition-colors",
+                  active
+                    ? "bg-primary border-primary text-primary-foreground shadow-md"
+                    : "bg-white dark:bg-card border-border text-foreground shadow-sm hover:border-primary/60 hover:bg-primary/5",
                 )}
               >
-                {f.label}
-                <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-background")}>
-                  {sectionCounts[f.key]}
+                <span className="flex items-center justify-center gap-2 text-sm lg:text-base font-semibold whitespace-nowrap">
+                  {f.label}
+                  <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{count}</span>
+                </span>
+                <span className={cn("block text-xs mt-0.5 tabular-nums", active ? "text-primary-foreground/85" : "text-muted-foreground")}>
+                  {gbp(total)} {SECTION_NOTES[f.key]}
                 </span>
               </button>
             );
@@ -438,7 +445,7 @@ function InvoicesTab() {
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" aria-label="Sort transactions">
-                  <ArrowUpDown className="h-4 w-4 mr-1" /> Sort<span className="hidden sm:inline">: {SORTS.find((o) => o.key === sort)?.label}</span>
+                  <ArrowUpDown className="h-4 w-4 mr-1" /><span>Sort<span className="hidden sm:inline">: {SORTS.find((o) => o.key === sort)?.label}</span></span>
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-60">
@@ -612,13 +619,16 @@ function LineRow({
     : STATUS_LABELS[line.status] ?? STATUS_LABELS.open;
   const hasInvoiceDoc = docs.some(d => d.docKind === "invoice");
   const hasConfirmationDoc = docs.some(d => d.docKind === "order_confirmation");
-  const status = (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
+  const noVat = noVatInstruction(line);
+  const status = noVat && line.status !== "done" && line.status !== "not_needed"
+    ? { label: noVat.pill, tone: "bg-violet-600 text-white" }
+    : (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
     ? { label: "Invoice attached", tone: "bg-emerald-100 text-emerald-900" }
     : (line.status === "matched" || line.status === "identified") && hasConfirmationDoc
       ? { label: "Order confirmation attached", tone: "bg-sky-100 text-sky-900" }
       : baseStatus;
   return (
-    <Card>
+    <Card className={noVat ? "border-2 border-violet-300 bg-violet-50/70 dark:bg-violet-950/20" : undefined}>
       <button className="w-full text-left" onClick={onToggle}>
         <div className="flex items-center gap-3 px-4 py-3">
           {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
@@ -652,7 +662,7 @@ function LineRow({
       </button>
       {expanded && (
         <CardContent className="border-t pt-4 space-y-4">
-          {line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
+          {noVat ? <NoVatPanel line={line} info={noVat} /> : line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
           <PostedToggle line={line} />
           {/* The VAT invoice, big and shown straight away — the thing the
               accounts team check (Graeme, 2026-11-03). */}
@@ -672,15 +682,16 @@ function LineRow({
             </div>
           ))}
           <DocumentsBlock line={line} docs={docs} />
-          {line.status !== "done" && line.status !== "not_needed" && <SupplierFieldsBlock line={line} />}
-          {line.status !== "done" && line.status !== "not_needed" && <AddFileControl line={line} />}
+          {/* Hunting for an invoice only matters while one is expected. */}
+          {line.status !== "done" && line.status !== "not_needed" && !noVat && <SupplierFieldsBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && !noVat && <AddFileControl line={line} />}
           {/* Once the VAT invoice is in, mailbox suggestions are just noise. */}
-          {(line.status === "open" || line.status === "identified" || line.status === "matched") && !hasInvoiceDoc && (
+          {(line.status === "open" || line.status === "identified" || line.status === "matched") && !hasInvoiceDoc && !noVat && (
             <SuggestionsBlock lineId={line.id} />
           )}
-          {line.status !== "done" && line.status !== "not_needed" && <ChaseSupplierBlock line={line} />}
+          {line.status !== "done" && line.status !== "not_needed" && !noVat && <ChaseSupplierBlock line={line} />}
           {vendor && <VendorBlock vendor={vendor} />}
-          <StatusButtons line={line} onStatus={onStatus} />
+          <StatusButtons line={line} hasInvoiceDoc={hasInvoiceDoc} onStatus={onStatus} />
           <details className="border-t pt-3">
             <summary className="cursor-pointer text-sm font-medium">Who did what, when</summary>
             <div className="mt-2"><HistoryList type="line" id={line.id} /></div>
@@ -1331,7 +1342,7 @@ function PostedToggle({ line }: { line: FinLine }) {
   );
 }
 
-function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: string, note?: string | null) => void }) {
+function StatusButtons({ line, hasInvoiceDoc, onStatus }: { line: FinLine; hasInvoiceDoc: boolean; onStatus: (status: string, note?: string | null) => void }) {
   const [note, setNote] = useState(line.statusNote ?? "");
   const isClosed = line.status === "done" || line.status === "not_needed";
   return (
@@ -1344,9 +1355,7 @@ function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: s
             <Button size="sm" onClick={() => onStatus("done", note || null)}>
               <CheckCircle2 className="h-4 w-4 mr-1" /> Mark done
             </Button>
-            <Button size="sm" variant="outline" onClick={() => onStatus("not_needed", note || null)}>
-              Not needed
-            </Button>
+            {!line.noVatReason && !hasInvoiceDoc && <NoVatControl line={line} />}
             {note !== (line.statusNote ?? "") && (
               <Button size="sm" variant="ghost" onClick={() => onStatus(line.status, note || null)}>Save note</Button>
             )}
@@ -1364,6 +1373,83 @@ function StatusButtons({ line, onStatus }: { line: FinLine; onStatus: (status: s
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** The instruction to the bookkeeper on a line with no VAT invoice, and the
+ *  way back if it does need one after all. */
+function NoVatPanel({ line, info }: { line: FinLine; info: { title: string; body: string } }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const undo = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/lines/${line.id}/no-vat`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reason: null }),
+    }),
+    onSuccess: () => { toast({ title: "Back to needing a VAT invoice" }); queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }); },
+    onError: (e: Error) => toast({ title: "Couldn't change it", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <div className="rounded-2xl bg-violet-600 text-white p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+      <div className="flex-1 min-w-0">
+        <div className="text-lg font-semibold">{info.title}</div>
+        <div className="text-sm text-white/90">{info.body}</div>
+      </div>
+      {line.status !== "done" && line.status !== "not_needed" && (
+        <Button size="sm" variant="secondary" onClick={() => undo.mutate()} disabled={undo.isPending} className="shrink-0">
+          It does need a VAT invoice
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/** The one control for "this will never have a VAT invoice" (Graeme,
+ *  2026-11-03 — it replaced "Not needed"): DLA, or another reason. The line
+ *  goes to To be processed with its posting instruction. */
+function NoVatControl({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [other, setOther] = useState(false);
+  const [reason, setReason] = useState("");
+  const mark = useMutation({
+    mutationFn: (body: { reason: "dla" | "other"; note?: string }) => jsonFetch(`${BASE}/api/finance/lines/${line.id}/no-vat`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+    }),
+    onSuccess: () => {
+      toast({ title: "Sent to the bookkeeper", description: line.postedDetectedAt
+        ? "It's under To be processed — already posted, so they'll check it went to the right place and mark it done."
+        : "It's under To be processed with the posting instruction. It closes once they've posted it." });
+      setOpen(false);
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save", description: e.message, variant: "destructive" }),
+  });
+  if (!open) {
+    return <Button size="sm" variant="outline" onClick={() => setOpen(true)}>No VAT invoice</Button>;
+  }
+  return (
+    <div className="w-full rounded-xl border-2 border-violet-300 bg-violet-50 dark:bg-violet-950/20 p-3 space-y-2">
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-semibold flex-1">Why is there no VAT invoice?</span>
+        <Button size="icon" variant="ghost" onClick={() => setOpen(false)} aria-label="Cancel"><XCircle className="h-4 w-4" /></Button>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Button className="bg-violet-600 hover:bg-violet-700 text-white" onClick={() => mark.mutate({ reason: "dla" })} disabled={mark.isPending}>
+          DLA — personal purchase on a business card
+        </Button>
+        <Button variant="outline" onClick={() => setOther(true)} disabled={mark.isPending}>Another reason</Button>
+      </div>
+      {other && (
+        <div className="flex flex-wrap gap-2">
+          <Input className="flex-1 min-w-[220px] bg-white dark:bg-card" value={reason} onChange={(e) => setReason(e.target.value)}
+            placeholder="e.g. supplier isn't VAT registered" autoFocus />
+          <Button onClick={() => mark.mutate({ reason: "other", note: reason.trim() })} disabled={!reason.trim() || mark.isPending}>
+            Send to the bookkeeper
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

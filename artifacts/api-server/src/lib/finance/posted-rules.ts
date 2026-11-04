@@ -23,12 +23,17 @@ export function describeImapLoginError(err: unknown): string {
 }
 
 
+/** Reasons a line will never have a VAT invoice (migration 0351). */
+export const NO_VAT_REASONS = ["dla", "other"] as const;
+export type NoVatReason = (typeof NO_VAT_REASONS)[number];
+
 /** Done, by definition (Graeme, 2026-11-03): posted in QuickBooks AND a VAT
- *  invoice attached. A line that's both closes itself; a line already
- *  closed (done or not needed) is left alone. */
-export function isReadyToClose(line: { status: string; postedDetectedAt: Date | null }, hasVatInvoice: boolean): boolean {
+ *  invoice attached — or, for a line that will never have one (a DLA
+ *  purchase), just posted. A line that's ready closes itself; a line
+ *  already closed (done or not needed) is left alone. */
+export function isReadyToClose(line: { status: string; postedDetectedAt: Date | null; noVatReason?: string | null }, hasVatInvoice: boolean): boolean {
   return (line.status === "open" || line.status === "identified" || line.status === "matched")
-    && line.postedDetectedAt != null && hasVatInvoice;
+    && line.postedDetectedAt != null && (hasVatInvoice || !!line.noVatReason);
 }
 
 

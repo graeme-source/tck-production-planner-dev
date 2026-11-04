@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -70,7 +70,9 @@ async function jsonFetch(url: string, init?: RequestInit) {
 const money = (v: string | null) => (v == null ? "—" : `£${Number(v).toFixed(2)}`);
 const ukDate = (iso: string | null) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "no date");
 
-export function InvoiceDropPanel() {
+/** `companion` sits beside the drop card on wide screens (the card
+ *  statement upload); results run full width underneath. */
+export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [items, setItems] = useState<Item[]>([]);
@@ -105,19 +107,17 @@ export function InvoiceDropPanel() {
 
   return (
     <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
       <Card
         className={cn("border-2 border-dashed transition-colors", dragOver ? "border-primary bg-primary/10" : "border-primary/40")}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); void addFiles(Array.from(e.dataTransfer.files)); }}
       >
-        <CardContent className="p-5 flex flex-col sm:flex-row sm:items-center gap-4">
-          <div className="h-12 w-12 rounded-2xl bg-primary/15 flex items-center justify-center shrink-0">
-            <FileText className="h-6 w-6 text-primary" />
-          </div>
+        <CardContent className="p-4 h-full flex flex-col xl:flex-row xl:items-center gap-3">
           <div className="flex-1 min-w-0">
-            <div className="text-lg font-semibold">Drop an invoice — it finds the transaction</div>
-            <div className="text-sm text-muted-foreground">PDFs or photos, one or several. Each is read and matched to its card transaction for you to confirm.</div>
+            <div className="font-semibold flex items-start gap-2"><FileText className="h-4 w-4 mt-1 shrink-0 text-primary" /> Drop an invoice — it finds the transaction</div>
+            <div className="text-xs text-muted-foreground">PDFs or photos, one or several — each is read and matched for you to confirm.</div>
           </div>
           <input
             ref={input}
@@ -127,11 +127,13 @@ export function InvoiceDropPanel() {
             className="hidden"
             onChange={(e) => { void addFiles(Array.from(e.target.files ?? [])); e.target.value = ""; }}
           />
-          <Button size="lg" onClick={() => input.current?.click()}>
+          <Button onClick={() => input.current?.click()} className="shrink-0 self-start xl:self-auto">
             <Upload className="h-4 w-4 mr-2" /> Add invoices
           </Button>
         </CardContent>
       </Card>
+      {companion}
+      </div>
 
       {items.map((item) => (
         <InvoiceMatchCard
@@ -214,7 +216,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
             <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
             <div>
               Attached to {item.attachedTo.supplier}, {money(item.attachedTo.amount)} on {ukDate(item.attachedTo.lineDate)}.
-              {item.autoDone ? " It was already posted in QuickBooks, so it's done and filed in Invoices." : " It's now under Document found."}
+              {item.autoDone ? " It was already posted in QuickBooks, so it's done and filed in Invoices." : " It's now under To be processed."}
             </div>
           </div>
         )}

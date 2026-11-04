@@ -132,7 +132,7 @@ export async function ingestLineDocuments(lineId: number, userId: number | null)
  *  any action that could complete the pair. The person whose action
  *  completed it is recorded as marking it done (null = the QuickBooks sync). */
 export async function autoCompleteIfReady(lineId: number, userId: number | null, trigger: string): Promise<boolean> {
-  const [line] = await db.select({ status: finLinesTable.status, postedDetectedAt: finLinesTable.postedDetectedAt })
+  const [line] = await db.select({ status: finLinesTable.status, postedDetectedAt: finLinesTable.postedDetectedAt, noVatReason: finLinesTable.noVatReason })
     .from(finLinesTable).where(eq(finLinesTable.id, lineId));
   if (!line) return false;
   const [inv] = await db.select({ id: finDocumentsTable.id }).from(finDocumentsTable)

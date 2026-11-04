@@ -34,6 +34,7 @@ export async function suggestLinesForInvoice(invoiceId: number): Promise<{ sugge
     .leftJoin(finVendorsTable, eq(finVendorsTable.id, finLinesTable.vendorId))
     .where(and(
       inArray(finLinesTable.status, ["open", "identified", "matched"]),
+      isNull(finLinesTable.noVatReason), // a DLA purchase never takes an invoice
       notExists(db.select({ one: sql`1` }).from(finDocumentsTable).where(and(
         eq(finDocumentsTable.lineId, finLinesTable.id),
         eq(finDocumentsTable.docKind, "invoice"),
