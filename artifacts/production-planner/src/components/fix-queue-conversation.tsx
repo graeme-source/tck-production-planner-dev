@@ -10,24 +10,20 @@
  *  - FixQueueThread — everything on the card in time order, oldest at the
  *    top: Claude's notes, Graeme's messages to the reporter, his replies to
  *    Claude (marked as private), the reporter's replies by first name, and
- *    small notes for decisions and "Jane read your message". A reply box at
- *    the bottom messages the reporter through the existing send path, so it
- *    pops up for them where they already read his messages — with the whole
- *    conversation above it — and they can answer again.
+ *    small notes for decisions and "Jane read your message".
  *  - Unread replies — the card is flagged "Jane replied" with a green strip
  *    and sorted to the top; the badge clears once the conversation has been
  *    on screen for a moment (POST /review/:id/read), without moving the card.
  *  - useFixQueueUnread — the count on the Fix queue nav item.
  *  - FixQueueSearch — one box over EVERY tab.
  */
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCheck, Loader2, MessageSquareReply, Search, Send, X } from "lucide-react";
-import { DictateButton } from "@/components/dictate-button";
+import { MessageSquareReply, Search, X } from "lucide-react";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
-  chatLine, clockLabel, newReporterWords, unreadLabel, withThreadRead,
+  chatLine, clockLabel, withThreadRead,
   type FixQueueItem, type FixQueueResponse, type FixQueueUnread,
 } from "@/lib/issue-pipeline";
 
@@ -75,7 +71,7 @@ function useMarkThreadRead() {
 
 /** "Seen — leave it where it was": clears "<name> replied" so the card goes
  *  back to the tab its status puts it in. */
-function useMarkSeen() {
+export function useMarkSeen() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => post(`/api/issue-pipeline/review/${id}/seen`),
@@ -88,90 +84,23 @@ function useMarkSeen() {
   });
 }
 
-/** The green strip at the top of a card the reporter has answered. */
-export function ReporterRepliedStrip({ item, firstName, saving, onOpen }: {
-  item: FixQueueItem;
-  firstName: string;
-  saving: boolean;
-  /** Scroll to the conversation and its reply box. */
-  onOpen: () => void;
-}) {
-  const seen = useMarkSeen();
-  const unread = item.unreadReplies ?? 0;
-  const words = newReporterWords(item.thread ?? []);
-  const latest = words[words.length - 1];
-  return (
-    <div className={cn(
-      "rounded-2xl border-2 p-4 space-y-3",
-      unread > 0 ? "border-emerald-500 bg-emerald-50 dark:bg-emerald-950/40" : "border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/20",
-    )}>
-      <div className="flex gap-3">
-        <MessageSquareReply className="w-7 h-7 text-emerald-700 dark:text-emerald-300 flex-shrink-0" />
-        <div className="min-w-0 space-y-1">
-          <p className="text-base font-bold text-emerald-900 dark:text-emerald-200">
-            {unreadLabel(firstName, unread)}
-            {latest && <span className="font-normal text-sm text-emerald-800/80 dark:text-emerald-300/80"> · {clockLabel(latest.at)}</span>}
-          </p>
-          {latest && <p className="text-lg font-semibold whitespace-pre-wrap break-words">“{latest.text}”</p>}
-        </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <button onClick={onOpen} disabled={saving}
-          className="h-12 px-4 rounded-xl bg-emerald-700 text-white font-bold flex items-center gap-2 hover:bg-emerald-800 disabled:opacity-50">
-          <MessageSquareReply className="w-5 h-5" /> Answer {firstName}
-        </button>
-        {item.triage.reporterReplyAt && (
-          <button onClick={() => seen.mutate(item.triage.id)} disabled={saving || seen.isPending}
-            className="h-12 px-4 rounded-xl border-2 border-border bg-card font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            {seen.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCheck className="w-5 h-5" />} Seen — leave it where it was
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
 const TONE: Record<string, string> = {
   you: "bg-primary text-primary-foreground",
   reporter: "bg-emerald-100 text-emerald-950 dark:bg-emerald-900/50 dark:text-emerald-50 border-2 border-emerald-300 dark:border-emerald-700",
   claude: "bg-sky-50 text-foreground dark:bg-sky-950/40 border border-sky-200 dark:border-sky-900",
 };
 
-export interface FixQueueThreadHandle {
-  /** Scroll to the reply box and focus it, optionally with text in it. */
-  focusReply: (text?: string) => void;
-}
-
-/** The one conversation on a card, with the reply box to the reporter. */
-export const FixQueueThread = forwardRef<FixQueueThreadHandle, {
-  item: FixQueueItem;
-  firstName: string;
-  /** The report has a reporter we can message. */
-  canMessage: boolean;
-  /** "Send and close" is only for reports not already closed or being fixed. */
-  canClose: boolean;
-  saving: boolean;
-  onMessage: (message: string, close: boolean) => void;
-}>(function FixQueueThread({ item, firstName, canMessage, canClose, saving, onMessage }, ref) {
+/** The one conversation on a card. Writing happens in the card's own panel,
+ *  so there's one place to act (2026-11-04). */
+export function FixQueueThread({ item, firstName }: { item: FixQueueItem; firstName: string }) {
   const thread = item.thread ?? [];
   const unread = item.unreadReplies ?? 0;
-  const [draft, setDraft] = useState("");
-  const boxRef = useRef<HTMLDivElement>(null);
   // The bottom of the conversation, where the newest reply is: seeing it is reading it.
   const endRef = useRef<HTMLLIElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
   const markRead = useMarkThreadRead();
   const firstUnreadAt = unread > 0
     ? thread.filter(e => e.who === "reporter" && e.kind === "reply").slice(-unread)[0]?.at ?? null
     : null;
-
-  useImperativeHandle(ref, () => ({
-    focusReply: (text?: string) => {
-      if (text != null) setDraft(text);
-      inputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-      setTimeout(() => inputRef.current?.focus(), 350);
-    },
-  }), []);
 
   // Opening the conversation reads it: once it has been on screen for a
   // couple of seconds the unread badge goes (the card stays where it is).
@@ -196,16 +125,8 @@ export const FixQueueThread = forwardRef<FixQueueThreadHandle, {
     return () => { obs.disconnect(); if (timer) clearTimeout(timer); };
   }, [unread, triageId, mutateRead]);
 
-  const send = (close: boolean) => {
-    const text = draft.trim();
-    if (!text) return;
-    onMessage(text, close);
-    setDraft("");
-  };
-
   return (
     <section
-      ref={boxRef}
       aria-label={`Conversation with ${firstName} and Claude`}
       className={cn("rounded-2xl border-2 overflow-hidden", unread > 0 ? "border-emerald-500" : "border-border")}
     >
@@ -256,42 +177,9 @@ export const FixQueueThread = forwardRef<FixQueueThreadHandle, {
         <li ref={endRef} aria-hidden="true" className="h-px" />
       </ol>
 
-      {canMessage && (
-        <div className="border-t border-border bg-secondary/30 p-3 md:p-4 space-y-2">
-          <div className="flex items-center gap-2">
-            <label htmlFor={`fixq-reply-${item.triage.id}`} className="text-sm font-bold flex-1">Message {firstName}</label>
-            <DictateButton value={draft} onChange={setDraft} context="note" />
-          </div>
-          <textarea
-            id={`fixq-reply-${item.triage.id}`}
-            ref={inputRef}
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            maxLength={4000}
-            rows={3}
-            placeholder={`Write to ${firstName} — it pops up for them with this conversation, and they can reply`}
-            className="w-full px-3 py-2.5 bg-background border-2 border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <div className="flex flex-col-reverse sm:flex-row sm:items-center gap-2">
-            <p className="text-xs text-muted-foreground flex-1">
-              The card stays where it is, waiting for {firstName}'s answer.{canClose ? " “Send and close” closes the report too." : ""}
-            </p>
-            {canClose && (
-              <button onClick={() => send(true)} disabled={saving || !draft.trim()}
-                className="h-12 px-4 rounded-xl border-2 border-primary/40 text-primary font-bold flex items-center justify-center gap-2 hover:bg-primary/10 disabled:opacity-50">
-                <CheckCheck className="w-4 h-4" /> Send and close
-              </button>
-            )}
-            <button onClick={() => send(false)} disabled={saving || !draft.trim()}
-              className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold flex items-center justify-center gap-2 disabled:opacity-50">
-              {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to {firstName}
-            </button>
-          </div>
-        </div>
-      )}
     </section>
   );
-});
+}
 
 /** One search box over every tab. */
 export function FixQueueSearch({ value, onChange }: { value: string; onChange: (v: string) => void }) {

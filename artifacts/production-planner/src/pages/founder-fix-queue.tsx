@@ -11,28 +11,21 @@
  * Founder account only (same email gate as the rest of /founder; the API
  * enforces it too). Big cards, not a table — it's read on a phone or iPad.
  */
-import { useEffect, useRef, useState } from "react";
-import { Link, Redirect } from "wouter";
+import { useEffect, useState } from "react";
+import { Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  AlertTriangle, AlarmClock, Award, Check, CheckCircle2, ClipboardCheck, ChevronDown, ChevronRight, ExternalLink, HelpCircle, Hourglass, Loader2,
-  MessageCircleQuestion, MessageSquareReply, MessageSquareText, RotateCcw, Scale, Send, Video, Wrench, X, XCircle,
-} from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, MessageSquareReply } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
-import { MarkdownBlock } from "@/components/lesson-media";
-import { ImprovementSuggestions, NoActionButton, useNoAction } from "@/components/fix-queue-extras";
-import {
-  FixQueueSearch, FixQueueThread, ReporterRepliedStrip, useFixQueueUnread, type FixQueueThreadHandle,
-} from "@/components/fix-queue-conversation";
-import { DictateButton } from "@/components/dictate-button";
+import { ImprovementSuggestions, useNoAction } from "@/components/fix-queue-extras";
+import { FixQueueSearch, useFixQueueUnread } from "@/components/fix-queue-conversation";
+import { FixCard, SNOOZE_OPTIONS, type DecisionAction } from "@/components/fix-queue-card";
 import { FixQueueBuildNow } from "@/components/fix-queue-build-now";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { feedTimestamp } from "@/lib/feed-time";
 import {
-  LANE_LABELS, QUEUE_TAB_LABELS, cardActions, noticeStatusLine, tabCount, unreadLabel, waitingForReporterLabel, withMessageSent, withReplySent,
-  type FixQueueItem, type FixQueueResponse, type FixQueueTab, type TriageLane, type TriageStatus,
+  tabCount, unreadLabel, withMessageSent, withReplySent,
+  type FixQueueItem, type FixQueueResponse, type FixQueueTab, type TriageStatus,
 } from "@/lib/issue-pipeline";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -49,32 +42,11 @@ const TABS: Array<{ key: FixQueueTab; label: string }> = [
   { key: "no_action", label: "Dismissed" },
 ];
 
-const SNOOZE_OPTIONS: Array<{ days: number; label: string }> = [
-  { days: 1, label: "1 day" }, { days: 3, label: "3 days" }, { days: 7, label: "1 week" },
-  { days: 14, label: "2 weeks" }, { days: 30, label: "1 month" },
-];
-
 const TAB_HINTS: Partial<Record<FixQueueTab, string>> = {
   in_progress: "Waiting on Claude's answer to your reply, or being fixed. They come back to To review by themselves once Claude answers.",
   snoozed: "Out of sight until the date shown, then back in To review by themselves.",
   no_action: "Dismissed with no action — nobody was messaged and Claude won't pick them up again. Restore one to put it back.",
 };
-
-const LANE_STYLES: Record<TriageLane, string> = {
-  defect: "bg-red-100 text-red-800 dark:bg-red-950/50 dark:text-red-200",
-  data_fix: "bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200",
-  understanding: "bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200",
-  improvement: "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200",
-  needs_info: "bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200",
-  not_app: "bg-secondary text-muted-foreground",
-};
-
-const STATUS_LABELS: Record<TriageStatus, string> = {
-  proposed: "To review", approved: "Approved", rejected: "Rejected",
-  in_progress: "In progress", fixed: "Fixed", wont_fix: "Won't fix", answered: "Answered", dismissed: "Dismissed — already done",
-};
-
-const SEVERITY_DOT: Record<string, string> = { red: "bg-red-500", yellow: "bg-amber-400", green: "bg-emerald-500" };
 
 async function jsonOrThrow(res: Response) {
   const data = await res.json().catch(() => null);
@@ -82,486 +54,7 @@ async function jsonOrThrow(res: Response) {
   return data;
 }
 
-type DecisionAction = "approve" | "reject" | "reply";
 const ACTION_TO_STATUS: Record<Exclude<DecisionAction, "reply">, TriageStatus> = { approve: "approved", reject: "rejected" };
-
-// ── Note dialog (reject with an optional note / reply with a question) ─────
-
-function NoteDialog({ mode, reopens = false, onCancel, onSubmit }: {
-  mode: "reject" | "reply";
-  /** Reply on a decided/closed card — say that it reopens it. */
-  reopens?: boolean;
-  onCancel: () => void;
-  /** fixNow = "Send and fix it this way" (reply only). */
-  onSubmit: (note: string, fixNow?: boolean) => void;
-}) {
-  const [note, setNote] = useState("");
-  const isReply = mode === "reply";
-  return (
-    <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-3 md:p-8" onClick={onCancel}>
-      <div
-        className="bg-card border border-border rounded-2xl shadow-2xl w-full max-w-lg max-h-[92dvh] flex flex-col overflow-hidden"
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          {isReply ? <MessageCircleQuestion className="w-5 h-5 text-sky-600" /> : <XCircle className="w-5 h-5 text-red-600" />}
-          <h2 className="font-display font-bold text-lg flex-1">{isReply ? "Reply to Claude" : "Reject this recommendation"}</h2>
-          <button onClick={onCancel} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-        <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          <p className="text-sm text-muted-foreground">
-            {isReply
-              ? "Correct Claude's understanding, answer its question, or tell it what to do instead. Your words become its newest instruction — it looks again on its next hourly pass and updates this card."
-              : "Optional: say why, so the next recommendation for something similar is better."}
-          </p>
-          {isReply && (
-            <p className="text-sm text-emerald-900 dark:text-emerald-100 bg-emerald-50 dark:bg-emerald-950/30 rounded-xl px-3 py-2.5">
-              <span className="font-semibold">Telling it how to fix it?</span> Use <span className="font-semibold">Send and fix it this way</span>: your message is the fix and your go-ahead, so Claude builds it on its next hourly run without coming back for approval. It still waits for you to say deploy.
-            </p>
-          )}
-          {isReply && reopens && (
-            <p className="text-sm font-medium text-sky-800 dark:text-sky-200 bg-sky-50 dark:bg-sky-950/30 rounded-xl px-3 py-2.5">
-              This reopens the card: your earlier decision is kept in its history, and Claude's updated recommendation comes back to To review for a fresh decision. The reporter isn't messaged.
-            </p>
-          )}
-          {isReply && (
-            <div className="flex justify-end">
-              <DictateButton value={note} onChange={setNote} context="note" />
-            </div>
-          )}
-          <textarea
-            value={note}
-            onChange={e => setNote(e.target.value)}
-            autoFocus
-            maxLength={isReply ? 4000 : 2000}
-            placeholder={isReply ? "e.g. Your understanding is wrong — it's the wrapping count on the iPad, not the stock figure." : "e.g. Working as intended — it's a training point."}
-            className="w-full min-h-[160px] px-3 py-2.5 bg-background border border-border rounded-xl text-base focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-        </div>
-        <div className="p-5 pt-0 space-y-2">
-          {isReply && (
-            <button
-              onClick={() => onSubmit(note.trim(), true)}
-              disabled={!note.trim()}
-              className="w-full h-12 rounded-xl font-bold bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <Wrench className="w-5 h-5" /> Send and fix it this way
-            </button>
-          )}
-          <div className="flex gap-2">
-            <button onClick={onCancel} className="flex-1 h-12 rounded-xl border border-border font-semibold hover:bg-secondary/60">
-              Cancel
-            </button>
-            <button
-              onClick={() => onSubmit(note.trim())}
-              disabled={isReply && !note.trim()}
-              className={cn(
-                "flex-1 h-12 rounded-xl font-bold disabled:opacity-50",
-                isReply ? "border-2 border-sky-600 text-sky-700 dark:text-sky-300 hover:bg-sky-50 dark:hover:bg-sky-950/30" : "bg-red-600 text-white hover:bg-red-700",
-              )}
-            >
-              {isReply ? "Just send" : "Reject"}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── One recommendation ──────────────────────────────────────────────────────
-
-function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
-}
-
-function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAction, saving, showTab = false }: {
-  item: FixQueueItem;
-  /** Search results: say which tab the card is in now. */
-  showTab?: boolean;
-  /** "Dismiss — no action" (restore = put it back). */
-  onNoAction: (restore: boolean) => void;
-  onDecide: (action: DecisionAction, note?: string, fixNow?: boolean) => void;
-  onMessage: (message: string, close: boolean) => void;
-  onDismiss: () => void;
-  /** days = null brings a snoozed card back now. */
-  onSnooze: (days: number | null) => void;
-  saving: boolean;
-}) {
-  const { triage: t, issue } = item;
-  const [whyOpen, setWhyOpen] = useState(false);
-  const [dialog, setDialog] = useState<null | "reject" | "reply">(null);
-  const threadRef = useRef<FixQueueThreadHandle>(null);
-  const unread = item.unreadReplies ?? 0;
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
-  const snoozedUntil = t.snoozedUntil && new Date(t.snoozedUntil).getTime() > Date.now() ? new Date(t.snoozedUntil) : null;
-  const actions = cardActions(t);
-  const thread = item.thread ?? [];
-  const firstName = issue?.reporter.name?.split(" ")[0] ?? "the reporter";
-  const waitingLabel = waitingForReporterLabel(t, firstName);
-  // Claude's draft pre-fills only the first message; follow-ups start blank.
-  const alreadyMessaged = thread.some(e => e.who === "you" && e.kind === "message");
-  const status = t.status;
-  const images = issue?.attachments.filter(a => a.kind === "image") ?? [];
-  const videos = issue?.attachments.filter(a => a.kind !== "image") ?? [];
-
-  return (
-    <article className={cn(
-      "rounded-3xl border-2 bg-card p-5 md:p-6 space-y-4 transition-opacity",
-      // A reply from the reporter you haven't read: a green strip down the
-      // card, so it stands out in the list (21 Oct 2026).
-      unread > 0 ? "border-emerald-500 border-l-[10px]" : t.reporterReplyAt ? "border-emerald-300 border-l-[10px]" : "border-border",
-      saving && "opacity-60",
-    )}>
-      {/* Chips */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Chip className={LANE_STYLES[t.lane]}>{LANE_LABELS[t.lane]}</Chip>
-        {t.behaviourChange && (
-          <Chip className="bg-amber-500 text-white"><Scale className="w-3.5 h-3.5" /> Changes agreed behaviour — your call first</Chip>
-        )}
-        {t.noActionNeeded && (status === "proposed" || status === "approved" || status === "rejected") && (
-          <Chip className="bg-emerald-100 text-emerald-800 dark:bg-emerald-950/50 dark:text-emerald-200"><CheckCircle2 className="w-3.5 h-3.5" /> Already done — no action needed</Chip>
-        )}
-        {snoozedUntil && status === "proposed" && (
-          <Chip className="bg-secondary text-foreground"><AlarmClock className="w-3.5 h-3.5" /> Snoozed until {snoozedUntil.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" })}</Chip>
-        )}
-        {showTab && item.tab && (
-          <Chip className="bg-primary text-primary-foreground">In: {QUEUE_TAB_LABELS[item.tab]}</Chip>
-        )}
-        {(unread > 0 || t.reporterReplyAt) && (
-          <Chip className="bg-emerald-600 text-white"><MessageSquareReply className="w-3.5 h-3.5" /> {unreadLabel(firstName, unread)}</Chip>
-        )}
-        {waitingLabel && !t.reporterReplyAt && (
-          <Chip className="bg-violet-100 text-violet-800 dark:bg-violet-950/50 dark:text-violet-200"><Hourglass className="w-3.5 h-3.5" /> {waitingLabel}</Chip>
-        )}
-        {t.awaitingRetriage && (
-          <Chip className="bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200"><MessageCircleQuestion className="w-3.5 h-3.5" /> Waiting for Claude to reply</Chip>
-        )}
-        {status !== "proposed" && <Chip className="bg-secondary text-foreground">{STATUS_LABELS[status]}</Chip>}
-        {t.noActionAt && <Chip className="bg-foreground text-background">Dismissed — no action{t.noActionBy ? ` · ${t.noActionBy}` : ""} · {feedTimestamp(t.noActionAt)}</Chip>}
-        <span className="ml-auto text-xs text-muted-foreground">Issue #{t.andonIssueId} · triaged {feedTimestamp(t.triagedAt)}</span>
-      </div>
-
-      {/* The reporter answered — it's back here for you (not Claude). */}
-      {(unread > 0 || t.reporterReplyAt) && (
-        <ReporterRepliedStrip item={item} firstName={firstName} saving={saving} onOpen={() => threadRef.current?.focusReply()} />
-      )}
-
-      {/* Claude's question — the conversation to finish before there's a
-          plan. Reply lives right here, on the thing it answers. */}
-      {t.questionForGraeme && status === "proposed" && (
-        <div className="rounded-2xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 p-4 space-y-3">
-          <div className="flex gap-3">
-            <HelpCircle className="w-6 h-6 text-amber-600 flex-shrink-0" />
-            <div>
-              <p className="text-xs font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300">Claude asks you</p>
-              <p className="text-lg font-semibold whitespace-pre-wrap">{t.questionForGraeme}</p>
-            </div>
-          </div>
-          {actions.canReply && (
-            <button onClick={() => setDialog("reply")} disabled={saving}
-              className="h-12 px-5 rounded-xl bg-amber-500 text-white font-bold flex items-center gap-2 hover:bg-amber-600 disabled:opacity-50">
-              <MessageCircleQuestion className="w-5 h-5" /> Answer Claude
-            </button>
-          )}
-        </div>
-      )}
-      {item.fixNow && status === "approved" && (
-        <div className="rounded-2xl border-2 border-primary/50 bg-primary/5 p-4 flex gap-3">
-          <Wrench className="w-6 h-6 text-primary flex-shrink-0" />
-          <p className="text-base">
-            <span className="font-bold">Approved — Claude will fix it the way you said.</span>{" "}
-            It builds this from your message on its next hourly run and won't ask you to approve again. Nothing goes live until you say deploy.
-          </p>
-        </div>
-      )}
-      {actions.waitingOnClaude && (
-        <div className="rounded-2xl border-2 border-sky-300 bg-sky-50 dark:bg-sky-950/30 p-4 flex gap-3">
-          <MessageCircleQuestion className="w-6 h-6 text-sky-600 flex-shrink-0" />
-          <p className="text-base">
-            <span className="font-bold">Sent — Claude will look at this on its next pass.</span>{" "}
-            It reads your reply as its newest instruction and updates this card (it runs every hour). Until then the card waits under In progress, then comes back to To review. Nothing for you to do yet.
-          </p>
-        </div>
-      )}
-
-      {/* The reporter's own words */}
-      {issue && (
-        <div className="rounded-2xl bg-secondary/40 p-4 space-y-3">
-          <blockquote className="text-lg md:text-xl leading-snug whitespace-pre-wrap border-l-4 border-primary pl-4">
-            “{issue.description?.trim() || "(no description)"}”
-          </blockquote>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
-            <span className="font-semibold text-foreground">{issue.reporter.name ?? "Someone"}</span>
-            <span>{feedTimestamp(issue.createdAt)}</span>
-            <span>{issue.station}</span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className={cn("w-2.5 h-2.5 rounded-full", SEVERITY_DOT[issue.severity] ?? "bg-muted")} />
-              {issue.severity}
-            </span>
-            {issue.resolved && <span className="text-emerald-700 dark:text-emerald-400 font-medium">Resolved {feedTimestamp(issue.resolved.at)}</span>}
-          </div>
-          {issue.reportContext && <p className="text-sm text-muted-foreground">Context: {issue.reportContext}</p>}
-          {(images.length > 0 || videos.length > 0) && (
-            <div className="flex flex-wrap gap-2">
-              {images.map(a => (
-                <a key={a.id} href={`${BASE}${a.url}`} target="_blank" rel="noopener noreferrer" className="block">
-                  <img src={`${BASE}${a.url}`} alt={a.fileName ?? "Photo from the report"} loading="lazy"
-                    className="w-24 h-24 md:w-28 md:h-28 object-cover rounded-xl border border-border" />
-                </a>
-              ))}
-              {videos.map(a => (
-                <a key={a.id} href={`${BASE}${a.url}`} target="_blank" rel="noopener noreferrer"
-                  className="w-24 h-24 md:w-28 md:h-28 rounded-xl border border-border flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground hover:bg-secondary">
-                  <Video className="w-6 h-6" /> Video
-                </a>
-              ))}
-            </div>
-          )}
-          {issue.comments.length > 0 && (
-            <p className="text-xs text-muted-foreground">{issue.comments.length} comment{issue.comments.length === 1 ? "" : "s"} on the issue</p>
-          )}
-        </div>
-      )}
-
-      {/* Verdict */}
-      <p className="text-xl md:text-2xl font-bold leading-snug">{t.verdictSummary}</p>
-
-      {/* Why — collapsible */}
-      {t.explanation.trim() && (
-        <div>
-          <button onClick={() => setWhyOpen(o => !o)} className="flex items-center gap-2 text-base font-semibold text-muted-foreground hover:text-foreground">
-            {whyOpen ? <ChevronDown className="w-5 h-5" /> : <ChevronRight className="w-5 h-5" />} Why
-          </button>
-          {whyOpen && (
-            <div className="mt-2 pl-7 [&_div]:text-base [&_p]:whitespace-pre-wrap break-words">
-              <MarkdownBlock content={t.explanation} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* ONE conversation (21 Oct 2026): Claude, you and the reporter in
-          time order, with the box to message the reporter at the bottom. */}
-      {(thread.length > 0 || issue?.reporter.id != null) && (
-        <FixQueueThread
-          ref={threadRef}
-          item={item}
-          firstName={firstName}
-          canMessage={issue?.reporter.id != null}
-          canClose={["proposed", "approved", "rejected", "wont_fix"].includes(status)}
-          saving={saving}
-          onMessage={onMessage}
-        />
-      )}
-
-      {/* Proposed fix — Approve / Dismiss live here, on what they act on.
-          Held back while there's still a conversation to finish. */}
-      {(t.proposedFix.trim() || actions.canApprove || actions.canDismiss || actions.approveBlocked) && (
-        <div className="rounded-2xl border border-border p-4 space-y-3">
-          {t.proposedFix.trim() && (
-            <div>
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1">
-                <Wrench className="w-4 h-4" /> Proposed fix
-              </p>
-              <p className="text-base whitespace-pre-wrap">{t.proposedFix}</p>
-            </div>
-          )}
-          {actions.canDismiss && (
-            <div className="space-y-1.5">
-              <button onClick={onDismiss} disabled={saving}
-                className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50">
-                {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5" />}
-                Dismiss — already done
-              </button>
-              <p className="text-sm text-muted-foreground">Closes the report{t.suggestedReply?.trim() ? ` and sends ${firstName} the reply below` : ""}. Nothing gets built.</p>
-            </div>
-          )}
-          {actions.canApprove && (
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <button onClick={() => onDecide("approve")} disabled={saving}
-                  className="h-14 px-6 rounded-2xl bg-primary text-primary-foreground text-lg font-bold flex items-center gap-2 hover:bg-primary/90 disabled:opacity-50">
-                  {saving ? <Loader2 className="w-5 h-5 animate-spin" /> : <Check className="w-5 h-5" />}
-                  {status === "rejected" ? "Approve this fix after all" : "Approve this fix"}
-                </button>
-                {actions.canReply && !t.questionForGraeme && (
-                  <button onClick={() => setDialog("reply")} disabled={saving}
-                    className="h-14 px-5 rounded-2xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-                    <MessageCircleQuestion className="w-5 h-5" /> Ask Claude first
-                  </button>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground">Approving tells Claude to go ahead and build this with you. It doesn't message {firstName} — use the reply below for that.</p>
-            </div>
-          )}
-          {actions.approveBlocked && (
-            <p className="text-sm font-medium text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 rounded-xl px-3 py-2.5">
-              {actions.waitingOnClaude
-                ? "Approve comes back once Claude has answered your reply."
-                : "Answer Claude's question above first — once the plan is agreed, you can approve it here."}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Claude's draft to the reporter — Message lives here. Sending it
-          never approves or closes anything unless you choose to. */}
-      {t.suggestedReply?.trim() && issue?.reporter.id != null && !alreadyMessaged && (
-        <div className="rounded-2xl border border-primary/30 bg-primary/5 p-4 space-y-3">
-          <div>
-            <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-primary mb-1">
-              <MessageSquareText className="w-4 h-4" /> Suggested reply to {issue.reporter.name ?? "the reporter"}
-            </p>
-            <p className="text-base whitespace-pre-wrap">{t.suggestedReply}</p>
-          </div>
-          <button onClick={() => threadRef.current?.focusReply(t.suggestedReply ?? "")} disabled={saving}
-            className="h-12 px-5 rounded-xl border-2 border-primary/40 bg-background text-primary font-bold flex items-center gap-2 hover:bg-primary/10 disabled:opacity-50">
-            <Send className="w-4 h-4" /> Use this — check it and send to {firstName}
-          </button>
-        </div>
-      )}
-
-      {/* Facts */}
-      <div className="flex flex-wrap gap-2 text-sm">
-        {t.objective && <Chip className="bg-primary/15 text-foreground">Objective {t.objective}</Chip>}
-        <Chip className="bg-secondary text-foreground">Blast radius: {t.blastRadius}</Chip>
-        <Chip className="bg-secondary text-foreground">Confidence: {t.confidence}</Chip>
-        {t.causeTag && <Chip className="bg-secondary text-foreground">Cause: {t.causeTag}</Chip>}
-      </div>
-
-      {item.related.length > 0 && (
-        <div>
-          <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1.5">Related reports</p>
-          <div className="flex flex-col gap-1.5">
-            {item.related.map(r => (
-              <Link key={r.id} href={`/reports?tab=issues&issueId=${r.id}`}
-                className="text-sm rounded-xl border border-border px-3 py-2 hover:bg-secondary/60 flex items-center gap-2">
-                <span className="font-semibold">#{r.id}</span>
-                <span className="truncate flex-1">{r.description ?? "—"}</span>
-                {r.reporterName && <span className="text-muted-foreground hidden sm:inline">{r.reporterName}</span>}
-                {r.resolvedAt && <Check className="w-4 h-4 text-emerald-600" />}
-              </Link>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Decision / progress trail */}
-      {(t.decidedAt || t.fixRef || item.notices.length > 0 || t.improvementId != null) && (
-        <div className="space-y-1 text-sm text-muted-foreground border-t border-border pt-3">
-          {t.decidedAt && (
-            <p>
-              {status === "proposed"
-                ? (t.awaitingRetriage ? "You replied" : "You replied — Claude has updated the recommendation")
-                : status === "answered"
-                  ? `Answered with a message by ${t.decidedBy ?? "you"}`
-                  : status === "dismissed"
-                  ? `Dismissed as already done by ${t.decidedBy ?? "you"}`
-                  : `${status === "rejected" ? "Rejected" : "Approved"} by ${t.decidedBy ?? "you"}`}
-              {" · "}{feedTimestamp(t.decidedAt)}
-              {t.decisionNote && <span className="block text-foreground">“{t.decisionNote}”</span>}
-            </p>
-          )}
-          {t.improvementId != null && (
-            <p className="flex items-center gap-1.5 text-emerald-700 dark:text-emerald-400 font-medium">
-              <Award className="w-4 h-4" /> Improvement credited to {issue?.reporter.name ?? "the reporter"}
-            </p>
-          )}
-          {t.fixRef && <p>Fix: <span className="font-mono text-foreground break-all">{t.fixRef}</span>{t.fixedAt ? ` · ${feedTimestamp(t.fixedAt)}` : ""}</p>}
-          {status === "fixed" && !t.issueResolvedAt && <p className="text-amber-700 dark:text-amber-400 font-medium">Waiting for your deploy — the reporter is told once it's live.</p>}
-          {item.notices.map(n => (
-            <p key={n.id} className="flex items-center gap-1.5">
-              <CheckCircle2 className={cn("w-4 h-4", n.acknowledgedAt ? "text-emerald-600" : "text-muted-foreground")} />
-              {noticeStatusLine(n)}{n.andonIssueId !== t.andonIssueId ? ` (#${n.andonIssueId})` : ""}
-              {" · "}{feedTimestamp(n.acknowledgedAt ?? n.createdAt)}
-            </p>
-          ))}
-        </div>
-      )}
-
-      {/* Housekeeping */}
-      <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border">
-        {/* Reply to Claude — on every card, whatever its state (Graeme,
-            2026-10-12): correct its understanding or give new instructions
-            even when it hasn't asked anything. */}
-        {actions.canReplyToClaude && (
-          <button onClick={() => setDialog("reply")} disabled={saving}
-            className="h-12 px-4 rounded-xl bg-sky-600 text-white font-bold flex items-center gap-2 hover:bg-sky-700 disabled:opacity-50">
-            <MessageCircleQuestion className="w-5 h-5" /> Reply to Claude
-          </button>
-        )}
-        {actions.canReject && (
-          <button onClick={() => setDialog("reject")} disabled={saving}
-            className="h-12 px-4 rounded-xl border-2 border-red-300 dark:border-red-900 text-red-700 dark:text-red-300 font-bold flex items-center gap-2 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-50">
-            <XCircle className="w-5 h-5" /> Reject
-          </button>
-        )}
-        {status === "proposed" && !t.awaitingRetriage && !snoozedUntil && (
-          <div className="relative">
-            <button onClick={() => setSnoozeOpen(o => !o)} disabled={saving}
-              className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-              <AlarmClock className="w-5 h-5" /> Not now
-            </button>
-            {snoozeOpen && (
-              <div className="absolute z-20 bottom-full mb-2 left-0 w-44 rounded-2xl border border-border bg-card shadow-xl p-1.5">
-                <p className="px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-muted-foreground">Snooze for</p>
-                {SNOOZE_OPTIONS.map(o => (
-                  <button key={o.days} onClick={() => { setSnoozeOpen(false); onSnooze(o.days); }}
-                    className="w-full text-left px-3 py-2.5 rounded-xl text-base font-medium hover:bg-secondary/60">
-                    {o.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-        {snoozedUntil && status === "proposed" && (
-          <button onClick={() => onSnooze(null)} disabled={saving}
-            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            <AlarmClock className="w-5 h-5" /> Bring back now
-          </button>
-        )}
-        {/* Message the reporter as often as you like (2026-10-13) — it never
-            closes the card by itself. */}
-        {issue?.reporter.id != null && (
-          <button onClick={() => threadRef.current?.focusReply()} disabled={saving}
-            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            <MessageSquareText className="w-5 h-5" /> {alreadyMessaged ? `Message ${firstName} again` : `Message ${firstName}`}
-          </button>
-        )}
-        {t.noActionAt ? (
-          <button onClick={() => onNoAction(true)} disabled={saving}
-            className="h-12 px-4 rounded-xl border-2 border-border font-bold flex items-center gap-2 hover:bg-secondary/60 disabled:opacity-50">
-            <RotateCcw className="w-5 h-5" /> Restore
-          </button>
-        ) : (
-          <NoActionButton saving={saving} onConfirm={() => onNoAction(false)} />
-        )}
-        {/* Forced testing: ask the reporter (always) to try it for real. */}
-        <Link href={`/test-requests?new=1&issue=${t.andonIssueId}`}
-          className="h-12 px-4 rounded-xl border-2 border-sky-500 text-sky-700 dark:text-sky-300 font-bold flex items-center gap-2 hover:bg-sky-50 dark:hover:bg-sky-900/30">
-          <ClipboardCheck className="w-5 h-5" /> Request a test
-        </Link>
-        <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}
-          className="ml-auto text-sm font-medium text-muted-foreground hover:text-foreground flex items-center gap-1.5 px-2 py-2">
-          Open in the issue log <ExternalLink className="w-4 h-4" />
-        </Link>
-      </div>
-
-      {(dialog === "reject" || dialog === "reply") && (
-        <NoteDialog
-          mode={dialog}
-          reopens={dialog === "reply" && (actions.replyReopens || !!t.noActionAt)}
-          onCancel={() => setDialog(null)}
-          onSubmit={(note, fixNow) => { setDialog(null); onDecide(dialog, note || undefined, fixNow); }}
-        />
-      )}
-    </article>
-  );
-}
 
 // ── Page ────────────────────────────────────────────────────────────────────
 
@@ -775,7 +268,7 @@ export default function FounderFixQueue() {
   const changeTab = (next: FixQueueTab) => { setSentItems(new Map()); setSearch(""); setQ(""); setTab(next); };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       {/* Its own line in the sidebar since 2026-09-29 (/fix-queue) — no
           longer a tab of The Business. Founder account only, as before. */}
       <PageHeader
@@ -783,16 +276,11 @@ export default function FounderFixQueue() {
         description="Claude reviews every app issue the team reports and recommends what to do. Nothing gets built without your approval."
       />
 
-      <p className="text-base text-muted-foreground">
-        Claude reviews every app issue the team reports and recommends what to do.{" "}
-        <span className="font-semibold text-foreground">Nothing gets built without your approval.</span>
-      </p>
-
-      {/* After a review session: build every approved card now (2 Nov 2026). */}
-      <FixQueueBuildNow />
-
-      {/* Find a card in ANY tab — one that moved is never lost (2026-10-13). */}
-      <FixQueueSearch value={search} onChange={setSearch} />
+      {/* Build every approved card now, and find a card in ANY tab. */}
+      <div className="grid gap-2 lg:grid-cols-[auto_minmax(0,1fr)] items-center">
+        <FixQueueBuildNow />
+        <FixQueueSearch value={search} onChange={setSearch} />
+      </div>
 
       {/* New replies on cards that aren't in this list — one tap finds each. */}
       {unreadElsewhere.length > 0 && (
@@ -809,18 +297,18 @@ export default function FounderFixQueue() {
       )}
 
       {/* Status tabs with counts */}
-      <div className="grid grid-cols-3 md:grid-cols-7 gap-2">
+      <div role="tablist" aria-label="Fix queue" className="flex flex-wrap gap-1.5">
         {TABS.map(t => {
           const n = tabCount(data, t.key);
           const active = !q && t.key === tab;
           return (
-            <button key={t.key} onClick={() => changeTab(t.key)}
+            <button key={t.key} role="tab" aria-selected={active} onClick={() => changeTab(t.key)}
               className={cn(
-                "rounded-2xl border-2 px-3 py-3 text-left transition-colors min-w-0",
-                active ? "border-primary bg-primary/10" : "border-border bg-card hover:bg-secondary/50",
+                "h-11 px-3.5 rounded-xl border-2 font-semibold flex items-center gap-2 transition-colors",
+                active ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card hover:bg-secondary/50",
               )}>
-              <span className="block text-2xl font-bold leading-none">{n}</span>
-              <span className="block text-sm font-medium text-muted-foreground mt-1 truncate">{t.label}</span>
+              {t.label}
+              <span className={cn("rounded-full px-2 text-xs font-bold tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{n}</span>
             </button>
           );
         })}
@@ -864,7 +352,7 @@ export default function FounderFixQueue() {
         </div>
       )}
 
-      <div className="space-y-5">
+      <div className="space-y-4">
         {needsYou.map(item => (
           <FixCard
             key={item.triage.id}

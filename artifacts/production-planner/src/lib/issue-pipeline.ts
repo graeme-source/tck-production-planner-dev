@@ -391,3 +391,47 @@ export function cardActions(t: Pick<Triage, "status" | "questionForGraeme" | "aw
     canReject: t.status === "proposed" || t.status === "approved",
   };
 }
+
+/** One recommended next move per card (Graeme, 2026-11-04): the button
+ *  highlighted in the card's single row of actions. */
+export type NextStep = "reply_reporter" | "reply_claude" | "dismiss_done" | "approve";
+
+/** Lanes where the answer is usually a message, not a build. */
+const ANSWER_LANES: ReadonlySet<TriageLane> = new Set<TriageLane>(["understanding", "not_app", "needs_info"]);
+
+/**
+ * What Graeme should do next on this card, or null when the ball isn't in
+ * his court. In order: someone replied, Claude asked something, it's
+ * already done, the answer is a message, or there's a fix to approve.
+ */
+export function recommendedStep(item: Pick<FixQueueItem, "triage" | "unreadReplies" | "thread">, hasReporter: boolean): NextStep | null {
+  const t = item.triage;
+  if (t.noActionAt) return null;
+  const a = cardActions(t);
+  if (hasReporter && ((item.unreadReplies ?? 0) > 0 || t.reporterReplyAt)) return "reply_reporter";
+  if (a.waitingOnClaude) return null;
+  if (a.openQuestion) return "reply_claude";
+  if (t.status !== "proposed") return a.canDismiss ? "dismiss_done" : null;
+  if (t.awaitingReporterSince) return null;
+  if (a.canDismiss) return "dismiss_done";
+  const messaged = (item.thread ?? []).some(e => e.who === "you" && e.kind === "message");
+  const draftReady = hasReporter && !!t.suggestedReply?.trim() && !messaged;
+  if (draftReady && ANSWER_LANES.has(t.lane)) return "reply_reporter";
+  if (t.proposedFix.trim()) return "approve";
+  return draftReady ? "reply_reporter" : "reply_claude";
+}
+
+/** Where a card stands when there's nothing for Graeme to do. */
+export function waitingLine(item: Pick<FixQueueItem, "triage" | "fixNow">, firstName: string, now: Date = new Date()): string | null {
+  const t = item.triage;
+  if (t.noActionAt) return "Dismissed — nobody was messaged";
+  if (t.status === "proposed" && t.awaitingRetriage) return "Waiting for Claude — it answers on its next pass";
+  if (t.status === "proposed") return waitingForReporterLabel(t, firstName, now);
+  if (t.status === "approved") return item.fixNow ? "Approved — Claude will fix it the way you said" : "Approved — Claude builds this next";
+  if (t.status === "in_progress") return "Claude is building this";
+  if (t.status === "fixed") return t.issueResolvedAt ? `Live — ${firstName} has been told` : `Built — goes live with the next deploy, then ${firstName} is told`;
+  if (t.status === "answered") return `Answered — ${firstName} has your message`;
+  if (t.status === "dismissed") return "Closed as already done";
+  if (t.status === "rejected" || t.status === "wont_fix") return "Not going ahead";
+  return null;
+}

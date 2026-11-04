@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions, withReplySent, type FixQueueItem } from "./issue-pipeline";
+import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions, recommendedStep, waitingLine, withReplySent, type FixQueueItem, type Triage } from "./issue-pipeline";
 
 describe("safeTestPath", () => {
   it("keeps in-app paths", () => {
@@ -135,5 +135,38 @@ describe("withReplySent — the card right after Reply to Claude", () => {
     expect(out.fixNow).toBe(true);
     expect(out.thread!.slice(-2).map(e => e.text)).toEqual(["Use the wrapping count, not stock", "Approved — fix it the way you said"]);
     expect(cardActions(out.triage).waitingOnClaude).toBe(false);
+  });
+});
+
+describe("recommendedStep — the one highlighted button", () => {
+  const card = (t: Partial<Triage>, extra: Partial<FixQueueItem> = {}) => ({
+    triage: { status: "proposed", lane: "defect", proposedFix: "", suggestedReply: null, questionForGraeme: null, noActionNeeded: false, awaitingRetriage: false, ...t } as Triage,
+    ...extra,
+  });
+  it("puts someone's reply first", () => {
+    expect(recommendedStep(card({ proposedFix: "x", questionForGraeme: "ok?" }, { unreadReplies: 1 }), true)).toBe("reply_reporter");
+  });
+  it("answers Claude's question before anything can be approved", () => {
+    expect(recommendedStep(card({ proposedFix: "x", questionForGraeme: "ok?" }), true)).toBe("reply_claude");
+  });
+  it("offers approval when there's a fix to approve", () => {
+    expect(recommendedStep(card({ proposedFix: "x" }), true)).toBe("approve");
+  });
+  it("dismisses what's already done", () => {
+    expect(recommendedStep(card({ noActionNeeded: true }), true)).toBe("dismiss_done");
+  });
+  it("replies when the answer is a message, not a build", () => {
+    expect(recommendedStep(card({ lane: "understanding", proposedFix: "x", suggestedReply: "It's under Orders" }), true)).toBe("reply_reporter");
+    expect(recommendedStep(card({ lane: "understanding", proposedFix: "x", suggestedReply: "It's under Orders" }, { thread: [{ at: "", who: "you", kind: "message", text: "hi" }] }), true)).toBe("approve");
+  });
+  it("recommends nothing while the ball isn't in his court", () => {
+    expect(recommendedStep(card({ proposedFix: "x", awaitingRetriage: true }), true)).toBeNull();
+    expect(recommendedStep(card({ proposedFix: "x", awaitingReporterSince: "2026-11-04T09:00:00Z" }), true)).toBeNull();
+    expect(recommendedStep(card({ status: "in_progress" }), true)).toBeNull();
+    expect(recommendedStep(card({ proposedFix: "x", noActionAt: "2026-11-04T09:00:00Z" }), true)).toBeNull();
+  });
+  it("says where it stands instead", () => {
+    expect(waitingLine(card({ status: "fixed" }), "Jane")).toMatch(/next deploy, then Jane is told/);
+    expect(waitingLine(card({ status: "approved" }, { fixNow: true }), "Jane")).toMatch(/the way you said/);
   });
 });
