@@ -30,8 +30,9 @@ export interface SmallLabelInput {
   batch?: string | null;
   /** The product's barcode digits; none = no barcode. */
   barcode?: string | null;
-  /** Storage and warming wording (the pair's first label only). */
-  instructions?: string | null;
+  /** The pair's first label only, each printed under its own heading. */
+  storage?: string | null;
+  warming?: string | null;
 }
 
 export interface SmallLabelBarcode {
@@ -103,7 +104,8 @@ export function buildSmallLabelContent(s: LabelSnapshot, dates: LabelDates): Sma
       useBy: dates.chilledUseBy ? formatLabelDate(dates.chilledUseBy) : "",
       batch: dates.batchCode,
       barcode: problems.some(p => p.startsWith("Barcode")) ? null : code,
-      ...(s.template.text.packInstructions?.trim() ? { instructions: s.template.text.packInstructions.trim() } : {}),
+      ...(s.template.text.packStorage?.trim() ? { storage: s.template.text.packStorage.trim() } : {}),
+      ...(s.template.text.packWarming?.trim() ? { warming: s.template.text.packWarming.trim() } : {}),
     },
     problems,
   };

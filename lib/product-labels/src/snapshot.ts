@@ -232,7 +232,8 @@ function smallComparable(s: LabelSnapshot): unknown {
     barcode: s.barcode,
     batchBasis: s.template.batchBasis,
     ...(labelFormat(s.template).printsDeck ? { deckText: s.deckText, mayContain: s.mayContain } : {}),
-    ...(s.template.text.packInstructions?.trim() ? { packInstructions: s.template.text.packInstructions.trim() } : {}),
+    ...(s.template.text.packStorage?.trim() ? { packStorage: s.template.text.packStorage.trim() } : {}),
+    ...(s.template.text.packWarming?.trim() ? { packWarming: s.template.text.packWarming.trim() } : {}),
     // Only when they differ from the default, so the published garlic mayo
     // label (barcode on, use-by from shelf life) keeps its hash.
     ...(s.template.barcodeOn === false ? { barcodeOn: false } : {}),
@@ -246,7 +247,7 @@ function smallComparable(s: LabelSnapshot): unknown {
  *  must keep their hashes. */
 function withoutPackInstructions<T extends { text?: unknown }>(template: T): T {
   if (!template.text) return template;
-  const { packInstructions: _p, ...text } = template.text as Record<string, unknown>;
+  const { packStorage: _s, packWarming: _w, ...text } = template.text as Record<string, unknown>;
   return { ...template, text };
 }
 
@@ -336,7 +337,8 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
     if (!liveFormat.backLabel && !currentFormat.backLabel && liveFormat.printsDeck && currentFormat.printsDeck) {
       add("deckText", "Ingredients", live.deckText, current.deckText);
       add("mayContain", "May contain", show(live.mayContain), show(current.mayContain));
-      add("template.text.packInstructions", "Storage and warming instructions", show(live.template.text.packInstructions?.trim() || null), show(current.template.text.packInstructions?.trim() || null));
+      add("template.text.packStorage", "Storage instructions", show(live.template.text.packStorage?.trim() || null), show(current.template.text.packStorage?.trim() || null));
+      add("template.text.packWarming", "Warming instructions", show(live.template.text.packWarming?.trim() || null), show(current.template.text.packWarming?.trim() || null));
     }
     add("templateId", "Label template", String(live.templateId), String(current.templateId));
     add("template.format", "Label size", liveFormat.sizeText, currentFormat.sizeText);

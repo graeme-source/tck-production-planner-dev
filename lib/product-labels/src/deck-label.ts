@@ -10,8 +10,9 @@
  * it still won't fit, `fits` is false and the label can't go live.
  *
  * The pair's first label is here too (layoutPairNameLabel): the small label's
- * name, USE BY, BATCH and barcode, with the storage and warming wording and a
- * bigger barcode.
+ * name, USE BY, BATCH and barcode, with storage and warming instructions
+ * under their own headings, a bigger barcode, and tighter margins to fit them
+ * (Graeme, 2026-11-04).
  */
 import { mmToDots } from "@workspace/units";
 import type { Face, PlacedRun, TextMeasurer } from "./layout";
@@ -133,7 +134,9 @@ export function layoutDeckLabel(m: TextMeasurer, input: DeckLabelInput): DeckLab
 const PAIR_MODULE_DOTS = 3;
 const PAIR_BARCODE_MAX_SHARE = 0.5;
 const PAIR_BAR_MAX_MM = 15;
-const PAIR_BLOCK_GAP_MM = 0.9;
+const PAIR_BLOCK_GAP_MM = 0.7;
+const PAIR_SIDE_MM = 4;
+const PAIR_TOP_MM = 1.5;
 /** Largest sizes; every line steps down together to the legal minimum. */
 const PAIR_PT = { name: 10.5, dates: 8.5, note: 7.75 } as const;
 
@@ -144,8 +147,8 @@ export function layoutPairNameLabel(m: TextMeasurer, input: SmallLabelInput & { 
   const mm = (v: number) => Math.round(mmToDots(v, p.dpi));
   const widthDots = mm(p.widthMm);
   const heightDots = mm(p.heightMm);
-  const margin = mm(p.marginMm);
-  const side = mm(SIDE_INSET_MM);
+  const margin = mm(PAIR_TOP_MM);
+  const side = mm(PAIR_SIDE_MM);
   const innerW = widthDots - side * 2;
   const innerH = heightDots - margin * 2;
   const name = input.name.replace(/\s+/g, " ").trim().toUpperCase();
@@ -180,11 +183,15 @@ export function layoutPairNameLabel(m: TextMeasurer, input: SmallLabelInput & { 
     { text: `USE BY: ${input.useBy}`, bold: true },
     ...(input.batch?.trim() ? [{ text: `   BATCH: ${input.batch.trim()}`, bold: false }] : []),
   ];
-  const note = input.instructions?.replace(/\s+/g, " ").trim();
+  const instruction = (heading: string, text?: string | null): Paragraph[] => {
+    const words = text?.replace(/\s+/g, " ").trim();
+    return words ? [[{ text: `${heading} `, bold: true }, ...parseBold(words)]] : [];
+  };
+  const notes = [...instruction("STORAGE:", input.storage), ...instruction("TO WARM:", input.warming)];
   const blocks = (pts: { name: number; dates: number; note: number }) => [
     { paras: [[{ text: name, bold: true }]] as Paragraph[], pt: pts.name, align: "condensed" as WidthVariant },
     { paras: [dates], pt: pts.dates, align: "semi-condensed" as WidthVariant },
-    ...(note ? [{ paras: [parseBold(note)], pt: pts.note, align: "condensed" as WidthVariant }] : []),
+    ...(notes.length ? [{ paras: notes, pt: pts.note, align: "condensed" as WidthVariant }] : []),
   ];
   const legal = (width: WidthVariant) => legalMinPt(Math.min(m.metrics({ width, weight: 500 }).xHeight, m.metrics({ width, weight: 700 }).xHeight), !!input.smallPack);
   const gap = mm(PAIR_BLOCK_GAP_MM);
