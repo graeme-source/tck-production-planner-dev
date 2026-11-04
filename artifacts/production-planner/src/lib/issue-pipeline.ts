@@ -18,7 +18,6 @@ export interface Triage {
   objective: string | null;
   blastRadius: "low" | "medium" | "high";
   confidence: "low" | "medium" | "high";
-  noGoZone: boolean;
   behaviourChange: boolean;
   questionForGraeme: string | null;
   /** Claude's draft message to the reporter — pre-fills "Message the reporter". */
