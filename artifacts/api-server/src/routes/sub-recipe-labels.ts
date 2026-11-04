@@ -23,7 +23,7 @@ import { db, productLabelPrintsTable, usersTable } from "@workspace/db";
 import {
   buildPrintRecord, describePeriod, labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, type LabelSnapshot,
 } from "@workspace/product-labels";
-import { labelsPdf, proofLabel } from "@workspace/product-labels/render";
+import { proofLabel, proofPdf } from "@workspace/product-labels/render";
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
@@ -112,7 +112,7 @@ router.post("/:subRecipeId/print", validate(PrintBody), async (req: Request, res
     if (!l) { res.status(404).json({ error: "This sub-recipe has no pot label." }); return; }
     if (!l.ready) { res.status(409).json({ error: l.message }); return; }
     const proof = l._proof;
-    const pdf = labelsPdf({ bitmap: proof.bitmap, dpi: proof.layout.dpi, copies: count, title: `${l.recipeName} - pot labels` });
+    const pdf = proofPdf(proof, proof.layout.dpi, count, `${l.recipeName} - pot labels`);
 
     // Recorded against the live version, like the back labels (Objective D).
     const userId = req.session.userId ?? null;

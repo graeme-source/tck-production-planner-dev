@@ -16,6 +16,7 @@ import { checkEan13, encodeEan13, EAN13_QUIET_LEFT, EAN13_QUIET_RIGHT } from "./
 import { code128Ok, encodeCode128, CODE128_QUIET } from "./code128";
 import { fitLine, FRONT_LABEL_PAGE, type Fit } from "./front-label";
 import { formatLabelDate, type LabelDates } from "./dates";
+import { labelFormat } from "./formats";
 import type { LabelSnapshot } from "./snapshot";
 
 export const SMALL_LABEL_PAGE = FRONT_LABEL_PAGE;
@@ -78,6 +79,7 @@ export function buildSmallLabelContent(s: LabelSnapshot, dates: LabelDates): Sma
   const name = s.labelName.replace(/\s+/g, " ").trim();
   if (!name) problems.push("No name to print — set the name on the label.");
   if (!dates.chilledUseBy) problems.push("No use-by — set the recipe's shelf life.");
+  if (labelFormat(s.template).printsDeck && !s.deckText.trim()) problems.push("No ingredients to print — check the recipe's ingredient declarations.");
   // An internal label (template barcode switched off) prints none and
   // needs none to go live.
   const wantsBarcode = s.template.barcodeOn !== false;

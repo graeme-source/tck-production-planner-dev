@@ -776,6 +776,17 @@ export function internalFreezerTemplate(): LabelTemplate {
   return t;
 }
 
+/** Small label with ingredients — two 102 × 25 mm labels in each pack
+ *  (Graeme, 2026-11-04, red wine gravy): name, USE BY, BATCH and barcode on
+ *  one; ingredients and allergens on the other. Use-by from the recipe's
+ *  shelf life. Picked on the recipe by hand. */
+export function smallWithIngredientsTemplate(): LabelTemplate {
+  const t = normaliseTemplate({ ...garlicMayoTemplate(), format: "pair-102x25" });
+  t.chilledDefault = null;
+  t.useBy = { from: "recipe-shelf-life" };
+  return t;
+}
+
 export const TEMPLATE_PRESETS: TemplatePreset[] = [
   {
     key: "standard",
@@ -812,5 +823,11 @@ export const TEMPLATE_PRESETS: TemplatePreset[] = [
     name: "Internal freezer label (102 × 25 mm)",
     description: "The small internal label put on at wrapping, before freezing: name, use-by from the recipe's shelf life, batch number, no barcode. Pick it as a recipe's wrapping label.",
     build: internalFreezerTemplate,
+  },
+  {
+    key: "small-with-ingredients",
+    name: "Small label with ingredients (102 × 25 mm, two labels)",
+    description: "Two 102 × 25 mm labels in each pack: name, use-by, batch number and barcode on one; ingredients and allergens on the other. Pick it on the recipe by hand.",
+    build: smallWithIngredientsTemplate,
   },
 ];

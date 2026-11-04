@@ -69,14 +69,14 @@ export function initialPrintCount(netTwoPacks: number | null | undefined): numbe
  *  check and no content blockers — must pass; then a person confirms. */
 export function publishBlockers(input: {
   archived: boolean; fits: boolean; fitProblems: string[]; contentProblems: string[]; deckBlockers: string[];
-  /** The label's template: a small-format label (formats.ts) prints no
-   *  ingredients, so the deck's declaration problems don't block it. */
+  /** The label's template: a label that prints no ingredients (formats.ts)
+   *  isn't blocked by the deck's declaration problems. */
   template?: { format?: unknown } | null;
 }): string[] {
   const out: string[] = [];
   if (input.archived) out.push("This recipe is archived.");
   if (!input.fits) out.push(...(input.fitProblems.length ? input.fitProblems : ["The label doesn't fit."]));
   out.push(...input.contentProblems);
-  if (labelFormat(input.template).backLabel) out.push(...input.deckBlockers);
+  if (labelFormat(input.template).printsDeck) out.push(...input.deckBlockers);
   return out;
 }

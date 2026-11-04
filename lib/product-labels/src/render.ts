@@ -14,6 +14,7 @@ import { LabelFontSet } from "./fonts";
 import { layoutLabel, type LabelLayout, type PlacedRun } from "./layout";
 import { pngDataUrl } from "./png";
 import { layoutFrontLabel, type FrontLabelInput, type FrontLabelLayout } from "./front-label";
+import { layoutDeckLabel, type DeckLabelLayout } from "./deck-label";
 import { buildSmallLabelContent, layoutSmallLabel, type SmallLabelContent, type SmallLabelInput, type SmallLabelLayout } from "./small-label";
 import { labelFormat, type LabelFormat } from "./formats";
 import { Bitmap, fillCircle, fillContours, fillRect, flattenPath, type PathCmd } from "./raster";
@@ -24,7 +25,8 @@ import { normaliseTemplate } from "./template";
 export { LabelFontSet, FONT_FILES } from "./fonts";
 export { Bitmap } from "./raster";
 export { encodePng, pngDataUrl } from "./png";
-export { labelsPdf, labelRunsPdf } from "./pdf";
+import { labelsPdf, labelRunsPdf } from "./pdf";
+export { labelsPdf, labelRunsPdf };
 
 function drawRun(bm: Bitmap, fonts: LabelFontSet, run: PlacedRun): void {
   const shaped = fonts.shapeText(run.text, run.face, run.sizeDots, run.letterSpacingEm);
@@ -118,17 +120,20 @@ export interface LabelProof {
   /** The back label's layout. For a small label: the page size, fit and
    *  barcode box only (no text fields, no fit table). */
   layout: LabelLayout;
-  /** Small format only: what it prints and how it's laid out. */
-  small: { content: SmallLabelContent; layout: SmallLabelLayout } | null;
-  /** Exactly what prints. */
+  /** Small format only: what it prints and how it's laid out. `deck` is the
+   *  ingredients label of a pair. */
+  small: { content: SmallLabelContent; layout: SmallLabelLayout; deck: DeckLabelLayout | null } | null;
+  /** Exactly what prints: the label, or the first of a pair. */
   bitmap: Bitmap;
+  /** Every different label that prints, in order. One, unless it's a pair. */
+  pages: Bitmap[];
   png: string;
   /** When it doesn't fit: the same drawing on a taller canvas, so the words
    *  that run off the label can be seen (the label edge is at layout.heightDots). */
   overflowPng: string | null;
 }
 
-type CheckedLabel = Omit<LabelProof, "bitmap" | "png" | "overflowPng">;
+type CheckedLabel = Omit<LabelProof, "bitmap" | "pages" | "png" | "overflowPng">;
 
 /** Content + layout only (no bitmap) — the fit check for the Labels list. */
 export function checkLabel(rawSnapshot: LabelSnapshot, when: { printDate: string; productionDate: string }, fonts: LabelFontSet): CheckedLabel {
@@ -157,6 +162,12 @@ export function checkLabel(rawSnapshot: LabelSnapshot, when: { printDate: string
 function checkSmallLabel(snapshot: LabelSnapshot, dates: LabelDates, fonts: LabelFontSet): CheckedLabel {
   const content = buildSmallLabelContent(snapshot, dates);
   const small = layoutSmallLabel(fonts, content.input);
+  const deck = labelFormat(snapshot.template).printsDeck
+    ? layoutDeckLabel(fonts, {
+      deckText: snapshot.deckText, mayContain: snapshot.mayContain,
+      allergenNote: snapshot.template.text.allergenNote, smallPack: snapshot.template.page.smallPack,
+    })
+    : null;
   const barcodeBox = small.barcode
     ? { x: small.barcode.x, y: small.barcode.top, w: small.barcode.modules.length * small.barcode.moduleDots, h: small.heightDots - small.barcode.top }
     : { x: 0, y: 0, w: 0, h: 0 };
@@ -172,10 +183,13 @@ function checkSmallLabel(snapshot: LabelSnapshot, dates: LabelDates, fonts: Labe
     divider: null,
     banner: null,
     extraRuns: small.runs,
-    fits: small.ok,
-    problems: small.ok ? [] : [{ field: "content", message: "Nothing to print — the label has no name." }],
+    fits: small.ok && (deck?.fits ?? true),
+    problems: [
+      ...(small.ok ? [] : [{ field: "content" as const, message: "Nothing to print — the label has no name." }]),
+      ...(deck && !deck.fits ? [{ field: "content" as const, message: "The ingredients don't fit on the label at the legal minimum type size." }] : []),
+    ],
   };
-  return { format: labelFormat(snapshot.template).key, content: emptyContent(content.problems), dates, layout, small: { content, layout: small } };
+  return { format: labelFormat(snapshot.template).key, content: emptyContent(content.problems), dates, layout, small: { content, layout: small, deck } };
 }
 
 function emptyContent(problems: string[]): LabelContent {
@@ -191,11 +205,42 @@ export function proofLabel(snapshot: LabelSnapshot, when: { printDate: string; p
   const checked = checkLabel(snapshot, when, fonts);
   if (checked.small) {
     const bitmap = drawSmallLabel(checked.small.layout, fonts);
-    return { ...checked, bitmap, png: pngDataUrl(bitmap), overflowPng: null };
+    const { deck } = checked.small;
+    const pages = deck ? [bitmap, drawDeckLabel(deck, fonts)] : [bitmap];
+    // A pair's proof picture is both labels, so the page sizes it to both.
+    const layout = deck ? { ...checked.layout, heightDots: sheetHeight(bitmap.height, pages.length) } : checked.layout;
+    return { ...checked, layout, bitmap, pages, png: proofPng({ bitmap, pages }), overflowPng: null };
   }
   const bitmap = renderLabel(checked.layout, fonts);
   const overflow = inkHeight(checked.layout, fonts) > checked.layout.heightDots ? renderLabel(checked.layout, fonts, true) : null;
-  return { ...checked, bitmap, png: pngDataUrl(bitmap), overflowPng: overflow ? pngDataUrl(overflow) : null };
+  return { ...checked, bitmap, pages: [bitmap], png: pngDataUrl(bitmap), overflowPng: overflow ? pngDataUrl(overflow) : null };
+}
+
+const PAIR_GAP_DOTS = 24;
+const sheetHeight = (labelHeight: number, labels: number) => labels * labelHeight + (labels - 1) * PAIR_GAP_DOTS;
+
+/** The picture of what prints: the label, or a pair one above the other, each
+ *  with a thin outline so the two read as separate labels. Never printed. */
+export function proofPng(proof: Pick<LabelProof, "bitmap" | "pages">): string {
+  if (proof.pages.length < 2) return pngDataUrl(proof.bitmap);
+  const { width, height } = proof.bitmap;
+  const sheet = new Bitmap(width, sheetHeight(height, proof.pages.length));
+  proof.pages.forEach((page, i) => {
+    const top = i * (height + PAIR_GAP_DOTS);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (page.get(x, y)) fillRect(sheet, x, top + y, 1, 1, 1);
+    fillRect(sheet, 0, top, width, 1, 1);
+    fillRect(sheet, 0, top + height - 1, width, 1, 1);
+    fillRect(sheet, 0, top, 1, height, 1);
+    fillRect(sheet, width - 1, top, 1, height, 1);
+  });
+  return pngDataUrl(sheet);
+}
+
+/** The print-ready PDF for a proof: a pair prints every first label, then
+ *  every second label, `copies` of each. */
+export function proofPdf(proof: Pick<LabelProof, "bitmap" | "pages">, dpi: number, copies: number, title: string): Uint8Array {
+  if (proof.pages.length < 2) return labelsPdf({ bitmap: proof.bitmap, dpi, copies, title });
+  return labelRunsPdf({ runs: proof.pages.map((bitmap) => ({ bitmap, copies })), dpi, title });
 }
 
 /** The front name label (#331) at printer resolution, plus its PNG proof.
@@ -213,6 +258,12 @@ export function renderSmallLabel(input: SmallLabelInput, fonts: LabelFontSet): {
   const layout = layoutSmallLabel(fonts, input);
   const bitmap = drawSmallLabel(layout, fonts);
   return { bitmap, png: pngDataUrl(bitmap), layout };
+}
+
+function drawDeckLabel(layout: DeckLabelLayout, fonts: LabelFontSet): Bitmap {
+  const bitmap = new Bitmap(layout.widthDots, layout.heightDots);
+  for (const run of layout.runs) drawRun(bitmap, fonts, run);
+  return bitmap;
 }
 
 function drawSmallLabel(layout: SmallLabelLayout, fonts: LabelFontSet): Bitmap {

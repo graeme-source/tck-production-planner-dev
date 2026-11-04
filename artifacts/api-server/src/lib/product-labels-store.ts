@@ -255,7 +255,7 @@ export function labelPublishBlockers(current: CurrentLabel, checked: Pick<LabelP
  *  allergen is still bold on the label — but the recipe's allergen list is
  *  wrong until the ingredient is fixed. */
 export function deckWarnings(deck: CurrentLabel["deck"], template?: LabelTemplate): string[] {
-  if (template && !labelFormat(template).backLabel) return [];
+  if (template && !labelFormat(template).printsDeck) return [];
   return deck.allergenMismatches.length
     ? [`Allergen ticks don't match the declaration for: ${deck.allergenMismatches.map(m => `${m.name} (${m.missing.join(", ")})`).join("; ")}.`]
     : [];

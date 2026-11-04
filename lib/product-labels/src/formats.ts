@@ -12,6 +12,9 @@
  *                 (layout.ts / content.ts).
  *   small-102x25  the small pot label: name, USE BY, BATCH and the
  *                 product's barcode — EAN-13 or Code 128 (small-label.ts).
+ *   pair-102x25   TWO 102 × 25 mm labels in each pack, for when the deck
+ *                 won't fit with everything else: the small label above,
+ *                 and one with the ingredients and allergens (deck-label.ts).
  *
  * Every place that behaves differently by format asks `labelFormat()` for
  * the spec rather than testing the key, so a new format is one entry here.
@@ -19,7 +22,7 @@
  */
 import { FRONT_LABEL_PAGE } from "./front-label";
 
-export type LabelFormat = "back-140x94" | "small-102x25";
+export type LabelFormat = "back-140x94" | "small-102x25" | "pair-102x25";
 
 export interface LabelFormatSpec {
   key: LabelFormat;
@@ -36,6 +39,9 @@ export interface LabelFormatSpec {
    *  settings are edited on the design page. False = the small label: none
    *  of those print, so none of them can block publishing. */
   backLabel: boolean;
+  /** The ingredient deck prints, so its problems stop it going live and a
+   *  deck change means the label needs updating. */
+  printsDeck: boolean;
   /** Barcode rule: EAN-13 only, or anything Code 128 can draw. */
   barcode: "ean13" | "ean13-or-code128";
 }
@@ -45,11 +51,15 @@ export const DEFAULT_LABEL_FORMAT: LabelFormat = "back-140x94";
 export const LABEL_FORMATS: Record<LabelFormat, LabelFormatSpec> = {
   "back-140x94": {
     key: "back-140x94", name: "Back label", widthMm: 140, heightMm: 94, dpi: null,
-    sizeText: "140 × 94 mm", backLabel: true, barcode: "ean13",
+    sizeText: "140 × 94 mm", backLabel: true, printsDeck: true, barcode: "ean13",
   },
   "small-102x25": {
     key: "small-102x25", name: "Small label", widthMm: FRONT_LABEL_PAGE.widthMm, heightMm: FRONT_LABEL_PAGE.heightMm, dpi: FRONT_LABEL_PAGE.dpi,
-    sizeText: `${FRONT_LABEL_PAGE.widthMm} × ${FRONT_LABEL_PAGE.heightMm} mm`, backLabel: false, barcode: "ean13-or-code128",
+    sizeText: `${FRONT_LABEL_PAGE.widthMm} × ${FRONT_LABEL_PAGE.heightMm} mm`, backLabel: false, printsDeck: false, barcode: "ean13-or-code128",
+  },
+  "pair-102x25": {
+    key: "pair-102x25", name: "Small label with ingredients", widthMm: FRONT_LABEL_PAGE.widthMm, heightMm: FRONT_LABEL_PAGE.heightMm, dpi: FRONT_LABEL_PAGE.dpi,
+    sizeText: `${FRONT_LABEL_PAGE.widthMm} × ${FRONT_LABEL_PAGE.heightMm} mm, two labels`, backLabel: false, printsDeck: true, barcode: "ean13-or-code128",
   },
 };
 

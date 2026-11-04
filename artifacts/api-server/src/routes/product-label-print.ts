@@ -33,7 +33,7 @@ import {
   buildPrintRecord, labelFormat, MAX_PRINT_COUNT, PRINT_REFUSAL_TEXT, printRefusal, normaliseTemplate, testPrintSource, TEST_STAMP_TEXT,
   type LabelRole, type LabelSnapshot, type PrintRefusal,
 } from "@workspace/product-labels";
-import { labelsPdf, pngDataUrl, proofLabel, stampTest } from "@workspace/product-labels/render";
+import { proofLabel, proofPdf, proofPng, stampTest } from "@workspace/product-labels/render";
 import { validate, validateQuery } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { buildRoleLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
@@ -95,14 +95,14 @@ async function prepare(recipeId: number, planItemId: number | undefined, test: b
   const stamped = test && testPrintSource({ hasLive: !!live }) === "current-stamped";
   const snapshot: LabelSnapshot | null = live ? (live.snapshot as LabelSnapshot) : test ? current.snapshot : null;
   const proof = snapshot ? proofLabel(snapshot, { printDate, productionDate: plan.productionDate }, fonts()) : null;
-  if (proof && stamped) stampTest(proof.bitmap, fonts(), TEST_STAMP_TEXT);
+  if (proof && stamped) for (const page of proof.pages) stampTest(page, fonts(), TEST_STAMP_TEXT);
 
   const refusal: PrintRefusal | null = test
     ? (proof?.layout.fits ? null : "doesnt-fit")
     : printRefusal({ hasLive: !!live, matchesLive, fits: proof?.layout.fits ?? false });
   return {
     status: 200 as const, role, recipe, plan, live, matchesLive, current, snapshot, proof, refusal, printDate, stamped,
-    png: proof ? (stamped ? pngDataUrl(proof.bitmap) : proof.png) : null,
+    png: proof ? (stamped ? proofPng(proof) : proof.png) : null,
   };
 }
 
@@ -177,7 +177,7 @@ router.post("/:recipeId", validate(PrintBody), async (req: Request, res: Respons
     // "back labels" / "small labels" — the template's format (formats.ts).
     const kind = `${labelFormat(r.snapshot.template).name.toLowerCase()}s`;
     const title = `${test ? "TEST - " : ""}${r.recipe.name} - ${kind}`;
-    const pdf = labelsPdf({ bitmap: r.proof.bitmap, dpi: page.dpi, copies: body.count, title });
+    const pdf = proofPdf(r.proof, page.dpi, body.count, title);
 
     const userId = req.session.userId ?? null;
     const [u] = userId ? await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, userId)) : [];

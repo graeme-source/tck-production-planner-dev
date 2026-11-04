@@ -231,6 +231,7 @@ function smallComparable(s: LabelSnapshot): unknown {
     chilled: s.chilled,
     barcode: s.barcode,
     batchBasis: s.template.batchBasis,
+    ...(labelFormat(s.template).printsDeck ? { deckText: s.deckText, mayContain: s.mayContain } : {}),
     // Only when they differ from the default, so the published garlic mayo
     // label (barcode on, use-by from shelf life) keeps its hash.
     ...(s.template.barcodeOn === false ? { barcodeOn: false } : {}),
@@ -323,6 +324,10 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
     add("labelName", "Name on the label", live.labelName, current.labelName);
     add("chilled", "Use-by", period(live.chilled), period(current.chilled));
     add("barcode", "Barcode number", show(live.barcode), show(current.barcode));
+    if (!liveFormat.backLabel && !currentFormat.backLabel && liveFormat.printsDeck && currentFormat.printsDeck) {
+      add("deckText", "Ingredients", live.deckText, current.deckText);
+      add("mayContain", "May contain", show(live.mayContain), show(current.mayContain));
+    }
     add("templateId", "Label template", String(live.templateId), String(current.templateId));
     add("template.format", "Label size", liveFormat.sizeText, currentFormat.sizeText);
     add("template.batchBasis", "Batch number taken from", live.template.batchBasis, current.template.batchBasis);

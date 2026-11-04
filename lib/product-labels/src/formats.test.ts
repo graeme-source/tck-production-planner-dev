@@ -67,7 +67,7 @@ describe("format normalisation", () => {
   it("each format names its size", () => {
     expect(labelFormat({}).sizeText).toBe("140 × 94 mm");
     expect(labelFormat({ format: "small-102x25" })).toMatchObject({ sizeText: "102 × 25 mm", backLabel: false });
-    expect(Object.keys(LABEL_FORMATS)).toEqual(["back-140x94", "small-102x25"]);
+    expect(Object.keys(LABEL_FORMATS)).toEqual(["back-140x94", "small-102x25", "pair-102x25"]);
   });
 
   it("the Garlic mayo preset is the small format: 38-day use-by, batch from the print day, no category", () => {
@@ -79,7 +79,7 @@ describe("format normalisation", () => {
     expect(t.batchBasis).toBe("print-day");
     expect(t.defaultForCategories).toEqual([]);
     // Every other preset is a back label.
-    for (const p of TEMPLATE_PRESETS.filter(x => x.key !== "garlic-mayo" && x.key !== "internal-freezer")) expect(labelFormat(p.build()).backLabel).toBe(true);
+    for (const p of TEMPLATE_PRESETS.filter(x => !["garlic-mayo", "internal-freezer", "small-with-ingredients"].includes(x.key))) expect(labelFormat(p.build()).backLabel).toBe(true);
   });
 });
 

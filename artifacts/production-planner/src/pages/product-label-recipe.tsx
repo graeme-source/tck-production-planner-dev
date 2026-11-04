@@ -201,7 +201,7 @@ export default function ProductLabelRecipePage() {
           <h2 className="text-lg font-bold">{data.matchesLive ? "Current — same as live" : "Current — from the recipe as it is now"}</h2>
           <ProofImage proof={cur} highlight={data.matchesLive ? [] : highlight} />
           {/* The small label has no text fields to size — its fixed size instead. */}
-          {cur.backLabel ? <FitTable proof={cur} /> : <p className="text-sm text-muted-foreground">Small label, {cur.sizeText} — name, use-by, batch number and barcode.</p>}
+          {cur.backLabel ? <FitTable proof={cur} /> : <p className="text-sm text-muted-foreground">Small label, {cur.sizeText} — name, use-by, batch number and barcode{cur.format === "pair-102x25" ? ", with the ingredients and allergens on the second label" : ""}.</p>}
         </div>
         <div className="space-y-2">
           <h2 className="text-lg font-bold">Live — what prints now</h2>
