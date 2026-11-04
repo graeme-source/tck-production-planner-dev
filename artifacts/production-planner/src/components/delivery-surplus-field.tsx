@@ -20,6 +20,7 @@ import {
   MAX_DAY_SURPLUS_PERCENT,
   deliverySurplusPreview,
   describeDeliverySurplus,
+  normalSurplusPercent,
   unreachableDeliveryWeekdays,
   parseSurplusByDeliveryWeekday,
   type IsoWeekday,
@@ -107,7 +108,7 @@ export function DeliverySurplusField({ ingredientId, normalPercent }: {
 
   const lead = q.data?.supplier?.leadTimeDays ?? 1;
   const cutoff = q.data?.supplier?.cutoffTime ?? "17:00";
-  const basePercent = Number(normalPercent) || q.data?.surplusPercent || 10;
+  const basePercent = normalSurplusPercent(normalPercent ?? q.data?.surplusPercent);
   const map = useMemo(() => parseSurplusByDeliveryWeekday(text), [text]);
   const unreachable = useMemo(() => new Set(unreachableDeliveryWeekdays(lead)), [lead]);
   const preview = useMemo(

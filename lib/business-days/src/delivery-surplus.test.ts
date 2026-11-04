@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { calcExpectedDeliveryDate } from "./index";
 import {
+  DEFAULT_SURPLUS_PERCENT,
+  normalSurplusPercent,
   surplusFor,
   surplusLabel,
   parseSurplusByDeliveryWeekday,
@@ -82,10 +84,43 @@ describe("blanks fall back to the normal surplus", () => {
   });
 });
 
+describe("#387: a saved 0% is a real 0%", () => {
+  const ONIONS = { surplusPercent: "0.00", surplusMode: "percent" as const, surplusAbsoluteQty: null };
+
+  it("gives no surplus at all, on any delivery day", () => {
+    for (const date of [null, "2026-11-04", "2026-11-09"]) {
+      const r = surplusFor(ONIONS, date, 0.6);
+      expect(r.qty).toBe(0);
+      expect(r.percent).toBe(0);
+      expect(r.basePercent).toBe(0);
+    }
+  });
+
+  it("a delivery-day % still beats a 0% normal", () => {
+    expect(surplusFor({ ...ONIONS, surplusByDeliveryWeekday: { 3: 30 } }, "2026-11-04", 10).percent).toBe(30);
+  });
+
+  it("the preview shows 0%, not 10%", () => {
+    const rows = deliverySurplusPreview({ surplusPercent: "0.00", surplusByDeliveryWeekday: null });
+    expect(rows.every(r => r.percent === 0)).toBe(true);
+  });
+
+  it("blank still means the 10% default", () => {
+    expect(normalSurplusPercent(null)).toBe(DEFAULT_SURPLUS_PERCENT);
+    expect(normalSurplusPercent(undefined)).toBe(DEFAULT_SURPLUS_PERCENT);
+    expect(normalSurplusPercent("")).toBe(DEFAULT_SURPLUS_PERCENT);
+    expect(normalSurplusPercent("abc")).toBe(DEFAULT_SURPLUS_PERCENT);
+    expect(normalSurplusPercent("0")).toBe(0);
+    expect(normalSurplusPercent(0)).toBe(0);
+    expect(normalSurplusPercent("25.50")).toBe(25.5);
+  });
+});
+
 describe("regression: ingredients without the setting behave exactly as before", () => {
-  // The old inline formula from routes/orders.ts.
+  // The old inline formula from routes/orders.ts, with the one agreed change:
+  // a saved 0 is now a real 0% (#387).
   const legacy = (surplusPercent: unknown, mode: unknown, abs: unknown, daily: number) => {
-    const pct = Number(surplusPercent) || 10;
+    const pct = surplusPercent == null ? 10 : Number(surplusPercent);
     const m = mode === "absolute" ? "absolute" : "percent";
     const a = abs != null ? Number(abs) : null;
     return m === "absolute" ? Math.max(0, a ?? 0) : daily * (pct / 100);
@@ -93,7 +128,7 @@ describe("regression: ingredients without the setting behave exactly as before",
   const rows: Array<[unknown, unknown, unknown, number]> = [
     ["10.00", "percent", null, 9.54],
     ["210.00", "percent", null, 4],
-    ["0", "percent", null, 5],       // 0 has always meant the 10% default
+    ["0", "percent", null, 5],
     [null, "percent", null, 5],
     ["10", "absolute", "4.5", 100],
     ["10", "absolute", null, 100],

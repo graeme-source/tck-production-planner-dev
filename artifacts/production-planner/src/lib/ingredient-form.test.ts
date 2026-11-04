@@ -1,6 +1,26 @@
 import { describe, it, expect } from "vitest";
 import { buildIngredientPayload, emptyIngredientFormDefaults, ingredientFormSchema } from "./ingredient-form";
 
+// #387: 0% surplus is a real setting; a cleared box still means the default.
+describe("surplus % box", () => {
+  const base = { ...emptyIngredientFormDefaults("ingredient"), name: "Diced white onions", unit: "kg", packWeight: 2.5, costPerPack: 4 };
+  const saved = (surplusPercent: unknown) =>
+    buildIngredientPayload(ingredientFormSchema.parse({ ...base, surplusPercent })).surplusPercent;
+
+  it("saves a typed 0 as 0", () => {
+    expect(saved("0")).toBe(0);
+    expect(saved(0)).toBe(0);
+  });
+
+  it("saves a cleared box as the 10% default, not 0", () => {
+    expect(saved("")).toBe(10);
+  });
+
+  it("saves a typed number as typed", () => {
+    expect(saved("25")).toBe(25);
+  });
+});
+
 // Secondary supplier price (2026-10-01): optional, and only sent while a
 // secondary supplier is chosen.
 describe("secondary supplier price", () => {

@@ -29,9 +29,19 @@ export const WEEKDAY_SHORT: Record<IsoWeekday, string> = {
   1: "Mon", 2: "Tue", 3: "Wed", 4: "Thu", 5: "Fri", 6: "Sat", 7: "Sun",
 };
 
-/** The fallback the order engine has always used for a blank / zero normal
- *  surplus. Kept here so behaviour without the new setting is unchanged. */
+/** The fallback for an ingredient with no surplus % saved at all. */
 export const DEFAULT_SURPLUS_PERCENT = 10;
+
+/**
+ * An ingredient's normal surplus %. Blank (null, "", not a number) falls back
+ * to the 10% default; a saved 0 is a real 0% and stays 0 (#387: Diced white
+ * onions set to 0% was quietly given 10% and ordered when nothing needed it).
+ */
+export function normalSurplusPercent(value: unknown): number {
+  if (value === null || value === undefined || value === "") return DEFAULT_SURPLUS_PERCENT;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : DEFAULT_SURPLUS_PERCENT;
+}
 
 /** Largest % accepted for one day (a sanity cap, not a business rule). */
 export const MAX_DAY_SURPLUS_PERCENT = 1000;
@@ -106,7 +116,7 @@ export function surplusFor(
   deliveryDate: Date | string | null | undefined,
   dailyRequirement: number,
 ): SurplusResult {
-  const basePercent = Number(ingredient.surplusPercent) || DEFAULT_SURPLUS_PERCENT;
+  const basePercent = normalSurplusPercent(ingredient.surplusPercent);
   const deliveryWeekday = deliveryDate ? isoWeekdayOf(deliveryDate) : null;
   if (ingredient.surplusMode === "absolute") {
     const abs = ingredient.surplusAbsoluteQty != null ? Number(ingredient.surplusAbsoluteQty) : 0;
@@ -173,7 +183,7 @@ export function deliverySurplusPreview(
   leadTimeDays = 1,
 ): DeliverySurplusPreviewRow[] {
   const byDay = parseSurplusByDeliveryWeekday(ingredient.surplusByDeliveryWeekday);
-  const base = Number(ingredient.surplusPercent) || DEFAULT_SURPLUS_PERCENT;
+  const base = normalSurplusPercent(ingredient.surplusPercent);
   return orderToDeliveryWeekdays(leadTimeDays)
     .map(({ orderWeekday, deliveryWeekday }) => {
       const day = byDay?.[deliveryWeekday];
