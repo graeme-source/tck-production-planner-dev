@@ -202,7 +202,15 @@ function Editor({ initial, reload }: { initial: TemplatePayload; reload: () => v
           {!format.backLabel && (
             <Card icon={<Ruler className="w-5 h-5" />} title="Small label">
               <p className="text-base font-semibold">Size: {format.sizeText} <span className="text-sm font-normal text-muted-foreground">— fixed for this template</span></p>
-              <p className="text-sm text-muted-foreground">Prints the recipe's name on the label (in capitals), USE BY from its use-by period, the batch number and its barcode — EAN-13, or Code 128 for longer codes like Shopify's{format.printsDeck ? ", with the ingredients and allergens on a second label" : ""}. The layout is fixed and kept plain; there are no fonts, wording or cooking steps to set.</p>
+              <p className="text-sm text-muted-foreground">Prints the recipe's name on the label (in capitals), USE BY from its use-by period, the batch number and its barcode — EAN-13, or Code 128 for longer codes like Shopify's{format.printsDeck ? ", with the ingredients and allergens on a second label" : ""}. The layout is fixed and kept plain; there are no fonts{format.printsDeck ? "" : ", wording or cooking steps"} to set.</p>
+              {format.printsDeck && (
+                <label className="block space-y-1">
+                  <span className="text-sm font-semibold">Storage and warming instructions</span>
+                  <textarea value={draft.text.packInstructions} rows={3} onChange={e => setText("packInstructions", e.target.value)}
+                    className="w-full rounded-xl border-2 border-border bg-card px-3 py-2 text-base" />
+                  <span className="block text-sm text-muted-foreground">Printed on the barcode label as written. Keep it short: it has to fit beside the barcode.</span>
+                </label>
+              )}
               <CategoryDefaults categories={draft.defaultForCategories} onChange={defaultForCategories => update(t => ({ ...t, defaultForCategories }))} />
             </Card>
           )}

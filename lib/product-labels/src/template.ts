@@ -139,6 +139,9 @@ export interface TemplateText {
   allergenNote: string;
   warning: string;
   address: string;
+  /** Storage and warming wording on a pair's first label (pair-102x25),
+   *  printed as written. Blank = none. No other label prints it. */
+  packInstructions: string;
 }
 
 /** Customer cooking instructions. NOT the factory oven setting on the recipe
@@ -338,6 +341,7 @@ export const DEFAULT_TEMPLATE: LabelTemplate = {
   text: {
     title: "{name} - {packSize} PACK",
     subtitle: "",
+    packInstructions: "",
     // Two steps (Graeme, 2026-10-11): the old step 3 ("Check they're piping
     // hot…") is gone. Step 1 is the one "some people get wrong", so its key
     // words are bold. Step 2: one line per appliance, the turn in the middle

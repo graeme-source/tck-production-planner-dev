@@ -184,7 +184,7 @@ export function comparableSnapshot(s: LabelSnapshot): unknown {
   // barcode), so it never matters here.
   const { cooking: _c, frozenDefault: _f, chilledDefault: _cd, boneRiskWords: _b, cookingTiers: _t, defaultForCategories: _dc, format: _fm, barcodeOn: _bo, ...template } = s.template;
   const { recipeName: _r, ...rest } = s;
-  return { ...rest, template: withoutDefaultUseBy(withoutOffBestBefore(withoutBlankSubtitle(withoutDefaultIngredientsRoom(template)))) };
+  return { ...rest, template: withoutPackInstructions(withoutDefaultUseBy(withoutOffBestBefore(withoutBlankSubtitle(withoutDefaultIngredientsRoom(template))))) };
 }
 
 /** The ingredients column's own gap and the run-on allergen note
@@ -232,6 +232,7 @@ function smallComparable(s: LabelSnapshot): unknown {
     barcode: s.barcode,
     batchBasis: s.template.batchBasis,
     ...(labelFormat(s.template).printsDeck ? { deckText: s.deckText, mayContain: s.mayContain } : {}),
+    ...(s.template.text.packInstructions?.trim() ? { packInstructions: s.template.text.packInstructions.trim() } : {}),
     // Only when they differ from the default, so the published garlic mayo
     // label (barcode on, use-by from shelf life) keeps its hash.
     ...(s.template.barcodeOn === false ? { barcodeOn: false } : {}),
@@ -241,6 +242,14 @@ function smallComparable(s: LabelSnapshot): unknown {
 
 /** A blank subtitle isn't drawn, so its wording and style are left out —
  *  labels published before the subtitle existed still match. */
+/** A back label never prints it, and labels published before it existed
+ *  must keep their hashes. */
+function withoutPackInstructions<T extends { text?: unknown }>(template: T): T {
+  if (!template.text) return template;
+  const { packInstructions: _p, ...text } = template.text as Record<string, unknown>;
+  return { ...template, text };
+}
+
 function withoutBlankSubtitle<T extends { text?: unknown; fields?: unknown }>(template: T): T {
   const text = (template.text ?? {}) as Record<string, unknown>;
   const sub = text.subtitle;
@@ -327,6 +336,7 @@ export function diffSnapshots(live: LabelSnapshot, current: LabelSnapshot): Snap
     if (!liveFormat.backLabel && !currentFormat.backLabel && liveFormat.printsDeck && currentFormat.printsDeck) {
       add("deckText", "Ingredients", live.deckText, current.deckText);
       add("mayContain", "May contain", show(live.mayContain), show(current.mayContain));
+      add("template.text.packInstructions", "Storage and warming instructions", show(live.template.text.packInstructions?.trim() || null), show(current.template.text.packInstructions?.trim() || null));
     }
     add("templateId", "Label template", String(live.templateId), String(current.templateId));
     add("template.format", "Label size", liveFormat.sizeText, currentFormat.sizeText);

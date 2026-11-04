@@ -8,11 +8,16 @@
  * the allergen note. Pure layout, measured through TextMeasurer; render.ts
  * draws it. It only ever shrinks as far as the legal minimum type size: if
  * it still won't fit, `fits` is false and the label can't go live.
+ *
+ * The pair's first label is here too (layoutPairNameLabel): the small label's
+ * name, USE BY, BATCH and barcode, with the storage and warming wording and a
+ * bigger barcode.
  */
 import { mmToDots } from "@workspace/units";
 import type { Face, PlacedRun, TextMeasurer } from "./layout";
-import { FRONT_LABEL_PAGE } from "./front-label";
+import { FRONT_LABEL_PAGE, fitLine } from "./front-label";
 import { legalMinPt } from "./legal";
+import { smallLabelBarcodeModules, type SmallLabelBarcode, type SmallLabelInput, type SmallLabelLayout } from "./small-label";
 import { mayContainParagraph, parseBold, type Paragraph } from "./text";
 import type { WidthVariant } from "./template";
 
@@ -122,4 +127,97 @@ export function layoutDeckLabel(m: TextMeasurer, input: DeckLabelInput): DeckLab
   }
   const last = steps[steps.length - 1]!;
   return build(last.width, last.sizePt, place(last.width, last.sizePt), false);
+}
+
+/** 3 dots = 0.375 mm modules, about full size for an EAN-13. */
+const PAIR_MODULE_DOTS = 3;
+const PAIR_BARCODE_MAX_SHARE = 0.5;
+const PAIR_BAR_MAX_MM = 15;
+const PAIR_BLOCK_GAP_MM = 0.9;
+/** Largest sizes; every line steps down together to the legal minimum. */
+const PAIR_PT = { name: 10.5, dates: 8.5, note: 7.75 } as const;
+
+/** The pair's first label: a bigger barcode on the right; the name, dates and
+ *  instructions on the left, all at the legal size or above. */
+export function layoutPairNameLabel(m: TextMeasurer, input: SmallLabelInput & { smallPack?: boolean }): SmallLabelLayout {
+  const p = FRONT_LABEL_PAGE;
+  const mm = (v: number) => Math.round(mmToDots(v, p.dpi));
+  const widthDots = mm(p.widthMm);
+  const heightDots = mm(p.heightMm);
+  const margin = mm(p.marginMm);
+  const side = mm(SIDE_INSET_MM);
+  const innerW = widthDots - side * 2;
+  const innerH = heightDots - margin * 2;
+  const name = input.name.replace(/\s+/g, " ").trim().toUpperCase();
+  const runs: PlacedRun[] = [];
+  if (!name) return { widthDots, heightDots, dpi: p.dpi, runs, barcode: null, barcodeProblem: null, ok: false };
+
+  let barcode: SmallLabelBarcode | null = null;
+  let barcodeProblem: string | null = null;
+  let leftW = innerW;
+  const code = input.barcode?.replace(/\s+/g, "");
+  if (code) {
+    const enc = smallLabelBarcodeModules(code);
+    if ("problem" in enc) barcodeProblem = enc.problem;
+    else {
+      const maxW = Math.floor(innerW * PAIR_BARCODE_MAX_SHARE);
+      const moduleDots = Math.max(1, Math.min(PAIR_MODULE_DOTS, Math.floor(maxW / enc.modules.length)));
+      const w = enc.modules.length * moduleDots;
+      const x = widthDots - side - w;
+      const digitsH = mm(2.6);
+      const barGap = mm(0.6);
+      const barsH = Math.min(innerH - digitsH - barGap, mm(PAIR_BAR_MAX_MM));
+      const top = margin + Math.round((innerH - (barsH + barGap + digitsH)) / 2);
+      const bottom = top + barsH;
+      barcode = { kind: enc.kind, modules: enc.modules, x, top, bottom, moduleDots };
+      const fit = fitLine(m, code, 500, w - moduleDots * 16, digitsH, digitsH + 6);
+      runs.push({ x: Math.round(x + (w - fit.inkW) / 2 - fit.inkLeft), y: bottom + barGap + fit.inkTop, text: code, face: fit.face, sizeDots: fit.size, letterSpacingEm: 0 });
+      leftW = x - side - mm(1);
+    }
+  }
+
+  const dates: Paragraph = [
+    { text: `USE BY: ${input.useBy}`, bold: true },
+    ...(input.batch?.trim() ? [{ text: `   BATCH: ${input.batch.trim()}`, bold: false }] : []),
+  ];
+  const note = input.instructions?.replace(/\s+/g, " ").trim();
+  const blocks = (pts: { name: number; dates: number; note: number }) => [
+    { paras: [[{ text: name, bold: true }]] as Paragraph[], pt: pts.name, align: "condensed" as WidthVariant },
+    { paras: [dates], pt: pts.dates, align: "semi-condensed" as WidthVariant },
+    ...(note ? [{ paras: [parseBold(note)], pt: pts.note, align: "condensed" as WidthVariant }] : []),
+  ];
+  const legal = (width: WidthVariant) => legalMinPt(Math.min(m.metrics({ width, weight: 500 }).xHeight, m.metrics({ width, weight: 700 }).xHeight), !!input.smallPack);
+  const gap = mm(PAIR_BLOCK_GAP_MM);
+  const measure = (down: number) => {
+    const pts = { name: PAIR_PT.name - down, dates: PAIR_PT.dates - down, note: PAIR_PT.note - down };
+    const placed = blocks(pts).map((b) => {
+      const pt = Math.max(b.pt, legal(b.align));
+      const size = ptToDots(pt);
+      const { lines, tooWide } = wrapPieces(m, b.paras, b.align, size, leftW);
+      const metrics = m.metrics({ width: b.align, weight: 500 });
+      const pitch = size * LINE_HEIGHT;
+      const asc = metrics.ascender * size * 0.8;
+      return { width: b.align, size, lines, pitch, asc, tooWide, h: asc + pitch * (lines.length - 1) + metrics.descender * size };
+    });
+    return { placed, height: placed.reduce((t, b) => t + b.h, 0) + gap * (placed.length - 1) };
+  };
+  let chosen = measure(0);
+  let fits = false;
+  for (let down = 0; down <= 8; down += 0.25) {
+    chosen = measure(down);
+    if (chosen.height <= innerH && chosen.placed.every((b) => !b.tooWide)) { fits = true; break; }
+  }
+  let top = margin + Math.max(0, (innerH - chosen.height) / 2);
+  for (const b of chosen.placed) {
+    b.lines.forEach((line, i) => {
+      for (const { piece, x } of line) {
+        runs.push({
+          x: side + x, y: Math.round(top + b.asc + i * b.pitch), text: piece.text,
+          face: { width: b.width, weight: piece.bold ? 700 : 500 }, sizeDots: b.size, letterSpacingEm: 0,
+        });
+      }
+    });
+    top += b.h + gap;
+  }
+  return { widthDots, heightDots, dpi: p.dpi, runs, barcode, barcodeProblem, ok: fits };
 }

@@ -14,7 +14,7 @@ import { LabelFontSet } from "./fonts";
 import { layoutLabel, type LabelLayout, type PlacedRun } from "./layout";
 import { pngDataUrl } from "./png";
 import { layoutFrontLabel, type FrontLabelInput, type FrontLabelLayout } from "./front-label";
-import { layoutDeckLabel, type DeckLabelLayout } from "./deck-label";
+import { layoutDeckLabel, layoutPairNameLabel, type DeckLabelLayout } from "./deck-label";
 import { buildSmallLabelContent, layoutSmallLabel, type SmallLabelContent, type SmallLabelInput, type SmallLabelLayout } from "./small-label";
 import { labelFormat, type LabelFormat } from "./formats";
 import { Bitmap, fillCircle, fillContours, fillRect, flattenPath, type PathCmd } from "./raster";
@@ -161,8 +161,11 @@ export function checkLabel(rawSnapshot: LabelSnapshot, when: { printDate: string
  *  history treat it like any other label. */
 function checkSmallLabel(snapshot: LabelSnapshot, dates: LabelDates, fonts: LabelFontSet): CheckedLabel {
   const content = buildSmallLabelContent(snapshot, dates);
-  const small = layoutSmallLabel(fonts, content.input);
-  const deck = labelFormat(snapshot.template).printsDeck
+  const isPair = labelFormat(snapshot.template).printsDeck;
+  const small = isPair
+    ? layoutPairNameLabel(fonts, { ...content.input, smallPack: snapshot.template.page.smallPack })
+    : layoutSmallLabel(fonts, content.input);
+  const deck = isPair
     ? layoutDeckLabel(fonts, {
       deckText: snapshot.deckText, mayContain: snapshot.mayContain,
       allergenNote: snapshot.template.text.allergenNote, smallPack: snapshot.template.page.smallPack,
@@ -185,7 +188,7 @@ function checkSmallLabel(snapshot: LabelSnapshot, dates: LabelDates, fonts: Labe
     extraRuns: small.runs,
     fits: small.ok && (deck?.fits ?? true),
     problems: [
-      ...(small.ok ? [] : [{ field: "content" as const, message: "Nothing to print — the label has no name." }]),
+      ...(small.ok ? [] : [{ field: "content" as const, message: isPair ? "The name, dates and instructions don't fit on the label at the legal minimum type size." : "Nothing to print — the label has no name." }]),
       ...(deck && !deck.fits ? [{ field: "content" as const, message: "The ingredients don't fit on the label at the legal minimum type size." }] : []),
     ],
   };

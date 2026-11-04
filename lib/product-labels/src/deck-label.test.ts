@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { loadBundledFonts } from "./node-fonts";
 import { DEFAULT_RECIPE_LABEL_SETTINGS, buildSnapshot, diffSnapshots, snapshotsMatch } from "./snapshot";
 import { labelFormat } from "./formats";
-import { layoutDeckLabel } from "./deck-label";
+import { layoutDeckLabel, layoutPairNameLabel } from "./deck-label";
 import { proofLabel, proofPdf } from "./render";
 import { publishBlockers } from "./status";
 import { smallWithIngredientsTemplate, TEMPLATE_PRESETS } from "./template";
@@ -12,6 +12,7 @@ const fonts = loadBundledFonts();
 const DECK = "Red Wine Gravy (Water, Red wine (**sulphites**), Red onions, Beef Stock (Water, beef bones, onion, carrot, leek, tomato puree, garlic, lovage, parsley), Salted **Butter** (**Butter** (**MILK**), Salt), **WHEAT** Flour, Demerara Sugar, thyme).";
 const MAY = "May also contain traces of nuts, peanuts, egg, soya, celery, sulphites, mustard, wheat and milk";
 const when = { printDate: "2026-11-04", productionDate: "2026-11-04" };
+const INSTRUCTIONS = "Keep chilled below 5°C. Warm in the microwave for 30 seconds, or until it reaches your desired temperature.";
 
 const snapshot = (deckText = DECK) => buildSnapshot({
   recipe: { name: "Red Wine Gravy", packSize: "1.0000", shelfLifeDays: 5 },
@@ -72,6 +73,43 @@ describe("small label with ingredients (two 102 × 25 mm labels)", () => {
     const b = snapshot(DECK.replace("thyme", "rosemary"));
     expect(snapshotsMatch(a, b)).toBe(false);
     expect(diffSnapshots(a, b).map((c) => c.key)).toContain("deckText");
+  });
+
+  it("fits the gravy's long name, instructions and a bigger barcode at the legal size", () => {
+    const l = layoutPairNameLabel(fonts, { name: "6 hour red wine gravy reduction - 200ml", useBy: "11/11/26", batch: "26308", barcode: "5065018206535", instructions: INSTRUCTIONS });
+    expect(l.ok).toBe(true);
+    expect(l.barcode).toMatchObject({ kind: "ean13", moduleDots: 3 });
+    const b = l.barcode!;
+    expect(b.x + b.modules.length * b.moduleDots).toBeLessThanOrEqual(l.widthDots);
+    const left = l.runs.filter((r) => r.x < b.x);
+    for (const r of left) {
+      const ink = fonts.ink(r.text, r.face, r.sizeDots, 0);
+      expect(r.x + ink.right, r.text).toBeLessThanOrEqual(b.x);
+      expect(r.y - ink.top, r.text).toBeGreaterThanOrEqual(0);
+      expect(r.y + ink.bottom, r.text).toBeLessThanOrEqual(l.heightDots);
+      const pt = (r.sizeDots / 203) * 72;
+      expect(pt, r.text).toBeGreaterThanOrEqual(legalMinPt(Math.min(fonts.metrics({ width: r.face.width, weight: 500 }).xHeight, fonts.metrics({ width: r.face.width, weight: 700 }).xHeight), false) - 0.001);
+    }
+    expect(l.runs.map((r) => r.text).join(" ")).toContain("microwave");
+  });
+
+  it("refuses instructions too long to fit rather than shrinking them", () => {
+    const l = layoutPairNameLabel(fonts, { name: "Red Wine Gravy", useBy: "11/11/26", batch: "26308", barcode: "5065018206535", instructions: INSTRUCTIONS.repeat(4) });
+    expect(l.ok).toBe(false);
+  });
+
+  it("flags the label for updating when the instructions change, and leaves other labels alone", () => {
+    const a = snapshot();
+    const t = smallWithIngredientsTemplate();
+    t.text.packInstructions = INSTRUCTIONS;
+    const b = buildSnapshot({
+      recipe: { name: "Red Wine Gravy", packSize: "1.0000", shelfLifeDays: 5 },
+      deck: { deckText: DECK, mayContainStatement: MAY },
+      settings: { ...DEFAULT_RECIPE_LABEL_SETTINGS, barcode: "97748478844497" },
+      templateId: 9, template: t,
+    });
+    expect(snapshotsMatch(a, b)).toBe(false);
+    expect(diffSnapshots(a, b).map((c) => c.key)).toContain("template.text.packInstructions");
   });
 
   it("is held back by declaration problems, as a back label is", () => {
