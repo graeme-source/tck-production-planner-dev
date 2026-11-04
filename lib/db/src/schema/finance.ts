@@ -115,7 +115,7 @@ export const finDocumentsTable = pgTable("fin_documents", {
   fileName: text("file_name").notNull(),
   fileSizeBytes: integer("file_size_bytes").notNull(),
   sha256: text("sha256").notNull(),
-  // 'manual_upload' | 'imap_attachment' | 'email_body_render' | 'photo'
+  // 'manual_upload' | 'imap_attachment' | 'email_body_render' | 'photo' | 'auto_match'
   docSource: text("doc_source").notNull(),
   sourceRef: text("source_ref"), // e.g. "INBOX:12345" for a mail attachment
   // 'invoice' | 'receipt' | 'order_confirmation' | 'other' — human/heuristic label
@@ -226,6 +226,9 @@ export const finInvoicesTable = pgTable("fin_invoices", {
   duplicateOfId: integer("duplicate_of_id"),
   notDuplicate: boolean("not_duplicate").notNull().default(false),
   dupKey: text("dup_key"), // invoiceDuplicateKey(), for the indexed lookup
+  // Waiting for its card transaction (migration 0353). NULL = not queued.
+  awaitingTransactionAt: timestamp("awaiting_transaction_at"),
+  rejectedLineIds: integer("rejected_line_ids").array().notNull().default([]),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isConfidentPick, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate } from "./invoice-to-line";
+import { isConfidentPick, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
 
 const line = (over: Partial<LineCandidate>): LineCandidate => ({
   id: 1, lineDate: "2026-10-06", authDate: null, descriptor: "SP ALUXO LTD", merchant: "ALUXO",
@@ -51,5 +51,44 @@ describe("rankLinesForInvoice", () => {
     const inv = { supplierName: "Some Shop", invoiceDate: "2026-10-05", invoiceNumber: "ORD-558812", totalAmount: "40.00" };
     const s = scoreInvoiceAgainstLine(inv, line({ descriptor: "PAYPAL *SOMESHOP", merchant: null, vendorName: null, amount: "41.00", orderReference: "ORD-558812" }));
     expect(s?.reasons.some((r) => r.includes("ORD-558812"))).toBe(true);
+  });
+});
+
+describe("pickCertainMatches", () => {
+  const invoice = (over: Partial<QueuedInvoice> = {}): QueuedInvoice => ({
+    id: 1, supplierName: "Aluxo Limited", invoiceDate: "2026-10-05", invoiceNumber: null, totalAmount: "120.00",
+    docKind: "invoice", readStatus: "done", rejectedLineIds: [], ...over,
+  });
+
+  it("matches the invoice dropped before its transaction arrived", () => {
+    expect(pickCertainMatches([invoice()], [line({ id: 11 })])).toMatchObject([{ invoiceId: 1, lineId: 11 }]);
+  });
+
+  it("leaves a monthly charge at the same price for a person", () => {
+    expect(pickCertainMatches([invoice()], [line({ id: 10, lineDate: "2026-09-06" }), line({ id: 11 })])).toEqual([]);
+  });
+
+  it("leaves two invoices that want the same transaction for a person", () => {
+    expect(pickCertainMatches([invoice({ id: 1 }), invoice({ id: 2 })], [line({ id: 11 })])).toEqual([]);
+  });
+
+  it("needs the supplier as well as the amount", () => {
+    expect(pickCertainMatches([invoice({ supplierName: "Screwfix" })], [line({ id: 11 })])).toEqual([]);
+  });
+
+  it("needs the charge within a week of the invoice, unless the reference is on both", () => {
+    const late = line({ id: 11, lineDate: "2026-10-20" });
+    expect(pickCertainMatches([invoice()], [late])).toEqual([]);
+    const referenced = line({ id: 11, lineDate: "2026-10-20", descriptor: "ALUXO INV-1001", orderReference: "INV-1001" });
+    expect(pickCertainMatches([invoice({ invoiceNumber: "INV-1001" })], [referenced])).toHaveLength(1);
+  });
+
+  it("never matches a receipt or an invoice it couldn't read", () => {
+    expect(pickCertainMatches([invoice({ docKind: "receipt" })], [line({ id: 11 })])).toEqual([]);
+    expect(pickCertainMatches([invoice({ readStatus: "failed" })], [line({ id: 11 })])).toEqual([]);
+  });
+
+  it("never goes back to a transaction someone said it isn't", () => {
+    expect(pickCertainMatches([invoice({ rejectedLineIds: [11] })], [line({ id: 11 })])).toEqual([]);
   });
 });

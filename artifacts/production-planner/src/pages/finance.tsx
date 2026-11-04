@@ -103,7 +103,10 @@ type FinVendor = {
   detailsConfirmed: boolean;
 };
 
-type FinDocMeta = { id: number; lineId: number; fileName: string; docKind: string; fileMime: string; createdAt: string };
+type FinDocMeta = { id: number; lineId: number; fileName: string; docKind: string; docSource: string; sourceRef: string | null; fileMime: string; createdAt: string };
+
+/** The library invoice a document on a line came from, if it did. */
+const invoiceIdOf = (d: FinDocMeta) => /^invoice:(\d+)$/.exec(d.sourceRef ?? "")?.[1] ?? null;
 
 // What a stored document IS — drives whether a line still needs chasing
 // (an order confirmation is evidence you bought it, not a VAT invoice).
@@ -135,6 +138,15 @@ type MatchRow = {
   hasPdf: boolean;
   snippet?: string | null;
 };
+
+/** What a card statement upload found, in one read. */
+function statementSummary(r: { new: number; duplicates: number; foundPosted: number | null; autoMatched: number; autoDone: number; toCheck: number }): string {
+  const parts = [`${r.new} new transaction${r.new === 1 ? "" : "s"}, ${r.duplicates} already known.`];
+  parts.push(r.foundPosted === null ? "QuickBooks couldn't be checked; it will try again within the hour." : `${r.foundPosted} found posted in QuickBooks.`);
+  if (r.autoMatched > 0) parts.push(`${r.autoMatched} invoice${r.autoMatched === 1 ? "" : "s"} matched automatically.`);
+  if (r.toCheck > 0) parts.push(`${r.toCheck} invoice${r.toCheck === 1 ? "" : "s"} to check.`);
+  return parts.join(" ");
+}
 
 async function jsonFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, { credentials: "include", ...init });
@@ -262,8 +274,9 @@ function InvoicesTab() {
       return jsonFetch(`${BASE}/api/finance/uploads`, { method: "POST", body: form });
     },
     onSuccess: (r: any) => {
-      toast({ title: "Statement imported", description: `${r.new} new transaction${r.new === 1 ? "" : "s"}, ${r.duplicates} already known.` });
+      toast({ title: "Statement imported", description: statementSummary(r) });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
     },
     onError: (e: Error) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
   });
@@ -373,7 +386,7 @@ function InvoicesTab() {
               />
               <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending} className="shrink-0 self-start xl:self-auto">
                 {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-                Upload CSV
+                {uploadMutation.isPending ? "Uploading and matching…" : "Upload CSV"}
               </Button>
             </CardContent>
           </Card>
@@ -634,6 +647,9 @@ function LineRow({
           {expanded ? <ChevronDown className="h-4 w-4 shrink-0" /> : <ChevronRight className="h-4 w-4 shrink-0" />}
           <div className="flex-1 min-w-0">
             <div className="font-medium truncate">{vendor?.name ?? line.merchant ?? line.descriptor}</div>
+            {docs.some((d) => d.docSource === "auto_match") && (
+              <div className="text-xs font-medium text-emerald-700 dark:text-emerald-400">Invoice matched automatically</div>
+            )}
             <div className="text-xs text-muted-foreground truncate">
               {line.lineDate}
               {line.cardholder ? ` · ${line.cardholder}` : ""}
@@ -947,6 +963,17 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
     },
     onError: (e: Error) => toast({ title: "Couldn't change the type", description: e.message, variant: "destructive" }),
   });
+  const takeOff = useMutation({
+    mutationFn: (invoiceId: string) => jsonFetch(`${BASE}/api/finance/invoices/${invoiceId}/detach`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }),
+    onSuccess: () => {
+      toast({ title: "Back in the invoice queue", description: "It won't be matched to this transaction again." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't take it off", description: e.message, variant: "destructive" }),
+  });
 
   return (
     <div
@@ -989,6 +1016,15 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
             >
               <Download className="h-4 w-4" />
             </a>
+            {invoiceIdOf(d) && (
+              <button
+                onClick={() => takeOff.mutate(invoiceIdOf(d)!)}
+                disabled={takeOff.isPending}
+                className="px-2.5 py-1.5 border-l hover:bg-accent text-xs text-muted-foreground"
+              >
+                Wrong transaction
+              </button>
+            )}
           </div>
         ))}
       </div>

@@ -9,7 +9,8 @@ import { resolveFinanceAccess } from "./finance";
 import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMimeFor, periodRange, sha256Of, supplierHintFromPath } from "../lib/finance/invoice-library";
 import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
-import { attachInvoiceToLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
+import { attachInvoiceToLine, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
+import { invoiceQueue, queueInvoice, rejectLineForInvoice, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
 // Finance → Invoices: the searchable library of every invoice we hold
 // (Graeme, 3 Nov 2026). Same access as the rest of Finance. Append-only —
@@ -328,10 +329,21 @@ router.post("/find-transaction", requireFinanceAccess, receiveOne, async (req: R
     const invoice = await invoiceSummary(r.id);
     const already = await attachedLine(invoice?.lineId ?? null);
     if (already) { res.json({ invoice, alreadyAttached: already, suggestions: [], confident: false }); return; }
+    // Add it once: from here it waits for its transaction, found or not.
+    await queueInvoice(r.id);
     res.json({ invoice, alreadyAttached: null, ...(await suggestLinesForInvoice(r.id)) });
   } catch (err) {
     console.error("[finance] find-transaction error:", err);
     res.status(500).json({ error: "Couldn't look for the transaction — try again." });
+  }
+});
+
+router.get("/queue", requireFinanceAccess, async (_req: Request, res: Response) => {
+  try {
+    res.json(await invoiceQueue());
+  } catch (err) {
+    console.error("[finance] invoice queue error:", err);
+    res.status(500).json({ error: "Couldn't load the invoice queue" });
   }
 });
 
@@ -359,6 +371,38 @@ router.post("/:id/attach", requireFinanceAccess, validate(attachSchema), async (
   } catch (err) {
     console.error("[finance] invoice attach error:", err);
     res.status(500).json({ error: "Couldn't attach it — try again." });
+  }
+});
+
+const rejectSchema = z.object({ lineId: z.number().int().positive() });
+router.post("/:id/reject-line", requireFinanceAccess, validate(rejectSchema), async (req: Request, res: Response) => {
+  try {
+    await rejectLineForInvoice(Number(req.params.id), (req.body as z.infer<typeof rejectSchema>).lineId, req.session.userId ?? null);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[finance] reject line error:", err);
+    res.status(500).json({ error: "Couldn't save that — try again." });
+  }
+});
+
+router.post("/:id/leave-queue", requireFinanceAccess, validate(z.object({})), async (req: Request, res: Response) => {
+  try {
+    await takeOutOfQueue(Number(req.params.id), req.session.userId ?? null);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[finance] leave queue error:", err);
+    res.status(500).json({ error: "Couldn't save that — try again." });
+  }
+});
+
+router.post("/:id/detach", requireFinanceAccess, validate(z.object({})), async (req: Request, res: Response) => {
+  try {
+    const r = await detachInvoiceFromLine(Number(req.params.id), req.session.userId ?? null);
+    if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
+    res.json(r);
+  } catch (err) {
+    console.error("[finance] invoice detach error:", err);
+    res.status(500).json({ error: "Couldn't take it off — try again." });
   }
 });
 

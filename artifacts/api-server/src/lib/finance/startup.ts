@@ -4,6 +4,7 @@ import { BACKLOG_ROWS, backlogDedupeHash } from "./backlog-seed";
 import { SHEET_ROWS_2026_11, sheetRowNote, sheetRowPosted, sheetRowDedupeHash, sheetNotesByDedupeHash } from "./backlog-reset-2026-11";
 import { normaliseMerchant } from "./merchant-normalise";
 import { runMailboxSync, refreshSuggestions } from "./mailbox-sync";
+import { matchQueuedInvoices } from "./invoice-queue";
 import { runQboSync } from "./qbo";
 
 // Finance startup: one-time backlog seed + the hourly mailbox sync timer.
@@ -163,7 +164,11 @@ export function startFinanceMailboxTimer(): void {
           console.log(`[finance] QBO sync: ${o.purchases} purchases, ${o.bills} bills, ${o.linesMarkedPosted} lines marked posted`);
         }
       })
-      .catch((e) => console.error("[finance] QBO sync failed:", e));
+      .catch((e) => console.error("[finance] QBO sync failed:", e))
+      // Whatever arrived this hour, however it arrived.
+      .then(() => matchQueuedInvoices())
+      .then((m) => { if (m.matched > 0) console.log(`[finance] matched ${m.matched} queued invoices`); })
+      .catch((e) => console.error("[finance] invoice matching failed:", e));
   // First run shortly after boot (let migrations settle), then hourly.
   setTimeout(run, 30_000).unref();
   setInterval(run, 60 * 60_000).unref();

@@ -7,16 +7,17 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { FilePreview } from "@/pages/finance-invoices";
+import { InvoiceQueuePanel } from "@/pages/finance-invoice-queue";
 import { CheckCircle2, Eye, FileText, Loader2, Search as SearchIcon, Upload, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 // Outstanding → "Drop an invoice" (Graeme, 3 Nov 2026): drop invoices,
 // each is read and the transaction it belongs to is put forward —
-// "I think it's this one" — and one press attaches it. Nothing is
-// attached without that press.
+// "I think it's this one" — and one press attaches it. If its transaction
+// isn't in yet it waits in the queue (finance-invoice-queue.tsx).
 
-type ReadInvoice = {
+export type ReadInvoice = {
   id: number;
   fileName: string;
   fileMime: string;
@@ -30,7 +31,7 @@ type ReadInvoice = {
   readNote: string | null;
 };
 
-type Suggestion = {
+export type Suggestion = {
   lineId: number;
   lineDate: string;
   supplier: string;
@@ -53,22 +54,20 @@ type FindResult = {
 type Item = {
   key: string;
   fileName: string;
-  state: "reading" | "ready" | "error" | "attached";
+  state: "reading" | "ready" | "error";
   result?: FindResult;
   error?: string;
-  attachedTo?: Suggestion;
-  autoDone?: boolean;
 };
 
-async function jsonFetch(url: string, init?: RequestInit) {
+export async function jsonFetch(url: string, init?: RequestInit) {
   const res = await fetch(url, { credentials: "include", ...init });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error || `Request failed (${res.status})`);
   return body;
 }
 
-const money = (v: string | null) => (v == null ? "—" : `£${Number(v).toFixed(2)}`);
-const ukDate = (iso: string | null) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "no date");
+export const money = (v: string | null) => (v == null ? "—" : `£${Number(v).toFixed(2)}`);
+export const ukDate = (iso: string | null) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "no date");
 
 /** `companion` sits beside the drop card on wide screens (the card
  *  statement upload); results run full width underneath. */
@@ -117,7 +116,7 @@ export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
         <CardContent className="p-4 h-full flex flex-col xl:flex-row xl:items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="font-semibold flex items-start gap-2"><FileText className="h-4 w-4 mt-1 shrink-0 text-primary" /> Drop an invoice — it finds the transaction</div>
-            <div className="text-xs text-muted-foreground">PDFs or photos, one or several — each is read and matched for you to confirm.</div>
+            <div className="text-xs text-muted-foreground">PDFs or photos, one or several. If the transaction isn't in yet, the invoice waits for it.</div>
           </div>
           <input
             ref={input}
@@ -143,6 +142,9 @@ export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
           onChange={(p) => patch(item.key, p)}
         />
       ))}
+
+      {/* What's on a card above isn't shown twice. */}
+      <InvoiceQueuePanel hiddenIds={items.flatMap((i) => (i.state === "ready" && i.result?.invoice ? [i.result.invoice.id] : []))} />
     </div>
   );
 }
@@ -163,7 +165,12 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lineId: s.lineId }),
     }) as Promise<{ autoDone: boolean }>,
     onSuccess: (r, s) => {
-      onChange({ state: "attached", attachedTo: s, autoDone: r.autoDone });
+      // The card's job is done, so it goes (Graeme, 4 Nov 2026).
+      toast({
+        title: `Attached to ${s.supplier}, ${money(s.amount)}`,
+        description: r.autoDone ? "It was already posted in QuickBooks, so it's done and filed in Invoices." : "It's now under To be processed.",
+      });
+      onDismiss();
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
     },
@@ -211,16 +218,6 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
 
         {item.state === "error" && <p className="text-sm text-destructive">{item.error}</p>}
 
-        {item.state === "attached" && item.attachedTo && (
-          <div className="rounded-xl bg-emerald-50 text-emerald-900 p-3 text-sm flex items-start gap-2">
-            <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
-            <div>
-              Attached to {item.attachedTo.supplier}, {money(item.attachedTo.amount)} on {ukDate(item.attachedTo.lineDate)}.
-              {item.autoDone ? " It was already posted in QuickBooks, so it's done and filed in Invoices." : " It's now under To be processed."}
-            </div>
-          </div>
-        )}
-
         {item.state === "ready" && item.result && (
           item.result.alreadyAttached ? (
             <p className="text-sm text-muted-foreground">
@@ -230,7 +227,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
             <p className="text-sm">
               {unread
                 ? "Couldn't read it automatically — type the supplier, date and total below and it will look again."
-                : "No matching transaction is waiting for an invoice — it's filed in Invoices. If something was read wrong, correct it below."}
+                : "No transaction for this yet. It's queued and will be matched when the card statement comes in. If something was read wrong, correct it below."}
             </p>
           ) : (
             <div className="space-y-3">
@@ -266,7 +263,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
   );
 }
 
-function SuggestionBox({ s, heading, primary, busy, onAttach }: { s: Suggestion; heading: string; primary?: boolean; busy: boolean; onAttach: () => void }) {
+export function SuggestionBox({ s, heading, primary, busy, onAttach }: { s: Suggestion; heading: string; primary?: boolean; busy: boolean; onAttach: () => void }) {
   return (
     <div className={cn("rounded-xl border p-4 flex flex-col sm:flex-row sm:items-center gap-3", primary ? "border-primary/50 bg-primary/5" : "bg-secondary/30")}>
       <div className="flex-1 min-w-0">
@@ -288,7 +285,7 @@ function SuggestionBox({ s, heading, primary, busy, onAttach }: { s: Suggestion;
 }
 
 /** Correct what was read off the invoice; each field saves when you leave it. */
-function DetailsEditor({ invoice, onSaved, busy }: { invoice: ReadInvoice; onSaved: () => void; busy: boolean }) {
+export function DetailsEditor({ invoice, onSaved, busy }: { invoice: ReadInvoice; onSaved: () => void; busy: boolean }) {
   const { toast } = useToast();
   const [supplier, setSupplier] = useState(invoice.supplierName ?? "");
   const [date, setDate] = useState(invoice.invoiceDate ?? "");

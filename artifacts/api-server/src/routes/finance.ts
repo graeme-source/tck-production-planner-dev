@@ -18,6 +18,7 @@ import { validate } from "../middleware/validate";
 import { requireFounder } from "../middleware/founder-access";
 import { isFounderEmail } from "@workspace/feature-registry";
 import { parseCotCsv } from "../lib/finance/cot-csv";
+import { afterCardImport, matchQueuedInvoices } from "../lib/finance/invoice-queue";
 import { normaliseMerchant } from "../lib/finance/merchant-normalise";
 import { sealSecret } from "../lib/finance/secret-box";
 import { runMailboxSync, refreshSuggestions, fetchAttachmentForMessage, fetchEmailPreview, testMailboxLogin } from "../lib/finance/mailbox-sync";
@@ -139,7 +140,7 @@ router.get("/lines", requireFinanceAccess, async (req: Request, res: Response) =
     const lineIds = lines.map((l) => l.id);
     const docs = lineIds.length
       ? await db
-          .select({ id: finDocumentsTable.id, lineId: finDocumentsTable.lineId, fileName: finDocumentsTable.fileName, docKind: finDocumentsTable.docKind, fileMime: finDocumentsTable.fileMime, createdAt: finDocumentsTable.createdAt })
+          .select({ id: finDocumentsTable.id, lineId: finDocumentsTable.lineId, fileName: finDocumentsTable.fileName, docKind: finDocumentsTable.docKind, docSource: finDocumentsTable.docSource, sourceRef: finDocumentsTable.sourceRef, fileMime: finDocumentsTable.fileMime, createdAt: finDocumentsTable.createdAt })
           .from(finDocumentsTable)
           .where(inArray(finDocumentsTable.lineId, lineIds))
       : [];
@@ -327,6 +328,7 @@ router.post("/lines", requireFinanceAccess, validate(manualLineSchema), async (r
       .returning();
     refreshSuggestions().catch((e) => console.error("[finance] suggestion refresh failed:", e));
     await logFinEvent("line", row.id, "added_by_hand", req.session.userId, { amount: row.amount, descriptor: row.descriptor });
+    matchQueuedInvoices(req.session.userId ?? null).catch((e) => console.error("[finance] invoice matching failed:", e));
     res.status(201).json(row);
   } catch (err) {
     console.error("[finance] manual line error:", err);
@@ -395,7 +397,8 @@ router.post("/uploads", requireFinanceAccess, upload.single("file"), async (req:
     // New lines → refresh suggestions in the background; don't block the response.
     refreshSuggestions().catch((e) => console.error("[finance] suggestion refresh failed:", e));
 
-    res.json({ uploadId: uploadRow.id, rows: parsed.rows.length, new: newCount, duplicates: duplicateCount, skippedRepayments: parsed.skippedRepayments });
+    const after = await afterCardImport(req.session.userId ?? null);
+    res.json({ uploadId: uploadRow.id, rows: parsed.rows.length, new: newCount, duplicates: duplicateCount, skippedRepayments: parsed.skippedRepayments, ...after });
   } catch (err) {
     console.error("[finance] upload error:", err);
     res.status(500).json({ error: "Failed to process upload" });

@@ -32,6 +32,7 @@ export interface LineSuggestion {
   strength: MatchStrength;
   daysApart: number | null;
   reasons: string[];
+  evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean };
 }
 
 const DAY_MS = 86_400_000;
@@ -101,7 +102,10 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
   if (!amountHit && !nameHit && !refHit) return null;
 
   const signals = (amountHit ? 1 : 0) + (nameHit ? 1 : 0) + (dateClose ? 1 : 0) + (refHit ? 1 : 0);
-  return { lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons };
+  return {
+    lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons,
+    evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit },
+  };
 }
 
 /** Best first: most signals, then score, then the nearest date — which is
@@ -125,4 +129,47 @@ export function isConfidentPick(ranked: LineSuggestion[]): boolean {
   if (!next) return true;
   return top.signals > next.signals || top.score > next.score ||
     Math.abs(top.daysApart ?? 999) < Math.abs(next.daysApart ?? 999);
+}
+
+export interface QueuedInvoice extends InvoiceForMatch {
+  id: number;
+  docKind: string;
+  readStatus: string;
+  rejectedLineIds: number[];
+}
+
+export interface CertainMatch {
+  invoiceId: number;
+  lineId: number;
+  reasons: string[];
+}
+
+export const withoutRejected = <L extends { id: number }>(lines: L[], rejected: number[]): L[] =>
+  lines.filter((l) => !rejected.includes(l.id));
+
+/**
+ * Invoices that can be attached with nobody pressing anything (Graeme,
+ * 4 Nov 2026: "obviously and undeniably accurate"). All of these must hold,
+ * or it goes to a person to check:
+ *  - a VAT invoice that was read automatically, not a receipt or a statement;
+ *  - the same amount AND the same supplier, charged within a week of the
+ *    invoice date or carrying its reference;
+ *  - it's the only transaction with that supplier and amount in the whole
+ *    six-week window, which rules out a monthly charge at the same price;
+ *  - no other queued invoice wants the same transaction.
+ */
+export function pickCertainMatches(invoices: QueuedInvoice[], lines: LineCandidate[]): CertainMatch[] {
+  const picks: CertainMatch[] = [];
+  for (const inv of invoices) {
+    if (inv.docKind !== "invoice" || inv.readStatus !== "done") continue;
+    const sameCharge = withoutRejected(lines, inv.rejectedLineIds)
+      .map((l) => scoreInvoiceAgainstLine(inv, l))
+      .filter((s): s is LineSuggestion => !!s && s.evidence.amount && s.evidence.supplier);
+    if (sameCharge.length !== 1) continue;
+    const [only] = sameCharge;
+    if (only.evidence.date || only.evidence.reference) picks.push({ invoiceId: inv.id, lineId: only.lineId, reasons: only.reasons });
+  }
+  const wanted = new Map<number, number>();
+  for (const p of picks) wanted.set(p.lineId, (wanted.get(p.lineId) ?? 0) + 1);
+  return picks.filter((p) => wanted.get(p.lineId) === 1);
 }
