@@ -6,15 +6,47 @@
  * by every station that works through a recipe queue.
  *
  * - QueueDock: the fixed bottom bar. Sits above StationLayout's bottom
- *   padding (pb-20) so it never covers the panel's own buttons.
+ *   padding (pb-28) so it never covers the panel's own buttons. Re-snaps
+ *   to the bottom when the iPad keyboard closes (#382).
  * - QueueSheet: the bottom sheet listing the whole run. Rendered = open;
  *   unmount to close. Stations supply their own rows (each station's row
  *   carries different numbers) and optional footer content (session
  *   totals, KPIs). Modal rules: X + backdrop close, capped height,
  *   internal scroll.
  */
-import React from "react";
+import React, { useEffect } from "react";
+import { keyboardClosed, opensKeyboard } from "@/lib/keyboard-resnap";
 import { ChevronLeft, ChevronRight, ListOrdered, CheckCircle2, X } from "lucide-react";
+
+/** After the on-screen keyboard closes, a zero-distance scroll makes iPad
+ *  Safari lay the page out again, which drops the fixed bar back to the
+ *  bottom. No scroll position moves. */
+function useResnapAfterKeyboard() {
+  useEffect(() => {
+    const snap = () => window.requestAnimationFrame(() => window.scrollTo(window.scrollX, window.scrollY));
+    let timer: number | undefined;
+    const viewport = window.visualViewport;
+    let lastHeight = viewport?.height ?? 0;
+    const onResize = () => {
+      if (!viewport) return;
+      if (keyboardClosed(lastHeight, viewport.height)) snap();
+      lastHeight = viewport.height;
+    };
+    const onFocusOut = (e: FocusEvent) => {
+      if (!opensKeyboard(e.target as HTMLElement | null)) return;
+      window.clearTimeout(timer);
+      // Give the keyboard time to finish closing.
+      timer = window.setTimeout(snap, 350);
+    };
+    viewport?.addEventListener("resize", onResize);
+    document.addEventListener("focusout", onFocusOut);
+    return () => {
+      window.clearTimeout(timer);
+      viewport?.removeEventListener("resize", onResize);
+      document.removeEventListener("focusout", onFocusOut);
+    };
+  }, []);
+}
 
 export function QueueDock({ label, doneCount, total, prevDisabled, nextDisabled, onPrev, onNext, onOpenQueue }: {
   /** Button wording, e.g. "Oven Queue" / "Build Queue — Line 1". */
@@ -27,6 +59,7 @@ export function QueueDock({ label, doneCount, total, prevDisabled, nextDisabled,
   onNext: () => void;
   onOpenQueue: () => void;
 }) {
+  useResnapAfterKeyboard();
   return (
     <div className="fixed bottom-0 left-0 right-0 z-30 border-t border-border bg-card/95 backdrop-blur-sm">
       <div className="max-w-7xl mx-auto px-4 py-2.5 pb-[max(0.625rem,env(safe-area-inset-bottom))] flex items-center gap-2">
