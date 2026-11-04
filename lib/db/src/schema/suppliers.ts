@@ -21,6 +21,9 @@ export const suppliersTable = pgTable("suppliers", {
   // True for suppliers that never provide invoices/delivery notes (Amazon
   // etc.) — goods-in skips the "Invoice filed" check for their deliveries.
   invoiceNotRequired: boolean("invoice_not_required").notNull().default(false),
+  // Orders go by email: the Orders card's main button is Email order
+  // (migration 0355).
+  orderByEmail: boolean("order_by_email").notNull().default(false),
   cutoffTime: text("cutoff_time").notNull().default("17:00"),
   // Minimum order spend in £ (e.g. 75.00). NULL = no minimum. The Orders page
   // warns when a draft order is below it and suggests items to move across.

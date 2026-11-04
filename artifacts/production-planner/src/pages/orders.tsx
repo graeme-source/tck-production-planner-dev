@@ -676,6 +676,8 @@ export default function Orders() {
     lockedOpenPo?: { id: number; expectedDeliveryDate: string };
     /** Minimum order spend in £; null = no minimum. */
     minimumOrderValue?: number | null;
+    /** Orders go by email: the card's main button is Email order. */
+    orderByEmail?: boolean;
   }>>({
     queryKey: ["suppliers-directory"],
     queryFn: async () => {
@@ -906,15 +908,10 @@ export default function Orders() {
     enabled: kanbanSearchOpen,
   });
 
-  const { data: allSuppliers = [] } = useQuery<{ id: number; name: string }[]>({
-    queryKey: ["suppliers-for-kanban-dialog"],
-    queryFn: async () => {
-      const res = await fetch(`${BASE}/api/suppliers`, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to load suppliers");
-      return res.json();
-    },
-    enabled: kanbanSearchOpen,
-  });
+  // One list for the whole page, always loaded. A second copy that only
+  // loaded with the kanban search left the Split dropdown empty (Graeme,
+  // 2026-11-04).
+  const allSuppliers = pickerSuppliers;
 
   // For a given kanban row, produce the supplier options in priority order:
   // primary first, then secondary, then the rest alphabetically.
@@ -2304,6 +2301,9 @@ export default function Orders() {
         // suppliers were the usual victims). WhatsApp-to-number still needs
         // the number saved.
         const orderDeliveryText = formatDeliveryDate(getDeliveryDateForSupplier(so.supplier.id));
+        // Set on the supplier's record: the top button is Email order, not
+        // the website, and it's the only Email order button on the card.
+        const ordersByEmail = supplierDirectory.get(so.supplier.id)?.orderByEmail === true;
         const emailHref = orderableLines.length > 0
           ? buildOrderMailto(so.supplier.name, so.supplier.email ?? "", orderableLines, orderDeliveryText)
           : null;
@@ -2399,7 +2399,18 @@ export default function Orders() {
                 {/* A clear button, not a grey icon (Graeme, 2026-10-01).
                     Green OUTLINE so it can't be mistaken for the solid-green
                     "Mark as Placed" action. */}
-                {so.supplier.website && (
+                {ordersByEmail && emailHref && (
+                  <a
+                    href={emailHref}
+                    onClick={e => e.stopPropagation()}
+                    className="min-h-[44px] px-4 inline-flex items-center gap-2 rounded-lg border-2 border-primary bg-primary/10 text-green-800 dark:text-green-300 text-sm font-semibold hover:bg-primary/20 transition-colors"
+                    title={so.supplier.email ? `Draft an order email to ${so.supplier.email}` : "No email saved for this supplier: opens a blank email with the order text"}
+                  >
+                    <Mail className="w-4 h-4 shrink-0" />
+                    {so.supplier.email ? "Email order" : "Email order (no address)"}
+                  </a>
+                )}
+                {so.supplier.website && !ordersByEmail && (
                   <a
                     href={so.supplier.website}
                     target="_blank"
@@ -2897,7 +2908,7 @@ export default function Orders() {
                         )}
                       </button>
                     )}
-                    {emailHref && (
+                    {emailHref && !ordersByEmail && (
                       <a
                         href={emailHref}
                         className="min-h-[44px] px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-2 border border-border hover:bg-secondary text-foreground"
