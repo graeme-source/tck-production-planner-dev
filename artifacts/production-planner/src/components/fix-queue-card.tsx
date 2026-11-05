@@ -1,9 +1,9 @@
 /**
- * One Fix queue card (redesign, Graeme, 2026-11-04). Three things, in order:
- * what they reported, Claude's assessment, what to do next. Every action
- * lives in ONE row: the recommended one highlighted, the others the same
- * plain colour, the rest behind More. The conversation and the detail are
- * folded away, so a whole card fits on screen.
+ * One Fix queue card (redesign, Graeme, 2026-11-04; tightened 5 Nov: "read two
+ * or three issues on one page"). What's reported beside what's recommended,
+ * then ONE row with every action: the recommended one highlighted, the others
+ * the same plain colour, the rest behind More. The conversation, the detail
+ * and any proposed reply stay folded until asked for.
  */
 import { useRef, useState } from "react";
 import { Link } from "wouter";
@@ -20,7 +20,7 @@ import {
 import { cn } from "@/lib/utils";
 import { feedTimestamp } from "@/lib/feed-time";
 import {
-  LANE_LABELS, QUEUE_TAB_LABELS, cardActions, clockLabel, newReporterWords, noticeStatusLine, recommendedStep, unreadLabel, waitingLine,
+  LANE_LABELS, QUEUE_TAB_LABELS, cardActions, clockLabel, newReporterWords, noticeStatusLine, proposedReply, recommendedStep, unreadLabel, waitingLine,
   type FixQueueItem, type NextStep, type TriageLane, type TriageStatus,
 } from "@/lib/issue-pipeline";
 
@@ -50,7 +50,7 @@ const STATUS_LABELS: Record<TriageStatus, string> = {
 const SEVERITY_DOT: Record<string, string> = { red: "bg-red-500", yellow: "bg-amber-400", green: "bg-emerald-500" };
 
 function Chip({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <span className={cn("inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold", className)}>{children}</span>;
+  return <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-bold", className)}>{children}</span>;
 }
 
 // ── The photo beside the report, opened in place ────────────────────────────
@@ -73,19 +73,19 @@ function Lightbox({ file, onClose }: { file: Attachment; onClose: () => void }) 
 }
 
 function ReportMedia({ files, onOpen }: { files: Attachment[]; onOpen: (f: Attachment) => void }) {
-  const [first, ...rest] = files;
-  const thumb = (f: Attachment, className: string) => (
-    <button key={f.id} onClick={() => onOpen(f)} aria-label={f.kind === "image" ? "See the photo full size" : "Play the video"}
-      className={cn("block rounded-xl overflow-hidden border border-border bg-secondary hover:opacity-90", className)}>
-      {f.kind === "image"
-        ? <img src={`${BASE}${f.url}`} alt={f.fileName ?? "Photo from the report"} loading="lazy" className="w-full h-full object-cover" />
-        : <span className="w-full h-full flex flex-col items-center justify-center gap-1 text-xs text-muted-foreground"><Video className="w-6 h-6" /> Video</span>}
-    </button>
-  );
   return (
-    <div className="space-y-2">
-      {thumb(first, "w-full h-40 md:h-44")}
-      {rest.length > 0 && <div className="grid grid-cols-4 gap-1.5">{rest.map(f => thumb(f, "aspect-square"))}</div>}
+    <div className="flex flex-col gap-1 flex-shrink-0">
+      {files.slice(0, 1).map(f => (
+        <button key={f.id} onClick={() => onOpen(f)} aria-label={f.kind === "image" ? "See the photo full size" : "Play the video"}
+          className="block w-16 h-16 rounded-lg overflow-hidden border border-border bg-secondary hover:opacity-90">
+          {f.kind === "image"
+            ? <img src={`${BASE}${f.url}`} alt={f.fileName ?? "Photo from the report"} loading="lazy" className="w-full h-full object-cover" />
+            : <span className="w-full h-full flex flex-col items-center justify-center text-[10px] text-muted-foreground"><Video className="w-5 h-5" /> Video</span>}
+        </button>
+      ))}
+      {files.length > 1 && (
+        <button onClick={() => onOpen(files[1])} className="text-[11px] font-semibold text-muted-foreground hover:text-foreground">+{files.length - 1} more</button>
+      )}
     </div>
   );
 }
@@ -119,7 +119,7 @@ function ComposerPanel({ mode, firstName, startText, canClose, reopens, saving, 
       </div>
     );
   }
-  const title = mode === "reporter" ? `Reply to ${firstName}` : mode === "claude" ? "Reply to Claude" : "Reject this recommendation";
+  const title = mode === "reporter" ? (startText ? `Proposed reply to ${firstName}` : `Reply to ${firstName}`) : mode === "claude" ? "Ask Claude" : "Reject this recommendation";
   const hint = mode === "reporter"
     ? `It pops up for ${firstName} with this conversation, and they can reply.`
     : mode === "claude"
@@ -202,25 +202,26 @@ export function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAc
   const waiting = waitingLine(item, firstName);
   const latestWords = newReporterWords(thread).at(-1);
   const repliedBack = unread > 0 || !!t.reporterReplyAt;
-  const claudeDraft = t.suggestedReply?.trim() && !alreadyMessaged ? t.suggestedReply : "";
+  // Only ever seen by pressing its button, which is also where it's sent from.
+  const claudeDraft = proposedReply(t, alreadyMessaged, repliedBack);
 
   const open = (mode: Composer) => setComposer(c => (c === mode ? null : mode));
   const buttons: Array<{ step: NextStep; label: string; icon: React.ReactNode; onClick: () => void }> = [];
-  if (actions.canDismiss) buttons.push({ step: "dismiss_done", label: "Dismiss — already done", icon: <CheckCircle2 className="w-5 h-5" />, onClick: onDismiss });
-  if (actions.canApprove) buttons.push({ step: "approve", label: status === "rejected" ? "Approve after all" : "Approve this fix", icon: <Check className="w-5 h-5" />, onClick: () => onDecide("approve") });
-  if (hasReporter) buttons.push({ step: "reply_reporter", label: `Reply to ${firstName}`, icon: <MessageSquareText className="w-5 h-5" />, onClick: () => open("reporter") });
-  buttons.push({ step: "reply_claude", label: "Reply to Claude", icon: <MessageCircleQuestion className="w-5 h-5" />, onClick: () => open("claude") });
+  if (actions.canDismiss) buttons.push({ step: "dismiss_done", label: "Dismiss — already done", icon: <CheckCircle2 className="w-4 h-4" />, onClick: onDismiss });
+  if (actions.canApprove) buttons.push({ step: "approve", label: status === "rejected" ? "Approve after all" : "Approve this fix", icon: <Check className="w-4 h-4" />, onClick: () => onDecide("approve") });
+  if (hasReporter) buttons.push({ step: "reply_reporter", label: claudeDraft ? "Read proposed reply" : `Reply to ${firstName}`, icon: <MessageSquareText className="w-4 h-4" />, onClick: () => open("reporter") });
+  buttons.push({ step: "reply_claude", label: "Ask Claude", icon: <MessageCircleQuestion className="w-4 h-4" />, onClick: () => open("claude") });
   // The recommended one goes first and is the only one in colour.
   const ordered = [...buttons].sort((a, b) => Number(b.step === step) - Number(a.step === step));
 
   const hint = step === "approve" ? `Tells Claude to build it. Nothing goes live until you deploy.`
     : step === "dismiss_done" ? `Closes the report${t.suggestedReply?.trim() ? ` and sends ${firstName} Claude's reply` : ""}. Nothing gets built.`
-    : step === "reply_reporter" && !repliedBack && claudeDraft ? `Claude has drafted this for you to check before it goes.`
-    : null;
+    : undefined;
+  const plainButton = "h-10 px-3 rounded-lg bg-secondary text-sm text-foreground font-bold flex items-center gap-1.5 hover:bg-secondary/70";
 
   return (
     <article className={cn(
-      "rounded-3xl border-2 bg-card p-4 md:p-5 space-y-3 transition-opacity",
+      "rounded-2xl border-2 bg-card p-3 md:px-4 space-y-2 transition-opacity",
       unread > 0 ? "border-emerald-500 border-l-[10px]" : t.reporterReplyAt ? "border-emerald-300 border-l-[10px]" : "border-border",
       saving && "opacity-60",
     )}>
@@ -234,115 +235,101 @@ export function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAc
         {showTab && item.tab && <Chip className="bg-primary text-primary-foreground">In: {QUEUE_TAB_LABELS[item.tab]}</Chip>}
         {repliedBack && <Chip className="bg-emerald-600 text-white"><MessageSquareReply className="w-3.5 h-3.5" /> {unreadLabel(firstName, unread)}</Chip>}
         {status !== "proposed" && <Chip className="bg-secondary text-foreground">{STATUS_LABELS[status]}</Chip>}
-        {item.related.length > 0 && <Chip className="bg-secondary text-foreground">{item.related.length} related report{item.related.length === 1 ? "" : "s"}</Chip>}
         <span className="ml-auto text-xs text-muted-foreground">#{t.andonIssueId} · {issue ? feedTimestamp(issue.createdAt) : feedTimestamp(t.triagedAt)}</span>
       </div>
 
-      {/* 1. What they reported, with the photo beside it */}
-      {issue && (
-        <div className={cn("grid gap-4", files.length > 0 && "md:grid-cols-[minmax(0,1fr)_16rem]")}>
-          <div className="min-w-0">
-            <p className={cn("text-lg md:text-xl font-bold leading-snug whitespace-pre-wrap break-words", !showDetails && "line-clamp-6")}>
-              {issue.description?.trim() || "(no description)"}
-            </p>
-            <p className="mt-1.5 flex flex-wrap items-center gap-x-2 text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">{issue.reporter.name ?? "Someone"}</span>
-              <span>· {issue.station}</span>
-              <span className={cn("w-2.5 h-2.5 rounded-full", SEVERITY_DOT[issue.severity] ?? "bg-muted")} aria-label={issue.severity} />
-              {issue.resolved && <span className="text-emerald-700 dark:text-emerald-400 font-medium">Resolved {feedTimestamp(issue.resolved.at)}</span>}
-            </p>
+      {/* What's reported, and what's recommended, side by side */}
+      <div className="grid gap-2 md:gap-4 md:grid-cols-2">
+        {issue && (
+          <div className="min-w-0 flex gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+                <span className={cn("w-2 h-2 rounded-full", SEVERITY_DOT[issue.severity] ?? "bg-muted")} aria-label={issue.severity} />
+                <span className="font-semibold text-foreground">{issue.reporter.name ?? "Someone"}</span>
+                <span>· {issue.station}</span>
+                {issue.resolved && <span className="text-emerald-700 dark:text-emerald-400 font-medium">· Resolved {feedTimestamp(issue.resolved.at)}</span>}
+              </p>
+              <p className={cn("mt-0.5 text-base font-bold leading-snug whitespace-pre-wrap break-words", !showDetails && "line-clamp-3")}>
+                {issue.description?.trim() || "(no description)"}
+              </p>
+            </div>
+            {files.length > 0 && <ReportMedia files={files} onOpen={setViewing} />}
           </div>
-          {files.length > 0 && <ReportMedia files={files} onOpen={setViewing} />}
+        )}
+        <div className="min-w-0 space-y-1">
+          <p className="text-xs font-semibold text-muted-foreground">Recommended</p>
+          <p className={cn("text-sm font-medium leading-snug", !showDetails && "line-clamp-3")}>{t.verdictSummary}</p>
+          {t.questionForGraeme && status === "proposed" && (
+            <p className="flex gap-1.5 text-sm font-medium text-amber-900 dark:text-amber-100">
+              <HelpCircle className="w-4 h-4 mt-0.5 flex-shrink-0 text-amber-600" />
+              <span className={cn("whitespace-pre-wrap", !showDetails && "line-clamp-2")}>{t.questionForGraeme}</span>
+            </p>
+          )}
+          {repliedBack && latestWords && (
+            <p className="flex gap-1.5 text-sm font-medium text-emerald-900 dark:text-emerald-100">
+              <MessageSquareReply className="w-4 h-4 mt-0.5 flex-shrink-0 text-emerald-700" />
+              <span className={cn("whitespace-pre-wrap break-words", !showDetails && "line-clamp-2")}>“{latestWords.text}” <span className="text-xs font-normal opacity-80">— {firstName}, {clockLabel(latestWords.at)}</span></span>
+            </p>
+          )}
         </div>
-      )}
-
-      {/* 2. Claude's assessment */}
-      <div className="rounded-2xl bg-secondary/50 p-3 md:p-4 space-y-2">
-        <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Claude's assessment</p>
-        <p className="text-base md:text-lg font-semibold leading-snug">{t.verdictSummary}</p>
-        {t.questionForGraeme && status === "proposed" && (
-          <p className="flex gap-2 text-base font-medium text-amber-900 dark:text-amber-100 bg-amber-50 dark:bg-amber-950/30 rounded-xl px-3 py-2">
-            <HelpCircle className="w-5 h-5 mt-0.5 flex-shrink-0 text-amber-600" />
-            <span className="whitespace-pre-wrap">{t.questionForGraeme}</span>
-          </p>
-        )}
-        {repliedBack && latestWords && (
-          <p className="flex gap-2 text-base font-medium text-emerald-950 dark:text-emerald-50 bg-emerald-50 dark:bg-emerald-950/40 rounded-xl px-3 py-2">
-            <MessageSquareReply className="w-5 h-5 mt-0.5 flex-shrink-0 text-emerald-700" />
-            <span className="whitespace-pre-wrap break-words">“{latestWords.text}” <span className="text-sm font-normal opacity-80">— {firstName}, {clockLabel(latestWords.at)}</span></span>
-          </p>
-        )}
-        {t.proposedFix.trim() && !showDetails && (
-          <p className="text-sm text-muted-foreground line-clamp-2"><span className="font-semibold text-foreground">Proposed fix:</span> {t.proposedFix}</p>
-        )}
       </div>
 
-      {/* 3. What to do next: the one place every action lives */}
-      <div className="space-y-1.5">
+      {/* Every action, in one row */}
+      <div className="flex flex-wrap items-center gap-1.5">
         {!step && waiting && (
-          <p className="flex items-center gap-2 text-sm font-semibold text-muted-foreground"><Hourglass className="w-4 h-4" /> {waiting}</p>
+          <p className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground mr-1"><Hourglass className="w-4 h-4" /> {waiting}</p>
         )}
-        <div className="flex flex-wrap items-center gap-2">
-          {ordered.map(b => (
-            <button key={b.step} onClick={b.onClick} disabled={saving}
-              className={cn(
-                "rounded-xl font-bold flex items-center gap-2 disabled:opacity-50",
-                b.step === step
-                  ? "h-12 px-5 bg-primary text-primary-foreground text-base shadow-md hover:bg-primary/90"
-                  : "h-12 px-3 bg-secondary text-foreground hover:bg-secondary/70",
-              )}>
-              {saving && b.step === step ? <Loader2 className="w-5 h-5 animate-spin" /> : b.icon} {b.label}
-            </button>
-          ))}
-          {(thread.length > 0 || hasReporter) && (
-            <button onClick={() => setShowChat(o => !o)} aria-expanded={showChat}
-              className="h-12 px-3 rounded-xl bg-secondary text-foreground font-bold flex items-center gap-1.5 hover:bg-secondary/70">
-              <MessagesSquare className="w-5 h-5" /> Chat{thread.length > 0 ? ` · ${thread.length}` : ""}
-              {unread > 0 && <span className="rounded-full bg-emerald-600 text-white px-2 text-xs">{unread}</span>}
-            </button>
-          )}
-          <button onClick={() => setShowDetails(o => !o)} aria-expanded={showDetails}
-            className="h-12 px-3 rounded-xl bg-secondary text-foreground font-bold flex items-center gap-1.5 hover:bg-secondary/70">
-            {showDetails ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />} Details
+        {ordered.map(b => (
+          <button key={b.step} onClick={b.onClick} disabled={saving} title={b.step === step ? hint : undefined}
+            className={cn(plainButton, "disabled:opacity-50", b.step === step && "bg-primary text-primary-foreground shadow-sm hover:bg-primary/90")}>
+            {saving && b.step === step ? <Loader2 className="w-4 h-4 animate-spin" /> : b.icon} {b.label}
           </button>
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="h-12 px-3 rounded-xl bg-secondary text-foreground font-bold flex items-center gap-1.5 hover:bg-secondary/70">
-                <MoreHorizontal className="w-5 h-5" /> More
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-60">
-              {actions.canReject && (
-                <DropdownMenuItem className="py-2.5" onSelect={() => setComposer("reject")}><XCircle className="w-4 h-4 mr-2" /> Reject</DropdownMenuItem>
-              )}
-              {status === "proposed" && !t.awaitingRetriage && !snoozedUntil && (
-                <DropdownMenuSub>
-                  <DropdownMenuSubTrigger className="py-2.5"><AlarmClock className="w-4 h-4 mr-2" /> Not now</DropdownMenuSubTrigger>
-                  <DropdownMenuSubContent>
-                    {SNOOZE_OPTIONS.map(o => <DropdownMenuItem key={o.days} className="py-2.5" onSelect={() => onSnooze(o.days)}>{o.label}</DropdownMenuItem>)}
-                  </DropdownMenuSubContent>
-                </DropdownMenuSub>
-              )}
-              {snoozedUntil && status === "proposed" && (
-                <DropdownMenuItem className="py-2.5" onSelect={() => onSnooze(null)}><AlarmClock className="w-4 h-4 mr-2" /> Bring back now</DropdownMenuItem>
-              )}
-              {t.reporterReplyAt && (
-                <DropdownMenuItem className="py-2.5" onSelect={() => seen.mutate(t.id)}><CheckCheck className="w-4 h-4 mr-2" /> Seen — leave it where it was</DropdownMenuItem>
-              )}
-              {t.noActionAt
-                ? <DropdownMenuItem className="py-2.5" onSelect={() => onNoAction(true)}><RotateCcw className="w-4 h-4 mr-2" /> Restore</DropdownMenuItem>
-                : <DropdownMenuItem className="py-2.5" onSelect={() => setComposer("no_action")}><X className="w-4 h-4 mr-2" /> Dismiss — no action</DropdownMenuItem>}
-              <DropdownMenuSeparator />
-              <DropdownMenuItem className="py-2.5" asChild>
-                <Link href={`/test-requests?new=1&issue=${t.andonIssueId}`}><ClipboardCheck className="w-4 h-4 mr-2" /> Request a test</Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem className="py-2.5" asChild>
-                <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}><ExternalLink className="w-4 h-4 mr-2" /> Open in the issue log</Link>
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-        {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+        ))}
+        {thread.length > 0 && (
+          <button onClick={() => setShowChat(o => !o)} aria-expanded={showChat} className={plainButton}>
+            <MessagesSquare className="w-4 h-4" /> Conversation · {thread.length}
+            {unread > 0 && <span className="rounded-full bg-emerald-600 text-white px-1.5 text-xs">{unread}</span>}
+          </button>
+        )}
+        <button onClick={() => setShowDetails(o => !o)} aria-expanded={showDetails} className={plainButton}>
+          {showDetails ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />} Details
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button className={plainButton}>
+              <MoreHorizontal className="w-4 h-4" /> More
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-60">
+            {actions.canReject && (
+              <DropdownMenuItem className="py-2.5" onSelect={() => setComposer("reject")}><XCircle className="w-4 h-4 mr-2" /> Reject</DropdownMenuItem>
+            )}
+            {status === "proposed" && !t.awaitingRetriage && !snoozedUntil && (
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger className="py-2.5"><AlarmClock className="w-4 h-4 mr-2" /> Not now</DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  {SNOOZE_OPTIONS.map(o => <DropdownMenuItem key={o.days} className="py-2.5" onSelect={() => onSnooze(o.days)}>{o.label}</DropdownMenuItem>)}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            )}
+            {snoozedUntil && status === "proposed" && (
+              <DropdownMenuItem className="py-2.5" onSelect={() => onSnooze(null)}><AlarmClock className="w-4 h-4 mr-2" /> Bring back now</DropdownMenuItem>
+            )}
+            {t.reporterReplyAt && (
+              <DropdownMenuItem className="py-2.5" onSelect={() => seen.mutate(t.id)}><CheckCheck className="w-4 h-4 mr-2" /> Seen — leave it where it was</DropdownMenuItem>
+            )}
+            {t.noActionAt
+              ? <DropdownMenuItem className="py-2.5" onSelect={() => onNoAction(true)}><RotateCcw className="w-4 h-4 mr-2" /> Restore</DropdownMenuItem>
+              : <DropdownMenuItem className="py-2.5" onSelect={() => setComposer("no_action")}><X className="w-4 h-4 mr-2" /> Dismiss — no action</DropdownMenuItem>}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem className="py-2.5" asChild>
+              <Link href={`/test-requests?new=1&issue=${t.andonIssueId}`}><ClipboardCheck className="w-4 h-4 mr-2" /> Request a test</Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem className="py-2.5" asChild>
+              <Link href={`/reports?tab=issues&issueId=${t.andonIssueId}`}><ExternalLink className="w-4 h-4 mr-2" /> Open in the issue log</Link>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
       {composer && (
@@ -379,10 +366,9 @@ export function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAc
               <p className="text-base whitespace-pre-wrap">{t.proposedFix}</p>
             </div>
           )}
-          {claudeDraft && (
-            <div>
-              <p className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted-foreground mb-1"><MessageSquareText className="w-4 h-4" /> Claude's draft reply to {firstName}</p>
-              <p className="text-base whitespace-pre-wrap">{claudeDraft}</p>
+          {files.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              {files.map(f => <ReportMedia key={f.id} files={[f]} onOpen={setViewing} />)}
             </div>
           )}
           <div className="flex flex-wrap gap-2">

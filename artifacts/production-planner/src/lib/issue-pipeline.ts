@@ -421,6 +421,12 @@ export function recommendedStep(item: Pick<FixQueueItem, "triage" | "unreadRepli
   return draftReady ? "reply_reporter" : "reply_claude";
 }
 
+/** Claude's draft reply, while it's still worth sending: not once he's messaged
+ *  them, and not once they've written back, which it can't have answered. */
+export function proposedReply(t: Pick<Triage, "suggestedReply">, alreadyMessaged: boolean, repliedBack: boolean): string {
+  return t.suggestedReply?.trim() && !alreadyMessaged && !repliedBack ? t.suggestedReply : "";
+}
+
 /** Where a card stands when there's nothing for Graeme to do. */
 export function waitingLine(item: Pick<FixQueueItem, "triage" | "fixNow">, firstName: string, now: Date = new Date()): string | null {
   const t = item.triage;

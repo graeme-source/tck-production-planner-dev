@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions, recommendedStep, waitingLine, withReplySent, type FixQueueItem, type Triage } from "./issue-pipeline";
+import { safeTestPath, tabCount, noticeStatusLine, batchedNoticeCopy, cardActions, proposedReply, recommendedStep, waitingLine, withReplySent, type FixQueueItem, type Triage } from "./issue-pipeline";
 
 describe("safeTestPath", () => {
   it("keeps in-app paths", () => {
@@ -135,6 +135,15 @@ describe("withReplySent — the card right after Reply to Claude", () => {
     expect(out.fixNow).toBe(true);
     expect(out.thread!.slice(-2).map(e => e.text)).toEqual(["Use the wrapping count, not stock", "Approved — fix it the way you said"]);
     expect(cardActions(out.triage).waitingOnClaude).toBe(false);
+  });
+});
+
+describe("proposedReply", () => {
+  it("offers Claude's draft until it's been overtaken", () => {
+    expect(proposedReply({ suggestedReply: "Thanks, sorted." }, false, false)).toBe("Thanks, sorted.");
+    expect(proposedReply({ suggestedReply: "Thanks, sorted." }, true, false)).toBe("");
+    expect(proposedReply({ suggestedReply: "Thanks, sorted." }, false, true)).toBe("");
+    expect(proposedReply({ suggestedReply: "  " }, false, false)).toBe("");
   });
 });
 
