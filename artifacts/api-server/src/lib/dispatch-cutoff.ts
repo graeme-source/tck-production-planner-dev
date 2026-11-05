@@ -8,7 +8,7 @@ import { getRecentUnfulfilledOrders } from "../services/shopify";
 import { ensureFreshDisputes, loadOpenDisputes } from "./order-disputes-store";
 import { DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback } from "./order-disputes";
 import { londonDateString, londonMinuteOfDay } from "./london-time";
-import { alertToShow, hasGivenUp, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
+import { alertToShow, hasGivenUp, isCheckDay, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
 
 const KEY = "dispatch_cutoff_alert";
 const TICK_MS = 60_000;
@@ -57,8 +57,8 @@ export async function dismissCutoff(): Promise<void> {
 
 async function tick(): Promise<void> {
   const minute = londonMinuteOfDay();
-  if (!isCheckDue(minute)) return;
   const today = londonDateString();
+  if (!isCheckDue(minute) || !isCheckDay(today)) return;
   if ((await readAlert())?.date === today) return;
   try {
     const orders = await findMissing(today);

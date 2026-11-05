@@ -15,6 +15,12 @@ const GIVE_UP_AT = 15 * 60;
 const DATE_TAG = /^\d{4}-\d{2}-\d{2}$/;
 
 export const isCheckDue = (minuteOfDay: number) => minuteOfDay >= CHECK_AT;
+
+/** Monday to Friday: nobody's packing at the weekend to see the alert. */
+export function isCheckDay(date: string): boolean {
+  const day = new Date(`${date}T12:00:00Z`).getUTCDay();
+  return day >= 1 && day <= 5;
+}
 export const hasGivenUp = (minuteOfDay: number) => minuteOfDay >= GIVE_UP_AT;
 
 interface CheckOrder {

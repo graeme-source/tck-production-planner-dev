@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertToShow, hasGivenUp, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
+import { alertToShow, hasGivenUp, isCheckDay, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
 
 const today = "2026-11-05";
 const order = (id: number, tags: string, at = "2026-11-05T13:54:00Z") => ({ id, name: `#${id}`, tags, created_at: at, customer: { first_name: "Dennis", last_name: "Hunter" } });
@@ -10,6 +10,14 @@ describe("when the check runs", () => {
     expect(isCheckDue(14 * 60 + 16)).toBe(true);
     expect(hasGivenUp(14 * 60 + 59)).toBe(false);
     expect(hasGivenUp(15 * 60)).toBe(true);
+  });
+});
+
+describe("which days it runs", () => {
+  it("runs Monday to Friday only", () => {
+    expect(["2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05", "2026-11-06"].map(isCheckDay)).toEqual([true, true, true, true, true]);
+    expect(isCheckDay("2026-11-07")).toBe(false);
+    expect(isCheckDay("2026-11-08")).toBe(false);
   });
 });
 
