@@ -1,7 +1,8 @@
 /**
- * The founder's benchmark editor for the Numbers panels (Objective I). Each
- * KPI's three figures autosave together with a visible state. Closable (X,
- * backdrop, Escape), max-h-[92dvh] with internal scrolling.
+ * The founder's benchmark editor for the Numbers panels (Objective I): every
+ * KPI from the Benchmarks button, one from the pencil on its panel. Each KPI's
+ * two figures autosave together with a visible state. Closable (X, backdrop,
+ * Escape), max-h-[92dvh] with internal scrolling.
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -10,12 +11,6 @@ import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { benchmarkProblem, KPIS, type Benchmark, type KpiId, type KpiSpec } from "@/lib/numbers-benchmarks";
 import { useNumbersBenchmarks, useSaveBenchmark } from "./api";
-
-const FIELDS: Array<{ key: keyof Benchmark; label: string }> = [
-  { key: "minimum", label: "Minimum" },
-  { key: "good", label: "Good" },
-  { key: "veryGood", label: "Very good" },
-];
 
 export function BenchmarksButton() {
   const { data } = useNumbersBenchmarks();
@@ -35,7 +30,7 @@ export function BenchmarksButton() {
   );
 }
 
-function BenchmarksDialog({ onClose }: { onClose: () => void }) {
+export function BenchmarksDialog({ only, onClose }: { only?: KpiId; onClose: () => void }) {
   const { data } = useNumbersBenchmarks();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -45,12 +40,12 @@ function BenchmarksDialog({ onClose }: { onClose: () => void }) {
   if (!data) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-3 md:p-8" onClick={onClose}>
+    <div className="fixed inset-0 z-[130] bg-black/70 flex items-center justify-center p-3 md:p-8" onClick={(e) => { e.stopPropagation(); onClose(); }}>
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="benchmarks-title"
-        className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden"
+        className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col overflow-hidden text-left text-foreground font-normal"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
@@ -61,7 +56,7 @@ function BenchmarksDialog({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          {KPIS.map((spec) => (
+          {KPIS.filter((spec) => !only || spec.id === only).map((spec) => (
             <BenchmarkRow key={spec.id} spec={spec} value={data.benchmarks[spec.id]} />
           ))}
         </div>
@@ -78,7 +73,7 @@ const unitLabel = (spec: KpiSpec) => {
 
 function BenchmarkRow({ spec, value }: { spec: KpiSpec; value: Benchmark | undefined }) {
   const save = useSaveBenchmark();
-  const [draft, setDraft] = useState<Benchmark>(value ?? { minimum: null, good: null, veryGood: null });
+  const [draft, setDraft] = useState<Benchmark>(value ?? { minimum: null, stretch: null });
   const auto = useAutosave((benchmark: Benchmark) => save.mutateAsync({ kpi: spec.id as KpiId, benchmark }));
   const set = (key: keyof Benchmark, text: string) => {
     const n = text.trim() === "" ? null : Number(text);
@@ -88,6 +83,10 @@ function BenchmarkRow({ spec, value }: { spec: KpiSpec; value: Benchmark | undef
     auto.schedule(next);
   };
   const problem = benchmarkProblem(draft, spec);
+  const fields: Array<{ key: keyof Benchmark; label: string }> = [
+    { key: "minimum", label: spec.lowerIsBetter ? "Limit" : "Minimum" },
+    { key: "stretch", label: "Stretch" },
+  ];
   return (
     <section className="rounded-xl border border-border p-4 space-y-3">
       <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -98,8 +97,8 @@ function BenchmarkRow({ spec, value }: { spec: KpiSpec; value: Benchmark | undef
         </p>
         <SaveChip state={auto.state} error={auto.error} onRetry={auto.flush} />
       </div>
-      <div className="grid grid-cols-3 gap-2">
-        {FIELDS.map(({ key, label }) => (
+      <div className="grid grid-cols-2 gap-2">
+        {fields.map(({ key, label }) => (
           <label key={key} className="text-xs font-medium text-muted-foreground">
             {label}
             <input

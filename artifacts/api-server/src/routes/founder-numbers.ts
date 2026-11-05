@@ -2,6 +2,7 @@
  * Founder Numbers page — trend graphs behind the tiles (Objective I).
  *
  *   GET /api/founder-numbers/trend?from=YYYY-MM-DD&to=YYYY-MM-DD[&granularity=hour|day|week|month]
+ *   GET /api/founder-numbers/day-pace   how a normal day builds up, by the hour
  *
  * One read returns EVERY graphed metric per bucket for the period — sales,
  * orders, AOV, new-customer revenue/count, subscription counts/revenue, ad
@@ -25,6 +26,8 @@ import { requireFounderArea } from "../middleware/founder-area-access";
 import { validateQuery } from "../middleware/validate";
 import { getOrdersByLondonDays } from "../services/shopify";
 import { loadSpendDays } from "../lib/ad-spend-days";
+import { buildDayPace } from "../lib/day-pace";
+import { addDaysToDateString, londonDateString } from "../lib/london-time";
 import {
   buildTrendSeries, dayCountBetween, resolveGranularity, MAX_TREND_DAYS,
   type Granularity, type SpendDay, type TrendSeries,
@@ -90,6 +93,25 @@ router.get("/trend", validateQuery(trendQuery), async (_req: Request, res: Respo
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[founder-numbers] trend error:", msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
+const PACE_DAYS = 28;
+const PACE_TTL_MS = 60 * 60_000;
+let paceCache: { at: number; data: Record<string, number[]> } | null = null;
+
+/** The last four full weeks, so every weekday counts the same. Takes no input. */
+router.get("/day-pace", async (_req: Request, res: Response) => {
+  if (paceCache && Date.now() - paceCache.at < PACE_TTL_MS) { res.json(paceCache.data); return; }
+  try {
+    const yesterday = addDaysToDateString(londonDateString(new Date()), -1);
+    const data = buildDayPace(await getOrdersByLondonDays(addDaysToDateString(yesterday, -(PACE_DAYS - 1)), yesterday));
+    paceCache = { at: Date.now(), data };
+    res.json(data);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[founder-numbers] day-pace error:", msg);
     res.status(502).json({ error: msg });
   }
 });

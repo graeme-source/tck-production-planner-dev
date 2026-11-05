@@ -1,51 +1,61 @@
 /**
- * The band across the top of a Numbers panel (Graeme, 5 Nov 2026): its grade
- * in the Advertising Efficiency colours, the three benchmarks scaled to the
- * period, and an arrow for whether it's improving. Maths and rules:
- * lib/numbers-benchmarks.ts. A KPI with no benchmarks shows just the arrow.
+ * The colour band across the top of a Numbers panel (Graeme, 5 Nov 2026): the
+ * Advertising Efficiency scale, for where the figure sits against its minimum
+ * and stretch, with those two figures scaled to the period. On a running day
+ * it says where the day is heading. The founder sets the figures from here.
+ * Rules: lib/numbers-benchmarks.ts.
  */
-import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
+import { useState } from "react";
+import { Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { formatBenchmark, gradeKpi, kpiChange, kpiSpec, type KpiChange, type KpiId } from "@/lib/numbers-benchmarks";
+import { formatBenchmark, gradeKpi, kpiSpec, type KpiId } from "@/lib/numbers-benchmarks";
 import { useNumbersBenchmarks } from "./api";
+import { BenchmarksDialog } from "./benchmarks-dialog";
 
-const CHANGE_CLASS = (c: KpiChange) =>
-  c.better == null ? "text-stone-700" : c.better ? "text-emerald-700" : "text-rose-700";
-
-export function KpiGradeStrip({ kpi, value, days = 1, prior, compareLabel }: {
+export function KpiGradeStrip({ kpi, value, days = 1, forecast }: {
   kpi: KpiId;
   value: number | null | undefined;
-  /** Days the benchmark covers: benchmarkDays(). */
-  days?: number;
-  /** The same figure in the period it's compared with. */
-  prior?: number | null;
-  compareLabel: string;
+  /** Days the benchmark covers: benchmarkDays(). Null = too early to judge. */
+  days?: number | null;
+  /** Where a running day should end up: dayForecast(). */
+  forecast?: number | null;
 }) {
   const { data } = useNumbersBenchmarks();
+  const [editing, setEditing] = useState(false);
   const spec = kpiSpec(kpi);
-  const grade = gradeKpi(value, data?.benchmarks[kpi], spec, days);
-  const change = kpiChange(value, prior, spec);
-  if (!grade && !change) return null;
-  const Arrow = change?.direction === "up" ? ArrowUpRight : change?.direction === "down" ? ArrowDownRight : Minus;
+  const benchmark = data?.benchmarks[kpi];
+  const grade = days == null ? null : gradeKpi(value, benchmark, spec, days);
+  const hasBenchmark = benchmark?.minimum != null && benchmark.stretch != null;
+  if (!hasBenchmark && !data?.canEdit) return null;
+
+  const words = grade
+    ? `Min ${formatBenchmark(grade.levels.minimum, spec.unit)} · Stretch ${formatBenchmark(grade.levels.stretch, spec.unit)}`
+    : hasBenchmark ? (days == null ? "Too early to tell" : "No figure yet") : "Set a benchmark";
   return (
-    <div
-      className={cn("px-5 py-2", grade ? (grade.shade.darkBackground ? "text-white" : "text-stone-900") : "bg-secondary/60")}
-      style={grade ? { backgroundColor: grade.shade.hex } : undefined}
-    >
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <span className="text-sm font-bold">{grade?.word}</span>
-        {change && (
-          <span className={cn("inline-flex items-center gap-1 rounded-full bg-white/90 px-2 py-0.5 text-xs font-bold tabular-nums", CHANGE_CLASS(change))}>
-            <Arrow className="w-3.5 h-3.5" />
-            {change.direction === "flat" ? "Level" : `${change.percent}%`} vs {compareLabel}
-          </span>
-        )}
+    <>
+      <div
+        className={cn("px-5 py-1.5 flex items-center justify-between gap-2 flex-wrap text-xs font-semibold tabular-nums", grade ? (grade.shade.darkBackground ? "text-white" : "text-stone-900") : "bg-secondary/60 text-muted-foreground")}
+        style={grade ? { backgroundColor: grade.shade.hex } : undefined}
+      >
+        <span>{words}</span>
+        <span className="inline-flex items-center gap-2">
+          {forecast != null && <span>On course for {formatBenchmark(forecast, spec.unit)}</span>}
+          {data?.canEdit && (
+            // A span, not a button: the band can sit inside a tile that is one.
+            <span
+              role="button"
+              tabIndex={0}
+              aria-label={`Change the ${spec.label} benchmark`}
+              onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setEditing(true); } }}
+              className="p-1 rounded hover:bg-black/10 cursor-pointer"
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </span>
+          )}
+        </span>
       </div>
-      {grade && (
-        <p className="text-[11px] font-medium opacity-90 tabular-nums mt-0.5">
-          Min {formatBenchmark(grade.levels.minimum, spec.unit)} · Good {formatBenchmark(grade.levels.good, spec.unit)} · Very good {formatBenchmark(grade.levels.veryGood, spec.unit)}
-        </p>
-      )}
-    </div>
+      {editing && <BenchmarksDialog only={kpi} onClose={() => setEditing(false)} />}
+    </>
   );
 }

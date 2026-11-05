@@ -2,7 +2,7 @@
  * Benchmarks for the Numbers page panels (Graeme, 5 Nov 2026). Objective I.
  *
  *   GET /api/numbers-benchmarks        every KPI's benchmarks, + may-I-edit
- *   PUT /api/numbers-benchmarks/:kpi   set one KPI's three figures (founder only)
+ *   PUT /api/numbers-benchmarks/:kpi   set one KPI's two figures (founder only)
  *
  * Reading is the same gate as the rest of Numbers; changing is the founder
  * alone. The grading itself is production-planner lib/numbers-benchmarks.ts
@@ -26,7 +26,7 @@ const KPIS = [
 ] as const;
 
 const figure = z.number().min(0).max(999_999_999).nullable();
-const BenchmarkBody = z.object({ minimum: figure, good: figure, veryGood: figure });
+const BenchmarkBody = z.object({ minimum: figure, stretch: figure });
 
 async function canEdit(userId: number): Promise<boolean> {
   const me = await db.execute<{ email: string | null }>(sql`SELECT email FROM app_users WHERE id = ${userId} LIMIT 1`);
@@ -37,11 +37,11 @@ const num = (v: string | null) => (v == null ? null : Number(v));
 
 router.get("/", async (req: Request, res: Response) => {
   try {
-    const rows = await db.execute<{ kpi: string; minimum: string | null; good: string | null; very_good: string | null }>(
-      sql`SELECT kpi, minimum, good, very_good FROM numbers_benchmarks`,
+    const rows = await db.execute<{ kpi: string; minimum: string | null; stretch: string | null }>(
+      sql`SELECT kpi, minimum, stretch FROM numbers_benchmarks`,
     );
     res.json({
-      benchmarks: Object.fromEntries(rows.rows.map(r => [r.kpi, { minimum: num(r.minimum), good: num(r.good), veryGood: num(r.very_good) }])),
+      benchmarks: Object.fromEntries(rows.rows.map(r => [r.kpi, { minimum: num(r.minimum), stretch: num(r.stretch) }])),
       canEdit: await canEdit(req.session.userId!),
     });
   } catch (err) {
@@ -53,12 +53,12 @@ router.get("/", async (req: Request, res: Response) => {
 router.put("/:kpi", requireFounder, validate(BenchmarkBody), async (req: Request, res: Response) => {
   const kpi = req.params["kpi"] as (typeof KPIS)[number];
   if (!KPIS.includes(kpi)) { res.status(404).json({ error: "Unknown KPI" }); return; }
-  const { minimum, good, veryGood } = req.body as z.infer<typeof BenchmarkBody>;
+  const { minimum, stretch } = req.body as z.infer<typeof BenchmarkBody>;
   try {
     await db.execute(sql`
-      INSERT INTO numbers_benchmarks (kpi, minimum, good, very_good, updated_by_id, updated_at)
-      VALUES (${kpi}, ${minimum}, ${good}, ${veryGood}, ${req.session.userId!}, NOW())
-      ON CONFLICT (kpi) DO UPDATE SET minimum = ${minimum}, good = ${good}, very_good = ${veryGood},
+      INSERT INTO numbers_benchmarks (kpi, minimum, stretch, updated_by_id, updated_at)
+      VALUES (${kpi}, ${minimum}, ${stretch}, ${req.session.userId!}, NOW())
+      ON CONFLICT (kpi) DO UPDATE SET minimum = ${minimum}, stretch = ${stretch},
         updated_by_id = ${req.session.userId!}, updated_at = NOW()
     `);
     res.json({ ok: true });
