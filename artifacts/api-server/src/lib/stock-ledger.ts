@@ -287,13 +287,16 @@ export function medianAbsGap(variances: CountVariance[]): number | null {
 
 // ── Orders page ─────────────────────────────────────────────────────────
 
-export type OrderStockBasis = "count" | "expected" | "not-counted";
+export type OrderStockBasis = "count" | "last-check" | "expected" | "not-counted";
 
 export interface OrderStockInput {
   /** What the Orders page has always read: the newest stock row or daily
    *  check (a count, plus any delivery appended after it). */
   snapshotStock: number;
   stockCheckEnabled: boolean;
+  /** Counted every day. A weekly-checked item not being counted today is
+   *  normal, not a sign nothing has moved. */
+  checkedDaily: boolean;
   /** London date (YYYY-MM-DD) of the latest real count; null = never. */
   lastCountDate: string | null;
   /** Today's London date. */
@@ -316,20 +319,30 @@ export interface OrderStockChoice {
 }
 
 /**
- * Which stock figure the order uses (Graeme, 15 Oct 2026):
+ * Which stock figure the order uses (Graeme, 15 Oct 2026; 5 Nov 2026):
  *  - counted today (any item) → that count, exactly as before;
- *  - otherwise, with a count to start from and usage the app can see →
- *    the EXPECTED figure (last count + deliveries − usage), clamped at 0;
+ *  - a daily-checked item with a count to start from and usage the app can
+ *    see → the LAST CHECK plus what's been delivered since. Usage stays out:
+ *    a daily item missed today is one nobody needed to recount. Still-to-prep
+ *    runs from the time of that check, the same as for a count;
+ *  - a weekly-checked item, or a kanban nobody checks → the EXPECTED figure
+ *    (last count + deliveries − usage), clamped at 0. Days of real use sit
+ *    between its counts, and leaving them out would under-order;
  *  - otherwise as before: the stale count for stock-checked items, and
  *    "not counted" for kanban items nobody checks.
- * A count from an earlier day has had usage since that the expected figure
- * takes off, so "fresh" means today, whatever the check frequency.
  */
 export function chooseOrderStock(input: OrderStockInput): OrderStockChoice {
   if (input.lastCountDate != null && input.lastCountDate === input.today) {
     return { basis: "count", stockOnHand: input.snapshotStock, outstandingPrepFromNow: false };
   }
   if (input.expected && input.coverage !== "untracked") {
+    if (input.stockCheckEnabled && input.checkedDaily) {
+      return {
+        basis: "last-check",
+        stockOnHand: Math.max(0, input.expected.basedOn.qty + input.expected.receipts),
+        outstandingPrepFromNow: false,
+      };
+    }
     const addBack = input.expected.usageByPlan[input.selectedPlanId] ?? 0;
     return {
       basis: "expected",

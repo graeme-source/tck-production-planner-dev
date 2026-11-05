@@ -58,16 +58,26 @@ of its use is inside a sub-recipe), or **Usage not tracked**.
   expected now, what it's built from, each count vs what was expected at that
   moment, and flags for big or repeated gaps.
 - **Orders**: with a count today the count is used as before, and a quiet
-  "expected 4.2" sits beside it. Without one, the line reads
-  "Expected ~X kg — last counted 12 Oct, + deliveries − usage" and the order is
-  worked out from it, so an order can be placed without counting. Its box
-  starts empty: typing a number records a real count.
+  "expected 4.2" sits beside it. Without one (Graeme, 5 Nov 2026) the line
+  shows the last check's date and value, with nothing to press, and so an order
+  can be placed without counting:
+  - **Checked daily**: the order uses the last check plus anything delivered
+    since. Usage is left out. Tins ticked since the check still come off as
+    still-to-prep, the same as for a count.
+  - **Checked weekly, or a kanban nobody checks**: the order uses the expected
+    figure, shown under the last check as "Expected ~X kg — last counted 12 Oct,
+    + deliveries − usage". Days of use sit between these items' counts (flour:
+    165 kg in 3 days), so leaving usage out would under-order.
+
+  Its box starts empty and the blue button stays: typing a number records a
+  real count.
 
 ### Orders: no double counting
 
 Still-to-prep (`lib/outstanding-prep.ts`) takes off tins not yet inside the
-stock figure. From a count: tins ticked after the count, and unticked tins.
-From the expected figure the ledger has already taken off the ticked tins, so
+stock figure. From a count or the last check: tins ticked after the count, and
+unticked tins (the route passes the count's own time, because a delivery row
+moves `stockCheckTimestamps` on). From the expected figure the ledger has already taken off the ticked tins, so
 still-to-prep counts only unticked ones (`isTinOutstanding` with "now"). The
 plan being ordered for already counts its whole requirement, so its own usage
 since the count is added back. Tested in `stock-ledger.test.ts`.

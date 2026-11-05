@@ -15,11 +15,20 @@ const ledger: IngredientLedger = {
   ],
 };
 
-const base = { ledger, snapshotStock: 14, stockCheckEnabled: true, nowMs: at(14, 15), toLondonDate, selectedPlanId: 3 };
+const base = { ledger, snapshotStock: 14, stockCheckEnabled: true, checkedDaily: true, nowMs: at(14, 15), toLondonDate, selectedPlanId: 3 };
 
 describe("orderLineStock", () => {
-  it("not counted today: orders from the expected figure and says what it's built from", () => {
+  it("daily item not counted today: orders from the last check plus deliveries", () => {
     const s = orderLineStock({ ...base, today: "2026-10-14" });
+    expect(s.basis).toBe("last-check");
+    expect(s.stockOnHand).toBe(14); // 4 + 10, the 7.5 used stays in
+    expect(s.outstandingPrepFromNow).toBe(false);
+    expect(s.expectedStock).toMatchObject({ basedOnCountQty: 4, receiptsSince: 10 });
+    expect(s.expectedStock!.basedOnCountAt).toBe(new Date(at(13, 14)).toISOString());
+  });
+
+  it("weekly item not counted today: orders from the expected figure and says what it's built from", () => {
+    const s = orderLineStock({ ...base, checkedDaily: false, today: "2026-10-14" });
     expect(s.basis).toBe("expected");
     expect(s.stockOnHand).toBe(6.5); // 4 + 10 − 7.5
     expect(s.outstandingPrepFromNow).toBe(true);

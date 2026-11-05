@@ -5,9 +5,10 @@
  *
  *  - Counted today → the count, as before; the expected figure at the
  *    moment of that count rides along quietly ("expected 4.2").
- *  - Not counted today, with a count to start from and tracked usage →
- *    "Expected ~X (last counted 12 Oct, + deliveries − usage)", and the
- *    order is worked out from it.
+ *  - Not counted today, checked daily, with tracked usage → the last check
+ *    and its date, and the order is worked out from it plus deliveries since.
+ *  - Checked weekly, or a kanban nobody checks → "Expected ~X (last counted
+ *    12 Oct, + deliveries − usage)", and the order is worked out from that.
  *  - Never counted, or nothing uses it → as before ("Not counted — kanban"
  *    / the stale count).
  */
@@ -47,6 +48,7 @@ export function orderLineStock(args: {
   ledger: IngredientLedger | undefined;
   snapshotStock: number;
   stockCheckEnabled: boolean;
+  checkedDaily: boolean;
   nowMs: number;
   today: string;
   toLondonDate: (ms: number) => string;
@@ -58,6 +60,7 @@ export function orderLineStock(args: {
   const choice = chooseOrderStock({
     snapshotStock: args.snapshotStock,
     stockCheckEnabled: args.stockCheckEnabled,
+    checkedDaily: args.checkedDaily,
     lastCountDate: exp ? args.toLondonDate(exp.basedOn.at) : null,
     today: args.today,
     expected: exp,

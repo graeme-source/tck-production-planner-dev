@@ -1,4 +1,3 @@
-import { Button } from "@/components/ui/button";
 import {
   deliveredSinceLabel,
   expectedStockBasisLine,
@@ -6,24 +5,23 @@ import {
   expectedStockTooltip,
   lastCheckValue,
   lastCheckWhen,
-  stockFromLastCheck,
+  orderingFromLabel,
   type ExpectedStock,
 } from "@/lib/expected-stock-label";
-import { CheckCircle2, Clock, History } from "lucide-react";
+import { Clock } from "lucide-react";
 
 // A line nobody has counted today (Graeme, 5 Nov 2026): when it was last
-// checked and what it came to are always on show, and the order can be worked
-// out from that instead of the expected figure, e.g. when there's no production
-// tomorrow and nothing has moved. It never records a stock check.
+// checked and what it came to are always on show, so anyone can decide whether
+// it needs a new check. The order already uses it, with nothing to press. An
+// item counted weekly orders from the expected figure, which says so here.
 
-export function OrderLastCheck({ expected, unit, using, onUse, onStopUsing }: {
+export function OrderLastCheck({ expected, unit, orderingFromIt }: {
   expected: ExpectedStock;
   unit: string;
-  using: boolean;
-  onUse: () => void;
-  onStopUsing: () => void;
+  orderingFromIt: boolean;
 }) {
   const delivered = deliveredSinceLabel(expected, unit);
+  const orderingFrom = orderingFromIt ? orderingFromLabel(expected, unit) : null;
   return (
     <div className="flex flex-col items-end gap-1 mt-0.5 text-right">
       <div className="text-xs leading-tight">
@@ -32,26 +30,13 @@ export function OrderLastCheck({ expected, unit, using, onUse, onStopUsing }: {
         </span>
         <span className="block text-sm font-bold">{lastCheckValue(expected, unit)}</span>
         {delivered && <span className="block text-muted-foreground">{delivered}</span>}
+        {orderingFrom && <span className="block font-semibold">{orderingFrom}</span>}
       </div>
-      {using ? (
-        <>
-          <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400 inline-flex items-center gap-1">
-            <CheckCircle2 className="w-3.5 h-3.5" /> Ordering from {Number(stockFromLastCheck(expected).toFixed(2))} {unit}
-          </span>
-          <Button type="button" variant="ghost" size="sm" className="h-auto min-h-[32px] px-2 text-xs" onClick={onStopUsing}>
-            Use expected instead
-          </Button>
-        </>
-      ) : (
-        <>
-          <Button type="button" variant="outline" size="sm" className="min-h-[40px]" onClick={onUse}>
-            <History className="w-4 h-4 mr-1" /> Use last check
-          </Button>
-          <span className="text-[10px] leading-tight text-sky-700 dark:text-sky-300" title={expectedStockTooltip(expected, unit)}>
-            <span className="block font-semibold">{expectedStockHeadline(expected, unit)}</span>
-            <span className="block text-muted-foreground">{expectedStockBasisLine(expected)}</span>
-          </span>
-        </>
+      {!orderingFromIt && (
+        <span className="text-[10px] leading-tight text-sky-700 dark:text-sky-300" title={expectedStockTooltip(expected, unit)}>
+          <span className="block font-semibold">{expectedStockHeadline(expected, unit)}</span>
+          <span className="block text-muted-foreground">{expectedStockBasisLine(expected)}</span>
+        </span>
       )}
     </div>
   );

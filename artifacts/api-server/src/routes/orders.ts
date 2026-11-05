@@ -357,20 +357,25 @@ router.get("/calculate", async (req, res) => {
   // other plan's outstanding prep whenever the selected plan happened to be
   // today's prep plan.
   //
-  // Running stock (Graeme, 15 Oct 2026 — docs/RUNNING_STOCK.md): without a
-  // count today, an ingredient's stock is its EXPECTED figure — last real
+  // Running stock (Graeme, 15 Oct 2026 — docs/RUNNING_STOCK.md): a weekly-
+  // checked item without a count today uses its EXPECTED figure — last real
   // count + deliveries − usage since (lib/stock-ledger*.ts). Ticked tins are
   // then already off that figure, so its still-to-prep counts only unticked
-  // tins: "now" is passed as its checked-at (isTinOutstanding).
+  // tins: "now" is passed as its checked-at (isTinOutstanding). A daily item
+  // uses its last check + deliveries (5 Nov 2026), so still-to-prep runs from
+  // that check. stockCheckTimestamps won't do: a delivery row moves it on.
   timer.mark("stock");
   const ledgerNow = new Date();
   const stockLedgers = await loadStockLedgers({ since: new Date(ledgerNow.getTime() - 120 * 86_400_000), until: ledgerNow, latestCountsOnly: true });
+  const weeklyCheckedIds = new Set((await db.select({ id: ingredientsTable.id }).from(ingredientsTable)
+    .where(eq(ingredientsTable.stockCheckFrequency, "weekly"))).map(r => r.id));
   const lineStockByIngredient: Record<number, OrderLineStock> = {};
   const lineStockFor = (iid: number, stockCheckEnabled: boolean): OrderLineStock =>
     (lineStockByIngredient[iid] ??= orderLineStock({
       ledger: stockLedgers.get(iid)?.ledger,
       snapshotStock: latestStockByIngredient[iid] ?? 0,
       stockCheckEnabled,
+      checkedDaily: !weeklyCheckedIds.has(iid),
       nowMs: ledgerNow.getTime(),
       today,
       toLondonDate: ms => londonDateString(new Date(ms)),
@@ -379,9 +384,9 @@ router.get("/calculate", async (req, res) => {
   timer.mark("ledger");
   const prepCheckedAt: Record<number, string | undefined> = { ...stockCheckTimestamps };
   for (const iid of ingredientIds) {
-    if (lineStockFor(iid, ingredientLookup[iid]?.stockCheckEnabled ?? false).outstandingPrepFromNow) {
-      prepCheckedAt[iid] = ledgerNow.toISOString();
-    }
+    const lineStock = lineStockFor(iid, ingredientLookup[iid]?.stockCheckEnabled ?? false);
+    if (lineStock.outstandingPrepFromNow) prepCheckedAt[iid] = ledgerNow.toISOString();
+    else if (lineStock.basis === "last-check") prepCheckedAt[iid] = lineStock.expectedStock?.basedOnCountAt;
   }
   const outstandingPrep = await computeOutstandingPrepRaw(prepCheckedAt);
   const selectedPlanShare = outstandingPrep.byPlan[planId] ?? {};

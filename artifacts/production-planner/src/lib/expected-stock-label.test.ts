@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  canUseLastCheck,
+  orderingFromLabel,
   deliveredSinceLabel,
   expectedAtCountLabel,
   expectedStockBasisLine,
@@ -80,28 +80,27 @@ describe("the last stock check on Orders", () => {
   it("orders from the count plus what's been delivered, without taking off usage", () => {
     expect(stockFromLastCheck(e)).toBe(15.5);
     expect(deliveredSinceLabel(e, "kg")).toBe("+12.5 kg delivered since");
+    expect(orderingFromLabel(e, "kg")).toBe("Ordering from 15.5 kg");
   });
 
   it("says nothing about deliveries when there haven't been any", () => {
     const none = { ...e, receiptsSince: 0 };
     expect(stockFromLastCheck(none)).toBe(3);
     expect(deliveredSinceLabel(none, "kg")).toBeNull();
+    expect(orderingFromLabel(none, "kg")).toBeNull();
   });
 
   it("never goes below nothing, e.g. after an undone delivery", () => {
     expect(stockFromLastCheck({ ...e, basedOnCountQty: 1, receiptsSince: -5 })).toBe(0);
   });
 
-  it("is offered only on lines nobody has counted today", () => {
-    expect(canUseLastCheck({ stockBasis: "expected", expectedStock: e, stockDirty: false })).toBe(true);
-    expect(canUseLastCheck({ stockBasis: "count", expectedStock: e, stockDirty: false })).toBe(false);
-    expect(canUseLastCheck({ stockBasis: "expected", expectedStock: null, stockDirty: false })).toBe(false);
-    expect(canUseLastCheck({ stockBasis: "expected", expectedStock: e, stockDirty: true })).toBe(false);
-    expect(canUseLastCheck({ stockBasis: "expected", expectedStock: e, stockDirty: true, usingLastCheck: true })).toBe(false);
+  it("keeps the blue button and saves nothing: the last check isn't a count today", () => {
+    expect(stockBoxStartsBlank({ stockBasis: "last-check", stockDirty: false })).toBe(true);
+    expect(shouldSaveStockOnBlur({ stockBasis: "last-check", stockDirty: false })).toBe(false);
   });
 
-  it("keeps the blue button: using the last check isn't a count", () => {
-    expect(stockBoxStartsBlank({ stockBasis: "expected", stockDirty: true, usingLastCheck: true })).toBe(true);
-    expect(shouldSaveStockOnBlur({ stockBasis: "expected", stockDirty: true, usingLastCheck: true })).toBe(false);
+  it("typing a number over it records a real count, as ever", () => {
+    expect(stockBoxStartsBlank({ stockBasis: "last-check", stockDirty: true })).toBe(false);
+    expect(shouldSaveStockOnBlur({ stockBasis: "last-check", stockDirty: true })).toBe(true);
   });
 });

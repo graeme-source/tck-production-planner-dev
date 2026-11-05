@@ -29,7 +29,6 @@ import {
   Calendar,
   RefreshCw,
   Clock,
-  History,
   Trash2,
   Mail,
   MessageCircle,
@@ -67,7 +66,6 @@ import { filterAddItemIngredients } from "@/lib/add-item-filter";
 import { formatCount, kanbanOrderPacks, nativeToStockCount, packNoun, positivePalletSize, packsToBaseQty } from "@workspace/units";
 import { StockCheckDialog, StockCheckTrigger } from "@/pages/station/shared/stock-check-entry";
 import { OrderLastCheck } from "@/components/order-last-check";
-import { Button } from "@/components/ui/button";
 import { londonToday } from "@/lib/station-training";
 import { UsedInLink } from "@/components/ingredient-usage-dialog";
 import {
@@ -99,8 +97,6 @@ import {
   expectedAtCountLabel,
   stockBoxStartsBlank,
   showsStockCheckButton,
-  stockFromLastCheck,
-  canUseLastCheck,
   type ExpectedStock,
   type StockBasis,
 } from "@/lib/expected-stock-label";
@@ -268,21 +264,10 @@ type EditableLine = OrderLine & {
   editedPacks: number;
   editedStock: number;
   stockDirty: boolean;
-  // Worked out from the last stock check instead of the expected figure.
-  // Nothing is recorded: it isn't a count.
-  usingLastCheck?: boolean;
   // Manual additions from the per-supplier "+ Add item" picker. These are
   // always orderable regardless of belowRequirement state.
   isManual?: boolean;
 };
-
-/** The line's stock as the last check has it, in the unit the line works in. */
-function lastCheckStock(line: OrderLine): number {
-  const stock = line.expectedStock ? stockFromLastCheck(line.expectedStock) : line.stockOnHand;
-  const ownUnit = line.nativeUnit ?? line.unit;
-  // Pack-counted kanban lines keep their stock figure in packs.
-  return ownUnit === line.unit ? stock : (nativeToStockCount(stock, "packs", { unit: ownUnit, packWeight: line.packWeight }) ?? stock);
-}
 
 type SupplierIngredient = {
   id: number;
@@ -824,24 +809,15 @@ export default function Orders() {
           // toggle) so a refetch doesn't blow away their typing.
           const prior = existing.find(e => e.ingredientId === l.ingredientId);
           if (prior && !prior.isManual && !prior.isMisc) {
-            // Once someone has counted it, the last check has been replaced.
-            const counted = !!prior.usingLastCheck && l.stockBasis !== "expected";
-            const keepStock = prior.stockDirty && !counted;
-            // Still the last check, but a delivery may have landed since.
-            if (prior.usingLastCheck && !counted && l.expectedStock) {
-              const editedStock = lastCheckStock(l);
-              return { ...l, isKanban: prior.isKanban || l.isKanban, checked: prior.checked, editedStock, editedPacks: suggestedPacks(l, editedStock), stockDirty: true, usingLastCheck: true };
-            }
             return {
               ...l,
               // A pulled kanban STAYS a kanban across refetches — losing the
               // flag is what let the calc re-absorb and re-sort it.
               isKanban: prior.isKanban || l.isKanban,
               checked: prior.checked,
-              editedPacks: keepStock ? prior.editedPacks : l.packsToOrder,
-              editedStock: keepStock ? prior.editedStock : l.stockOnHand,
-              stockDirty: keepStock,
-              usingLastCheck: false,
+              editedPacks: prior.stockDirty ? prior.editedPacks : l.packsToOrder,
+              editedStock: prior.stockDirty ? prior.editedStock : l.stockOnHand,
+              stockDirty: prior.stockDirty,
             };
           }
           return {
@@ -1629,7 +1605,7 @@ export default function Orders() {
     setEditableLines(prev => {
       const updated = { ...prev };
       const lines = [...(updated[supplierId] || [])];
-      const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true, usingLastCheck: false };
+      const line = { ...lines[idx], editedStock: Math.max(0, newStock), stockDirty: true };
       // Recalculate packs based on new stock. Mirror the backend: deduct
       // undelivered inbound on open POs, round up to whole packs, kanban
       // floor, then up to the nearest whole case (lib/order-line-surplus).
@@ -1638,28 +1614,6 @@ export default function Orders() {
       updated[supplierId] = lines;
       return updated;
     });
-  }, []);
-
-  // Order from the last stock check rather than the expected figure (Graeme,
-  // 5 Nov 2026). The packs change, but no stock check is recorded.
-  const applyLastCheck = useCallback((supplierId: number, match: (line: EditableLine) => boolean) => {
-    setEditableLines(prev => ({
-      ...prev,
-      [supplierId]: (prev[supplierId] ?? []).map(line => {
-        if (!match(line) || !line.expectedStock) return line;
-        const editedStock = lastCheckStock(line);
-        return { ...line, editedStock, editedPacks: suggestedPacks(line, editedStock), stockDirty: true, usingLastCheck: true };
-      }),
-    }));
-  }, []);
-
-  const dropLastCheck = useCallback((supplierId: number, ingredientId: number) => {
-    setEditableLines(prev => ({
-      ...prev,
-      [supplierId]: (prev[supplierId] ?? []).map(line => line.ingredientId === ingredientId
-        ? { ...line, editedStock: line.stockOnHand, editedPacks: suggestedPacks(line, line.stockOnHand), stockDirty: false, usingLastCheck: false }
-        : line),
-    }));
   }, []);
 
   const saveStockCheck = useCallback(async (ingredientId: number, quantity: number) => {
@@ -1678,7 +1632,7 @@ export default function Orders() {
         for (const [sid, lines] of Object.entries(updated)) {
           updated[Number(sid)] = lines.map(l =>
             l.ingredientId === ingredientId
-              ? { ...l, stockOnHand: quantity, lastStockCheckAt: data.checkedAt, stockDirty: false, usingLastCheck: false }
+              ? { ...l, stockOnHand: quantity, lastStockCheckAt: data.checkedAt, stockDirty: false }
               : l
           );
         }
@@ -2335,7 +2289,6 @@ export default function Orders() {
         const allChecked = orderableLines.length > 0 && orderableLines.every(l => l.checked);
         const checkedCount = orderableLines.filter(l => l.checked).length;
         const nonRequiredCount = allLines.length - orderableLines.length;
-        const lastCheckIds = orderableLines.filter(canUseLastCheck).map(l => l.ingredientId);
         const expanded = expandedSuppliers.has(so.supplier.id);
         const cost = estimatedCost(orderableLines);
         const reopenedPOId = reopenedPlacedOrders[so.supplier.id]?.id;
@@ -2508,13 +2461,6 @@ export default function Orders() {
 
             {expanded && (
               <div className="border-t border-border">
-                {lastCheckIds.length > 1 && (
-                  <div className="flex justify-end px-3 pt-3">
-                    <Button type="button" variant="outline" size="sm" className="min-h-[40px]" onClick={() => applyLastCheck(so.supplier.id, l => lastCheckIds.includes(l.ingredientId))}>
-                      <History className="w-4 h-4 mr-1" /> Use last check on all {lastCheckIds.length}
-                    </Button>
-                  </div>
-                )}
                 <div className="overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead>
@@ -2668,13 +2614,11 @@ export default function Orders() {
                                   onClick={() => setStockDialog({ supplierId: so.supplier.id, idx, line })}
                                 />
                               )}
-                              {line.stockBasis === "expected" && line.expectedStock && (!line.stockDirty || line.usingLastCheck) ? (
+                              {(line.stockBasis === "last-check" || line.stockBasis === "expected") && line.expectedStock && !line.stockDirty ? (
                                 <OrderLastCheck
                                   expected={line.expectedStock}
                                   unit={line.nativeUnit ?? line.unit}
-                                  using={!!line.usingLastCheck}
-                                  onUse={() => applyLastCheck(so.supplier.id, l => l.ingredientId === line.ingredientId)}
-                                  onStopUsing={() => dropLastCheck(so.supplier.id, line.ingredientId)}
+                                  orderingFromIt={line.stockBasis === "last-check"}
                                 />
                               ) : !showsStockCheckButton(line) && !line.stockDirty ? (
                                 <span

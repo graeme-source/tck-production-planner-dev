@@ -156,7 +156,7 @@ describe("chooseOrderStock", () => {
 
   const base = {
     snapshotStock: 35, stockCheckEnabled: true, lastCountDate: "2026-10-12", today: "2026-10-14",
-    expected: exp, coverage: "tracked" as const, selectedPlanId: 9,
+    checkedDaily: true, expected: exp, coverage: "tracked" as const, selectedPlanId: 9,
   };
 
   it("uses today's count as before", () => {
@@ -164,14 +164,28 @@ describe("chooseOrderStock", () => {
       .toEqual({ basis: "count", stockOnHand: 35, outstandingPrepFromNow: false });
   });
 
-  it("uses the expected figure without a count today, adding back the ordered plan's own usage", () => {
+  it("a daily item not counted today orders from its last check plus deliveries, usage left out", () => {
+    // 10 + 25; the 10 used since stays in, and no tin has been taken off yet.
+    expect(chooseOrderStock(base)).toEqual({ basis: "last-check", stockOnHand: 35, outstandingPrepFromNow: false });
+  });
+
+  it("never orders against a negative last check, e.g. after an undone delivery", () => {
+    expect(chooseOrderStock({ ...base, expected: { ...exp!, receipts: -40 } }).stockOnHand).toBe(0);
+  });
+
+  it("a weekly item keeps the expected figure: its usage between counts is real", () => {
     // expected = 10 + 25 − 6 − 4 = 25; plan 9's 4 is already in its requirement.
-    expect(chooseOrderStock(base)).toEqual({ basis: "expected", stockOnHand: 29, outstandingPrepFromNow: true });
+    expect(chooseOrderStock({ ...base, checkedDaily: false }))
+      .toEqual({ basis: "expected", stockOnHand: 29, outstandingPrepFromNow: true });
+  });
+
+  it("a kanban nobody checks has no last check worth trusting, so keeps the expected figure too", () => {
+    expect(chooseOrderStock({ ...base, stockCheckEnabled: false }).basis).toBe("expected");
   });
 
   it("never orders against a negative expected figure", () => {
     const neg = { ...exp!, expected: -8, usageByPlan: {} };
-    expect(chooseOrderStock({ ...base, expected: neg }).stockOnHand).toBe(0);
+    expect(chooseOrderStock({ ...base, checkedDaily: false, expected: neg }).stockOnHand).toBe(0);
   });
 
   it("keeps the old behaviour when usage isn't tracked or there's no count", () => {

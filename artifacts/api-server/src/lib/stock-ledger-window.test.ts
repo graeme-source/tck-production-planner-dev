@@ -73,7 +73,9 @@ describe("ledger windowed to its two latest counts (Orders page, #376)", () => {
           toLondonDate: (ms: number) => new Date(ms).toISOString().slice(0, 10),
           selectedPlanId,
         };
-        expect(orderLineStock({ ...args, ledger: trimmed })).toEqual(orderLineStock({ ...args, ledger: full }));
+        for (const checkedDaily of [true, false]) {
+          expect(orderLineStock({ ...args, checkedDaily, ledger: trimmed })).toEqual(orderLineStock({ ...args, checkedDaily, ledger: full }));
+        }
       }
     }
   });

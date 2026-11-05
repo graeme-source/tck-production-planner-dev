@@ -5,7 +5,7 @@
  * expected figure is never shown at a station or on a stock-check screen.
  */
 
-export type StockBasis = "count" | "expected" | "not-counted";
+export type StockBasis = "count" | "last-check" | "expected" | "not-counted";
 
 export interface ExpectedStock {
   qty: number;
@@ -41,7 +41,7 @@ export function expectedStockTooltip(e: ExpectedStock, unit: string): string {
     `− ${num(e.usageSince)} ${unit} used since`,
     `= ${num(e.qty)} ${unit} expected now (never below 0)`,
     e.coverageLabel,
-    "No count today, so the order uses this. Record a stock check, or use the last check, to order from that instead.",
+    "Counted weekly, so the order uses this until the next count. Record a stock check to use that instead.",
   ].join("\n");
 }
 
@@ -69,11 +69,17 @@ export function lastCheckValue(e: ExpectedStock, unit: string): string {
   return `${num(e.basedOnCountQty)} ${unit}`;
 }
 
-/** The stock an order uses from the last check: nothing has been used since,
- *  so usage stays out, but what's been delivered since is really on the shelf
- *  and ordering it again would over-order. */
+/** The stock an order uses from the last check (the server's sum, in
+ *  chooseOrderStock): usage stays out, but what's been delivered since is
+ *  really on the shelf and ordering it again would over-order. */
 export function stockFromLastCheck(e: ExpectedStock): number {
   return Math.max(0, e.basedOnCountQty + e.receiptsSince);
+}
+
+/** "Ordering from 15.5 kg", only when a delivery makes that differ from the
+ *  last check itself. */
+export function orderingFromLabel(e: ExpectedStock, unit: string): string | null {
+  return e.receiptsSince !== 0 ? `Ordering from ${num(stockFromLastCheck(e))} ${unit}` : null;
 }
 
 /** "+5 kg delivered since", when anything has been. */
@@ -81,27 +87,19 @@ export function deliveredSinceLabel(e: ExpectedStock, unit: string): string | nu
   return e.receiptsSince > 0 ? `+${num(e.receiptsSince)} ${unit} delivered since` : null;
 }
 
-/** Lines that can be ordered from their last check instead of the expected
- *  figure: nobody has counted them today. */
-export function canUseLastCheck(line: { stockBasis?: StockBasis; expectedStock?: ExpectedStock | null; usingLastCheck?: boolean; stockDirty: boolean }): boolean {
-  return line.stockBasis === "expected" && !!line.expectedStock && !line.usingLastCheck && !line.stockDirty;
-}
-
 interface StockBoxLine {
   stockCounted?: boolean;
   stockBasis?: StockBasis;
   stockDirty: boolean;
-  /** Ordering from the last check: not a count, so the blue button stays. */
-  usingLastCheck?: boolean;
 }
 
-/** The stock box starts EMPTY when its figure isn't a count — an expected
- *  figure or a never-counted kanban — so nobody saves it as one by tabbing
- *  through. Typing a number records a real count, as ever. */
+/** The stock box starts EMPTY when its figure isn't today's count — the last
+ *  check, an expected figure or a never-counted kanban — so nobody saves it as
+ *  one by tabbing through, and the blue button stays. Typing a number records
+ *  a real count, as ever. */
 export function stockBoxStartsBlank(line: StockBoxLine): boolean {
-  if (line.usingLastCheck) return true;
   if (line.stockDirty) return false;
-  return line.stockCounted === false || line.stockBasis === "expected";
+  return line.stockCounted === false || line.stockBasis === "expected" || line.stockBasis === "last-check";
 }
 
 /** Kanban items nobody stock-checks get no "Record stock check" button on
@@ -117,6 +115,5 @@ export function showsStockCheckButton(line: { isKanban?: boolean; stockCounted?:
  *  box that started blank (that would record a made-up 0 or the expected
  *  figure as if someone had counted it). */
 export function shouldSaveStockOnBlur(line: StockBoxLine): boolean {
-  if (line.usingLastCheck) return false;
   return line.stockDirty || !stockBoxStartsBlank(line);
 }
