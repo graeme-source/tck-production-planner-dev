@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  benchmarkDays, benchmarkProblem, dayForecast, formatBenchmark, gradeKpi, kpiSpec, londonHoursGone, shareOfDayDone, type Benchmark,
+  benchmarkDays, benchmarkProblem, dayForecast, formatBenchmark, gradeKpi, kpiSpec, londonHoursGone, monthlyFromDaily, dailyFromMonthly, salesBenchmark, shareOfDayDone, type Benchmark,
 } from "./numbers-benchmarks";
 import { shadeAtRatio } from "./ad-efficiency";
 
@@ -46,6 +46,24 @@ describe("gradeKpi", () => {
     expect(gradeKpi(100, { minimum: 100, stretch: null }, ncr)).toBeNull();
     expect(gradeKpi(100, { minimum: 200, stretch: 100 }, ncr)).toBeNull();
     expect(gradeKpi(100, b, ncr, 0)).toBeNull();
+  });
+});
+
+describe("one sales target, daily or monthly", () => {
+  it("works out the day from the month, and the month from the day", () => {
+    expect(salesBenchmark(120_000, 180_000, 30)).toEqual({ minimum: 4000, stretch: 6000 });
+    expect(dailyFromMonthly(120_000, 30)).toBe(4000);
+    expect(monthlyFromDaily(4500, 30)).toBe(135_000);
+  });
+
+  it("comes back to the same month after a round trip", () => {
+    expect(monthlyFromDaily(dailyFromMonthly(125_000, 31), 31)).toBe(125_000);
+  });
+
+  it("has Average Daily, Month to Date and Forecast agree", () => {
+    const daily = salesBenchmark(120_000, 180_000, 30);
+    const shade = gradeKpi(116_005.74, { minimum: 120_000, stretch: 180_000 }, kpiSpec("monthlySales"))?.shade.hex;
+    expect(gradeKpi(116_005.74 / 30, daily, sales, 1)?.shade.hex).toBe(shade);
   });
 });
 

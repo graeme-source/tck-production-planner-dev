@@ -13,7 +13,7 @@
  *   returning  every other PAID order — subscriptions and wholesale included
  *   £0 resends are left out of both sides, as they are out of AOV.
  */
-import { Users, AlertCircle } from "lucide-react";
+import { AlertCircle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TrendChip } from "@/components/sales-trend-panel";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
@@ -48,18 +48,9 @@ export function NewVsReturningCard({
       type="button"
       onClick={onToggleTrend}
       aria-expanded={trendOpen}
-      className={`glass-panel p-6 rounded-2xl overflow-hidden flex flex-col gap-3 col-span-full text-left w-full hover-lift transition-all cursor-pointer ${trendOpen ? "ring-2 ring-primary" : "ring-0"}`}
+      className={`glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 col-span-full text-left w-full hover-lift transition-all cursor-pointer ${trendOpen ? "ring-2 ring-primary" : "ring-0"}`}
     >
-      {grade && <div className="-mx-6 -mt-6 mb-1">{grade}</div>}
-      <div className="flex items-center gap-3">
-        <div className="p-3 rounded-xl bg-primary/10 text-primary">
-          <Users className="w-5 h-5" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <p className="text-lg font-display font-bold leading-tight">New vs returning customers — {periodLabel}</p>
-          <p className="text-xs text-muted-foreground mt-0.5">Share of the paid orders received in this period</p>
-        </div>
-      </div>
+      <div className="-mx-5 -mt-5 mb-1">{grade}</div>
 
       {isLoading ? (
         <>

@@ -1,4 +1,4 @@
-import { Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { cloneElement, Fragment, useState, useMemo, useRef, useCallback, useEffect } from "react";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { TodayNcRoas } from "@/components/ad-efficiency/today-nc-roas";
 import { Redirect } from "wouter";
@@ -50,7 +50,7 @@ import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
 import { AdEfficiencyRow } from "@/components/ad-efficiency/ad-efficiency-row";
 import { NewVsReturningCard } from "@/components/new-vs-returning-card";
-import { KpiGradeStrip } from "@/components/numbers-benchmarks/kpi-grade-strip";
+import { KpiGradeStrip, type KpiGradeStripProps } from "@/components/numbers-benchmarks/kpi-grade-strip";
 import { useDayPace } from "@/components/numbers-benchmarks/api";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import { benchmarkDays, dayForecast, londonHoursGone, shareOfDayDone, type KpiId } from "@/lib/numbers-benchmarks";
@@ -276,6 +276,10 @@ async function fetchOrdersByType(from: string, to: string) {
   }>;
 }
 
+/** A panel's coloured title bar, given the title the tile was handed. */
+type GradeBar = React.ReactElement<KpiGradeStripProps>;
+const titled = (grade: GradeBar, title: string, qualifier?: string) => cloneElement(grade, { title, qualifier });
+
 /** A tile's trend graph switch: open state and how to flip it. */
 interface TrendToggle {
   open: boolean;
@@ -329,7 +333,7 @@ function RoasTile({
   trend,
   grade,
 }: {
-  grade?: React.ReactNode;
+  grade: GradeBar;
   title: string;
   result: RoasResult;
   loading?: boolean;
@@ -339,13 +343,9 @@ function RoasTile({
 }) {
   return (
     <TileShell trend={trend} className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
-      {grade && <div className="-mx-5 -mt-5 mb-1">{grade}</div>}
+      <div className="-mx-5 -mt-5 mb-1">{titled(grade, title)}</div>
       <div className="flex items-center gap-4">
-      <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
-        <Percent className="w-5 h-5" />
-      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-muted-foreground truncate">{title}</p>
         {loading ? (
           <Skeleton className="h-7 w-16 mt-1" />
         ) : result.available ? (
@@ -380,32 +380,22 @@ function MoneyTile({
   title,
   value,
   sub,
-  icon: Icon,
-  color,
-  bg,
   loading,
   trend,
   grade,
 }: {
-  grade?: React.ReactNode;
+  grade: GradeBar;
   title: string;
   value: number | null;
   sub?: string;
-  icon: React.ElementType;
-  color: string;
-  bg: string;
   loading?: boolean;
   trend?: TrendToggle;
 }) {
   return (
     <TileShell trend={trend} className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
-      {grade && <div className="-mx-5 -mt-5 mb-1">{grade}</div>}
+      <div className="-mx-5 -mt-5 mb-1">{titled(grade, title)}</div>
       <div className="flex items-center gap-4">
-      <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
-        <Icon className="w-5 h-5" />
-      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-muted-foreground truncate">{title}</p>
         {loading ? (
           <Skeleton className="h-7 w-20 mt-1" />
         ) : (
@@ -428,9 +418,6 @@ function KpiCard({
   qualifier,
   value,
   sub,
-  icon: Icon,
-  color,
-  bg,
   loading,
   error,
   trend,
@@ -439,8 +426,8 @@ function KpiCard({
   className,
   grade,
 }: {
-  /** The grade band across the top. */
-  grade?: React.ReactNode;
+  /** The coloured title bar. */
+  grade: GradeBar;
   title: string;
   /** Small grey words under the title that pin down what it means, e.g.
    *  "Sales this month" under "Average Daily". */
@@ -454,27 +441,13 @@ function KpiCard({
   className?: string;
   value: string;
   sub?: string;
-  icon: React.ElementType;
-  color: string;
-  bg: string;
   loading?: boolean;
   error?: boolean;
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className={`glass-panel p-6 rounded-2xl overflow-hidden flex flex-col gap-3 ${className ?? ""}`}>
-      {grade && <div className="-mx-6 -mt-6 mb-1">{grade}</div>}
-      <div className="flex items-center gap-3">
-        <div className={`p-3 rounded-xl ${bg} ${color}`}>
-          <Icon className="w-5 h-5" />
-        </div>
-        {/* Big and bold enough to read at a glance alongside the figure
-            (Graeme, 2026-09-26: "all I see is the big, bold numbers"). */}
-        <div className="flex-1 min-w-0">
-          <p className="text-lg font-display font-bold leading-tight">{title}</p>
-          {qualifier && <p className="text-xs text-muted-foreground mt-0.5">{qualifier}</p>}
-        </div>
-      </div>
+    <TileShell trend={trend} className={`glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 ${className ?? ""}`}>
+      <div className="-mx-5 -mt-5 mb-1">{titled(grade, title, qualifier)}</div>
       {loading ? (
         <Skeleton className="h-9 w-40" />
       ) : error ? (
@@ -593,7 +566,7 @@ function OrderTypeCard({
   trend,
   grade,
 }: {
-  grade?: React.ReactNode;
+  grade: GradeBar;
   type: (typeof CUSTOMER_TYPES)[number];
   count: number;
   dayCount: number;
@@ -603,24 +576,20 @@ function OrderTypeCard({
   /** The count's graph, on its own chip — tapping the tile still opens the orders. */
   trend?: TrendToggle;
 }) {
-  const { label, icon: Icon, color, bg } = type;
+  const { label } = type;
   const dailyAvg = dayCount > 1 ? (count / dayCount).toFixed(1) : null;
   return (
     <div
       className={`glass-panel rounded-2xl overflow-hidden flex flex-col w-full hover-lift transition-all
         ${isActive || trend?.open ? "ring-2 ring-primary" : "ring-0"}`}
     >
-    {grade}
+    {titled(grade, label)}
     <button
       onClick={onClick}
       aria-expanded={isActive}
       className="p-5 pb-3 w-full min-w-0 flex items-center gap-4 text-left cursor-pointer"
     >
-      <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
-        <Icon className="w-5 h-5" />
-      </div>
       <div className="flex-1 min-w-0">
-        <p className="text-sm font-medium text-muted-foreground truncate">{label}</p>
         {loading ? (
           <Skeleton className="h-7 w-12 mt-1" />
         ) : (
@@ -1288,9 +1257,6 @@ function FounderDashboard() {
             title="Today's Sales"
             value={monthSummary ? formatGBP(monthSummary.todayRevenue) : "—"}
             sub={monthSummary ? `${monthSummary.todayOrderCount} order${monthSummary.todayOrderCount !== 1 ? "s" : ""} today` : undefined}
-            icon={TrendingUp}
-            color="text-primary"
-            bg="bg-primary/10"
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("todaySales")}
@@ -1320,9 +1286,6 @@ function FounderDashboard() {
             sub={monthSummary ? `${monthSummary.todayNewCustomerOrderCount} new-customer order${monthSummary.todayNewCustomerOrderCount !== 1 ? "s" : ""}` : undefined}
             extra={newCustomerLine ? <p className="text-xs text-muted-foreground">{newCustomerLine}</p> : undefined}
             belowValue={monthSummary ? <TodayNcRoas date={todayStr} newCustomerRevenue={monthSummary.todayNewCustomerRevenue} /> : undefined}
-            icon={UserPlus}
-            color="text-sky-500"
-            bg="bg-sky-500/10"
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("newCustomersToday")}
@@ -1352,9 +1315,6 @@ function FounderDashboard() {
             title="Month to Date"
             value={monthSummary ? formatGBP(monthSummary.totalRevenue) : "—"}
             sub={monthSummary ? `${monthSummary.orderCount} orders this month` : undefined}
-            icon={BarChart2}
-            color="text-blue-500"
-            bg="bg-blue-500/10"
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("monthToDate")}
@@ -1389,9 +1349,6 @@ function FounderDashboard() {
             title="Today's AOV"
             value={monthSummary?.todayAov != null ? formatGBP(monthSummary.todayAov) : "—"}
             sub={monthSummary ? aovSub(monthSummary.todayRevenue, monthSummary.todayPaidOrderCount, "No paid orders yet today") : undefined}
-            icon={ShoppingBag}
-            color="text-emerald-500"
-            bg="bg-emerald-500/10"
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("todayAov")}
@@ -1417,9 +1374,6 @@ function FounderDashboard() {
             qualifier="Sales this month"
             value={monthSummary ? formatGBP(monthSummary.averageDailyRevenue) : "—"}
             sub={monthSummary ? `Over ${monthSummary.dayCount} day${monthSummary.dayCount !== 1 ? "s" : ""} so far` : undefined}
-            icon={Calculator}
-            color="text-violet-500"
-            bg="bg-violet-500/10"
             loading={monthLoading}
             error={!!monthError}
             grade={<KpiGradeStrip kpi="sales" value={monthSummary?.averageDailyRevenue} />}
@@ -1430,9 +1384,6 @@ function FounderDashboard() {
             qualifier="Estimated monthly"
             value={monthSummary ? formatGBP(monthSummary.estimatedMonthlyRevenue) : "—"}
             sub={`Based on ${getDaysInMonth(today)}-day month`}
-            icon={Calendar}
-            color="text-amber-500"
-            bg="bg-amber-500/10"
             loading={monthLoading}
             error={!!monthError}
             grade={<KpiGradeStrip kpi="monthlySales" value={monthSummary?.estimatedMonthlyRevenue} />}
@@ -1536,9 +1487,6 @@ function FounderDashboard() {
                 title={`Total Sales — ${period.label}`}
                 value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
                 sub={periodSummary ? `${periodSummary.orderCount} orders` : undefined}
-                icon={BarChart2}
-                color="text-blue-500"
-                bg="bg-blue-500/10"
                 loading={periodLoading}
                 error={!!periodError}
                 trend={periodToggle("revenue", ["orders"])}
@@ -1551,9 +1499,6 @@ function FounderDashboard() {
                 title={`AOV — ${period.label}`}
                 value={periodSummary?.aov != null ? formatGBP(periodSummary.aov) : "—"}
                 sub={periodSummary ? aovSub(periodSummary.totalRevenue, periodSummary.paidOrderCount, "No paid orders in this period") : undefined}
-                icon={ShoppingBag}
-                color="text-emerald-500"
-                bg="bg-emerald-500/10"
                 loading={periodLoading}
                 error={!!periodError}
                 trend={periodToggle("aov")}
@@ -1567,7 +1512,7 @@ function FounderDashboard() {
                 periodLabel={period.label}
                 trendOpen={periodTrend === "newCustomerShare"}
                 onToggleTrend={periodToggle("newCustomerShare").onToggle}
-                grade={<KpiGradeStrip kpi="newCustomerShare" value={periodTrendData?.totals.newCustomerSharePercent} />}
+                grade={<KpiGradeStrip kpi="newCustomerShare" title={`New vs returning customers — ${period.label}`} qualifier="Share of the paid orders received in this period" value={periodTrendData?.totals.newCustomerSharePercent} />}
               />
               {periodPanel(["newCustomerShare"])}
             </div>
@@ -1590,9 +1535,6 @@ function FounderDashboard() {
               <MoneyTile
                 title="New Customer Revenue"
                 value={newCustomerRevenue}
-                icon={TrendingUp}
-                color="text-blue-500"
-                bg="bg-blue-500/10"
                 loading={orderTypesLoading}
                 trend={periodToggle("newCustomerRevenue")}
                 grade={<KpiGradeStrip kpi="newCustomerRevenue" value={newCustomerRevenue} days={periodDays("newCustomerRevenue")} />}
@@ -1616,15 +1558,11 @@ function FounderDashboard() {
                   shows a £0 for "nobody has told us yet". */}
               <div className={`glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 ${periodTrend === "adSpend" ? "ring-2 ring-primary" : ""}`}>
                 <div className="-mx-5 -mt-5 mb-1 empty:hidden">
-                  <KpiGradeStrip kpi="adSpend" value={periodSpendTotal} days={periodDays("adSpend")} />
+                  <KpiGradeStrip kpi="adSpend" title="Ad Spend" value={periodSpendTotal} days={periodDays("adSpend")} />
                 </div>
                 <div className="flex items-center gap-4">
-                <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
-                  <Megaphone className="w-5 h-5" />
-                </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <p className="text-sm font-medium text-muted-foreground truncate">Ad Spend</p>
+                  <div className="flex items-center gap-2 empty:hidden">
                     {metaStatus?.connected && (
                       <button
                         onClick={() => metaRefresh.mutate()}
@@ -1728,9 +1666,6 @@ function FounderDashboard() {
                 title="Total Subscription Revenue"
                 value={subscriptionRevenue}
                 sub="Recurring and new combined"
-                icon={Repeat}
-                color="text-violet-500"
-                bg="bg-violet-500/10"
                 loading={orderTypesLoading}
                 trend={periodToggle("subscriptionRevenue")}
                 grade={<KpiGradeStrip kpi="subscriptionRevenue" value={subscriptionRevenue} days={periodDays("subscriptionRevenue")} />}
@@ -1742,14 +1677,10 @@ function FounderDashboard() {
                   inherently excluded. */}
               <div className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
                 <div className="-mx-5 -mt-5 mb-1 empty:hidden">
-                  <KpiGradeStrip kpi="conversionRate" value={periodConversion?.conversionRate == null ? null : periodConversion.conversionRate * 100} />
+                  <KpiGradeStrip kpi="conversionRate" title="Conversion Rate" value={periodConversion?.conversionRate == null ? null : periodConversion.conversionRate * 100} />
                 </div>
                 <div className="flex items-center gap-4">
-                <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
-                  <BarChart2 className="w-5 h-5" />
-                </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-muted-foreground truncate">Conversion Rate</p>
                   {conversionLoading ? (
                     <Skeleton className="h-7 w-16 mt-1" />
                   ) : periodConversion?.conversionRate != null ? (

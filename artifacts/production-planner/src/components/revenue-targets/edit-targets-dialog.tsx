@@ -1,7 +1,7 @@
 /**
- * "Edit targets" — the founder's editor for the monthly MINIMUM and each
- * month's STRETCH (Graeme, 2026-10-08), and since 5 Nov 2026 every other Numbers
- * panel's target, so there's one place for them all. Objective I.
+ * "Targets" — the founder's one menu (Graeme, 5 Nov 2026): the monthly sales
+ * MINIMUM and each month's STRETCH (2026-10-08), readable and editable per month
+ * or per day, one target either way, then every other Numbers panel's. Objective I.
  *
  * Changing a target by accident must be hard, so saving is a double
  * confirmation: (1) a plain list of exactly what will change, then (2) a
@@ -16,13 +16,14 @@ import { createPortal } from "react-dom";
 import { format, parseISO } from "date-fns";
 import { ArrowLeft, Check, Loader2, Pencil, ShieldCheck, Target, X } from "lucide-react";
 import {
-  applyChanges, describeChanges, diffTargets, formatGbp, invertChanges, monthLabel, monthsFrom, parseAmount, resolveStretch,
+  applyChanges, daysInMonth, describeChanges, diffTargets, formatGbp, invertChanges, monthLabel, monthsFrom, parseAmount, resolveStretch,
   stretchBelowMinimum, type TargetChange, type TargetsState,
 } from "@workspace/revenue-targets";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { BenchmarkRows } from "@/components/numbers-benchmarks/benchmarks-dialog";
+import { dailyFromMonthly, monthlyFromDaily } from "@/lib/numbers-benchmarks";
 import { useRevenueTargets, useSaveTargetChanges, type RevenueTargetsPayload } from "./api";
 
 const WINDOW = 13;
@@ -64,7 +65,7 @@ export function EditTargetsButton({ className }: { className?: string }) {
         onClick={editor.open}
         className={cn("inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl border-2 border-border bg-card hover:bg-secondary/60", className)}
       >
-        <Target className="w-4 h-4 text-primary" /> Edit targets
+        <Target className="w-4 h-4 text-primary" /> Targets
       </button>
       {editor.element}
     </>
@@ -142,7 +143,7 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-targets-title"
-        className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-xl max-h-[92dvh] flex flex-col overflow-hidden"
+        className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden text-left font-normal text-foreground"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
@@ -167,10 +168,19 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
             <>
               <section className="space-y-2">
                 <label htmlFor="target-minimum" className="text-base font-semibold block">Sales minimum — every month</label>
-                <AmountInput id="target-minimum" value={minText} onChange={setMinText} invalid={minInvalid} />
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Per month</p>
+                    <AmountInput id="target-minimum" value={minText} onChange={setMinText} invalid={minInvalid} />
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground mb-1">Per day</p>
+                    <DailyAmount monthly={minText} days={daysInMonth(data.currentMonth)} onMonthly={setMinText} ariaLabel="Sales minimum per day" />
+                  </div>
+                </div>
                 {minInvalid
                   ? <p className="text-sm text-red-600">Type an amount, e.g. 120,000 or 120k.</p>
-                  : <p className="text-sm text-muted-foreground">Same every month until you change it.</p>}
+                  : <p className="text-sm text-muted-foreground">Change either and the other follows. Same every month until you change it.</p>}
               </section>
 
               <section className="space-y-2">
@@ -178,6 +188,11 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
                 <p className="text-sm text-muted-foreground">
                   Leave a month blank to keep the month before's stretch. Set a higher one where you want to push (e.g. November).
                 </p>
+                <div className="flex gap-3 text-xs font-medium text-muted-foreground">
+                  <span className="w-24 sm:w-28 flex-shrink-0" />
+                  <span className="flex-1 grid grid-cols-2 gap-2"><span>Per month</span><span>Per day</span></span>
+                  <span className="w-9 flex-shrink-0" />
+                </div>
                 <ul className="space-y-2">
                   {months.map((m, i) => {
                     const text = stretchText[m] ?? "";
@@ -189,27 +204,36 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
                     const low = belowMin.includes(m) && text.trim() !== "";
                     return (
                       <li key={m} className="flex items-center gap-3">
-                        <span className="w-24 sm:w-40 flex-shrink-0 text-base leading-tight">
+                        <span className="w-24 sm:w-28 flex-shrink-0 text-base leading-tight">
                           {monthLabel(m, { short: m.slice(0, 4) === data.currentMonth.slice(0, 4) })}
                           {i === 0 && <span className="block text-xs text-muted-foreground">this month</span>}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <AmountInput
-                            value={text}
-                            onChange={v => setStretchText(s => ({ ...s, [m]: v }))}
-                            placeholder={placeholder}
-                            invalid={bad || low}
-                            ariaLabel={`${monthLabel(m)} stretch target`}
-                          />
+                          <div className="grid grid-cols-2 gap-2">
+                            <AmountInput
+                              value={text}
+                              onChange={v => setStretchText(s => ({ ...s, [m]: v }))}
+                              placeholder={placeholder}
+                              invalid={bad || low}
+                              ariaLabel={`${monthLabel(m)} stretch target`}
+                            />
+                            <DailyAmount
+                              monthly={text}
+                              carried={carried.value}
+                              days={daysInMonth(m)}
+                              onMonthly={v => setStretchText(s => ({ ...s, [m]: v }))}
+                              ariaLabel={`${monthLabel(m)} stretch target per day`}
+                            />
+                          </div>
                           {bad && <p className="text-xs text-red-600 mt-1">Not an amount — try 150,000 or 150k.</p>}
                           {low && <p className="text-xs text-red-600 mt-1">Must be above the minimum.</p>}
                         </div>
-                        {text.trim() !== "" && (
+                        {text.trim() !== "" ? (
                           <button type="button" onClick={() => setStretchText(s => ({ ...s, [m]: "" }))}
-                            className="p-2 rounded-lg hover:bg-secondary text-muted-foreground" aria-label={`Clear ${monthLabel(m)}'s stretch`}>
+                            className="p-2 w-9 rounded-lg hover:bg-secondary text-muted-foreground flex-shrink-0" aria-label={`Clear ${monthLabel(m)}'s stretch`}>
                             <X className="w-4 h-4" />
                           </button>
-                        )}
+                        ) : <span className="w-9 flex-shrink-0" />}
                       </li>
                     );
                   })}
@@ -311,10 +335,38 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
   );
 }
 
-function AmountInput({ id, value, onChange, placeholder, invalid, ariaLabel }: {
+/** The same target as a figure per day: typing here sets the month's. */
+function DailyAmount({ monthly, carried, days, onMonthly, ariaLabel }: {
+  monthly: string;
+  /** The stretch carried from an earlier month, when this one's blank. */
+  carried?: number | null;
+  days: number;
+  onMonthly: (v: string) => void;
+  ariaLabel: string;
+}) {
+  const [typing, setTyping] = useState<string | null>(null);
+  const month = parseAmount(monthly);
+  return (
+    <AmountInput
+      value={typing ?? (month == null ? "" : asText(dailyFromMonthly(month, days)))}
+      placeholder={carried != null ? asText(dailyFromMonthly(carried, days)) : undefined}
+      ariaLabel={ariaLabel}
+      onChange={v => {
+        setTyping(v);
+        const day = parseAmount(v);
+        if (day != null) onMonthly(asText(monthlyFromDaily(day, days)));
+        else if (v.trim() === "") onMonthly("");
+      }}
+      onLeave={() => setTyping(null)}
+    />
+  );
+}
+
+function AmountInput({ id, value, onChange, onLeave, placeholder, invalid, ariaLabel }: {
   id?: string;
   value: string;
   onChange: (v: string) => void;
+  onLeave?: () => void;
   placeholder?: string;
   invalid?: boolean;
   ariaLabel?: string;
@@ -332,7 +384,7 @@ function AmountInput({ id, value, onChange, placeholder, invalid, ariaLabel }: {
         aria-label={ariaLabel}
         onChange={e => onChange(e.target.value)}
         // "150k" → "150,000" once you move on, so what's saved is visible.
-        onBlur={() => { const n = parseAmount(value); if (n != null) onChange(asText(n)); }}
+        onBlur={() => { if (onLeave) onLeave(); else { const n = parseAmount(value); if (n != null) onChange(asText(n)); } }}
         className="flex-1 min-w-0 h-12 bg-transparent px-2 text-base sm:text-lg tabular-nums focus:outline-none placeholder:text-muted-foreground/70"
       />
       {value.trim() !== "" && parseAmount(value) != null && <Check className="w-4 h-4 text-primary flex-shrink-0" />}

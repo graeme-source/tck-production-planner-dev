@@ -24,12 +24,12 @@ export interface KpiSpec {
   perDay: boolean;
   /** Less is better: the benchmarks run downwards. */
   lowerIsBetter?: boolean;
-  /** Set in the monthly sales targets, not here. */
+  /** Comes from the monthly sales targets, the single source for sales. */
   monthlyTarget?: boolean;
 }
 
 export const KPIS = [
-  { id: "sales", label: "Total sales", unit: "£", perDay: true },
+  { id: "sales", label: "Total sales", unit: "£", perDay: true, monthlyTarget: true },
   // The month's revenue against the monthly minimum and stretch: Month to Date
   // and Forecast, judged on where the month is heading.
   { id: "monthlySales", label: "Monthly sales", unit: "£", perDay: false, monthlyTarget: true },
@@ -57,6 +57,15 @@ export interface Benchmark {
 export type BenchmarkMap = Partial<Record<KpiId, Benchmark>>;
 
 interface Levels { minimum: number; stretch: number }
+
+/** A day's sales target is the month's ÷ its days, and setting a day's target
+ *  sets the month's: one target, read or edited either way. */
+export const dailyFromMonthly = (monthly: number, daysInMonth: number) => monthly / daysInMonth;
+export const monthlyFromDaily = (daily: number, daysInMonth: number) => Math.round(daily * daysInMonth);
+
+export function salesBenchmark(minimum: number, stretch: number | null, daysInMonth: number): Benchmark {
+  return { minimum: dailyFromMonthly(minimum, daysInMonth), stretch: stretch == null ? null : dailyFromMonthly(stretch, daysInMonth) };
+}
 
 /** Both figures, in order: rising, or falling when less is better. */
 export function benchmarkLevels(b: Benchmark | undefined, spec: KpiSpec): Levels | null {

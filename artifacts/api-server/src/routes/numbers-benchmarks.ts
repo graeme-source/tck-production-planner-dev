@@ -21,7 +21,7 @@ const router: IRouter = Router();
 router.use(requireFounderArea("founder.numbers"));
 
 const KPIS = [
-  "sales", "aov", "newCustomerShare", "newCustomers", "newCustomerRevenue", "newCustomerRoas",
+  "aov", "newCustomerShare", "newCustomers", "newCustomerRevenue", "newCustomerRoas",
   "adSpend", "recurringSubs", "newSubs", "subscriptionRevenue", "conversionRate",
 ] as const;
 
