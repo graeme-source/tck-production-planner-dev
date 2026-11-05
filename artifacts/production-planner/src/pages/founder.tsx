@@ -50,6 +50,11 @@ import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
 import { AdEfficiencyRow } from "@/components/ad-efficiency/ad-efficiency-row";
 import { NewVsReturningCard } from "@/components/new-vs-returning-card";
+import { BenchmarksButton } from "@/components/numbers-benchmarks/benchmarks-dialog";
+import { KpiGradeStrip } from "@/components/numbers-benchmarks/kpi-grade-strip";
+import { usePriorFigures } from "@/hooks/use-prior-figures";
+import { useSalesTrend } from "@/hooks/use-sales-trend";
+import { benchmarkDays, comparisonWindow, londonDayFraction, type KpiId } from "@/lib/numbers-benchmarks";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -323,7 +328,9 @@ function RoasTile({
   loading,
   windowLabel,
   trend,
+  grade,
 }: {
+  grade?: React.ReactNode;
   title: string;
   result: RoasResult;
   loading?: boolean;
@@ -332,7 +339,8 @@ function RoasTile({
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex flex-col gap-3">
+    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
+      {grade && <div className="-mx-5 -mt-5 mb-1">{grade}</div>}
       <div className="flex items-center gap-4">
       <div className="p-3 rounded-xl bg-pink-500/10 text-pink-500 shrink-0">
         <Percent className="w-5 h-5" />
@@ -378,7 +386,9 @@ function MoneyTile({
   bg,
   loading,
   trend,
+  grade,
 }: {
+  grade?: React.ReactNode;
   title: string;
   value: number | null;
   sub?: string;
@@ -389,7 +399,8 @@ function MoneyTile({
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl flex flex-col gap-3">
+    <TileShell trend={trend} className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
+      {grade && <div className="-mx-5 -mt-5 mb-1">{grade}</div>}
       <div className="flex items-center gap-4">
       <div className={`p-3 rounded-xl ${bg} ${color} shrink-0`}>
         <Icon className="w-5 h-5" />
@@ -427,7 +438,10 @@ function KpiCard({
   extra,
   belowValue,
   className,
+  grade,
 }: {
+  /** The grade band across the top. */
+  grade?: React.ReactNode;
   title: string;
   /** Small grey words under the title that pin down what it means, e.g.
    *  "Sales this month" under "Average Daily". */
@@ -449,7 +463,8 @@ function KpiCard({
   trend?: TrendToggle;
 }) {
   return (
-    <TileShell trend={trend} className={`glass-panel p-6 rounded-2xl flex flex-col gap-3 ${className ?? ""}`}>
+    <TileShell trend={trend} className={`glass-panel p-6 rounded-2xl overflow-hidden flex flex-col gap-3 ${className ?? ""}`}>
+      {grade && <div className="-mx-6 -mt-6 mb-1">{grade}</div>}
       <div className="flex items-center gap-3">
         <div className={`p-3 rounded-xl ${bg} ${color}`}>
           <Icon className="w-5 h-5" />
@@ -577,7 +592,9 @@ function OrderTypeCard({
   onClick,
   loading,
   trend,
+  grade,
 }: {
+  grade?: React.ReactNode;
   type: (typeof CUSTOMER_TYPES)[number];
   count: number;
   dayCount: number;
@@ -591,9 +608,10 @@ function OrderTypeCard({
   const dailyAvg = dayCount > 1 ? (count / dayCount).toFixed(1) : null;
   return (
     <div
-      className={`glass-panel rounded-2xl flex flex-col w-full hover-lift transition-all
+      className={`glass-panel rounded-2xl overflow-hidden flex flex-col w-full hover-lift transition-all
         ${isActive || trend?.open ? "ring-2 ring-primary" : "ring-0"}`}
     >
+    {grade}
     <button
       onClick={onClick}
       aria-expanded={isActive}
@@ -885,6 +903,28 @@ function FounderDashboard() {
   );
   const from = period.from;
   const to = period.to;
+
+  // Benchmarks and improving-or-worsening (Graeme, 5 Nov 2026). The running
+  // day counts as the part gone, and comparisons are cut to this time of day.
+  const dayFraction = londonDayFraction(today);
+  const todayWindow = useMemo(() => periodWindow("today", today), [todayStr]);
+  const monthWindow = useMemo(() => periodWindow("monthToDate", today), [todayStr]);
+  const todayPrior = usePriorFigures(todayWindow, dayFraction);
+  const monthPrior = usePriorFigures(monthWindow, dayFraction);
+  const periodPrior = usePriorFigures(period, dayFraction);
+  const periodDays = benchmarkDays(period, dayFraction);
+  const monthElapsedDays = benchmarkDays(monthWindow, dayFraction);
+  const monthDivisor = monthSummary?.dayCount || 1;
+  const priorDailyAverage = monthPrior.prior ? monthPrior.prior.revenue / monthDivisor : null;
+  const { data: periodTrendData } = useSalesTrend(from, to, null, !period.empty);
+  const priorPeriod = comparisonWindow(period);
+  const { data: priorConversion } = useQuery({
+    queryKey: ["founder-conversion", priorPeriod.from, priorPeriod.to],
+    queryFn: () => fetchConversion(priorPeriod.from, priorPeriod.to),
+    staleTime: 5 * 60 * 1000,
+    // Shopify gives conversion by the day, so a running day has no fair match.
+    enabled: !period.empty && !period.includesToday,
+  });
 
   function applyPreset(id: PeriodPresetId) {
     const win = periodWindow(id, new Date());
@@ -1252,7 +1292,10 @@ function FounderDashboard() {
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
             {"At a Glance — " + format(today, "MMMM yyyy")}
           </h2>
-          <EditTargetsButton />
+          <div className="flex items-center gap-2 flex-wrap">
+            <BenchmarksButton />
+            <EditTargetsButton />
+          </div>
         </div>
         {/* Eight columns' worth of tiles (Month to Date and Forecast are
             two wide): four columns on a wide screen, two on the iPad, so
@@ -1268,6 +1311,7 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("todaySales")}
+            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.todayRevenue} days={dayFraction} prior={todayPrior.prior?.revenue} compareLabel={todayPrior.compareLabel} />}
           />
           {glanceTrend === "todaySales" && (
             <div className="col-span-full">
@@ -1299,6 +1343,7 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("newCustomersToday")}
+            grade={<KpiGradeStrip kpi="newCustomerRevenue" value={monthSummary?.todayNewCustomerRevenue} days={dayFraction} prior={todayPrior.prior?.newCustomerRevenue} compareLabel={todayPrior.compareLabel} />}
           />
           {glanceTrend === "newCustomersToday" && (
             <div className="col-span-full">
@@ -1330,6 +1375,7 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("monthToDate")}
+            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.totalRevenue} days={monthElapsedDays} prior={monthPrior.prior?.revenue} compareLabel={monthPrior.compareLabel} />}
             // Two columns wide: sales so far against the minimum and this
             // month's stretch, and the projected month-end against each.
             className="sm:col-span-2"
@@ -1366,6 +1412,7 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("todayAov")}
+            grade={<KpiGradeStrip kpi="aov" value={monthSummary?.todayAov} prior={todayPrior.prior?.aov} compareLabel={todayPrior.compareLabel} />}
           />
           {glanceTrend === "todayAov" && (
             <div className="col-span-full">
@@ -1392,6 +1439,7 @@ function FounderDashboard() {
             bg="bg-violet-500/10"
             loading={monthLoading}
             error={!!monthError}
+            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.averageDailyRevenue} days={monthElapsedDays / monthDivisor} prior={priorDailyAverage} compareLabel={monthPrior.compareLabel} />}
           />
           <KpiCard
             title="Forecast"
@@ -1404,6 +1452,7 @@ function FounderDashboard() {
             bg="bg-amber-500/10"
             loading={monthLoading}
             error={!!monthError}
+            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.estimatedMonthlyRevenue} days={getDaysInMonth(today) * (monthElapsedDays / monthDivisor)} prior={priorDailyAverage == null ? null : priorDailyAverage * getDaysInMonth(today)} compareLabel={monthPrior.compareLabel} />}
           />
         </div>
         {/* Advertising efficiency (Graeme, 2026-10-11): new-customer ROAS
@@ -1510,6 +1559,7 @@ function FounderDashboard() {
                 loading={periodLoading}
                 error={!!periodError}
                 trend={periodToggle("revenue", ["orders"])}
+                grade={<KpiGradeStrip kpi="sales" value={periodSummary?.totalRevenue} days={periodDays} prior={periodPrior.prior?.revenue} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["revenue", "orders"])}
               <KpiCard
@@ -1522,6 +1572,7 @@ function FounderDashboard() {
                 loading={periodLoading}
                 error={!!periodError}
                 trend={periodToggle("aov")}
+                grade={<KpiGradeStrip kpi="aov" value={periodSummary?.aov} prior={periodPrior.prior?.aov} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["aov"])}
               {/* New vs returning, full width under the two totals (Graeme, 2026-10-13). */}
@@ -1531,6 +1582,7 @@ function FounderDashboard() {
                 periodLabel={period.label}
                 trendOpen={periodTrend === "newCustomerShare"}
                 onToggleTrend={periodToggle("newCustomerShare").onToggle}
+                grade={<KpiGradeStrip kpi="newCustomerShare" value={periodTrendData?.totals.newCustomerSharePercent} prior={periodPrior.prior?.newCustomerShare} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["newCustomerShare"])}
             </div>
@@ -1547,6 +1599,7 @@ function FounderDashboard() {
                 onClick={() => handleTypeClick(customerType("newCustomer").tag)}
                 loading={orderTypesLoading}
                 trend={periodToggle("newCustomerOrders")}
+                grade={<KpiGradeStrip kpi="newCustomers" value={orderTypesLoading ? null : getGroupCount(customerType("newCustomer").tag)} days={periodDays} prior={periodPrior.prior?.newCustomers} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["newCustomerOrders"])}
               <MoneyTile
@@ -1557,6 +1610,7 @@ function FounderDashboard() {
                 bg="bg-blue-500/10"
                 loading={orderTypesLoading}
                 trend={periodToggle("newCustomerRevenue")}
+                grade={<KpiGradeStrip kpi="newCustomerRevenue" value={newCustomerRevenue} days={periodDays} prior={periodPrior.prior?.newCustomerRevenue} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["newCustomerRevenue"])}
               <RoasTile
@@ -1564,6 +1618,7 @@ function FounderDashboard() {
                 result={periodRoas}
                 loading={roasLoading}
                 trend={periodToggle("roas")}
+                grade={<KpiGradeStrip kpi="newCustomerRoas" value={periodRoas.available ? periodRoas.percent : null} prior={periodPrior.prior?.newCustomerRoas} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["roas"])}
 
@@ -1574,7 +1629,10 @@ function FounderDashboard() {
                   spend is stored per day; multi-day periods show the total
                   of the days we have, and say how many that is. It never
                   shows a £0 for "nobody has told us yet". */}
-              <div className={`glass-panel p-5 rounded-2xl flex flex-col gap-3 ${periodTrend === "adSpend" ? "ring-2 ring-primary" : ""}`}>
+              <div className={`glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 ${periodTrend === "adSpend" ? "ring-2 ring-primary" : ""}`}>
+                <div className="-mx-5 -mt-5 mb-1 empty:hidden">
+                  <KpiGradeStrip kpi="adSpend" value={periodSpendTotal} days={periodDays} prior={periodPrior.prior?.adSpend} compareLabel={periodPrior.compareLabel} />
+                </div>
                 <div className="flex items-center gap-4">
                 <div className="p-3 rounded-xl bg-orange-500/10 text-orange-500 shrink-0">
                   <Megaphone className="w-5 h-5" />
@@ -1674,6 +1732,7 @@ function FounderDashboard() {
                   onClick={() => handleTypeClick(customerType(id).tag)}
                   loading={orderTypesLoading}
                   trend={periodToggle(id === "recurringSub" ? "recurringSubOrders" : "newSubOrders")}
+                  grade={<KpiGradeStrip kpi={(id === "recurringSub" ? "recurringSubs" : "newSubs") satisfies KpiId} value={orderTypesLoading ? null : getGroupCount(customerType(id).tag)} days={periodDays} prior={id === "recurringSub" ? periodPrior.prior?.recurringSubs : periodPrior.prior?.newSubs} compareLabel={periodPrior.compareLabel} />}
                 />
                 {periodPanel([id === "recurringSub" ? "recurringSubOrders" : "newSubOrders"])}
                 </Fragment>
@@ -1689,13 +1748,18 @@ function FounderDashboard() {
                 bg="bg-violet-500/10"
                 loading={orderTypesLoading}
                 trend={periodToggle("subscriptionRevenue")}
+                grade={<KpiGradeStrip kpi="subscriptionRevenue" value={subscriptionRevenue} days={periodDays} prior={periodPrior.prior?.subscriptionRevenue} compareLabel={periodPrior.compareLabel} />}
               />
               {periodPanel(["subscriptionRevenue"])}
 
               {/* Conversion Rate — Shopify's own online-store metric via
                   ShopifyQL. Session-based, so subscription renewals are
                   inherently excluded. */}
-              <div className="glass-panel p-5 rounded-2xl flex items-center gap-4">
+              <div className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
+                <div className="-mx-5 -mt-5 mb-1 empty:hidden">
+                  <KpiGradeStrip kpi="conversionRate" value={periodConversion?.conversionRate == null ? null : periodConversion.conversionRate * 100} prior={priorConversion?.conversionRate == null ? null : priorConversion.conversionRate * 100} compareLabel={periodPrior.compareLabel} />
+                </div>
+                <div className="flex items-center gap-4">
                 <div className="p-3 rounded-xl bg-emerald-500/10 text-emerald-500 shrink-0">
                   <BarChart2 className="w-5 h-5" />
                 </div>
@@ -1718,6 +1782,7 @@ function FounderDashboard() {
                       <p className="text-xs text-muted-foreground mt-0.5">No Shopify session data for this period</p>
                     </>
                   )}
+                </div>
                 </div>
               </div>
             </div>

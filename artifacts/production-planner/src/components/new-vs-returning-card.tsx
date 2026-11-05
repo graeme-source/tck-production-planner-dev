@@ -27,12 +27,15 @@ export function NewVsReturningCard({
   periodLabel,
   trendOpen,
   onToggleTrend,
+  grade,
 }: {
   from: string;
   to: string;
   periodLabel: string;
   trendOpen: boolean;
   onToggleTrend: () => void;
+  /** The grade band across the top. */
+  grade?: React.ReactNode;
 }) {
   const { data, isLoading, error } = useSalesTrend(from, to, null);
   const t = data?.totals;
@@ -45,8 +48,9 @@ export function NewVsReturningCard({
       type="button"
       onClick={onToggleTrend}
       aria-expanded={trendOpen}
-      className={`glass-panel p-6 rounded-2xl flex flex-col gap-3 col-span-full text-left w-full hover-lift transition-all cursor-pointer ${trendOpen ? "ring-2 ring-primary" : "ring-0"}`}
+      className={`glass-panel p-6 rounded-2xl overflow-hidden flex flex-col gap-3 col-span-full text-left w-full hover-lift transition-all cursor-pointer ${trendOpen ? "ring-2 ring-primary" : "ring-0"}`}
     >
+      {grade && <div className="-mx-6 -mt-6 mb-1">{grade}</div>}
       <div className="flex items-center gap-3">
         <div className="p-3 rounded-xl bg-primary/10 text-primary">
           <Users className="w-5 h-5" />

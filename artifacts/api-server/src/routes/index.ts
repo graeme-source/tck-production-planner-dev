@@ -172,6 +172,7 @@ import testBoxShopifyRouter from "./test-box-shopify";
 import testBoxProductionRouter from "./test-box-production";
 import founderNumbersRouter from "./founder-numbers";
 import adEfficiencyRouter from "./ad-efficiency";
+import numbersBenchmarksRouter from "./numbers-benchmarks";
 import googleAdsIngestRouter from "./google-ads-ingest";
 import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
@@ -498,6 +499,9 @@ router.use("/founder-numbers", founderNumbersRouter);
 // At a Glance ROAS card targets (Numbers): read by founder.numbers grantees,
 // changed by the founder only — guarded inside.
 router.use("/ad-efficiency", adEfficiencyRouter);
+// Numbers panel benchmarks: read by founder.numbers grantees, changed by the
+// founder only — guarded inside.
+router.use("/numbers-benchmarks", numbersBenchmarksRouter);
 // The Google Ads script link — make / turn off its key, see what it last
 // sent. Founder only (requireFounder inside).
 router.use("/google-ads-link", googleAdsLinkRouter);
