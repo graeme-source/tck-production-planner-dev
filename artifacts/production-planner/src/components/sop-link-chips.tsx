@@ -46,7 +46,7 @@ export interface SopLink {
 }
 
 export interface SopAttachTarget {
-  targetType: "checklist_template" | "ingredient" | "recipe_ingredient" | "recipe" | "sub_recipe" | "station" | "page";
+  targetType: "checklist_template" | "ingredient" | "recipe_ingredient" | "recipe" | "sub_recipe" | "station" | "page" | "supplier";
   a?: number;
   b?: number;
   text?: string;

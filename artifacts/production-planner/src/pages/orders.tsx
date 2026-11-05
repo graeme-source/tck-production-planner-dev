@@ -60,6 +60,7 @@ import { parseISODate, resolveDeliveryDate } from "@/lib/order-delivery";
 import { kanbansToPutBack, openOrdersForSupplier, orderTargetFor, placedOrderEditState, showsPendingCard } from "@/lib/supplier-order-target";
 import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
+import { SupplierSopBanner, SupplierSopAddButton } from "@/components/supplier-sop";
 import { useNow } from "@/hooks/use-now";
 import { orderForSupplierSearch } from "@/lib/search-word-groups";
 import { filterAddItemIngredients } from "@/lib/add-item-filter";
@@ -2447,6 +2448,7 @@ export default function Orders() {
                 {expanded ? <ChevronUp className="w-5 h-5 text-muted-foreground" /> : <ChevronDown className="w-5 h-5 text-muted-foreground" />}
               </div>
             </button>
+            <SupplierSopBanner supplierId={so.supplier.id} supplierName={so.supplier.name} />
 
             {minimumState && minimumState.plan.gap > 0 && orderableLines.length > 0 && (
               <MinimumOrderNotice
@@ -2895,6 +2897,7 @@ export default function Orders() {
                       <StickyNote className="w-4 h-4" />
                       Supplier notes
                     </button>
+                    <SupplierSopAddButton supplierId={so.supplier.id} supplierName={so.supplier.name} />
                     {isReopened && canManageOrders && reopenedPOId && (
                       <button
                         onClick={() => setDeleteOrderConfirm({ poId: reopenedPOId, supplierId: so.supplier.id, supplierName: so.supplier.name })}
