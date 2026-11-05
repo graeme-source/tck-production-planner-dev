@@ -1,36 +1,32 @@
 /**
- * The founder's benchmark editor for the Numbers panels (Objective I): every
- * KPI from the Benchmarks button, one from the pencil on its panel. Each KPI's
- * two figures autosave together with a visible state. Closable (X, backdrop,
- * Escape), max-h-[92dvh] with internal scrolling.
+ * The founder's targets for the Numbers panels (Objective I). BenchmarkRows
+ * sits inside Edit targets, under the monthly sales targets; the pencil on a
+ * panel opens that one panel's row. Each KPI's two figures autosave together
+ * with a visible state. Sales aren't here: they're the monthly targets.
+ * Closable (X, backdrop, Escape), max-h-[92dvh] with internal scrolling.
  */
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Gauge, X } from "lucide-react";
+import { Target, X } from "lucide-react";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
 import { benchmarkProblem, KPIS, type Benchmark, type KpiId, type KpiSpec } from "@/lib/numbers-benchmarks";
 import { useNumbersBenchmarks, useSaveBenchmark } from "./api";
 
-export function BenchmarksButton() {
+/** Every panel's targets, sales aside. */
+export function BenchmarkRows({ only }: { only?: KpiId }) {
   const { data } = useNumbersBenchmarks();
-  const [open, setOpen] = useState(false);
-  if (!data?.canEdit) return null;
+  if (!data) return null;
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl border-2 border-border bg-card hover:bg-secondary/60"
-      >
-        <Gauge className="w-4 h-4 text-primary" /> Benchmarks
-      </button>
-      {open && <BenchmarksDialog onClose={() => setOpen(false)} />}
+      {KPIS.filter((spec: KpiSpec) => !spec.monthlyTarget && (!only || spec.id === only)).map((spec) => (
+        <BenchmarkRow key={spec.id} spec={spec} value={data.benchmarks[spec.id]} />
+      ))}
     </>
   );
 }
 
-export function BenchmarksDialog({ only, onClose }: { only?: KpiId; onClose: () => void }) {
+export function BenchmarksDialog({ only, onClose }: { only: KpiId; onClose: () => void }) {
   const { data } = useNumbersBenchmarks();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -49,16 +45,14 @@ export function BenchmarksDialog({ only, onClose }: { only?: KpiId; onClose: () 
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-          <Gauge className="w-6 h-6 text-primary flex-shrink-0" />
-          <h2 id="benchmarks-title" className="flex-1 min-w-0 font-display font-bold text-xl leading-tight">Benchmarks</h2>
+          <Target className="w-6 h-6 text-primary flex-shrink-0" />
+          <h2 id="benchmarks-title" className="flex-1 min-w-0 font-display font-bold text-xl leading-tight">Target</h2>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
             <X className="w-6 h-6" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          {KPIS.filter((spec) => !only || spec.id === only).map((spec) => (
-            <BenchmarkRow key={spec.id} spec={spec} value={data.benchmarks[spec.id]} />
-          ))}
+          <BenchmarkRows only={only} />
         </div>
       </div>
     </div>,

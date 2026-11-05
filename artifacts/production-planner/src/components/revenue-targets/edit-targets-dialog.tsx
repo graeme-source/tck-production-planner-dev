@@ -1,6 +1,7 @@
 /**
  * "Edit targets" — the founder's editor for the monthly MINIMUM and each
- * month's STRETCH (Graeme, 2026-10-08). Objective I.
+ * month's STRETCH (Graeme, 2026-10-08), and since 5 Nov 2026 every other Numbers
+ * panel's target, so there's one place for them all. Objective I.
  *
  * Changing a target by accident must be hard, so saving is a double
  * confirmation: (1) a plain list of exactly what will change, then (2) a
@@ -21,18 +22,18 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
+import { BenchmarkRows } from "@/components/numbers-benchmarks/benchmarks-dialog";
 import { useRevenueTargets, useSaveTargetChanges, type RevenueTargetsPayload } from "./api";
 
 const WINDOW = 13;
 
-/** The button + dialog. Renders nothing unless this person may edit. */
-export function EditTargetsButton({ className }: { className?: string }) {
+/** The dialog, for the button or a sales panel's pencil to open. */
+export function useTargetsEditor() {
   const { data } = useRevenueTargets();
   // The save lives here, not in the dialog, so the toast's Undo still works
   // after the dialog has closed.
   const save = useSaveTargetChanges();
-  const [open, setOpen] = useState(false);
-  if (!data?.canEdit) return null;
+  const [isOpen, setOpen] = useState(false);
 
   const undo = (applied: TargetChange[], before: TargetsState) => {
     save.mutate(invertChanges(applied), {
@@ -43,16 +44,29 @@ export function EditTargetsButton({ className }: { className?: string }) {
       onError: (e: Error) => toast({ title: "Couldn't undo", description: e.message, variant: "destructive" }),
     });
   };
+  return {
+    canEdit: !!data?.canEdit,
+    open: () => setOpen(true),
+    element: isOpen && data?.canEdit
+      ? <EditTargetsDialog data={data} save={save} onUndo={undo} onClose={() => setOpen(false)} />
+      : null,
+  };
+}
+
+/** The button + dialog. Renders nothing unless this person may edit. */
+export function EditTargetsButton({ className }: { className?: string }) {
+  const editor = useTargetsEditor();
+  if (!editor.canEdit) return null;
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={editor.open}
         className={cn("inline-flex items-center gap-2 text-sm font-semibold px-4 py-2 rounded-xl border-2 border-border bg-card hover:bg-secondary/60", className)}
       >
         <Target className="w-4 h-4 text-primary" /> Edit targets
       </button>
-      {open && <EditTargetsDialog data={data} save={save} onUndo={undo} onClose={() => setOpen(false)} />}
+      {editor.element}
     </>
   );
 }
@@ -135,10 +149,10 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
           <Target className="w-6 h-6 text-primary flex-shrink-0" />
           <div className="flex-1 min-w-0">
             <h2 id="edit-targets-title" className="font-display font-bold text-xl leading-tight">
-              {step === "edit" ? "Monthly sales targets" : step === "review" ? "Check the changes" : "Confirm the change"}
+              {step === "edit" ? "Targets" : step === "review" ? "Check the changes" : "Confirm the change"}
             </h2>
             <p className="text-sm text-muted-foreground">
-              {step === "edit" ? "Minimum every month, plus a stretch you can raise month by month."
+              {step === "edit" ? "Monthly sales first, then every other panel on Numbers."
                 : step === "review" ? "Step 1 of 2 — this is exactly what will change."
                   : "Step 2 of 2 — tick the box to make it final."}
             </p>
@@ -152,7 +166,7 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
           {step === "edit" && (
             <>
               <section className="space-y-2">
-                <label htmlFor="target-minimum" className="text-base font-semibold block">Minimum — every month</label>
+                <label htmlFor="target-minimum" className="text-base font-semibold block">Sales minimum — every month</label>
                 <AmountInput id="target-minimum" value={minText} onChange={setMinText} invalid={minInvalid} />
                 {minInvalid
                   ? <p className="text-sm text-red-600">Type an amount, e.g. 120,000 or 120k.</p>
@@ -160,7 +174,7 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
               </section>
 
               <section className="space-y-2">
-                <h3 className="text-base font-semibold">Stretch — by month</h3>
+                <h3 className="text-base font-semibold">Sales stretch — by month</h3>
                 <p className="text-sm text-muted-foreground">
                   Leave a month blank to keep the month before's stretch. Set a higher one where you want to push (e.g. November).
                 </p>
@@ -205,6 +219,12 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
                     A carried-forward stretch would be at or below the minimum in {belowMin.map(m => monthLabel(m, { short: true })).join(", ")} — raise the stretch or lower the minimum.
                   </p>
                 )}
+              </section>
+
+              <section className="space-y-2">
+                <h3 className="text-base font-semibold">Other panels</h3>
+                <p className="text-sm text-muted-foreground">Each saves on its own as you type.</p>
+                <BenchmarkRows />
               </section>
 
               {data.history.length > 0 && (

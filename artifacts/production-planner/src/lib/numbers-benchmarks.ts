@@ -24,10 +24,15 @@ export interface KpiSpec {
   perDay: boolean;
   /** Less is better: the benchmarks run downwards. */
   lowerIsBetter?: boolean;
+  /** Set in the monthly sales targets, not here. */
+  monthlyTarget?: boolean;
 }
 
 export const KPIS = [
   { id: "sales", label: "Total sales", unit: "£", perDay: true },
+  // The month's revenue against the monthly minimum and stretch: Month to Date
+  // and Forecast, judged on where the month is heading.
+  { id: "monthlySales", label: "Monthly sales", unit: "£", perDay: false, monthlyTarget: true },
   { id: "aov", label: "Average order value", unit: "£", perDay: false },
   { id: "newCustomerShare", label: "New customer share of orders", unit: "%", perDay: false },
   { id: "newCustomers", label: "New customers", unit: "count", perDay: true },

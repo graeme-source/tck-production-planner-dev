@@ -49,6 +49,24 @@ describe("gradeKpi", () => {
   });
 });
 
+describe("the month's revenue", () => {
+  const month = kpiSpec("monthlySales");
+  const targets: Benchmark = { minimum: 120_000, stretch: 180_000 };
+
+  it("isn't scaled: it's judged on where the month is heading", () => {
+    expect(gradeKpi(116_006, targets, month, 5)?.levels).toEqual(targets);
+  });
+
+  it("is under the minimum when it's heading short, however it reads today", () => {
+    expect(gradeKpi(116_006, targets, month)?.shade.hex).toBe(shadeAtRatio(116_006 / 120_000).hex);
+    expect(gradeKpi(116_006, targets, month)!.shade.step).toBeLessThan(gradeKpi(120_000, targets, month)!.shade.step);
+  });
+
+  it("has no colour without a stretch for the month", () => {
+    expect(gradeKpi(100, { minimum: 120_000, stretch: null }, month)).toBeNull();
+  });
+});
+
 describe("benchmarkProblem", () => {
   it("says what's missing or the wrong way round", () => {
     expect(benchmarkProblem({ minimum: null, stretch: null }, aov)).toBeNull();

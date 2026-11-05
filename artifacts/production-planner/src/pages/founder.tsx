@@ -50,7 +50,6 @@ import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
 import { AdEfficiencyRow } from "@/components/ad-efficiency/ad-efficiency-row";
 import { NewVsReturningCard } from "@/components/new-vs-returning-card";
-import { BenchmarksButton } from "@/components/numbers-benchmarks/benchmarks-dialog";
 import { KpiGradeStrip } from "@/components/numbers-benchmarks/kpi-grade-strip";
 import { useDayPace } from "@/components/numbers-benchmarks/api";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
@@ -910,10 +909,7 @@ function FounderDashboard() {
   const hoursGone = londonHoursGone(today);
   const dayShare = (kpi: KpiId) => shareOfDayDone(dayPace?.[kpi], hoursGone);
   const todayWindow = useMemo(() => periodWindow("today", today), [todayStr]);
-  const monthWindow = useMemo(() => periodWindow("monthToDate", today), [todayStr]);
   const periodDays = (kpi: KpiId) => benchmarkDays(period, dayShare(kpi));
-  const monthElapsedDays = benchmarkDays(monthWindow, dayShare("sales")) ?? 0;
-  const monthDivisor = monthSummary?.dayCount || 1;
   const { data: periodTrendData } = useSalesTrend(from, to, null, !period.empty);
 
   function applyPreset(id: PeriodPresetId) {
@@ -1282,10 +1278,7 @@ function FounderDashboard() {
           <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
             {"At a Glance — " + format(today, "MMMM yyyy")}
           </h2>
-          <div className="flex items-center gap-2 flex-wrap">
-            <BenchmarksButton />
-            <EditTargetsButton />
-          </div>
+          <EditTargetsButton />
         </div>
         {/* Eight columns' worth of tiles (Month to Date and Forecast are
             two wide): four columns on a wide screen, two on the iPad, so
@@ -1365,7 +1358,7 @@ function FounderDashboard() {
             loading={monthLoading}
             error={!!monthError}
             trend={glanceToggle("monthToDate")}
-            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.totalRevenue} days={monthElapsedDays} />}
+            grade={<KpiGradeStrip kpi="monthlySales" value={monthSummary?.estimatedMonthlyRevenue} forecast={monthSummary?.estimatedMonthlyRevenue} />}
             // Two columns wide: sales so far against the minimum and this
             // month's stretch, and the projected month-end against each.
             className="sm:col-span-2"
@@ -1429,7 +1422,7 @@ function FounderDashboard() {
             bg="bg-violet-500/10"
             loading={monthLoading}
             error={!!monthError}
-            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.averageDailyRevenue} days={monthElapsedDays / monthDivisor} />}
+            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.averageDailyRevenue} />}
           />
           <KpiCard
             title="Forecast"
@@ -1442,7 +1435,7 @@ function FounderDashboard() {
             bg="bg-amber-500/10"
             loading={monthLoading}
             error={!!monthError}
-            grade={<KpiGradeStrip kpi="sales" value={monthSummary?.estimatedMonthlyRevenue} days={getDaysInMonth(today) * (monthElapsedDays / monthDivisor)} />}
+            grade={<KpiGradeStrip kpi="monthlySales" value={monthSummary?.estimatedMonthlyRevenue} />}
           />
         </div>
         {/* Advertising efficiency (Graeme, 2026-10-11): new-customer ROAS
@@ -1549,7 +1542,9 @@ function FounderDashboard() {
                 loading={periodLoading}
                 error={!!periodError}
                 trend={periodToggle("revenue", ["orders"])}
-                grade={<KpiGradeStrip kpi="sales" value={periodSummary?.totalRevenue} days={periodDays("sales")} />}
+                grade={period.id === "monthToDate"
+                  ? <KpiGradeStrip kpi="monthlySales" value={monthSummary?.estimatedMonthlyRevenue} forecast={monthSummary?.estimatedMonthlyRevenue} />
+                  : <KpiGradeStrip kpi="sales" value={periodSummary?.totalRevenue} days={periodDays("sales")} />}
               />
               {periodPanel(["revenue", "orders"])}
               <KpiCard
