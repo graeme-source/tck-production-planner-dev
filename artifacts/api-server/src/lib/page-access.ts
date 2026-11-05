@@ -4,9 +4,9 @@ import { db, pagePermissionsTable } from "@workspace/db";
 // permission the app already enforces on the corresponding page. If a user
 // can't open /stock in the app, Caz won't answer stock questions for them.
 
-export type Role = "viewer" | "manager" | "admin";
-
-const ROLE_RANK: Record<Role, number> = { viewer: 0, manager: 1, admin: 2 };
+export { roleMeets, type Role } from "./page-access-rules";
+import type { Role } from "./page-access-rules";
+import { roleMeets } from "./page-access-rules";
 
 /** Page defaults, mirrored from routes/page-permissions.ts. Anything not listed
  *  defaults to "viewer" (visible to everyone logged in). */
@@ -24,11 +24,6 @@ const DEFAULT_MIN_ROLE: Record<string, Role> = {
   "/suppliers": "manager",
   "/stock-accuracy": "manager",
 };
-
-/** True when `userRole` is at least `minRole` in the viewer<manager<admin order. */
-export function roleMeets(userRole: Role, minRole: Role): boolean {
-  return ROLE_RANK[userRole] >= ROLE_RANK[minRole];
-}
 
 export interface PageMinRoles {
   /** Min role for a page key: DB override wins, else built-in default, else "viewer". */

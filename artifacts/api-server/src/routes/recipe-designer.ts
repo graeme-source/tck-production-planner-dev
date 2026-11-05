@@ -18,6 +18,8 @@ import {
   CAZ_TOOL_PAGE_KEYS,
   executeCazTool,
 } from "../lib/ai/caz-tools";
+import { JANE_DATA_GUIDE, JANE_DATA_TOOL_NAMES } from "../lib/ai/jane-data-access";
+import { executeJaneDataTool, janeDataTools, loadJaneAccess } from "../lib/ai/jane-data-tools";
 import { getPageMinRoles, roleMeets, type Role } from "../lib/page-access";
 import { londonDateString } from "../lib/london-time";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -136,14 +138,12 @@ ${TEST_BOX_TOOL}`;
 // Read-only assistant for everyone else on the team. Same name (Caz), but no
 // recipe-design or memory powers — it answers questions from live data and
 // cannot change anything.
-const CAZ_PROMPT = `You are AI Jane, the assistant inside The Calzone Kitchen's Production Planner app. You help the team by answering questions about what the app knows: recipes, ingredients, allergens, costs, sub-recipes, today's and other days' production plans, prep quantities (how much of each thing per tray/batch), stock / factory numbers, and average ingredient consumption (how much of an ingredient a normal day or week uses — get_ingredient_consumption, which counts sub-recipe usage too and works on a 5-production-day week).
+const CAZ_PROMPT = `You are AI Jane, the assistant inside The Calzone Kitchen's Production Planner app. You help the team by answering questions about what the app knows: recipes, ingredients, allergens, costs, sub-recipes, production plans and what was really made, prep quantities (how much of each thing per tray/batch), stock, orders and deliveries, temperatures and checks, issues, improvements and waste, and how much of an ingredient was used or is normally needed.
 
 ## What you can and can't do
 You are READ-ONLY. You look things up and explain them. You cannot change recipes, plans, stock, tags or settings, and you cannot take any action (no tagging orders, no raising issues, no edits). If someone asks you to change something, tell them plainly that you can only look things up, and point them to the right screen to make the change themselves.
 
 You only have tools for operational data. You have NO access to staff records, HR, training, contact details or anything personal — if asked, say that's not something you can see.
-
-Some tools may be unavailable to the person you're talking to because of their access level. If you don't have a tool for what's asked, say you can't see that rather than guessing.
 
 ## Tone & response style
 Be a helpful, plain-spoken colleague. Short and direct — lead with the answer. Use **bold** for the key number. No markdown headings. Don't narrate tool use ("let me check…") — just answer. Don't surface internal IDs (recipe/ingredient ids); use names.
@@ -153,6 +153,9 @@ When someone asks a prep question like "how much BBQ sauce per tray for BBQ Pull
 For allergen questions, use get_recipe_allergens (one call — it walks the whole ingredient tree including sub-recipes). Don't assemble allergens from get_recipe. If the tool reports incomplete declarations, give the allergens you have but note that the ingredient data for that product isn't fully complete, so it should be double-checked against the pack.
 
 Really — do not narrate ("let me pull up…", "I need to check…"). Call the tool and give the answer.`;
+
+/** A question across several records takes several lookups. */
+const MOST_LOOKUP_ROUNDS = 12;
 
 // Image attachments make /chat bodies big. The 30 MB json limit for that
 // path lives in app.ts via lib/big-body-routes.ts — a parser attached here
@@ -388,7 +391,8 @@ router.post("/chat", async (req: Request, res: Response) => {
   // permits; only the founder gets the write-proposal tools (recipe drafts,
   // memory updates). So for staff there is physically no tool that can change
   // anything — read-only is structural, not just prompted.
-  const readTools = await allowedReadTools(requester.role);
+  const dataAccess = await loadJaneAccess(requester.userId, requester.role);
+  const readTools = [...await allowedReadTools(requester.role), ...janeDataTools(dataAccess)];
   const tools: Anthropic.Tool[] = requester.isFounder
     ? [...readTools, ...PROPOSAL_TOOL_DEFINITIONS]
     : readTools;
@@ -398,7 +402,7 @@ router.post("/chat", async (req: Request, res: Response) => {
   const datedPrompt = `Today's date is ${londonDateString()} (Europe/London). When the user gives a date without a year, assume the current or nearest upcoming one.\n\n`;
   // The assistant is "AI Jane" in the app (renamed from Caz, 28 Oct 2026) —
   // named after Jane, who answers everyone's questions on the floor.
-  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT);
+  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT) + `\n\n${JANE_DATA_GUIDE}`;
 
   // Only persist to a thread the requester owns — never write into someone
   // else's conversation via a passed-in id.
@@ -431,7 +435,7 @@ router.post("/chat", async (req: Request, res: Response) => {
   let assistantTextAcc = "";
 
   try {
-    for (let iteration = 0; iteration < 8; iteration++) {
+    for (let iteration = 0; iteration < MOST_LOOKUP_ROUNDS; iteration++) {
       const stream = client.messages.stream({
         model: CLAUDE_MODELS.sonnet,
         max_tokens: 4096,
@@ -509,7 +513,9 @@ router.post("/chat", async (req: Request, res: Response) => {
 
         // Data tools — execute against DB / loopback.
         send("tool_call", { name: use.name, status: "running" });
-        const exec = CAZ_TOOL_NAMES.has(use.name)
+        const exec = JANE_DATA_TOOL_NAMES.has(use.name)
+          ? await executeJaneDataTool(use.name, use.input, dataAccess)
+          : CAZ_TOOL_NAMES.has(use.name)
           ? await executeCazTool(use.name, use.input, cazCtx)
           : RECIPE_TOOL_NAMES.has(use.name)
             ? await executeRecipeTool(use.name, use.input)
