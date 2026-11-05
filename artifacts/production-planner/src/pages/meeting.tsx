@@ -4180,6 +4180,8 @@ interface PrincipleRow {
   id: number;
   weekPosition: number;
   title: string;
+  partLabel: string | null;
+  partIndex: number | null;
   summary: string;
   isActive: boolean;
 }
@@ -4308,12 +4310,20 @@ function CuriosityTimeToggleCard() {
   );
 }
 
+/** Every week of a subject shares its title, so the part tells them apart. */
+function weekLabel(week: { title: string; partLabel?: string | null; partIndex?: number | null }): string {
+  if (week.partLabel) return `${week.title} — ${week.partLabel}`;
+  return week.partIndex === 1 ? `${week.title} — overview` : week.title;
+}
+
+type FocusWeek = { id: number; title: string; partLabel: string | null; partIndex: number | null };
+
 function WeeklyFocusCard() {
   const queryClient = useQueryClient();
   const { data } = useQuery<{
-    thisWeek: { weekStart: string; principle: { id: number; title: string } | null; source: "override" | "curriculum" };
-    nextWeek: { weekStart: string; principle: { id: number; title: string } | null; source: "override" | "curriculum" };
-    principles: Array<{ id: number; title: string }>;
+    thisWeek: { weekStart: string; principle: (FocusWeek & { draft: boolean }) | null; source: "override" | "curriculum" };
+    nextWeek: { weekStart: string; principle: (FocusWeek & { draft: boolean }) | null; source: "override" | "curriculum" };
+    principles: FocusWeek[];
   }>({
     queryKey: ["lean-week-plan"],
     queryFn: async () => {
@@ -4353,12 +4363,15 @@ function WeeklyFocusCard() {
         className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm"
       >
         <option value="">
-          Follow curriculum{wk.source === "curriculum" && wk.principle ? ` — ${wk.principle.title}` : ""}
+          Follow curriculum{wk.source === "curriculum" && wk.principle ? ` — ${weekLabel(wk.principle)}` : ""}
         </option>
         {data.principles.map(p => (
-          <option key={p.id} value={p.id}>{p.title}</option>
+          <option key={p.id} value={p.id}>{weekLabel(p)}</option>
         ))}
       </select>
+      {wk.principle?.draft && (
+        <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 flex-shrink-0">draft</span>
+      )}
       {wk.source === "override" && (
         <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 flex-shrink-0">pinned</span>
       )}
@@ -4566,7 +4579,7 @@ function PrincipleCard({ principle, expanded, onToggle }: { principle: Principle
         <div className="flex items-center gap-3 min-w-0">
           <span className="text-xs font-semibold text-muted-foreground tabular-nums w-12 shrink-0">Wk {principle.weekPosition}</span>
           <div className="text-left min-w-0">
-            <p className={cn("font-medium truncate", !principle.isActive && "line-through text-muted-foreground")}>{principle.title}</p>
+            <p className={cn("font-medium truncate", !principle.isActive && "line-through text-muted-foreground")}>{weekLabel(principle)}</p>
             <p className="text-xs text-muted-foreground truncate">{principle.summary}</p>
           </div>
         </div>

@@ -45,6 +45,7 @@ import { validate } from "../middleware/validate";
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
+import { followOnWeek } from "../lib/lean-week-follow-on";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadLastProductionKpis } from "../services/last-production-kpis";
 import { separateKitchenPositions } from "@workspace/production-schedule";
@@ -72,7 +73,8 @@ export function mondayOf(iso: string): string {
 }
 
 /** Which principle is the focus for the week starting `weekStart`?
- *  An explicit row in lean_week_focus wins; otherwise the active
+ *  An explicit row in lean_week_focus wins. After a pinned week the plan
+ *  carries on from it (lib/lean-week-follow-on). Otherwise the active
  *  curriculum (minus the on-demand catch-all) is walked in weekPosition
  *  order from the anchor week. */
 export async function getWeekFocusPrinciple(weekStart: string) {
@@ -89,10 +91,30 @@ export async function getWeekFocusPrinciple(weekStart: string) {
     .from(leanPrinciplesTable)
     .where(eq(leanPrinciplesTable.isActive, true))
     .orderBy(asc(leanPrinciplesTable.weekPosition));
-  // Only LOCKED weeks are ever taught (migration 0057). A week being written
-  // in the curriculum planner sits in the plan as a draft — it must not reach
-  // a morning meeting, and it must not shift the rotation of the weeks that
-  // are ready, which is why it's filtered out here rather than at the edges.
+  const [lastPin] = await db.execute<{ principle_id: number; week_start: string }>(sql`
+    SELECT principle_id, to_char(week_start, 'YYYY-MM-DD') AS week_start FROM lean_week_focus
+    WHERE week_start < ${weekStart} ORDER BY week_start DESC LIMIT 1
+  `).then(r => r.rows);
+  if (lastPin) {
+    const lessons = await db
+      .select({ principleId: leanExamplesTable.principleId, count: sql<number>`COUNT(*)::int` })
+      .from(leanExamplesTable)
+      .where(eq(leanExamplesTable.isActive, true))
+      .groupBy(leanExamplesTable.principleId);
+    const lessonCount = new Map(lessons.map(l => [l.principleId, Number(l.count)]));
+    const plan = actives
+      .filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE)
+      .map(p => ({ ...p, lessonCount: lessonCount.get(p.id) ?? 0 }));
+    const weeksAfter = Math.round((new Date(`${weekStart}T00:00:00Z`).getTime() - new Date(`${lastPin.week_start}T00:00:00Z`).getTime()) / (7 * 86_400_000));
+    const next = followOnWeek(plan, lastPin.principle_id, weeksAfter);
+    if (next) return { principle: next, source: "curriculum" as const };
+  }
+
+  // With no pin to follow, only LOCKED weeks are taught (migration 0057). A
+  // week being written in the curriculum planner sits in the plan as a draft —
+  // it must not reach a morning meeting, and it must not shift the rotation of
+  // the weeks that are ready, which is why it's filtered out here rather than
+  // at the edges.
   const rotation = actives.filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE && p.status === "locked");
   if (rotation.length === 0) return { principle: null, source: "curriculum" as const };
 
@@ -1175,14 +1197,19 @@ router.get("/lessons/week-plan", async (_req: Request, res: Response) => {
   const [thisWeek, nextWeek, principles] = await Promise.all([
     getWeekFocusPrinciple(thisMonday),
     getWeekFocusPrinciple(nextMonday),
-    db.select({ id: leanPrinciplesTable.id, title: leanPrinciplesTable.title, weekPosition: leanPrinciplesTable.weekPosition, isActive: leanPrinciplesTable.isActive })
+    db.select({ id: leanPrinciplesTable.id, title: leanPrinciplesTable.title, partLabel: leanPrinciplesTable.partLabel, partIndex: leanPrinciplesTable.partIndex, weekPosition: leanPrinciplesTable.weekPosition, isActive: leanPrinciplesTable.isActive })
       .from(leanPrinciplesTable)
       .orderBy(asc(leanPrinciplesTable.weekPosition)),
   ]);
+  const summary = ({ principle, source }: Awaited<ReturnType<typeof getWeekFocusPrinciple>>, weekStart: string) => ({
+    weekStart,
+    principle: principle ? { id: principle.id, title: principle.title, partLabel: principle.partLabel, partIndex: principle.partIndex, draft: principle.status !== "locked" } : null,
+    source,
+  });
 
   res.json({
-    thisWeek: { weekStart: thisMonday, principle: thisWeek.principle ? { id: thisWeek.principle.id, title: thisWeek.principle.title } : null, source: thisWeek.source },
-    nextWeek: { weekStart: nextMonday, principle: nextWeek.principle ? { id: nextWeek.principle.id, title: nextWeek.principle.title } : null, source: nextWeek.source },
+    thisWeek: summary(thisWeek, thisMonday),
+    nextWeek: summary(nextWeek, nextMonday),
     principles: principles.filter(p => p.isActive && p.title !== ON_DEMAND_PRINCIPLE_TITLE),
   });
 });
@@ -1194,8 +1221,11 @@ router.put("/lessons/week-focus", async (req: Request, res: Response) => {
     return;
   }
   const weekStart = mondayOf(body.weekStart);
+  // Setting a week frees the one after it, so that follows on from this choice
+  // (Graeme, 5 Nov 2026). A week can still be pinned by setting it afterwards.
+  const weekAfter = new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
   if (body.principleId == null) {
-    await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start = ${weekStart}`);
+    await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start IN (${weekStart}, ${weekAfter})`);
     res.json({ ok: true, weekStart, cleared: true });
     return;
   }
@@ -1205,6 +1235,7 @@ router.put("/lessons/week-focus", async (req: Request, res: Response) => {
     INSERT INTO lean_week_focus (week_start, principle_id) VALUES (${weekStart}, ${body.principleId})
     ON CONFLICT (week_start) DO UPDATE SET principle_id = ${body.principleId}
   `);
+  await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start = ${weekAfter}`);
   res.json({ ok: true, weekStart, principleId: body.principleId });
 });
 
