@@ -17,6 +17,7 @@ import { validate } from "../middleware/validate";
 import { buildSopFromVideo, buildSopFromMedia, ffmpegAvailable, type SuppliedPhoto } from "../lib/sop-video";
 import { isClaudeConfigured } from "../lib/ai/claude";
 import { markSopContentChanged, sopIdForStep } from "../lib/sop-content-version";
+import { sopLinkProblem } from "../lib/sop-link-targets";
 
 const router: IRouter = Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
@@ -952,9 +953,24 @@ router.get("/links/for-page", requireAuth, async (req, res) => {
   })));
 });
 
-const LINK_TYPES = new Set(["checklist_template", "ingredient", "recipe_ingredient", "recipe", "sub_recipe", "station", "page"]);
-/** Link types addressed by a text key rather than a numeric id. */
-const TEXT_KEYED_LINK_TYPES = new Set(["station", "page"]);
+// GET /links/for-suppliers → { [supplierId]: [{linkId,sopId,title,stepCount}] }
+//
+// Supplier SOPs (Fix queue #390): a how-to for ordering from one supplier,
+// shown big on that supplier's Orders card. Every supplier in one call, so
+// the page's cards share a single request.
+router.get("/links/for-suppliers", requireAuth, async (_req, res) => {
+  const rows = await db.execute<{ link_id: number; target_a: number; sop_id: number; title: string; step_count: number }>(sql`
+    SELECT l.id AS link_id, l.target_a, l.sop_id, s.title, ${STEP_COUNT_SQL}
+    FROM sop_links l JOIN standards_sops s ON s.id = l.sop_id
+    WHERE l.target_type = 'supplier'
+    ORDER BY s.title
+  `);
+  const out: Record<number, Array<{ linkId: number; sopId: number; title: string; stepCount: number }>> = {};
+  for (const r of rows.rows ?? []) {
+    (out[r.target_a] ??= []).push({ linkId: r.link_id, sopId: r.sop_id, title: r.title, stepCount: Number(r.step_count) || 0 });
+  }
+  res.json(out);
+});
 
 // POST /links {sopId, targetType, a?, b?, text?} — attach (idempotent).
 router.post("/links", requireAuth, async (req, res) => {
@@ -963,16 +979,9 @@ router.post("/links", requireAuth, async (req, res) => {
   const a = req.body?.a != null ? Number(req.body.a) : null;
   const b = req.body?.b != null ? Number(req.body.b) : null;
   const text = req.body?.text != null ? String(req.body.text) : null;
-  if (!Number.isInteger(sopId) || !LINK_TYPES.has(targetType)) {
-    res.status(400).json({ error: "sopId and a valid targetType are required" });
-    return;
-  }
-  if (TEXT_KEYED_LINK_TYPES.has(targetType) ? !text : !Number.isInteger(a)) {
-    res.status(400).json({ error: "Target reference missing" });
-    return;
-  }
-  if (targetType === "recipe_ingredient" && !Number.isInteger(b)) {
-    res.status(400).json({ error: "recipe_ingredient links need a=recipeId and b=ingredientId" });
+  const problem = sopLinkProblem({ sopId, targetType, a, b, text });
+  if (problem) {
+    res.status(400).json({ error: problem });
     return;
   }
   const inserted = await db.execute<{ id: number }>(sql`
