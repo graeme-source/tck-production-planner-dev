@@ -1224,8 +1224,14 @@ router.put("/lessons/week-focus", async (req: Request, res: Response) => {
   // Setting a week frees the one after it, so that follows on from this choice
   // (Graeme, 5 Nov 2026). A week can still be pinned by setting it afterwards.
   const weekAfter = new Date(new Date(`${weekStart}T00:00:00Z`).getTime() + 7 * 86_400_000).toISOString().slice(0, 10);
+  // The to-dos name the week's lesson, so they follow the change. Imported
+  // here because lean-reviews imports this file. Never fails the save.
+  const refreshTodos = () => import("./lean-reviews")
+    .then(m => m.ensureWeeklyLeanTodosForAll())
+    .catch(err => console.warn("[lean-todos] refresh after a focus change failed (the hourly sweep will catch up):", err));
   if (body.principleId == null) {
     await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start IN (${weekStart}, ${weekAfter})`);
+    await refreshTodos();
     res.json({ ok: true, weekStart, cleared: true });
     return;
   }
@@ -1236,6 +1242,7 @@ router.put("/lessons/week-focus", async (req: Request, res: Response) => {
     ON CONFLICT (week_start) DO UPDATE SET principle_id = ${body.principleId}
   `);
   await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start = ${weekAfter}`);
+  await refreshTodos();
   res.json({ ok: true, weekStart, principleId: body.principleId });
 });
 

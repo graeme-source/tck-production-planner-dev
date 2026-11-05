@@ -33,6 +33,7 @@ import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
 import { gradeQuiz } from "../lib/lean-quiz-grade";
+import { founderReviewTodo, leanWeekLabel } from "../lib/lean-review-todo";
 import { mondayOf, getWeekFocusPrinciple } from "./morning-meetings";
 
 const router: IRouter = Router();
@@ -145,7 +146,7 @@ export async function ensureWeeklyLeanTodosForAll(): Promise<void> {
     await db.execute(sql`
       INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, lean_week_start)
       SELECT u.id, NULL, 'Lean learning',
-             ${`Lean lesson of the week: ${principle.title}`}, ${WEEKLY_TODO_NOTES},
+             ${`Lean lesson of the week: ${leanWeekLabel(principle)}`}, ${WEEKLY_TODO_NOTES},
              '/lean-review', 'normal', ${dueDate}::date, 'open', ${weekStart}
       FROM app_users u
       WHERE u.is_active = TRUE
@@ -159,12 +160,13 @@ export async function ensureWeeklyLeanTodosForAll(): Promise<void> {
   const nextMonday = nextMondayFrom(weekStart);
   const { principle: nextPrinciple } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
   if (nextPrinciple) {
+    const todo = founderReviewTodo(nextPrinciple, (await loadLessons(nextPrinciple.id)).length);
     await db.execute(sql`
       INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, lean_week_start)
       SELECT u.id, NULL, 'Lean learning',
-             ${`Review next week's lean module: ${nextPrinciple.title}`},
+             ${todo.title},
              ${"Founder review-ahead: read next week's five pages, check the videos and quiz, swap anything that isn't right — then count it as your completion. Same rules as everyone, a week early."},
-             '/lean-review?week=next', 'normal', ${dueDate}::date, 'open', ${nextMonday}
+             ${todo.url}, 'normal', ${dueDate}::date, 'open', ${nextMonday}
       FROM app_users u
       WHERE u.is_active = TRUE
         AND u.email IN (${sql.join(founderEmails.map(e => sql`${e}`), sql`, `)})
@@ -172,6 +174,46 @@ export async function ensureWeeklyLeanTodosForAll(): Promise<void> {
         AND NOT EXISTS (SELECT 1 FROM lean_lesson_reviews r WHERE r.user_id = u.id AND r.week_start = ${nextMonday})
     `);
   }
+  await syncLeanTodos(weekStart, nextMonday, principle, nextPrinciple, founderEmails);
+}
+
+/**
+ * Keep the weekly to-dos naming the right lesson when a week's focus changes
+ * (Graeme, 5 Nov 2026). The founder's review-ahead follows next week's lesson,
+ * and a review of the lesson it replaced no longer counts, so it reopens. The
+ * team's open to-dos take this week's new name; finished ones stay finished.
+ */
+async function syncLeanTodos(
+  weekStart: string,
+  nextMonday: string,
+  principle: LeanPrincipleRow | null,
+  nextPrinciple: LeanPrincipleRow | null,
+  founderEmails: string[],
+): Promise<void> {
+  const founders = sql.join(founderEmails.map(e => sql`${e}`), sql`, `);
+  if (principle) {
+    await db.execute(sql`
+      UPDATE todo_tasks t SET title = ${`Lean lesson of the week: ${leanWeekLabel(principle)}`}, updated_at = NOW()
+      FROM app_users u
+      WHERE u.id = t.assignee_id AND u.email NOT IN (${founders})
+        AND t.lean_week_start = ${weekStart} AND t.status <> 'done'
+        AND t.title <> ${`Lean lesson of the week: ${leanWeekLabel(principle)}`}
+    `);
+  }
+  if (!nextPrinciple) return;
+  const todo = founderReviewTodo(nextPrinciple, (await loadLessons(nextPrinciple.id)).length);
+  await db.execute(sql`
+    DELETE FROM lean_lesson_reviews r USING app_users u
+    WHERE u.id = r.user_id AND u.email IN (${founders})
+      AND r.week_start = ${nextMonday} AND r.principle_id <> ${nextPrinciple.id}
+  `);
+  await db.execute(sql`
+    UPDATE todo_tasks t SET title = ${todo.title}, url = ${todo.url}, status = 'open', completed_at = NULL, updated_at = NOW()
+    FROM app_users u
+    WHERE u.id = t.assignee_id AND u.email IN (${founders})
+      AND t.lean_week_start = ${nextMonday} AND t.title <> ${todo.title}
+      AND NOT EXISTS (SELECT 1 FROM lean_lesson_reviews r WHERE r.user_id = u.id AND r.week_start = ${nextMonday})
+  `);
 }
 
 /** Lazily ensure a weekly lean to-do exists — the push that makes the
@@ -271,9 +313,8 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
         await ensureWeeklyTodo({
           userId,
           weekStart: nextMonday,
-          title: `Review next week's lean module: ${nextPrinciple.title}`,
+          ...founderReviewTodo(nextPrinciple, (await loadLessons(nextPrinciple.id)).length),
           notes: "Founder review-ahead: read next week's five pages, check the videos and quiz, swap anything that isn't right — then count it as your completion. Same rules as everyone, a week early.",
-          url: "/lean-review?week=next",
           // Due the Friday of the CURRENT week — reviewed before it starts.
           dueDate: fridayOf(weekStart),
         });
@@ -283,7 +324,7 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
     await ensureWeeklyTodo({
       userId,
       weekStart,
-      title: `Lean lesson of the week: ${principle.title}`,
+      title: `Lean lesson of the week: ${leanWeekLabel(principle)}`,
       notes: WEEKLY_TODO_NOTES,
       url: "/lean-review",
       dueDate: fridayOf(weekStart),
