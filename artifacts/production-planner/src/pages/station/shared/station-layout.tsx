@@ -15,6 +15,7 @@ import { STATIONS, type StationType } from "./constants";
 import { BreakTracker } from "./break-tracker";
 import { StationReminderBanner } from "./timed-reminders";
 import { StationMessagesBanner } from "@/components/station-messages";
+import { DispatchCutoffBanner } from "@/components/dispatch-cutoff-banner";
 import { MessagesButton } from "@/components/messages/messages-button";
 import { messageStationKeys } from "@/components/messages/messages-api";
 import {
@@ -323,6 +324,7 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
             <StationMessagesBanner stationType={key} />
           </div>
         ))}
+        {(stationType === "packing" || stationType === "wrapping") && <DispatchCutoffBanner />}
         {children}
       </div>
 

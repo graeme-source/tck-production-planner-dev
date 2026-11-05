@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { ChargebackHoldsBanner } from "@/components/chargeback-holds-banner";
+import { DispatchCutoffBanner } from "@/components/dispatch-cutoff-banner";
 import { CancelledOrderLabelsBanner } from "@/components/cancelled-order-labels-banner";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
@@ -4335,6 +4336,7 @@ export default function Fulfilment() {
       {/* Messages sent to the packing station — this screen is where the
           packers actually live, so 'packing' notes land here too. */}
       <StationMessagesBanner stationType="packing" />
+      <DispatchCutoffBanner />
       {/* APC tracking slow several times in a row: one banner, not a warning per order (#339). */}
       <ApcTrackingSlowBanner />
       {/* Timed reminders for packing — the 3pm Factory Number count alarm

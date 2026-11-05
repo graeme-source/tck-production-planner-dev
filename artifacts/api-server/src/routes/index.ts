@@ -173,6 +173,7 @@ import testBoxProductionRouter from "./test-box-production";
 import founderNumbersRouter from "./founder-numbers";
 import adEfficiencyRouter from "./ad-efficiency";
 import numbersBenchmarksRouter from "./numbers-benchmarks";
+import dispatchCutoffRouter from "./dispatch-cutoff";
 import googleAdsIngestRouter from "./google-ads-ingest";
 import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
@@ -502,6 +503,8 @@ router.use("/ad-efficiency", adEfficiencyRouter);
 // Numbers panel benchmarks: read by founder.numbers grantees, changed by the
 // founder only — guarded inside.
 router.use("/numbers-benchmarks", numbersBenchmarksRouter);
+// The 2:16 order check alert, on the packing and wrapping screens.
+router.use("/dispatch-cutoff", dispatchCutoffRouter);
 // The Google Ads script link — make / turn off its key, see what it last
 // sent. Founder only (requireFounder inside).
 router.use("/google-ads-link", googleAdsLinkRouter);

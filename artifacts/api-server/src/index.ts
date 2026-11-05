@@ -3418,6 +3418,10 @@ async function startup() {
     const { startLeanTodoScheduler } = await import("./lib/lean-todo-scheduler");
     startLeanTodoScheduler();
 
+    // The 2:16 check for orders that have missed tomorrow's run.
+    const { startDispatchCutoffScheduler } = await import("./lib/dispatch-cutoff");
+    startDispatchCutoffScheduler();
+
     // Return-to-work chase: detects completed sick spells from the Planday
     // mirror and raises to-dos for the colleague + RTW managers until the
     // form is signed (Graeme, 2026-09-14).
