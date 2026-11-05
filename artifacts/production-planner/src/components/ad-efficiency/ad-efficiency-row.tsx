@@ -5,26 +5,25 @@
  * Three big cards — new-customer ROAS over the last 7 days and this month,
  * and ROAS on total sales over the last 30 days — each against a target,
  * coloured like the dashboard's KPI tiles (lib/station-kpi-bands.ts), with
- * a sparkline and the £ behind it. Then a "What to do" card following the
- * Hammersley rule. Maths: lib/ad-efficiency.ts (pure, tested). Figures:
+ * a sparkline and the £ behind it. Maths: lib/ad-efficiency.ts (pure,
+ * tested). Figures:
  * the Numbers trend series by the day — the same data as Order Analysis.
  */
 import { useId, useMemo, useState } from "react";
-import { SpendContextNotes } from "@/components/sales-drivers/spend-context-notes";
-import { ArrowDownRight, ArrowUpRight, ChevronDown, HelpCircle, History, Megaphone, Minus } from "lucide-react";
+import { ChevronDown, History, Megaphone } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
 import {
-  adWindows, earliestDayNeeded, measureWindow, recommend, roasBand, roasShade, roasVerdict, rollingSeries, shadeAtRatio, ROAS_SHADE_ANCHORS, ROAS_SHADE_STEPS,
-  spendSourceLine, type AdDay, type AdEfficiencySettings, type RecommendationTone, type SparkPoint,
+  adWindows, earliestDayNeeded, measureWindow, roasBand, roasShade, roasVerdict, rollingSeries, shadeAtRatio, ROAS_SHADE_ANCHORS, ROAS_SHADE_STEPS,
+  type AdDay, type AdEfficiencySettings, type SparkPoint,
 } from "@/lib/ad-efficiency";
 import { yesterdayLondon, type RoasResult, type RoasWindow } from "@/lib/roas";
 import {
   canExpandDayList, dayListCaption, dayListToggleLabel, readDayListExpanded, visibleDayRows, writeDayListExpanded,
 } from "@/lib/kpi-day-list";
 import { BAND_HEADER_CLASS, BAND_TEXT_CLASS, type KpiBand } from "@/lib/station-kpi-bands";
-import { useAdEfficiencySettings, useSpendSources } from "./api";
+import { useAdEfficiencySettings } from "./api";
 import { RoasTargetsButton } from "./targets-dialog";
 import { RoasHistoryDialog } from "./roas-history-dialog";
 
@@ -320,13 +319,6 @@ function RoasCard({
   );
 }
 
-const TONE: Record<RecommendationTone, { icon: React.ElementType; border: string; chip: string; label: string }> = {
-  raise: { icon: ArrowUpRight, border: "border-l-[#7cb342]", chip: "bg-[#7cb342]/15 text-[#558b2f]", label: "Raise spend" },
-  hold: { icon: Minus, border: "border-l-sky-500", chip: "bg-sky-100 text-sky-700", label: "Hold steady" },
-  trim: { icon: ArrowDownRight, border: "border-l-rose-600", chip: "bg-rose-100 text-rose-600", label: "Trim spend" },
-  unknown: { icon: HelpCircle, border: "border-l-stone-400", chip: "bg-stone-100 text-stone-600", label: "Not enough data" },
-};
-
 export function AdEfficiencyRow() {
   const lastDay = yesterdayLondon(Date.now());
   const from = earliestDayNeeded(lastDay);
@@ -334,7 +326,6 @@ export function AdEfficiencyRow() {
   const settingsQ = useAdEfficiencySettings();
   const [historyOpen, setHistoryOpen] = useState(false);
   const windows = useMemo(() => adWindows(lastDay), [lastDay]);
-  const sources = useSpendSources(windows.last30.from, lastDay);
 
   const days: AdDay[] = useMemo(
     () => (trend.data?.buckets ?? []).map((b) => ({
@@ -358,14 +349,8 @@ export function AdEfficiencyRow() {
       sparkNc30: rollingSeries(days, "newCustomer", 30, lastDay),
       spark30: rollingSeries(days, "total", 30, lastDay),
       dailyNc: rollingSeries(days, "newCustomer", 1, lastDay, 7),
-      advice: recommend({ days, windows, settings }),
     };
   }, [days, windows, settings, trend.data, lastDay]);
-
-  const sourceLine = useMemo(
-    () => spendSourceLine(sources.data?.days ?? [], sources.data?.google?.firstDate ?? null),
-    [sources.data],
-  );
 
   const failed = trend.error || settingsQ.error;
 
@@ -430,43 +415,11 @@ export function AdEfficiencyRow() {
               revenueLabel="Total sales"
             />
           </div>
-          <AdviceCard advice={view.advice} sourceLine={sourceLine} />
-          {/* Delivery wait, emails and site changes in the same 7 days —
-              context for the advice, never an override (2026-10-16). */}
-          <SpendContextNotes from={windows.last7.from} to={windows.last7.to} />
           {historyOpen && (
             <RoasHistoryDialog lastDay={lastDay} target={settings.ncRoas7dTargetPct} onClose={() => setHistoryOpen(false)} />
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function AdviceCard({ advice, sourceLine }: { advice: ReturnType<typeof recommend>; sourceLine: string }) {
-  const tone = TONE[advice.tone];
-  const Icon = tone.icon;
-  return (
-    <div className={cn("glass-panel rounded-2xl p-5 border-l-8 space-y-3", tone.border)}>
-      <div className="flex items-start gap-4">
-        <div className={cn("p-3 rounded-xl shrink-0", tone.chip)}>
-          <Icon className="w-6 h-6" />
-        </div>
-        <div className="min-w-0 space-y-1">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">What to do · {tone.label}</p>
-          <p className="text-lg font-semibold leading-snug">{advice.headline}</p>
-        </div>
-      </div>
-      {advice.notes.length > 0 && (
-        <ul className="space-y-1.5 pl-1">
-          {advice.notes.map((n) => (
-            <li key={n} className="text-sm flex gap-2"><span className="text-muted-foreground">•</span><span>{n}</span></li>
-          ))}
-        </ul>
-      )}
-      <p className="text-xs text-muted-foreground">
-        Based on the 7-day new-customer ROAS. All three cards use complete days up to yesterday — today is still running. {sourceLine}
-      </p>
     </div>
   );
 }

@@ -46,15 +46,6 @@ const GROUPS: Array<{ title: string; fields: FieldSpec[] }> = [
       { field: "amberWidthPct", label: "Yellow band", hint: "How far under target is still yellow (10 = yellow from 90% to 100% of target, red below).", unit: "%", min: 0, max: 50 },
     ],
   },
-  {
-    title: "What to do",
-    fields: [
-      { field: "holdBandPct", label: "Hold band", hint: "Within this much of the 7-day target, hold spend steady. Above it: raise. Below it: trim.", unit: "%", min: 0, max: 50 },
-      { field: "raiseSpendMinPct", label: "Suggested raise — from", hint: "Smallest spend increase suggested when you're beating target.", unit: "%", min: 0.1, max: 200 },
-      { field: "raiseSpendMaxPct", label: "Suggested raise — to", hint: "Largest spend increase suggested.", unit: "%", min: 0.1, max: 200 },
-      { field: "smallSampleSpend", label: "Too little spend to judge", hint: "Below this much ad spend over 7 days, the advice is softened.", unit: "£", min: 0, max: 1000000 },
-    ],
-  },
 ];
 
 export function RoasTargetsButton() {
