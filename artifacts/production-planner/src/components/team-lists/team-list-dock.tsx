@@ -31,8 +31,8 @@ import { ListDetail } from "@/pages/team-lists";
 import type { TeamListSummary } from "./team-lists-api";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
-/** Read by the toasts, the quick-actions tab and the improvement pop-up so
- *  they sit left of the dock instead of on top of it. */
+/** Added into --right-dock-w (index.css), which the toasts, the quick-actions
+ *  tab and the improvement pop-up read to sit left of the dock. */
 const DOCK_WIDTH_VAR = "--team-dock-w";
 
 /** The lists the dock can show and the one it's showing (null = hide). */

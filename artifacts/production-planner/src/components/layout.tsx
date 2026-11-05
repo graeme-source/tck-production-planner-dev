@@ -948,7 +948,8 @@ export function Layout({ children }: { children: ReactNode }) {
       </AnimatePresence>
 
       {/* ── Main content ────────────────────────────────────────────────── */}
-      <main className="flex-1 flex flex-col h-full overflow-hidden relative">
+      {/* AI Jane docked on a desktop: the page narrows, it isn't covered. */}
+      <main className="flex-1 flex flex-col h-full overflow-hidden relative" style={{ paddingRight: "var(--jane-dock-w, 0px)" }}>
         <TopBar onMenu={handleMenuButton} fallbackTitle={currentPageName} onOpenSops={() => setSopsOpen(true)} showMessages={!accountantOnly} />
         {/* THE app scroll container for sidebar pages. The id is load-bearing:
             lib/scroll.ts and the modal scroll-keeper target it. overscroll-
@@ -994,7 +995,7 @@ export function Layout({ children }: { children: ReactNode }) {
           here). Accountants get neither the dock nor the to-do machinery. */}
       {/* Accountants get the dock too, but only Improvement + Report issue
           (Graeme, 2026-11-03). */}
-      <QuickActionsDock accountantOnly={accountantOnly} />
+      <QuickActionsDock accountantOnly={accountantOnly} inLayout />
       {/* Weekly sales-derived DPT refresh — renders nothing except for
           managers/admins in the week it's due. */}
       <DptSuggestionPrompt />
@@ -1014,11 +1015,13 @@ export function Layout({ children }: { children: ReactNode }) {
  * mounted on the visitor kiosk or print views: the kiosk is handed to
  * members of the public, so app nav must stay unreachable there.
  */
-export function QuickActionsDock({ accountantOnly = false }: {
+export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
   /** Finance accountants (isBookkeeper, not admin): just "Improvement" and
    *  "Report issue" — none of the kitchen actions, lists or pop-ups
    *  (Graeme, 2026-11-03). */
   accountantOnly?: boolean;
+  /** Rendered by the Layout, so AI Jane can dock beside the page. */
+  inLayout?: boolean;
 } = {}) {
   const { state } = useAuth();
   const user = state.status === "authenticated" ? state.user : null;
@@ -1059,7 +1062,7 @@ export function QuickActionsDock({ accountantOnly = false }: {
 
   return (
     <>
-      <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} />
+      <FoundersAssistant open={assistantOpen} onClose={() => setAssistantOpen(false)} isFounder={isFounder} canDock={inLayout} />
       <QuickActionsPanel
         assistantOpen={assistantOpen}
         onOpenAssistant={() => setAssistantOpen(true)}

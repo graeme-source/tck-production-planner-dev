@@ -173,7 +173,7 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
               highlightTab && !open && "swipe-tab-pulse",
             )}
             // Shut, it sits left of the team list dock when that's open.
-            style={{ right: open ? "100%" : "calc(100% + var(--team-dock-w, 0px))", height: TAB_HEIGHT }}
+            style={{ right: open ? "100%" : "calc(100% + var(--right-dock-w, 0px))", height: TAB_HEIGHT }}
             data-testid="quick-actions-handle"
             data-handle-style="tab"
           >
@@ -206,7 +206,7 @@ export function SwipePanel({ open, onOpenChange, title, badge, tabLabel, highlig
             title={tabLabel}
             onClick={() => onOpenChange(!open, "tap")}
             className="absolute top-1/2 -translate-y-1/2 h-24 flex items-center justify-end select-none cursor-pointer"
-            style={{ left: `calc(-${HANDLE_HIT_WIDTH}px - var(--team-dock-w, 0px))`, width: HANDLE_HIT_WIDTH, touchAction: "none" }}
+            style={{ left: `calc(-${HANDLE_HIT_WIDTH}px - var(--right-dock-w, 0px))`, width: HANDLE_HIT_WIDTH, touchAction: "none" }}
             data-testid="quick-actions-handle"
             data-handle-style="slim"
           >

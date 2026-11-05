@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Send, Loader2, User as UserIcon, Plus, BookOpen, X, Save, MessagesSquare, Trash2, ChefHat, Wrench, Paperclip, ImageIcon, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useTeamListDock, useViewportWidth } from "@/hooks/use-team-list-dock";
+import { janeDockWidth } from "@/lib/jane-dock";
+import { dockLayout } from "@/lib/team-list-dock";
 import { JaneAvatar } from "@/components/jane-avatar";
 
 // Named after Jane, who answers everyone's questions on the floor, while she's
@@ -131,12 +134,15 @@ function welcomeMessage(isFounder: boolean): Message {
 
 interface FoundersAssistantProps {
   open: boolean;
+  /** In the Layout, whose page can narrow to make room. A station screen has
+   *  no Layout, so she slides over it. */
+  canDock?: boolean;
   onClose: () => void;
   /** Founder gets recipe-design + memory tools; everyone else is read-only. */
   isFounder: boolean;
 }
 
-export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistantProps) {
+export function FoundersAssistant({ open, onClose, isFounder, canDock = false }: FoundersAssistantProps) {
   const [messages, setMessages] = useState<Message[]>([welcomeMessage(isFounder)]);
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
@@ -521,6 +527,22 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
     setRecipeDraft(prev => prev ? { ...prev, [key]: value } : prev);
   };
 
+  const viewportWidth = useViewportWidth();
+  const teamDock = useTeamListDock();
+  const teamLayout = dockLayout(viewportWidth);
+  const dockWidth = canDock && open
+    ? janeDockWidth(viewportWidth, teamDock.open && teamLayout.mode === "dock" ? teamLayout.width : 0)
+    : null;
+
+  // The Layout's <main> leaves this much room; the toasts and the quick-actions
+  // tab sit left of it.
+  useEffect(() => {
+    if (dockWidth == null) return;
+    const root = document.documentElement;
+    root.style.setProperty("--jane-dock-w", `${dockWidth}px`);
+    return () => { root.style.removeProperty("--jane-dock-w"); };
+  }, [dockWidth]);
+
   if (!open) return null;
 
   const activeThread = threads.find(t => t.id === activeThreadId);
@@ -528,7 +550,11 @@ export function FoundersAssistant({ open, onClose, isFounder }: FoundersAssistan
   return (
     <div className="fixed inset-0 z-40 flex justify-end pointer-events-none">
       <div
-        className="pointer-events-auto bg-background border-l border-border shadow-2xl flex flex-col h-full w-full sm:w-[460px] md:w-[500px]"
+        className={cn(
+          "pointer-events-auto bg-background border-l border-border flex flex-col h-full",
+          dockWidth == null && "shadow-2xl w-full sm:w-[460px] md:w-[500px]",
+        )}
+        style={dockWidth != null ? { width: dockWidth } : undefined}
       >
         {/* Drawer header */}
         <div className="flex items-center justify-between px-3 py-2 border-b border-border bg-background">

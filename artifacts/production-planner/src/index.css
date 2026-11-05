@@ -58,6 +58,8 @@
 }
 
 :root {
+  /* Everything docked down the right, for the toasts and the quick-actions tab. */
+  --right-dock-w: calc(var(--team-dock-w, 0px) + var(--jane-dock-w, 0px));
   /* Warm Food Industry Aesthetic: Sage, Cream, Earthy Browns */
   --background: 210 60% 97%;
   --foreground: 20 14% 16%;
