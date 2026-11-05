@@ -1,7 +1,7 @@
 /**
- * Monthly revenue targets — a MINIMUM (one figure, every month) and a
- * STRETCH per month that carries forward until changed (Graeme,
- * 2026-10-08). Objective I.
+ * Monthly revenue targets — a default MINIMUM any month can replace with its
+ * own, and a STRETCH per month that carries forward until changed (Graeme,
+ * 2026-10-08, 2026-11-05). Objective I.
  *
  * Seen on Numbers (the Month to Date tile, where they're edited) and on
  * Sales & Marketing (read-only revenue pace), so reading is open to the
@@ -47,7 +47,7 @@ async function buildPayload(userId: number) {
   const today = londonToday();
   const currentMonth = monthOf(today);
   const state = await loadState(pool);
-  const months = targetsForMonths(monthsFrom(currentMonth, WINDOW_MONTHS), state.minimum, state.rows);
+  const months = targetsForMonths(monthsFrom(currentMonth, WINDOW_MONTHS), state.minimum, state.rows, state.minimums);
 
   const setBy = await db.execute<{ month: string; set_by_name: string | null; set_at: string }>(
     sql`SELECT month, set_by_name, set_at::text FROM revenue_targets`,
@@ -55,7 +55,7 @@ async function buildPayload(userId: number) {
   const setByMonth = new Map(setBy.rows.map(r => [r.month, { name: r.set_by_name, at: r.set_at }]));
 
   const history = await db.execute<{
-    kind: "minimum" | "stretch"; month: string | null; old_value: number | null; new_value: number | null;
+    kind: "minimum" | "stretch" | "month_minimum"; month: string | null; old_value: number | null; new_value: number | null;
     changed_by_name: string | null; changed_at: string;
   }>(sql`
     SELECT kind, month, old_value::float8 AS old_value, new_value::float8 AS new_value, changed_by_name, changed_at::text
@@ -74,6 +74,8 @@ async function buildPayload(userId: number) {
     /** Every month with its own stretch (the editor resolves carry-forward
      *  from these with the same rules as the server). */
     rows: state.rows,
+    /** Every month with its own minimum. */
+    minimums: state.minimums ?? [],
     history: history.rows.map(h => ({
       kind: h.kind, month: h.month,
       oldValue: h.old_value == null ? null : Number(h.old_value),
@@ -107,14 +109,17 @@ async function applyTargetChanges(userId: number, changes: TargetChange[]): Prom
     await pg.query(`SELECT 1 FROM app_settings WHERE key = $1 FOR UPDATE`, [MINIMUM_SETTING_KEY]);
     const before = await loadState(pg);
     const saved = new Map(before.rows.map(r => [r.month, r.stretch]));
+    const savedMinimums = new Map((before.minimums ?? []).map(r => [r.month, r.minimum]));
 
     for (const c of changes) {
-      const current = c.kind === "minimum" ? before.minimum : (saved.get(c.month!) ?? null);
+      const current = c.kind === "minimum" ? before.minimum
+        : c.kind === "month_minimum" ? (savedMinimums.get(c.month!) ?? null)
+          : (saved.get(c.month!) ?? null);
       if (current !== c.from) {
         throw new TargetsConflict(
           c.kind === "minimum"
-            ? `The minimum is now ${formatGbp(current ?? 0)} — it changed since you opened this. Close and reopen to see the latest.`
-            : `${monthLabel(c.month!)}'s stretch changed since you opened this. Close and reopen to see the latest.`,
+            ? `The default minimum is now ${formatGbp(current ?? 0)} — it changed since you opened this. Close and reopen to see the latest.`
+            : `${monthLabel(c.month!)}'s ${c.kind === "month_minimum" ? "minimum" : "stretch"} changed since you opened this. Close and reopen to see the latest.`,
         );
       }
     }
@@ -123,7 +128,7 @@ async function applyTargetChanges(userId: number, changes: TargetChange[]): Prom
     const below = stretchBelowMinimum(after, window);
     if (below.length > 0) {
       throw new TargetsInvalid(
-        `A stretch target has to be above the minimum (${formatGbp(after.minimum)}) — check ${monthLabel(below[0]!)}${below.length > 1 ? ` and ${below.length - 1} later month${below.length === 2 ? "" : "s"}` : ""}.`,
+        `A stretch target has to be above that month's minimum — check ${monthLabel(below[0]!)}${below.length > 1 ? ` and ${below.length - 1} later month${below.length === 2 ? "" : "s"}` : ""}.`,
       );
     }
     // Only what really differs (a no-op change records nothing).
@@ -139,6 +144,18 @@ async function applyTargetChanges(userId: number, changes: TargetChange[]): Prom
            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
           [MINIMUM_SETTING_KEY, String(c.to)],
         );
+      } else if (c.kind === "month_minimum") {
+        if (c.to == null) {
+          await pg.query(`DELETE FROM revenue_month_minimums WHERE month = $1`, [c.month]);
+        } else {
+          await pg.query(
+            `INSERT INTO revenue_month_minimums (month, minimum_target, set_by_id, set_by_name, set_at)
+             VALUES ($1, $2, $3, $4, NOW())
+             ON CONFLICT (month) DO UPDATE SET minimum_target = EXCLUDED.minimum_target,
+               set_by_id = EXCLUDED.set_by_id, set_by_name = EXCLUDED.set_by_name, set_at = NOW()`,
+            [c.month, c.to, userId, name],
+          );
+        }
       } else if (c.to == null) {
         await pg.query(`DELETE FROM revenue_targets WHERE month = $1`, [c.month]);
       } else {
@@ -184,6 +201,7 @@ const monthKey = z.string().refine(isMonthKey, "month must be YYYY-MM");
 const ChangeSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("minimum"), month: z.null().optional(), from: amount, to: amount }),
   z.object({ kind: z.literal("stretch"), month: monthKey, from: amount.nullable(), to: amount.nullable() }),
+  z.object({ kind: z.literal("month_minimum"), month: monthKey, from: amount.nullable(), to: amount.nullable() }),
 ]);
 const ChangesBody = z.object({ changes: z.array(ChangeSchema).min(1).max(40) });
 
@@ -193,8 +211,8 @@ router.post("/changes", requireFounder, validate(ChangesBody), async (req: Reque
   const changes: TargetChange[] = body.changes.map(c =>
     c.kind === "minimum"
       ? { kind: "minimum", month: null, from: c.from, to: c.to }
-      : { kind: "stretch", month: c.month, from: c.from, to: c.to });
-  const months = changes.filter(c => c.kind === "stretch").map(c => c.month);
+      : { kind: c.kind, month: c.month, from: c.from, to: c.to });
+  const months = changes.filter(c => c.kind !== "minimum").map(c => `${c.kind} ${c.month}`);
   if (new Set(months).size !== months.length || changes.filter(c => c.kind === "minimum").length > 1) {
     res.status(400).json({ error: "Each target can only appear once in a save." });
     return;

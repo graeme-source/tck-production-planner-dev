@@ -55,7 +55,7 @@ router.get("/scheme", async (_req: Request, res: Response) => {
     scheme,
     savedAt: row?.updated_at ?? null,
     thisMonth,
-    months: targetsForMonths(months, targets.minimum, targets.rows).map(t => ({ month: t.month, minimum: t.minimum, stretch: t.stretch })),
+    months: targetsForMonths(months, targets.minimum, targets.rows, targets.minimums).map(t => ({ month: t.month, minimum: t.minimum, stretch: t.stretch })),
     // What's been typed for each month (profit, any revenue override), so
     // the page can show which finished months still await their profit.
     entries: await readMonthEntries(months),

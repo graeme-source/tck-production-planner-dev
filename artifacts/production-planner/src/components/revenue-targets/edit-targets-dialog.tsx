@@ -81,12 +81,15 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
   onClose: () => void;
 }) {
   const months = useMemo(() => monthsFrom(data.currentMonth, WINDOW), [data.currentMonth]);
-  const before: TargetsState = useMemo(() => ({ minimum: data.minimum, rows: data.rows }), [data]);
+  const before: TargetsState = useMemo(() => ({ minimum: data.minimum, rows: data.rows, minimums: data.minimums }), [data]);
   const ownByMonth = useMemo(() => new Map(data.rows.map(r => [r.month, r.stretch])), [data.rows]);
 
   const [minText, setMinText] = useState(asText(data.minimum));
   const [stretchText, setStretchText] = useState<Record<string, string>>(
     () => Object.fromEntries(months.map(m => [m, asText(ownByMonth.get(m))])),
+  );
+  const [monthMinText, setMonthMinText] = useState<Record<string, string>>(
+    () => Object.fromEntries(months.map(m => [m, asText(data.minimums.find(r => r.month === m)?.minimum)])),
   );
   const [step, setStep] = useState<"edit" | "review" | "confirm">("edit");
   const [ticked, setTicked] = useState(false);
@@ -96,6 +99,7 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
   // ones still carry forward into this month).
   const minParsed = parseAmount(minText);
   const badMonths = months.filter(m => stretchText[m]!.trim() !== "" && parseAmount(stretchText[m]!) == null);
+  const badMinMonths = months.filter(m => monthMinText[m]!.trim() !== "" && parseAmount(monthMinText[m]!) == null);
   const after: TargetsState = {
     minimum: minParsed ?? data.minimum,
     rows: [
@@ -105,11 +109,18 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
         return v == null ? [] : [{ month: m, stretch: v }];
       }),
     ].sort((a, b) => a.month.localeCompare(b.month)),
+    minimums: [
+      ...data.minimums.filter(r => !months.includes(r.month)),
+      ...months.flatMap(m => {
+        const v = parseAmount(monthMinText[m] ?? "");
+        return v == null ? [] : [{ month: m, minimum: v }];
+      }),
+    ].sort((a, b) => a.month.localeCompare(b.month)),
   };
   const belowMin = stretchBelowMinimum(after, months);
   const changes: TargetChange[] = diffTargets(before, after);
   const minInvalid = minParsed == null;
-  const canReview = !minInvalid && badMonths.length === 0 && belowMin.length === 0 && changes.length > 0;
+  const canReview = !minInvalid && badMonths.length === 0 && badMinMonths.length === 0 && belowMin.length === 0 && changes.length > 0;
   const summary = describeChanges(before, changes);
 
   const close = () => { if (!save.isPending) onClose(); };
@@ -143,7 +154,7 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
         role="dialog"
         aria-modal="true"
         aria-labelledby="edit-targets-title"
-        className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92dvh] flex flex-col overflow-hidden text-left font-normal text-foreground"
+        className="bg-card border-2 border-border rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92dvh] flex flex-col overflow-hidden text-left font-normal text-foreground"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
@@ -167,82 +178,76 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
           {step === "edit" && (
             <>
               <section className="space-y-2">
-                <label htmlFor="target-minimum" className="text-base font-semibold block">Sales minimum — every month</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Per month</p>
-                    <AmountInput id="target-minimum" value={minText} onChange={setMinText} invalid={minInvalid} />
-                  </div>
-                  <div>
-                    <p className="text-xs font-medium text-muted-foreground mb-1">Per day</p>
-                    <DailyAmount monthly={minText} days={daysInMonth(data.currentMonth)} onMonthly={setMinText} ariaLabel="Sales minimum per day" />
-                  </div>
+                <label htmlFor="target-minimum" className="text-base font-semibold block">Default sales minimum</label>
+                <div className="grid grid-cols-2 gap-2 max-w-md">
+                  <AmountInput id="target-minimum" value={minText} onChange={setMinText} invalid={minInvalid} ariaLabel="Default minimum per month" />
+                  <DailyAmount monthly={minText} days={daysInMonth(data.currentMonth)} onMonthly={setMinText} ariaLabel="Default minimum per day" />
                 </div>
                 {minInvalid
-                  ? <p className="text-sm text-red-600">Type an amount, e.g. 120,000 or 120k.</p>
-                  : <p className="text-sm text-muted-foreground">Change either and the other follows. Same every month until you change it.</p>}
+                  ? <p className="text-sm text-red-600">Type an amount, e.g. 110,000 or 110k.</p>
+                  : <p className="text-sm text-muted-foreground">Used for any month without its own minimum below.</p>}
               </section>
 
               <section className="space-y-2">
-                <h3 className="text-base font-semibold">Sales stretch — by month</h3>
+                <h3 className="text-base font-semibold">Sales targets by month</h3>
                 <p className="text-sm text-muted-foreground">
-                  Leave a month blank to keep the month before's stretch. Set a higher one where you want to push (e.g. November).
+                  Change a month or day figure and the other follows. A blank minimum uses the default. A blank stretch keeps the month before's.
                 </p>
-                <div className="flex gap-3 text-xs font-medium text-muted-foreground">
-                  <span className="w-24 sm:w-28 flex-shrink-0" />
-                  <span className="flex-1 grid grid-cols-2 gap-2"><span>Per month</span><span>Per day</span></span>
-                  <span className="w-9 flex-shrink-0" />
+                <div className="hidden sm:grid grid-cols-[6rem_repeat(4,minmax(0,1fr))] gap-2 text-xs font-medium text-muted-foreground">
+                  <span />
+                  <span>Minimum</span><span>Per day</span><span>Stretch</span><span>Per day</span>
                 </div>
-                <ul className="space-y-2">
+                <ul className="space-y-3 sm:space-y-2">
                   {months.map((m, i) => {
                     const text = stretchText[m] ?? "";
+                    const minOwn = monthMinText[m] ?? "";
                     const carried = resolveStretch(m, after.rows);
                     const placeholder = carried.value != null && text.trim() === ""
-                      ? `same as ${monthLabel(carried.fromMonth!, { short: true, abbreviated: true })}: ${formatGbp(carried.value)}`
+                      ? `${asText(carried.value)} (${monthLabel(carried.fromMonth!, { short: true, abbreviated: true })})`
                       : "no stretch";
                     const bad = badMonths.includes(m);
-                    const low = belowMin.includes(m) && text.trim() !== "";
+                    const badMin = badMinMonths.includes(m);
+                    const low = belowMin.includes(m);
                     return (
-                      <li key={m} className="flex items-center gap-3">
-                        <span className="w-24 sm:w-28 flex-shrink-0 text-base leading-tight">
-                          {monthLabel(m, { short: m.slice(0, 4) === data.currentMonth.slice(0, 4) })}
+                      <li key={m} className="grid grid-cols-2 sm:grid-cols-[6rem_repeat(4,minmax(0,1fr))] gap-2 items-center">
+                        <span className="col-span-2 sm:col-span-1 text-base leading-tight">
+                          {monthLabel(m, { short: m.slice(0, 4) === data.currentMonth.slice(0, 4), abbreviated: true })}
                           {i === 0 && <span className="block text-xs text-muted-foreground">this month</span>}
                         </span>
-                        <div className="flex-1 min-w-0">
-                          <div className="grid grid-cols-2 gap-2">
-                            <AmountInput
-                              value={text}
-                              onChange={v => setStretchText(s => ({ ...s, [m]: v }))}
-                              placeholder={placeholder}
-                              invalid={bad || low}
-                              ariaLabel={`${monthLabel(m)} stretch target`}
-                            />
-                            <DailyAmount
-                              monthly={text}
-                              carried={carried.value}
-                              days={daysInMonth(m)}
-                              onMonthly={v => setStretchText(s => ({ ...s, [m]: v }))}
-                              ariaLabel={`${monthLabel(m)} stretch target per day`}
-                            />
-                          </div>
-                          {bad && <p className="text-xs text-red-600 mt-1">Not an amount — try 150,000 or 150k.</p>}
-                          {low && <p className="text-xs text-red-600 mt-1">Must be above the minimum.</p>}
-                        </div>
-                        {text.trim() !== "" ? (
-                          <button type="button" onClick={() => setStretchText(s => ({ ...s, [m]: "" }))}
-                            className="p-2 w-9 rounded-lg hover:bg-secondary text-muted-foreground flex-shrink-0" aria-label={`Clear ${monthLabel(m)}'s stretch`}>
-                            <X className="w-4 h-4" />
-                          </button>
-                        ) : <span className="w-9 flex-shrink-0" />}
+                        <AmountInput
+                          value={minOwn}
+                          onChange={v => setMonthMinText(s => ({ ...s, [m]: v }))}
+                          placeholder={asText(after.minimum)}
+                          invalid={badMin || low}
+                          ariaLabel={`${monthLabel(m)} minimum`}
+                        />
+                        <DailyAmount
+                          monthly={minOwn}
+                          carried={after.minimum}
+                          days={daysInMonth(m)}
+                          onMonthly={v => setMonthMinText(s => ({ ...s, [m]: v }))}
+                          ariaLabel={`${monthLabel(m)} minimum per day`}
+                        />
+                        <AmountInput
+                          value={text}
+                          onChange={v => setStretchText(s => ({ ...s, [m]: v }))}
+                          placeholder={placeholder}
+                          invalid={bad || low}
+                          ariaLabel={`${monthLabel(m)} stretch target`}
+                        />
+                        <DailyAmount
+                          monthly={text}
+                          carried={carried.value}
+                          days={daysInMonth(m)}
+                          onMonthly={v => setStretchText(s => ({ ...s, [m]: v }))}
+                          ariaLabel={`${monthLabel(m)} stretch target per day`}
+                        />
+                        {(bad || badMin) && <p className="col-span-full text-xs text-red-600">Not an amount — try 150,000 or 150k.</p>}
+                        {low && <p className="col-span-full text-xs text-red-600">The stretch must be above this month's minimum.</p>}
                       </li>
                     );
                   })}
                 </ul>
-                {belowMin.length > 0 && belowMin.some(m => (stretchText[m] ?? "").trim() === "") && (
-                  <p className="text-sm text-red-600">
-                    A carried-forward stretch would be at or below the minimum in {belowMin.map(m => monthLabel(m, { short: true })).join(", ")} — raise the stretch or lower the minimum.
-                  </p>
-                )}
               </section>
 
               <section className="space-y-2">
@@ -258,7 +263,7 @@ function EditTargetsDialog({ data, save, onUndo, onClose }: {
                     {data.history.slice(0, 5).map((h, i) => (
                       <li key={i}>
                         {format(parseISO(h.changedAt.replace(" ", "T")), "d MMM HH:mm")} · {h.changedByName ?? "someone"} ·{" "}
-                        {h.kind === "minimum" ? "Minimum" : `${monthLabel(h.month!)} stretch`}{" "}
+                        {h.kind === "minimum" ? "Default minimum" : `${monthLabel(h.month!)} ${h.kind === "month_minimum" ? "minimum" : "stretch"}`}{" "}
                         {h.oldValue == null ? "set" : formatGbp(h.oldValue)} → {h.newValue == null ? "cleared" : formatGbp(h.newValue)}
                       </li>
                     ))}

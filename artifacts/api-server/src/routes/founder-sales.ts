@@ -159,7 +159,7 @@ router.get("/pulse", async (req: Request, res: Response) => {
     // Minimum + this month's stretch (carried forward if not set) — the
     // same reader and rules as the Numbers page (lib/revenue-targets).
     const targetsState = await loadRevenueTargetsState();
-    const monthTargets = targetsForMonth(monthOf(today), targetsState.minimum, targetsState.rows);
+    const monthTargets = targetsForMonth(monthOf(today), targetsState.minimum, targetsState.rows, targetsState.minimums);
     const target = monthTargets.minimum;
     const cadenceDays = Number(await getSetting("marketing_email_cadence_days")) || 3;
 

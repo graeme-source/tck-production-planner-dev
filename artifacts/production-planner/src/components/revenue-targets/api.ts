@@ -4,7 +4,7 @@
  * Server: routes/revenue-targets.ts. Rules: @workspace/revenue-targets.
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { targetsForMonth, type MonthTargets, type StretchRow, type TargetChange } from "@workspace/revenue-targets";
+import { targetsForMonth, type MinimumRow, type MonthTargets, type StretchRow, type TargetChange } from "@workspace/revenue-targets";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -14,8 +14,9 @@ export interface RevenueTargetsPayload {
   minimum: number;
   months: Array<MonthTargets & { setBy: { name: string | null; at: string } | null }>;
   rows: StretchRow[];
+  minimums: MinimumRow[];
   history: Array<{
-    kind: "minimum" | "stretch";
+    kind: "minimum" | "stretch" | "month_minimum";
     month: string | null;
     oldValue: number | null;
     newValue: number | null;
@@ -55,7 +56,7 @@ export function useRevenueTargets(enabled = true) {
 export function useThisMonthTargets(enabled = true) {
   const q = useRevenueTargets(enabled);
   const data = q.data;
-  const thisMonth = data ? targetsForMonth(data.currentMonth, data.minimum, data.rows) : null;
+  const thisMonth = data ? targetsForMonth(data.currentMonth, data.minimum, data.rows, data.minimums) : null;
   return { ...q, thisMonth, today: data?.today ?? null, canEdit: data?.canEdit ?? false };
 }
 

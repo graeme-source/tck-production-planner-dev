@@ -3,8 +3,9 @@
  * so Numbers, Sales & Marketing and the server can never disagree
  * (Graeme, 2026-10-08). Objective I (founder command centre: foresight).
  *
- *  - MINIMUM: one figure, the same every month (app_settings
- *    monthly_revenue_target). The line we must not fall below.
+ *  - MINIMUM: a default (app_settings monthly_revenue_target), which any month
+ *    can replace with its own (Graeme, 5 Nov 2026). A month left blank uses the
+ *    default, not the month before. The line we must not fall below.
  *  - STRETCH: set per month and it CARRIES FORWARD — a month with no stretch
  *    of its own uses the most recent earlier month's, until it's changed.
  *    No stretch set for any earlier month → no stretch line at all.
@@ -98,22 +99,42 @@ export function resolveStretch(month: MonthKey, rows: readonly StretchRow[]): Re
   };
 }
 
+/** A minimum saved for one month. */
+export interface MinimumRow {
+  month: MonthKey;
+  minimum: number;
+}
+
+/** The month's own minimum, else the default. */
+export function resolveMinimum(month: MonthKey, defaultMinimum: number, minimums: readonly MinimumRow[] = []): number {
+  return minimums.find(m => m.month === month)?.minimum ?? defaultMinimum;
+}
+
 export interface MonthTargets {
   month: MonthKey;
   minimum: number;
+  /** True when the month has its own minimum rather than the default. */
+  ownMinimum: boolean;
   stretch: number | null;
   stretchSource: StretchSource;
   /** The month the stretch figure was set for (itself when "set"). */
   stretchFromMonth: MonthKey | null;
 }
 
-export function targetsForMonth(month: MonthKey, minimum: number, rows: readonly StretchRow[]): MonthTargets {
+export function targetsForMonth(month: MonthKey, minimum: number, rows: readonly StretchRow[], minimums: readonly MinimumRow[] = []): MonthTargets {
   const r = resolveStretch(month, rows);
-  return { month, minimum, stretch: r.value, stretchSource: r.source, stretchFromMonth: r.fromMonth };
+  return {
+    month,
+    minimum: resolveMinimum(month, minimum, minimums),
+    ownMinimum: minimums.some(m => m.month === month),
+    stretch: r.value,
+    stretchSource: r.source,
+    stretchFromMonth: r.fromMonth,
+  };
 }
 
-export function targetsForMonths(months: readonly MonthKey[], minimum: number, rows: readonly StretchRow[]): MonthTargets[] {
-  return months.map(m => targetsForMonth(m, minimum, rows));
+export function targetsForMonths(months: readonly MonthKey[], minimum: number, rows: readonly StretchRow[], minimums: readonly MinimumRow[] = []): MonthTargets[] {
+  return months.map(m => targetsForMonth(m, minimum, rows, minimums));
 }
 
 /** The saved minimum as a number, falling back to the default when it's
@@ -151,8 +172,9 @@ export function formatGbpShort(n: number): string {
 // ── Editing: what changes, in plain words, and how to undo it ─────────────
 
 export interface TargetChange {
-  kind: "minimum" | "stretch";
-  /** The month, for a stretch change; null for the minimum. */
+  /** "minimum" is the default; "month_minimum" is one month's own. */
+  kind: "minimum" | "stretch" | "month_minimum";
+  /** The month; null for the default minimum. */
   month: MonthKey | null;
   /** The saved value before (null = this month had none of its own). */
   from: number | null;
@@ -161,8 +183,10 @@ export interface TargetChange {
 }
 
 export interface TargetsState {
+  /** The default minimum. */
   minimum: number;
   rows: StretchRow[];
+  minimums?: MinimumRow[];
 }
 
 /** Every difference between two states, minimum first then by month. */
@@ -179,6 +203,13 @@ export function diffTargets(before: TargetsState, after: TargetsState): TargetCh
     const to = a.get(month) ?? null;
     if (from !== to) out.push({ kind: "stretch", month, from, to });
   }
+  const bMin = new Map((before.minimums ?? []).map(r => [r.month, r.minimum]));
+  const aMin = new Map((after.minimums ?? []).map(r => [r.month, r.minimum]));
+  for (const month of [...new Set([...bMin.keys(), ...aMin.keys()])].sort()) {
+    const from = bMin.get(month) ?? null;
+    const to = aMin.get(month) ?? null;
+    if (from !== to) out.push({ kind: "month_minimum", month, from, to });
+  }
   return out;
 }
 
@@ -186,15 +217,18 @@ export function diffTargets(before: TargetsState, after: TargetsState): TargetCh
 export function applyChanges(state: TargetsState, changes: readonly TargetChange[]): TargetsState {
   let minimum = state.minimum;
   const rows = new Map(state.rows.map(r => [r.month, r.stretch]));
+  const minimums = new Map((state.minimums ?? []).map(r => [r.month, r.minimum]));
   for (const c of changes) {
     if (c.kind === "minimum") { if (c.to != null) minimum = c.to; continue; }
     if (!c.month) continue;
-    if (c.to == null) rows.delete(c.month);
-    else rows.set(c.month, c.to);
+    const target = c.kind === "month_minimum" ? minimums : rows;
+    if (c.to == null) target.delete(c.month);
+    else target.set(c.month, c.to);
   }
   return {
     minimum,
     rows: [...rows.entries()].map(([month, stretch]) => ({ month, stretch })).sort((x, y) => x.month.localeCompare(y.month)),
+    minimums: [...minimums.entries()].map(([month, value]) => ({ month, minimum: value })).sort((x, y) => x.month.localeCompare(y.month)),
   };
 }
 
@@ -210,9 +244,13 @@ export function describeChanges(before: TargetsState, changes: readonly TargetCh
   const after = applyChanges(before, changes);
   return changes.map(c => {
     if (c.kind === "minimum") {
-      return `Minimum (every month): ${formatGbp(c.from ?? before.minimum)} → ${formatGbp(c.to ?? before.minimum)}`;
+      return `Default minimum: ${formatGbp(c.from ?? before.minimum)} → ${formatGbp(c.to ?? before.minimum)}`;
     }
     const month = c.month!;
+    if (c.kind === "month_minimum") {
+      const phrase = (v: number | null, fallback: number) => (v == null ? `${formatGbp(fallback)} (the default)` : formatGbp(v));
+      return `${monthLabel(month)} minimum: ${phrase(c.from, before.minimum)} → ${phrase(c.to, after.minimum)}`;
+    }
     const was = resolveStretch(month, before.rows);
     const now = resolveStretch(month, after.rows);
     return `${monthLabel(month)} stretch: ${stretchPhrase(was)} → ${stretchPhrase(now)}`;
@@ -230,7 +268,7 @@ function stretchPhrase(r: ResolvedStretch): string {
 export function stretchBelowMinimum(state: TargetsState, months: readonly MonthKey[]): MonthKey[] {
   return months.filter(m => {
     const r = resolveStretch(m, state.rows);
-    return r.value != null && r.value <= state.minimum;
+    return r.value != null && r.value <= resolveMinimum(m, state.minimum, state.minimums);
   });
 }
 

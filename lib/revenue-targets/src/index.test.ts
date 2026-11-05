@@ -46,6 +46,43 @@ describe("stretch carries forward", () => {
   });
 });
 
+describe("a minimum for each month", () => {
+  const rows = [{ month: "2026-10", stretch: 150000 }];
+  const minimums = [{ month: "2026-11", minimum: 120000 }];
+
+  it("uses the month's own, and the default for any other, not the month before", () => {
+    const t = targetsForMonths(["2026-10", "2026-11", "2026-12"], 110000, rows, minimums);
+    expect(t.map(x => x.minimum)).toEqual([110000, 120000, 110000]);
+    expect(t.map(x => x.ownMinimum)).toEqual([false, true, false]);
+  });
+
+  it("finds, applies and undoes a change to one month", () => {
+    const before: TargetsState = { minimum: 110000, rows, minimums };
+    const after: TargetsState = { minimum: 110000, rows, minimums: [{ month: "2026-11", minimum: 125000 }, { month: "2026-12", minimum: 130000 }] };
+    const changes = diffTargets(before, after);
+    expect(changes).toEqual([
+      { kind: "month_minimum", month: "2026-11", from: 120000, to: 125000 },
+      { kind: "month_minimum", month: "2026-12", from: null, to: 130000 },
+    ]);
+    expect(applyChanges(before, changes).minimums).toEqual(after.minimums);
+    expect(applyChanges(after, invertChanges(changes)).minimums).toEqual(minimums);
+  });
+
+  it("describes it in plain words", () => {
+    const before: TargetsState = { minimum: 110000, rows, minimums };
+    expect(describeChanges(before, [{ kind: "month_minimum", month: "2026-12", from: null, to: 130000 }]))
+      .toEqual(["December 2026 minimum: £110,000 (the default) → £130,000"]);
+    expect(describeChanges(before, [{ kind: "month_minimum", month: "2026-11", from: 120000, to: null }]))
+      .toEqual(["November 2026 minimum: £120,000 → £110,000 (the default)"]);
+  });
+
+  it("checks a stretch against its own month's minimum", () => {
+    const s: TargetsState = { minimum: 110000, rows: [{ month: "2026-11", stretch: 115000 }], minimums };
+    expect(stretchBelowMinimum(s, ["2026-11"])).toEqual(["2026-11"]);
+    expect(stretchBelowMinimum({ ...s, minimums: [] }, ["2026-11"])).toEqual([]);
+  });
+});
+
 describe("the minimum's setting key", () => {
   it("is founder-managed, so the generic settings route can't change it", () => {
     expect(isFounderManagedSetting("monthly_revenue_target")).toBe(true);
@@ -72,7 +109,7 @@ describe("changes", () => {
       { kind: "stretch", month: "2026-11", from: null, to: 175000 },
     ]);
     expect(describeChanges(before, changes)).toEqual([
-      "Minimum (every month): £120,000 → £130,000",
+      "Default minimum: £120,000 → £130,000",
       "November 2026 stretch: £150,000 (same as October) → £175,000",
     ]);
   });
@@ -89,8 +126,8 @@ describe("changes", () => {
   it("undo puts everything back", () => {
     const changes = diffTargets(before, after);
     const applied = applyChanges(before, changes);
-    expect(applied).toEqual(after);
-    expect(applyChanges(applied, invertChanges(changes))).toEqual(before);
+    expect(applied).toEqual({ ...after, minimums: [] });
+    expect(applyChanges(applied, invertChanges(changes))).toEqual({ ...before, minimums: [] });
   });
 
   it("flags a stretch that isn't above the minimum (including carried ones)", () => {
