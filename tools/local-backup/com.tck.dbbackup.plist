@@ -8,10 +8,10 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/graemecarter/Dev Projects/tck-production-planner-main/tools/local-backup/backup.sh</string>
+        <string>/Users/graemecarter/TCK-Backups/bin/backup.sh</string>
     </array>
 
-    <!-- Run daily at 16:45 (Europe/London — end of kitchen day). If the
+    <!-- Run daily at 16:45 (Europe/London — kitchen end-of-day). If the
          Mac is asleep at that time, launchd will run it as soon as the
          Mac wakes up. For lid-closed reliability, pair this with:
            sudo pmset repeat wakeorpoweron MTWRFSU 16:40:00

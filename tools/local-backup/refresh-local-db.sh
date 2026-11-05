@@ -14,8 +14,8 @@
 #   4. Re-seed the local-only claude-test admin user and bounce the dev API
 #      on :3000 so its connection pool moves to the new DB.
 #
-# SAFETY: PROD_DATABASE_URL is only ever passed to pg_dump (inside
-# backup.sh). Nothing in this script writes to Railway.
+# SAFETY: backup.sh reads live under a read-only login. Nothing in this script
+# writes to Railway.
 #
 # Manual run / re-run today: rm ~/TCK-Backups/.last-local-refresh && bash <this file>
 set -uo pipefail
@@ -23,7 +23,7 @@ set -uo pipefail
 BACKUP_DIR="$HOME/TCK-Backups"
 LOG="$BACKUP_DIR/refresh.log"
 MARKER="$BACKUP_DIR/.last-local-refresh"
-BACKUP_SH="${TCK_BACKUP_SH:-$HOME/Dev Projects/tck-production-planner-main/tools/local-backup/backup.sh}"
+BACKUP_SH="${TCK_BACKUP_SH:-$HOME/TCK-Backups/bin/backup.sh}"
 PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 TEST_EMAIL="claude-test@thecalzonekitchen.co.uk"
 

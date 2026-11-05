@@ -1,8 +1,14 @@
 # Local DB backup
 
-Pulls a nightly `pg_dump` of the Railway production database to
-`~/TCK-Backups/` on Graeme's Mac. This is the off-Railway copy that the
-2026-05-20 outage proved we needed.
+Pulls a nightly `pg_dump` of the live database to `~/TCK-Backups/` on Graeme's
+Mac over Railway SSH. This is the off-Railway copy that the 2026-05-20 outage
+proved we needed. Since 5 Nov 2026 the live database has no public connection:
+the dump runs on the database server under the read-only `claude_read` login
+and streams back, so no connection string lives on the Mac.
+
+The scripts run from `~/TCK-Backups/bin/`; these are the copies under version
+control. `live-read.sh` reads live with `claude_read`. `live-change.sh` makes a
+data change all or nothing, saving the affected rows first.
 
 - **Schedule:** daily at 03:00 (via launchd; runs when Mac wakes if asleep at 03:00).
 - **Retention:** 30 most recent daily dumps; older ones auto-deleted.
@@ -12,18 +18,8 @@ Pulls a nightly `pg_dump` of the Railway production database to
 
 ## One-time setup
 
-1. **Save the production connection string** outside the repo:
-
-   ```bash
-   cat > ~/.tck-backup.env <<'EOF'
-   PROD_DATABASE_URL='postgresql://USER:PASS@HOST:PORT/railway'
-   EOF
-   chmod 600 ~/.tck-backup.env
-   ```
-
-   Get the URL from Railway → Postgres service → Variables → `DATABASE_URL`
-   (use the **public** one, not the internal `*.railway.internal` host —
-   that only resolves inside Railway's network).
+1. **Copy the scripts** from this folder to `~/TCK-Backups/bin/` and make sure
+   the Mac's SSH key is registered with Railway (`railway ssh keys`).
 
 2. **Install the launchd job:**
 
