@@ -7,9 +7,10 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
-import { validate } from "../middleware/validate";
+import { validate, validateQuery } from "../middleware/validate";
 import { requireFounderArea } from "../middleware/founder-area-access";
 import { getMetaAdsStatus, runMetaAdSpendSync } from "../lib/meta-ads";
+import { getAdsReport } from "../lib/meta-ads-report";
 
 const router: IRouter = Router();
 router.use(requireFounderArea("founder.numbers"));
@@ -38,6 +39,21 @@ router.post("/refresh", validate(RefreshBody), async (_req: Request, res: Respon
   // The sync never throws; an unreachable Meta is ok:false with a message.
   // 200 regardless, so the client reads the body rather than guessing.
   res.json(result);
+});
+
+const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const ReportQuery = z
+  .object({ from: day, to: day, refresh: z.literal("1").optional() })
+  .refine(q => q.from <= q.to, { message: "from must be on or before to" });
+
+/**
+ * The Ads page: live campaigns, ad sets and ads with their figures for a
+ * period. Read-only. Always 200: "not connected" and "Meta didn't answer" are
+ * states to show, and the body says which.
+ */
+router.get("/report", validateQuery(ReportQuery), async (_req: Request, res: Response) => {
+  const { from, to, refresh } = res.locals["query"] as z.infer<typeof ReportQuery>;
+  res.json(await getAdsReport(from, to, refresh === "1"));
 });
 
 export default router;

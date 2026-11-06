@@ -34,13 +34,15 @@ import {
   type DailySpend,
 } from "./meta-ads-sync";
 
-const GRAPH_HOST = "https://graph.facebook.com";
+export const GRAPH_HOST = "https://graph.facebook.com";
 const LAST_SYNC_KEY = "meta_ads_last_sync";
 const DAILY_MARKER_KEY = "meta_ads_last_daily_run";
 
 /** Pages of insights to follow before giving up. 90 days at 500/page is one. */
 const MAX_PAGES = 10;
-const REQUEST_TIMEOUT_MS = 30_000;
+const REQUEST_TIMEOUT_MS = 60_000;
+
+export type ConnectedMetaConfig = Extract<MetaAdsConfig, { connected: true }>;
 
 export type SyncTrigger = "scheduled" | "manual" | "startup";
 
@@ -72,7 +74,7 @@ export interface MetaSyncResult {
  * truncated and scrubbed before they are allowed anywhere near a log line.
  */
 async function graphGet(
-  cfg: Extract<MetaAdsConfig, { connected: true }>,
+  cfg: ConnectedMetaConfig,
   url: string,
 ): Promise<unknown> {
   const controller = new AbortController();
@@ -101,9 +103,25 @@ function scrub(text: string, token: string): string {
   return token ? text.split(token).join("[token]") : text;
 }
 
+/** Every row of a Graph API list, following Meta's cursor paging. */
+export async function graphGetAll(cfg: ConnectedMetaConfig, firstUrl: string): Promise<unknown[]> {
+  let url: string | null = firstUrl;
+  const all: unknown[] = [];
+  for (let page = 0; page < MAX_PAGES && url; page++) {
+    const body = (await graphGet(cfg, url)) as {
+      data?: unknown;
+      paging?: { next?: unknown };
+    };
+    if (Array.isArray(body?.data)) all.push(...body.data);
+    const next = body?.paging?.next;
+    url = typeof next === "string" && next.startsWith(GRAPH_HOST) ? next : null;
+  }
+  return all;
+}
+
 /** The ad account's reporting timezone and currency. */
 async function fetchAccountMeta(
-  cfg: Extract<MetaAdsConfig, { connected: true }>,
+  cfg: ConnectedMetaConfig,
 ): Promise<{ timezone: string | null; currency: string | null }> {
   const url = `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}?fields=timezone_name,currency`;
   const body = (await graphGet(cfg, url)) as { timezone_name?: unknown; currency?: unknown };
@@ -118,7 +136,7 @@ async function fetchAccountMeta(
  * Follows Meta's cursor paging.
  */
 async function fetchDailySpend(
-  cfg: Extract<MetaAdsConfig, { connected: true }>,
+  cfg: ConnectedMetaConfig,
   window: SyncWindow,
 ): Promise<unknown[]> {
   const params = new URLSearchParams({
@@ -128,19 +146,7 @@ async function fetchDailySpend(
     limit: "500",
     time_range: JSON.stringify({ since: window.since, until: window.until }),
   });
-  let url: string | null = `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}/insights?${params}`;
-
-  const all: unknown[] = [];
-  for (let page = 0; page < MAX_PAGES && url; page++) {
-    const body = (await graphGet(cfg, url)) as {
-      data?: unknown;
-      paging?: { next?: unknown };
-    };
-    if (Array.isArray(body?.data)) all.push(...body.data);
-    const next = body?.paging?.next;
-    url = typeof next === "string" && next.startsWith(GRAPH_HOST) ? next : null;
-  }
-  return all;
+  return graphGetAll(cfg, `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}/insights?${params}`);
 }
 
 // ── Reading and writing our side ───────────────────────────────────────────
