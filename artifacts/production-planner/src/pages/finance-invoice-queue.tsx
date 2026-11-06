@@ -6,6 +6,7 @@ import { useToast } from "@/hooks/use-toast";
 import { DetailsEditor, jsonFetch, money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
 import { MatchOptions, type InvoiceMatches } from "@/pages/finance-invoice-match";
 import { FilePreview } from "@/pages/finance-invoices";
+import { InvoiceNotes } from "@/pages/finance-invoice-notes";
 import { ChevronDown, ChevronRight, Eye } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -106,6 +107,8 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
       </div>
 
       <MatchOptions invoice={inv} matches={entry} busy={busy} onAttach={(lines) => attach.mutate(lines.map((l) => l.lineId))} onReject={(id) => reject.mutate(id)} />
+
+      <InvoiceNotes invoice={inv} />
 
       <div className="flex flex-wrap gap-2">
         <Button variant="ghost" size="sm" onClick={() => setShowFile((v) => !v)}><Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide invoice" : "View invoice"}</Button>

@@ -9,6 +9,7 @@ import { useToast } from "@/hooks/use-toast";
 import { FilePreview } from "@/pages/finance-invoices";
 import { MatchOptions, type InvoiceMatches, type Suggestion } from "@/pages/finance-invoice-match";
 import { InvoiceQueuePanel } from "@/pages/finance-invoice-queue";
+import { InvoiceNotes, type PaymentStatus } from "@/pages/finance-invoice-notes";
 import { Eye, FileText, Loader2, Search as SearchIcon, Upload, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -30,6 +31,8 @@ export type ReadInvoice = {
   docKind: string;
   readStatus: string;
   readNote: string | null;
+  notes: string | null;
+  paymentStatus: PaymentStatus;
 };
 
 type FindResult = InvoiceMatches & {
@@ -233,6 +236,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
             <div className="space-y-3">
               {unread && !inv.totalAmount && <p className="text-sm">Couldn't read it automatically: type the supplier, date and total below and it will look again.</p>}
               <MatchOptions invoice={inv} matches={item.result} busy={busy} onAttach={(lines) => attach.mutate(lines)} onReject={(id) => reject.mutate(id)} />
+              <InvoiceNotes invoice={inv} />
               <div className="flex flex-wrap gap-2">
                 {!editing && hasOptions && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Details wrong? Correct them</Button>}
                 <Button variant="ghost" size="sm" disabled={busy} onClick={() => leaveQueue.mutate()}>No card transaction</Button>

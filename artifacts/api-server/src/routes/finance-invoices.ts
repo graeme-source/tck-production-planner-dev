@@ -301,6 +301,7 @@ async function invoiceSummary(id: number) {
     invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount,
     vatAmount: finInvoicesTable.vatAmount, docKind: finInvoicesTable.docKind,
     readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote, lineId: finInvoicesTable.lineId,
+    notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus,
   }).from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
   return inv ?? null;
 }
@@ -430,6 +431,7 @@ const editSchema = z.object({
   vatAmount: z.number().finite().nullable().optional(),
   docKind: z.enum(["invoice", "receipt", "credit_note", "statement", "other"]).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
+  paymentStatus: z.enum(["paid", "unpaid"]).nullable().optional(),
 });
 
 router.patch("/:id", requireFinanceAccess, validate(editSchema), async (req: Request, res: Response) => {
@@ -454,6 +456,7 @@ router.patch("/:id", requireFinanceAccess, validate(editSchema), async (req: Req
     set("vatAmount", body.vatAmount === undefined ? undefined : body.vatAmount === null ? null : body.vatAmount.toFixed(2));
     set("docKind", body.docKind);
     set("notes", body.notes === undefined ? undefined : body.notes || null);
+    set("paymentStatus", body.paymentStatus);
     if (Object.keys(updates).length === 0) { res.json({ ok: true, changed: 0 }); return; }
     await db.update(finInvoicesTable).set({ ...updates, updatedAt: new Date() }).where(eq(finInvoicesTable.id, id));
     await logFinEvent("invoice", id, "edited", req.session.userId, { changes });

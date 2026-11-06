@@ -18,6 +18,7 @@ const queuedColumns = {
   invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount,
   vatAmount: finInvoicesTable.vatAmount, docKind: finInvoicesTable.docKind,
   readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote,
+  notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus,
   rejectedLineIds: finInvoicesTable.rejectedLineIds, awaitingTransactionAt: finInvoicesTable.awaitingTransactionAt,
 };
 

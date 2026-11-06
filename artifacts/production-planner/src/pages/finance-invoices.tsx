@@ -690,7 +690,7 @@ const ACTION_LABELS: Record<string, (d: Record<string, any>) => string> = {
   added_by_hand: () => "Transaction added by hand",
 };
 const FIELD_NAMES: Record<string, string> = {
-  supplierName: "supplier", invoiceDate: "date", invoiceNumber: "invoice number", totalAmount: "total", vatAmount: "VAT", docKind: "kind", notes: "notes",
+  supplierName: "supplier", invoiceDate: "date", invoiceNumber: "invoice number", totalAmount: "total", vatAmount: "VAT", docKind: "kind", paymentStatus: "paid status", notes: "notes",
 };
 
 /** Who did what, when — for an invoice (with its transaction's story) or a card transaction. */
