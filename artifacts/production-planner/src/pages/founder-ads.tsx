@@ -42,8 +42,8 @@ function AdsPage() {
 
   const column = (title: string, rows: AdRow[]) => (
     <section className="min-w-0 space-y-3">
-      <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">
-        {title} · {rows.length}
+      <h2 className="flex items-baseline gap-2 whitespace-nowrap text-2xl lg:text-3xl font-display font-extrabold text-foreground leading-tight">
+        {title} <span className="text-lg lg:text-xl font-semibold text-muted-foreground tabular-nums">{rows.length}</span>
       </h2>
       {rows.map(row => (
         <AdCard
