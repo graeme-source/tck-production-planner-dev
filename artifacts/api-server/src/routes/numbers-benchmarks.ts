@@ -23,6 +23,7 @@ router.use(requireFounderArea("founder.numbers"));
 const KPIS = [
   "aov", "newCustomerShare", "newCustomers", "newCustomerRevenue", "newCustomerRoas",
   "adSpend", "recurringSubs", "newSubs", "subscriptionRevenue", "conversionRate",
+  "adsCostPerResult", "adsPurchaseRoas", "adsCostPerReach",
 ] as const;
 
 const figure = z.number().min(0).max(999_999_999).nullable();

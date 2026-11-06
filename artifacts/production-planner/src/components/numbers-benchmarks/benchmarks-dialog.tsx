@@ -10,23 +10,23 @@ import { createPortal } from "react-dom";
 import { Target, X } from "lucide-react";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
-import { benchmarkProblem, KPIS, type Benchmark, type KpiId, type KpiSpec } from "@/lib/numbers-benchmarks";
+import { benchmarkProblem, KPIS, type Benchmark, type KpiId, type KpiSpec, type KpiUnit } from "@/lib/numbers-benchmarks";
 import { useNumbersBenchmarks, useSaveBenchmark } from "./api";
 
-/** Every panel's targets, sales aside. */
-export function BenchmarkRows({ only }: { only?: KpiId }) {
+/** Every panel's targets, sales aside: the Numbers ones, or the Ads page's. */
+export function BenchmarkRows({ only, ads = false }: { only?: KpiId; ads?: boolean }) {
   const { data } = useNumbersBenchmarks();
   if (!data) return null;
   return (
     <>
-      {KPIS.filter((spec: KpiSpec) => !spec.monthlyTarget && (!only || spec.id === only)).map((spec) => (
+      {KPIS.filter((spec: KpiSpec) => !spec.monthlyTarget && !!spec.ads === ads && (!only || spec.id === only)).map((spec) => (
         <BenchmarkRow key={spec.id} spec={spec} value={data.benchmarks[spec.id]} />
       ))}
     </>
   );
 }
 
-export function BenchmarksDialog({ only, onClose }: { only: KpiId; onClose: () => void }) {
+export function BenchmarksDialog({ only, ads = false, onClose }: { only?: KpiId; ads?: boolean; onClose: () => void }) {
   const { data } = useNumbersBenchmarks();
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -46,13 +46,13 @@ export function BenchmarksDialog({ only, onClose }: { only: KpiId; onClose: () =
       >
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
           <Target className="w-6 h-6 text-primary flex-shrink-0" />
-          <h2 id="benchmarks-title" className="flex-1 min-w-0 font-display font-bold text-xl leading-tight">Target</h2>
+          <h2 id="benchmarks-title" className="flex-1 min-w-0 font-display font-bold text-xl leading-tight">{ads ? "Ads targets" : "Target"}</h2>
           <button onClick={onClose} className="p-2 rounded-lg hover:bg-secondary" aria-label="Close">
             <X className="w-6 h-6" />
           </button>
         </div>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          <BenchmarkRows only={only} />
+          <BenchmarkRows only={only} ads={ads} />
         </div>
       </div>
     </div>,
@@ -60,18 +60,24 @@ export function BenchmarksDialog({ only, onClose }: { only: KpiId; onClose: () =
   );
 }
 
-const unitLabel = (spec: KpiSpec) => {
-  const unit = spec.unit === "count" ? "" : spec.unit;
-  return [unit, spec.perDay ? "per day" : ""].filter(Boolean).join(" ");
+const UNIT_LABEL: Record<KpiUnit, string> = {
+  "£": "£", "£p": "£", "%": "%", count: "", ratio: "£ back for each £1 spent", pence: "pence per person reached",
 };
+
+const unitLabel = (spec: KpiSpec) => [UNIT_LABEL[spec.unit], spec.perDay ? "per day" : ""].filter(Boolean).join(" ");
+
+const asText = (n: number | null | undefined) => (n == null ? "" : String(n));
 
 function BenchmarkRow({ spec, value }: { spec: KpiSpec; value: Benchmark | undefined }) {
   const save = useSaveBenchmark();
   const [draft, setDraft] = useState<Benchmark>(value ?? { minimum: null, stretch: null });
+  // What's typed is kept as text, so "2." can become "2.5".
+  const [text, setText] = useState({ minimum: asText(value?.minimum), stretch: asText(value?.stretch) });
   const auto = useAutosave((benchmark: Benchmark) => save.mutateAsync({ kpi: spec.id as KpiId, benchmark }));
-  const set = (key: keyof Benchmark, text: string) => {
-    const n = text.trim() === "" ? null : Number(text);
+  const set = (key: keyof Benchmark, typed: string) => {
+    const n = typed.trim() === "" ? null : Number(typed);
     if (n != null && (!Number.isFinite(n) || n < 0)) return;
+    setText({ ...text, [key]: typed });
     const next = { ...draft, [key]: n };
     setDraft(next);
     auto.schedule(next);
@@ -97,7 +103,7 @@ function BenchmarkRow({ spec, value }: { spec: KpiSpec; value: Benchmark | undef
             {label}
             <input
               inputMode="decimal"
-              value={draft[key] ?? ""}
+              value={text[key]}
               onChange={(e) => set(key, e.target.value)}
               onBlur={auto.flush}
               className="mt-1 w-full px-3 py-2 rounded-lg border border-border bg-background text-base font-semibold text-foreground tabular-nums focus:outline-none focus:ring-2 focus:ring-primary/40"

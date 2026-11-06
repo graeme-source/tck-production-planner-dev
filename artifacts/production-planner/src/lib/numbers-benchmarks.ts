@@ -14,7 +14,8 @@
  */
 import { shadeAtRatio, type RoasShade } from "./ad-efficiency";
 
-export type KpiUnit = "£" | "%" | "count";
+/** "£p" keeps the pence, "ratio" is a ROAS like 2.8, "pence" is 2.5p. */
+export type KpiUnit = "£" | "£p" | "%" | "count" | "ratio" | "pence";
 
 export interface KpiSpec {
   id: string;
@@ -26,6 +27,8 @@ export interface KpiSpec {
   lowerIsBetter?: boolean;
   /** Comes from the monthly sales targets, the single source for sales. */
   monthlyTarget?: boolean;
+  /** Belongs to the Ads page, not the Numbers panels. */
+  ads?: boolean;
 }
 
 export const KPIS = [
@@ -43,6 +46,9 @@ export const KPIS = [
   { id: "newSubs", label: "New subscriptions", unit: "count", perDay: true },
   { id: "subscriptionRevenue", label: "Subscription revenue", unit: "£", perDay: true },
   { id: "conversionRate", label: "Conversion rate", unit: "%", perDay: false },
+  { id: "adsCostPerResult", label: "Cost per result", unit: "£p", perDay: false, lowerIsBetter: true, ads: true },
+  { id: "adsPurchaseRoas", label: "Purchase ROAS", unit: "ratio", perDay: false, ads: true },
+  { id: "adsCostPerReach", label: "Cost per reach", unit: "pence", perDay: false, lowerIsBetter: true, ads: true },
 ] as const satisfies readonly KpiSpec[];
 
 export type KpiId = (typeof KPIS)[number]["id"];
@@ -91,13 +97,9 @@ export interface KpiGrade {
 
 const lerp = (t: number, a: number, b: number) => a + Math.min(1, Math.max(0, t)) * (b - a);
 
-/**
- * Colour a figure. Under the minimum it's the same as a ROAS under target:
- * yellow just under, orange, red, then dark red at 30% under. At the minimum
- * it's brand green, darkening to emerald at the stretch, then on to deep
- * platinum 25% past it. Null without a figure or both benchmarks.
- */
-export function gradeKpi(value: number | null | undefined, benchmark: Benchmark | undefined, spec: KpiSpec, days = 1): KpiGrade | null {
+/** Where a figure sits on the colour scale (see gradeKpi), with the two
+ *  figures scaled to the days in view. */
+export function kpiRatio(value: number | null | undefined, benchmark: Benchmark | undefined, spec: KpiSpec, days = 1): { ratio: number; levels: Levels } | null {
   if (value == null || !Number.isFinite(value)) return null;
   const base = benchmarkLevels(benchmark, spec);
   if (!base || !(days > 0)) return null;
@@ -112,7 +114,18 @@ export function gradeKpi(value: number | null | undefined, benchmark: Benchmark 
   const ratio = v < min ? v / min
     : v < stretch ? lerp((v - min) / (stretch - min), 1, 1.25)
       : lerp((v / stretch - 1) / 0.25, 1.25, 1.5);
-  return { shade: shadeAtRatio(ratio), levels };
+  return { ratio, levels };
+}
+
+/**
+ * Colour a figure. Under the minimum it's the same as a ROAS under target:
+ * yellow just under, orange, red, then dark red at 30% under. At the minimum
+ * it's brand green, darkening to emerald at the stretch, then on to deep
+ * platinum 25% past it. Null without a figure or both benchmarks.
+ */
+export function gradeKpi(value: number | null | undefined, benchmark: Benchmark | undefined, spec: KpiSpec, days = 1): KpiGrade | null {
+  const placed = kpiRatio(value, benchmark, spec, days);
+  return placed && { shade: shadeAtRatio(placed.ratio), levels: placed.levels };
 }
 
 /** One KPI's share of a normal day done by the end of each London hour (0–1). */
@@ -153,6 +166,9 @@ export function dayForecast(value: number | null | undefined, dayShare: number):
 
 export function formatBenchmark(n: number, unit: KpiUnit): string {
   if (unit === "£") return `£${Math.round(n).toLocaleString("en-GB")}`;
+  if (unit === "£p") return `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (unit === "ratio") return n.toFixed(2);
+  if (unit === "pence") return `${n.toFixed(1)}p`;
   const rounded = Math.round(n * 10) / 10;
   return unit === "%" ? `${rounded}%` : rounded.toLocaleString("en-GB");
 }
