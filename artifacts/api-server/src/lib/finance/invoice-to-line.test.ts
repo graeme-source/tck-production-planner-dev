@@ -54,6 +54,15 @@ describe("rankLinesForInvoice", () => {
   });
 });
 
+describe("a supplier written two ways", () => {
+  it("is confident about Toolstation Ltd and Tool Station", () => {
+    const inv = { supplierName: "Toolstation Ltd", invoiceDate: "2026-09-10", invoiceNumber: "YWW519695271", totalAmount: "15.92" };
+    const s = scoreInvoiceAgainstLine(inv, line({ lineDate: "2026-09-10", descriptor: "Tool Station", merchant: "Tool Station", vendorName: "Tool Station", amount: "15.92" }))!;
+    expect(s.mismatches).toEqual([]);
+    expect(isConfidentPick([s])).toBe(true);
+  });
+});
+
 describe("invoices in another currency", () => {
   const railway = { supplierName: "Railway Corporation", invoiceDate: "2026-07-01", invoiceNumber: "GXO3L6QI-0004", totalAmount: "20.00", currency: "USD", gbpRate: 0.75528 };
   const charge = line({ lineDate: "2026-07-02", descriptor: "Railway", merchant: "Railway", vendorName: "Railway", amount: "15.14" });

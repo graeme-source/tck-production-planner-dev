@@ -73,11 +73,13 @@ export function normaliseMerchant(raw: string): string {
 
 /**
  * Prefix-tolerant comparison: bank descriptors truncate (~22 chars), so
- * "SCREWFIX.C" should match "SCREWFIX.CO.UK" / "SCREWFIX".
+ * "SCREWFIX.C" should match "SCREWFIX.CO.UK" / "SCREWFIX". Spacing and
+ * punctuation don't count, so "Toolstation Ltd" is "Tool Station".
  */
 export function merchantsLooselyMatch(a: string, b: string): boolean {
-  const na = normaliseMerchant(a);
-  const nb = normaliseMerchant(b);
+  const squash = (name: string) => normaliseMerchant(name).replace(/[^A-Z0-9]/g, "");
+  const na = squash(a);
+  const nb = squash(b);
   if (!na || !nb) return false;
   if (na === nb) return true;
   const [shorter, longer] = na.length <= nb.length ? [na, nb] : [nb, na];

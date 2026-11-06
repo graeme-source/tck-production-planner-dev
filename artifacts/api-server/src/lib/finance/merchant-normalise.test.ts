@@ -32,6 +32,12 @@ describe("normaliseMerchant", () => {
     expect(normaliseMerchant("BUNZL C&H SUPPLIES")).toBe("BUNZL C&H SUPPLIES");
   });
 
+  it("ignores spacing and punctuation in a name", () => {
+    expect(merchantsLooselyMatch("Toolstation Ltd", "Tool Station")).toBe(true);
+    expect(merchantsLooselyMatch("Bidfood", "BID-FOOD")).toBe(true);
+    expect(merchantsLooselyMatch("Toolstation Ltd", "Screwfix")).toBe(false);
+  });
+
   it("matches truncated descriptors prefix-tolerantly", () => {
     expect(merchantsLooselyMatch("WWW.SCREWFIX.C", "SCREWFIX DIRECT")).toBe(true);
     expect(merchantsLooselyMatch("SQ *CAKEHEAD LIMITED", "WWW.CAKEHEAD.CO.UK")).toBe(true);
