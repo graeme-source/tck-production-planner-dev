@@ -6,11 +6,11 @@ import {
   Truck, ChevronLeft, ChevronRight, Calendar, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
   CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft,
-  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw, PackageOpen, Sparkles,
+  FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw, PackageOpen, Sparkles, Combine,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
 import { cn } from "@/lib/utils";
-import { SupplierCallStrip } from "@/components/supplier-call-strip";
+import { SupplierAccountNumber, SupplierCallButton } from "@/components/supplier-call-strip";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
@@ -1208,6 +1208,30 @@ export default function Deliveries() {
     },
   });
 
+  // Two orders from one supplier for one van: the newer joins the older.
+  const combineMutation = useMutation({
+    mutationFn: async ({ targetId, fromOrderId }: { targetId: number; fromOrderId: number }) => {
+      const res = await fetch(`${BASE}/api/orders/purchase-orders/${targetId}/combine`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ fromOrderId }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to combine the orders");
+      }
+      return res.json();
+    },
+    onSuccess: (_data, { targetId, fromOrderId }) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deliveries/weekly"] });
+      toast({ title: `PO #${fromOrderId} combined into PO #${targetId}` });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Couldn't combine the orders", description: err.message, variant: "destructive" });
+    },
+  });
+
   // Completely undo a received delivery (received by mistake).
   const unreceiveMutation = useMutation({
     mutationFn: async (orderId: number) => {
@@ -1512,6 +1536,12 @@ export default function Deliveries() {
               const orderCollections = collectionsByKey.get(collectionKey(order.supplierId, selectedDateStr)) ?? [];
               const blockedByCollection = orderCollections.some(c => c.outstanding);
               const cardIsClickable = canReceive && !blockedByCollection;
+              const cardSupplier = suppliersList?.find(sp => sp.id === order.supplierId);
+              // The oldest open order from this supplier today; a newer card
+              // offers to join it.
+              const combineTarget = order.status === "placed"
+                ? selectedDayOrdersAll.find(o => o.supplierId === order.supplierId && o.status === "placed" && o.id < order.id)
+                : undefined;
               return (
                 <div
                   key={order.id}
@@ -1628,6 +1658,23 @@ export default function Deliveries() {
                           Edit order
                         </button>
                       )}
+                      {canEdit && combineTarget && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (confirm(`Combine PO #${order.id} into PO #${combineTarget.id}? Its ${order.lines.length} ${order.lines.length === 1 ? "item moves" : "items move"} across and PO #${order.id} goes. This can't be undone, and the supplier isn't told.`)) {
+                              combineMutation.mutate({ targetId: combineTarget.id, fromOrderId: order.id });
+                            }
+                          }}
+                          disabled={combineMutation.isPending}
+                          className="min-h-[44px] px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5 whitespace-nowrap disabled:opacity-50"
+                          title="This supplier has another order for today"
+                        >
+                          <Combine className="w-4 h-4" />
+                          Combine with PO #{combineTarget.id}
+                        </button>
+                      )}
+                      <SupplierCallButton supplier={cardSupplier} />
                       {canReceive && !isReceived && blockedByCollection && (
                         <span className="text-xs font-medium text-amber-700 dark:text-amber-300 px-3 py-2 rounded-xl bg-amber-100 dark:bg-amber-900/40 flex items-center gap-1.5">
                           <PackageOpen className="w-3.5 h-3.5" />
@@ -1695,9 +1742,8 @@ export default function Deliveries() {
                     </div>
                   </div>
 
-                  {/* Who to ring about this delivery, and the account number
-                      they'll ask for (#332). Hidden when neither is on file. */}
-                  <SupplierCallStrip supplier={suppliersList?.find(sp => sp.id === order.supplierId)} />
+                  {/* The account number they'll ask for (#332). */}
+                  <SupplierAccountNumber supplier={cardSupplier} />
 
                   <div
                     className="border-t border-border/50 px-4 py-2.5 bg-secondary/10 flex items-center gap-2 flex-wrap"
