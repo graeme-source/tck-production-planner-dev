@@ -63,7 +63,7 @@ function NothingYet({ invoice }: { invoice: ReadInvoice }) {
     <div className="rounded-xl border p-4">
       <div className="font-semibold">No transaction yet</div>
       <div className="text-sm text-muted-foreground">
-        Nothing here for {invoice.totalAmount ? invoiceMoney(invoice.totalAmount, invoice.currency) : "this invoice"}. It stays in the queue and attaches itself when the charge comes in.
+        Nothing here for {invoice.totalAmount ? invoiceMoney(invoice.totalAmount, invoice.currency) : "this invoice"}. It stays in the Inbox and attaches itself if the charge comes in.
       </div>
     </div>
   );
@@ -155,12 +155,16 @@ function ChooseCharges({ invoice, lines, busy, onAttach }: { invoice: ReadInvoic
   );
 }
 
-export function MatchOptions({ invoice, matches, busy, onAttach, onReject }: {
+/** `quiet` is for the Inbox, where having no transaction is the normal state:
+ *  only a real match speaks up. The warning still comes before anything poor
+ *  is attached by hand. */
+export function MatchOptions({ invoice, matches, busy, onAttach, onReject, quiet = false }: {
   invoice: ReadInvoice;
   matches: InvoiceMatches;
   busy: boolean;
   onAttach: (lines: Suggestion[]) => void;
   onReject: (lineId: number) => void;
+  quiet?: boolean;
 }) {
   const [more, setMore] = useState(false);
   const [choosing, setChoosing] = useState(false);
@@ -179,9 +183,9 @@ export function MatchOptions({ invoice, matches, busy, onAttach, onReject }: {
   return (
     <div className="space-y-3">
       {matched && <SuggestionBox s={top} heading={confident ? "I think it's this one" : "Same amount, check it's right"} busy={busy} onAttach={() => onAttach([top])} />}
-      {!top && <NothingYet invoice={invoice} />}
+      {!top && !quiet && <NothingYet invoice={invoice} />}
       {addsUpToIt && <AddsUpBox invoice={invoice} lines={together} busy={busy} onAttach={() => onAttach(together)} />}
-      {top && !matched && !addsUpToIt && <DoesntMatchWarning issues={top.mismatches}>{moreButton}</DoesntMatchWarning>}
+      {top && !matched && !addsUpToIt && (quiet ? <div>{chooseButton}</div> : <DoesntMatchWarning issues={top.mismatches}>{moreButton}</DoesntMatchWarning>)}
 
       {matched && (
         <div className="flex flex-wrap gap-2">
@@ -205,7 +209,7 @@ export function MatchOptions({ invoice, matches, busy, onAttach, onReject }: {
             <Button variant="outline" size="sm" disabled={busy} onClick={() => onReject(top.lineId)}>Not this one</Button>
             {chooseButton}
           </div>
-          <p className="text-sm text-muted-foreground">If you leave it, it stays in the queue and attaches itself when the right charge comes in.</p>
+          <p className="text-sm text-muted-foreground">If you leave it, it stays in the Inbox and attaches itself if the right charge comes in.</p>
         </div>
       )}
       {choosing && <ChooseCharges invoice={invoice} lines={suggestions} busy={busy} onAttach={onAttach} />}

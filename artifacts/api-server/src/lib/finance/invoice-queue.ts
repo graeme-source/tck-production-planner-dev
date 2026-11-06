@@ -21,8 +21,12 @@ const queuedColumns = {
   readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote,
   notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus, currency: finInvoicesTable.currency,
   rejectedLineIds: finInvoicesTable.rejectedLineIds, awaitingTransactionAt: finInvoicesTable.awaitingTransactionAt,
+  postedAt: finInvoicesTable.postedAt,
 };
 
+/** Everything that can still meet its transaction. One the bookkeeper has
+ *  posted stays in here: if its card charge turns up later, it attaches itself
+ *  and closes, rather than being chased as a transaction with no invoice. */
 async function queuedInvoices() {
   return db.select(queuedColumns).from(finInvoicesTable)
     .where(and(isNotNull(finInvoicesTable.awaitingTransactionAt), isNull(finInvoicesTable.lineId), isNull(finInvoicesTable.duplicateOfId)))
@@ -74,7 +78,7 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
 }
 
 type QueuedRow = Awaited<ReturnType<typeof queuedInvoices>>[number] & { gbpRate: number | null };
-export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds"> } & InvoiceMatches;
+export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds" | "postedAt"> } & InvoiceMatches;
 
 /** `check` has something likely enough to be worth someone's time
  *  (isWorthChecking), or charges that add up to it; `waiting` has nothing that
@@ -82,11 +86,12 @@ export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds"> } & Invoi
  *  describes every invoice from a regular. */
 export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: QueueEntry[] }> {
   await settleAttachedByHand();
-  const invoices = await Promise.all((await queuedInvoices()).map(withGbpRate));
+  const inbox = (await queuedInvoices()).filter((inv) => !inv.postedAt);
+  const invoices = await Promise.all(inbox.map(withGbpRate));
   const lines = invoices.length ? await waitingLines() : [];
   const check: QueueEntry[] = [];
   const waiting: QueueEntry[] = [];
-  for (const { rejectedLineIds, ...invoice } of invoices) {
+  for (const { rejectedLineIds, postedAt: _notPosted, ...invoice } of invoices) {
     const ranked = rankForInvoice({ ...invoice, rejectedLineIds }, lines);
     const worthChecking = !!ranked.addsUp || ranked.suggestions.some(isWorthChecking);
     (worthChecking ? check : waiting).push({ invoice, ...ranked });
@@ -101,7 +106,21 @@ export async function rejectLineForInvoice(invoiceId: number, lineId: number, us
   await logFinEvent("invoice", invoiceId, "transaction_rejected", userId, { lineId });
 }
 
-/** Paid some other way: it stays in the library, out of the queue. */
+/** The bookkeeper has found it in QuickBooks and posted it (Graeme, 6 Nov
+ *  2026): out of the Inbox, in the library. A mistake goes back the same way. */
+export async function setInvoicePosted(invoiceId: number, posted: boolean, userId: number | null): Promise<boolean> {
+  const done = await db.update(finInvoicesTable)
+    .set(posted
+      ? { postedAt: new Date(), postedBy: userId, updatedAt: new Date() }
+      : { postedAt: null, postedBy: null, awaitingTransactionAt: sql`coalesce(${finInvoicesTable.awaitingTransactionAt}, now())`, updatedAt: new Date() })
+    .where(and(eq(finInvoicesTable.id, invoiceId), isNull(finInvoicesTable.lineId)))
+    .returning({ id: finInvoicesTable.id });
+  if (done.length === 0) return false;
+  await logFinEvent("invoice", invoiceId, posted ? "marked_posted" : "back_to_inbox", userId);
+  return true;
+}
+
+/** Shouldn't be here at all: it stays in the library, out of the Inbox. */
 export async function takeOutOfQueue(invoiceId: number, userId: number | null): Promise<void> {
   await db.update(finInvoicesTable).set({ awaitingTransactionAt: null, updatedAt: new Date() }).where(eq(finInvoicesTable.id, invoiceId));
   await logFinEvent("invoice", invoiceId, "taken_out_of_queue", userId);

@@ -216,7 +216,7 @@ export const finInvoicesTable = pgTable("fin_invoices", {
   currency: text("currency").notNull().default("GBP"),
   docKind: text("doc_kind").notNull().default("invoice"),
   notes: text("notes"),
-  paymentStatus: text("payment_status"), // 'paid' | 'unpaid' | null (not said yet)
+  paymentStatus: text("payment_status").default("paid"), // 'paid' | 'unpaid'; paid unless someone says otherwise
   readStatus: text("read_status").notNull().default("pending"), // pending | done | failed | not_available
   readNote: text("read_note"),
   uploadedBy: integer("uploaded_by"),

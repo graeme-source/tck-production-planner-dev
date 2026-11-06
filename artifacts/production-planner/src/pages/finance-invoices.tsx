@@ -50,6 +50,7 @@ type Invoice = {
   currency: string;
   docKind: string;
   notes: string | null;
+  paymentStatus: "paid" | "unpaid" | null;
   readStatus: "pending" | "done" | "failed" | "not_available";
   readNote: string | null;
   uploadedByName: string | null;
@@ -485,13 +486,14 @@ function InvoiceList({ invoices, onOpen }: { invoices: Invoice[]; onOpen: (id: n
                   {fmtDate(inv.invoiceDate)}{inv.invoiceNumber ? ` · ${inv.invoiceNumber}` : ""}{inv.financialYear ? ` · FY ${inv.financialYear} P${periodNo(inv.invoiceDate!)}` : ""}
                   {inv.source === "transaction"
                     ? ` · posted${inv.postedByName ? ` by ${inv.postedByName}` : ""}${inv.postedAt ? ` ${fmtWhen(inv.postedAt)}` : ""}`
-                    : ` · uploaded${inv.uploadedByName ? ` by ${inv.uploadedByName}` : ""} ${fmtWhen(inv.createdAt)}`}
+                    : ` · uploaded${inv.uploadedByName ? ` by ${inv.uploadedByName}` : ""} ${fmtWhen(inv.createdAt)}${inv.postedAt ? ` · posted${inv.postedByName ? ` by ${inv.postedByName}` : ""} ${fmtWhen(inv.postedAt)}` : ""}`}
                 </div>
               </div>
               {inv.duplicateOfId && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400"><Copy className="h-3 w-3 mr-1" /> Same as another</Badge>}
               {inv.readStatus === "pending" && <Badge variant="outline" className="shrink-0"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Reading</Badge>}
               {(inv.readStatus === "failed" || inv.readStatus === "not_available") && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">Check details</Badge>}
               {inv.docKind !== "invoice" && <Badge variant="outline" className="shrink-0">{KINDS[inv.docKind] ?? inv.docKind}</Badge>}
+              {inv.paymentStatus === "unpaid" && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">Unpaid</Badge>}
               <Badge variant="outline" className={cn("shrink-0", inv.source === "transaction" ? "text-indigo-700 border-indigo-300" : "")}>
                 {inv.source === "transaction" ? "Card transaction" : "Uploaded"}
               </Badge>
@@ -568,10 +570,34 @@ function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; onClose:
             ) : (
               <div>Uploaded{invoice.uploadedByName ? ` by ${invoice.uploadedByName}` : ""}, {fmtWhen(invoice.createdAt)}.</div>
             )}
+            {invoice.source === "upload" && invoice.postedAt && !invoice.lineId && <BackToInbox invoice={invoice} onDone={onClose} />}
           </div>
           <HistoryList type="invoice" id={invoice.id} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Marked as posted by mistake: back it goes. */
+function BackToInbox({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const back = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/invoices/${invoice.id}/posted`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posted: false }),
+    }),
+    onSuccess: () => {
+      toast({ title: "Back in the Inbox" });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+      onDone();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't put it back", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <div>
+      Marked as posted{invoice.postedByName ? ` by ${invoice.postedByName}` : ""}{invoice.postedAt ? `, ${fmtWhen(invoice.postedAt)}` : ""}.{" "}
+      <button type="button" className="underline underline-offset-2" disabled={back.isPending} onClick={() => back.mutate()}>Put it back in the Inbox</button>
     </div>
   );
 }
@@ -673,6 +699,9 @@ const ACTION_LABELS: Record<string, (d: Record<string, any>) => string> = {
   marked_not_duplicate: () => "Marked as a different invoice (not a duplicate)",
   unmarked_not_duplicate: () => "Unmarked as a different invoice",
   document_relabelled: (d) => `File relabelled${d.docKind ? ` as ${d.docKind === "invoice" ? "VAT invoice" : String(d.docKind).replace(/_/g, " ")}` : ""}`,
+  marked_posted: () => "Marked as posted in QuickBooks, out of the Inbox",
+  back_to_inbox: () => "Put back in the Inbox",
+  taken_out_of_queue: () => "Taken out of the Inbox",
   auto_done: () => "Marked done automatically: posted with a VAT invoice",
   found_posted_in_quickbooks: () => "Found posted in QuickBooks",
   marked_done: () => "Transaction marked done",

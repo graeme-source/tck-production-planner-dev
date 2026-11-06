@@ -10,7 +10,7 @@ import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMi
 import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
 import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
-import { invoiceQueue, queueInvoice, rejectLineForInvoice, takeOutOfQueue } from "../lib/finance/invoice-queue";
+import { invoiceQueue, queueInvoice, rejectLineForInvoice, setInvoicePosted, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
 // Finance → Invoices: the searchable library of every invoice we hold
 // (Graeme, 3 Nov 2026). Same access as the rest of Finance. Append-only —
@@ -107,6 +107,7 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
       currency: finInvoicesTable.currency,
       docKind: finInvoicesTable.docKind,
       notes: finInvoicesTable.notes,
+      paymentStatus: finInvoicesTable.paymentStatus,
       readStatus: finInvoicesTable.readStatus,
       readNote: finInvoicesTable.readNote,
       uploadedBy: finInvoicesTable.uploadedBy,
@@ -392,6 +393,21 @@ router.post("/:id/leave-queue", requireFinanceAccess, validate(z.object({})), as
     res.json({ ok: true });
   } catch (err) {
     console.error("[finance] leave queue error:", err);
+    res.status(500).json({ error: "Couldn't save that — try again." });
+  }
+});
+
+const postedSchema = z.object({ posted: z.boolean() });
+router.post("/:id/posted", requireFinanceAccess, validate(postedSchema), async (req: Request, res: Response) => {
+  try {
+    const { posted } = req.body as z.infer<typeof postedSchema>;
+    if (!await setInvoicePosted(Number(req.params.id), posted, req.session.userId ?? null)) {
+      res.status(409).json({ error: "This invoice is already on a transaction." });
+      return;
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[finance] invoice posted error:", err);
     res.status(500).json({ error: "Couldn't save that — try again." });
   }
 });

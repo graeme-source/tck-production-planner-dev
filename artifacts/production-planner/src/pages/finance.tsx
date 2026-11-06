@@ -6,7 +6,9 @@ import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { InvoicesLibraryPanel, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { InvoiceDropPanel } from "@/pages/finance-invoice-drop";
-import { UndoUploadButton } from "@/pages/finance-upload-undo";
+import { UndoUploadLink } from "@/pages/finance-upload-undo";
+import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
+import { inboxEntries, inboxTotal } from "@/lib/finance-inbox";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -170,20 +172,22 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
 };
 
 const FILTERS = [
-  { key: "outstanding", label: "Outstanding" },
+  // Transactions with no invoice yet (Graeme, 6 Nov 2026: not just invoices).
+  { key: "outstanding", label: "Outstanding transactions" },
+  // Invoices with no transaction yet, for the bookkeeper to post in QuickBooks.
+  { key: "inbox", label: "Inbox" },
   // The bookkeeper's queue: a VAT invoice attached, or the team has said
   // there won't be one and how to post it (Graeme, 2026-11-03).
   { key: "matched", label: "To be processed" },
   { key: "done", label: "Completed" },
-  { key: "all", label: "All" },
 ] as const;
 
 /** What each section's total means, under its count on the tab. */
 const SECTION_NOTES: Record<(typeof FILTERS)[number]["key"], string> = {
   outstanding: "awaiting documents",
+  inbox: "to post in QuickBooks",
   matched: "ready for the bookkeeper",
   done: "done",
-  all: "in total",
 };
 
 const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -262,7 +266,9 @@ function InvoicesTab() {
   const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
+  const [onDropCards, setOnDropCards] = useState<number[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
+  const inbox = useInvoiceQueue();
 
   const linesQuery = useQuery<LinesResponse>({
     queryKey: ["/api/finance/lines"],
@@ -347,10 +353,10 @@ function InvoicesTab() {
     return {
       outstanding: sum(lines.filter((l) => l.status === "open" || l.status === "identified")),
       matched: sum(lines.filter((l) => l.status === "matched")),
+      inbox: { count: inboxEntries(inbox.data).length, total: inboxTotal(inboxEntries(inbox.data)) },
       done: sum(lines.filter((l) => l.status === "done" || l.status === "not_needed")),
-      all: sum(lines),
     } satisfies Record<(typeof FILTERS)[number]["key"], { count: number; total: number }>;
-  }, [data]);
+  }, [data, inbox.data]);
 
 
   return (
@@ -358,6 +364,7 @@ function InvoicesTab() {
       {/* Drop an invoice beside the card statement upload (Graeme, 2026-11-03:
           one row, far less height; the counts live on the tabs below). */}
       <InvoiceDropPanel
+        onCardsChange={setOnDropCards}
         companion={
           <Card
             className={`h-full rounded-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
@@ -386,10 +393,13 @@ function InvoicesTab() {
                   e.target.value = "";
                 }}
               />
-              <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending} className="shrink-0 self-start xl:self-auto">
-                {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-                {uploadMutation.isPending ? "Uploading and matching…" : "Upload CSV"}
-              </Button>
+              <div className="shrink-0 flex flex-col items-start xl:items-end self-start xl:self-auto">
+                <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending}>
+                  {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+                  {uploadMutation.isPending ? "Uploading and matching…" : "Upload CSV"}
+                </Button>
+                <UndoUploadLink />
+              </div>
             </CardContent>
           </Card>
         }
@@ -415,7 +425,7 @@ function InvoicesTab() {
                     : "bg-white dark:bg-card border-border text-foreground shadow-sm hover:border-primary/60 hover:bg-primary/5",
                 )}
               >
-                <span className="flex items-center justify-center gap-2 text-sm lg:text-base font-semibold whitespace-nowrap">
+                <span className="flex items-center justify-center gap-2 text-sm lg:text-base font-semibold">
                   {f.label}
                   <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{count}</span>
                 </span>
@@ -433,7 +443,6 @@ function InvoicesTab() {
               <Plus className="h-4 w-4 mr-1" /> Add a transaction
             </Button>
           )}
-          {filter === "outstanding" && <UndoUploadButton />}
           {filter === "matched" && (
             <Button variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
               title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
@@ -441,7 +450,7 @@ function InvoicesTab() {
               {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
             </Button>
           )}
-          <div className="ml-auto flex gap-2">
+          {filter !== "inbox" && <div className="ml-auto flex gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant={postedFilter === "any" ? "outline" : "default"}>
@@ -470,7 +479,7 @@ function InvoicesTab() {
                 </DropdownMenuRadioGroup>
               </DropdownMenuContent>
             </DropdownMenu>
-          </div>
+          </div>}
         </div>
 
         <div className="relative">
@@ -493,8 +502,10 @@ function InvoicesTab() {
         </div>
       </div>
 
-      {/* Lines */}
-      {linesQuery.isLoading ? (
+      {/* Lines, or the Inbox's invoices */}
+      {filter === "inbox" ? (
+        <InboxPanel hiddenIds={onDropCards} search={search} />
+      ) : linesQuery.isLoading ? (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : filtered.length === 0 ? (
         <Card><CardContent className="py-10 text-center text-muted-foreground">Nothing here — all caught up.</CardContent></Card>
@@ -552,7 +563,7 @@ function AddLineDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () 
       }),
     }),
     onSuccess: () => {
-      toast({ title: "Transaction added", description: "It's in Outstanding as \"Needs invoice\"." });
+      toast({ title: "Transaction added", description: "It's in Outstanding transactions as \"Needs invoice\"." });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
       queryClient.invalidateQueries({ queryKey: ["/api/finance/summary"] });
       onAdded();

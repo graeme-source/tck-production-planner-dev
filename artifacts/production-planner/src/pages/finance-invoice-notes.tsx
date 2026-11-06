@@ -12,13 +12,14 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export type PaymentStatus = "paid" | "unpaid" | null;
 
 // What this invoice is, and whether it's been paid (Graeme, 6 Nov 2026), on an
-// invoice waiting for its transaction. Both save on their own.
+// invoice in the Inbox. Paid unless someone says it needs paying. Both save on
+// their own.
 
 export function InvoiceNotes({ invoice }: { invoice: { id: number; notes: string | null; paymentStatus: PaymentStatus } }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState(invoice.notes ?? "");
-  const [status, setStatus] = useState<PaymentStatus>(invoice.paymentStatus);
+  const [status, setStatus] = useState<PaymentStatus>(invoice.paymentStatus ?? "paid");
   const patch = (body: object) => jsonFetch(`${BASE}/api/finance/invoices/${invoice.id}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
@@ -42,7 +43,7 @@ export function InvoiceNotes({ invoice }: { invoice: { id: number; notes: string
       variant={status === value ? "default" : "outline"}
       aria-pressed={status === value}
       disabled={saveStatus.isPending}
-      onClick={() => saveStatus.mutate(status === value ? null : value)}
+      onClick={() => { if (status !== value) saveStatus.mutate(value); }}
     >
       {label}
     </Button>
@@ -51,8 +52,8 @@ export function InvoiceNotes({ invoice }: { invoice: { id: number; notes: string
   return (
     <div className="rounded-xl border p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        {choice("unpaid", "Unpaid")}
         {choice("paid", "Paid")}
+        {choice("unpaid", "Unpaid")}
         <span className="ml-auto"><SaveChip state={auto.state} error={auto.error} onRetry={auto.flush} /></span>
       </div>
       <Textarea

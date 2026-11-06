@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 import { FilePreview } from "@/pages/finance-invoices";
 import { MatchOptions, type InvoiceMatches, type Suggestion } from "@/pages/finance-invoice-match";
-import { InvoiceQueuePanel } from "@/pages/finance-invoice-queue";
 import { InvoiceNotes, type PaymentStatus } from "@/pages/finance-invoice-notes";
 import { Eye, FileText, Loader2, Search as SearchIcon, Upload, X } from "lucide-react";
 
@@ -17,7 +16,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 // Outstanding → "Drop an invoice" (Graeme, 3 Nov 2026): drop invoices,
 // each is read and the transaction it belongs to is put forward —
 // "I think it's this one" — and one press attaches it. If its transaction
-// isn't in yet it waits in the queue (finance-invoice-queue.tsx).
+// isn't in yet it waits in the Inbox (finance-invoice-queue.tsx).
 
 export type ReadInvoice = {
   id: number;
@@ -67,13 +66,19 @@ export function invoiceMoney(v: string | null, currency: string | null | undefin
 export const ukDate = (iso: string | null) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "no date");
 
 /** `companion` sits beside the drop card on wide screens (the card
- *  statement upload); results run full width underneath. */
-export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
+ *  statement upload); results run full width underneath. `onCardsChange` says
+ *  which invoices are on a card here, so the Inbox doesn't show them twice. */
+export function InvoiceDropPanel({ companion, onCardsChange }: { companion?: ReactNode; onCardsChange?: (ids: number[]) => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [items, setItems] = useState<Item[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const input = useRef<HTMLInputElement>(null);
+
+  const onCards = items.flatMap((i) => (i.state === "ready" && i.result?.invoice ? [i.result.invoice.id] : []));
+  const onCardsKey = onCards.join(",");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- the ids, not the array
+  useEffect(() => { onCardsChange?.(onCards); }, [onCardsKey]);
 
   const patch = (key: string, p: Partial<Item>) => setItems((all) => all.map((i) => (i.key === key ? { ...i, ...p } : i)));
 
@@ -113,7 +118,7 @@ export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
         <CardContent className="p-4 h-full flex flex-col xl:flex-row xl:items-center gap-3">
           <div className="flex-1 min-w-0">
             <div className="font-semibold flex items-start gap-2"><FileText className="h-4 w-4 mt-1 shrink-0 text-primary" /> Drop an invoice — it finds the transaction</div>
-            <div className="text-xs text-muted-foreground">PDFs or photos, one or several. If the transaction isn't in yet, the invoice waits for it.</div>
+            <div className="text-xs text-muted-foreground">PDFs or photos, one or several. If the transaction isn't in yet, it goes to the Inbox.</div>
           </div>
           <input
             ref={input}
@@ -139,9 +144,6 @@ export function InvoiceDropPanel({ companion }: { companion?: ReactNode }) {
           onChange={(p) => patch(item.key, p)}
         />
       ))}
-
-      {/* What's on a card above isn't shown twice. */}
-      <InvoiceQueuePanel hiddenIds={items.flatMap((i) => (i.state === "ready" && i.result?.invoice ? [i.result.invoice.id] : []))} />
     </div>
   );
 }
@@ -189,18 +191,8 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
     onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
   });
 
-  const leaveQueue = useMutation({
-    mutationFn: () => post("leave-queue"),
-    onSuccess: () => {
-      toast({ title: "Taken out of the queue", description: "It's still in Invoices." });
-      onDismiss();
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
-    },
-    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
-  });
-
   const hasOptions = (item.result?.suggestions.length ?? 0) > 0;
-  const busy = attach.isPending || reject.isPending || leaveQueue.isPending || lookAgain.isPending;
+  const busy = attach.isPending || reject.isPending || lookAgain.isPending;
 
   return (
     <Card>
@@ -245,10 +237,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
               {unread && !inv.totalAmount && <p className="text-sm">Couldn't read it automatically: type the supplier, date and total below and it will look again.</p>}
               <MatchOptions invoice={inv} matches={item.result} busy={busy} onAttach={(lines) => attach.mutate(lines)} onReject={(id) => reject.mutate(id)} />
               <InvoiceNotes invoice={inv} />
-              <div className="flex flex-wrap gap-2">
-                {!editing && hasOptions && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Details wrong? Correct them</Button>}
-                <Button variant="ghost" size="sm" disabled={busy} onClick={() => leaveQueue.mutate()}>No card transaction</Button>
-              </div>
+              {!editing && hasOptions && <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>Details wrong? Correct them</Button>}
             </div>
           )
         )}

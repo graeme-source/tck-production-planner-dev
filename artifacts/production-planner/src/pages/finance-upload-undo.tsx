@@ -5,13 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import { jsonFetch, money, ukDate } from "@/pages/finance-invoice-drop";
-import { AlertTriangle, Loader2, Undo2, X } from "lucide-react";
+import { AlertTriangle, Loader2, X } from "lucide-react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const API = `${BASE}/api/finance/upload-undo`;
 
-// Temporary (Graeme, 4 Nov 2026): undo a statement upload, seeing exactly what
-// will happen first. Founder only: anyone else gets no button.
+// Undo a statement upload, seeing exactly what will happen first (Graeme, 4 Nov
+// 2026). A quiet link on the Card statement panel (6 Nov), so nobody takes it
+// for undoing an invoice. Founder only: anyone else gets no link.
 
 type Upload = { id: number; fileName: string | null; rowCount: number; newCount: number; createdAt: string; linesLeft: number };
 type Preview = {
@@ -23,13 +24,15 @@ type Preview = {
 
 const when = (iso: string) => new Date(iso).toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
 
-export function UndoUploadButton() {
+export function UndoUploadLink() {
   const [open, setOpen] = useState(false);
   const uploads = useQuery<{ uploads: Upload[] }>({ queryKey: ["/api/finance/upload-undo"], queryFn: () => jsonFetch(API), retry: false });
   if (!uploads.data) return null;
   return (
     <>
-      <Button variant="outline" onClick={() => setOpen(true)}><Undo2 className="h-4 w-4 mr-1" /> Undo an upload</Button>
+      <button type="button" className="py-1 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground" onClick={() => setOpen(true)}>
+        Undo a previous upload
+      </button>
       {open && <UndoDialog uploads={uploads.data.uploads} onClose={() => setOpen(false)} />}
     </>
   );
@@ -50,7 +53,7 @@ function UndoDialog({ uploads, onClose }: { uploads: Upload[]; onClose: () => vo
   const undo = useMutation({
     mutationFn: () => jsonFetch(`${API}/${chosen}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true, alsoOtherMatches: alsoOthers }) }) as Promise<{ removed: number; kept: number; automaticMatches: number; libraryQueued: number }>,
     onSuccess: (r) => {
-      toast({ title: `Removed ${r.removed} transactions`, description: `${r.automaticMatches} automatic matches taken off, ${r.libraryQueued} invoices out of the queue, ${r.kept} transactions kept.` });
+      toast({ title: `Removed ${r.removed} transactions`, description: `${r.automaticMatches} automatic matches taken off, ${r.libraryQueued} invoices out of the Inbox, ${r.kept} transactions kept.` });
       void queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
       void queryClient.invalidateQueries({ queryKey: ["/api/finance/upload-undo"] });
@@ -88,7 +91,7 @@ function UndoDialog({ uploads, onClose }: { uploads: Upload[]; onClose: () => vo
               <ul className="rounded-xl border p-4 space-y-1 text-base">
                 <li><b>{p.removing}</b> transactions removed, {money(p.removingValue)} in total{p.postedAmongThem ? `, ${p.postedAmongThem} of them posted in QuickBooks` : ""}</li>
                 <li><b>{p.automaticMatches + (alsoOthers ? p.otherAutomaticMatches : 0)}</b> automatic invoice matches taken off</li>
-                <li><b>{p.libraryQueued}</b> library invoices taken out of the queue</li>
+                <li><b>{p.libraryQueued}</b> library invoices taken out of the Inbox</li>
                 <li><b>{p.keeping.length}</b> transactions kept because someone worked on them</li>
               </ul>
               {p.quickBooksImportOn && (
