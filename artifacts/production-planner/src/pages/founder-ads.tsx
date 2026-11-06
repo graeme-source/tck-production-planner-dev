@@ -30,7 +30,8 @@ export default function FounderAds() {
 }
 
 function AdsPage() {
-  const picker = usePeriodChoice();
+  // Today first (Graeme, 6 Nov 2026): this page is for what the ads are doing now.
+  const picker = usePeriodChoice("today");
   const { period } = picker;
   const report = useAdsReport(period.from, period.to, !period.empty);
   const { data: targets } = useNumbersBenchmarks();

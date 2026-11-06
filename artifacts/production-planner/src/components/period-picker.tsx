@@ -21,12 +21,12 @@ export function describePeriod(period: PeriodWindow): string {
 export type PeriodChoice = PeriodPresetId | "custom";
 
 /** A period selection of its own, for a page with nothing else tied to it. */
-export function usePeriodChoice() {
+export function usePeriodChoice(initial: PeriodPresetId = DEFAULT_PERIOD) {
   const now = new Date();
   const todayStr = londonDayString(now);
-  const [periodId, setPeriodId] = useState<PeriodChoice>(DEFAULT_PERIOD);
-  const [customFrom, setCustomFrom] = useState(() => periodWindow(DEFAULT_PERIOD, now).from);
-  const [customTo, setCustomTo] = useState(() => periodWindow(DEFAULT_PERIOD, now).to);
+  const [periodId, setPeriodId] = useState<PeriodChoice>(initial);
+  const [customFrom, setCustomFrom] = useState(() => periodWindow(initial, now).from);
+  const [customTo, setCustomTo] = useState(() => periodWindow(initial, now).to);
   const period = useMemo(
     () => (periodId === "custom" ? customWindow(customFrom, customTo, now) : periodWindow(periodId, now)),
     [periodId, customFrom, customTo, todayStr],
