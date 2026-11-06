@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
+import { invoiceMoney, money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronRight, ListChecks, Loader2 } from "lucide-react";
 
 // What an invoice can do next (Graeme, 4 Nov 2026). "I think it's this one"
@@ -63,7 +63,7 @@ function NothingYet({ invoice }: { invoice: ReadInvoice }) {
     <div className="rounded-xl border p-4">
       <div className="font-semibold">No transaction yet</div>
       <div className="text-sm text-muted-foreground">
-        Nothing here for {invoice.totalAmount ? money(invoice.totalAmount) : "this invoice"}. It stays in the queue and attaches itself when the charge comes in.
+        Nothing here for {invoice.totalAmount ? invoiceMoney(invoice.totalAmount, invoice.currency) : "this invoice"}. It stays in the queue and attaches itself when the charge comes in.
       </div>
     </div>
   );
@@ -113,7 +113,8 @@ function ChooseCharges({ invoice, lines, busy, onAttach }: { invoice: ReadInvoic
   const [ticked, setTicked] = useState<number[]>([]);
   const chosen = lines.filter((l) => ticked.includes(l.lineId));
   const total = sumOf(chosen);
-  const invoiceTotal = invoice.totalAmount ? Number(invoice.totalAmount) : null;
+  // Charges are in pounds, so a foreign invoice has no total to sum them to.
+  const invoiceTotal = invoice.totalAmount && (invoice.currency ?? "GBP").toUpperCase() === "GBP" ? Number(invoice.totalAmount) : null;
   const gap = invoiceTotal === null ? 0 : (pence(total) - pence(invoiceTotal)) / 100;
   const exact = gap === 0;
   const issues = [

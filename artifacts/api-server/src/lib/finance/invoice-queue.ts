@@ -2,6 +2,7 @@ import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
 import { db, finInvoicesTable } from "@workspace/db";
 import { attachInvoiceToLine, rankForInvoice, waitingLines, type InvoiceMatches } from "./invoice-attach";
 import { logFinEvent } from "./invoice-store";
+import { withGbpRate } from "./fx-rates";
 import { isWorthChecking, pickCertainMatches } from "./invoice-to-line";
 import { runQboSync } from "./qbo";
 
@@ -18,7 +19,7 @@ const queuedColumns = {
   invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount,
   vatAmount: finInvoicesTable.vatAmount, docKind: finInvoicesTable.docKind,
   readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote,
-  notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus,
+  notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus, currency: finInvoicesTable.currency,
   rejectedLineIds: finInvoicesTable.rejectedLineIds, awaitingTransactionAt: finInvoicesTable.awaitingTransactionAt,
 };
 
@@ -60,7 +61,7 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
     if (invoices.length === 0) return { matched: 0, autoDone: 0 };
     let matched = 0;
     let autoDone = 0;
-    for (const pick of pickCertainMatches(invoices, await waitingLines())) {
+    for (const pick of pickCertainMatches(await Promise.all(invoices.map(withGbpRate)), await waitingLines())) {
       const r = await attachInvoiceToLine(pick.invoiceId, pick.lineId, userId, { auto: true, reasons: pick.reasons });
       if (!r.ok) continue;
       matched++;
@@ -72,7 +73,7 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
   }
 }
 
-type QueuedRow = Awaited<ReturnType<typeof queuedInvoices>>[number];
+type QueuedRow = Awaited<ReturnType<typeof queuedInvoices>>[number] & { gbpRate: number | null };
 export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds"> } & InvoiceMatches;
 
 /** `check` has something likely enough to be worth someone's time
@@ -81,7 +82,7 @@ export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds"> } & Invoi
  *  describes every invoice from a regular. */
 export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: QueueEntry[] }> {
   await settleAttachedByHand();
-  const invoices = await queuedInvoices();
+  const invoices = await Promise.all((await queuedInvoices()).map(withGbpRate));
   const lines = invoices.length ? await waitingLines() : [];
   const check: QueueEntry[] = [];
   const waiting: QueueEntry[] = [];

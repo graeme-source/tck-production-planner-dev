@@ -301,7 +301,7 @@ async function invoiceSummary(id: number) {
     invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount,
     vatAmount: finInvoicesTable.vatAmount, docKind: finInvoicesTable.docKind,
     readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote, lineId: finInvoicesTable.lineId,
-    notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus,
+    notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus, currency: finInvoicesTable.currency,
   }).from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
   return inv ?? null;
 }

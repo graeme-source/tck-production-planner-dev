@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { DetailsEditor, jsonFetch, money, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
+import { DetailsEditor, invoiceMoney, jsonFetch, ukDate, type ReadInvoice } from "@/pages/finance-invoice-drop";
 import { MatchOptions, type InvoiceMatches } from "@/pages/finance-invoice-match";
 import { FilePreview } from "@/pages/finance-invoices";
 import { InvoiceNotes } from "@/pages/finance-invoice-notes";
@@ -100,7 +100,7 @@ function QueueRow({ entry }: { entry: QueueEntry }) {
       <div>
         <div className="font-medium break-words">{inv.supplierName ?? inv.fileName}</div>
         <div className="text-sm text-muted-foreground break-words">
-          {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"} · {inv.totalAmount ? money(inv.totalAmount) : "total not read"}
+          {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"} · {inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : "total not read"}
           {inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""}
         </div>
         {unread && !inv.totalAmount && <div className="text-sm text-destructive">Couldn't be read: correct the details so it can be matched.</div>}

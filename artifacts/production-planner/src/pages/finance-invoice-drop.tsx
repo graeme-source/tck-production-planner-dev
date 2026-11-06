@@ -28,6 +28,7 @@ export type ReadInvoice = {
   invoiceNumber: string | null;
   totalAmount: string | null;
   vatAmount: string | null;
+  currency: string;
   docKind: string;
   readStatus: string;
   readNote: string | null;
@@ -56,6 +57,13 @@ export async function jsonFetch(url: string, init?: RequestInit) {
 }
 
 export const money = (v: string | null) => (v == null ? "—" : `£${Number(v).toFixed(2)}`);
+/** An invoice's own amount, in the currency it's written in. */
+export function invoiceMoney(v: string | null, currency: string | null | undefined): string {
+  if (v == null) return "—";
+  const code = currency?.toUpperCase() || "GBP";
+  const symbol = ({ GBP: "£", USD: "$", EUR: "€" } as Record<string, string>)[code];
+  return symbol ? `${symbol}${Number(v).toFixed(2)}` : `${code} ${Number(v).toFixed(2)}`;
+}
 export const ukDate = (iso: string | null) => (iso ? new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "no date");
 
 /** `companion` sits beside the drop card on wide screens (the card
@@ -201,7 +209,7 @@ function InvoiceMatchCard({ item, onDismiss, onChange }: { item: Item; onDismiss
           <div className="flex-1 min-w-0">
             <div className="font-semibold break-words">{inv?.supplierName ?? item.fileName}</div>
             <div className="text-sm text-muted-foreground break-words">
-              {inv ? <>Invoice {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"} · {inv.totalAmount ? money(inv.totalAmount) : "total not read"}{inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""} · {item.fileName}</> : item.fileName}
+              {inv ? <>Invoice {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"} · {inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : "total not read"}{inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""} · {item.fileName}</> : item.fileName}
             </div>
             {inv && inv.docKind !== "invoice" && (
               <Badge variant="secondary" className="mt-1">Reads as a {inv.docKind.replace("_", " ")}, not a VAT invoice</Badge>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chargesThatAddUp, isConfidentPick, isStrongMatch, isWorthChecking, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
+import { chargesThatAddUp, isConfidentPick, isStrongMatch, isWorthChecking, moneyIn, pickCertainMatches, rankLinesForInvoice, scoreInvoiceAgainstLine, type LineCandidate, type QueuedInvoice } from "./invoice-to-line";
 
 const line = (over: Partial<LineCandidate>): LineCandidate => ({
   id: 1, lineDate: "2026-10-06", authDate: null, descriptor: "SP ALUXO LTD", merchant: "ALUXO",
@@ -51,6 +51,59 @@ describe("rankLinesForInvoice", () => {
     const inv = { supplierName: "Some Shop", invoiceDate: "2026-10-05", invoiceNumber: "ORD-558812", totalAmount: "40.00" };
     const s = scoreInvoiceAgainstLine(inv, line({ descriptor: "PAYPAL *SOMESHOP", merchant: null, vendorName: null, amount: "41.00", orderReference: "ORD-558812" }));
     expect(s?.reasons.some((r) => r.includes("ORD-558812"))).toBe(true);
+  });
+});
+
+describe("invoices in another currency", () => {
+  const railway = { supplierName: "Railway Corporation", invoiceDate: "2026-07-01", invoiceNumber: "GXO3L6QI-0004", totalAmount: "20.00", currency: "USD", gbpRate: 0.75528 };
+  const charge = line({ lineDate: "2026-07-02", descriptor: "Railway", merchant: "Railway", vendorName: "Railway", amount: "15.14" });
+
+  it("matches a $20 invoice to the £15.14 it was charged at", () => {
+    const s = scoreInvoiceAgainstLine(railway, charge)!;
+    expect(s.evidence.amount).toBe(true);
+    expect(s.evidence.approx).toBe(true);
+    expect(s.mismatches).toEqual([]);
+    expect(s.reasons[0]).toBe("$20.00 is about £15.11, charged £15.14");
+    expect(isStrongMatch(s)).toBe(true);
+  });
+
+  it("is never compared directly: $20 isn't a £20 charge", () => {
+    const s = scoreInvoiceAgainstLine(railway, { ...charge, amount: "20.00" })!;
+    expect(s.evidence.amount).toBe(false);
+    expect(s.mismatches[0]).toBe("$20.00 is about £15.11, so this is £4.89 more");
+  });
+
+  it("allows for the card's rate, but not much more", () => {
+    expect(scoreInvoiceAgainstLine(railway, { ...charge, amount: "15.90" })!.evidence.amount).toBe(true);
+    expect(scoreInvoiceAgainstLine(railway, { ...charge, amount: "16.50" })!.evidence.amount).toBe(false);
+  });
+
+  it("says so when the rate can't be found", () => {
+    const s = scoreInvoiceAgainstLine({ ...railway, gbpRate: null }, charge)!;
+    expect(s.evidence.amount).toBe(false);
+    expect(s.mismatches[0]).toBe("Invoice is in USD and the exchange rate couldn't be found");
+  });
+
+  it("still takes the card's own record of the foreign amount as exact", () => {
+    const s = scoreInvoiceAgainstLine(railway, { ...charge, originalAmount: "20.00" })!;
+    expect(s.evidence.approx).toBe(false);
+    expect(s.reasons[0]).toBe("same amount, $20.00");
+  });
+
+  it("is left for a person, never attached by itself", () => {
+    const queued = { ...railway, id: 1, docKind: "invoice", readStatus: "done", rejectedLineIds: [] };
+    expect(pickCertainMatches([queued], [charge])).toEqual([]);
+  });
+
+  it("doesn't try to add charges up to a foreign total", () => {
+    expect(chargesThatAddUp(railway, [{ ...charge, amount: "10.00" }, { ...charge, id: 2, amount: "10.00" }])).toBeNull();
+  });
+
+  it("shows each currency properly", () => {
+    expect(moneyIn("20", "USD")).toBe("$20.00");
+    expect(moneyIn("20", "EUR")).toBe("€20.00");
+    expect(moneyIn("20", null)).toBe("£20.00");
+    expect(moneyIn("20", "SEK")).toBe("SEK 20.00");
   });
 });
 

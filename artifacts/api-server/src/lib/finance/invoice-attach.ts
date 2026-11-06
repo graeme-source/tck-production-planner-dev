@@ -1,7 +1,8 @@
 import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { db, finDocumentsTable, finInvoicesTable, finLinesTable, finVendorsTable } from "@workspace/db";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, logFinEvent } from "./invoice-store";
-import { chargesThatAddUp, isConfidentPick, rankLinesForInvoice, withoutRejected, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
+import { withGbpRate } from "./fx-rates";
+import { chargesThatAddUp, isConfidentPick, rankLinesForInvoice, withoutRejected, type InvoiceForMatch, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
 
 // Outstanding → "Drop an invoice" (Graeme, 3 Nov 2026): the invoice is
 // filed in the library, read, and the transaction it belongs to is put
@@ -50,7 +51,7 @@ export type InvoiceMatches = { suggestions: SuggestedLine[]; confident: boolean;
 /** The transactions this invoice could belong to, best first, and any set of
  *  them that comes to the invoice total. */
 export function rankForInvoice(
-  inv: { supplierName: string | null; invoiceDate: string | null; invoiceNumber: string | null; totalAmount: string | null; rejectedLineIds: number[] },
+  inv: InvoiceForMatch & { rejectedLineIds: number[] },
   lines: WaitingLine[],
 ): InvoiceMatches {
   const open = withoutRejected(lines, inv.rejectedLineIds);
@@ -74,9 +75,10 @@ export async function suggestLinesForInvoice(invoiceId: number): Promise<Invoice
   const [inv] = await db.select({
     supplierName: finInvoicesTable.supplierName, invoiceDate: finInvoicesTable.invoiceDate, invoiceNumber: finInvoicesTable.invoiceNumber,
     totalAmount: finInvoicesTable.totalAmount, rejectedLineIds: finInvoicesTable.rejectedLineIds,
+    currency: finInvoicesTable.currency,
   }).from(finInvoicesTable).where(eq(finInvoicesTable.id, invoiceId));
   if (!inv) return { suggestions: [], confident: false, addsUp: null };
-  return rankForInvoice(inv, await waitingLines());
+  return rankForInvoice(await withGbpRate(inv), await waitingLines());
 }
 
 /** Kind of document the line gets, from what the reader made of the file. */

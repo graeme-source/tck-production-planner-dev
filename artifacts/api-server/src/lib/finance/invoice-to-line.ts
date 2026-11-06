@@ -11,6 +11,10 @@ export interface InvoiceForMatch {
   invoiceDate: string | null; // ISO
   invoiceNumber: string | null;
   totalAmount: string | null;
+  /** The invoice's own currency; blank is pounds. */
+  currency?: string | null;
+  /** Pounds per one of that currency, around the invoice date. */
+  gbpRate?: number | null;
 }
 
 export interface LineCandidate {
@@ -38,10 +42,25 @@ export interface LineSuggestion {
   mismatches: string[];
   /** Lesser things to check, such as the date. */
   doubts: string[];
-  evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean };
+  /** approx: the amount only agrees after a rough currency conversion. */
+  evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean; approx?: boolean };
 }
 
 const DAY_MS = 86_400_000;
+
+/** How far a converted amount can sit from the charge and still be it: the
+ *  card's own rate and fee, and the days between invoice and charge. */
+const CONVERSION_MARGIN = 0.06;
+
+const SYMBOLS: Record<string, string> = { GBP: "£", USD: "$", EUR: "€" };
+
+export function moneyIn(amount: string | number, currency?: string | null): string {
+  const code = currency?.toUpperCase() || "GBP";
+  const symbol = SYMBOLS[code];
+  return symbol ? `${symbol}${Number(amount).toFixed(2)}` : `${code} ${Number(amount).toFixed(2)}`;
+}
+
+const isForeign = (inv: InvoiceForMatch) => !!inv.currency && inv.currency.toUpperCase() !== "GBP";
 
 function amountsEqual(a: string, b: string): boolean {
   return Math.abs(Number(a) - Number(b)) < 0.005;
@@ -74,12 +93,25 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
   const doubts: string[] = [];
   let points = 0;
 
-  const amountHit = !!inv.totalAmount && (
-    amountsEqual(inv.totalAmount, line.amount) ||
+  // In a foreign currency, the charge in pounds can't be compared directly: it
+  // has to come out close to the invoice at that day's rate.
+  const foreign = isForeign(inv);
+  const inPounds = foreign && inv.totalAmount && inv.gbpRate ? Number(inv.totalAmount) * inv.gbpRate : null;
+  const exactHit = !!inv.totalAmount && (
+    (!foreign && amountsEqual(inv.totalAmount, line.amount)) ||
     (line.originalAmount ? amountsEqual(inv.totalAmount, line.originalAmount) : false)
   );
-  if (amountHit) { points += 45; reasons.push(`same amount, £${Number(line.amount).toFixed(2)}`); }
-  else if (inv.totalAmount) {
+  const roughHit = !exactHit && inPounds != null && Math.abs(Number(line.amount) - inPounds) <= inPounds * CONVERSION_MARGIN;
+  const amountHit = exactHit || roughHit;
+  const converted = inPounds != null ? `${moneyIn(inv.totalAmount!, inv.currency)} is about £${inPounds.toFixed(2)}` : "";
+  if (roughHit) { points += 45; reasons.push(`${converted}, charged £${Number(line.amount).toFixed(2)}`); }
+  else if (exactHit) { points += 45; reasons.push(`same amount, ${foreign ? moneyIn(inv.totalAmount!, inv.currency) : `£${Number(line.amount).toFixed(2)}`}`); }
+  else if (inPounds != null) {
+    const over = Number(line.amount) - inPounds;
+    mismatches.push(`${converted}, so this is £${Math.abs(over).toFixed(2)} ${over > 0 ? "more" : "less"}`);
+  } else if (foreign && inv.totalAmount) {
+    mismatches.push(`Invoice is in ${inv.currency!.toUpperCase()} and the exchange rate couldn't be found`);
+  } else if (inv.totalAmount) {
     const over = Number(line.amount) - Number(inv.totalAmount);
     mismatches.push(`Amount is £${Math.abs(over).toFixed(2)} ${over > 0 ? "more" : "less"} than the invoice`);
   } else mismatches.push("Invoice total wasn't read");
@@ -120,7 +152,7 @@ export function scoreInvoiceAgainstLine(inv: InvoiceForMatch, line: LineCandidat
   const signals = (amountHit ? 1 : 0) + (nameHit ? 1 : 0) + (dateClose ? 1 : 0) + (refHit ? 1 : 0);
   return {
     lineId: line.id, score: Math.min(100, points), signals, strength: strengthOf(signals), daysApart: days, reasons, mismatches, doubts,
-    evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit },
+    evidence: { amount: amountHit, supplier: nameHit, date: dateClose, reference: refHit, approx: roughHit },
   };
 }
 
@@ -176,6 +208,8 @@ const MOST_DAYS_CHARGED_AFTER = 7;
  * (Graeme, 4 Nov 2026). Only ever put to a person.
  */
 export function chargesThatAddUp(inv: InvoiceForMatch, lines: LineCandidate[]): number[] | null {
+  // A rough conversion can't add up to the penny.
+  if (isForeign(inv)) return null;
   const target = Math.round(Number(inv.totalAmount ?? 0) * 100);
   if (target <= 0) return null;
   const charges = lines
@@ -227,6 +261,7 @@ export const withoutRejected = <L extends { id: number }>(lines: L[], rejected: 
  *    invoice date or carrying its reference;
  *  - it's the only transaction with that supplier and amount in the whole
  *    six-week window, which rules out a monthly charge at the same price;
+ *  - the amount agrees exactly, not just after a rough currency conversion;
  *  - no other queued invoice wants the same transaction.
  */
 export function pickCertainMatches(invoices: QueuedInvoice[], lines: LineCandidate[]): CertainMatch[] {
@@ -236,6 +271,7 @@ export function pickCertainMatches(invoices: QueuedInvoice[], lines: LineCandida
     const sameCharge = withoutRejected(lines, inv.rejectedLineIds)
       .map((l) => scoreInvoiceAgainstLine(inv, l))
       .filter((s): s is LineSuggestion => !!s && s.evidence.amount && s.evidence.supplier);
+    if (sameCharge.some(s => s.evidence.approx)) continue;
     if (sameCharge.length !== 1) continue;
     const [only] = sameCharge;
     if (only.evidence.date || only.evidence.reference) picks.push({ invoiceId: inv.id, lineId: only.lineId, reasons: only.reasons });
