@@ -82,11 +82,13 @@ export function canGrantFeature(input: { actorEmail: string | null | undefined; 
  *  set = founder or a grant of it; unset = the founder alone. */
 export const FOUNDER_TABS = [
   { href: "/founder/numbers", label: "Numbers", feature: FOUNDER_FEATURES.numbers },
-  { href: "/founder/focus", label: "Schedule" },
+  // Ads (6 Nov 2026) took the Schedule tab's place: same people as Numbers,
+  // whose targets it uses. The schedule page itself is still at /founder/focus.
+  { href: "/founder/ads", label: "Ads", feature: FOUNDER_FEATURES.numbers },
   { href: "/founder/pnl", label: "P&L" },
   // Renamed from "Sales & Marketing" (28 Oct 2026): the sales numbers live
   // on Numbers; this tab is the email + marketing calendar page.
-  { href: "/founder/sales", label: "Email & Marketing Calendar", feature: FOUNDER_FEATURES.sales },
+  { href: "/founder/sales", label: "Marketing Calendar", feature: FOUNDER_FEATURES.sales },
   // Website A/B tests (2026-10-24): same people as Sales & Marketing.
   { href: "/founder/ab-tests", label: "Website A/B tests", feature: FOUNDER_FEATURES.sales },
   // Floor map (2026-10-26): the founder's own while he tries it out.

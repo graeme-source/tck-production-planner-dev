@@ -71,6 +71,7 @@ import FounderFocus from "@/pages/founder-focus";
 import FounderSales from "@/pages/founder-sales";
 import FounderAbTests from "@/pages/founder-ab-tests";
 import FounderFloor from "@/pages/founder-floor";
+import FounderAds from "@/pages/founder-ads";
 import FounderLiveOffers from "@/pages/founder-live-offers";
 import FounderBundleBuilder from "@/pages/founder-bundle-builder";
 import FounderBonus from "@/pages/founder-bonus";
@@ -284,6 +285,7 @@ function Router() {
               <Route path="/founder/sales" component={FounderSales} />
               <Route path="/founder/ab-tests" component={FounderAbTests} />
               <Route path="/founder/floor" component={FounderFloor} />
+              <Route path="/founder/ads" component={FounderAds} />
               <Route path="/founder/live-offers" component={FounderLiveOffers} />
               <Route path="/founder/bundle-builder" component={FounderBundleBuilder} />
               <Route path="/founder/bonus" component={FounderBonus} />

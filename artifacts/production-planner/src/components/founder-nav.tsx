@@ -1,14 +1,15 @@
 /**
  * The founder area's own navigation — a "site within a site". One tab strip
- * shared by all founder pages, so moving between the schedule, numbers, P&L
- * and sales/marketing is one tap from anywhere, replacing the ad-hoc
- * buttons/cards each page used to carry.
+ * shared by all founder pages, so moving between numbers, ads, P&L and
+ * sales/marketing is one tap from anywhere, replacing the ad-hoc buttons/cards
+ * each page used to carry. The tabs wrap onto a second row rather than scroll
+ * (Graeme, 6 Nov 2026), so every tab is always in view.
  *
  * /founder lands on the first tab the viewer may open (Numbers for the
  * founder). Someone with only one tab gets no strip at all.
  */
 import { Link, useLocation } from "wouter";
-import { Calendar, LineChart, Calculator, Megaphone, FlaskConical, Map as MapIcon } from "lucide-react";
+import { BarChart3, LineChart, Calculator, Megaphone, FlaskConical, Map as MapIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
@@ -19,7 +20,7 @@ import { useApprovalsNeeded } from "@/components/marketing-calendar/api";
 // (/fix-queue) on 2026-09-29.
 const ICONS: Record<string, typeof LineChart> = {
   "/founder/numbers": LineChart,
-  "/founder/focus": Calendar,
+  "/founder/ads": BarChart3,
   "/founder/pnl": Calculator,
   "/founder/sales": Megaphone,
   "/founder/ab-tests": FlaskConical,
@@ -36,7 +37,7 @@ export function FounderNav() {
   const waiting = needed.data?.canApprove ? needed.data.count : 0;
   if (tabs.length <= 1) return null;
   return (
-    <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 backdrop-blur-sm overflow-x-auto">
+    <nav className="flex flex-wrap gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 backdrop-blur-sm">
       {tabs.map(tab => {
         const active = location === tab.href;
         const Icon = ICONS[tab.href] ?? LineChart;

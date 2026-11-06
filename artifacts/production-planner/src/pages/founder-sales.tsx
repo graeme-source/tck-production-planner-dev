@@ -96,7 +96,7 @@ export default function FounderSales() {
     <div className="space-y-6">
       <FounderNav />
       <PageHeader
-        title="Email & Marketing Calendar"
+        title="Marketing Calendar"
         description="Revenue pace, email cadence and the marketing calendar — there's always something on."
       />
 
