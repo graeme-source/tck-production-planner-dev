@@ -20,7 +20,9 @@ export interface AdRow {
   level: AdLevel;
   name: string;
   status: string;
+  campaignId: string | null;
   campaignName: string | null;
+  adSetId: string | null;
   adSetName: string | null;
   dailyBudget: number | null;
   lifetimeBudget: number | null;
@@ -36,6 +38,65 @@ export interface AdRow {
   roas: number | null;
   costPerResult: number | null;
   costPerReachPct: number | null;
+}
+
+/** An ad set and its ads. `adSet` is null when its ads are live but it isn't
+ *  on the page itself (flagged with issues, on £0): they still need a home. */
+export interface AdSetGroup {
+  key: string;
+  adSet: AdRow | null;
+  name: string | null;
+  ads: AdRow[];
+}
+
+export interface CampaignGroup {
+  key: string;
+  campaign: AdRow | null;
+  name: string | null;
+  adSets: AdSetGroup[];
+}
+
+/**
+ * The page as folders (Graeme, 6 Nov 2026): each campaign holding its ad sets,
+ * each ad set holding its ads, biggest spend first as they arrive. Grouped on
+ * Meta's ids, never names: ad names repeat across ad sets.
+ */
+export function groupAds(campaigns: AdRow[], adSets: AdRow[], ads: AdRow[]): CampaignGroup[] {
+  const groups = new Map<string, CampaignGroup>();
+  const setsByKey = new Map<string, AdSetGroup>();
+
+  const campaignGroup = (id: string | null, name: string | null) => {
+    const key = id ?? "unknown";
+    let group = groups.get(key);
+    if (!group) {
+      group = { key, campaign: null, name, adSets: [] };
+      groups.set(key, group);
+    }
+    return group;
+  };
+  const adSetGroup = (parent: CampaignGroup, id: string | null, name: string | null) => {
+    const key = `${parent.key}/${id ?? "unknown"}`;
+    let group = setsByKey.get(key);
+    if (!group) {
+      group = { key, adSet: null, name, ads: [] };
+      setsByKey.set(key, group);
+      parent.adSets.push(group);
+    }
+    return group;
+  };
+
+  for (const row of campaigns) {
+    const group = campaignGroup(row.id, row.name);
+    group.campaign = row;
+  }
+  for (const row of adSets) {
+    const group = adSetGroup(campaignGroup(row.campaignId, row.campaignName), row.id, row.name);
+    group.adSet = row;
+  }
+  for (const row of ads) {
+    adSetGroup(campaignGroup(row.campaignId, row.campaignName), row.adSetId, row.adSetName).ads.push(row);
+  }
+  return [...groups.values()];
 }
 
 export interface AdGrade {

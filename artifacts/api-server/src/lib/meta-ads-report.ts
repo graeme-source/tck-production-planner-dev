@@ -24,8 +24,8 @@ const INSIGHT_FIELDS = "spend,reach,impressions,frequency,cpm,ctr,inline_link_cl
 
 const LEVELS = {
   campaign: { edge: "campaigns", idField: "campaign_id", fields: "id,name,effective_status,daily_budget,lifetime_budget" },
-  adset: { edge: "adsets", idField: "adset_id", fields: "id,name,effective_status,daily_budget,lifetime_budget,campaign{name}" },
-  ad: { edge: "ads", idField: "ad_id", fields: "id,name,effective_status,campaign{name},adset{name}" },
+  adset: { edge: "adsets", idField: "adset_id", fields: "id,name,effective_status,daily_budget,lifetime_budget,campaign{id,name}" },
+  ad: { edge: "ads", idField: "ad_id", fields: "id,name,effective_status,campaign{id,name},adset{id,name}" },
 } as const satisfies Record<AdLevel, { edge: string; idField: string; fields: string }>;
 
 async function fetchLevel(cfg: ConnectedMetaConfig, level: AdLevel, from: string, to: string): Promise<AdRow[]> {

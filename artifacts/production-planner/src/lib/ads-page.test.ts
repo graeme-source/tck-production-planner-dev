@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gradeAd, money, reachPctText, roasText, type AdRow } from "./ads-page";
+import { gradeAd, groupAds, money, reachPctText, roasText, type AdRow } from "./ads-page";
 import { shadeAtRatio } from "./ad-efficiency";
 import type { BenchmarkMap } from "./numbers-benchmarks";
 
@@ -10,7 +10,7 @@ const targets: BenchmarkMap = {
 };
 
 const row = (over: Partial<AdRow>): AdRow => ({
-  id: "1", level: "ad", name: "Ad", status: "ACTIVE", campaignName: null, adSetName: null, dailyBudget: null, lifetimeBudget: null,
+  id: "1", level: "ad", name: "Ad", status: "ACTIVE", campaignId: null, campaignName: null, adSetId: null, adSetName: null, dailyBudget: null, lifetimeBudget: null,
   spend: 100, reach: 5000, impressions: 8000, purchases: 5, purchaseValue: 280, linkClicks: 90, frequency: 1.6, cpm: 12.5, ctr: 1.2,
   roas: 2.8, costPerResult: 20, costPerReachPct: 2, ...over,
 });
@@ -71,6 +71,52 @@ describe("gradeAd", () => {
     const g = gradeAd(row({}), { adsPurchaseRoas: targets.adsPurchaseRoas });
     expect(g.overall?.hex).toBe(shadeAtRatio(1).hex);
     expect(g.costPerResult).toBeNull();
+  });
+});
+
+describe("groupAds", () => {
+  const campaign = (id: string, name: string) => row({ id, name, level: "campaign" });
+  const adSet = (id: string, name: string, campaignId: string) => row({ id, name, level: "adset", campaignId, campaignName: `Campaign ${campaignId}` });
+  const ad = (id: string, name: string, adSetId: string, campaignId: string) =>
+    row({ id, name, adSetId, adSetName: `Set ${adSetId}`, campaignId, campaignName: `Campaign ${campaignId}` });
+
+  it("puts each ad set in its campaign and each ad in its ad set, keeping the spend order", () => {
+    const groups = groupAds(
+      [campaign("c1", "First"), campaign("c2", "Second")],
+      [adSet("s3", "Big", "c2"), adSet("s1", "Main", "c1"), adSet("s2", "Small", "c1")],
+      [ad("a1", "One", "s1", "c1"), ad("a2", "Two", "s3", "c2"), ad("a3", "Three", "s1", "c1"), ad("a4", "Four", "s2", "c1")],
+    );
+    expect(groups.map(g => g.campaign?.name)).toEqual(["First", "Second"]);
+    expect(groups[0]!.adSets.map(s => s.adSet?.name)).toEqual(["Main", "Small"]);
+    expect(groups[0]!.adSets[0]!.ads.map(a => a.name)).toEqual(["One", "Three"]);
+    expect(groups[1]!.adSets[0]!.ads.map(a => a.name)).toEqual(["Two"]);
+  });
+
+  it("goes by id, so ads with the same name stay in their own ad sets", () => {
+    const groups = groupAds(
+      [campaign("c1", "First")],
+      [adSet("s1", "A", "c1"), adSet("s2", "B", "c1")],
+      [ad("a1", "Philly ASMR Ad", "s1", "c1"), ad("a2", "Philly ASMR Ad", "s2", "c1")],
+    );
+    expect(groups[0]!.adSets.map(s => s.ads.map(a => a.id))).toEqual([["a1"], ["a2"]]);
+  });
+
+  it("keeps a campaign with nothing live inside it", () => {
+    const groups = groupAds([campaign("c1", "First")], [], []);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.adSets).toEqual([]);
+  });
+
+  it("gives a live ad a home when its ad set isn't on the page", () => {
+    const groups = groupAds([campaign("c1", "First")], [], [ad("a1", "Lost", "s9", "c1")]);
+    expect(groups[0]!.adSets[0]).toMatchObject({ adSet: null, name: "Set s9" });
+    expect(groups[0]!.adSets[0]!.ads.map(a => a.id)).toEqual(["a1"]);
+  });
+
+  it("gives a live ad set a home when its campaign isn't on the page, after the live campaigns", () => {
+    const groups = groupAds([campaign("c1", "First")], [adSet("s1", "Stray", "c9")], []);
+    expect(groups.map(g => g.key)).toEqual(["c1", "c9"]);
+    expect(groups[1]).toMatchObject({ campaign: null, name: "Campaign c9" });
   });
 });
 

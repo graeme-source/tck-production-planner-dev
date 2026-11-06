@@ -30,7 +30,6 @@ export function AdCard({ row, grade, canEdit, onOpen, onEditTargets }: {
   onOpen: () => void;
   onEditTargets: () => void;
 }) {
-  const parent = row.level === "ad" ? row.adSetName : row.campaignName;
   return (
     <div
       role="button"
@@ -59,7 +58,6 @@ export function AdCard({ row, grade, canEdit, onOpen, onEditTargets }: {
             </span>
           )}
         </div>
-        {parent && <p className="text-xs font-medium opacity-90 mt-0.5 break-words">{parent}</p>}
         {grade.note && <p className="text-sm font-semibold opacity-90 mt-0.5">{grade.note}</p>}
       </div>
       {/* Four across where the columns are wide; two by two on an iPad, where

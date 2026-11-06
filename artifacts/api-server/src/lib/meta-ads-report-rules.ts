@@ -20,8 +20,10 @@ export interface AdEntity {
   name: string;
   status: string;
   /** Null on a campaign. */
+  campaignId: string | null;
   campaignName: string | null;
   /** Null unless this is an ad. */
+  adSetId: string | null;
   adSetName: string | null;
   /** £ a day, when this level holds the budget. */
   dailyBudget: number | null;
@@ -65,8 +67,8 @@ const pounds = (v: unknown): number | null => {
   return n != null && n > 0 ? n / 100 : null;
 };
 
-const nameOf = (v: unknown): string | null =>
-  v && typeof v === "object" ? str((v as { name?: unknown }).name) : null;
+const fieldOf = (v: unknown, field: "id" | "name"): string | null =>
+  v && typeof v === "object" ? str((v as Record<string, unknown>)[field]) : null;
 
 /** One line of Meta's list of campaigns, ad sets or ads. Null if unreadable. */
 export function parseEntity(raw: unknown): AdEntity | null {
@@ -78,8 +80,10 @@ export function parseEntity(raw: unknown): AdEntity | null {
     id,
     name: str(r["name"]) ?? id,
     status: str(r["effective_status"]) ?? "UNKNOWN",
-    campaignName: nameOf(r["campaign"]),
-    adSetName: nameOf(r["adset"]),
+    campaignId: fieldOf(r["campaign"], "id"),
+    campaignName: fieldOf(r["campaign"], "name"),
+    adSetId: fieldOf(r["adset"], "id"),
+    adSetName: fieldOf(r["adset"], "name"),
     dailyBudget: pounds(r["daily_budget"]),
     lifetimeBudget: pounds(r["lifetime_budget"]),
   };

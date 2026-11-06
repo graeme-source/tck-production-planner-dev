@@ -74,7 +74,7 @@ describe("parseEntity", () => {
       id: "1", name: "TN-Reviews", effective_status: "ACTIVE", daily_budget: "55000",
       campaign: { id: "2", name: "GC - TOF" }, adset: { id: "3", name: "General Main Ad set" },
     })!;
-    expect(row).toMatchObject({ campaignName: "GC - TOF", adSetName: "General Main Ad set", dailyBudget: 550, lifetimeBudget: null });
+    expect(row).toMatchObject({ campaignId: "2", campaignName: "GC - TOF", adSetId: "3", adSetName: "General Main Ad set", dailyBudget: 550, lifetimeBudget: null });
   });
 });
 
