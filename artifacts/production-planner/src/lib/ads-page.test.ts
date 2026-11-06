@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gradeAd, money, penceText, roasText, type AdRow } from "./ads-page";
+import { gradeAd, money, reachPctText, roasText, type AdRow } from "./ads-page";
 import { shadeAtRatio } from "./ad-efficiency";
 import type { BenchmarkMap } from "./numbers-benchmarks";
 
@@ -12,7 +12,7 @@ const targets: BenchmarkMap = {
 const row = (over: Partial<AdRow>): AdRow => ({
   id: "1", level: "ad", name: "Ad", status: "ACTIVE", campaignName: null, adSetName: null, dailyBudget: null, lifetimeBudget: null,
   spend: 100, reach: 5000, impressions: 8000, purchases: 5, purchaseValue: 280, linkClicks: 90, frequency: 1.6, cpm: 12.5, ctr: 1.2,
-  roas: 2.8, costPerResult: 20, costPerReachPence: 2, ...over,
+  roas: 2.8, costPerResult: 20, costPerReachPct: 2, ...over,
 });
 
 describe("gradeAd", () => {
@@ -31,8 +31,8 @@ describe("gradeAd", () => {
   });
 
   it("leaves cost per reach out of the card's colour", () => {
-    const cheap = gradeAd(row({ costPerReachPence: 1 }), targets);
-    const dear = gradeAd(row({ costPerReachPence: 9 }), targets);
+    const cheap = gradeAd(row({ costPerReachPct: 1 }), targets);
+    const dear = gradeAd(row({ costPerReachPct: 9 }), targets);
     expect(cheap.overall?.hex).toBe(dear.overall?.hex);
     expect(cheap.costPerReach!.step).toBeGreaterThan(dear.costPerReach!.step);
   });
@@ -43,7 +43,7 @@ describe("gradeAd", () => {
   });
 
   it("stays grey with no spend", () => {
-    const g = gradeAd(row({ spend: 0, purchases: 0, roas: null, costPerResult: null, costPerReachPence: null }), targets);
+    const g = gradeAd(row({ spend: 0, purchases: 0, roas: null, costPerResult: null, costPerReachPct: null }), targets);
     expect(g.overall).toBeNull();
     expect(g.note).toBe("No spend in this period");
   });
@@ -79,7 +79,7 @@ describe("formats", () => {
     expect(money(13.2)).toBe("£13.20");
     expect(money(1234.5)).toBe("£1,234.50");
     expect(roasText(2.261)).toBe("2.26");
-    expect(penceText(2.12)).toBe("2.1p");
+    expect(reachPctText(1.7258)).toBe("1.73%");
     expect(money(null)).toBe("—");
   });
 });

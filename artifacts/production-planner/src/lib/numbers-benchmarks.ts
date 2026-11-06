@@ -14,8 +14,8 @@
  */
 import { shadeAtRatio, type RoasShade } from "./ad-efficiency";
 
-/** "£p" keeps the pence, "ratio" is a ROAS like 2.8, "pence" is 2.5p. */
-export type KpiUnit = "£" | "£p" | "%" | "count" | "ratio" | "pence";
+/** "£p" keeps the pence, "ratio" is a ROAS like 2.8, "%2" is 1.73%. */
+export type KpiUnit = "£" | "£p" | "%" | "%2" | "count" | "ratio";
 
 export interface KpiSpec {
   id: string;
@@ -48,7 +48,7 @@ export const KPIS = [
   { id: "conversionRate", label: "Conversion rate", unit: "%", perDay: false },
   { id: "adsCostPerResult", label: "Cost per result", unit: "£p", perDay: false, lowerIsBetter: true, ads: true },
   { id: "adsPurchaseRoas", label: "Purchase ROAS", unit: "ratio", perDay: false, ads: true },
-  { id: "adsCostPerReach", label: "Cost per reach", unit: "pence", perDay: false, lowerIsBetter: true, ads: true },
+  { id: "adsCostPerReach", label: "Cost per reach", unit: "%2", perDay: false, lowerIsBetter: true, ads: true },
 ] as const satisfies readonly KpiSpec[];
 
 export type KpiId = (typeof KPIS)[number]["id"];
@@ -168,7 +168,7 @@ export function formatBenchmark(n: number, unit: KpiUnit): string {
   if (unit === "£") return `£${Math.round(n).toLocaleString("en-GB")}`;
   if (unit === "£p") return `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   if (unit === "ratio") return n.toFixed(2);
-  if (unit === "pence") return `${n.toFixed(1)}p`;
+  if (unit === "%2") return `${n.toFixed(2)}%`;
   const rounded = Math.round(n * 10) / 10;
   return unit === "%" ? `${rounded}%` : rounded.toLocaleString("en-GB");
 }

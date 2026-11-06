@@ -61,7 +61,7 @@ export function BenchmarksDialog({ only, ads = false, onClose }: { only?: KpiId;
 }
 
 const UNIT_LABEL: Record<KpiUnit, string> = {
-  "£": "£", "£p": "£", "%": "%", count: "", ratio: "£ back for each £1 spent", pence: "pence per person reached",
+  "£": "£", "£p": "£", "%": "%", "%2": "% · spend ÷ reach", count: "", ratio: "£ back for each £1 spent",
 };
 
 const unitLabel = (spec: KpiSpec) => [UNIT_LABEL[spec.unit], spec.perDay ? "per day" : ""].filter(Boolean).join(" ");

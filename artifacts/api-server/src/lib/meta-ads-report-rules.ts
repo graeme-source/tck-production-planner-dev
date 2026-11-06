@@ -6,8 +6,8 @@
  * The figures are defined to match Ads Manager's own columns:
  *   cost per result = spend ÷ website purchases
  *   purchase ROAS   = purchase value ÷ spend (Meta's own figure when it sends one)
- *   cost per reach  = spend ÷ reach, in pence (Graeme's custom column, which
- *                     Ads Manager displays as a percentage)
+ *   cost per reach  = spend ÷ reach, as a percentage (Graeme's custom column:
+ *                     5 Nov 2026, £282.16 ÷ 16,350 = 1.73%, £575.44 ÷ 38,516 = 1.49%)
  */
 
 export type AdLevel = "campaign" | "adset" | "ad";
@@ -41,14 +41,14 @@ export interface AdFigures {
   ctr: number | null;
   roas: number | null;
   costPerResult: number | null;
-  costPerReachPence: number | null;
+  costPerReachPct: number | null;
 }
 
 export type AdRow = AdEntity & AdFigures & { level: AdLevel };
 
 const NO_FIGURES: AdFigures = {
   spend: 0, reach: 0, impressions: 0, purchases: 0, purchaseValue: 0, linkClicks: 0,
-  frequency: null, cpm: null, ctr: null, roas: null, costPerResult: null, costPerReachPence: null,
+  frequency: null, cpm: null, ctr: null, roas: null, costPerResult: null, costPerReachPct: null,
 };
 
 const num = (v: unknown): number | null => {
@@ -128,7 +128,7 @@ export function parseInsight(raw: unknown, level: AdLevel): (AdFigures & { id: s
     ctr: num(r["ctr"]),
     roas: metaRoas ?? (spend > 0 ? purchaseValue / spend : null),
     costPerResult: purchases > 0 ? spend / purchases : null,
-    costPerReachPence: reach > 0 ? (spend / reach) * 100 : null,
+    costPerReachPct: reach > 0 ? (spend / reach) * 100 : null,
   };
 }
 

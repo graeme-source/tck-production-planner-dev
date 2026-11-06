@@ -3,9 +3,9 @@
  * targets set on that page. Same scale and sums as the Numbers panels
  * (lib/numbers-benchmarks.ts). Pure, tested. Objective I.
  *
- * Each of the three figures gets its own colour. The card's own colour is
- * ROAS and cost per result averaged, the two that say whether an ad is making
- * money. Cost per reach doesn't feed it: an ad can be dear to show and still
+ * Each of the three figures gets its own colour, shown as a small dot. The
+ * card's header colour is ROAS and cost per result averaged, the two that say
+ * whether an ad is making money. Cost per reach doesn't feed it: an ad can be dear to show and still
  * sell well, and its figure climbs on longer periods as the same people are
  * only counted once.
  */
@@ -35,7 +35,7 @@ export interface AdRow {
   ctr: number | null;
   roas: number | null;
   costPerResult: number | null;
-  costPerReachPence: number | null;
+  costPerReachPct: number | null;
 }
 
 export interface AdGrade {
@@ -57,7 +57,7 @@ export function gradeAd(row: AdRow, benchmarks: BenchmarkMap | undefined): AdGra
   const none = { overall: null, costPerResult: null, roas: null, costPerReach: null };
   if (!(row.spend > 0)) return { ...none, note: "No spend in this period" };
 
-  const reach = shade(kpiRatio(row.costPerReachPence, benchmarks?.adsCostPerReach, REACH)?.ratio);
+  const reach = shade(kpiRatio(row.costPerReachPct, benchmarks?.adsCostPerReach, REACH)?.ratio);
   const limit = benchmarks?.adsCostPerResult?.minimum;
 
   // Nothing sold yet, on less than one sale's worth of spend: that's not a
@@ -85,5 +85,5 @@ export function gradeAd(row: AdRow, benchmarks: BenchmarkMap | undefined): AdGra
 
 export const money = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "£p"));
 export const roasText = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "ratio"));
-export const penceText = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "pence"));
+export const reachPctText = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "%2"));
 export const count = (n: number | null | undefined) => (n == null ? "—" : Math.round(n).toLocaleString("en-GB"));

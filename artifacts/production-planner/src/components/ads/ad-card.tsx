@@ -1,22 +1,24 @@
 /**
  * One campaign, ad set or ad: its name on a bar in its colour, like a Numbers
- * panel, with the three figures in their own colours below. Tap for the rest.
+ * panel, with the three figures on plain card below (Graeme, 6 Nov 2026: fully
+ * coloured cards were too much and hard to read). A small dot gives each
+ * figure's own colour. Tap for the rest.
  */
 import { Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { money, penceText, roasText, type AdGrade, type AdRow } from "@/lib/ads-page";
+import { money, reachPctText, roasText, type AdGrade, type AdRow } from "@/lib/ads-page";
 import type { RoasShade } from "@/lib/ad-efficiency";
 
 const shadeText = (shade: RoasShade) => (shade.darkBackground ? "text-white" : "text-stone-900");
 
 function Figure({ label, value, shade }: { label: string; value: string; shade: RoasShade | null }) {
   return (
-    <div
-      className={cn("px-0.5 py-2 text-center min-w-0", shade ? shadeText(shade) : "bg-secondary/60 text-foreground")}
-      style={shade ? { backgroundColor: shade.hex } : undefined}
-    >
-      <p className="text-[11px] font-medium opacity-90">{label}</p>
-      <p className="text-[13px] font-bold tabular-nums tracking-tight">{value}</p>
+    <div className="px-0.5 py-2 text-center min-w-0">
+      <p className="text-[11px] font-medium text-muted-foreground inline-flex items-center gap-1">
+        {shade && <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: shade.hex }} />}
+        {label}
+      </p>
+      <p className="text-[13px] font-bold tabular-nums tracking-tight text-foreground">{value}</p>
     </div>
   );
 }
@@ -60,10 +62,10 @@ export function AdCard({ row, grade, canEdit, onOpen, onEditTargets }: {
         {parent && <p className="text-xs font-medium opacity-90 mt-0.5 break-words">{parent}</p>}
         {grade.note && <p className="text-sm font-semibold opacity-90 mt-0.5">{grade.note}</p>}
       </div>
-      <div className="grid grid-cols-3 gap-px bg-border">
+      <div className="grid grid-cols-3 divide-x divide-border">
         <Figure label="CPA" value={money(row.costPerResult)} shade={grade.costPerResult} />
         <Figure label="ROAS" value={roasText(row.roas)} shade={grade.roas} />
-        <Figure label="Reach" value={penceText(row.costPerReachPence)} shade={grade.costPerReach} />
+        <Figure label="Reach" value={reachPctText(row.costPerReachPct)} shade={grade.costPerReach} />
       </div>
     </div>
   );

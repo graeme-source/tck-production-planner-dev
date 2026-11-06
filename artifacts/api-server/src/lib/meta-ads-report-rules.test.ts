@@ -31,8 +31,10 @@ describe("parseInsight", () => {
     expect(row.linkClicks).toBe(31);
   });
 
-  it("works out cost per reach as Graeme's column does: spend ÷ reach, in pence", () => {
-    expect(parseInsight(blackFriday, "campaign")!.costPerReachPence).toBeCloseTo(1.87, 2);
+  it("works out cost per reach as Graeme's Ads Manager column does: spend ÷ reach, as a %", () => {
+    // Both campaigns on 5 Nov 2026, which that column showed as 1.73% and 1.49%.
+    expect(parseInsight({ campaign_id: "1", spend: "282.16", reach: "16350" }, "campaign")!.costPerReachPct!.toFixed(2)).toBe("1.73");
+    expect(parseInsight({ campaign_id: "2", spend: "575.44", reach: "38516" }, "campaign")!.costPerReachPct!.toFixed(2)).toBe("1.49");
   });
 
   it("prefers pixel purchases, which is what Results counts", () => {
@@ -50,7 +52,7 @@ describe("parseInsight", () => {
     const row = parseInsight({ ad_id: "1", spend: "4.54" }, "ad")!;
     expect(row.purchases).toBe(0);
     expect(row.costPerResult).toBeNull();
-    expect(row.costPerReachPence).toBeNull();
+    expect(row.costPerReachPct).toBeNull();
     expect(row.roas).toBe(0);
   });
 

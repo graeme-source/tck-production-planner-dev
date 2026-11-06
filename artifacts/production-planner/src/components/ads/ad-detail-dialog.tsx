@@ -6,18 +6,18 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { count, money, penceText, roasText, type AdGrade, type AdLevel, type AdRow } from "@/lib/ads-page";
+import { count, money, reachPctText, roasText, type AdGrade, type AdLevel, type AdRow } from "@/lib/ads-page";
 import type { RoasShade } from "@/lib/ad-efficiency";
 
 const LEVEL_NAME: Record<AdLevel, string> = { campaign: "Campaign", adset: "Ad set", ad: "Ad" };
 
 function Stat({ label, value, shade }: { label: string; value: string; shade?: RoasShade | null }) {
   return (
-    <div
-      className={cn("rounded-xl border border-border p-3", shade ? (shade.darkBackground ? "text-white" : "text-stone-900") : "bg-background")}
-      style={shade ? { backgroundColor: shade.hex, borderColor: shade.hex } : undefined}
-    >
-      <p className={cn("text-xs font-medium", shade ? "opacity-90" : "text-muted-foreground")}>{label}</p>
+    <div className="rounded-xl border border-border bg-background p-3">
+      <p className="text-xs font-medium text-muted-foreground inline-flex items-center gap-1.5">
+        {shade && <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: shade.hex }} />}
+        {label}
+      </p>
       <p className="text-xl font-display font-bold tabular-nums">{value}</p>
     </div>
   );
@@ -68,7 +68,7 @@ export function AdDetailDialog({ row, grade, periodLabel, onClose }: {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             <Stat label="Cost per result" value={money(row.costPerResult)} shade={grade.costPerResult} />
             <Stat label="Purchase ROAS" value={roasText(row.roas)} shade={grade.roas} />
-            <Stat label="Cost per reach" value={penceText(row.costPerReachPence)} shade={grade.costPerReach} />
+            <Stat label="Cost per reach" value={reachPctText(row.costPerReachPct)} shade={grade.costPerReach} />
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             <Stat label="Spent" value={money(row.spend)} />
