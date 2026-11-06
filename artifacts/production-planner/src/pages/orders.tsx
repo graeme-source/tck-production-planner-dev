@@ -1,6 +1,8 @@
 import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { clearIngredientMark, OUTSTANDING_KEY } from "@/components/queued-production/api";
 import { QueuedOrdersReminder } from "@/components/queued-production/orders-reminder";
+import { NewerPlanBanner } from "@/components/newer-plan-banner";
+import { newerPlanThan } from "@/lib/newer-plan";
 import { StandingOrderChip } from "@/components/standing-order-chip";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -736,9 +738,13 @@ export default function Orders() {
       if (!res.ok) throw new Error("Failed to load plans");
       return res.json();
     },
+    // Always re-read on coming back: a plan made elsewhere must show up.
+    staleTime: 0,
   });
 
   const activePlans = (plans ?? []).filter(p => p.status === "active");
+  const selectedPlan = activePlans.find(p => p.id === selectedPlanId) ?? null;
+  const newerPlan = newerPlanThan(activePlans, selectedPlanId);
 
   useEffect(() => {
     if (activePlans.length > 0 && !selectedPlanId) {
@@ -2089,6 +2095,10 @@ export default function Orders() {
           ))}
         </select>
       </div>
+
+      {selectedPlan && newerPlan && (
+        <NewerPlanBanner key={`${selectedPlan.id}-${newerPlan.id}`} selected={selectedPlan} newer={newerPlan} onSwitch={setSelectedPlanId} />
+      )}
 
       <QueuedOrdersReminder />
 
