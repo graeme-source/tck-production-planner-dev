@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BONUS_SCHEME as S, bonusFor, bonusLadder, bonusRevenue, dayRangeLabel, monthsAwaitingProfit, revenueBonus } from "./staff-bonus";
+import { DEFAULT_BONUS_SCHEME as S, bonusFor, bonusLadder, bonusRevenue, monthsAwaitingProfit, revenueBonus } from "./staff-bonus";
 
 describe("each month's figures", () => {
   it("lists finished months still waiting for their profit, oldest first", () => {
@@ -9,15 +9,20 @@ describe("each month's figures", () => {
   it("counts a loss as entered", () => {
     expect(monthsAwaitingProfit(["2026-09"], "2026-10", { "2026-09": { profit: -1500, revenueOverride: null } })).toEqual([]);
   });
-  it("uses a typed revenue over the packed figure, and the packed figure otherwise", () => {
+  it("uses a typed revenue over the actual figure, and the actual figure otherwise", () => {
     expect(bonusRevenue(138450.77, 140000)).toBe(140000);
     expect(bonusRevenue(138450.77, null)).toBe(138450.77);
     expect(bonusRevenue(0, null)).toBe(0);
     expect(bonusRevenue(null, undefined)).toBeNull();
   });
-  it("labels the days orders went out", () => {
-    expect(dayRangeLabel("2026-09-01", "2026-09-30")).toBe("1 Sep – 30 Sep");
-    expect(dayRangeLabel("2026-10-05", "2026-10-05")).toBe("5 Oct");
+  it("doesn't wait on a month QuickBooks has a profit for", () => {
+    const none = { profit: null, revenueOverride: null };
+    expect(monthsAwaitingProfit(["2026-09", "2026-10"], "2026-11", { "2026-09": none, "2026-10": none }, { "2026-10": 7000 })).toEqual(["2026-09"]);
+    expect(monthsAwaitingProfit(["2026-10"], "2026-11", { "2026-10": none }, { "2026-10": -500 })).toEqual([]);
+  });
+  it("uses a typed profit over QuickBooks, and QuickBooks otherwise", () => {
+    expect(bonusRevenue(9000, 7500)).toBe(7500);
+    expect(bonusRevenue(9000, null)).toBe(9000);
   });
 });
 

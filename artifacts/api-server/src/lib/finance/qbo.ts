@@ -162,6 +162,21 @@ export async function qboQuery<T>(query: string): Promise<T[]> {
   return key ? qr[key] : [];
 }
 
+/** A read-only report, e.g. ProfitAndLoss. */
+export async function qboReport<T>(name: string, params: Record<string, string>): Promise<T> {
+  const { realmId, accessToken } = await freshAccessToken();
+  const query = new URLSearchParams({ ...params, minorversion: "75" });
+  const res = await fetch(`${API_BASE}/v3/company/${realmId}/reports/${name}?${query}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: "application/json" },
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    const tid = res.headers.get("intuit_tid");
+    throw new Error(`QuickBooks report failed (${res.status}${tid ? `, intuit_tid ${tid}` : ""}): ${text.slice(0, 300)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
 interface QboTxn {
   Id: string;
   TxnDate?: string;

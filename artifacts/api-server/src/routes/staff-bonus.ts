@@ -9,17 +9,19 @@
  * every signed-in user. The maths is client-side (lib/staff-bonus.ts); this
  * only stores the numbers and hands over the month targets. Objective I.
  *
- * 30 Oct 2026: each month's revenue sent out is worked out from what was
- * packed (GET /month/:month, lib/sent-out-revenue.ts); its net operating
- * profit is typed once signed off (PUT /month/:month, autosaved).
+ * 6 Nov 2026: each month's revenue is that month's sales, the same as Month to
+ * Date on Numbers (GET /month/:month). Its net operating profit comes from the
+ * QuickBooks Profit and Loss report for finished months; a typed figure wins
+ * (PUT /month/:month, autosaved).
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { addMonths, isMonthKey, monthOf, targetsForMonths } from "@workspace/revenue-targets";
-import { loadSentOutRevenue } from "../lib/sent-out-revenue-load";
-import type { SentOutRevenue } from "../lib/sent-out-revenue";
+import { getOrdersByLondonDays } from "../services/shopify";
+import { monthDays, monthRevenue } from "../lib/bonus-month-revenue";
+import { qboProfitForMonth } from "../lib/finance/qbo-profit";
 import { requireFounder } from "../middleware/founder-access";
 import { requirePeopleUnlock } from "../middleware/people-unlock";
 import { validate } from "../middleware/validate";
@@ -51,6 +53,9 @@ router.get("/scheme", async (_req: Request, res: Response) => {
   const targets = await loadRevenueTargetsState();
   const thisMonth = monthOf(londonDateString());
   const months = [-2, -1, 0, 1, 2, 3].map(n => addMonths(thisMonth, n));
+  const finished = months.filter(m => m < thisMonth);
+  const today = londonDateString();
+  const qboProfits = Object.fromEntries(await Promise.all(finished.map(async m => [m, (await readQboProfit(m, today)).profit] as const)));
   res.json({
     scheme,
     savedAt: row?.updated_at ?? null,
@@ -59,17 +64,26 @@ router.get("/scheme", async (_req: Request, res: Response) => {
     // What's been typed for each month (profit, any revenue override), so
     // the page can show which finished months still await their profit.
     entries: await readMonthEntries(months),
+    qboProfits,
   });
 });
 
-// ── One month: revenue sent out (worked out) + what's typed ──────────────
+// ── One month: revenue + profit, each with a typed figure on top ─────────
 //
-// Revenue sent out comes from what was packed (lib/sent-out-revenue.ts —
-// the dispatch dates and revenue rules are documented there). Net operating
-// profit is typed once it's signed off in QuickBooks, about two weeks into
-// the next month. A typed revenue figure, if any, overrides the worked-out
-// one. Both are kept per month in founder_settings
+// Revenue is the month's sales (lib/bonus-month-revenue.ts). Net operating
+// profit is read from QuickBooks once the month has finished, and can keep
+// moving until the books are signed off. A typed figure, if any, is used
+// instead of either. Both are kept per month in founder_settings
 // ("staff_bonus_month:YYYY-MM"), founder-only like the scheme.
+
+async function readQboProfit(month: string, today: string): Promise<{ profit: number | null; error: string | null }> {
+  try {
+    return { profit: await qboProfitForMonth(month, today), error: null };
+  } catch (err) {
+    console.warn(`[staff-bonus] QuickBooks profit for ${month} failed:`, err instanceof Error ? err.message : err);
+    return { profit: null, error: "Couldn't reach QuickBooks" };
+  }
+}
 
 const MONTH_KEY_PREFIX = "staff_bonus_month:";
 
@@ -116,22 +130,19 @@ router.get("/month/:month", async (req: Request, res: Response) => {
   const m = month.data;
   const today = londonDateString();
   const entry = (await readMonthEntries([m]))[m]!;
-  if (m > monthOf(today)) { res.json({ month: m, sentOut: null, sentOutError: null, entry }); return; }
-  let sentOut: SentOutRevenue | null = null;
-  let sentOutError: string | null = null;
+  const none = { qboProfit: null, qboError: null };
+  if (m > monthOf(today)) { res.json({ month: m, revenue: null, revenueError: null, ...none, entry }); return; }
+  const days = monthDays(m, today);
+  let revenue: (ReturnType<typeof monthRevenue> & { complete: boolean }) | null = null;
+  let revenueError: string | null = null;
   try {
-    sentOut = await loadSentOutRevenue(m, {}, today);
+    revenue = { ...monthRevenue(await getOrdersByLondonDays(days.from, days.to)), complete: days.complete };
   } catch (err) {
-    // Shopify unreachable: fall back to the mirror as last synced.
-    console.error("[staff-bonus] sent-out revenue failed, retrying from the mirror:", err);
-    try {
-      sentOut = await loadSentOutRevenue(m, { shopify: false }, today);
-      sentOut.warnings.unshift("Couldn't reach Shopify just now — this is from the orders as last synced.");
-    } catch (err2) {
-      sentOutError = err2 instanceof Error ? err2.message : String(err2);
-    }
+    console.error("[staff-bonus] month revenue failed:", err);
+    revenueError = "Couldn't reach Shopify just now. Try again, or type a figure";
   }
-  res.json({ month: m, sentOut, sentOutError, entry });
+  const profit = days.complete ? await readQboProfit(m, today) : { profit: null, error: null };
+  res.json({ month: m, revenue, revenueError, qboProfit: profit.profit, qboError: profit.error, entry });
 });
 
 router.put("/month/:month", validate(MonthEntryBody), async (req: Request, res: Response) => {

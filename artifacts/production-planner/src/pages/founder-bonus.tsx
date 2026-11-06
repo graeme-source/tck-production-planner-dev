@@ -4,11 +4,11 @@
  * founder.sales grant Tommy has — and behind the private PIN, which the
  * server enforces too (routes/staff-bonus.ts). Maths: lib/staff-bonus.ts.
  *
- * Top: try a month and see what's paid and why. Revenue sent out is worked
- * out from what was packed that month (30 Oct 2026; rules in api-server
- * lib/sent-out-revenue.ts), with a typed figure as an override; net
- * operating profit is typed once signed off in QuickBooks. Both autosave
- * per month, and finished months without a profit are flagged.
+ * Top: try a month and see what's paid and why. Revenue is the month's sales
+ * (6 Nov 2026; the same as Month to Date on Numbers), and net operating profit
+ * comes from the QuickBooks Profit and Loss report for finished months. A typed
+ * figure replaces either, autosaved per month, and finished months without a
+ * profit are flagged.
  * Middle: what each revenue level pays and the profit it needs.
  * Bottom: the scheme's own numbers, saved as you type (visible save state).
  * Objective I.
@@ -16,7 +16,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Redirect } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Loader2, Lock, PackageCheck, PiggyBank, RotateCcw, SlidersHorizontal, TableProperties } from "lucide-react";
+import { BarChart2, Check, Loader2, Lock, PiggyBank, RotateCcw, SlidersHorizontal, TableProperties } from "lucide-react";
 import { monthLabel } from "@workspace/revenue-targets";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
@@ -26,7 +26,7 @@ import { PageHeader } from "@/components/page-header";
 import { SaveChip } from "@/components/save-chip";
 import { cn } from "@/lib/utils";
 import {
-  DEFAULT_BONUS_SCHEME, bonusFor, bonusLadder, bonusRevenue, dayRangeLabel, monthsAwaitingProfit,
+  DEFAULT_BONUS_SCHEME, bonusFor, bonusLadder, bonusRevenue, monthsAwaitingProfit,
   type BonusMonthEntry, type BonusScheme,
 } from "@/lib/staff-bonus";
 
@@ -39,20 +39,17 @@ interface SchemeResponse {
   thisMonth: string;
   months: Array<{ month: string; minimum: number; stretch: number | null }>;
   entries?: Record<string, BonusMonthEntry>;
+  qboProfits?: Record<string, number | null>;
 }
 
-/** GET /api/staff-bonus/month/:month — rules in api-server lib/sent-out-revenue.ts. */
+/** GET /api/staff-bonus/month/:month. */
 interface MonthResponse {
   month: string;
-  sentOut: {
-    incVat: number;
-    orders: number;
-    firstDay: string | null;
-    lastDay: string | null;
-    complete: boolean;
-    warnings: string[];
-  } | null;
-  sentOutError: string | null;
+  revenue: { total: number; orders: number; complete: boolean } | null;
+  revenueError: string | null;
+  /** Net operating profit from QuickBooks, for a finished month. */
+  qboProfit: number | null;
+  qboError: string | null;
   entry: BonusMonthEntry;
 }
 
@@ -109,7 +106,7 @@ function Loaded({ data }: { data: SchemeResponse }) {
   const [month, setMonth] = useState(data.thisMonth);
   const [minimum, setMinimum] = useState(String(monthTargets(data.thisMonth)?.minimum ?? 110000));
   const [stretch, setStretch] = useState(String(monthTargets(data.thisMonth)?.stretch ?? ""));
-  const awaiting = monthsAwaitingProfit(data.months.map(m => m.month), data.thisMonth, data.entries ?? {});
+  const awaiting = monthsAwaitingProfit(data.months.map(m => m.month), data.thisMonth, data.entries ?? {}, data.qboProfits ?? {});
 
   const pickMonth = (m: string) => {
     setMonth(m);
@@ -195,7 +192,7 @@ function Loaded({ data }: { data: SchemeResponse }) {
           <table className="w-full text-base">
             <thead>
               <tr className="text-left text-sm text-muted-foreground border-b border-border">
-                <th className="py-2 pr-3 font-semibold">Revenue sent out</th>
+                <th className="py-2 pr-3 font-semibold">Revenue</th>
                 <th className="py-2 px-3 font-semibold text-right">Bonus</th>
                 <th className="py-2 pl-3 font-semibold text-right">Profit needed</th>
               </tr>
@@ -250,14 +247,14 @@ function Loaded({ data }: { data: SchemeResponse }) {
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
-          Revenue is what we packed and sent that month, after refunds. Profit leaves out capital spending and one-offs you choose to leave out. Under the minimum there's no bonus; it climbs from the minimum bonus to the stretch bonus, then adds the extra for every step above stretch up to the most it pays. It's never paid from profit below the share we always keep.
+          Revenue is that month's sales after refunds. Profit leaves out capital spending and one-offs you choose to leave out. Under the minimum there's no bonus; it climbs from the minimum bonus to the stretch bonus, then adds the extra for every step above stretch up to the most it pays. It's never paid from profit below the share we always keep.
         </p>
       </section>
     </div>
   );
 }
 
-// ── One month: revenue sent out (worked out) + profit (typed) + the bonus ──
+// ── One month: revenue + profit (QuickBooks or typed) + the bonus ──────────
 
 function MonthFigures({ month, isFuture, min, str, scheme, targets }: {
   month: string; isFuture: boolean; min: number; str: number; scheme: BonusScheme; targets: ReactNode;
@@ -275,7 +272,7 @@ function MonthFigures({ month, isFuture, min, str, scheme, targets }: {
     return (
       <>
         <div className="rounded-xl border-2 border-dashed border-border px-4 py-5 flex items-center gap-2 text-base text-muted-foreground">
-          <Loader2 className="w-5 h-5 animate-spin" /> Adding up what we packed in {monthLabel(month)}…
+          <Loader2 className="w-5 h-5 animate-spin" /> Adding up {monthLabel(month)}…
         </div>
         {targets}
       </>
@@ -324,45 +321,45 @@ function MonthLoaded({ data, isFuture, min, str, scheme, targets }: {
     const v = parseMoney(text);
     if (v !== undefined) overrideSave.schedule(v);
   };
-  const backToPacked = () => {
+  const backToActual = () => {
     setOverride("");
     setShowOverride(false);
     overrideSave.schedule(null);
     void overrideSave.flush();
   };
 
-  const s = data.sentOut;
+  const s = data.revenue;
   const typed = parseMoney(override);
   const usingOverride = typed != null;
-  const rev = bonusRevenue(s?.incVat, typed ?? null);
-  const pro = parseMoney(profit);
+  const rev = bonusRevenue(s?.total, typed ?? null);
+  const typedProfit = parseMoney(profit);
+  const pro = bonusRevenue(data.qboProfit, typedProfit ?? null);
+  const profitHint = typedProfit != null
+    ? (data.qboProfit != null ? `Using your figure. QuickBooks says ${gbp(data.qboProfit)}.` : "Using your figure.")
+    : data.qboProfit != null ? "From the QuickBooks P&L. It can change until the month is signed off. Type a figure to use yours instead."
+      : data.qboError ? `${data.qboError}. Type the figure instead.`
+        : data.revenue?.complete ? "QuickBooks has no figure yet. Type it instead."
+          : "QuickBooks fills this once the month has finished, or type a figure.";
   const result = rev != null && pro != null ? bonusFor({ revenue: rev, profit: pro, minimum: min, stretch: str }, scheme) : null;
 
   return (
     <>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-1">
-          <span className="block text-sm font-semibold">Revenue sent out</span>
+          <span className="block text-sm font-semibold">{s && !s.complete ? "Revenue so far this month" : "Revenue this month"}</span>
           <div className={cn("h-14 rounded-xl border-2 border-border bg-secondary/40 px-3 flex items-center gap-2 text-2xl font-bold tabular-nums",
             usingOverride && "opacity-50 line-through")}>
-            <PackageCheck className="w-5 h-5 text-primary shrink-0" />
-            {s ? gbp(s.incVat) : isFuture ? <span className="text-base font-semibold text-muted-foreground">Not started</span> : "—"}
+            <BarChart2 className="w-5 h-5 text-primary shrink-0" />
+            {s ? gbp(s.total) : isFuture ? <span className="text-base font-semibold text-muted-foreground">Not started</span> : "—"}
           </div>
-          {s && (
-            <span className="block text-xs text-muted-foreground">
-              {s.orders > 0 && s.firstDay && s.lastDay
-                ? <>from {s.orders.toLocaleString("en-GB")} order{s.orders === 1 ? "" : "s"} packed {dayRangeLabel(s.firstDay, s.lastDay)}{s.complete ? "" : " so far"}</>
-                : "No orders packed yet"}
-            </span>
-          )}
-          {s?.warnings[0] && <span className="block text-xs font-semibold text-amber-700 dark:text-amber-400">{s.warnings[0]}</span>}
-          {data.sentOutError && <span className="block text-xs font-semibold text-destructive">Couldn't work it out: {data.sentOutError}</span>}
+          {s && <span className="block text-xs text-muted-foreground">from {s.orders.toLocaleString("en-GB")} order{s.orders === 1 ? "" : "s"}{s.complete ? "" : " so far"}</span>}
+          {data.revenueError && <span className="block text-xs font-semibold text-destructive">{data.revenueError}.</span>}
           {showOverride ? (
             <div className="pt-1 space-y-1">
               <MoneyField label="Your figure (used instead)" value={override} onChange={onOverride} onBlur={() => void overrideSave.flush()}
                 status={<SaveChip state={overrideSave.state} error={overrideSave.error} onRetry={() => void overrideSave.flush()} />} />
-              <button type="button" onClick={backToPacked} className="min-h-11 text-sm font-semibold text-primary inline-flex items-center gap-1.5">
-                <RotateCcw className="w-4 h-4" /> Use the packed figure
+              <button type="button" onClick={backToActual} className="min-h-11 text-sm font-semibold text-primary inline-flex items-center gap-1.5">
+                <RotateCcw className="w-4 h-4" /> Use the actual figure
               </button>
             </div>
           ) : (
@@ -372,7 +369,7 @@ function MonthLoaded({ data, isFuture, min, str, scheme, targets }: {
           )}
         </div>
         <MoneyField label="Net operating profit" value={profit} onChange={onProfit} onBlur={() => void profitSave.flush()}
-          placeholder="e.g. 7000" big hint="Enter once signed off in QuickBooks"
+          placeholder={data.qboProfit != null ? String(Math.round(data.qboProfit)) : "e.g. 7000"} big hint={profitHint}
           status={<SaveChip state={profitSave.state} error={profitSave.error} onRetry={() => void profitSave.flush()} />} />
       </div>
       {targets}

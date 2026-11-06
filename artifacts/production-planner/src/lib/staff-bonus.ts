@@ -2,7 +2,7 @@
  * The monthly bonus scheme agreed for Tommy (Graeme, 27–29 Oct 2026), as
  * numbers the founder can tweak on The Business → Bonus calculator:
  *
- *   - Revenue = orders SENT OUT that month.
+ *   - Revenue = that month's sales after refunds (Month to Date on Numbers).
  *   - Under the minimum: nothing. At the minimum: `atMinimum` (£50). Then it
  *     climbs slowly and steeply near the top — atMinimum + (atStretch −
  *     atMinimum) × progress^curve, progress = how far from minimum to
@@ -91,28 +91,22 @@ export interface BonusMonthEntry {
   revenueOverride: number | null;
 }
 
-/** Finished months (before `thisMonth`) whose net operating profit hasn't
- *  been entered yet — it's typed once signed off in QuickBooks, about two
- *  weeks into the next month. Oldest first. */
+/** Finished months (before `thisMonth`) with no net operating profit: none
+ *  typed, and none from QuickBooks. Oldest first. */
 export function monthsAwaitingProfit(
-  months: readonly string[], thisMonth: string, entries: Readonly<Record<string, BonusMonthEntry | undefined>>,
+  months: readonly string[],
+  thisMonth: string,
+  entries: Readonly<Record<string, BonusMonthEntry | undefined>>,
+  qboProfits: Readonly<Record<string, number | null | undefined>> = {},
 ): string[] {
-  return months.filter(m => m < thisMonth && entries[m]?.profit == null).sort();
+  return months.filter(m => m < thisMonth && entries[m]?.profit == null && qboProfits[m] == null).sort();
 }
 
-/** The revenue the bonus uses: a typed override if there is one, else the
- *  figure worked out from what was packed. null = neither yet. */
-export function bonusRevenue(packed: number | null | undefined, override: number | null | undefined): number | null {
-  if (override != null && Number.isFinite(override)) return override;
-  return packed != null && Number.isFinite(packed) ? packed : null;
-}
-
-const SHORT_MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
-/** "1 Sep – 30 Sep" (or one day alone) from YYYY-MM-DD days. */
-export function dayRangeLabel(first: string, last: string): string {
-  const day = (d: string) => `${Number(d.slice(8, 10))} ${SHORT_MONTHS[Number(d.slice(5, 7)) - 1] ?? ""}`;
-  return first === last ? day(first) : `${day(first)} – ${day(last)}`;
+/** A typed figure if there is one, else the worked-out or QuickBooks figure.
+ *  null = neither yet. Used for both revenue and profit. */
+export function bonusRevenue(worked: number | null | undefined, typed: number | null | undefined): number | null {
+  if (typed != null && Number.isFinite(typed)) return typed;
+  return worked != null && Number.isFinite(worked) ? worked : null;
 }
 
 /** Revenue points for the "what it pays" table: the minimum, quarters to
