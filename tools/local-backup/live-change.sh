@@ -17,10 +17,11 @@ fi
 if grep -qiE '^\s*\\' "$CHANGE"; then echo "Refused: psql commands aren't allowed." >&2; exit 2; fi
 STAMP=$(date '+%Y-%m-%d_%H%M%S')
 DIR="$HOME/TCK-Backups/live-changes"
-PREFIX="$DIR/$STAMP$([ "$END" = ROLLBACK ] && echo -dry-run)"
+PREFIX="$DIR/$STAMP"
+if [ "$END" = ROLLBACK ]; then PREFIX="$PREFIX-dry-run"; fi
 cp "$CHANGE" "$PREFIX.change.sql"
 "$HOME/TCK-Backups/bin/live-read.sh" "$BEFORE" > "$PREFIX.before.csv"
 echo "Rows before the change: $(($(wc -l < "$PREFIX.before.csv") - 1)) (saved to $PREFIX.before.csv)"
 SQL=$( { echo "BEGIN;"; cat "$CHANGE"; echo; echo "$END;"; } | base64 | tr -d '\n')
 on_db "echo $SQL | base64 -d | psql -h /var/run/postgresql -U postgres -d railway -X -v ON_ERROR_STOP=1" | tee "$PREFIX.result.txt"
-[ "$END" = ROLLBACK ] && echo "Dry run: nothing was changed."
+if [ "$END" = ROLLBACK ]; then echo "Dry run: nothing was changed."; fi
