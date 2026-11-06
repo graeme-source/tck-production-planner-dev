@@ -35,7 +35,6 @@ import {
   addDays,
   customWindow,
   DEFAULT_PERIOD,
-  PERIOD_PRESETS,
   periodWindow,
   windowRoas,
   type PeriodPresetId,
@@ -43,6 +42,7 @@ import {
   type RoasResult,
 } from "@/lib/roas";
 import { revenueForTags } from "@/lib/order-type-totals";
+import { describePeriod, PeriodPicker } from "@/components/period-picker";
 import { SalesTrendPanel, TrendChip } from "@/components/sales-trend-panel";
 import { DispatchOrdersPanel } from "@/components/dispatch-orders-panel";
 import type { TrendMetricId } from "@/lib/sales-trend-view";
@@ -819,14 +819,6 @@ export default function FounderView() {
   return <FounderDashboard />;
 }
 
-/** A period's days spelled out for a human — "Wed 17 Sep", or a range. */
-function describePeriod(period: PeriodWindow): string {
-  if (period.empty) return "No complete days yet";
-  const day = (d: string) => format(new Date(`${d}T12:00:00`), "EEE d MMM");
-  if (period.dayCount === 1) return day(period.from);
-  return `${day(period.from)} – ${day(period.to)} · ${period.dayCount} days`;
-}
-
 function sectionHeading(text: string) {
   return (
     <h2 className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-4">
@@ -1405,60 +1397,15 @@ function FounderDashboard() {
         {sectionHeading("Order Analysis — " + period.label)}
 
         {/* Picker row */}
-        <div className="glass-panel p-4 rounded-2xl space-y-3 mb-5">
-          {/* Presets. Yesterday and Today lead — the precursor to the longer
-              ranges — and the rest follow in increasing length. */}
-          <div className="flex flex-wrap gap-2">
-            {PERIOD_PRESETS.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => applyPreset(p.id)}
-                className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all border ${
-                  periodId === p.id
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
-          </div>
-          {/* Custom date inputs */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-muted-foreground">From</label>
-              <input
-                type="date"
-                value={from}
-                max={to}
-                onChange={(e) => handleManualDateChange("from", e.target.value)}
-                className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-muted-foreground">To</label>
-              <input
-                type="date"
-                value={to}
-                min={from}
-                max={todayStr}
-                onChange={(e) => handleManualDateChange("to", e.target.value)}
-                className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
+        <div className="mb-5">
+          <PeriodPicker periodId={periodId} period={period} todayStr={todayStr} onPreset={applyPreset} onDate={handleManualDateChange}>
             {periodError && (
               <p className="text-destructive text-sm flex items-center gap-1">
                 <AlertCircle className="w-4 h-4" />
                 {(periodError as Error).message}
               </p>
             )}
-          </div>
-          {/* Exactly which days are being counted, always spelled out. */}
-          <p className="text-xs text-muted-foreground">
-            {describePeriod(period)}
-            {period.includesToday && " · today is still running, so these figures are partial"}
-          </p>
+          </PeriodPicker>
         </div>
 
         {period.empty ? (
