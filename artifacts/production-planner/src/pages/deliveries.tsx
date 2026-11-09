@@ -3,9 +3,9 @@ import { useQueryClient, useQuery, useMutation } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { VisitorCheckInButton } from "@/components/visitor-check-in-button";
 import {
-  Truck, ChevronLeft, ChevronRight, Calendar, Package, Thermometer,
+  Truck, ChevronLeft, ChevronRight, Calendar, Thermometer,
   Check, AlertTriangle, Loader2, ClipboardCheck, X,
-  CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft, Plus, Minus,
+  CheckCircle2, AlertCircle, PackageCheck, ArrowRightLeft,
   FileText, Boxes, Pencil, Eye, EyeOff, RotateCcw, PackageOpen, Sparkles,
 } from "lucide-react";
 import { format, startOfWeek, addDays, isSameDay, parseISO, isToday } from "date-fns";
@@ -16,8 +16,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { toast } from "@/hooks/use-toast";
 import { useLocation } from "wouter";
-import { packNoun, packDescriptor, fmtQty, formatLineQty, formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
-import { NumberInput } from "@/components/ui/number-input";
+import { packDescriptor, fmtQty, formatLineQty, formatLineQtyParts } from "@/pages/station/shared/prep-helpers";
 import { palletReceiptLabel } from "@workspace/units";
 import { TempDial } from "@/components/temp-dial";
 import {
@@ -33,8 +32,6 @@ import {
   shopifyUploadsOf,
   stockConfirmLines,
 } from "@workspace/goods-in";
-import { ShelfLifeWarning, ShelfLifeRejectedNote, ShelfLifeRecordNote } from "@/components/deliveries/shelf-life-warning";
-import { DamagePanel, DamageRecordNote, type LineDamage } from "@/components/deliveries/damage-panel";
 import { IssuePhotoStep, IssuePhotoStrip, useRevokeOnUnmount, type IssuePhoto } from "@/components/deliveries/issue-photos";
 import { usePeople } from "@/components/messages/messages-api";
 import { useShortReportSettings, type ShortReportOutcome } from "@/components/deliveries/short-report-api";
@@ -43,6 +40,9 @@ import { ShortReportSettingsModal } from "@/components/deliveries/short-report-s
 import { ShopifyUploadConfirm } from "@/components/deliveries/shopify-upload-confirm";
 import { StockAddConfirm } from "@/components/deliveries/stock-add-confirm";
 import { LineReceiptStatus, OrderShortBadge } from "@/components/deliveries/receipt-status";
+import {
+  ReceivingColumnHeader, ReceivingLineRow, receivingColumnVars, type ReceivingLine,
+} from "@/components/deliveries/receiving-line-row";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -247,44 +247,6 @@ function computeProcessingDots(order: DeliveryOrder): ProcessingDots {
   const fullyProcessed = required.every((d) => d === "done");
 
   return { received, temperature, invoice, kanbanPutAway, fullyProcessed };
-}
-
-interface ReceivingLine {
-  lineId: number;
-  ingredientName: string;
-  ingredientCategory: string | null;
-  quantityOrdered: number;
-  quantityReceived: number;
-  unit: string;
-  // The ingredient's native unit (kg / g / ml / l / pieces). May differ from
-  // `unit` when the line was stored as a pack count ("packs" / "bottles").
-  nativeUnit?: string | null;
-  /** What one pack is called (#327). */
-  packName?: string | null;
-  useByDate: string;
-  shelfLifeDays: number | null;
-  requiresUseByDate: boolean;
-  defaultStorageLocation: string | null;
-  useByIsAuto: boolean;
-  /** Received (at quantityReceived) / Not received / not decided yet. Every
-   *  line must be decided before goods-in can be completed (lib/goods-in). */
-  decision: LineDecision;
-  stockInPacks?: boolean;
-  packWeight?: number | null;
-  palletSize?: number | null;
-  /** Minimum shelf life on delivery, days (null = none). */
-  minDeliveryShelfLifeDays: number | null;
-  /** "Accept anyway" tapped on a short-shelf-life warning. */
-  shelfLifeAccepted: boolean;
-  /** "Reject it" tapped: the use-by that was too short (line is Not received). */
-  shelfLifeRejectedUseBy: string | null;
-  /** This line's shelf life was already reported on an earlier save. */
-  shelfLifeReported: boolean;
-  /** "Damaged / broken" (quantityReceived = what ARRIVED; a rejected damaged
-   *  quantity is taken off when sent — receivedAfterDamage). */
-  damage: LineDamage | null;
-  /** The damage was already reported on an earlier save (read-only now). */
-  damageReported: boolean;
 }
 
 /** What a dialog line sends: ticked + quantity after any rejected damage. */
@@ -503,6 +465,8 @@ function ReceivingDialog({
   // day goods-in was first saved when editing.
   const deliveryDay = order.deliveryRecord?.receivedAt ? londonDeliveryDay(order.deliveryRecord.receivedAt) : londonDeliveryDay();
   const shelfLifeOf = (l: ReceivingLine) => checkShelfLife({ deliveryDate: deliveryDay, useByDate: l.useByDate, minDays: l.minDeliveryShelfLifeDays });
+  // The Use-by column only shows when some line on this order has one.
+  const anyUseBy = lines.some((l) => l.requiresUseByDate || l.minDeliveryShelfLifeDays != null);
   // A received line whose use-by is short needs Accept anyway / Reject it.
   const shelfLifeUndecided = lines
     .map((l, i) => ({ l, i }))
@@ -744,58 +708,62 @@ function ReceivingDialog({
       {/* Phone-first card (Graeme, 16 Oct 2026, checking a delivery in on
           his phone): nearly full width, header with a big X that never
           scrolls away, the lines scroll inside, and the save button sits in
-          a footer that is always on screen. */}
+          a footer that is always on screen. One compact row per line
+          (Graeme, 9 Nov 2026) so a 10-item order fits on the iPad without
+          scrolling up and down to find things. */}
       <DialogContent
-        className="w-[calc(100vw-1rem)] max-w-none sm:w-[85vw] sm:max-w-[85vw] bg-card border-border rounded-2xl max-h-[92dvh] p-0 gap-0 flex flex-col overflow-hidden [&>button:last-child]:hidden"
+        className="w-[calc(100vw-1rem)] max-w-none lg:w-[94vw] lg:max-w-[94vw] bg-card border-border rounded-2xl max-h-[92dvh] p-0 gap-0 flex flex-col overflow-hidden [&>button:last-child]:hidden"
         aria-describedby={undefined}
       >
-        <DialogHeader className="shrink-0 px-4 sm:px-6 pt-4 pb-3 border-b border-border text-left space-y-0">
-          <div className="flex items-start gap-3">
-          <DialogTitle className="flex-1 min-w-0 font-display text-2xl sm:text-3xl font-bold flex items-center gap-3 text-left">
-            <Truck className="w-7 h-7 text-primary shrink-0" />
-            <span className="min-w-0 break-words">{order.supplierName}</span>
-          </DialogTitle>
-          <button
-            type="button"
-            onClick={handleClose}
-            aria-label="Close"
-            className="h-12 w-12 -mr-1 -mt-1 flex items-center justify-center rounded-xl border border-border hover:bg-secondary/60 shrink-0"
-          >
-            <X className="w-6 h-6" />
-          </button>
+        <DialogHeader className="shrink-0 px-3 sm:px-5 py-2 border-b border-border text-left space-y-0">
+          <div className="flex items-center gap-3">
+            <div className="flex-1 min-w-0 flex items-center gap-x-3 gap-y-1 flex-wrap">
+              <DialogTitle className="min-w-0 font-display text-xl sm:text-2xl font-bold flex items-center gap-2 text-left">
+                <Truck className="w-6 h-6 text-primary shrink-0" />
+                <span className="min-w-0 break-words">{order.supplierName}</span>
+              </DialogTitle>
+              {(() => {
+                const expectedIsToday = order.expectedDeliveryDate
+                  ? isToday(parseISO(order.expectedDeliveryDate))
+                  : false;
+                const expectedLabel = order.expectedDeliveryDate
+                  ? format(parseISO(order.expectedDeliveryDate), "EEE d MMM")
+                  : "—";
+                return (
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="text-sm text-muted-foreground">PO #{order.id}</span>
+                    {order.origin === "unexpected" && <UnexpectedBadge />}
+                    {order.originallyExpectedDate && (
+                      <span className="text-sm text-muted-foreground">
+                        (booked for {format(parseISO(order.originallyExpectedDate), "EEE d MMM")})
+                      </span>
+                    )}
+                    <span
+                      className={cn(
+                        "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold text-white",
+                        expectedIsToday ? "bg-[#7cb342]" : "bg-red-600"
+                      )}
+                    >
+                      <Calendar className="w-4 h-4" />
+                      Expected {expectedLabel}
+                      {!expectedIsToday && order.expectedDeliveryDate && " (not today)"}
+                    </span>
+                  </div>
+                );
+              })()}
+            </div>
+            <button
+              type="button"
+              onClick={handleClose}
+              aria-label="Close"
+              className="h-11 w-11 -mr-1 flex items-center justify-center rounded-xl border border-border hover:bg-secondary/60 shrink-0"
+            >
+              <X className="w-6 h-6" />
+            </button>
           </div>
-          {(() => {
-            const expectedIsToday = order.expectedDeliveryDate
-              ? isToday(parseISO(order.expectedDeliveryDate))
-              : false;
-            const expectedLabel = order.expectedDeliveryDate
-              ? format(parseISO(order.expectedDeliveryDate), "EEE d MMM")
-              : "—";
-            return (
-              <div className="mt-2 flex items-center gap-2 flex-wrap">
-                <span className="text-sm text-muted-foreground">PO #{order.id}</span>
-                {order.origin === "unexpected" && <UnexpectedBadge />}
-                {order.originallyExpectedDate && (
-                  <span className="text-sm text-muted-foreground">
-                    (booked for {format(parseISO(order.originallyExpectedDate), "EEE d MMM")})
-                  </span>
-                )}
-                <span
-                  className={cn(
-                    "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-sm font-semibold text-white",
-                    expectedIsToday ? "bg-[#7cb342]" : "bg-red-600"
-                  )}
-                >
-                  <Calendar className="w-4 h-4" />
-                  Expected {expectedLabel}
-                  {!expectedIsToday && order.expectedDeliveryDate && " (not today)"}
-                </span>
-              </div>
-            );
-          })()}
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 sm:px-6 py-4 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-3 sm:px-5 pt-1 pb-3 space-y-6">
           {dialogStep === "short" ? (
             <>
               <ShortReportStep
@@ -811,344 +779,32 @@ function ReceivingDialog({
             </>
           ) : (
           <>
-          <div>
-            <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
-              <h3 className="text-sm font-semibold flex items-center gap-2">
-                <Package className="w-4 h-4" /> Order Lines
-                {lines.length > 0 && (
-                  <span
-                    className={cn(
-                      "text-xs font-medium px-2 py-0.5 rounded-full",
-                      allDecided
-                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
-                        : "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200"
-                    )}
-                  >
-                    {lines.length - undecided.length} / {lines.length} decided
-                  </span>
-                )}
-              </h3>
-              {/* The normal case — everything arrived — stays one tap: every
-                  line not yet decided becomes Received at the quantity shown. */}
-              {undecided.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => editLines(lines.map((l) => (l.decision == null ? { ...l, decision: (l.quantityReceived > 0 ? "received" : "not_received") as LineDecision } : l)))}
-                  className="min-h-[44px] text-sm font-semibold px-4 py-2 rounded-xl border-2 border-green-500 text-green-800 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors inline-flex items-center gap-1.5"
-                >
-                  <Check className="w-4 h-4" strokeWidth={3} />
-                  {undecided.length === lines.length ? "Mark all received" : `Mark the other ${undecided.length} received`}
-                </button>
-              )}
+          {/* Wide desktop: the lines on the left, temperatures / checks /
+              notes beside them, so the whole delivery is on one screen. */}
+          <div className="space-y-6 xl:space-y-0 xl:grid xl:grid-cols-[minmax(0,1fr)_22rem] xl:gap-6 xl:items-start">
+          <div style={receivingColumnVars(anyUseBy)}>
+            {/* Column titles stay put while the lines scroll under them. */}
+            <div className="sticky -top-1 z-10 bg-card">
+              <ReceivingColumnHeader anyUseBy={anyUseBy} />
             </div>
-            <div className="space-y-3">
-              {lines.map((line, idx) => {
-                const received = line.decision === "received";
-                const notReceived = line.decision === "not_received";
-                const discrepancy = received && line.quantityReceived !== line.quantityOrdered;
-                const useByMissing = received && line.requiresUseByDate && line.quantityReceived > 0 && !line.useByDate;
-                const locationLabel = line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null;
-                const decide = (decision: LineDecision) => {
-                  const next = [...lines];
-                  // Received with nothing in the box means the ordered amount.
-                  const qty = decision === "received" && !(next[idx].quantityReceived > 0) ? next[idx].quantityOrdered : next[idx].quantityReceived;
-                  // A plain Received / Not received tap undoes any shelf-life call.
-                  next[idx] = {
-                    ...next[idx], decision, quantityReceived: qty, shelfLifeAccepted: false, shelfLifeRejectedUseBy: null,
-                    // Nothing arrived = nothing damaged (unless already reported).
-                    damage: decision === "not_received" && !next[idx].damageReported ? null : next[idx].damage,
-                  };
-                  editLines(next);
-                };
-                const slCheck = shelfLifeOf(line);
-                const slShort = received && line.quantityReceived > 0 && !!slCheck?.short;
-                const rejectedCheck = notReceived && line.shelfLifeRejectedUseBy
-                  ? checkShelfLife({ deliveryDate: deliveryDay, useByDate: line.shelfLifeRejectedUseBy, minDays: line.minDeliveryShelfLifeDays })
-                  : null;
-                const setShelfLife = (patch: Partial<ReceivingLine>) => {
-                  const next = [...lines];
-                  next[idx] = { ...next[idx], ...patch };
-                  editLines(next);
-                };
-                const showUseBy = line.requiresUseByDate || line.minDeliveryShelfLifeDays != null;
-                const slRecord = order.shelfLifeReports?.find((r) => r.lineId === line.lineId);
-                const dmRecord = order.damageReports?.find((r) => r.lineId === line.lineId);
-                return (
-                  <div
-                    key={line.lineId}
-                    className={cn(
-                      "rounded-xl p-3 space-y-2 transition-colors",
-                      notReceived
-                        ? "border-2 border-red-400 bg-red-50/60 dark:bg-red-950/20 dark:border-red-800"
-                        : slShort
-                        ? "border-2 border-red-600 bg-red-50/40 dark:bg-red-950/20"
-                        : useByMissing
-                        ? "border-2 border-destructive bg-destructive/5"
-                        : discrepancy
-                        ? "border-2 border-amber-400 bg-amber-50/40 dark:bg-amber-900/10 dark:border-amber-700"
-                        : received
-                        ? "border-2 border-green-400 bg-green-50/60 dark:bg-green-900/15 dark:border-green-700"
-                        : "border-2 border-dashed border-amber-400 bg-background"
-                    )}
-                  >
-                    <div className="flex items-center justify-between gap-2 flex-wrap">
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className={cn("text-xl font-bold break-words min-w-0", notReceived && "text-red-800 dark:text-red-300")}>
-                          {line.ingredientName}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0 flex-wrap">
-                        {locationLabel && (
-                          <span className="text-xs text-muted-foreground bg-secondary px-2 py-0.5 rounded-full">
-                            → {locationLabel}
-                          </span>
-                        )}
-                        {useByMissing && (
-                          <span className="text-xs font-medium text-destructive bg-destructive/10 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <AlertTriangle className="w-3 h-3" /> Use-by required
-                          </span>
-                        )}
-                        {line.useByIsAuto && !notReceived && (
-                          <span className="text-xs font-medium text-green-600 dark:text-green-400 bg-green-100 dark:bg-green-900/30 px-2 py-0.5 rounded-full">
-                            Auto-dated
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                    {/* Every line is decided, one big button each (Graeme,
-                        2026-10-15): Received at the quantity below — edit it
-                        for a short delivery — or Not received. */}
-                    <div className="grid grid-cols-2 gap-2" role="group" aria-label={`${line.ingredientName}: received or not`}>
-                      <button
-                        type="button"
-                        onClick={() => decide("received")}
-                        aria-pressed={received}
-                        className={cn(
-                          "min-h-[52px] px-2 rounded-xl border-2 text-base sm:text-lg font-bold inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap transition-colors",
-                          received
-                            ? "bg-green-600 border-green-600 text-white"
-                            : "border-green-500 text-green-800 dark:text-green-300 bg-background hover:bg-green-50 dark:hover:bg-green-900/20"
-                        )}
-                      >
-                        <Check className="w-5 h-5" strokeWidth={3} /> Received
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => decide("not_received")}
-                        aria-pressed={notReceived}
-                        className={cn(
-                          "min-h-[52px] px-2 rounded-xl border-2 text-base sm:text-lg font-bold inline-flex items-center justify-center gap-1.5 sm:gap-2 whitespace-nowrap transition-colors",
-                          notReceived
-                            ? "bg-red-600 border-red-600 text-white"
-                            : "border-red-400 text-red-700 dark:text-red-300 bg-background hover:bg-red-50 dark:hover:bg-red-900/20"
-                        )}
-                      >
-                        <X className="w-5 h-5" strokeWidth={3} /> Not received
-                      </button>
-                    </div>
-                    {slRecord && (
-                      <ShelfLifeRecordNote record={slRecord} supplierName={order.supplierName} />
-                    )}
-                    {notReceived && line.shelfLifeRejectedUseBy && (
-                      <ShelfLifeRejectedNote
-                        check={rejectedCheck}
-                        useByDate={line.shelfLifeRejectedUseBy}
-                        supplierName={order.supplierName}
-                        alreadyReported={line.shelfLifeReported}
-                      />
-                    )}
-                    {notReceived && (
-                      <p className="text-base font-semibold text-red-800 dark:text-red-300">
-                        Nothing {line.shelfLifeRejectedUseBy ? "kept" : "arrived"} — {line.quantityOrdered} {line.unit} ordered. It goes on the short-delivery report.
-                      </p>
-                    )}
-                    {!notReceived && (() => {
-                      // For pack-counted ingredients, operators count whole
-                      // packs coming off the truck — the stored quantity stays
-                      // in the ingredient's native unit so everything
-                      // downstream (recipes, cost) keeps working.
-                      const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
-                      const pw = Number(line.packWeight) || 1;
-                      // For lines stored as a pack count (line.unit = "packs" /
-                      // "bottles") the quantity IS already a pack count; for
-                      // native-unit lines we divide by packWeight. Either way
-                      // we need the ingredient's nativeUnit to label the size.
-                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles" || line.unit === "pallets";
-                      const orderedPacks = inPacks
-                        ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
-                        : 0;
-                      const nativeUnitForLine = line.nativeUnit ?? line.unit;
-                      const sizeHint = inPacks ? packSizeHint(line.packWeight, nativeUnitForLine, line.packName) : null;
-                      const orderedDisplay = inPacks ? (
-                        <>
-                          {orderedPacks} {packNoun(nativeUnitForLine, orderedPacks, line.packName)}
-                          {sizeHint && (
-                            <> <span className="text-sm font-normal text-muted-foreground">({sizeHint})</span></>
-                          )}
-                        </>
-                      ) : `${line.quantityOrdered} ${line.unit}`;
-                      // For lineIsPackUnit lines, the stored quantity IS already
-                      // a pack count — don't divide by pw. For native-unit lines
-                      // we keep the legacy display↔native conversion.
-                      const receivedPackCount = inPacks
-                        ? (lineIsPackUnit ? line.quantityReceived : Math.round(line.quantityReceived / pw))
-                        : line.quantityReceived;
-                      const step = inPacks ? 1 : 0.5;
-                      const bump = (deltaPacks: number) => {
-                        const next = [...lines];
-                        const current = Number(next[idx].quantityReceived) || 0;
-                        const currentInDisplay = inPacks
-                          ? (lineIsPackUnit ? current : current / pw)
-                          : current;
-                        const newDisplay = Math.max(0, currentInDisplay + deltaPacks);
-                        const nextReceived = inPacks
-                          ? (lineIsPackUnit ? newDisplay : newDisplay * pw)
-                          : Number(newDisplay.toFixed(2));
-                        next[idx] = { ...next[idx], quantityReceived: nextReceived, decision: nextReceived > 0 ? "received" : "not_received" };
-                        editLines(next);
-                      };
-                      return (
-                    <div className={cn("grid gap-3 grid-cols-[minmax(0,2fr)_minmax(0,3fr)]", showUseBy ? "sm:grid-cols-3" : "sm:grid-cols-2")} onClick={(e) => e.stopPropagation()}>
-                      <div className="min-w-0">
-                        <label className="text-base font-semibold text-muted-foreground block mb-1">Ordered</label>
-                        <span className="text-xl font-bold tabular-nums">
-                          {orderedDisplay}
-                        </span>
-                        {(() => {
-                          // Pallet orders: "1 pallet — 50 packs" so the
-                          // person at the door can match it to what's on
-                          // the truck (1,800 each on its own means nothing).
-                          const pallet = palletReceiptLabel(line.quantityOrdered, line.unit, {
-                            packWeight: line.packWeight,
-                            palletSize: line.palletSize,
-                            unit: line.nativeUnit ?? line.unit,
-                          });
-                          return pallet ? (
-                            <span className="block text-sm font-semibold text-muted-foreground">{pallet}</span>
-                          ) : null;
-                        })()}
-                      </div>
-                      <div className="min-w-0">
-                        <label className="text-base font-semibold text-muted-foreground block mb-1 flex items-baseline gap-1.5 flex-wrap">
-                          <span>Received</span>
-                          {inPacks ? (
-                            <>
-                              <span className="text-sm font-semibold">({packNoun(line.nativeUnit ?? line.unit, receivedPackCount || 0, line.packName)})</span>
-                              {(() => {
-                                const hint = packSizeHint(line.packWeight, line.nativeUnit ?? line.unit, line.packName);
-                                return hint ? <span className="text-xs font-normal text-muted-foreground">{hint}</span> : null;
-                              })()}
-                            </>
-                          ) : (
-                            <span className="text-xs font-normal text-muted-foreground">({line.unit})</span>
-                          )}
-                        </label>
-                        <div className={cn(
-                          "flex items-stretch rounded-lg border bg-background overflow-hidden focus-within:ring-2 focus-within:ring-primary/30",
-                          discrepancy ? "border-amber-400" : "border-border"
-                        )}>
-                          <button
-                            type="button"
-                            aria-label={inPacks ? "Decrease received by 1 pack" : "Decrease received by 0.5"}
-                            onClick={() => bump(-step)}
-                            className="min-w-[44px] min-h-[48px] px-2 sm:px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
-                          >
-                            <Minus className="w-5 h-5" />
-                          </button>
-                          <NumberInput
-                            step={step}
-                            min="0"
-                            inputMode={inPacks ? "numeric" : "decimal"}
-                            value={inPacks ? receivedPackCount : line.quantityReceived}
-                            onChange={(n) => {
-                              const next = [...lines];
-                              const stored = inPacks
-                                ? (lineIsPackUnit ? n : n * pw)
-                                : n;
-                              next[idx] = { ...next[idx], quantityReceived: stored, decision: stored > 0 ? "received" : "not_received" };
-                              editLines(next);
-                            }}
-                            className="flex-1 min-w-0 px-1 sm:px-2 py-2 bg-background text-center text-xl font-bold tabular-nums text-[#7cb342] focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                          />
-                          <button
-                            type="button"
-                            aria-label={inPacks ? "Increase received by 1 pack" : "Increase received by 0.5"}
-                            onClick={() => bump(step)}
-                            className="min-w-[44px] min-h-[48px] px-2 sm:px-3 bg-secondary/40 hover:bg-secondary/70 active:bg-secondary text-foreground transition-colors flex items-center justify-center shrink-0"
-                          >
-                            <Plus className="w-5 h-5" />
-                          </button>
-                        </div>
-                      </div>
-                      {showUseBy && (
-                        <div className="min-w-0 col-span-2 sm:col-span-1">
-                          <label className="text-base font-semibold text-muted-foreground block mb-1">
-                            Use-by Date{line.requiresUseByDate && <span className="text-destructive ml-1">*</span>}
-                          </label>
-                          <input
-                            type="date"
-                            value={line.useByDate}
-                            onChange={(e) => {
-                              const next = [...lines];
-                              // A new date needs a new shelf-life decision.
-                              next[idx] = { ...next[idx], useByDate: e.target.value, useByIsAuto: false, shelfLifeAccepted: false };
-                              editLines(next);
-                            }}
-                            className={cn(
-                              "w-full min-w-0 min-h-[48px] px-3 py-2 bg-background border rounded-lg text-lg font-bold focus:outline-none focus:ring-2 focus:ring-primary/30",
-                              useByMissing || slShort ? "border-destructive border-2" : "border-border"
-                            )}
-                          />
-                        </div>
-                      )}
-                    </div>
-                      );
-                    })()}
-                    {slShort && slCheck && (
-                      <ShelfLifeWarning
-                        check={slCheck}
-                        supplierName={order.supplierName}
-                        accepted={line.shelfLifeAccepted}
-                        onAccept={() => setShelfLife({ shelfLifeAccepted: true, shelfLifeRejectedUseBy: null })}
-                        onReject={() => setShelfLife({ decision: "not_received", shelfLifeAccepted: false, shelfLifeRejectedUseBy: line.useByDate })}
-                        onUndo={() => setShelfLife({ shelfLifeAccepted: false })}
-                      />
-                    )}
-                    {dmRecord ? (
-                      <DamageRecordNote record={dmRecord} supplierName={order.supplierName} unitLabel={line.unit} />
-                    ) : received && line.quantityReceived > 0 ? (
-                      <DamagePanel
-                        line={line}
-                        arrived={line.quantityReceived}
-                        damage={line.damage}
-                        onChange={(d) => setShelfLife({ damage: d })}
-                      />
-                    ) : null}
-                    {discrepancy && (() => {
-                      const inPacks = !!line.stockInPacks && (line.packWeight ?? 0) > 0;
-                      const pw = Number(line.packWeight) || 1;
-                      const lineIsPackUnit = line.unit === "packs" || line.unit === "bottles" || line.unit === "pallets";
-                      const orderedPacks = inPacks
-                        ? (lineIsPackUnit ? line.quantityOrdered : Math.round(line.quantityOrdered / pw))
-                        : 0;
-                      const native = line.nativeUnit ?? line.unit;
-                      const sizeHint = inPacks ? packSizeHint(line.packWeight, native, line.packName) : null;
-                      return (
-                        <div className="flex items-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-                          <AlertTriangle className="w-3.5 h-3.5" />
-                          {line.quantityReceived < line.quantityOrdered ? "Short — goes on the short-delivery report" : "More than ordered"} (
-                          {inPacks
-                            ? <>{orderedPacks} {packNoun(native, orderedPacks, line.packName)}{sizeHint && <> <span className="opacity-70">({sizeHint})</span></>}</>
-                            : `${line.quantityOrdered} ${line.unit}`}
-                          {" "}ordered)
-                        </div>
-                      );
-                    })()}
-                  </div>
-                );
-              })}
+            <div className="space-y-1.5">
+              {lines.map((line, idx) => (
+                <ReceivingLineRow
+                  key={line.lineId}
+                  line={line}
+                  onChange={(patch) => editLines((prev) => prev.map((l, i) => (i === idx ? { ...l, ...patch } : l)))}
+                  supplierName={order.supplierName}
+                  deliveryDay={deliveryDay}
+                  anyUseBy={anyUseBy}
+                  locationLabel={line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null}
+                  slRecord={order.shelfLifeReports?.find((r) => r.lineId === line.lineId)}
+                  dmRecord={order.damageReports?.find((r) => r.lineId === line.lineId)}
+                />
+              ))}
             </div>
           </div>
+
+          <div className="space-y-6">
 
           {(hasChilled || hasFrozen) && (
             <div>
@@ -1348,12 +1004,14 @@ function ReceivingDialog({
             </div>
           )}
 
+          </div>
+          </div>
           </>
           )}
         </div>
 
         {/* Always on screen, whatever the scroll position. */}
-        <div className="shrink-0 border-t border-border bg-card px-4 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] space-y-2">
+        <div className="shrink-0 border-t border-border bg-card px-3 sm:px-5 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] space-y-2">
           {dialogStep === "short" ? (
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
               <button
@@ -1376,11 +1034,44 @@ function ReceivingDialog({
               </button>
             </div>
           ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Where the order stands, always in view. */}
+              {lines.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span
+                    className={cn(
+                      "text-sm font-semibold px-3 py-1 rounded-full whitespace-nowrap",
+                      allDecided
+                        ? "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300"
+                        : "bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200"
+                    )}
+                  >
+                    {lines.length - undecided.length} / {lines.length} decided
+                  </span>
+                  {allDecided && shortNow.length > 0 && (
+                    <span className="text-sm font-semibold px-3 py-1 rounded-full whitespace-nowrap bg-red-100 text-red-800 dark:bg-red-950/40 dark:text-red-200">
+                      {shortNow.length} short
+                    </span>
+                  )}
+                </div>
+              )}
+              {/* The normal case — everything arrived — stays one tap: every
+                  line not yet decided becomes Received at the quantity shown. */}
+              {undecided.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => editLines(lines.map((l) => (l.decision == null ? { ...l, decision: (l.quantityReceived > 0 ? "received" : "not_received") as LineDecision } : l)))}
+                  className="min-h-[48px] text-base font-semibold px-4 py-2 rounded-xl border-2 border-green-500 text-green-800 dark:text-green-300 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors inline-flex items-center gap-1.5"
+                >
+                  <Check className="w-5 h-5" strokeWidth={3} />
+                  {undecided.length === lines.length ? "Mark all received" : `Mark the other ${undecided.length} received`}
+                </button>
+              )}
             <button
               onClick={() => (needsShortStep ? setDialogStep("short") : submit())}
               disabled={!canReceive || receiveMutation.isPending}
               className={cn(
-                "w-full min-h-[56px] px-3 py-3 rounded-xl font-bold text-lg text-center flex items-center justify-center gap-2 transition-colors [&>svg]:shrink-0",
+                "flex-1 min-w-[16rem] min-h-[48px] px-3 py-2 rounded-xl font-bold text-lg text-center flex items-center justify-center gap-2 transition-colors [&>svg]:shrink-0",
                 canReceive
                   ? "bg-primary text-primary-foreground hover:bg-primary/90"
                   : "bg-secondary text-muted-foreground cursor-not-allowed"
@@ -1408,6 +1099,7 @@ function ReceivingDialog({
                 <><CheckCircle2 className="w-4 h-4" /> Mark as Received</>
               )}
             </button>
+            </div>
           )}
           {receiveMutation.isError && (
             <p className="text-sm text-destructive text-center">
