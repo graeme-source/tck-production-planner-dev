@@ -36,7 +36,7 @@ const REVISION = "2024-10-15";
 
 /** GET by default. The one POST is the read-only campaign values REPORT
  *  (Klaviyo's reporting queries are POSTs; they change nothing). */
-async function kFetch<T>(apiKey: string, url: string, report?: { body: unknown }): Promise<T> {
+export async function kFetch<T>(apiKey: string, url: string, report?: { body: unknown }): Promise<T> {
   const res = await fetch(url.startsWith("http") ? url : `https://a.klaviyo.com${url}`, {
     method: report ? "POST" : "GET",
     headers: {
@@ -210,7 +210,7 @@ let resultsRunning: Promise<void> | null = null;
 let resultsError: string | null = null;
 let placedOrderMetric: { key: string; id: string } | null = null;
 
-async function placedOrderMetricId(apiKey: string): Promise<string> {
+export async function placedOrderMetricId(apiKey: string): Promise<string> {
   if (placedOrderMetric?.key === apiKey) return placedOrderMetric.id;
   // Same rule as the surveys feature: "Placed Order", Shopify's if several.
   const matches: Array<{ id: string; integration: string }> = [];

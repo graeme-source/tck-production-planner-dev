@@ -50,6 +50,7 @@ import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
 import { EditTargetsButton } from "@/components/revenue-targets/edit-targets-dialog";
 import { AdEfficiencyRow } from "@/components/ad-efficiency/ad-efficiency-row";
 import { NewVsReturningCard } from "@/components/new-vs-returning-card";
+import { EmailRevenueCard } from "@/components/email-revenue-card";
 import { KpiGradeStrip, type KpiGradeStripProps } from "@/components/numbers-benchmarks/kpi-grade-strip";
 import { useDayPace } from "@/components/numbers-benchmarks/api";
 import { useSalesTrend } from "@/hooks/use-sales-trend";
@@ -1462,6 +1463,8 @@ function FounderDashboard() {
                 grade={<KpiGradeStrip kpi="newCustomerShare" title={`New vs returning customers — ${period.label}`} qualifier="Share of the paid orders received in this period" value={periodTrendData?.totals.newCustomerSharePercent} />}
               />
               {periodPanel(["newCustomerShare"])}
+              {/* Klaviyo's email revenue, flows vs campaigns (Graeme, 2026-11-09). */}
+              <EmailRevenueCard from={from} to={to} periodLabel={period.label} totalSales={periodSummary?.totalRevenue} />
             </div>
             <div className="mb-6" />
 
