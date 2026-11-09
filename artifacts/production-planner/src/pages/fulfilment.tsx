@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { ChargebackHoldsBanner } from "@/components/chargeback-holds-banner";
 import { DispatchCutoffBanner } from "@/components/dispatch-cutoff-banner";
 import { CancelledOrderLabelsBanner } from "@/components/cancelled-order-labels-banner";
@@ -28,6 +28,7 @@ import {
   type TagScope,
 } from "@/lib/dispatch-tagging";
 import { clampBoxes, localDeliveryBoxLabels, localDeliveryLabelHtml, MAX_LOCAL_BOXES } from "@/lib/local-delivery-label";
+import { shouldReclaimScanFocus } from "@/lib/scan-focus";
 import { ApcBatchBookingDialog } from "@/components/apc-batch-booking";
 import { BookingIssuesButton } from "@/components/apc-booking-issues/issues-button";
 import { BookingIssuesReport } from "@/components/apc-booking-issues/issues-report";
@@ -2324,6 +2325,19 @@ export default function Fulfilment() {
   // Local delivery box count, for its "Box 1 of N" labels — belongs to the
   // order it was set on, so the next order starts again at 1.
   const [localBoxes, setLocalBoxes] = useState<{ orderId: number; n: number } | null>(null);
+  // After any tap on a button around the scan box, and whenever the page gets
+  // focus back (closing a print window), the scanner must type into the scan
+  // box again. Left on a button, a scan's Enter pressed that button instead:
+  // a local delivery "wouldn't scan" (#139291, 9 Nov 2026).
+  const reclaimScanFocus = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (barcodeRef.current && shouldReclaimScanFocus(document.activeElement as HTMLElement | null)) barcodeRef.current.focus();
+    });
+  }, []);
+  useEffect(() => {
+    window.addEventListener("focus", reclaimScanFocus);
+    return () => window.removeEventListener("focus", reclaimScanFocus);
+  }, [reclaimScanFocus]);
   const localBoxCount = activeOrder && localBoxes?.orderId === activeOrder.id ? localBoxes.n : 1;
   const activeIsLocal = (!!activeOrder && isLocalDelivery(activeOrder)) || activeIsCollection;
 
@@ -3613,7 +3627,7 @@ export default function Fulfilment() {
             <span className="text-base font-bold">Boxes</span>
             <div className="flex items-center gap-1">
               <button
-                onClick={() => setLocalBoxes({ orderId: activeOrder.id, n: clampBoxes(localBoxCount - 1) })}
+                onClick={() => { setLocalBoxes({ orderId: activeOrder.id, n: clampBoxes(localBoxCount - 1) }); reclaimScanFocus(); }}
                 disabled={localBoxCount <= 1}
                 className="w-11 h-11 rounded-xl border-2 border-border flex items-center justify-center disabled:opacity-40"
                 aria-label="One box fewer"
@@ -3622,7 +3636,7 @@ export default function Fulfilment() {
               </button>
               <span className="w-12 text-center text-2xl font-black tabular-nums">{localBoxCount}</span>
               <button
-                onClick={() => setLocalBoxes({ orderId: activeOrder.id, n: clampBoxes(localBoxCount + 1) })}
+                onClick={() => { setLocalBoxes({ orderId: activeOrder.id, n: clampBoxes(localBoxCount + 1) }); reclaimScanFocus(); }}
                 disabled={localBoxCount >= MAX_LOCAL_BOXES}
                 className="w-11 h-11 rounded-xl border-2 border-border flex items-center justify-center disabled:opacity-40"
                 aria-label="One box more"
@@ -3631,7 +3645,7 @@ export default function Fulfilment() {
               </button>
             </div>
             <button
-              onClick={() => printLocalDeliveryLabels(activeOrder, localBoxCount)}
+              onClick={() => { printLocalDeliveryLabels(activeOrder, localBoxCount); reclaimScanFocus(); }}
               className="ml-auto px-5 py-3 rounded-xl text-base font-bold bg-teal-600 text-white hover:bg-teal-700 transition-colors flex items-center gap-2"
             >
               <Printer className="w-5 h-5" />
