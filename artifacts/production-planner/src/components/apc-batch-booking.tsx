@@ -7,8 +7,9 @@
  *
  *   1. PREFLIGHT — nothing is booked. Shows what would be booked, what is
  *                  blocked, what needs a human look, what is already done.
- *                  Orders are TICKED INDIVIDUALLY; nothing is selected by
- *                  default, so a full run is a deliberate act.
+ *                  Every ready order starts ticked (Graeme, 9 Nov 2026:
+ *                  booking them all is the everyday case); untick or use a
+ *                  quick pick for a smaller run.
  *   2. CONFIRM   — a second explicit step naming the exact count and the
  *                  service-code mix.
  *   3. REPORT    — the counts and every order's outcome, copyable. Any
@@ -26,6 +27,7 @@ import {
   Truck, ClipboardCopy, ShieldAlert, ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { bookButtonLabel, defaultSelection } from "@/lib/apc-book-selection";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/hooks/use-toast";
 import type { PostcodeServiceFacts, PostcodeCall } from "@/components/apc-postcode-service";
@@ -292,8 +294,8 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
   const [error, setError] = useState<string | null>(null);
   const [stage, setStage] = useState<"review" | "confirm" | "booking" | "report">("review");
   const [report, setReport] = useState<BookResponse | null>(null);
-  // Nothing ticked to begin with: booking the whole wave has to be chosen,
-  // not defaulted into.
+  // Every ready order is ticked once the preflight arrives (Graeme, 9 Nov
+  // 2026); "Needs a look" orders still have to be ticked by hand.
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
   useEffect(() => {
@@ -302,7 +304,10 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
       .then(async r => {
         const d = await r.json();
         if (!r.ok) throw new Error(d.error ?? "Preflight failed");
-        if (!cancelled) setPreflight(d);
+        if (!cancelled) {
+          setPreflight(d);
+          setSelected(defaultSelection(d.ready ?? []));
+        }
       })
       .catch(e => { if (!cancelled) setError(e instanceof Error ? e.message : "Preflight failed"); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -489,7 +494,7 @@ export function ApcBatchBookingDialog({ tag, adminBase, onClose, onBooked, onOpe
                 disabled={toBook.length === 0 || !preflight.codesConfigured}
                 className="px-4 py-2 bg-primary text-primary-foreground rounded-xl text-sm font-semibold hover:bg-primary/90 disabled:opacity-40"
               >
-                Continue
+                {bookButtonLabel(toBook.map(o => o.orderId), preflight.ready.map(o => o.orderId))}
               </button>
             </div>
           </div>

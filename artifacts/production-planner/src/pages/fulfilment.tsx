@@ -4535,8 +4535,9 @@ export default function Fulfilment() {
                 <Filter className="w-5 h-5" /> Showing these orders below
               </p>
               <div className="ml-auto flex items-center gap-2 flex-wrap">
-                {/* canBookCourier: booking is manager-only (other session,
-                    2026-08-21) — merged with the unified-bar layout. */}
+                {/* Booking is everyone's (Graeme, 9 Nov 2026); the APC check
+                    and rescheduling stay with canBookCourier ("Fix APC
+                    booking problems"). */}
                 {apcMode === "full" && (
                   <BookingIssuesButton onOpen={() => setShowBookingIssues(true)} />
                 )}
@@ -4549,7 +4550,7 @@ export default function Fulfilment() {
                     <ShieldCheck className="w-5 h-5" /> APC check
                   </button>
                 )}
-                {apcMode === "full" && canBookCourier && (
+                {apcMode === "full" && (
                   <button
                     onClick={() => setShowBatchBooking(true)}
                     className="px-5 py-3 rounded-xl text-base font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
