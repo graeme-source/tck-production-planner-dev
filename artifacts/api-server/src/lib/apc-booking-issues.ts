@@ -199,7 +199,7 @@ export interface ActionInput {
   state: IssueState;
   resolved: boolean;
   dealtWith: boolean;
-  /** Courier actions permission ("Book APC labels" — manager or grant). */
+  /** Fixing booking problems ("Fix APC booking problems" — manager or grant). */
   canCourier: boolean;
   hasEmail: boolean;
   suggestedRetryCode: string | null;
@@ -208,7 +208,7 @@ export interface ActionInput {
 }
 
 const HIDDEN: Availability = { show: false, enabled: false };
-const NEEDS_PERMISSION = "Needs the \"Book APC labels\" permission — ask a manager.";
+const NEEDS_PERMISSION = "Needs the \"Fix APC booking problems\" permission — ask a manager.";
 
 function gate(a: Availability, canCourier: boolean): Availability {
   if (!a.show || !a.enabled || canCourier) return a;

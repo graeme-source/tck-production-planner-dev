@@ -13,7 +13,8 @@ import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnf
 import { nextAvailableDeliveryDate, deliveryDateChoices, isSaturdayDate, rescheduleTags, withDeliveryDate, friendlyDate, firstNameOf, greetingNameOf, toZapietDate } from "../lib/order-reschedule";
 import { rescheduleEmailFor, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { validate } from "../middleware/validate";
-import { requireFeature } from "../lib/feature-access";
+import { requireFeature, userCan } from "../lib/feature-access";
+import { batchBookNeedsFixPermission, FIX_PERMISSION_MESSAGE } from "../lib/apc-batch-book-access";
 import { sendEmail } from "../lib/email";
 import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as isApcConfigured, trainingCredentialsConfigured, APC_TRAINING_BASE, checkPostcodeService, lookupOrderByReference, lookupOrdersByReference, lookupOrderByWaybill, parseApcBarcode, waybillCore, apcTrackingUrl, type ApcOrderLookup } from "../services/apc";
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
@@ -108,10 +109,10 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
  * (Graeme, 2026-08-21). The page permission stays where it is; these specific
  * endpoints sit above it.
  */
-// Courier actions (batch booking, preflight, rescheduling) are manager-and-up
-// by default, but the "Book APC labels" ability grant opens them to a named
-// person without promoting them (Graeme, 2026-09-09) — the whole point of the
-// feature-grants screen. requireFeature = role clears manager OR the grant.
+// Rescheduling and other booking fixes are manager-and-up by default, or the
+// "Fix APC booking problems" grant (was "Book APC labels"; Graeme, 2026-09-09).
+// Booking itself is open to everyone on the packing page since 9 Nov 2026.
+// requireFeature = role clears manager OR the grant.
 const requireManagerForCourierActions = requireFeature("ability.book_apc_labels");
 
 async function getAppSetting(key: string): Promise<string | null> {
@@ -2185,7 +2186,7 @@ async function buildPreflight(tag: string, dispatchDate: Date, chargebackHeld: R
 }
 
 // GET /batch-preflight?tag=YYYY-MM-DD — what WOULD happen. Books nothing.
-router.get("/batch-preflight", requireManagerForCourierActions, async (req: Request, res: Response) => {
+router.get("/batch-preflight", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const { tag, dispatchDate } = req.query as { tag?: string; dispatchDate?: string };
   if (!tag) { res.status(400).json({ error: "tag query param required" }); return; }
   try {
@@ -2203,7 +2204,7 @@ router.get("/batch-preflight", requireManagerForCourierActions, async (req: Requ
 // Books each order in turn. One order failing never stops the rest, and every
 // order comes back with its own outcome so a partial run is fully accounted
 // for. Orders that already hold a live consignment are skipped, not re-booked.
-router.post("/batch-book", requireManagerForCourierActions, async (req: Request, res: Response) => {
+router.post("/batch-book", requireFulfilmentAccess, async (req: Request, res: Response) => {
   const parsed = z.object({
     tag: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     orderIds: z.array(z.number()).min(1).max(500),
@@ -2221,6 +2222,15 @@ router.post("/batch-book", requireManagerForCourierActions, async (req: Request,
   if (!isApcConfigured()) { res.status(503).json({ error: "APC credentials not configured." }); return; }
 
   const { tag, orderIds, serviceCodeOverride, retry: isRetry = false } = parsed.data;
+  // A first booking is anyone's (Graeme, 9 Nov 2026); a retry or a different
+  // service code is fixing a problem, which stays with the trained people.
+  if (batchBookNeedsFixPermission(parsed.data)) {
+    const role = await resolveRole(req);
+    if (!role || !(await userCan(req.session.userId, role, "ability.book_apc_labels"))) {
+      res.status(403).json({ error: FIX_PERMISSION_MESSAGE });
+      return;
+    }
+  }
   const dispatchDate = parsed.data.dispatchDate ? new Date(parsed.data.dispatchDate) : new Date(tag);
   const bookedBy = await resolveUserName(req);
 

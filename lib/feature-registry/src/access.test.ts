@@ -38,13 +38,16 @@ describe("decideAccess", () => {
 
   it("the Order Packing abilities exist and grant like anything else", () => {
     // Why Graeme couldn't find them (2026-09-09): tagging and booking had no
-    // registry entries at all. Managers keep both without a grant; a viewer
-    // gets exactly the one they were handed.
-    for (const key of ["ability.tag_dispatch", "ability.book_apc_labels"]) {
-      expect(decideAccess({ userRole: "manager", grantedKeys: [], featureKey: key })).toBe(true);
-      expect(decideAccess({ userRole: "viewer", grantedKeys: [], featureKey: key })).toBe(false);
-      expect(decideAccess({ userRole: "viewer", grantedKeys: [key], featureKey: key })).toBe(true);
-    }
+    // registry entries at all. Fixing booking problems stays manager-or-grant.
+    const key = "ability.book_apc_labels";
+    expect(decideAccess({ userRole: "manager", grantedKeys: [], featureKey: key })).toBe(true);
+    expect(decideAccess({ userRole: "viewer", grantedKeys: [], featureKey: key })).toBe(false);
+    expect(decideAccess({ userRole: "viewer", grantedKeys: [key], featureKey: key })).toBe(true);
+  });
+
+  it("lets everyone tag orders for dispatch (Graeme, 9 Nov 2026)", () => {
+    expect(decideAccess({ userRole: "viewer", grantedKeys: [], featureKey: "ability.tag_dispatch" })).toBe(true);
+    // Tagging never unlocks fixing booking problems.
     expect(decideAccess({ userRole: "viewer", grantedKeys: ["ability.tag_dispatch"], featureKey: "ability.book_apc_labels" })).toBe(false);
   });
 

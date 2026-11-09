@@ -43,8 +43,13 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // ── Abilities on Order Packing Live ──────────────────────────────────────
   // Both need the Order Packing Live page as well — grant that too for
   // someone below its access level.
-  { key: "ability.tag_dispatch", name: "Tag orders for dispatch", description: "Approve the day's orders — the Step 1 tagging panel on Order Packing Live.", area: "Order Packing abilities", kind: "ability", minRole: "manager" },
-  { key: "ability.book_apc_labels", name: "Book APC labels", description: "Raise APC consignments and reschedule orders on Order Packing Live.", area: "Order Packing abilities", kind: "ability", minRole: "manager" },
+  // Everyone on Order Packing Live tags and books now (Graeme, 9 Nov 2026):
+  // the team books the orders that go through and gets on with packing. The
+  // key keeps its name, so existing grants stand.
+  { key: "ability.tag_dispatch", name: "Tag orders for dispatch", description: "Approve the day's orders — the Step 1 tagging panel on Order Packing Live. Everyone can do this.", area: "Order Packing abilities", kind: "ability", minRole: "viewer" },
+  // Was "Book APC labels". Booking itself is open to everyone; what stays
+  // gated is sorting out what didn't book (key unchanged: grants hang off it).
+  { key: "ability.book_apc_labels", name: "Fix APC booking problems", description: "Retry failed APC bookings, reschedule orders, customer emails and refunds, and the APC check. Booking itself is open to everyone on Order Packing Live.", area: "Order Packing abilities", kind: "ability", minRole: "manager" },
   { key: "page.reports", name: "Reports", description: "Reports and the issue log.", area: "Pages", kind: "page", page: "/reports", minRole: "viewer" },
   { key: "page.kanbans", name: "Kanbans", description: "Kanban cards and the shelf-edge reorder loop.", area: "Pages", kind: "page", page: "/kanbans", minRole: "viewer" },
   // The Product Hub page was retired on 12 Oct 2026 (now Product Labels at
