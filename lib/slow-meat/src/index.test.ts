@@ -9,6 +9,7 @@ import {
   isSlowMeat,
   type RecipeMeatProfile,
   type SlowMeatSettings,
+  countsTowardSlowMeatLimit,
 } from "./index";
 
 const settings: SlowMeatSettings = { minCookMinutes: 120, trayLimit: 11 };
@@ -161,5 +162,16 @@ describe("parseSlowMeatSettings", () => {
     expect(parseSlowMeatSettings({})).toEqual({ minCookMinutes: 120, trayLimit: 11 });
     expect(parseSlowMeatSettings({ minCookMinutes: "abc", trayLimit: "-2" })).toEqual({ minCookMinutes: 120, trayLimit: 11 });
     expect(parseSlowMeatSettings({ minCookMinutes: "90", trayLimit: "14" })).toEqual({ minCookMinutes: 90, trayLimit: 14 });
+  });
+});
+
+describe("countsTowardSlowMeatLimit", () => {
+  it("counts a slow meat unless it's been left out (pork, 9 Nov 2026)", () => {
+    expect(countsTowardSlowMeatLimit(180, 120, true)).toBe(true);
+    expect(countsTowardSlowMeatLimit(180, 120, undefined)).toBe(true);
+    expect(countsTowardSlowMeatLimit(180, 120, false)).toBe(false);
+  });
+  it("never counts a quick meat", () => {
+    expect(countsTowardSlowMeatLimit(30, 120, true)).toBe(false);
   });
 });

@@ -75,6 +75,16 @@ export function isSlowMeat(cookTimeMin: number | null | undefined, minCookMinute
   return cookTimeMin != null && cookTimeMin >= minCookMinutes;
 }
 
+/** A slow meat that also counts toward the oven limit: each ingredient can be
+ *  left out (Graeme, 9 Nov 2026: pork now cooks overnight at another time). */
+export function countsTowardSlowMeatLimit(
+  cookTimeMin: number | null | undefined,
+  minCookMinutes: number,
+  countsTowardLimit: boolean | null | undefined,
+): boolean {
+  return countsTowardLimit !== false && isSlowMeat(cookTimeMin, minCookMinutes);
+}
+
 const EPS = 1e-9;
 
 /** Trays for a weight of one meat. Weight is taken to the gram first so

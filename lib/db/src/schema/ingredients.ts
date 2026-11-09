@@ -32,6 +32,11 @@ export const ingredientsTable = pgTable("ingredients", {
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),
   prepWeightMode: text("prep_weight_mode").notNull().default("raw"),
   rawMeatTrayCapacityKg: numeric("raw_meat_tray_capacity_kg", { precision: 10, scale: 4 }),
+  // How the Raw Meat station portions it (migration 0363, Fix queue #396):
+  // in the slow-meat oven limit or not, trays or bags, split or one lot.
+  countsTowardSlowMeat: boolean("counts_toward_slow_meat").notNull().default(true),
+  meatPortionContainer: text("meat_portion_container").notNull().default("tray"),
+  meatPortionBreakdown: boolean("meat_portion_breakdown").notNull().default(true),
   // Main Prep weighs this as ONE tin per recipe however many batches (Fresh
   // Basil, Rosemary, Garlic Butter). Read by prepUnitCount (api lib
   // stock-usage-rules.ts) for Main Prep, Orders and the ledger. Migration 0240.

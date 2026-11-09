@@ -13,12 +13,12 @@
  *   - category raw_meat only; fried-chicken recipes excluded (they prep
  *     elsewhere, exactly as the station excludes them)
  */
-import { db, appSettingsTable, recipesTable, productionPlanItemsTable } from "@workspace/db";
+import { db, appSettingsTable, recipesTable, productionPlanItemsTable, ingredientsTable } from "@workspace/db";
 import { eq, inArray } from "drizzle-orm";
 import {
   SLOW_MEAT_SETTING_KEYS,
   parseSlowMeatSettings,
-  isSlowMeat,
+  countsTowardSlowMeatLimit,
   type RecipeMeatProfile,
   type RecipeMeatUse,
   type SlowMeatSettings,
@@ -54,11 +54,13 @@ export async function saveSlowMeatSettings(s: SlowMeatSettings): Promise<void> {
 async function loadRecipeProfile(
   recipe: { id: number; name: string; portionsPerBatch: number | null },
   minCookMinutes: number,
+  leftOut: Set<number>,
 ): Promise<RecipeMeatProfile | null> {
   const portionsPerBatch = Number(recipe.portionsPerBatch) || 10;
   const resolved = await resolveRecipeIngredients(recipe.id, portionsPerBatch, { skipToppings: true });
   const agg = aggregateIngredients(resolved);
-  const slow = [...agg.values()].filter(i => i.category === "raw_meat" && isSlowMeat(i.estimatedCookTimeMin, minCookMinutes));
+  const slow = [...agg.values()].filter(i => i.category === "raw_meat"
+    && countsTowardSlowMeatLimit(i.estimatedCookTimeMin, minCookMinutes, !leftOut.has(i.ingredientId)));
   if (slow.length === 0) return null;
 
   // Raw quantity per batch in the ingredient's own unit (what the station
@@ -104,10 +106,15 @@ export async function loadSlowMeatProfiles(
     .select({ id: recipesTable.id, name: recipesTable.name, portionsPerBatch: recipesTable.portionsPerBatch, category: recipesTable.category })
     .from(recipesTable);
   const recipes = recipeIds ? await base.where(inArray(recipesTable.id, recipeIds)) : await base;
+  // Meats switched out of the limit on their ingredient (migration 0363).
+  const leftOut = new Set((await db
+    .select({ id: ingredientsTable.id })
+    .from(ingredientsTable)
+    .where(eq(ingredientsTable.countsTowardSlowMeat, false))).map(r => r.id));
   const out: RecipeMeatProfile[] = [];
   for (const r of recipes) {
     if (r.category === FRIED_CHICKEN_CATEGORY) continue;
-    const p = await loadRecipeProfile(r, settings.minCookMinutes);
+    const p = await loadRecipeProfile(r, settings.minCookMinutes, leftOut);
     if (p) out.push(p);
   }
   return out;
