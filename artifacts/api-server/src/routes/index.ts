@@ -158,6 +158,7 @@ import caseOrdersRouter from "./case-orders";
 import founderFocusRouter from "./founder-focus";
 import founderAdSpendRouter from "./founder-ad-spend";
 import metaAdsRouter from "./meta-ads";
+import klaviyoEmailRevenueRouter from "./klaviyo-email-revenue";
 import todosRouter from "./todos";
 import smartAddRouter from "./smart-add";
 import founderSalesRouter from "./founder-sales";
@@ -462,6 +463,7 @@ router.use("/founder-focus", founderFocusRouter);
 // Numbers page. Founder-gated inside the router; a no-op until the
 // META_ADS_TOKEN / META_AD_ACCOUNT_ID env vars exist.
 router.use("/meta-ads", metaAdsRouter);
+router.use("/klaviyo-email-revenue", klaviyoEmailRevenueRouter);
 // Old contracts filed on a person's record (uploaded PDF / photo): HR-records
 // accounts + the employee themself only, guarded inside. Mounted BEFORE
 // /contracts so "/uploaded" never reaches that router's "/:id".
