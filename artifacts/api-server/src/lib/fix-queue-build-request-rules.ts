@@ -61,3 +61,25 @@ export function finishBuild(current: BuildRequest | null, nowIso: string, note: 
   const s = buildRequestStatus(current);
   return s === "building" || s === "requested" ? { ...current!, claimedAt: current!.claimedAt ?? nowIso, finishedAt: nowIso, note } : null;
 }
+
+/**
+ * Which approved cards the button can build (Graeme, 9 Nov 2026: "I keep
+ * clicking it and they never get built"). Only a defect or an improvement has
+ * code to write. An approved data fix, explanation or needs-more-info card is
+ * waiting on something else (a live data change, an answer, someone outside
+ * the app), so counting it made the button promise builds that never came.
+ */
+const CODE_LANES = new Set(["defect", "improvement"]);
+
+export const hasCodeToWrite = (lane: string): boolean => CODE_LANES.has(lane);
+
+/** What an approved card without code is waiting for, in a few words. */
+export function approvedBlocker(lane: string): string {
+  switch (lane) {
+    case "data_fix": return "a live data change";
+    case "needs_info": return "more information";
+    case "understanding": return "an answer, not code";
+    case "not_app": return "something outside the app";
+    default: return "something other than code";
+  }
+}

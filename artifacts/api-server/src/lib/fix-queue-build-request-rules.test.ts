@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildRequestStatus, claimBuild, finishBuild, parseBuildRequest, pressBuildNow } from "./fix-queue-build-request-rules";
+import { buildRequestStatus, claimBuild, finishBuild, parseBuildRequest, pressBuildNow, approvedBlocker, hasCodeToWrite } from "./fix-queue-build-request-rules";
 
 const T1 = "2026-11-02T08:10:00.000Z";
 const T2 = "2026-11-02T08:15:00.000Z";
@@ -38,5 +38,24 @@ describe("Build approved fixes now", () => {
     expect(parseBuildRequest("not json")).toBeNull();
     expect(parseBuildRequest("")).toBeNull();
     expect(parseBuildRequest(JSON.stringify({ requestedAt: T1 }))).toMatchObject({ requestedAt: T1, claimedAt: null });
+  });
+});
+
+describe("hasCodeToWrite", () => {
+  // Live on 9 Nov 2026: seven approved cards, none with code, and the button
+  // still said "Build 7 approved now" every time Graeme pressed it.
+  it("counts only defects and improvements as buildable", () => {
+    expect(hasCodeToWrite("defect")).toBe(true);
+    expect(hasCodeToWrite("improvement")).toBe(true);
+    for (const lane of ["data_fix", "understanding", "needs_info", "not_app"]) expect(hasCodeToWrite(lane)).toBe(false);
+  });
+});
+
+describe("approvedBlocker", () => {
+  it("says what an approved card without code is waiting for", () => {
+    expect(approvedBlocker("data_fix")).toBe("a live data change");
+    expect(approvedBlocker("needs_info")).toBe("more information");
+    expect(approvedBlocker("understanding")).toBe("an answer, not code");
+    expect(approvedBlocker("something new")).toBe("something other than code");
   });
 });

@@ -3,8 +3,8 @@
  * Fix queue's numbers beside it. Rules: fix-queue-build-request-rules.ts.
  */
 import { db, appSettingsTable, issueTriageTable } from "@workspace/db";
-import { eq, sql } from "drizzle-orm";
-import { BUILD_REQUEST_SETTING_KEY, buildRequestStatus, parseBuildRequest, type BuildRequest } from "./fix-queue-build-request-rules";
+import { eq, inArray } from "drizzle-orm";
+import { BUILD_REQUEST_SETTING_KEY, approvedBlocker, buildRequestStatus, hasCodeToWrite, parseBuildRequest, type BuildRequest } from "./fix-queue-build-request-rules";
 
 export async function readBuildRequest(): Promise<BuildRequest | null> {
   const [row] = await db.select({ value: appSettingsTable.value }).from(appSettingsTable).where(eq(appSettingsTable.key, BUILD_REQUEST_SETTING_KEY));
@@ -17,12 +17,25 @@ export async function writeBuildRequest(r: BuildRequest): Promise<void> {
     .onConflictDoUpdate({ target: appSettingsTable.key, set: { value, updatedAt: new Date() } });
 }
 
-/** What the button shows: the request, plus how many approved cards wait to be built. */
+/** What the button shows: the request, how many approved cards have code to
+ *  build, and the approved ones that are waiting on something else. */
 export async function buildRequestView() {
   const r = await readBuildRequest();
-  const [counts] = await db.select({
-    approved: sql<number>`count(*) filter (where ${issueTriageTable.status} = 'approved')::int`,
-    building: sql<number>`count(*) filter (where ${issueTriageTable.status} = 'in_progress')::int`,
-  }).from(issueTriageTable);
-  return { status: buildRequestStatus(r), request: r, approvedWaiting: counts?.approved ?? 0, inProgress: counts?.building ?? 0 };
+  const rows = await db.select({
+    issueId: issueTriageTable.andonIssueId,
+    lane: issueTriageTable.lane,
+    status: issueTriageTable.status,
+    summary: issueTriageTable.verdictSummary,
+  }).from(issueTriageTable).where(inArray(issueTriageTable.status, ["approved", "in_progress"]));
+  const approved = rows.filter(row => row.status === "approved");
+  return {
+    status: buildRequestStatus(r),
+    request: r,
+    approvedWaiting: approved.filter(row => hasCodeToWrite(row.lane)).length,
+    approvedNotCode: approved
+      .filter(row => !hasCodeToWrite(row.lane))
+      .map(row => ({ issueId: row.issueId, waitingFor: approvedBlocker(row.lane), summary: row.summary }))
+      .sort((a, b) => a.issueId - b.issueId),
+    inProgress: rows.filter(row => row.status === "in_progress").length,
+  };
 }
