@@ -6,7 +6,7 @@
  * meeting: its pages are the week's five meeting lessons (big visual, few
  * words — the meeting is the reminder, this is the reinforcement) and the
  * last page is a three-question quiz. Full marks completes it; retries are
- * free. Completion writes the review, ticks the person's cell on the Lean
+ * free. A week with no quiz is finished from its last page instead. Completion writes the review, ticks the person's cell on the Lean
  * training matrix, and closes the auto-created weekly to-do.
  *
  * Exports:
@@ -24,6 +24,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { LessonDiagram } from "@/components/lesson-diagrams";
 import { MarkdownBlock, YouTubeEmbed } from "@/components/lesson-media";
+import { pagerAction } from "@/lib/lean-review-pager";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -213,6 +214,8 @@ export function LeanReviewPage() {
   const onQuizPage = hasQuiz && pageIdx === totalPages - 1;
   const lesson = onQuizPage ? null : lessons[pageIdx];
   const allAnswered = data.quiz.every((_q, i) => answers[i] != null);
+  const done = !!lastResult?.passed || (isPreview ? !!data.selfCompleted : data.completed);
+  const action = pagerAction({ pageIdx, lessonCount: lessons.length, hasQuiz, done });
 
   return (
     // Full width, text beside the video on wide screens, so a lesson page fits
@@ -360,15 +363,40 @@ export function LeanReviewPage() {
         >
           <ChevronLeft className="w-4 h-4" /> Back
         </button>
-        {!onQuizPage && (
+        {(action === "next" || action === "quiz") && (
           <button
             onClick={() => setPageIdx(i => Math.min(totalPages - 1, i + 1))}
             className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5"
           >
-            {pageIdx === lessons.length - 1 && hasQuiz ? <>To the quiz <GraduationCap className="w-4 h-4" /></> : <>Next <ChevronRight className="w-4 h-4" /></>}
+            {action === "quiz" ? <>To the quiz <GraduationCap className="w-4 h-4" /></> : <>Next <ChevronRight className="w-4 h-4" /></>}
+          </button>
+        )}
+        {action === "finish" && (
+          // No quiz this week: reading the pages is the review.
+          <button
+            onClick={() => submit.mutate()}
+            disabled={submit.isPending}
+            className="px-5 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold inline-flex items-center gap-1.5 disabled:opacity-50"
+          >
+            {submit.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+            I've read and understood it
           </button>
         )}
       </div>
+
+      {!hasQuiz && lastResult?.passed && (
+        <div className="rounded-xl border border-emerald-300 dark:border-emerald-800 bg-emerald-50 dark:bg-emerald-950/30 px-4 py-3 text-sm font-semibold text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4" />
+          {!isPreview
+            ? "Done for the week. Your Lean training matrix has been ticked."
+            : data.canSelfComplete
+              ? "Done. Next week is counted as done for you."
+              : "Done. You've read next week's lesson."}
+        </div>
+      )}
+      {submit.isError && (
+        <p className="text-sm text-red-600">Couldn't save that. Try again in a moment.</p>
+      )}
 
       <p className="text-xs text-muted-foreground flex items-center gap-1.5">
         <BookOpen className="w-3.5 h-3.5" />
