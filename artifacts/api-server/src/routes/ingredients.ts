@@ -409,6 +409,18 @@ router.get("/:id/kanban-card", async (req, res) => {
   });
 });
 
+// How each raw meat is portioned at the Raw Meat station (Fix queue #396,
+// 9 Nov 2026): in the slow-meat limit or not, trays or bags, split or one lot.
+router.get("/meat-portioning", async (_req, res) => {
+  const rows = await db.select({
+    id: ingredientsTable.id,
+    countsTowardSlowMeat: ingredientsTable.countsTowardSlowMeat,
+    container: ingredientsTable.meatPortionContainer,
+    breakdown: ingredientsTable.meatPortionBreakdown,
+  }).from(ingredientsTable).where(eq(ingredientsTable.category, "raw_meat"));
+  res.json(rows.map(r => ({ ...r, container: r.container === "bag" ? "bag" : "tray" })));
+});
+
 router.get("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const [row] = await db.select().from(ingredientsTable).where(eq(ingredientsTable.id, id));
@@ -645,6 +657,37 @@ router.put("/:id/meat-timing", requireManagerOrAdmin, validate(MeatTimingBody), 
       id: ingredientsTable.id,
       estimatedCookTimeMin: ingredientsTable.estimatedCookTimeMin,
       meatProcessMinutes: ingredientsTable.meatProcessMinutes,
+    });
+  if (!row) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(row);
+});
+
+// Save one raw meat's portioning (only the keys sent are written).
+const MeatPortioningBody = z.object({
+  countsTowardSlowMeat: z.boolean().optional(),
+  container: z.enum(["tray", "bag"]).optional(),
+  breakdown: z.boolean().optional(),
+});
+router.put("/:id/meat-portioning", requireManagerOrAdmin, validate(MeatPortioningBody), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+  const body = req.body as z.infer<typeof MeatPortioningBody>;
+  if (body.countsTowardSlowMeat === undefined && body.container === undefined && body.breakdown === undefined) {
+    res.status(400).json({ error: "Nothing to save" });
+    return;
+  }
+  const [row] = await db.update(ingredientsTable)
+    .set({
+      ...(body.countsTowardSlowMeat !== undefined ? { countsTowardSlowMeat: body.countsTowardSlowMeat } : {}),
+      ...(body.container !== undefined ? { meatPortionContainer: body.container } : {}),
+      ...(body.breakdown !== undefined ? { meatPortionBreakdown: body.breakdown } : {}),
+    })
+    .where(eq(ingredientsTable.id, id))
+    .returning({
+      id: ingredientsTable.id,
+      countsTowardSlowMeat: ingredientsTable.countsTowardSlowMeat,
+      container: ingredientsTable.meatPortionContainer,
+      breakdown: ingredientsTable.meatPortionBreakdown,
     });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);

@@ -9,6 +9,7 @@
  * Schema, value-shaping and payload-building helpers all live in
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
+import { MeatPortioningFields } from "@/components/meat-portioning/meat-portioning-fields";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { detectAllergens, ALLERGEN_DISPLAY, declarationNeedsWrapper, labelNameFor, wrapDeclaration } from "@workspace/allergens";
@@ -1222,8 +1223,9 @@ export function IngredientFormDialog({
 
           {showRawMeatTray && (
             <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+              <MeatPortioningFields ingredientId={editingItem?.id ?? null} />
               <div>
-                <label className="text-sm font-medium mb-1 block">Tray Capacity <span className="text-xs font-normal text-muted-foreground">(kg per tray)</span></label>
+                <label className="text-sm font-medium mb-1 block">Raw meat per tray or bag <span className="text-xs font-normal text-muted-foreground">(kg, including its rub and sauce)</span></label>
                 <div className="relative max-w-[160px]">
                   <input type="number" step="0.1" min="0" {...register("rawMeatTrayCapacityKg")} className={cn(numInputClass, "pr-10")} placeholder="e.g. 10" />
                   <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">kg</span>
