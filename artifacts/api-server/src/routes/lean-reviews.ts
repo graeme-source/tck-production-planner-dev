@@ -124,6 +124,14 @@ function fridayOf(monday: string): string {
   return new Date(new Date(`${monday}T00:00:00Z`).getTime() + 4 * 86_400_000).toISOString().slice(0, 10);
 }
 
+/** The week the founder's review-ahead is about: the plan's next week, even
+ *  when it isn't written yet, so the to-do asks for it to be written instead
+ *  of naming whatever the meeting would fall back to (Graeme, 9 Nov 2026). */
+async function founderNextWeek(nextMonday: string): Promise<LeanPrincipleRow | null> {
+  const week = await getWeekFocusPrinciple(nextMonday);
+  return (week.planned ?? week.principle) as LeanPrincipleRow | null;
+}
+
 /**
  * Create this week's lean to-do for EVERY active user, up front (Graeme,
  * 2026-09-14): the reminder lands on Monday saying "due by Friday" and the
@@ -158,7 +166,7 @@ export async function ensureWeeklyLeanTodosForAll(): Promise<void> {
 
   // Founder review-ahead: next week's module, due this Friday.
   const nextMonday = nextMondayFrom(weekStart);
-  const { principle: nextPrinciple } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+  const nextPrinciple = await founderNextWeek(nextMonday);
   if (nextPrinciple) {
     const todo = founderReviewTodo(nextPrinciple, (await loadLessons(nextPrinciple.id)).length);
     await db.execute(sql`
@@ -308,7 +316,7 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
       .from(leanLessonReviewsTable)
       .where(and(eq(leanLessonReviewsTable.userId, userId), eq(leanLessonReviewsTable.weekStart, nextMonday)));
     if (!nextReview) {
-      const { principle: nextPrinciple } = (await getWeekFocusPrinciple(nextMonday)) as { principle: LeanPrincipleRow | null };
+      const nextPrinciple = await founderNextWeek(nextMonday);
       if (nextPrinciple) {
         await ensureWeeklyTodo({
           userId,

@@ -25,3 +25,15 @@ export function followOnWeek<W extends PlanWeek>(plan: W[], pinnedId: number, we
   if (from < 0) return null;
   return teachable[(from + weeksAfter) % teachable.length];
 }
+
+/**
+ * The week the plan says comes next, written or not (Graeme, 9 Nov 2026). The
+ * team's meeting steps over an empty week (followOnWeek), but the founder's
+ * to-do must name it, so he's asked to write 3S — Sweep rather than told to
+ * review Seeing Waste, which the plan only reached by wrapping round.
+ */
+export function plannedWeek<W extends PlanWeek>(plan: W[], pinnedId: number, weeksAfter: number): W | null {
+  const from = plan.findIndex(w => w.id === pinnedId);
+  if (from < 0) return null;
+  return plan[(from + weeksAfter) % plan.length];
+}
