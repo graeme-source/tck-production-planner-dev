@@ -31,6 +31,8 @@ import { linkedStockChecksForRecipe } from "@/lib/linked-stock-checks";
 import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
 import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-session-capture";
 import { prepItemKey } from "@/lib/prep-session-capture";
+import { useMeatPortioning } from "@/components/meat-portioning/api";
+import { displayUnits, portionWord, sharedContainer, wholeLotToggle } from "@/lib/meat-portioning";
 
 interface PrepTrayCompletion {
   id: number;
@@ -278,6 +280,15 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   };
 
   const [trayPending, setTrayPending] = useState<string | null>(null);
+  // Trays or bags, and whether a meat is split at all (Fix queue #396).
+  const portioning = useMeatPortioning();
+
+  /** The single tick for a meat that isn't split: ticks every portion still
+   *  to do, or unticks them all, so stock and "still to prep" are unchanged. */
+  const toggleWholeLot = async (ingredientId: number, recipeId: number, count: number) => {
+    const { numbers } = wholeLotToggle(count, n => isCompleted(ingredientId, recipeId, n));
+    for (const n of numbers) await toggleTray(ingredientId, recipeId, n);
+  };
 
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
     if (isOnBreak) return;
@@ -364,17 +375,19 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const selTotalMarinadeG = selMarinades.reduce((sum, m) => sum + m.totalGrams, 0);
   const selTrayCapKg = selRawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
 
-  // Per-recipe tray completion count
-  const recipeCompletedTrays = (r: PrepRecipeDetail) => {
-    return r.ingredients.filter(i => i.isRawMeat).reduce((s, ing) => {
-      if (!ing.trayCount) return s;
-      return s + Array.from({ length: ing.trayCount }, (_, i) => i + 1)
-        .filter(tn => isCompleted(ing.ingredientId, r.recipeId, tn)).length;
-    }, 0);
+  // Per-recipe completion count, in what the station shows: trays or bags,
+  // and an unsplit meat as one lot (Fix queue #396).
+  const meatUnits = (r: PrepRecipeDetail, ing: PrepIngredientDetail) => {
+    const portions = ing.trayCount ?? 0;
+    const done = Array.from({ length: portions }, (_, i) => i + 1)
+      .filter(tn => isCompleted(ing.ingredientId, r.recipeId, tn)).length;
+    return displayUnits({ portions, done, breakdown: portioning.of(ing.ingredientId).breakdown });
   };
+  const recipeCompletedTrays = (r: PrepRecipeDetail) =>
+    r.ingredients.filter(i => i.isRawMeat).reduce((s, ing) => s + meatUnits(r, ing).done, 0);
 
   const recipeTrays = (r: PrepRecipeDetail) =>
-    r.ingredients.filter(i => i.isRawMeat).reduce((s, i) => s + (i.trayCount ?? 0), 0);
+    r.ingredients.filter(i => i.isRawMeat).reduce((s, ing) => s + meatUnits(r, ing).total, 0);
 
   const selCompletedTrays = selected ? recipeCompletedTrays(selected) : 0;
   const selTotalTrays = selected ? recipeTrays(selected) : 0;
@@ -572,7 +585,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                   <p className="text-4xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400 leading-none">
                     {selCompletedTrays}<span className="text-2xl text-muted-foreground font-normal">/{selTotalTrays}</span>
                   </p>
-                  <p className="text-sm font-medium text-rose-700 dark:text-rose-300 mt-0.5">tray{selTotalTrays !== 1 ? "s" : ""} done</p>
+                  <p className="text-sm font-medium text-rose-700 dark:text-rose-300 mt-0.5">{portionWord(sharedContainer(selRawMeat.map(i => portioning.of(i.ingredientId).container)), selTotalTrays)} done</p>
                 </div>
                 <div className="h-8 w-px bg-rose-200 dark:bg-rose-700" />
                 <div>
@@ -616,18 +629,22 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
             {/* Per-ingredient tray task cards */}
             <div className="space-y-4">
               <p className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
-                {selTotalTrays > 0 ? "Tap each tray to mark it complete" : "Ingredients"}
+                {selTotalTrays > 0 ? "Tap each one to mark it complete" : "Ingredients"}
               </p>
               {selRawMeat.map(ing => {
                 const meatMarinades = selMarinades.filter(m => m.rawMeatIngredientId === ing.ingredientId);
                 const ingKgTotal = toKg(ing.rawQty, ing.unit);
+                const { container, breakdown } = portioning.of(ing.ingredientId);
+                const one = portionWord(container, 1);
+                const One = one.charAt(0).toUpperCase() + one.slice(1);
                 const ingTrays = ing.trayCount;
-                const perTrayKg = ingTrays && ingTrays > 0 ? ingKgTotal / ingTrays : null;
+                // Not split: no per-portion figures, the totals are the job.
+                const perTrayKg = breakdown && ingTrays && ingTrays > 0 ? ingKgTotal / ingTrays : null;
                 // Piece-counted ingredients (Pigs & Blankets etc.) display
                 // as whole pieces instead of kg — kg stays visible as a
                 // secondary line for tray packing context.
                 const usePieces = ing.pieceCount != null && ing.pieceCount > 0;
-                const perTrayPieces = usePieces && ingTrays && ingTrays > 0
+                const perTrayPieces = usePieces && breakdown && ingTrays && ingTrays > 0
                   ? Math.ceil((ing.pieceCount ?? 0) / ingTrays)
                   : null;
                 const ingMarinadeG = meatMarinades.reduce((s, m) => s + m.totalGrams, 0);
@@ -642,15 +659,15 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                   ? (perTrayPieces != null ? `${perTrayPieces} pieces` : null)
                   : (perTrayKg != null ? formatPrepWeight(perTrayKg, "kg") : null);
                 const meatSopAmounts: SopAmountsContext = {
-                  title: `For today: ${meatTotalText} ${ing.ingredientName}${ingTrays ? ` · ${ingTrays} tray${ingTrays !== 1 ? "s" : ""}` : ""}`,
+                  title: `For today: ${meatTotalText} ${ing.ingredientName}${ingTrays && breakdown ? ` · ${ingTrays} ${portionWord(container, ingTrays)}` : ""}`,
                   amounts: [
-                    { name: ing.ingredientName, amountText: meatPerTrayText ? `${meatTotalText} total · ${meatPerTrayText} per tray` : meatTotalText },
+                    { name: ing.ingredientName, amountText: meatPerTrayText ? `${meatTotalText} total · ${meatPerTrayText} per ${one}` : meatTotalText },
                     ...meatMarinades.filter(m => !m.addAtCooking).map(m => {
                       const total = formatPrepWeight(m.totalGrams, "g");
-                      const perTray = ingTrays && ingTrays > 0 ? formatPrepWeight(m.totalGrams / ingTrays, "g") : null;
+                      const perTray = breakdown && ingTrays && ingTrays > 0 ? formatPrepWeight(m.totalGrams / ingTrays, "g") : null;
                       return {
                         name: m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown",
-                        amountText: perTray ? `${total} total · ${perTray} per tray` : total,
+                        amountText: perTray ? `${total} total · ${perTray} per ${one}` : total,
                       };
                     }),
                   ],
@@ -670,8 +687,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                             "text-center rounded-lg px-3 py-1.5 min-w-[52px]",
                             ingAllDone ? "bg-rose-500 text-white" : "bg-rose-600 text-white"
                           )}>
-                            <p className="text-2xl font-bold font-display tabular-nums leading-none">{ingDone}<span className="text-sm opacity-70">/{ingTrays}</span></p>
-                            <p className="text-sm opacity-80">tray{ingTrays !== 1 ? "s" : ""}</p>
+                            {(() => { const u = displayUnits({ portions: ingTrays, done: ingDone, breakdown }); return (
+                              <p className="text-2xl font-bold font-display tabular-nums leading-none">{u.done}<span className="text-sm opacity-70">/{u.total}</span></p>
+                            ); })()}
+                            <p className="text-sm opacity-80">{breakdown ? portionWord(container, ingTrays) : "all in one"}</p>
                           </div>
                           <div className="flex-1">
                             <div className="flex items-center gap-2">
@@ -695,13 +714,13 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           <div className="text-right">
                             {usePieces ? (
                               <>
-                                <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayPieces} pieces</p>
-                                <p className="text-sm text-muted-foreground mt-0.5">per tray</p>
+                                <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayPieces ?? ing.pieceCount} pieces</p>
+                                <p className="text-sm text-muted-foreground mt-0.5">{perTrayPieces != null ? `per ${one}` : "in total"}</p>
                               </>
                             ) : (
                               <>
-                                <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{perTrayKg!.toFixed(3)} kg</p>
-                                <p className="text-sm text-muted-foreground mt-0.5">per tray</p>
+                                <p className="text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300 leading-none">{(perTrayKg ?? ingKgTotal).toFixed(3)} kg</p>
+                                <p className="text-sm text-muted-foreground mt-0.5">{perTrayKg != null ? `per ${one}` : "in total"}</p>
                               </>
                             )}
                           </div>
@@ -745,7 +764,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         row keeps the tray maths explainable. */}
                     {meatMarinades.filter(m => !m.addAtCooking).map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                      const perTrayG = ingTrays && ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
+                      const perTrayG = breakdown && ingTrays && ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
                       return (
                         <div key={mi} className="flex items-center justify-between px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 text-sm text-muted-foreground bg-white dark:bg-background/50">
                           <span className="flex items-center gap-2">
@@ -768,7 +787,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           <div className="text-right">
                             {perTrayG != null ? (
                               <>
-                                <span className="tabular-nums font-semibold text-foreground">{perTrayG}g / tray</span>
+                                <span className="tabular-nums font-semibold text-foreground">{perTrayG}g / {one}</span>
                                 <p className="text-sm text-muted-foreground">{m.totalGrams}g total</p>
                               </>
                             ) : (
@@ -789,7 +808,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                     <StationStockChecks
                       variant="row"
                       ready={isIngredientFullyDone(ing.ingredientId)}
-                      notReadyHint={`Stock check once the ${ing.ingredientName.toLowerCase()} trays are done`}
+                      notReadyHint={`Stock check once the ${ing.ingredientName.toLowerCase()} ${portionWord(container, 2)} are done`}
                       checkDate={nextPlan?.planDate ?? plan.planDate}
                       isDraft={isDraft}
                       stationLabel="Raw Meat"
@@ -835,8 +854,31 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       ingredientIds={selLinkedChecks.byMeat.get(ing.ingredientId)?.heldBack ?? []}
                     />
 
+                    {/* Not split: one tick for the whole lot (Fix queue #396). */}
+                    {trayNums.length > 0 && !breakdown && (
+                      <div className="px-4 pb-4 pt-3 bg-background/50 border-t border-rose-100 dark:border-rose-900/40">
+                        <button
+                          onClick={() => void toggleWholeLot(ing.ingredientId, selected.recipeId, trayNums.length)}
+                          disabled={isOnBreak || trayPending != null}
+                          className={cn(
+                            "w-full flex items-center justify-center gap-3 border-2 rounded-2xl px-4 py-4 transition-all active:scale-[0.99]",
+                            isOnBreak ? "opacity-50 cursor-not-allowed" : "",
+                            ingAllDone
+                              ? "bg-rose-50 dark:bg-rose-900/30 border-rose-400 dark:border-rose-600 shadow-sm"
+                              : "bg-background border-border hover:border-rose-400 hover:shadow-md",
+                          )}
+                        >
+                          {ingAllDone ? <CheckCircle2 className="w-5 h-5 text-rose-500" /> : <div className="w-5 h-5 rounded-full border-2 border-muted-foreground/40" />}
+                          <span className="text-lg font-bold">{ingAllDone ? "All done" : "Done — all of it"}</span>
+                          <span className="text-lg font-bold tabular-nums text-rose-700 dark:text-rose-300">
+                            {usePieces ? `${ing.pieceCount} pieces` : `${ingKgTotal.toFixed(3)} kg`}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+
                     {/* Clickable tray buttons */}
-                    {trayNums.length > 0 && (
+                    {trayNums.length > 0 && breakdown && (
                       <div className="px-4 pb-4 pt-3 bg-background/50 border-t border-rose-100 dark:border-rose-900/40">
                         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5">
                           {trayNums.map(tn => {
@@ -861,7 +903,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                                   ) : (
                                     <div className="w-4 h-4 rounded-full border-2 border-muted-foreground/40" />
                                   )}
-                                  <span className="text-base font-bold">Tray {tn}</span>
+                                  <span className="text-base font-bold">{One} {tn}</span>
                                 </div>
                                 {usePieces && perTrayPieces != null ? (
                                   <span className={cn("text-xl font-bold tabular-nums", done ? "text-rose-600 dark:text-rose-300" : "text-foreground")}>
