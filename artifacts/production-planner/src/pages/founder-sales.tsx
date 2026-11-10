@@ -5,11 +5,9 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
-import { format, parseISO } from "date-fns";
-import { TrendingUp, TrendingDown, Mail, Loader2, Check, AlertTriangle } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Loader2, Check, AlertTriangle } from "lucide-react";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
-import { TargetsProgress } from "@/components/revenue-targets/targets-progress";
+import { EmailRevenuePanel } from "@/components/marketing-calendar/email-revenue-panel";
 import { SalesDriversSection } from "@/components/sales-drivers/sales-drivers-section";
 import { ChangeLog } from "@/components/sales-drivers/change-log";
 
@@ -68,7 +66,6 @@ async function api(path: string, init?: RequestInit) {
   return res.json();
 }
 
-const gbp = (n: number) => `£${Math.round(n).toLocaleString()}`;
 
 // ── Page ───────────────────────────────────────────────────────────────────
 export default function FounderSales() {
@@ -97,7 +94,7 @@ export default function FounderSales() {
       <FounderNav />
       <PageHeader
         title="Marketing Calendar"
-        description="Revenue pace, email cadence and the marketing calendar — there's always something on."
+        description="Email revenue, the last emails sent and the marketing calendar — there's always something on."
       />
 
       <div className="space-y-6">
@@ -120,12 +117,14 @@ export default function FounderSales() {
             </div>
           ) : null}
 
-          {/* Pace and email cadence side by side, stretched to the same height;
-              the calendar runs full width beneath both (Graeme, 2026-09-30). */}
-          <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-6 items-stretch [&>*]:h-full">
-            <PaceCard pace={data?.pace ?? null} loading={isLoading} />
-            <EmailCadenceCard email={data?.email} loading={isLoading} onChanged={invalidate} canManage={isFounder} />
-          </div>
+          {/* Email revenue this month and the last five emails, in one
+              compact panel — replaced Revenue pace and Email cadence
+              (Graeme, 10 Nov 2026). Objective I. */}
+          <EmailRevenuePanel
+            storeSales={data?.pace?.monthToDate ?? null}
+            connected={!!data?.email.configured}
+            footer={isFounder ? <KlaviyoControls email={data?.email} onChanged={invalidate} /> : undefined}
+          />
           <MarketingCalendar />
 
           {/* What's driving sales — delivery wait, conversion and the website
@@ -140,71 +139,9 @@ export default function FounderSales() {
   );
 }
 
-// ── Revenue pace ────────────────────────────────────────────────────────────
-function PaceCard({ pace, loading }: { pace: Pace | null; loading: boolean }) {
-  return (
-    <section className="rounded-2xl border border-border bg-card p-5 space-y-4">
-      <h2 className="text-sm font-semibold flex items-center gap-2">
-        {pace && !pace.onPace
-          ? <TrendingDown className="w-4 h-4 text-red-500" />
-          : <TrendingUp className="w-4 h-4 text-primary" />}
-        Revenue pace — this month
-      </h2>
-      {loading ? (
-        <Skeleton className="h-24 w-full" />
-      ) : !pace ? (
-        <p className="text-sm text-muted-foreground">
-          Shopify sales are unavailable right now — pace will reappear when the sales summary loads.
-        </p>
-      ) : (
-        <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <PaceStat label="Month to date" value={gbp(pace.monthToDate)} sub={`${pace.orderCount} orders`} />
-            <PaceStat
-              label="Projected"
-              value={gbp(pace.projected)}
-              sub={`minimum ${gbp(pace.target)}`}
-              tone={pace.onPace ? "good" : "bad"}
-            />
-            <PaceStat label="Daily average" value={gbp(pace.averageDailyRevenue)} sub="so far" />
-            <PaceStat
-              label="Needed per day"
-              value={gbp(pace.requiredDailyRate)}
-              sub={`for the minimum · ${pace.daysLeft} days left`}
-              tone={pace.requiredDailyRate > pace.averageDailyRevenue ? "bad" : "good"}
-            />
-          </div>
-          {/* Against both targets — the same component and figures as the
-              Month to Date tile on Numbers, where the targets are edited. */}
-          <TargetsProgress monthToDate={pace.monthToDate} projected={pace.projected} />
-          <p className="text-xs text-muted-foreground">
-            The faint tick is where sales should be by today for the minimum. Targets are set on Numbers.
-          </p>
-        </>
-      )}
-    </section>
-  );
-}
-
-function PaceStat({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: "good" | "bad" }) {
-  return (
-    <div className="rounded-xl bg-secondary/30 px-3 py-2.5">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={cn("text-lg font-semibold tabular-nums",
-        tone === "good" && "text-primary", tone === "bad" && "text-red-500")}>{value}</p>
-      {sub && <p className="text-xs text-muted-foreground">{sub}</p>}
-    </div>
-  );
-}
-
-// ── Email cadence + Klaviyo connection ─────────────────────────────────────
-function EmailCadenceCard({ email, loading, onChanged, canManage }: {
-  email?: EmailStatus;
-  loading: boolean;
-  onChanged: () => void;
-  /** Connect/disconnect Klaviyo — the founder only. Others see the cadence. */
-  canManage: boolean;
-}) {
+// ── Klaviyo connection (the founder's) ─────────────────────────────────────
+// Connect with a key while it isn't connected; a small Disconnect once it is.
+function KlaviyoControls({ email, onChanged }: { email?: EmailStatus; onChanged: () => void }) {
   const [apiKey, setApiKey] = useState("");
   const [connectError, setConnectError] = useState<string | null>(null);
   const connect = useMutation({
@@ -217,71 +154,29 @@ function EmailCadenceCard({ email, loading, onChanged, canManage }: {
     onSuccess: onChanged,
   });
 
-  const overdue = email?.configured && !email.error && (email.daysSince == null || email.daysSince >= email.cadenceDays);
-
+  if (!email?.configured) {
+    return (
+      <div className="space-y-2 max-w-md">
+        <p className="text-xs text-muted-foreground">
+          Connect Klaviyo with a <b>private API key</b> (Klaviyo → Settings → API keys, read-only is enough).
+        </p>
+        <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Klaviyo private API key (pk_…)"
+          type="password" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" />
+        {connectError && <p className="text-xs text-red-500">{connectError}</p>}
+        <button onClick={() => connect.mutate()} disabled={connect.isPending || apiKey.trim().length < 10}
+          className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5">
+          {connect.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Connect
+        </button>
+      </div>
+    );
+  }
   return (
-    <section className="rounded-2xl border border-border bg-card p-5 space-y-3">
-      <h2 className="text-sm font-semibold flex items-center gap-2">
-        <Mail className={cn("w-4 h-4", overdue ? "text-amber-500" : "text-primary")} /> Email cadence
-        {email && <span className="text-xs font-normal text-muted-foreground">— every {email.cadenceDays} days minimum</span>}
-      </h2>
-      {loading ? (
-        <Skeleton className="h-20 w-full" />
-      ) : !email?.configured && !canManage ? (
-        <p className="text-sm text-muted-foreground">Klaviyo isn't connected yet — Graeme connects it.</p>
-      ) : !email?.configured ? (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Connect Klaviyo with a <b>private API key</b> (Klaviyo → Settings → API keys, read-only is enough).
-            Once connected, this card tracks when the last campaign went out and nudges you at the cadence.
-          </p>
-          <input value={apiKey} onChange={e => setApiKey(e.target.value)} placeholder="Klaviyo private API key (pk_…)"
-            type="password" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm" />
-          {connectError && <p className="text-xs text-red-500">{connectError}</p>}
-          <button onClick={() => connect.mutate()} disabled={connect.isPending || apiKey.trim().length < 10}
-            className="text-xs px-3 py-1.5 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1.5">
-            {connect.isPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Connect
-          </button>
-        </div>
-      ) : email.error ? (
-        <div className="space-y-2">
-          <p className="text-sm text-amber-600 dark:text-amber-400">Klaviyo error: {email.error}</p>
-          {canManage && (
-            <button onClick={() => disconnect.mutate()} className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50">
-              Disconnect &amp; re-enter key
-            </button>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div className={cn("rounded-xl px-3 py-2.5", overdue ? "bg-amber-500/10" : "bg-secondary/30")}>
-            <p className="text-lg font-semibold tabular-nums">
-              {email.daysSince == null ? "No sends found" : email.daysSince === 0 ? "Sent today" : `${email.daysSince} day${email.daysSince === 1 ? "" : "s"} since last email`}
-            </p>
-            {overdue && (
-              <p className="text-xs text-amber-700 dark:text-amber-400">
-                Over the {email.cadenceDays}-day cadence — send one today. Segments (VIPs, lapsed, new) can be mailed more often than the full list.
-              </p>
-            )}
-          </div>
-          {email.recent.length > 0 && (
-            <ul className="space-y-1">
-              {email.recent.map((c, i) => (
-                <li key={i} className="text-xs flex items-center justify-between gap-2 px-1">
-                  <span className="truncate">{c.name}</span>
-                  <span className="text-muted-foreground flex-shrink-0">{format(parseISO(c.sentAt), "d MMM")}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {canManage && (
-            <button onClick={() => disconnect.mutate()} disabled={disconnect.isPending}
-              className="text-xs px-3 py-1.5 rounded-lg border border-border hover:bg-secondary/50 text-muted-foreground">
-              Disconnect Klaviyo
-            </button>
-          )}
-        </div>
-      )}
-    </section>
+    <div className="flex flex-wrap items-center gap-3">
+      {email.error && <p className="text-xs text-amber-600 dark:text-amber-400">Klaviyo error: {email.error}</p>}
+      <button onClick={() => disconnect.mutate()} disabled={disconnect.isPending}
+        className="text-xs text-muted-foreground underline-offset-2 hover:underline">
+        {email.error ? "Disconnect & re-enter key" : "Disconnect Klaviyo"}
+      </button>
+    </div>
   );
 }

@@ -11,7 +11,8 @@ import { requireFounderArea } from "../middleware/founder-area-access";
 import { getEmailRevenue } from "../lib/klaviyo-email-revenue";
 
 const router: IRouter = Router();
-router.use(requireFounderArea("founder.numbers"));
+// Numbers (Order Analysis) and the Marketing Calendar page both show it.
+router.use(requireFounderArea(["founder.numbers", "founder.sales"]));
 
 const day = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const Query = z
