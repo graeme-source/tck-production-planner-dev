@@ -85,20 +85,19 @@ export function rowTone(f: {
   return "undecided";
 }
 
-/** Grid columns for a row on tablet and desktop: Arrived? (tick / cross),
- *  item name (takes the rest, wraps — never truncated), Ordered (its own
- *  column only on wide screens; under the name otherwise), the Received
- *  stepper, Use-by (only when some line on the order has one), and the
- *  Damaged button. Each row is its own grid, so every track except the name
- *  is a fixed width — that is what keeps the columns lined up under the
- *  header. */
-export function receivingColumns(opts: { anyUseBy: boolean; orderedColumn: boolean }): string {
+/** Grid columns for a row on tablet and desktop: Arrived? (tick / cross,
+ *  spaced well apart so the wrong one isn't tapped — Graeme, 10 Nov 2026),
+ *  item (ordered quantity then name; takes the rest, wraps — never
+ *  truncated), the Received stepper, Use-by (only when some line on the
+ *  order has one), and the Damaged button. Each row is its own grid, so
+ *  every track except the item is a fixed width — that is what keeps the
+ *  columns lined up under the header. `wide` = desktop widths. */
+export function receivingColumns(opts: { anyUseBy: boolean; wide: boolean }): string {
   return [
-    "6rem",
-    "minmax(8rem,1fr)",
-    ...(opts.orderedColumn ? ["7rem"] : []),
-    opts.orderedColumn ? "10rem" : "9.5rem",
-    ...(opts.anyUseBy ? [opts.orderedColumn ? "9.5rem" : "8.5rem"] : []),
+    "8rem",
+    "minmax(10rem,1fr)",
+    opts.wide ? "10rem" : "9.5rem",
+    ...(opts.anyUseBy ? [opts.wide ? "9.5rem" : "8.5rem"] : []),
     "3.5rem",
   ].join(" ");
 }

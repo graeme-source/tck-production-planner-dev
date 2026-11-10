@@ -77,15 +77,18 @@ describe("rowTone", () => {
 
 describe("receivingColumns", () => {
   it("adds the Use-by column only when a line needs one", () => {
-    expect(receivingColumns({ anyUseBy: false, orderedColumn: false }).split(" ")).toHaveLength(4);
-    expect(receivingColumns({ anyUseBy: true, orderedColumn: false }).split(" ")).toHaveLength(5);
+    expect(receivingColumns({ anyUseBy: false, wide: false }).split(" ")).toHaveLength(4);
+    expect(receivingColumns({ anyUseBy: true, wide: false }).split(" ")).toHaveLength(5);
   });
-  it("adds the Ordered column on wide screens", () => {
-    expect(receivingColumns({ anyUseBy: true, orderedColumn: true }).split(" ")).toHaveLength(6);
+  it("has no separate Ordered column — the quantity sits in front of the name", () => {
+    expect(receivingColumns({ anyUseBy: true, wide: true }).split(" ")).toHaveLength(5);
   });
-  it("gives only the item name a flexible width, so rows line up", () => {
-    const tracks = receivingColumns({ anyUseBy: true, orderedColumn: true }).split(" ");
-    expect(tracks.filter((t) => t.includes("fr"))).toEqual(["minmax(8rem,1fr)"]);
+  it("leaves room between tick and cross (two 44 px buttons plus a wide gap)", () => {
+    expect(receivingColumns({ anyUseBy: false, wide: false }).split(" ")[0]).toBe("8rem");
+  });
+  it("gives only the item a flexible width, so rows line up", () => {
+    const tracks = receivingColumns({ anyUseBy: true, wide: true }).split(" ");
+    expect(tracks.filter((t) => t.includes("fr"))).toEqual(["minmax(10rem,1fr)"]);
     expect(tracks.some((t) => t.includes("auto"))).toBe(false);
   });
 });
