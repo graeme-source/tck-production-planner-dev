@@ -778,7 +778,7 @@ function ReceivingDialog({
             <div className="sticky -top-1 z-10 bg-card">
               <ReceivingColumnHeader anyUseBy={anyUseBy} />
             </div>
-            <div className="space-y-1.5">
+            <div className="space-y-3">
               {lines.map((line, idx) => (
                 <ReceivingLineRow
                   key={line.lineId}
@@ -798,13 +798,12 @@ function ReceivingDialog({
 
           {(hasChilled || hasFrozen) && (
             <div>
-              <h3 className="text-xl font-bold mb-1 flex items-center gap-2">
-                <Thermometer className="w-6 h-6" /> Temperature Checks
-                <span className="text-sm font-semibold text-destructive ml-1">Required</span>
+              {/* Just the title and a red box per reading (Graeme, 10 Nov):
+                  no explaining paragraph, no "is required" line — the red
+                  box is the reminder. */}
+              <h3 className="text-xl font-bold mb-3 flex items-center gap-2">
+                <Thermometer className="w-6 h-6" /> Temperature checks
               </h3>
-              <p className="text-sm text-muted-foreground mb-3">
-                Temperature must be recorded for all chilled and frozen items before the delivery can be marked as received.
-              </p>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {/* Same dial as the fridge checklist (Graeme, 2026-09-14):
                     −/+ nudge 0.1°C (hold to spin) with a slider for coarse
@@ -813,18 +812,17 @@ function ReceivingDialog({
                     missing, never silently defaulted. */}
                 {hasChilled && (
                   <div>
-                    <label className="text-base font-semibold block mb-1">
-                      Chilled Temp (°C) <span className="text-destructive">*</span>
-                    </label>
                     {chilledTemp.trim() === "" ? (
                       <button
                         type="button"
                         onClick={() => editChilledTemp("4.0")}
-                        className="w-full min-h-[52px] px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
+                        className="w-full min-h-[52px] px-3 py-3 rounded-lg border-2 border-destructive bg-destructive/5 text-destructive text-base font-bold hover:bg-destructive/10"
                       >
                         Record chilled temperature
                       </button>
                     ) : (
+                      <>
+                      <p className="text-base font-semibold mb-1">Chilled (°C)</p>
                       <TempDial
                         value={Number(chilledTemp)}
                         min={-20}
@@ -833,28 +831,23 @@ function ReceivingDialog({
                         onStep={d => editChilledTemp((Math.min(20, Math.max(-20, Number(chilledTemp) + d))).toFixed(1))}
                         onSet={v => editChilledTemp(v.toFixed(1))}
                       />
-                    )}
-                    {chilledTempMissing && (
-                      <p className="text-sm text-destructive mt-1 flex items-center gap-1">
-                        <AlertCircle className="w-4 h-4" /> Chilled temperature is required
-                      </p>
+                      </>
                     )}
                   </div>
                 )}
                 {hasFrozen && (
                   <div>
-                    <label className="text-base font-semibold block mb-1">
-                      Frozen Temp (°C) <span className="text-destructive">*</span>
-                    </label>
                     {frozenTemp.trim() === "" ? (
                       <button
                         type="button"
                         onClick={() => editFrozenTemp("-18.0")}
-                        className="w-full min-h-[52px] px-3 py-3 rounded-lg border-2 border-dashed border-destructive/60 text-destructive font-semibold hover:bg-destructive/5"
+                        className="w-full min-h-[52px] px-3 py-3 rounded-lg border-2 border-destructive bg-destructive/5 text-destructive text-base font-bold hover:bg-destructive/10"
                       >
                         Record frozen temperature
                       </button>
                     ) : (
+                      <>
+                      <p className="text-base font-semibold mb-1">Frozen (°C)</p>
                       <TempDial
                         value={Number(frozenTemp)}
                         min={-20}
@@ -863,11 +856,7 @@ function ReceivingDialog({
                         onStep={d => editFrozenTemp((Math.min(20, Math.max(-20, Number(frozenTemp) + d))).toFixed(1))}
                         onSet={v => editFrozenTemp(v.toFixed(1))}
                       />
-                    )}
-                    {frozenTempMissing && (
-                      <p className="text-sm text-destructive mt-1 flex items-center gap-1">
-                        <AlertCircle className="w-4 h-4" /> Frozen temperature is required
-                      </p>
+                      </>
                     )}
                   </div>
                 )}

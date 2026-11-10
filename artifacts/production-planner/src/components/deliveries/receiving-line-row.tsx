@@ -169,7 +169,7 @@ export function ReceivingLineRow({
   return (
     <div
       className={cn(
-        "rounded-xl border-2 px-2 py-1 md:py-0.5 transition-colors flex flex-wrap items-center gap-2 md:grid md:[grid-template-columns:var(--recv-cols-md)] lg:[grid-template-columns:var(--recv-cols-lg)] md:gap-x-1.5 md:gap-y-2",
+        "rounded-xl border-2 px-2 py-2 md:py-1.5 transition-colors flex flex-wrap items-center gap-2 md:grid md:[grid-template-columns:var(--recv-cols-md)] lg:[grid-template-columns:var(--recv-cols-lg)] md:gap-x-1.5 md:gap-y-2",
         TONE_CLASS[tone],
       )}
     >
