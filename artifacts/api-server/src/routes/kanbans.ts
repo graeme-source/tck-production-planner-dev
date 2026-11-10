@@ -1,6 +1,9 @@
 import { Router, type IRouter } from "express";
 import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, recipesTable, subRecipesTable } from "@workspace/db";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, inArray } from "drizzle-orm";
+import { z } from "zod";
+import { validate } from "../middleware/validate";
+import { canSnoozeKanban, kanbanSnoozeTarget, kanbanWaitingUntil } from "../lib/kanban-snooze";
 import { computeNextOrderDay, formatOrderDayTarget, getOrderDayLabel, isDueToday } from "../lib/order-day-scheduler";
 import { londonDateString } from "../lib/london-time";
 import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
@@ -144,9 +147,19 @@ router.get("/ingredients", async (_req, res) => {
   // "Used in N recipes" link on the Pulled Kanbans list — the same count as
   // the Ingredients list (Graeme, 15 Oct 2026).
   const usage = await loadIngredientUsageCounts();
+  // Pulled kanbans put off with "Not today" show in the list as waiting,
+  // with the day they come back, so nobody pulls them twice.
+  const today = londonDateString();
+  const cards = await db
+    .select({ ingredientId: kanbanItemsTable.ingredientId, status: kanbanItemsTable.status, orderDayTarget: kanbanItemsTable.orderDayTarget })
+    .from(kanbanItemsTable)
+    .orderBy(desc(kanbanItemsTable.id));
+  const latestCard = new Map<number, typeof cards[number]>();
+  for (const c of cards) if (c.ingredientId != null && !latestCard.has(c.ingredientId)) latestCard.set(c.ingredientId, c);
 
   res.json(rows.map(r => ({
     ingredientId: r.ingredientId,
+    waitingUntil: kanbanWaitingUntil(latestCard.get(r.ingredientId), today),
     usedInRecipes: usage.get(r.ingredientId)?.recipes ?? 0,
     usedInSubRecipes: usage.get(r.ingredientId)?.subRecipes ?? 0,
     ingredientName: r.ingredientName,
@@ -593,6 +606,30 @@ router.post("/unqueue", async (req, res) => {
     }).where(eq(kanbanItemsTable.id, existing.id));
   }
   res.json({ ok: true });
+});
+
+// "Not today" (Graeme, 2026-11-10): the kanban stays PULLED but drops off
+// today's orders and comes back tomorrow — and every day after until it's
+// ordered — so tape can wait for the next box order rather than go on its
+// own (and carry its own delivery charge). See lib/kanban-snooze.
+const SnoozeBody = z.object({ ingredientIds: z.array(z.number().int().positive()).min(1).max(200) });
+router.post("/snooze", validate(SnoozeBody), async (req, res) => {
+  const { ingredientIds } = req.body as z.infer<typeof SnoozeBody>;
+  const today = londonDateString();
+  const until = kanbanSnoozeTarget(today);
+  const rows = await db
+    .select({ id: kanbanItemsTable.id, ingredientId: kanbanItemsTable.ingredientId, status: kanbanItemsTable.status, orderDayTarget: kanbanItemsTable.orderDayTarget })
+    .from(kanbanItemsTable)
+    .where(inArray(kanbanItemsTable.ingredientId, ingredientIds))
+    .orderBy(desc(kanbanItemsTable.id));
+  // The latest row per ingredient is its card (same rule as queue/unqueue).
+  const latest = new Map<number, typeof rows[number]>();
+  for (const r of rows) if (r.ingredientId != null && !latest.has(r.ingredientId)) latest.set(r.ingredientId, r);
+  const ids = [...latest.values()].filter(r => canSnoozeKanban(r, today)).map(r => r.id);
+  if (ids.length > 0) {
+    await db.update(kanbanItemsTable).set({ orderDayTarget: until }).where(inArray(kanbanItemsTable.id, ids));
+  }
+  res.json({ snoozed: ids.length, until });
 });
 
 router.post("/:id/pull", async (req, res) => {

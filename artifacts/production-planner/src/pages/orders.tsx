@@ -59,6 +59,7 @@ import {
   toISODate,
 } from "@workspace/business-days";
 import { parseISODate, resolveDeliveryDate } from "@/lib/order-delivery";
+import { kanbanWaitingLabel } from "@/lib/kanban-waiting";
 import { kanbansToPutBack, openOrdersForSupplier, orderTargetFor, placedOrderEditState, showsPendingCard } from "@/lib/supplier-order-target";
 import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
@@ -299,6 +300,8 @@ type KanbanIngredient = {
   orderingUrl: string | null;
   /** The Ingredients list's "Used in" count (same server helper). */
   usedInRecipes?: number;
+  /** Pulled but put off with "Not today": the day it's back on the orders. */
+  waitingUntil?: string | null;
   usedInSubRecipes?: number;
 };
 
@@ -1190,12 +1193,39 @@ export default function Orders() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ingredientId }),
     }).catch(() => {});
+    dropKanbanLines([ingredientId]);
+  };
+
+  // "Not today" (Graeme, 2026-11-10): the kanban stays pulled but leaves
+  // today's orders and comes back tomorrow, every day until it's ordered —
+  // so tape can wait for the next box order instead of going on its own.
+  const snoozeKanbans = async (ingredientIds: number[]): Promise<boolean> => {
+    if (ingredientIds.length === 0) return true;
+    try {
+      const res = await fetch(`${BASE}/api/kanbans/snooze`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ingredientIds }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    } catch {
+      toast({ variant: "destructive", title: "Not saved", description: "Couldn't put the kanban off until tomorrow — try again." });
+      return false;
+    }
+    dropKanbanLines(ingredientIds);
+    queryClient.invalidateQueries({ queryKey: ["kanbans-ingredients-for-orders"] });
+    return true;
+  };
+
+  const dropKanbanLines = (ingredientIds: number[]) => {
+    const drop = new Set(ingredientIds);
     const suppliersLeftEmpty: number[] = [];
     setEditableLines(prev => {
       const updated: Record<number, EditableLine[]> = {};
       for (const [sid, lines] of Object.entries(prev)) {
         const numSid = Number(sid);
-        const filtered = lines.filter(l => !(l.ingredientId === ingredientId && l.isKanban));
+        const filtered = lines.filter(l => !(drop.has(l.ingredientId) && l.isKanban));
         if (filtered.length > 0) updated[numSid] = filtered;
         else suppliersLeftEmpty.push(numSid);
       }
@@ -1212,7 +1242,7 @@ export default function Orders() {
     }
     setAddedKanbanIngredientIds(prev => {
       const next = new Set(prev);
-      next.delete(ingredientId);
+      for (const id of drop) next.delete(id);
       return next;
     });
   };
@@ -1804,11 +1834,14 @@ export default function Orders() {
   const totalPendingItems = pendingSuppliers.reduce((sum, s) => sum + (editableLines[s.supplier.id]?.length ?? 0), 0);
   const totalPlacedForPlan = placedForPlan.length;
 
-  const dismissSupplier = useCallback((supplierId: number) => {
+  const dismissSupplier = useCallback((supplierId: number, kanbans: "put-back" | "not-today" = "put-back") => {
     // Pulled kanbans on the card go back on the board, as deleting their line
     // does — hiding the card alone left them queued on the server, so they
     // came back every day for a week (AA Labels, Graeme 28 Oct 2026).
-    for (const ingredientId of kanbansToPutBack(editableLines[supplierId] ?? [])) {
+    // "Not today" instead keeps them pulled and brings them back tomorrow.
+    const cardKanbans = kanbansToPutBack(editableLines[supplierId] ?? []);
+    if (kanbans === "not-today") void snoozeKanbans(cardKanbans);
+    else for (const ingredientId of cardKanbans) {
       fetch(`${BASE}/api/kanbans/unqueue`, {
         method: "POST",
         credentials: "include",
@@ -2558,8 +2591,18 @@ export default function Orders() {
                               <div className="text-xs text-muted-foreground">#{line.supplierPartNumber}</div>
                             )}
                             {line.isKanban && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600 mt-0.5">
-                                Kanban
+                              <span className="flex flex-wrap items-center gap-2 mt-0.5">
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600">
+                                  Kanban
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => void snoozeKanbans([line.ingredientId])}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border bg-background text-xs font-semibold text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+                                  title="Keep it pulled — it comes back tomorrow, every day until it's ordered"
+                                >
+                                  <Clock className="w-3.5 h-3.5" /> Not today
+                                </button>
                               </span>
                             )}
                             {(line.splitsIn ?? []).map(sp => (
@@ -3329,8 +3372,8 @@ export default function Orders() {
               {/* Pulled items float to the top so the operator can scan what
                   they've already done and spot mis-pulls quickly. */}
               {[...filteredKanbanIngredients].sort((a, b) => {
-                const aAdded = addedKanbanIngredientIds.has(a.ingredientId) ? 0 : 1;
-                const bAdded = addedKanbanIngredientIds.has(b.ingredientId) ? 0 : 1;
+                const aAdded = addedKanbanIngredientIds.has(a.ingredientId) ? 0 : a.waitingUntil ? 1 : 2;
+                const bAdded = addedKanbanIngredientIds.has(b.ingredientId) ? 0 : b.waitingUntil ? 1 : 2;
                 if (aAdded !== bAdded) return aAdded - bAdded;
                 return (a.ingredientName ?? "").localeCompare(b.ingredientName ?? "");
               }).map(k => {
@@ -3385,7 +3428,14 @@ export default function Orders() {
                         )}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <p className="font-medium truncate">{k.ingredientName ?? "Unknown"}</p>
+                        <p className="font-medium truncate">
+                          {k.ingredientName ?? "Unknown"}
+                          {!alreadyAdded && kanbanWaitingLabel(k.waitingUntil) && (
+                            <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-300 align-middle">
+                              <Clock className="w-3 h-3" /> Pulled · {kanbanWaitingLabel(k.waitingUntil)}
+                            </span>
+                          )}
+                        </p>
                         {orderAmt != null && (
                           <p className="text-sm text-muted-foreground truncate">
                             <span className="font-medium text-foreground">{orderAmt} {unitLabel}</span> to order
@@ -3652,7 +3702,8 @@ export default function Orders() {
               </p>
               {(editableLines[dismissConfirm.supplierId] ?? []).some(l => l.isKanban) && (
                 <p className="text-sm font-semibold text-foreground">
-                  Its pulled kanbans ({(editableLines[dismissConfirm.supplierId] ?? []).filter(l => l.isKanban).map(l => l.ingredientName).join(", ")}) go back on the board, so they won&rsquo;t come back tomorrow. Pull them again if they&rsquo;re still needed.
+                  Pulled kanbans: {(editableLines[dismissConfirm.supplierId] ?? []).filter(l => l.isKanban).map(l => l.ingredientName).join(", ")}.
+                  Not today keeps them pulled and brings them back tomorrow. Put back un-pulls them.
                 </p>
               )}
               <p className="text-xs text-muted-foreground">
@@ -3665,12 +3716,29 @@ export default function Orders() {
                 >
                   Cancel
                 </button>
-                <button
-                  onClick={() => { dismissSupplier(dismissConfirm.supplierId); setDismissConfirm(null); }}
-                  className="px-4 py-2 rounded-lg text-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
-                >
-                  Dismiss
-                </button>
+                {(editableLines[dismissConfirm.supplierId] ?? []).some(l => l.isKanban) ? (
+                  <>
+                    <button
+                      onClick={() => { dismissSupplier(dismissConfirm.supplierId, "put-back"); setDismissConfirm(null); }}
+                      className="px-4 py-2 rounded-lg text-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                    >
+                      Dismiss, put kanbans back
+                    </button>
+                    <button
+                      onClick={() => { dismissSupplier(dismissConfirm.supplierId, "not-today"); setDismissConfirm(null); }}
+                      className="px-4 py-2 rounded-lg text-sm bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                      Not today
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={() => { dismissSupplier(dismissConfirm.supplierId); setDismissConfirm(null); }}
+                    className="px-4 py-2 rounded-lg text-sm bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                )}
               </div>
             </div>
           )}
