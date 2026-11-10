@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { SupplierPaymentEditor } from "@/components/suppliers/supplier-payment-editor";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListSuppliers, type CreateSupplier } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
@@ -633,6 +634,7 @@ export default function Suppliers() {
                 );
               }}
             />
+            <SupplierPaymentEditor supplierId={editingItem.id} />
             <DeliveryChecksEditor supplierId={editingItem.id} />
           </DialogContent>
         </Dialog>

@@ -1,5 +1,7 @@
-import { and, asc, eq, isNotNull, isNull, sql } from "drizzle-orm";
-import { db, finInvoicesTable } from "@workspace/db";
+import { and, asc, eq, inArray, isNotNull, isNull, sql } from "drizzle-orm";
+import { db, finEventsTable, finInvoicesTable, finInvoiceUploadsTable, supplierInvoiceNamesTable, suppliersTable, usersTable } from "@workspace/db";
+import { invoiceSourceText } from "./invoice-source";
+import { matchSupplierForInvoice, type PaymentTerms, type SupplierForMatch, type SupplierMatch } from "../supplier-invoice-match";
 import { attachInvoiceToLine, rankForInvoice, waitingLines, type InvoiceMatches } from "./invoice-attach";
 import { logFinEvent } from "./invoice-store";
 import { withGbpRate } from "./fx-rates";
@@ -78,7 +80,47 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
 }
 
 type QueuedRow = Awaited<ReturnType<typeof queuedInvoices>>[number] & { gbpRate: number | null };
-export type QueueEntry = { invoice: Omit<QueuedRow, "rejectedLineIds" | "postedAt"> } & InvoiceMatches;
+export type QueueEntry = {
+  invoice: Omit<QueuedRow, "rejectedLineIds" | "postedAt"> & { sourceText: string; supplier: SupplierMatch | null };
+} & InvoiceMatches;
+
+/** Every supplier with the other names on their invoices, for matching. */
+async function suppliersForMatch(): Promise<SupplierForMatch[]> {
+  const [suppliers, names] = await Promise.all([
+    db.select({ id: suppliersTable.id, name: suppliersTable.name, paymentTerms: suppliersTable.paymentTerms }).from(suppliersTable),
+    db.select({ supplierId: supplierInvoiceNamesTable.supplierId, name: supplierInvoiceNamesTable.name }).from(supplierInvoiceNamesTable),
+  ]);
+  return suppliers.map((s) => ({
+    id: s.id, name: s.name,
+    paymentTerms: (s.paymentTerms === "on_account" ? "on_account" : "paid_when_ordered") as PaymentTerms,
+    invoiceNames: names.filter((n) => n.supplierId === s.id).map((n) => n.name),
+  }));
+}
+
+/** "Uploaded by Gillian on the Finance page · 9 Nov, 13:18" per invoice
+ *  (Graeme, 10 Nov 2026) — who put it in, and how. */
+async function sourceTexts(ids: number[]): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  if (ids.length === 0) return out;
+  const rows = await db.select({
+    id: finInvoicesTable.id, source: finInvoicesTable.source, uploadId: finInvoicesTable.uploadId,
+    createdAt: finInvoicesTable.createdAt, uploaderName: usersTable.name, uploadFileName: finInvoiceUploadsTable.fileName,
+  }).from(finInvoicesTable)
+    .leftJoin(usersTable, eq(usersTable.id, finInvoicesTable.uploadedBy))
+    .leftJoin(finInvoiceUploadsTable, eq(finInvoiceUploadsTable.id, finInvoicesTable.uploadId))
+    .where(inArray(finInvoicesTable.id, ids));
+  const events = await db.select({ entityId: finEventsTable.entityId, detail: finEventsTable.detail }).from(finEventsTable)
+    .where(and(eq(finEventsTable.entityType, "invoice"), eq(finEventsTable.action, "uploaded"), inArray(finEventsTable.entityId, ids)));
+  const via = new Map<number, string>();
+  for (const e of events) if (typeof e.detail?.["via"] === "string") via.set(e.entityId, e.detail["via"] as string);
+  for (const r of rows) {
+    out.set(r.id, invoiceSourceText({
+      source: r.source, uploaderName: r.uploaderName, via: via.get(r.id) ?? null,
+      uploadId: r.uploadId, uploadFileName: r.uploadFileName, createdAt: r.createdAt,
+    }));
+  }
+  return out;
+}
 
 /** `check` has something likely enough to be worth someone's time
  *  (isWorthChecking), or charges that add up to it; `waiting` has nothing that
@@ -89,12 +131,16 @@ export async function invoiceQueue(): Promise<{ check: QueueEntry[]; waiting: Qu
   const inbox = (await queuedInvoices()).filter((inv) => !inv.postedAt);
   const invoices = await Promise.all(inbox.map(withGbpRate));
   const lines = invoices.length ? await waitingLines() : [];
+  const [sources, suppliers] = await Promise.all([sourceTexts(invoices.map((i) => i.id)), invoices.length ? suppliersForMatch() : []]);
   const check: QueueEntry[] = [];
   const waiting: QueueEntry[] = [];
   for (const { rejectedLineIds, postedAt: _notPosted, ...invoice } of invoices) {
     const ranked = rankForInvoice({ ...invoice, rejectedLineIds }, lines);
     const worthChecking = !!ranked.addsUp || ranked.suggestions.some(isWorthChecking);
-    (worthChecking ? check : waiting).push({ invoice, ...ranked });
+    (worthChecking ? check : waiting).push({
+      invoice: { ...invoice, sourceText: sources.get(invoice.id) ?? "", supplier: matchSupplierForInvoice(invoice.supplierName, suppliers) },
+      ...ranked,
+    });
   }
   return { check, waiting };
 }

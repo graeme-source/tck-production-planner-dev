@@ -41,6 +41,7 @@ import stockGatingRouter from "./stock-gating";
 import salesRouter from "./sales";
 import dispatchesRouter from "./dispatches";
 import suppliersRouter from "./suppliers";
+import supplierPaymentRouter from "./supplier-payment";
 import usersRouter from "./users";
 import categoryDefaultsRouter from "./category-defaults";
 import shopifyRouter from "./shopify";
@@ -285,6 +286,7 @@ router.use("/smart-add", smartAddRouter);
 router.use("/test-requests", testRequestsRouter);
 router.use("/onboarding", onboardingRouter);
 router.use("/category-defaults", categoryDefaultsRouter);
+router.use("/suppliers", supplierPaymentRouter);
 router.use("/suppliers", suppliersRouter);
 // Admin dry-run tidy of unwrapped label declarations — before the main
 // ingredients router so its POST path is matched here.
