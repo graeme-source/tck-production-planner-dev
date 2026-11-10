@@ -18,7 +18,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 // here; it's then just in the library. It doesn't become a transaction on this
 // page unless it meets one: the undeniable matches attach themselves.
 
-type QueueEntry = InvoiceMatches & { invoice: ReadInvoice & { gbpRate: number | null } };
+type QueueEntry = InvoiceMatches & { invoice: ReadInvoice & { gbpRate: number | null; sourceText?: string } };
 type InvoiceQueue = { check: QueueEntry[]; waiting: QueueEntry[] };
 
 const QUEUE_KEY = ["/api/finance/invoices", "queue"];
@@ -78,21 +78,23 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
 
   return (
     <Card><CardContent className="p-4 space-y-3">
-      <div>
-        <div className="flex items-start gap-3">
-          <div className="flex-1 min-w-0 font-semibold break-words">{inv.supplierName ?? inv.fileName}</div>
-          <div className="shrink-0 font-bold tabular-nums">{inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : "total not read"}</div>
+      {/* One headline row (Graeme, 10 Nov 2026): who and what on the left,
+          then the note, Paid / Unpaid, and the amount — wraps on a phone. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        <div className="min-w-[12rem] max-w-full sm:max-w-[40%]">
+          <div className="font-semibold break-words">{inv.supplierName ?? inv.fileName}</div>
+          <div className="text-sm text-muted-foreground break-words">
+            {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"}
+            {inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""}
+          </div>
+          {inv.sourceText && <div className="text-xs text-muted-foreground break-words">{inv.sourceText}</div>}
+          {unread && !inv.totalAmount && <div className="text-sm text-destructive">Couldn't be read: correct the details so it can be matched.</div>}
         </div>
-        <div className="text-sm text-muted-foreground break-words">
-          {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"}
-          {inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""}
-        </div>
-        {unread && !inv.totalAmount && <div className="text-sm text-destructive">Couldn't be read: correct the details so it can be matched.</div>}
+        <InvoiceNotes invoice={inv} layout="inline" />
+        <div className="shrink-0 ml-auto font-bold tabular-nums text-lg">{inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : "total not read"}</div>
       </div>
 
       <MatchOptions quiet invoice={inv} matches={entry} busy={busy} onAttach={(lines) => attach.mutate(lines.map((l) => l.lineId))} onReject={(id) => reject.mutate(id)} />
-
-      <InvoiceNotes invoice={inv} />
 
       <div className="flex flex-wrap items-center gap-2">
         <Button disabled={busy} onClick={() => markPosted.mutate()}>
