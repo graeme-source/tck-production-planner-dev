@@ -124,7 +124,9 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
         <Button disabled={busy} onClick={() => markPosted.mutate()}>
           {markPosted.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Mark as posted
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setShowFile((v) => !v)}><Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide invoice" : "View invoice"}</Button>
+        {/* Same size as Mark as posted, with a border: the bookkeeper opens the
+            invoice on nearly every row to read the VAT split (Graeme, 10 Nov 2026). */}
+        <Button variant="outline" aria-expanded={showFile} onClick={() => setShowFile((v) => !v)}><Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide invoice" : "View invoice"}</Button>
         <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>Correct details</Button>
         <Button variant="ghost" size="sm" className="sm:ml-auto" disabled={busy} onClick={() => leave.mutate()}>Remove from Inbox</Button>
       </div>
