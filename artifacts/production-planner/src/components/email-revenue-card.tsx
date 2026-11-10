@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface Part { revenue: number; orders: number }
-type Report =
+export type EmailRevenueReport =
   | { connected: false }
   | { connected: true; ok: false; message: string }
   | {
@@ -24,8 +24,8 @@ type Report =
     split: Part & { campaigns: Part; flows: Part; byFlow: Array<Part & { flowId: string; name: string }> };
   };
 
-function useEmailRevenue(from: string, to: string) {
-  return useQuery<Report>({
+export function useEmailRevenue(from: string, to: string) {
+  return useQuery<EmailRevenueReport>({
     queryKey: ["klaviyo-email-revenue", from, to],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/klaviyo-email-revenue?${new URLSearchParams({ from, to })}`, { credentials: "include" });
