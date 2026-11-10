@@ -66,7 +66,7 @@ export function InvoiceNotes({ invoice, layout = "stacked" }: {
   if (layout === "inline") {
     return (
       <>
-        <div className="flex-1 min-w-[12rem] flex items-center gap-2">
+        <div className="flex-1 min-w-[10rem] flex items-center gap-2">
           <Input
             aria-label="Notes on this invoice"
             placeholder="Notes: what this is, who it's for…"

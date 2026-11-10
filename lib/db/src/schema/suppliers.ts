@@ -36,6 +36,21 @@ export const suppliersTable = pgTable("suppliers", {
   // Our account number with this supplier (migration 0213) — printed near
   // the top of the goods-in issue email. NULL = none on file.
   accountNumber: text("account_number"),
+  // How we pay them (migration 0365, Graeme 10 Nov 2026): 'paid_when_ordered'
+  // (card, the usual) or 'on_account' (they invoice, the team pays on terms).
+  // Shown on their invoices in the Finance Inbox. How many days comes later.
+  paymentTerms: text("payment_terms").notNull().default("paid_when_ordered"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// Other names this supplier's invoices come in under (migration 0365):
+// "Northamptonshire Food Services Ltd" is NFS Meats. Matched as well as the
+// supplier's own name when the Inbox looks up an invoice's payment terms.
+export const supplierInvoiceNamesTable = pgTable("supplier_invoice_names", {
+  id: serial("id").primaryKey(),
+  supplierId: integer("supplier_id").notNull(),
+  name: text("name").notNull(),
+  createdBy: integer("created_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
