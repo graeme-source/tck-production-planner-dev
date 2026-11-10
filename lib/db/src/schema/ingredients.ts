@@ -27,6 +27,11 @@ export const ingredientsTable = pgTable("ingredients", {
   shopifyVariantTitle: text("shopify_variant_title"),
   // Sellable Shopify units per received pack/unit (box of 12 → 12).
   shopifyUnitsPerPack: numeric("shopify_units_per_pack", { precision: 10, scale: 2 }),
+  // Connected Inventory (migration 0366): a product fridge item whose stock
+  // is read from Shopify; orders to its supplier top it up to maxStockUnits
+  // (store units). See api-server lib/connected-inventory.
+  connectedInventory: boolean("connected_inventory").notNull().default(false),
+  maxStockUnits: integer("max_stock_units"),
   notes: text("notes"),
   category: text("category"),
   processingRatio: numeric("processing_ratio", { precision: 5, scale: 4 }),

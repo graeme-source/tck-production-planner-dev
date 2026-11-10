@@ -2,6 +2,8 @@ import { z } from "zod";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { loadQueuedOrderItems, markQueuedOrdered } from "../lib/queued-production-orders";
 import { loadDueStandingOrders, markStandingOrdered } from "../lib/standing-orders";
+import { loadConnectedItems } from "../lib/connected-inventory";
+import { cardIsOrdering, connectedTopUpPacks, inboundPacks } from "../lib/connected-inventory-rules";
 import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, packsWithStandingFloor, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 import {
   db,
@@ -520,6 +522,10 @@ router.get("/calculate", async (req, res) => {
        *  standingFloorPacks lets the page's stock-edit recompute keep it. */
       standingOrder?: { label: string; packs: number };
       standingFloorPacks?: number;
+      /** Connected Inventory (lib/connected-inventory): a product fridge
+       *  item topped up to its maximum from Shopify's on-hand figure (null
+       *  = Shopify didn't answer, so nothing was topped up). */
+      connectedInventory?: { onHandUnits: number | null; inboundUnits: number; maxUnits: number; unitsPerPack: number };
     }>;
   }> = {};
 
@@ -1157,6 +1163,85 @@ router.get("/calculate", async (req, res) => {
       palletSizeMissing: false,
       standingOrder: tag,
       standingFloorPacks: st.packs,
+      packName: d.packName ?? null,
+    });
+  }
+
+  // ── Connected Inventory (Graeme, 10 Nov 2026) ───────────────────────────
+  // Ordering from a supplier with product fridge items (Sauce Shop bottles,
+  // Cakehead bakes)? Read each item's Shopify stock and top it up to its
+  // maximum on the same order, so the next kanban pulled there doesn't mean
+  // a second order the day after. Whole cases, never over the maximum;
+  // stock on its way counts. A pulled kanban for one of them orders the
+  // top-up (at least one case) instead of its card amount. When Shopify
+  // doesn't answer, nothing is added and the kanban keeps its amount.
+  const orderingSupplierIds = Object.values(supplierOrderMap)
+    .filter(so => cardIsOrdering(so.lines))
+    .map(so => so.supplier.id);
+  for (const item of await loadConnectedItems(orderingSupplierIds)) {
+    const d = item.ingredient;
+    const sid = d.supplierId!;
+    const card = supplierOrderMap[sid];
+    if (!card) continue;
+    const existing = card.lines.find(l => l.ingredientId === d.id);
+    if (item.onHandUnits == null) {
+      if (existing) existing.connectedInventory = { onHandUnits: null, inboundUnits: 0, maxUnits: item.maxUnits, unitsPerPack: item.unitsPerPack };
+      continue;
+    }
+    const packWeight = Number(d.packWeight) || 1;
+    const inboundUnits = Math.round((inboundByIngredient[d.id] ?? [])
+      .reduce((n, x) => n + inboundPacks(x.qty, x.unit, packWeight), 0) * item.unitsPerPack);
+    const topUp = connectedTopUpPacks({ onHandUnits: item.onHandUnits, inboundUnits, maxUnits: item.maxUnits, unitsPerPack: item.unitsPerPack });
+    const info = { onHandUnits: item.onHandUnits, inboundUnits, maxUnits: item.maxUnits, unitsPerPack: item.unitsPerPack };
+    if (existing) {
+      const inPacks = existing.splitInPacks ?? 0;
+      const packs = existing.isKanban
+        ? Math.max(topUp, 1)
+        : Math.max(existing.packsToOrder - inPacks, topUp);
+      existing.packsToOrder = packs + inPacks;
+      existing.orderQty = lineQtyForPacks(existing, existing.packsToOrder);
+      if (existing.isKanban) existing.kanbanFloorPacks = packs;
+      else existing.standingFloorPacks = Math.max(existing.standingFloorPacks ?? 0, topUp);
+      existing.belowRequirement = false;
+      existing.connectedInventory = info;
+      continue;
+    }
+    if (topUp <= 0) continue;
+    const ls = lineStockFor(d.id, d.stockCheckEnabled ?? false);
+    card.lines.push({
+      ingredientId: d.id,
+      ingredientName: d.name,
+      unit: d.unit ?? "kg",
+      totalRequired: 0,
+      stockOnHand: Math.round(ls.stockOnHand * 100) / 100,
+      surplusTarget: 0,
+      packWeight,
+      costPerPack: Number(d.costPerPack) || 0,
+      supplierPartNumber: d.supplierPartNumber ?? null,
+      orderQty: packsToBaseQty(topUp, packWeight),
+      packsToOrder: topUp,
+      isKanban: false,
+      kanbanFloorPacks: null,
+      stockCounted: d.stockCheckEnabled ?? false,
+      stockBasis: ls.basis,
+      expectedStock: ls.expectedStock,
+      expectedAtLastCount: ls.expectedAtLastCount,
+      orderingUrl: d.orderingUrl ?? null,
+      lastStockCheckAt: stockCheckTimestamps[d.id] ?? null,
+      belowRequirement: false,
+      stockInPacks: (d.stockInPacks ?? false) && packWeight > 0,
+      // A fixed top-up from Shopify's figure: no requirement, surplus,
+      // prep or case maths; the floor keeps it through a stock edit.
+      caseSizePacks: null,
+      inboundQty: Math.round((inboundByIngredient[d.id] ?? []).reduce((n, x) => n + x.qty, 0) * 100) / 100,
+      inboundDeliveries: inboundByIngredient[d.id] ?? [],
+      prepOutstandingQty: 0,
+      nativeUnit: d.unit ?? "kg",
+      palletSize: positivePalletSize(d.palletSize),
+      orderInPallets: false,
+      palletSizeMissing: false,
+      standingFloorPacks: topUp,
+      connectedInventory: info,
       packName: d.packName ?? null,
     });
   }

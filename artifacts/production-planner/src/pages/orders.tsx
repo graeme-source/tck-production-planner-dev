@@ -31,6 +31,7 @@ import {
   Calendar,
   RefreshCw,
   Clock,
+  Refrigerator,
   Trash2,
   Mail,
   MessageCircle,
@@ -60,6 +61,7 @@ import {
 } from "@workspace/business-days";
 import { parseISODate, resolveDeliveryDate } from "@/lib/order-delivery";
 import { kanbanWaitingLabel } from "@/lib/kanban-waiting";
+import { connectedInventoryLabel, type ConnectedInventoryInfo } from "@/lib/connected-inventory-label";
 import { kanbansToPutBack, openOrdersForSupplier, orderTargetFor, placedOrderEditState, showsPendingCard } from "@/lib/supplier-order-target";
 import { cutoffStatus, sortByCutoff, type CutoffStatus, type SupplierCutoffInfo } from "@/lib/supplier-cutoff";
 import { SupplierCutoffBadge } from "@/components/supplier-cutoff-badge";
@@ -187,6 +189,9 @@ type OrderLine = SurplusLineFields & {
   /** Standing weekly order due today (#348) — "Every Fri" and its fixed
    *  packs, a floor on this line (standingFloorPacks, SurplusLineFields). */
   standingOrder?: { label: string; packs: number };
+  /** Connected Inventory: a product fridge item topped up to its maximum
+   *  from Shopify's stock (api lib/connected-inventory). */
+  connectedInventory?: ConnectedInventoryInfo;
   /** What one pack is called — "box", "roll" (#327). Null = pack. */
   packName?: string | null;
 };
@@ -2644,6 +2649,19 @@ export default function Orders() {
                                 </button>
                               </span>
                             ))}
+                            {line.connectedInventory && (
+                              <span
+                                className={cn(
+                                  "mt-1 flex w-fit items-center gap-1 px-2 py-0.5 rounded-md text-xs font-semibold",
+                                  line.connectedInventory.onHandUnits == null
+                                    ? "bg-destructive/10 text-destructive"
+                                    : "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+                                )}
+                                title="Connected Inventory — topped up to the most we hold, in whole cases"
+                              >
+                                <Refrigerator className="w-3 h-3" /> {connectedInventoryLabel(line.connectedInventory)}
+                              </span>
+                            )}
                             {line.standingOrder && (
                               <StandingOrderChip
                                 ingredientId={line.ingredientId}

@@ -10,6 +10,7 @@
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
 import { MeatPortioningFields } from "@/components/meat-portioning/meat-portioning-fields";
+import { ConnectedInventoryFields } from "@/components/connected-inventory/connected-inventory-fields";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { detectAllergens, ALLERGEN_DISPLAY, declarationNeedsWrapper, labelNameFor, wrapDeclaration } from "@workspace/allergens";
@@ -1331,6 +1332,7 @@ export function IngredientFormDialog({
           )}
 
           <ShopifyLinkSection watch={watch} setValue={setValue} register={register} inputClass={inputClass} />
+          {watch("shopifyVariantId") && <ConnectedInventoryFields ingredientId={editingItem?.id ?? null} />}
 
           <div className="flex items-center gap-3 py-1">
             <label className="relative inline-flex items-center cursor-pointer">
