@@ -1461,7 +1461,7 @@ export default function Orders() {
   };
 
   const placeMutation = useMutation({
-    mutationFn: async ({ supplierId, lines, deliveryDate }: { supplierId: number; lines: EditableLine[]; deliveryDate?: string }) => {
+    mutationFn: async ({ supplierId, lines, deliveryDate, keepSeparate }: { supplierId: number; lines: EditableLine[]; deliveryDate?: string; keepSeparate?: boolean }) => {
       // Never send non-required informational lines to the PO endpoint —
       // they're display-only. Manual-added and kanban lines always go through.
       const orderableLines = lines.filter(l => l.isKanban || l.isManual || !l.belowRequirement);
@@ -1512,12 +1512,13 @@ export default function Orders() {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ expectedDeliveryDate: deliveryDate }),
+        body: JSON.stringify({ expectedDeliveryDate: deliveryDate, keepSeparate }),
       });
       if (!placeRes.ok) throw new Error("Failed to place order");
       return placeRes.json();
     },
-    onSuccess: (_result, variables) => {
+    onSuccess: (result, variables) => {
+      if (result?.combinedIntoOrderId) toast({ title: `Combined into PO #${result.combinedIntoOrderId}` });
       queryClient.invalidateQueries({ queryKey: ["purchase-orders-for-plan"] });
       queryClient.invalidateQueries({ queryKey: ["order-calculate"] });
       // Drop the placed supplier's editable lines + locally-added-kanban
@@ -1741,7 +1742,22 @@ export default function Orders() {
     });
   };
 
-  const confirmPlaceOrder = () => {
+  // Another order from this supplier for the chosen day? Placing combines
+  // with it unless "Keep separate" is pressed (Graeme, 6 Nov 2026). Not asked
+  // when editing an order that's already placed.
+  const { data: sameDayCheck } = useQuery<{ order: { id: number; itemCount: number } | null }>({
+    queryKey: ["same-day-order", confirmDialog?.supplierId, confirmDialog?.deliveryDateISO],
+    enabled: !!confirmDialog && !reopenedPlacedOrders[confirmDialog.supplierId],
+    staleTime: 0,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/orders/purchase-orders/same-day?supplierId=${confirmDialog!.supplierId}&date=${confirmDialog!.deliveryDateISO}`, { credentials: "include" });
+      if (!res.ok) return { order: null };
+      return res.json();
+    },
+  });
+  const sameDayOrder = confirmDialog && !reopenedPlacedOrders[confirmDialog.supplierId] ? sameDayCheck?.order ?? null : null;
+
+  const confirmPlaceOrder = (keepSeparate = false) => {
     if (!confirmDialog) return;
     // Priced at THIS supplier, so a line moved onto its secondary supplier
     // is saved on the PO at that supplier's price.
@@ -1751,6 +1767,7 @@ export default function Orders() {
       supplierId: confirmDialog.supplierId,
       lines,
       deliveryDate: confirmDialog.deliveryDateISO,
+      keepSeparate,
     });
   };
   // Operator-dismissed cards drop out of the pending list but stay tracked so
@@ -3787,15 +3804,29 @@ export default function Orders() {
                   ))}
                 </div>
               )}
-              <div className="flex gap-3 justify-end">
+              {sameDayOrder && (
+                <p className="text-sm font-medium rounded-lg border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 px-3 py-2">
+                  {confirmDialog.supplierName} already has PO #{sameDayOrder.id} ({sameDayOrder.itemCount} {sameDayOrder.itemCount === 1 ? "item" : "items"}) for this day.
+                </p>
+              )}
+              <div className="flex flex-wrap gap-3 justify-end">
                 <button
                   onClick={() => setConfirmDialog(null)}
                   className="px-4 py-2 rounded-lg text-sm border border-border hover:bg-secondary transition-colors"
                 >
                   Cancel
                 </button>
+                {sameDayOrder && (
+                  <button
+                    onClick={() => confirmPlaceOrder(true)}
+                    disabled={placeMutation.isPending}
+                    className="px-4 py-2 rounded-lg text-sm border border-border hover:bg-secondary transition-colors disabled:opacity-50"
+                  >
+                    Keep separate
+                  </button>
+                )}
                 <button
-                  onClick={confirmPlaceOrder}
+                  onClick={() => confirmPlaceOrder()}
                   disabled={placeMutation.isPending}
                   className="px-4 py-2 rounded-lg text-sm bg-green-600 text-white hover:bg-green-700 transition-colors flex items-center gap-2"
                 >
@@ -3804,7 +3835,7 @@ export default function Orders() {
                   ) : (
                     <Check className="w-4 h-4" />
                   )}
-                  Confirm &amp; Place Order
+                  {sameDayOrder ? `Combine with PO #${sameDayOrder.id}` : <>Confirm &amp; Place Order</>}
                 </button>
               </div>
             </div>

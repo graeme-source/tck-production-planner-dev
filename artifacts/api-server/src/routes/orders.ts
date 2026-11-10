@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { loadQueuedOrderItems, markQueuedOrdered } from "../lib/queued-production-orders";
 import { loadDueStandingOrders, markStandingOrdered } from "../lib/standing-orders";
@@ -21,6 +22,8 @@ import { eq, and, or, isNull, desc, sql, inArray, notInArray, lte, gte } from "d
 import { resolveRecipeIngredients, aggregateIngredients } from "../lib/ingredient-resolver";
 import { computeOutstandingPrepRaw } from "../lib/outstanding-prep";
 import { markSplitsPlaced, splitsForCalculate, type SplitView } from "../lib/order-splits";
+import { CombineRefused, combineOrders, findSameDayOrder } from "../lib/order-combine";
+import { validate, validateQuery } from "../middleware/validate";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
 import { createStageTimer } from "../lib/stage-timer";
 import { readCacheMiddleware } from "../lib/request-read-cache";
@@ -1456,6 +1459,33 @@ router.post("/purchase-orders", async (req, res) => {
   });
 });
 
+// Is there already an order from this supplier for this delivery day? The
+// Place Order box asks whether to combine with it (Graeme, 6 Nov 2026).
+const SameDayQuery = z.object({
+  supplierId: z.coerce.number().int().positive(),
+  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+router.get("/purchase-orders/same-day", validateQuery(SameDayQuery), async (req, res) => {
+  const { supplierId, date } = SameDayQuery.parse(req.query);
+  res.json({ order: await findSameDayOrder(supplierId, date) });
+});
+
+// Combine one placed order into another: same supplier, same day, nothing
+// received. The lines join `:id` and `fromOrderId` goes. Rules:
+// lib/order-combine-rules.ts.
+const CombineBody = z.object({ fromOrderId: z.number().int().positive() });
+router.post("/purchase-orders/:id/combine", requireManagerOrAdmin, validate(CombineBody), async (req, res) => {
+  const targetId = Number(req.params.id);
+  const { fromOrderId } = req.body as z.infer<typeof CombineBody>;
+  try {
+    await combineOrders(targetId, fromOrderId);
+    res.json({ ok: true, orderId: targetId });
+  } catch (err) {
+    if (err instanceof CombineRefused) { res.status(400).json({ error: err.message }); return; }
+    throw err;
+  }
+});
+
 router.patch("/purchase-orders/:id/place", async (req, res) => {
   const orderId = Number(req.params.id);
   const userId = req.session.userId ?? null;
@@ -1560,6 +1590,27 @@ router.patch("/purchase-orders/:id/place", async (req, res) => {
   await markQueuedOrdered(orderId, updated.supplierId, placedIngredientIds);
   // Standing weekly orders due today are ordered — not back until next time (#348).
   await markStandingOrdered(orderId, placedIngredientIds);
+
+  // Same supplier, same day: one van, one order, unless the person placing it
+  // chose to keep them apart. If it can't combine, both orders still stand.
+  if (req.body?.keepSeparate !== true) {
+    const sameDay = await findSameDayOrder(updated.supplierId, expectedDeliveryDate, orderId);
+    if (sameDay) {
+      try {
+        await combineOrders(sameDay.id, orderId);
+        const [combined] = await db.select().from(purchaseOrdersTable).where(eq(purchaseOrdersTable.id, sameDay.id));
+        res.json({
+          ...combined,
+          createdAt: combined.createdAt.toISOString(),
+          placedAt: combined.placedAt?.toISOString() ?? null,
+          combinedIntoOrderId: sameDay.id,
+        });
+        return;
+      } catch (err) {
+        console.warn(`[Orders] PO ${orderId} placed but not combined into PO ${sameDay.id}:`, err);
+      }
+    }
+  }
 
   res.json({
     ...updated,

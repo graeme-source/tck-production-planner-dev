@@ -1,21 +1,35 @@
-// The highlighted "Call · Account no." strip under the supplier name on each
-// Front Door delivery card (#332, Jane Miles). Tap to dial reuses the
-// Contacts page's Call button; the account number has a copy button because
-// Brakes ask for it before speaking to customer service. Shows only when
-// there's something to show.
+// Each Front Door delivery card's Call button and account number (#332, Jane
+// Miles). The account number has a copy button because Brakes ask for it
+// before speaking to customer service. Calling is rare, so since 6 Nov 2026
+// (Graeme) it's a plain button beside Edit order, not a highlighted strip.
+// Each shows only when there's something to show.
 import { useState } from "react";
-import { Copy, Check } from "lucide-react";
-import { CallButton } from "@/components/contacts/contact-card";
+import { Copy, Check, Phone } from "lucide-react";
+import { telHref } from "@/components/contacts/contacts-api";
 import { supplierCallStrip, type SupplierCallInfo } from "@/lib/supplier-call-strip";
 import { toast } from "@/hooks/use-toast";
 
-export function SupplierCallStrip({ supplier }: { supplier: SupplierCallInfo | null | undefined }) {
+export function SupplierCallButton({ supplier }: { supplier: SupplierCallInfo | null | undefined }) {
+  const phone = supplierCallStrip(supplier)?.phone;
+  if (!phone) return null;
+  return (
+    <a
+      href={telHref(phone)}
+      className="min-h-[44px] px-3 py-2 rounded-xl border border-border text-sm font-medium hover:bg-secondary/50 transition-colors flex items-center gap-1.5 whitespace-nowrap"
+    >
+      <Phone className="w-4 h-4" />
+      Call {phone}
+    </a>
+  );
+}
+
+export function SupplierAccountNumber({ supplier }: { supplier: SupplierCallInfo | null | undefined }) {
   const strip = supplierCallStrip(supplier);
   const [copied, setCopied] = useState(false);
-  if (!strip) return null;
+  if (!strip?.accountNumber) return null;
 
   const copy = async () => {
-    if (!strip.accountNumber) return;
+    if (!strip?.accountNumber) return;
     try {
       await navigator.clipboard.writeText(strip.accountNumber);
       setCopied(true);
@@ -26,26 +40,18 @@ export function SupplierCallStrip({ supplier }: { supplier: SupplierCallInfo | n
   };
 
   return (
-    <div
-      className="mx-4 mb-3 rounded-xl border-2 border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950/30 p-2 flex flex-wrap items-center gap-2"
-      onClick={e => e.stopPropagation()}
-    >
-      {strip.phone && <CallButton phone={strip.phone} label={`Call ${strip.phone}`} className="flex-[1_1_12rem]" />}
-      {strip.accountNumber && (
-        <div className="flex-[1_1_12rem] flex items-center justify-between gap-2 h-12 px-3 rounded-xl bg-background border border-amber-300 dark:border-amber-700">
-          <span className="text-base font-semibold break-all">
-            Account no. <span className="font-mono text-lg">{strip.accountNumber}</span>
-          </span>
-          <button
-            onClick={copy}
-            className="shrink-0 inline-flex items-center gap-1.5 h-10 px-3 rounded-lg border border-border hover:bg-secondary/60 text-sm font-semibold"
-            aria-label="Copy the account number"
-          >
-            {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
-            {copied ? "Copied" : "Copy"}
-          </button>
-        </div>
-      )}
+    <div className="px-4 pb-3 flex items-center gap-2 text-sm" onClick={e => e.stopPropagation()}>
+      <span className="text-muted-foreground break-all">
+        Account no. <span className="font-mono font-semibold text-foreground">{strip.accountNumber}</span>
+      </span>
+      <button
+        onClick={copy}
+        className="shrink-0 inline-flex items-center gap-1.5 min-h-[44px] px-3 rounded-lg border border-border hover:bg-secondary/60 text-sm font-medium"
+        aria-label="Copy the account number"
+      >
+        {copied ? <Check className="w-4 h-4 text-green-600" /> : <Copy className="w-4 h-4" />}
+        {copied ? "Copied" : "Copy"}
+      </button>
     </div>
   );
 }
