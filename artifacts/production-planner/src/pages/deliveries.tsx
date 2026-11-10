@@ -199,15 +199,6 @@ function useDeliveryDetail(orderId: number | null) {
   });
 }
 
-const LOCATION_LABELS: Record<string, string> = {
-  prep_fridge: "Prep Fridge",
-  raw_meat_fridge: "Raw Meat Fridge",
-  production_fridge: "Production Fridge",
-  raw_freezer: "Raw Freezer",
-  production_freezer: "Production Freezer",
-  dry_store: "Dry Store",
-};
-
 type DotStatus = "done" | "pending" | "na";
 
 interface ProcessingDots {
@@ -796,7 +787,6 @@ function ReceivingDialog({
                   supplierName={order.supplierName}
                   deliveryDay={deliveryDay}
                   anyUseBy={anyUseBy}
-                  locationLabel={line.defaultStorageLocation ? LOCATION_LABELS[line.defaultStorageLocation] || line.defaultStorageLocation : null}
                   slRecord={order.shelfLifeReports?.find((r) => r.lineId === line.lineId)}
                   dmRecord={order.damageReports?.find((r) => r.lineId === line.lineId)}
                 />

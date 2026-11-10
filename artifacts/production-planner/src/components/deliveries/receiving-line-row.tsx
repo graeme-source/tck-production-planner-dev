@@ -2,7 +2,9 @@
  * One goods-in line as a single compact row (Graeme, 9 Nov 2026: receiving
  * a 9–10 item order meant "constantly" scrolling up and down). Objective D.
  *
- * Tablet / desktop: Arrived? (tick / cross) · item · ordered · received
+ * Tablet / desktop: Arrived? (tick / cross, well apart) · "8 bottles
+ * Whole Milk" (ordered quantity in front of the name — Graeme, 10 Nov
+ * 2026; no storage location, it isn't needed at the door) · received
  * stepper · use-by · damaged — one row each, columns lined up under a
  * header, so a whole order fits on an iPad screen. Phone: the same cells
  * wrap onto a second line. Anything that needs more room — the short
@@ -72,12 +74,11 @@ const TONE_CLASS: Record<RowTone, string> = {
 };
 
 /** The two column layouts, as CSS variables for the list that holds the
- *  header and rows: tablet (ordered under the name) and wide screens
- *  (ordered in its own column). */
+ *  header and rows: tablet and wide screens. */
 export function receivingColumnVars(anyUseBy: boolean): CSSProperties {
   return {
-    "--recv-cols-md": receivingColumns({ anyUseBy, orderedColumn: false }),
-    "--recv-cols-lg": receivingColumns({ anyUseBy, orderedColumn: true }),
+    "--recv-cols-md": receivingColumns({ anyUseBy, wide: false }),
+    "--recv-cols-lg": receivingColumns({ anyUseBy, wide: true }),
   } as CSSProperties;
 }
 
@@ -87,8 +88,7 @@ export function ReceivingColumnHeader({ anyUseBy }: { anyUseBy: boolean }) {
   return (
     <div className="hidden md:grid md:[grid-template-columns:var(--recv-cols-md)] lg:[grid-template-columns:var(--recv-cols-lg)] gap-x-1.5 items-end px-3 py-1">
       <span className={cell}>Arrived?</span>
-      <span className={cell}>Item</span>
-      <span className={cn(cell, "hidden lg:block")}>Ordered</span>
+      <span className={cell}>Ordered · item</span>
       <span className={cn(cell, "text-center")}>Received</span>
       {anyUseBy && <span className={cell}>Use-by</span>}
       <span className={cn(cell, "text-center")}>Damaged</span>
@@ -102,7 +102,6 @@ export function ReceivingLineRow({
   supplierName,
   deliveryDay,
   anyUseBy,
-  locationLabel,
   slRecord,
   dmRecord,
 }: {
@@ -114,7 +113,6 @@ export function ReceivingLineRow({
   deliveryDay: string;
   /** Some line on the order has a use-by column. */
   anyUseBy: boolean;
-  locationLabel: string | null;
   slRecord?: ShelfLifeRecord;
   dmRecord?: DamageRecord;
 }) {
@@ -177,7 +175,7 @@ export function ReceivingLineRow({
     >
       {/* Every line is decided (Graeme, 2026-10-15): Received at the quantity
           shown — edit it for a short delivery — or Not received. */}
-      <div className="flex gap-2 shrink-0" role="group" aria-label={`${line.ingredientName}: received or not`}>
+      <div className="flex gap-6 shrink-0" role="group" aria-label={`${line.ingredientName}: received or not`}>
         <button
           type="button"
           onClick={() => decide("received")}
@@ -210,23 +208,33 @@ export function ReceivingLineRow({
         </button>
       </div>
 
-      {/* Name never truncated — it wraps. */}
+      {/* "8 bottles  Whole Milk": what was ordered first, then the name —
+          the quantity in its own box so the names still stand apart.
+          Name never truncated — it wraps. */}
       <div className="flex-1 min-w-[10rem] md:min-w-0">
-        {/* Name, with where it goes beside it while there's room. */}
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+        <div className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
+          <span className={cn(
+            "shrink-0 rounded-md px-2 py-0.5 text-base md:text-lg font-bold tabular-nums leading-tight whitespace-nowrap",
+            notReceived ? "bg-red-100 border border-red-200 text-red-800 dark:bg-red-950/40 dark:border-red-900 dark:text-red-300" : "bg-background border border-border text-foreground",
+          )}>
+            {orderedText}
+          </span>
           <span className={cn("text-base md:text-lg font-bold leading-tight break-words min-w-0", notReceived && "text-red-800 dark:text-red-300")}>
             {line.ingredientName}
           </span>
-          {locationLabel && <span className={cn(chip, "text-muted-foreground bg-secondary whitespace-nowrap")}>→ {locationLabel}</span>}
         </div>
-        {/* One line under the name: what was ordered (until there's room
-            for its own column), then any flags. */}
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="lg:hidden text-sm text-muted-foreground leading-snug">
-              Ordered <span className="font-bold text-foreground tabular-nums">{orderedText}</span>
-              {sizeHint && <> ({sizeHint})</>}
-              {pallet && <> · <span className="font-semibold">{pallet}</span></>}
-            </span>
+        {/* One line under it: pack size, pallet, then any flags. */}
+        {(sizeHint || pallet || useByMissing || (line.useByIsAuto && !notReceived) || discrepancy) && (
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+            {(sizeHint || pallet) && (
+              <span className="text-sm text-muted-foreground leading-snug">
+                {sizeHint && <>({sizeHint})</>}
+                {sizeHint && pallet && " · "}
+                {/* Pallet orders: "1 pallet — 50 packs" so the person at the
+                    door can match it to what's on the truck. */}
+                {pallet && <span className="font-semibold">{pallet}</span>}
+              </span>
+            )}
             {useByMissing && (
               <span className={cn(chip, "font-medium text-destructive bg-destructive/10")}>
                 <AlertTriangle className="w-3 h-3" /> Use-by required
@@ -241,16 +249,8 @@ export function ReceivingLineRow({
                 {line.quantityReceived < line.quantityOrdered ? "Short — goes on the short-delivery report" : "More than ordered"}
               </span>
             )}
-        </div>
-      </div>
-
-      {/* Ordered — its own column on wide screens. */}
-      <div className="hidden lg:block min-w-0 leading-tight">
-        <span className="text-lg font-bold tabular-nums">{orderedText}</span>
-        {sizeHint && <span className="block text-xs text-muted-foreground">({sizeHint})</span>}
-        {/* Pallet orders: "1 pallet — 50 packs" so the person at the door can
-            match it to what's on the truck. */}
-        {pallet && <span className="block text-xs font-semibold text-muted-foreground">{pallet}</span>}
+          </div>
+        )}
       </div>
 
       {notReceived ? (
