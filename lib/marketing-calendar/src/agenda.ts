@@ -156,3 +156,29 @@ export function draftsOpen(saved: string | null | undefined, anyNeedsApproval: b
   if (saved === "closed") return false;
   return anyNeedsApproval;
 }
+
+/**
+ * The list opens at the last email sent, not two weeks back (Graeme,
+ * 11 Nov 2026: "I probably just want to see yesterday's, or the last email
+ * sent … I should be able to see [today's] right at the top"). Keeps the
+ * most recent past day with an email (or today, when there's none in
+ * range) and everything after it, under that day's week heading. `hidden`
+ * says whether anything was folded away, for the "Show earlier" button.
+ */
+export function startAtLastSent<P extends AgendaPhase, E extends AgendaEmail>(
+  rows: AgendaRow<P, E>[],
+  today: string,
+): { rows: AgendaRow<P, E>[]; hidden: boolean } {
+  let start = -1;
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i];
+    if (r.kind !== "day") continue;
+    if (r.date < today && r.emails.length > 0) start = i;
+    if (r.date >= today) { if (start < 0) start = i; break; }
+  }
+  if (start <= 0) return { rows, hidden: false };
+  let week = start - 1;
+  while (week >= 0 && rows[week].kind !== "week") week--;
+  const kept = week >= 0 ? [rows[week], ...rows.slice(start)] : rows.slice(start);
+  return { rows: kept, hidden: kept.length < rows.length };
+}

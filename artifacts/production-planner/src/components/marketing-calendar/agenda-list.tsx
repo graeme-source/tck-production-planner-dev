@@ -18,11 +18,11 @@
  * @workspace/marketing-calendar — tested there.
  */
 import { EmailResultsBlock } from "./email-results";
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { format, parseISO } from "date-fns";
 import { BadgeCheck, ChevronDown, ChevronUp, Flag, Loader2, Mail, PencilLine, Play, Tag, Users } from "lucide-react";
 import {
-  buildAgenda, customerGroupChip, emailRowStatus, formatRange, rowWantsApproval, type AgendaRow, type EmailRowStatus, type PhaseOnRow,
+  buildAgenda, customerGroupChip, emailRowStatus, formatRange, rowWantsApproval, startAtLastSent, type AgendaRow, type EmailRowStatus, type PhaseOnRow,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { appScrollContainer } from "@/lib/scroll";
@@ -70,10 +70,17 @@ export function AgendaList({
   /** Bumped by the Today button to scroll back to today. */
   scrollToTodaySignal: number;
 }) {
-  const { rows, laneCount } = useMemo(
+  const agenda = useMemo(
     () => buildAgenda<Phase, CalEmail>({ from, to, today, phases, emails }),
     [from, to, today, phases, emails],
   );
+  // Opens at the last email sent, then today (Graeme, 11 Nov 2026); the
+  // first "Show earlier" unfolds the rest of what's loaded, later presses
+  // load more weeks as before.
+  const [showAll, setShowAll] = useState(false);
+  const recent = useMemo(() => startAtLastSent(agenda.rows, today), [agenda.rows, today]);
+  const rows = showAll ? agenda.rows : recent.rows;
+  const laneCount = agenda.laneCount;
 
   // The list flows in the page and the PAGE scrolls (Graeme, 2026-10-21:
   // "Get rid of having to scroll in the container of the calendar … I want
@@ -118,7 +125,8 @@ export function AgendaList({
       const first = rowsEls.find(el => topInScroller(el) + el.offsetHeight > 0) ?? rowsEls[0];
       if (first) anchor.current = { key: first.dataset.rowKey!, offset: topInScroller(first) };
     }
-    onEarlier();
+    if (!showAll && recent.hidden) setShowAll(true);
+    else onEarlier();
   };
 
   return (

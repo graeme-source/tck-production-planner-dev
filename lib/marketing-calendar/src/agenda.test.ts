@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agendaRange, buildAgenda, draftsOpen, sortDrafts, type AgendaRow } from "./agenda";
+import { agendaRange, buildAgenda, draftsOpen, sortDrafts, startAtLastSent, type AgendaRow } from "./agenda";
 import { emailRowStatus, rowWantsApproval } from "./email-approvals";
 
 type P = { id: number; startDate: string; endDate: string; title: string };
@@ -165,5 +165,36 @@ describe("emailRowStatus", () => {
     expect(rowWantsApproval("changed")).toBe(true);
     expect(rowWantsApproval("approved")).toBe(false);
     expect(rowWantsApproval("sent_unapproved")).toBe(false);
+  });
+});
+
+describe("startAtLastSent (11 Nov 2026)", () => {
+  const build = (emails: E[]) => buildAgenda<P, E>({ from: "2026-10-05", to: "2026-11-01", today: TODAY, phases: [], emails }).rows;
+
+  it("opens at the last email sent, under its week heading, with today after it", () => {
+    const rows = build([
+      { id: "old", date: "2026-10-06", sendAt: null },
+      { id: "last", date: "2026-10-20", sendAt: null },
+      { id: "today", date: TODAY, sendAt: null },
+    ]);
+    const out = startAtLastSent(rows, TODAY);
+    expect(out.hidden).toBe(true);
+    const c = compact(out.rows);
+    expect(c[0]).toBe("W 2026-10-19 *");
+    expect(c[1]).toBe("d 2026-10-20 [] last");
+    expect(c[2]).toMatch(/^TODAY 2026-10-21 .*today/);
+    expect(c.join(" ")).not.toContain("old");
+  });
+
+  it("an email sent last week keeps its own week heading", () => {
+    const out = startAtLastSent(build([{ id: "last", date: "2026-10-16", sendAt: null }]), TODAY);
+    expect(compact(out.rows).slice(0, 2)).toEqual(["W 2026-10-12", "d 2026-10-16 [] last"]);
+  });
+
+  it("with no past email in range it opens at today", () => {
+    const out = startAtLastSent(build([]), TODAY);
+    expect(out.hidden).toBe(true);
+    expect(compact(out.rows)[0]).toBe("W 2026-10-19 *");
+    expect(compact(out.rows)[1]).toMatch(/^TODAY 2026-10-21/);
   });
 });
