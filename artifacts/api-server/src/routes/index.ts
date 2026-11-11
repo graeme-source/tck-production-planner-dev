@@ -5,6 +5,7 @@ import healthRouter from "./health";
 import authRouter from "./auth";
 import storageRouter from "./storage";
 import ingredientsRouter from "./ingredients";
+import publicDateLockedProductsRouter from "./public-date-locked-products";
 import ingredientDeclarationsRouter from "./ingredient-declarations";
 import ingredientDeliverySurplusRouter from "./ingredient-delivery-surplus";
 import subRecipesRouter from "./sub-recipes";
@@ -233,6 +234,10 @@ router.use("/print-jobs", (req: Request, res: Response, next: NextFunction) =>
 // managers' probe assignments sit behind the session guard further down.
 router.use("/probe-readings", (req: Request, res: Response, next: NextFunction) =>
   req.method === "POST" && (req.path === "/" || req.path === "") ? probeBridgeRouter(req, res, next) : next());
+
+// Website assistant (cs-agent, no cookie): the date-locked product list.
+// NOT public — demands the CS_AGENT_SHARED_SECRET key (503 when unset).
+router.use("/public/date-locked-products", publicDateLockedProductsRouter);
 
 // Auth guard for all routes below
 router.use((req: Request, res: Response, next: NextFunction) => {
