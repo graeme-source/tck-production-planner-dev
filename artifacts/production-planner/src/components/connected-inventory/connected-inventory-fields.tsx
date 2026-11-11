@@ -5,7 +5,7 @@
  * Orders page tops it up to the maximum here. Each change saves straight
  * away with a visible state.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Refrigerator } from "lucide-react";
 import { useAutosave } from "@/hooks/use-autosave";
@@ -23,8 +23,18 @@ type View = {
 };
 type Patch = { connectedInventory?: boolean; maxStockUnits?: number | null };
 
-export function ConnectedInventoryFields({ ingredientId }: { ingredientId: number | null }) {
-  if (ingredientId == null) return null;
+/** A clear "what to do first" line in place of the settings (Graeme, 11 Nov
+ *  2026: the box used to stay hidden until a link was saved, so it couldn't
+ *  be found). */
+function FirstStep({ children }: { children: ReactNode }) {
+  return (
+    <p className="rounded-xl border-2 border-dashed border-border px-4 py-4 text-sm text-muted-foreground">{children}</p>
+  );
+}
+
+export function ConnectedInventoryFields({ ingredientId, linked }: { ingredientId: number | null; linked: boolean }) {
+  if (ingredientId == null) return <FirstStep>Save the item first, then link it to its Shopify product above.</FirstStep>;
+  if (!linked) return <FirstStep>Link it to its Shopify product above and press Save Changes. Then tick Connected Inventory here and set the most we hold.</FirstStep>;
   return <Fields ingredientId={ingredientId} />;
 }
 
@@ -67,24 +77,21 @@ function Fields({ ingredientId }: { ingredientId: number }) {
     setMax(view.data.maxStockUnits != null ? String(view.data.maxStockUnits) : "");
   }, [view.data?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  if (!view.data) return null;
+  if (view.isError) return <FirstStep>Couldn&rsquo;t load the fridge settings ({(view.error as Error).message}). Close and open the item again.</FirstStep>;
+  if (!view.data) return <FirstStep>Loading…</FirstStep>;
   const v = view.data;
   if (!v.linkedToShopify) {
-    return (
-      <p className="text-xs text-muted-foreground">
-        Product fridge item: link it to its Shopify product and save, then it can be topped up from Shopify&rsquo;s stock.
-      </p>
-    );
+    return <FirstStep>Press Save Changes to keep the Shopify link. Then open the item again, tick Connected Inventory here and set the most we hold.</FirstStep>;
   }
   const maxNum = Number(max);
   const shortBy = on && maxNum > 0 && v.onHandUnits != null ? Math.max(0, maxNum - Math.max(0, v.onHandUnits)) : null;
   const packs = shortBy != null ? Math.floor(shortBy / v.unitsPerPack + 1e-9) : null;
 
   return (
-    <div className="rounded-xl border border-border p-3 space-y-3">
+    <div className="space-y-3">
       <div className="flex items-center justify-between gap-2">
-        <p className="text-sm font-semibold flex items-center gap-1.5">
-          <Refrigerator className="w-4 h-4 text-primary" /> Product fridge item
+        <p className="text-sm text-muted-foreground flex items-center gap-1.5">
+          <Refrigerator className="w-4 h-4 text-primary" /> Bought in and sold from the product fridge
         </p>
         <SaveChip state={auto.state} error={auto.error} onRetry={auto.flush} />
       </div>

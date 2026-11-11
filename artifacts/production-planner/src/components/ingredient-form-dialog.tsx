@@ -18,7 +18,19 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Carrot, Box, Camera, ChevronDown, Images, Sparkles, ShoppingBag, X, Loader2 } from "lucide-react";
+import { Carrot, Box, Camera, Images, Sparkles, ShoppingBag, X, Loader2, BookOpenText, Truck, Boxes, CalendarClock, ChefHat, Tag } from "lucide-react";
+import { EditorSection } from "@/components/recipe-editor/editor-shell";
+import { INGREDIENT_TABS, tabsFor, ingredientErrorCounts, firstIngredientErrorTab, type IngredientTabId } from "@/lib/ingredient-editor-tabs";
+
+const INGREDIENT_TAB_ICONS: Record<IngredientTabId, typeof Tag> = {
+  basics: BookOpenText,
+  buying: Truck,
+  stock: Boxes,
+  shelf: CalendarClock,
+  prep: ChefHat,
+  label: Tag,
+  shop: ShoppingBag,
+};
 import { cn } from "@/lib/utils";
 import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
@@ -150,9 +162,24 @@ export function IngredientFormDialog({
   };
 
   const [initialized, setInitialized] = useState(false);
-  const [nutritionOpen, setNutritionOpen] = useState(false);
-  if (open && !initialized) { populateForm(editingItem, defaultMode); setInitialized(true); }
-  if (!open && initialized) { setInitialized(false); setNutritionOpen(false); }
+  // The open tab (lib/ingredient-editor-tabs). Each opening starts on
+  // Basics — or on Label & nutrition when opened to fix a declaration.
+  const [tab, setTab] = useState<IngredientTabId>("basics");
+  if (open && !initialized) { populateForm(editingItem, defaultMode); setInitialized(true); setTab(focusDeclaration ? "label" : "basics"); }
+  if (!open && initialized) { setInitialized(false); }
+  const shownTabs = tabsFor(isIngredient);
+  const activeTab: IngredientTabId = shownTabs.includes(tab) ? tab : "basics";
+  const tabErrorCounts = ingredientErrorCounts(errors as Record<string, unknown>);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const chooseTab = (t: IngredientTabId) => {
+    setTab(t);
+    if (bodyRef.current) bodyRef.current.scrollTop = 0;
+  };
+  // A refused save opens the first tab with a problem.
+  const onInvalid = (errs: Record<string, unknown>) => {
+    const t = firstIngredientErrorTab(errs);
+    if (t) chooseTab(t);
+  };
 
   const switchMode = (mode: IngredientFormMode) => {
     setValue("formMode", mode);
@@ -188,16 +215,16 @@ export function IngredientFormDialog({
   const declarationReg = register("labelDeclaration");
   const declarationRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => {
-    if (open && focusDeclaration) setNutritionOpen(true);
+    if (open && focusDeclaration) setTab("label");
   }, [open, focusDeclaration]);
   useEffect(() => {
-    if (!(open && focusDeclaration && nutritionOpen)) return;
+    if (!(open && focusDeclaration && tab === "label")) return;
     const t = setTimeout(() => {
       declarationRef.current?.scrollIntoView({ block: "center", behavior: "smooth" });
       declarationRef.current?.focus({ preventScroll: true });
     }, 200);
     return () => clearTimeout(t);
-  }, [open, focusDeclaration, nutritionOpen]);
+  }, [open, focusDeclaration, tab]);
   // What a save will store when the text is a bare list — the server wraps
   // it under the name with the same shared rule (@workspace/allergens).
   const wrapPreview = watchedDeclaration.trim() && declarationNeedsWrapper(watchedDeclaration)
@@ -405,7 +432,6 @@ export function IngredientFormDialog({
       };
       // Everything found goes straight in; anything not found is left as it was.
       applyScrapedFields(full, ALL_APPLY_FLAGS);
-      setNutritionOpen(true);
       setScrapeSummary({
         ...summariseScrape(data.sources, data.extracted.allergens ?? [], data.upf),
         upf: data.upf ?? null,
@@ -745,49 +771,82 @@ export function IngredientFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
-      <DialogContent className="w-[calc(100vw-1rem)] sm:max-w-[640px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto z-[200]">
-        <DialogHeader>
-          <DialogTitle className="font-display text-xl">
-            {editingItem ? "Edit Item" : "Add New Item"}
-          </DialogTitle>
+      {/* Tabbed and full width, like the recipe editor (Graeme, 11 Nov 2026):
+          the tab bar and the save buttons stay in view, the body scrolls. */}
+      <DialogContent className="p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] sm:max-w-[min(96vw,1400px)] h-[92dvh] max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl z-[200] [&>button:last-child]:p-2 [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child>svg]:h-5 [&>button:last-child>svg]:w-5">
+        <DialogHeader className="px-5 sm:px-6 pt-5 pb-0 pr-14 shrink-0 space-y-3 text-left">
+          <div className="flex items-center gap-3 flex-wrap">
+            <DialogTitle className="font-display text-xl">
+              {editingItem ? (watchedName || editingItem.name || "Edit item") : "Add New Item"}
+            </DialogTitle>
+            {!lockMode && (
+              <div className="inline-flex gap-1 p-1 bg-secondary/40 rounded-xl" role="group" aria-label="Kind of item">
+                <button
+                  type="button"
+                  onClick={() => switchMode("ingredient")}
+                  title="Perishable food item used in recipes"
+                  className={cn("px-3 min-h-9 flex items-center gap-1.5 rounded-lg text-sm font-medium transition-all",
+                    formMode === "ingredient" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  <Carrot className="w-4 h-4" /> Ingredient
+                </button>
+                <button
+                  type="button"
+                  onClick={() => switchMode("supply")}
+                  title="Non-perishable packaging, courier materials or supplies"
+                  className={cn("px-3 min-h-9 flex items-center gap-1.5 rounded-lg text-sm font-medium transition-all",
+                    formMode === "supply" ? "bg-card shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}
+                >
+                  <Box className="w-4 h-4" /> Supply
+                </button>
+              </div>
+            )}
+          </div>
+          <div role="tablist" aria-label="Item settings" className="-mx-5 sm:-mx-6 px-5 sm:px-6 pb-3 border-b border-border flex gap-1.5 xl:gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            {INGREDIENT_TABS.filter(t => shownTabs.includes(t.id)).map(t => {
+              const Icon = INGREDIENT_TAB_ICONS[t.id];
+              const isActive = t.id === activeTab;
+              const nErr = tabErrorCounts[t.id] ?? 0;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  role="tab"
+                  id={`ingredient-tab-${t.id}`}
+                  aria-selected={isActive}
+                  aria-controls={`ingredient-panel-${t.id}`}
+                  onClick={() => chooseTab(t.id)}
+                  title={t.hint}
+                  className={cn(
+                    "relative shrink-0 lg:flex-1 min-h-12 px-3 xl:px-4 py-2 rounded-xl text-sm xl:text-base font-semibold flex items-center justify-center gap-1.5 xl:gap-2 transition-colors whitespace-nowrap",
+                    isActive ? "bg-primary text-primary-foreground shadow-sm" : "bg-secondary/40 text-foreground hover:bg-secondary/70",
+                  )}
+                >
+                  <Icon className="w-4 h-4 xl:w-5 xl:h-5 shrink-0" />
+                  <span className="flex flex-col items-start leading-tight">
+                    <span>{t.label}</span>
+                    <span className={cn("hidden xl:block text-[11px] font-normal", isActive ? "text-primary-foreground/85" : "text-muted-foreground")}>{t.hint}</span>
+                  </span>
+                  {nErr > 0 && (
+                    <span className="min-w-6 h-6 px-1.5 rounded-full bg-destructive text-white text-xs font-bold flex items-center justify-center" aria-label={`${nErr} problem${nErr !== 1 ? "s" : ""} to fix`}>
+                      {nErr}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
         </DialogHeader>
 
-        {!lockMode && (
-          <>
-            <div className="flex gap-1 p-1 bg-secondary/40 rounded-xl mt-2 mb-1">
-              <button
-                type="button"
-                onClick={() => switchMode("ingredient")}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all",
-                  formMode === "ingredient"
-                    ? "bg-card shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <Carrot className="w-4 h-4" /> Ingredient
-              </button>
-              <button
-                type="button"
-                onClick={() => switchMode("supply")}
-                className={cn(
-                  "flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm font-medium transition-all",
-                  formMode === "supply"
-                    ? "bg-card shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                <Box className="w-4 h-4" /> Supply
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mb-4 text-center">
-              {formMode === "ingredient"
-                ? "Perishable food item used in recipes"
-                : "Non-perishable packaging, courier materials or supplies"}
-            </p>
-          </>
-        )}
-
+        <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-5" data-testid="ingredient-editor-body">
+          {/* Fill from a supplier page or a label photo — open when adding,
+              folded away when editing so it isn't in the way. Outside the
+              form, so Enter in the URL box doesn't save. */}
+          <details hidden={activeTab !== "basics"} open={!editingItem} className="mb-5 rounded-2xl border border-primary/30 bg-primary/5">
+            <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold flex items-center gap-2 min-h-11">
+              <Sparkles className="w-4 h-4 text-primary" /> Fill in from a supplier page or a label photo
+            </summary>
+            <div className="px-4 pb-4 [&>div:first-child]:mb-0 [&>div:first-child]:border-0 [&>div:first-child]:bg-transparent [&>div:first-child]:p-0">
         {/* Scrape from URL — the user's first move when adding an
             ingredient from a supplier site. Paste the product URL,
             click Scrape, review the fields Claude extracted, then
@@ -994,9 +1053,12 @@ export function IngredientFormDialog({
             </div>
           )}
         </div>
+            </div>
+          </details>
 
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-5">
-
+          <form id="ingredient-form" onSubmit={handleSubmit(onSubmit, onInvalid)}>
+            <div role="tabpanel" id="ingredient-panel-basics" aria-labelledby="ingredient-tab-basics" hidden={activeTab !== "basics"} className="grid gap-5 lg:grid-cols-2 items-start">
+              <EditorSection title="Item">
           <div className="grid grid-cols-3 gap-3">
             <div className="col-span-2">
               <label className="text-sm font-medium mb-1 block">Name *</label>
@@ -1029,18 +1091,82 @@ export function IngredientFormDialog({
               </select>
             </div>
           </div>
-
-          <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-sm font-medium mb-1 block">
+              {isIngredient ? "Ingredient Category" : "Supply Category"}
+            </label>
+            <select {...register("category")} className={inputClass}>
+              {(isIngredient ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES).map(c => (
+                <option key={c.value} value={c.value}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+<div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Brand</label>
               <input {...register("brand")} className={inputClass} placeholder="e.g. Jiffy" />
             </div>
+</div>
+              </EditorSection>
+              <EditorSection title="Notes">
+          <div>
+            <label className="text-sm font-medium mb-1 block">Notes</label>
+            <textarea {...register("notes")} rows={2} className={cn(inputClass, "resize-none")} placeholder="Any additional notes..." />
+          </div>
+              </EditorSection>
+            </div>
+            <div role="tabpanel" id="ingredient-panel-buying" aria-labelledby="ingredient-tab-buying" hidden={activeTab !== "buying"} className="grid gap-5 lg:grid-cols-2 items-start">
+              <EditorSection title="Suppliers">
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Primary Supplier</label>
+              <select {...register("supplierId")} className={inputClass}>
+                <option value="0">— No supplier —</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Secondary Supplier</label>
+              <select {...register("secondarySupplierId")} className={inputClass}>
+                <option value="0">— None —</option>
+                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          </div>
+          {/* Price at the secondary supplier (Graeme, 2026-10-01). Optional —
+              the Orders page uses it when this item is moved onto that
+              supplier's order to reach their minimum order value. */}
+          {watchedSecondarySupplierId > 0 && (
+            <div>
+              <label className="text-sm font-medium mb-1 block">
+                Price at {secondarySupplierName ?? "secondary supplier"} (per pack)
+              </label>
+              <div className="relative max-w-[200px]">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">£</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  inputMode="decimal"
+                  {...register("secondaryCostPerPack")}
+                  className={cn(inputClass, "pl-7")}
+                  placeholder="Not known"
+                />
+              </div>
+              {errors.secondaryCostPerPack && <span className="text-destructive text-xs">{errors.secondaryCostPerPack.message}</span>}
+              <p className="text-xs text-muted-foreground mt-1">
+                Optional. Used on the Orders page to cost moving this item onto {secondarySupplierName ?? "the secondary supplier"}&rsquo;s order. Leave blank if you don&rsquo;t know it.
+              </p>
+            </div>
+          )}
+              </EditorSection>
+              <EditorSection title="Pack & price">
+<div className="grid sm:grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Supplier Part No.</label>
               <input {...register("supplierPartNumber")} className={inputClass} placeholder="e.g. JF-BOX-L" />
             </div>
-          </div>
-
+</div>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Pack size ({watchedUnit || "unit"}) *</label>
@@ -1086,45 +1212,131 @@ export function IngredientFormDialog({
               {errors.palletSize && <span className="text-destructive text-xs">{String(errors.palletSize.message)}</span>}
             </div>
           )}
-
-          <div>
-            <label className="text-sm font-medium mb-1 block">
-              {isIngredient ? "Ingredient Category" : "Supply Category"}
+              </EditorSection>
+            </div>
+            <div role="tabpanel" id="ingredient-panel-stock" aria-labelledby="ingredient-tab-stock" hidden={activeTab !== "stock"} className="grid gap-5 lg:grid-cols-2 items-start">
+              <EditorSection title="Stock checks">
+          <div className="flex items-center gap-3 py-1">
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" {...register("stockCheckEnabled")} className="sr-only peer" />
+              <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
             </label>
-            <select {...register("category")} className={inputClass}>
-              {(isIngredient ? INGREDIENT_CATEGORIES : SUPPLY_CATEGORIES).map(c => (
-                <option key={c.value} value={c.value}>{c.label}</option>
-              ))}
-            </select>
+            <div>
+              <span className="text-sm font-medium">Requires Stock Check</span>
+              <p className="text-xs text-muted-foreground">Operators must record remaining stock during Main Prep.</p>
+            </div>
           </div>
 
-          {isIngredient && (
-            <>
+          {watchedStockCheckEnabled && (
+            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
               <div>
-                <label className="text-sm font-medium mb-1 block">
-                  Processing Ratio <span className="text-xs font-normal text-muted-foreground">(unchopped → chopped / raw → cooked)</span>
-                </label>
-                <div className="relative max-w-[160px]">
-                  <input type="number" step="0.01" min="0" max="100" {...register("processingRatioPct")} className={cn(numInputClass, "pr-8")} placeholder="e.g. 84.70" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">Leave blank for 100% (no loss). Adjusts sub-recipe yield.</p>
-                {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
+                <label className="text-sm font-medium mb-1 block">Check Frequency</label>
+                <select {...register("stockCheckFrequency")} className={inputClass}>
+                  <option value="daily">Daily — check every production day</option>
+                  <option value="weekly">Weekly — check on a specific day only</option>
+                </select>
               </div>
-
-              {watchedProcessingRatioPct != null && watchedProcessingRatioPct < 100 && (
-                <div className="pl-4 border-l-2 border-primary/20">
-                  <label className="text-sm font-medium mb-1 block">Prep Weighing Point</label>
-                  <select {...register("prepWeightMode")} className={cn(numInputClass, "max-w-[280px]")}>
-                    <option value="raw">Raw weight (weigh before processing)</option>
-                    <option value="processed">Processed weight (weigh after processing)</option>
+              {watchedStockCheckFrequency === "weekly" && (
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Check Day</label>
+                  <select {...register("stockCheckDay")} className={inputClass}>
+                    <option value="">— Select a day —</option>
+                    {["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map(d => <option key={d} value={d}>{d}</option>)}
                   </select>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Controls which weight the prep station shows. Use "processed" for ingredients where staff chop/pick then weigh the exact amount (e.g. basil, fresh veg).
-                  </p>
                 </div>
               )}
+              {/* The unit every stock check asks for (Graeme, 19 Oct) —
+                  autosaves on its own endpoint, so it needs a saved ingredient. */}
+              {editingItem?.id
+                ? <StockCheckUnitField ingredientId={editingItem.id} />
+                : <p className="text-xs text-muted-foreground">Save the ingredient first to choose the unit stock checks are recorded in.</p>}
+              <div>
+                <label className="text-sm font-medium mb-1 block">Surplus % <span className="text-xs font-normal text-muted-foreground">(ordering buffer)</span></label>
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="1" min="0" {...register("surplusPercent")} className={cn(numInputClass, "pr-8")} placeholder="10" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                </div>
+              </div>
+              {/* Surplus by delivery day (Graeme, 14 Oct) — autosaves on its
+                  own endpoint, so it needs a saved ingredient. */}
+              {editingItem?.id
+                ? <DeliverySurplusField ingredientId={editingItem.id} normalPercent={watch("surplusPercent")} />
+                : <p className="text-xs text-muted-foreground">Save the ingredient first to set a different surplus for each delivery day.</p>}
+            </div>
+          )}
+{isIngredient && (
+<>
+              <div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input type="checkbox" {...register("stockInPacks")} className="w-4 h-4 rounded border-border" />
+                  <span className="text-sm font-medium">Count stock in whole packs</span>
+                </label>
+                <p className="text-xs text-muted-foreground mt-1 ml-6">
+                  Stock check, ordering and goods-in count this in whole {watchedUnit === "ml" || watchedUnit === "l" ? "bottles" : "packs"} instead of {watchedUnit || "weight"}. Recipes and prep still use {watchedUnit || "the native unit"}. Requires Pack size.
+                </p>
+                {errors.stockInPacks && <span className="text-destructive text-xs ml-6 block mt-1">{String(errors.stockInPacks.message)}</span>}
+              </div>
+</>
+)}
+              </EditorSection>
+              <EditorSection title="Storage & kanban">
+          {/* Where it lives — printed on the kanban card (#357). Autosaves
+              on its own endpoint, so it needs a saved item. */}
+          {editingItem?.id
+            ? <StorageLocationField ingredientId={editingItem.id} />
+            : <p className="text-xs text-muted-foreground">Save the item first to set its storage location (printed on the kanban card).</p>}
 
+          <div className="flex items-center gap-3 py-1">
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input type="checkbox" {...register("kanbanEnabled")} className="sr-only peer" />
+              <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
+            </label>
+            <div>
+              <span className="text-sm font-medium">Kanban Enabled</span>
+              <p className="text-xs text-muted-foreground">Item appears in the kanban reorder system.</p>
+            </div>
+          </div>
+
+          {watchedKanbanEnabled && (
+            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Kanban Unit</label>
+                  <select {...register("kanbanUnit")} className={inputClass}>
+                    <option value="weight">Weight (kg/g/L)</option>
+                    <option value="pack">Pack</option>
+                    <option value="bottle">Bottle</option>
+                    <option value="pallet">Pallet</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Trigger Quantity</label>
+                  <input type="number" step="0.1" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
+                  <p className="text-xs text-muted-foreground mt-1">Pull card when stock reaches this level.</p>
+                </div>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Order Amount</label>
+                <input type="number" step="0.1" min="0" {...register("kanbanOrderAmount")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 50" />
+                <p className="text-xs text-muted-foreground mt-1">Quantity to order when card is pulled.</p>
+              </div>
+              {/* Standing weekly order (#348) — autosaves on its own
+                  endpoint, so it needs a saved ingredient. */}
+              {editingItem?.id
+                ? <StandingOrderField ingredientId={editingItem.id} kanbanEnabled />
+                : <p className="text-xs text-muted-foreground">Save the item first to have it ordered automatically every week.</p>}
+            </div>
+          )}
+          {/* Kanban switched off but a weekly order still set: keep it visible. */}
+          {!watchedKanbanEnabled && editingItem?.id && (
+            <StandingOrderField ingredientId={editingItem.id} kanbanEnabled={false} />
+          )}
+              </EditorSection>
+            </div>
+{isIngredient && (
+<>
+            <div role="tabpanel" id="ingredient-panel-shelf" aria-labelledby="ingredient-tab-shelf" hidden={activeTab !== "shelf"} className="grid gap-5 lg:grid-cols-2 items-start">
+              <EditorSection title="Shelf life">
               <div>
                 <label className="text-sm font-medium mb-1 block">Shelf Life <span className="text-xs font-normal text-muted-foreground">(days)</span></label>
                 <div className="relative max-w-[160px]">
@@ -1154,7 +1366,8 @@ export function IngredientFormDialog({
                   Empty = the category default set on the Label Printer page.
                 </p>
               </div>
-
+              </EditorSection>
+              <EditorSection title="Goods-in">
               <div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" {...register("requiresUseByDate")} className="w-4 h-4 rounded border-border" />
@@ -1175,18 +1388,38 @@ export function IngredientFormDialog({
                   automatically. Empty = no minimum.
                 </p>
               </div>
-
+              </EditorSection>
+            </div>
+</>
+)}
+{isIngredient && (
+<>
+            <div role="tabpanel" id="ingredient-panel-prep" aria-labelledby="ingredient-tab-prep" hidden={activeTab !== "prep"} className="grid gap-5 lg:grid-cols-2 items-start">
+              <EditorSection title="Prep">
               <div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input type="checkbox" {...register("stockInPacks")} className="w-4 h-4 rounded border-border" />
-                  <span className="text-sm font-medium">Count stock in whole packs</span>
+                <label className="text-sm font-medium mb-1 block">
+                  Processing Ratio <span className="text-xs font-normal text-muted-foreground">(unchopped → chopped / raw → cooked)</span>
                 </label>
-                <p className="text-xs text-muted-foreground mt-1 ml-6">
-                  Stock check, ordering and goods-in count this in whole {watchedUnit === "ml" || watchedUnit === "l" ? "bottles" : "packs"} instead of {watchedUnit || "weight"}. Recipes and prep still use {watchedUnit || "the native unit"}. Requires Pack size.
-                </p>
-                {errors.stockInPacks && <span className="text-destructive text-xs ml-6 block mt-1">{String(errors.stockInPacks.message)}</span>}
+                <div className="relative max-w-[160px]">
+                  <input type="number" step="0.01" min="0" max="100" {...register("processingRatioPct")} className={cn(numInputClass, "pr-8")} placeholder="e.g. 84.70" />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Leave blank for 100% (no loss). Adjusts sub-recipe yield.</p>
+                {errors.processingRatioPct && <span className="text-destructive text-xs">{String(errors.processingRatioPct.message)}</span>}
               </div>
 
+              {watchedProcessingRatioPct != null && watchedProcessingRatioPct < 100 && (
+                <div className="pl-4 border-l-2 border-primary/20">
+                  <label className="text-sm font-medium mb-1 block">Prep Weighing Point</label>
+                  <select {...register("prepWeightMode")} className={cn(numInputClass, "max-w-[280px]")}>
+                    <option value="raw">Raw weight (weigh before processing)</option>
+                    <option value="processed">Processed weight (weigh after processing)</option>
+                  </select>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Controls which weight the prep station shows. Use "processed" for ingredients where staff chop/pick then weigh the exact amount (e.g. basil, fresh veg).
+                  </p>
+                </div>
+              )}
               <div>
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input type="checkbox" {...register("prepOneTinPerRecipe")} className="w-4 h-4 rounded border-border" />
@@ -1219,10 +1452,9 @@ export function IngredientFormDialog({
                 </p>
                 {errors.prepCountPerPortion && <span className="text-destructive text-xs">{String(errors.prepCountPerPortion.message)}</span>}
               </div>
-            </>
-          )}
-
-          {showRawMeatTray && (
+              </EditorSection>
+{showRawMeatTray ? (
+              <EditorSection title="Raw meat">
             <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
               <MeatPortioningFields ingredientId={editingItem?.id ?? null} />
               <div>
@@ -1285,175 +1517,21 @@ export function IngredientFormDialog({
                 </select>
               </div>
             </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-sm font-medium mb-1 block">Primary Supplier</label>
-              <select {...register("supplierId")} className={inputClass}>
-                <option value="0">— No supplier —</option>
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
+              </EditorSection>
+) : (
+<p className="text-sm text-muted-foreground rounded-2xl border-2 border-dashed border-border px-4 py-6 text-center">Raw meat settings (trays or bags, cooking temperature and times) show here when the category on Basics is Raw meat.</p>
+)}
             </div>
-            <div>
-              <label className="text-sm font-medium mb-1 block">Secondary Supplier</label>
-              <select {...register("secondarySupplierId")} className={inputClass}>
-                <option value="0">— None —</option>
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-              </select>
-            </div>
-          </div>
-
-          {/* Price at the secondary supplier (Graeme, 2026-10-01). Optional —
-              the Orders page uses it when this item is moved onto that
-              supplier's order to reach their minimum order value. */}
-          {watchedSecondarySupplierId > 0 && (
-            <div>
-              <label className="text-sm font-medium mb-1 block">
-                Price at {secondarySupplierName ?? "secondary supplier"} (per pack)
-              </label>
-              <div className="relative max-w-[200px]">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">£</span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  inputMode="decimal"
-                  {...register("secondaryCostPerPack")}
-                  className={cn(inputClass, "pl-7")}
-                  placeholder="Not known"
-                />
-              </div>
-              {errors.secondaryCostPerPack && <span className="text-destructive text-xs">{errors.secondaryCostPerPack.message}</span>}
-              <p className="text-xs text-muted-foreground mt-1">
-                Optional. Used on the Orders page to cost moving this item onto {secondarySupplierName ?? "the secondary supplier"}&rsquo;s order. Leave blank if you don&rsquo;t know it.
-              </p>
-            </div>
-          )}
-
-          <ShopifyLinkSection watch={watch} setValue={setValue} register={register} inputClass={inputClass} />
-          {watch("shopifyVariantId") && <ConnectedInventoryFields ingredientId={editingItem?.id ?? null} />}
-
-          <div className="flex items-center gap-3 py-1">
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" {...register("stockCheckEnabled")} className="sr-only peer" />
-              <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
-            </label>
-            <div>
-              <span className="text-sm font-medium">Requires Stock Check</span>
-              <p className="text-xs text-muted-foreground">Operators must record remaining stock during Main Prep.</p>
-            </div>
-          </div>
-
-          {watchedStockCheckEnabled && (
-            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
-              <div>
-                <label className="text-sm font-medium mb-1 block">Check Frequency</label>
-                <select {...register("stockCheckFrequency")} className={inputClass}>
-                  <option value="daily">Daily — check every production day</option>
-                  <option value="weekly">Weekly — check on a specific day only</option>
-                </select>
-              </div>
-              {watchedStockCheckFrequency === "weekly" && (
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Check Day</label>
-                  <select {...register("stockCheckDay")} className={inputClass}>
-                    <option value="">— Select a day —</option>
-                    {["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"].map(d => <option key={d} value={d}>{d}</option>)}
-                  </select>
-                </div>
-              )}
-              {/* The unit every stock check asks for (Graeme, 19 Oct) —
-                  autosaves on its own endpoint, so it needs a saved ingredient. */}
-              {editingItem?.id
-                ? <StockCheckUnitField ingredientId={editingItem.id} />
-                : <p className="text-xs text-muted-foreground">Save the ingredient first to choose the unit stock checks are recorded in.</p>}
-              <div>
-                <label className="text-sm font-medium mb-1 block">Surplus % <span className="text-xs font-normal text-muted-foreground">(ordering buffer)</span></label>
-                <div className="relative max-w-[160px]">
-                  <input type="number" step="1" min="0" {...register("surplusPercent")} className={cn(numInputClass, "pr-8")} placeholder="10" />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">%</span>
-                </div>
-              </div>
-              {/* Surplus by delivery day (Graeme, 14 Oct) — autosaves on its
-                  own endpoint, so it needs a saved ingredient. */}
-              {editingItem?.id
-                ? <DeliverySurplusField ingredientId={editingItem.id} normalPercent={watch("surplusPercent")} />
-                : <p className="text-xs text-muted-foreground">Save the ingredient first to set a different surplus for each delivery day.</p>}
-            </div>
-          )}
-
-          {/* Where it lives — printed on the kanban card (#357). Autosaves
-              on its own endpoint, so it needs a saved item. */}
-          {editingItem?.id
-            ? <StorageLocationField ingredientId={editingItem.id} />
-            : <p className="text-xs text-muted-foreground">Save the item first to set its storage location (printed on the kanban card).</p>}
-
-          <div className="flex items-center gap-3 py-1">
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input type="checkbox" {...register("kanbanEnabled")} className="sr-only peer" />
-              <div className="w-9 h-5 bg-gray-300 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-primary/30 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-primary"></div>
-            </label>
-            <div>
-              <span className="text-sm font-medium">Kanban Enabled</span>
-              <p className="text-xs text-muted-foreground">Item appears in the kanban reorder system.</p>
-            </div>
-          </div>
-
-          {watchedKanbanEnabled && (
-            <div className="pl-4 border-l-2 border-primary/20 flex flex-col gap-3">
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Kanban Unit</label>
-                  <select {...register("kanbanUnit")} className={inputClass}>
-                    <option value="weight">Weight (kg/g/L)</option>
-                    <option value="pack">Pack</option>
-                    <option value="bottle">Bottle</option>
-                    <option value="pallet">Pallet</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="text-sm font-medium mb-1 block">Trigger Quantity</label>
-                  <input type="number" step="0.1" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
-                  <p className="text-xs text-muted-foreground mt-1">Pull card when stock reaches this level.</p>
-                </div>
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Order Amount</label>
-                <input type="number" step="0.1" min="0" {...register("kanbanOrderAmount")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 50" />
-                <p className="text-xs text-muted-foreground mt-1">Quantity to order when card is pulled.</p>
-              </div>
-              {/* Standing weekly order (#348) — autosaves on its own
-                  endpoint, so it needs a saved ingredient. */}
-              {editingItem?.id
-                ? <StandingOrderField ingredientId={editingItem.id} kanbanEnabled />
-                : <p className="text-xs text-muted-foreground">Save the item first to have it ordered automatically every week.</p>}
-            </div>
-          )}
-          {/* Kanban switched off but a weekly order still set: keep it visible. */}
-          {!watchedKanbanEnabled && editingItem?.id && (
-            <StandingOrderField ingredientId={editingItem.id} kanbanEnabled={false} />
-          )}
-
-          {isIngredient && (
-            <div className="border border-amber-300/50 rounded-xl overflow-hidden">
-              <button
-                type="button"
-                onClick={() => setNutritionOpen(!nutritionOpen)}
-                className="w-full flex items-center justify-between px-4 py-3 bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
-              >
-                <span className="text-sm font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-2">
-                  Nutritionals &amp; Labelling
-                  {watch("nutritionalsAiEstimated") && (
+</>
+)}
+{isIngredient && (
+<>
+            <div role="tabpanel" id="ingredient-panel-label" aria-labelledby="ingredient-tab-label" hidden={activeTab !== "label"} className="grid gap-5 items-start">
+              <EditorSection title={<span className="flex items-center gap-2">Nutrition, declaration &amp; allergens{watch("nutritionalsAiEstimated") && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300 border border-purple-200 dark:border-purple-800">
                       <Sparkles className="w-3 h-3" /> AI-estimated
                     </span>
-                  )}
-                </span>
-                <ChevronDown className={cn("w-4 h-4 text-amber-600 transition-transform", nutritionOpen && "rotate-180")} />
-              </button>
-              {nutritionOpen && (
-                <div className="px-4 py-4 space-y-4 bg-card">
+                  )}</span>}>
                   {/* AI estimate panel — name-only Claude estimate of per-100g
                       values and UK14 allergens. Same review/apply pattern as
                       the URL scrape, but only the nutritional fields are
@@ -1739,23 +1817,27 @@ export function IngredientFormDialog({
                       </div>
                     )}
                   </div>
-                </div>
-              )}
+              </EditorSection>
             </div>
-          )}
+</>
+)}
+            <div role="tabpanel" id="ingredient-panel-shop" aria-labelledby="ingredient-tab-shop" hidden={activeTab !== "shop"} className="grid gap-5 lg:grid-cols-2 items-start">
+              <EditorSection title="Shopify">
+          <ShopifyLinkSection watch={watch} setValue={setValue} register={register} inputClass={inputClass} />
+              </EditorSection>
+              <EditorSection title="Product fridge item">
+<ConnectedInventoryFields ingredientId={editingItem?.id ?? null} linked={!!watch("shopifyVariantId")} />
+              </EditorSection>
+            </div>
+          </form>
+        </div>
 
-          <div>
-            <label className="text-sm font-medium mb-1 block">Notes</label>
-            <textarea {...register("notes")} rows={2} className={cn(inputClass, "resize-none")} placeholder="Any additional notes..." />
-          </div>
-
-          <div className="flex justify-end gap-3 pt-2 border-t border-border">
-            <button type="button" onClick={onClose} className="px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
-            <button type="submit" className="px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20">
-              {editingItem ? "Save Changes" : formMode === "ingredient" ? "Add Ingredient" : "Add Supply"}
-            </button>
-          </div>
-        </form>
+        <div className="shrink-0 border-t border-border px-5 sm:px-6 py-3 flex justify-end gap-3 bg-card">
+          <button type="button" onClick={onClose} className="min-h-11 px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
+          <button type="submit" form="ingredient-form" className="min-h-11 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20">
+            {editingItem ? "Save Changes" : formMode === "ingredient" ? "Add Ingredient" : "Add Supply"}
+          </button>
+        </div>
       </DialogContent>
     </Dialog>
   );
