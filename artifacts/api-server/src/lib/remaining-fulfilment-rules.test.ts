@@ -50,3 +50,38 @@ describe("packs still to leave the fridge today", () => {
     expect(core.skippedNonCoreLineItems).toBe(1);
   });
 });
+
+describe("Calzone Club Special still to go out (11 Nov 2026)", () => {
+  const PHILLY = 26;
+  const special = { recipeId: PHILLY, isCoreMenu: true };
+  const today = [
+    { id: 10, line_items: [{ variant_id: 47413827731735, quantity: 1, title: "Calzone Club Special" }] },
+    { id: 11, line_items: [{ variant_id: 47413827731735, quantity: 1, title: "Calzone Club Special" }, { variant_id: 111, quantity: 2 }] },
+  ];
+
+  it("before the pack: both Specials come off the Special's recipe", () => {
+    const c = countRemainingPacks(today, variants, { special });
+    expect(c.byRecipe[PHILLY]).toBe(2);
+    expect(c.byRecipe[MAC]).toBe(2);
+    expect(c.unmappedVariantIds).toEqual([]);
+  });
+
+  it("part way through the pack: only the Special not yet scanned comes off", () => {
+    expect(countRemainingPacks(today, variants, { special }, new Set([10])).byRecipe[PHILLY]).toBe(1);
+  });
+
+  it("after the pack: nothing comes off", () => {
+    expect(countRemainingPacks(today, variants, { special }, new Set([10, 11])).byRecipe[PHILLY]).toBeUndefined();
+  });
+
+  it("with no Special set it stays unmapped, as before", () => {
+    const c = countRemainingPacks(today, variants);
+    expect(c.byRecipe[PHILLY]).toBeUndefined();
+    expect(c.unmappedVariantIds).toEqual(["47413827731735"]);
+  });
+
+  it("a mac-only count ignores the Special", () => {
+    expect(countRemainingPacks(today, variants, { special, limitToRecipeIds: [MAC] }).byRecipe).toEqual({ [MAC]: 2 });
+  });
+});
+

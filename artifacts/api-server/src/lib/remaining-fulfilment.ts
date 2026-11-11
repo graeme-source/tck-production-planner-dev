@@ -12,8 +12,8 @@
  * drift, both paths now compute it here.
  */
 
-import { db, shopifyFulfilmentTrackingTable } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { db, recipesTable, shopifyFulfilmentTrackingTable } from "@workspace/db";
+import { eq, inArray, sql } from "drizzle-orm";
 import { getUnfulfilledOrdersByTag } from "../services/shopify";
 import { countRemainingPacks } from "./remaining-fulfilment-rules";
 
@@ -107,7 +107,19 @@ export async function remainingFulfilmentPacks(
       : [];
     const alreadyOffStock = new Set(trackedRows.map(r => Number(r.id)));
 
-    const counted = countRemainingPacks(unfulfilled, variantToRecipe, opts, alreadyOffStock);
+    // This week's Club Special: its orders come out of that recipe's stock.
+    const [special] = await db
+      .select({ recipeId: recipesTable.id, isCoreMenu: recipesTable.isCoreMenu })
+      .from(recipesTable)
+      .where(eq(recipesTable.isCurrentSpecial, true))
+      .limit(1);
+
+    const counted = countRemainingPacks(
+      unfulfilled,
+      variantToRecipe,
+      { ...opts, special: special ? { recipeId: special.recipeId, isCoreMenu: special.isCoreMenu ?? false } : null },
+      alreadyOffStock,
+    );
     Object.assign(byRecipe, counted.byRecipe);
     diagnostics.totalLineItems = counted.totalLineItems;
     diagnostics.mappedLineItems = counted.mappedLineItems;

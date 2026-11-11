@@ -3,10 +3,13 @@
  * Kept free of the database so they can be unit-tested; the loader in
  * remaining-fulfilment.ts fetches the orders, mappings and tracking rows.
  */
+import { isClubSpecialTitle } from "@workspace/barcodes";
 
 export interface RemainingOrderLine {
   variant_id?: number | string | null;
   quantity?: number | null;
+  /** Product title — how a Calzone Club Special line is recognised. */
+  title?: string | null;
 }
 
 export interface RemainingOrder {
@@ -43,7 +46,17 @@ export interface RemainingPacksCount {
 export function countRemainingPacks(
   orders: RemainingOrder[],
   variantToRecipe: Map<string, VariantRecipe>,
-  opts: { coreMenuOnly?: boolean; limitToRecipeIds?: number[] } = {},
+  opts: {
+    coreMenuOnly?: boolean;
+    limitToRecipeIds?: number[];
+    /** This week's Calzone Club Special recipe. A "Calzone Club Special"
+     *  line comes out of THAT recipe's fridge stock, but it's sold as its
+     *  own product with no recipe mapping, so it was never deducted: the
+     *  Philly (the Special) planned from 20 packs on 11 Nov 2026 with 2
+     *  Specials still to go out that day (Graeme). The dispatch columns
+     *  already count Specials against the recipe; now this does too. */
+    special?: VariantRecipe | null;
+  } = {},
   alreadyOffStock: Set<number> = new Set(),
 ): RemainingPacksCount {
   const limit = opts.limitToRecipeIds ? new Set(opts.limitToRecipeIds) : null;
@@ -64,7 +77,8 @@ export function countRemainingPacks(
     for (const line of order.line_items ?? []) {
       if (!line.variant_id) continue;
       out.totalLineItems += 1;
-      const mapping = variantToRecipe.get(String(line.variant_id));
+      const mapping = (opts.special && isClubSpecialTitle(line.title) ? opts.special : null)
+        ?? variantToRecipe.get(String(line.variant_id));
       if (!mapping) {
         unmapped.add(String(line.variant_id));
         continue;
