@@ -1,11 +1,12 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { SupplierPaymentEditor } from "@/components/suppliers/supplier-payment-editor";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListSuppliers, type CreateSupplier } from "@workspace/api-client-react";
 import { useAppMutations } from "@/hooks/use-mutations";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
-import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical, Truck, Clock, UserRound } from "lucide-react";
+import { Plus, Trash2, Edit2, Loader2, Building2, Mail, Phone, Globe, MapPin, Search, ClipboardCheck, GripVertical, Truck, Clock, UserRound, Contact, Landmark } from "lucide-react";
+import { SUPPLIER_TABS, supplierTabsFor, supplierErrorCounts, firstSupplierErrorTab, type SupplierTabId } from "@/lib/supplier-editor-tabs";
 import { useForm } from "react-hook-form";
 import * as z from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -15,6 +16,13 @@ import { SupplierAccountNumberField } from "@/components/supplier-account-number
 import { SUPPLIER_CARD_ACTIONS_ROW, SUPPLIER_CARD_EDIT_BUTTON, SUPPLIER_CARD_DELETE_BUTTON } from "@/lib/supplier-card-actions";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+const SUPPLIER_TAB_ICONS: Record<SupplierTabId, typeof Truck> = {
+  contact: Contact,
+  ordering: Truck,
+  account: Landmark,
+  checks: ClipboardCheck,
+};
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"] as const;
 
@@ -110,7 +118,15 @@ function SupplierForm({
   isPending,
   isEdit,
   editing,
+  title,
+  paymentPanel,
+  checksPanel,
 }: {
+  title: string;
+  /** Payment terms — saves on its own, shown on the Account tab. */
+  paymentPanel?: ReactNode;
+  /** Goods-in checks — saves on its own, its own tab. */
+  checksPanel?: ReactNode;
   values: FormValues;
   onSubmit: (data: FormValues) => void;
   isPending: boolean;
@@ -124,6 +140,11 @@ function SupplierForm({
     defaultValues: values,
   });
 
+  const [activeTab, setActiveTab] = useState<SupplierTabId>("contact");
+  const shownTabs = supplierTabsFor(editing != null);
+  const tabErrorCounts = supplierErrorCounts(errors);
+  const formId = editing ? `supplier-form-${editing.id}` : "supplier-form-new";
+
   const watchedFrequency = watch("orderFrequency");
   const watchedOrderDays = watch("orderDays") ?? "";
   const selectedDays = watchedOrderDays ? watchedOrderDays.split(",").filter(Boolean) : [];
@@ -136,236 +157,322 @@ function SupplierForm({
   };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="space-y-4 mt-4">
-      <div>
-        <label className="text-sm font-medium mb-1 block">Company / Supplier Name *</label>
-        <input
-          {...register("name")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="e.g. Harvest Foods Ltd"
-        />
-        {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
-      </div>
+    <>
+      <DialogHeader className="px-5 sm:px-6 pt-5 pb-0 pr-14 shrink-0 space-y-3 text-left">
+        <DialogTitle className="font-display text-xl">{title}</DialogTitle>
+        <div role="tablist" aria-label="Supplier settings" className="-mx-5 sm:-mx-6 px-5 sm:px-6 pb-3 border-b border-border flex gap-1.5 xl:gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+          {SUPPLIER_TABS.filter(t => shownTabs.includes(t.id)).map(t => {
+            const Icon = SUPPLIER_TAB_ICONS[t.id];
+            const isActive = t.id === activeTab;
+            const nErr = tabErrorCounts[t.id] ?? 0;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                role="tab"
+                id={`supplier-tab-${t.id}`}
+                aria-selected={isActive}
+                aria-controls={`supplier-panel-${t.id}`}
+                onClick={() => setActiveTab(t.id)}
+                title={t.hint}
+                className={cn(
+                  "relative shrink-0 lg:flex-1 min-h-12 px-3 xl:px-4 py-2 rounded-xl text-sm xl:text-base font-semibold flex items-center justify-center gap-1.5 xl:gap-2 transition-colors whitespace-nowrap",
+                  isActive ? "bg-primary text-primary-foreground shadow-sm" : "bg-secondary/40 text-foreground hover:bg-secondary/70",
+                )}
+              >
+                <Icon className="w-4 h-4 xl:w-5 xl:h-5 shrink-0" />
+                <span className="flex flex-col items-start leading-tight">
+                  <span>{t.label}</span>
+                  <span className={cn("hidden xl:block text-[11px] font-normal", isActive ? "text-primary-foreground/85" : "text-muted-foreground")}>{t.hint}</span>
+                </span>
+                {nErr > 0 && (
+                  <span className="min-w-6 h-6 px-1.5 rounded-full bg-destructive text-white text-xs font-bold flex items-center justify-center" aria-label={`${nErr} problem${nErr !== 1 ? "s" : ""} to fix`}>
+                    {nErr}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      </DialogHeader>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="text-sm font-medium mb-1 block">Contact Name</label>
-          <input
-            {...register("contactName")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="Account manager name"
-          />
-        </div>
-        <div>
-          <label className="text-sm font-medium mb-1 block">Phone</label>
-          <input
-            {...register("phone")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="+44 1234 567890"
-          />
-        </div>
-      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto px-5 sm:px-6 py-5" data-testid="supplier-editor-body">
+        <form id={formId} onSubmit={handleSubmit(onSubmit, (errs) => { const tab = firstSupplierErrorTab(errs); if (tab) setActiveTab(tab); })}>
+          <section
+            role="tabpanel"
+            id="supplier-panel-contact"
+            aria-labelledby="supplier-tab-contact"
+            hidden={activeTab !== "contact"}
+            className="grid gap-x-8 gap-y-4 lg:grid-cols-2"
+          >
+            <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Company / Supplier Name *</label>
+              <input
+                {...register("name")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="e.g. Harvest Foods Ltd"
+              />
+              {errors.name && <span className="text-destructive text-xs">{errors.name.message}</span>}
+            </div>
 
-      <div>
-        <label className="text-sm font-medium mb-1 block">Email</label>
-        <input
-          {...register("email")}
-          type="email"
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="orders@supplier.co.uk"
-        />
-        {errors.email && <span className="text-destructive text-xs">{errors.email.message}</span>}
-      </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Contact Name</label>
+                <input
+                  {...register("contactName")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="Account manager name"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Phone</label>
+                <input
+                  {...register("phone")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="+44 1234 567890"
+                />
+              </div>
+            </div>
 
-      <div className="rounded-xl border border-border bg-secondary/30 p-3 space-y-3">
-        <div>
-          <p className="text-sm font-semibold">Account manager</p>
-          <p className="text-xs text-muted-foreground">
-            If something arrives with less shelf life than the minimum set on the ingredient, goods-in emails them
-            automatically (Graeme gets a copy).
-          </p>
-        </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="text-sm font-medium mb-1 block">Name</label>
-            <input
-              {...register("accountManagerName")}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="e.g. Sam Smith"
-            />
-          </div>
-          <div>
-            <label className="text-sm font-medium mb-1 block">Email</label>
-            <input
-              {...register("accountManagerEmail")}
-              type="email"
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="name@supplier.co.uk"
-            />
-            {errors.accountManagerEmail && <span className="text-destructive text-xs">{errors.accountManagerEmail.message}</span>}
-          </div>
-        </div>
-        {editing ? (
-          <SupplierAccountNumberField supplierId={editing.id} initial={editing.accountNumber} />
-        ) : (
-          <div>
-            <label className="text-sm font-medium mb-1 block">Our account number</label>
-            <input
-              {...register("accountNumber")}
-              maxLength={100}
-              className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-              placeholder="e.g. 1867332"
-            />
-            <span className="text-xs text-muted-foreground">Quoted at the top of goods-in issue emails.</span>
-          </div>
+            <div>
+              <label className="text-sm font-medium mb-1 block">Email</label>
+              <input
+                {...register("email")}
+                type="email"
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="orders@supplier.co.uk"
+              />
+              {errors.email && <span className="text-destructive text-xs">{errors.email.message}</span>}
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">Ordering Phone (WhatsApp)</label>
+              <input
+                {...register("orderingPhone")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="+44 7123 456789"
+              />
+              <span className="text-xs text-muted-foreground">International format (with country code) so the WhatsApp order button works.</span>
+            </div>
+            </div>
+            <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Website</label>
+              <input
+                {...register("website")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                placeholder="https://www.supplier.co.uk"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">Address</label>
+              <textarea
+                {...register("address")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[96px] resize-y"
+                placeholder="Street, City, Postcode"
+              />
+            </div>
+
+            <div>
+              <label className="text-sm font-medium mb-1 block">Notes</label>
+              <textarea
+                {...register("notes")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
+                placeholder="Payment terms, order minimums..."
+              />
+            </div>
+            </div>
+          </section>
+          <section
+            role="tabpanel"
+            id="supplier-panel-ordering"
+            aria-labelledby="supplier-tab-ordering"
+            hidden={activeTab !== "ordering"}
+            className="grid gap-x-8 gap-y-4 lg:grid-cols-2"
+          >
+            <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Order Frequency</label>
+              <select
+                {...register("orderFrequency")}
+                className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+              >
+                <option value="daily">Daily — can order any day</option>
+                <option value="weekly">Weekly — specific order days only</option>
+              </select>
+            </div>
+
+            {watchedFrequency === "weekly" && (
+              <div>
+                <label className="text-sm font-medium mb-1 block">Order Days</label>
+                <div className="flex flex-wrap gap-2">
+                  {WEEKDAYS.map(day => (
+                    <button
+                      key={day}
+                      type="button"
+                      onClick={() => toggleDay(day)}
+                      className={cn(
+                        "px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
+                        selectedDays.includes(day)
+                          ? "bg-primary text-primary-foreground border-primary"
+                          : "bg-background border-border text-muted-foreground hover:border-primary/50"
+                      )}
+                    >
+                      {day.slice(0, 3)}
+                    </button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">Select which days orders can be placed with this supplier.</p>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">Delivery Lead Time (days)</label>
+                <input
+                  type="number"
+                  min={0}
+                  {...register("leadTimeDays")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Days after ordering until delivery arrives.</p>
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Order Cut-off Time</label>
+                <input
+                  type="time"
+                  {...register("cutoffTime")}
+                  className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Orders placed after this time add an extra day.</p>
+              </div>
+            </div>
+            </div>
+            <div className="space-y-4">
+            <div>
+              <label className="text-sm font-medium mb-1 block">Minimum order value (&pound;)</label>
+              <div className="relative max-w-[240px]">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">&pound;</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min={0}
+                  inputMode="decimal"
+                  {...register("minimumOrderValue")}
+                  className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                  placeholder="No minimum"
+                />
+              </div>
+              {errors.minimumOrderValue && <span className="text-destructive text-xs">{errors.minimumOrderValue.message}</span>}
+              <p className="text-xs text-muted-foreground mt-1">
+                Leave blank if there&rsquo;s no minimum. The Orders page warns when an order is under it and suggests items to move across from other suppliers.
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" {...register("orderByEmail")} className="w-4 h-4 rounded border-border" />
+                <span className="text-sm font-medium">We order from this supplier by email</span>
+              </label>
+              <p className="text-xs text-muted-foreground mt-1 ml-6">
+                The main button on their order becomes Email order instead of Supplier website.
+              </p>
+            </div>
+            </div>
+          </section>
+          <section
+            role="tabpanel"
+            id="supplier-panel-account"
+            aria-labelledby="supplier-tab-account"
+            hidden={activeTab !== "account"}
+            className="grid gap-x-8 gap-y-4 lg:grid-cols-2"
+          >
+            <div className="space-y-4">
+            <div className="rounded-xl border border-border bg-secondary/30 p-3 space-y-3">
+              <div>
+                <p className="text-sm font-semibold">Account manager</p>
+                <p className="text-xs text-muted-foreground">
+                  If something arrives with less shelf life than the minimum set on the ingredient, goods-in emails them
+                  automatically (Graeme gets a copy).
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Name</label>
+                  <input
+                    {...register("accountManagerName")}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="e.g. Sam Smith"
+                  />
+                </div>
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Email</label>
+                  <input
+                    {...register("accountManagerEmail")}
+                    type="email"
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="name@supplier.co.uk"
+                  />
+                  {errors.accountManagerEmail && <span className="text-destructive text-xs">{errors.accountManagerEmail.message}</span>}
+                </div>
+              </div>
+              {editing ? (
+                <SupplierAccountNumberField supplierId={editing.id} initial={editing.accountNumber} />
+              ) : (
+                <div>
+                  <label className="text-sm font-medium mb-1 block">Our account number</label>
+                  <input
+                    {...register("accountNumber")}
+                    maxLength={100}
+                    className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+                    placeholder="e.g. 1867332"
+                  />
+                  <span className="text-xs text-muted-foreground">Quoted at the top of goods-in issue emails.</span>
+                </div>
+              )}
+            </div>
+            </div>
+            <div className="space-y-4">
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" {...register("invoiceNotRequired")} className="w-4 h-4 rounded border-border" />
+                <span className="text-sm font-medium">No invoices from this supplier</span>
+              </label>
+              <p className="text-xs text-muted-foreground mt-1 ml-6">
+                For suppliers like Amazon that never provide an invoice or delivery note —
+                goods-in skips the &ldquo;Invoice filed&rdquo; check on their deliveries.
+              </p>
+            </div>
+            </div>
+          </section>
+        </form>
+        {/* These save as you go, so they sit outside the form: Enter in them
+            never saves the supplier. */}
+        {paymentPanel && (
+          <div hidden={activeTab !== "account"} className="max-w-3xl">{paymentPanel}</div>
+        )}
+        {checksPanel && (
+          <section role="tabpanel" id="supplier-panel-checks" aria-labelledby="supplier-tab-checks" hidden={activeTab !== "checks"} className="max-w-3xl">
+            {checksPanel}
+          </section>
         )}
       </div>
 
-      <div>
-        <label className="text-sm font-medium mb-1 block">Ordering Phone (WhatsApp)</label>
-        <input
-          {...register("orderingPhone")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="+44 7123 456789"
-        />
-        <span className="text-xs text-muted-foreground">International format (with country code) so the WhatsApp order button works.</span>
-      </div>
-
-      <div>
-        <label className="text-sm font-medium mb-1 block">Website</label>
-        <input
-          {...register("website")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          placeholder="https://www.supplier.co.uk"
-        />
-      </div>
-
-      <div>
-        <label className="text-sm font-medium mb-1 block">Address</label>
-        <textarea
-          {...register("address")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[64px] resize-none"
-          placeholder="Street, City, Postcode"
-        />
-      </div>
-
-      <div>
-        <label className="text-sm font-medium mb-1 block">Order Frequency</label>
-        <select
-          {...register("orderFrequency")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
+      <div className="shrink-0 border-t border-border px-5 sm:px-6 py-3 flex items-center justify-end gap-3 bg-card">
+        <button
+          type="submit"
+          form={formId}
+          disabled={isPending}
+          className="min-h-11 px-6 py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2 w-full sm:w-auto"
         >
-          <option value="daily">Daily — can order any day</option>
-          <option value="weekly">Weekly — specific order days only</option>
-        </select>
+          {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
+          {isPending ? "Saving..." : isEdit ? "Save Changes" : "Add Supplier"}
+        </button>
       </div>
-
-      {watchedFrequency === "weekly" && (
-        <div>
-          <label className="text-sm font-medium mb-1 block">Order Days</label>
-          <div className="flex flex-wrap gap-2">
-            {WEEKDAYS.map(day => (
-              <button
-                key={day}
-                type="button"
-                onClick={() => toggleDay(day)}
-                className={cn(
-                  "px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors",
-                  selectedDays.includes(day)
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background border-border text-muted-foreground hover:border-primary/50"
-                )}
-              >
-                {day.slice(0, 3)}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">Select which days orders can be placed with this supplier.</p>
-        </div>
-      )}
-
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className="text-sm font-medium mb-1 block">Delivery Lead Time (days)</label>
-          <input
-            type="number"
-            min={0}
-            {...register("leadTimeDays")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="1"
-          />
-          <p className="text-xs text-muted-foreground mt-1">Days after ordering until delivery arrives.</p>
-        </div>
-        <div>
-          <label className="text-sm font-medium mb-1 block">Order Cut-off Time</label>
-          <input
-            type="time"
-            {...register("cutoffTime")}
-            className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
-          <p className="text-xs text-muted-foreground mt-1">Orders placed after this time add an extra day.</p>
-        </div>
-      </div>
-
-      <div>
-        <label className="text-sm font-medium mb-1 block">Minimum order value (&pound;)</label>
-        <div className="relative max-w-[200px]">
-          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm pointer-events-none">&pound;</span>
-          <input
-            type="number"
-            step="0.01"
-            min={0}
-            inputMode="decimal"
-            {...register("minimumOrderValue")}
-            className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30"
-            placeholder="No minimum"
-          />
-        </div>
-        {errors.minimumOrderValue && <span className="text-destructive text-xs">{errors.minimumOrderValue.message}</span>}
-        <p className="text-xs text-muted-foreground mt-1">
-          Leave blank if there&rsquo;s no minimum. The Orders page warns when an order is under it and suggests items to move across from other suppliers.
-        </p>
-      </div>
-
-      <div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" {...register("invoiceNotRequired")} className="w-4 h-4 rounded border-border" />
-          <span className="text-sm font-medium">No invoices from this supplier</span>
-        </label>
-        <p className="text-xs text-muted-foreground mt-1 ml-6">
-          For suppliers like Amazon that never provide an invoice or delivery note —
-          goods-in skips the &ldquo;Invoice filed&rdquo; check on their deliveries.
-        </p>
-      </div>
-
-      <div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input type="checkbox" {...register("orderByEmail")} className="w-4 h-4 rounded border-border" />
-          <span className="text-sm font-medium">We order from this supplier by email</span>
-        </label>
-        <p className="text-xs text-muted-foreground mt-1 ml-6">
-          The main button on their order becomes Email order instead of Supplier website.
-        </p>
-      </div>
-
-      <div>
-        <label className="text-sm font-medium mb-1 block">Notes</label>
-        <textarea
-          {...register("notes")}
-          className="w-full px-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30 min-h-[60px] resize-none"
-          placeholder="Payment terms, order minimums..."
-        />
-      </div>
-
-      <button
-        type="submit"
-        disabled={isPending}
-        className="w-full py-2.5 bg-primary text-primary-foreground rounded-xl font-medium hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-      >
-        {isPending && <Loader2 className="w-4 h-4 animate-spin" />}
-        {isPending ? "Saving..." : isEdit ? "Save Changes" : "Add Supplier"}
-      </button>
-    </form>
+    </>
   );
 }
 
@@ -455,7 +562,7 @@ function DeliveryChecksEditor({ supplierId }: { supplierId: number }) {
   }
 
   return (
-    <div className="space-y-3 mt-4 border-t border-border pt-4">
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold flex items-center gap-2">
           <ClipboardCheck className="w-4 h-4 text-primary" /> Delivery Checks
@@ -577,11 +684,9 @@ export default function Suppliers() {
 
       {/* Add Dialog */}
       <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
-        <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle className="font-display text-xl">New Supplier</DialogTitle>
-          </DialogHeader>
+        <DialogContent className="p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] sm:max-w-[min(96vw,1400px)] h-[92dvh] max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl [&>button:last-child]:p-2 [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child>svg]:h-5 [&>button:last-child>svg]:w-5">
           <SupplierForm
+            title="New Supplier"
             values={defaultValues}
             isEdit={false}
             isPending={createSupplier.isPending}
@@ -598,12 +703,12 @@ export default function Suppliers() {
 
       {editingItem && (
         <Dialog open={!!editingItem} onOpenChange={(v) => { if (!v) setEditingItem(null); }}>
-          <DialogContent className="sm:max-w-[540px] bg-card border-border rounded-2xl max-h-[92dvh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="font-display text-xl">Edit Supplier</DialogTitle>
-            </DialogHeader>
+          <DialogContent className="p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] sm:max-w-[min(96vw,1400px)] h-[92dvh] max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl [&>button:last-child]:p-2 [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child>svg]:h-5 [&>button:last-child>svg]:w-5">
             <SupplierForm
               key={editingItem.id}
+              title={editingItem.name || "Edit Supplier"}
+              paymentPanel={<SupplierPaymentEditor supplierId={editingItem.id} />}
+              checksPanel={<DeliveryChecksEditor supplierId={editingItem.id} />}
               values={{
                 name: editingItem.name,
                 contactName: editingItem.contactName ?? "",
@@ -634,8 +739,6 @@ export default function Suppliers() {
                 );
               }}
             />
-            <SupplierPaymentEditor supplierId={editingItem.id} />
-            <DeliveryChecksEditor supplierId={editingItem.id} />
           </DialogContent>
         </Dialog>
       )}
