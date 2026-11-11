@@ -7,6 +7,7 @@ import { postcodeServiceFor, postcodeServiceView, postcodeRefusalAdvice } from "
 import { rescheduleDateWarnings } from "../services/apc-postcode-overrides";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { recordBookingRun, rescheduleRulesForOrder, appendIssueAction, type RescheduleRules } from "../lib/apc-booking-issues-db";
+import { recordFridayAction } from "../lib/friday-dispatch-check-db";
 import { loadOwnership, reconcileBarcodes, scanQueueBarcodes } from "../lib/barcode-store";
 import { MANUAL_TICK_KEY, isManualTickEnabled, checkPackedLines } from "../lib/packing-barcode-gate";
 import { removeTagFromOrder, shopifyAdminOrderUrl, shopifyAdminOrderBase, getUnfulfilledOrdersByTag, getOrdersByTag, getOrdersByTagIncludingCancelled, getRecentUnfulfilledOrders, fulfillOrder, getProductsByTag, findOrderByName, addTagToOrder, replaceTagOnOrder, getOrderById, shopifyGraphQL, getOrderForReschedule, updateOrderTagsAndAttributes, type ShopifyOrder, type ShopifyLineItem } from "../services/shopify";
@@ -1628,6 +1629,9 @@ const RescheduleBody = z.object({
   /** False lets the tags move without mailing the customer (e.g. they've
    *  already been told by phone). */
   sendCustomerEmail: z.boolean().default(true),
+  /** Set when the move is made from the Friday dispatch check: the Friday
+   *  the order was due out on, so the check can show it was moved. */
+  fridayCheckDispatchDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 /** Everything both the preview and the apply need to agree on. */
@@ -1735,7 +1739,7 @@ router.get("/orders/:orderId/reschedule-preview", requireManagerForCourierAction
 // POST /orders/:orderId/reschedule — writes the tags + attribute, then emails.
 router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, validate(RescheduleBody), async (req: Request, res: Response) => {
   const orderId = Number(req.params.orderId);
-  const { date: toDate, fromDate, sendCustomerEmail } = req.body as z.infer<typeof RescheduleBody>;
+  const { date: toDate, fromDate, sendCustomerEmail, fridayCheckDispatchDate } = req.body as z.infer<typeof RescheduleBody>;
   if (!Number.isFinite(orderId)) { res.status(400).json({ error: "Invalid orderId" }); return; }
 
   try {
@@ -1801,6 +1805,18 @@ router.post("/orders/:orderId/reschedule", requireManagerForCourierActions, vali
         if (emailed) await appendIssueAction(rules.issueId, { kind: "email_sent", at, byUserId: req.session.userId ?? null, byName: senderName, detail: `${plan.email.to} (${plan.email.variant === "permanent_saturday" ? "no Saturdays" : "temporary restriction"})` });
       } catch (logErr) {
         console.warn(`[Fulfilment] could not record the reschedule of ${plan.order.name} on the issues report:`, logErr instanceof Error ? logErr.message : logErr);
+      }
+    }
+
+    // Moved from the Friday dispatch check: note it there, the same way.
+    if (fridayCheckDispatchDate) {
+      try {
+        await recordFridayAction({
+          dispatchDate: fridayCheckDispatchDate, orderId, orderName: plan.order.name, kind: "moved",
+          detail: toDate, byUserId: req.session.userId ?? null, byName: senderName,
+        });
+      } catch (logErr) {
+        console.warn(`[Fulfilment] could not record the move of ${plan.order.name} on the Friday check:`, logErr instanceof Error ? logErr.message : logErr);
       }
     }
 
