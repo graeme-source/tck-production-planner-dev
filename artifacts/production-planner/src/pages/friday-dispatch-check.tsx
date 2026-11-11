@@ -12,18 +12,16 @@
  */
 import { useState, type ReactNode } from "react";
 import {
-  AlertTriangle, Ban, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2, Mail, RefreshCw, Truck,
+  AlertTriangle, Ban, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, HelpCircle, Loader2, RefreshCw, Truck,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ConfirmSheet } from "@/components/apc-booking-issues/confirm-sheet";
-import { RescheduleOrderDialog } from "@/components/reschedule-order-dialog";
 import {
-  useFridayCheck, useNoSaturdayEmailDraft, useSendNoSaturdayEmail, addDays, fridayOnOrAfter, londonToday, shortDay, when, FRIDAY_CHECK_KEY,
+  useFridayCheck, useNoSaturdayEmailDraft, useSendNoSaturdayEmail, addDays, fridayOnOrAfter, londonToday, shortDay, when,
   type FridayCheck, type FridayCheckRow, type FridayStatus, type Alternative,
 } from "@/components/friday-dispatch-check/api";
-import { useQueryClient } from "@tanstack/react-query";
 
 const STYLE: Record<Exclude<FridayStatus, "ok">, { title: string; ring: string; band: string; icon: ReactNode }> = {
   no_saturday: {
@@ -96,10 +94,9 @@ function BigButton({ onClick, disabled, title, icon, label, tone }: {
   );
 }
 
-function OrderCard({ row, check, onEmail, onMove }: {
+function OrderCard({ row, check, onEmail }: {
   row: FridayCheckRow; check: FridayCheck;
   onEmail: (row: FridayCheckRow) => void;
-  onMove: (row: FridayCheckRow, alt: Alternative) => void;
 }) {
   const style = STYLE[row.status as Exclude<FridayStatus, "ok">];
   const noPerm = check.canCourier ? undefined : "Needs the \"Fix APC booking problems\" permission";
@@ -149,19 +146,21 @@ function OrderCard({ row, check, onEmail, onMove }: {
         </div>
 
         <div className="space-y-2 pt-1">
-          <div className="flex flex-wrap gap-2.5">
-            <BigButton onClick={() => onEmail(row)} disabled={!row.canEmail || !check.canCourier}
-              title={noPerm ?? row.emailNote ?? undefined} icon={<Mail className="w-5 h-5" />}
-              label={row.done?.emailedAt ? "Email again" : "Email customer"} tone="red" />
-            <BigButton onClick={() => onMove(row, row.thursday)} disabled={!row.thursday.possible || !check.canCourier}
-              title={noPerm ?? row.thursday.note ?? undefined} icon={<CalendarClock className="w-5 h-5" />}
-              label="Move to Thursday" tone="blue" />
-            <BigButton onClick={() => onMove(row, row.tuesday)} disabled={!row.tuesday.possible || !check.canCourier}
-              title={noPerm ?? row.tuesday.note ?? undefined} icon={<CalendarClock className="w-5 h-5" />}
-              label="Move to next Wednesday" tone="amber" />
-          </div>
-          {(noPerm || row.emailNote) && (
-            <p className="text-sm text-muted-foreground">{noPerm ?? row.emailNote}</p>
+          {/* One action (Graeme, 11 Nov 2026): move it to the Wednesday after
+              and email them a link to choose a sooner day themselves. Test
+              production and 8-pack bags are changed by hand. */}
+          {row.lockedReason ? (
+            <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-base font-semibold text-amber-900 dark:text-amber-200">
+              {row.lockedReason}
+            </p>
+          ) : (
+            <BigButton onClick={() => onEmail(row)}
+              disabled={!row.canEmail || !row.tuesday.possible || !check.canCourier || !!row.done?.movedAt}
+              title={noPerm ?? row.emailNote ?? row.tuesday.note ?? undefined} icon={<CalendarClock className="w-5 h-5" />}
+              label={`Reschedule to ${shortDay(check.dates.tuesdayDelivery)} & email`} tone="red" />
+          )}
+          {!row.lockedReason && (noPerm || row.emailNote || (!row.tuesday.possible ? row.tuesday.note : null)) && (
+            <p className="text-sm text-muted-foreground">{noPerm ?? row.emailNote ?? row.tuesday.note}</p>
           )}
         </div>
       </div>
@@ -175,10 +174,10 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
   const d = draft.data;
   return (
     <ConfirmSheet
-      title="Email the customer"
+      title="Reschedule and email the customer"
       orderName={row.orderName}
       customerName={d?.customerName ?? row.customerName}
-      confirmLabel={d?.to ? `Send to ${d.to}` : "Send"}
+      confirmLabel={d?.to ? `Move to ${d.newDeliveryLabel} & email ${d.to}` : "Move & email"}
       confirmDisabled={!d?.to || draft.isLoading || !!draft.error}
       busy={send.isPending}
       tone="danger"
@@ -186,8 +185,16 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
       onConfirm={() => send.mutate(
         { orderId: row.orderId, dispatchDate, confirmOrderName: row.orderName },
         {
-          onSuccess: r => { toast({ title: `${row.orderName}: email sent`, description: `To ${r.to}` }); onClose(); },
-          onError: (e: Error) => toast({ title: "The email didn't send", description: e.message, variant: "destructive" }),
+          onSuccess: r => {
+            if (!r.emailed) toast({ title: `${row.orderName} moved, but the email didn't send`, description: r.emailError ?? "", variant: "destructive" });
+            else toast({
+              title: `${row.orderName} moved and emailed`,
+              description: r.linkIncluded ? `To ${r.to}, with the choose-a-day link` : `To ${r.to} — WITHOUT the link (${r.linkError ?? "the assistant didn't answer"}); it asks them to reply instead`,
+              variant: r.linkIncluded ? undefined : "destructive",
+            });
+            onClose();
+          },
+          onError: (e: Error) => toast({ title: "Nothing was changed", description: e.message, variant: "destructive" }),
         },
       )}
     >
@@ -201,6 +208,9 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
             </p>
           )}
           {!d.to && <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">No email address on this order.</p>}
+          <p className="rounded-xl border border-border bg-secondary/30 px-3 py-2 text-sm">
+            This moves the order to <span className="font-semibold">{d.newDeliveryLabel}</span> in Shopify straight away (Tuesday's dispatch), then sends this email.
+          </p>
           <p className="text-sm"><span className="font-semibold">To:</span> {d.to ?? "—"}</p>
           <p className="text-sm"><span className="font-semibold">Subject:</span> {d.subject}</p>
           <pre className="text-sm whitespace-pre-wrap font-sans bg-secondary/30 rounded-xl p-4">{d.body}</pre>
@@ -213,9 +223,7 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
 export default function FridayDispatchCheck() {
   const [picked, setPicked] = useState<string | null>(null);
   const { data, isLoading, isFetching, error, refetch } = useFridayCheck(picked);
-  const qc = useQueryClient();
   const [emailRow, setEmailRow] = useState<FridayCheckRow | null>(null);
-  const [move, setMove] = useState<{ row: FridayCheckRow; alt: Alternative } | null>(null);
 
   // The server's answer when it has one; worked out here too, so the date
   // controls still work when the Shopify read failed.
@@ -279,7 +287,7 @@ export default function FridayDispatchCheck() {
           {flagged.length > 0 && (
             <div className="grid grid-cols-1 xl:grid-cols-2 2xl:grid-cols-3 gap-4">
               {flagged.map(r => (
-                <OrderCard key={r.orderId} row={r} check={data} onEmail={setEmailRow} onMove={(row, alt) => setMove({ row, alt })} />
+                <OrderCard key={r.orderId} row={r} check={data} onEmail={setEmailRow} />
               ))}
             </div>
           )}
@@ -336,19 +344,6 @@ export default function FridayDispatchCheck() {
 
       {emailRow && data && (
         <EmailSheet row={emailRow} dispatchDate={data.dispatchDate} onClose={() => setEmailRow(null)} />
-      )}
-      {move && data && (
-        <RescheduleOrderDialog
-          orderId={move.row.orderId}
-          orderName={move.row.orderName}
-          fromDate={data.dates.deliveryDate}
-          adminUrl={`${data.adminOrderBase}${move.row.orderId}`}
-          initialDate={move.alt.deliveryDate}
-          defaultSendEmail={false}
-          fridayCheckDispatchDate={data.dispatchDate}
-          onClose={() => setMove(null)}
-          onDone={() => qc.invalidateQueries({ queryKey: FRIDAY_CHECK_KEY })}
-        />
       )}
     </div>
   );

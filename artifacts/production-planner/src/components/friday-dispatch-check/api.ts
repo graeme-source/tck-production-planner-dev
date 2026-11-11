@@ -31,6 +31,8 @@ export interface FridayCheckRow {
   canOfferThursday: boolean;
   canEmail: boolean;
   emailNote: string | null;
+  /** Test production / 8-pack bags: never moved from here — by hand. */
+  lockedReason: string | null;
   done: DoneState | null;
 }
 
@@ -77,6 +79,14 @@ export function useFridayCheck(dispatchDate: string | null) {
 export interface EmailDraft {
   orderName: string; customerName: string | null; to: string | null; subject: string; body: string;
   offerThursday: boolean; alreadyEmailedAt: string | null; alreadyEmailedBy: string | null;
+  /** Where "Reschedule & email" moves it: the Wednesday after (Tuesday's dispatch). */
+  newDelivery: string; newDeliveryLabel: string;
+}
+
+export interface RescheduleResult {
+  ok: true; to: string; movedTo: string;
+  emailed: boolean; emailError: string | null;
+  linkIncluded: boolean; linkError: string | null;
 }
 
 export function useNoSaturdayEmailDraft(orderId: number | null, dispatchDate: string) {
@@ -93,7 +103,7 @@ export function useSendNoSaturdayEmail() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (v: { orderId: number; dispatchDate: string; confirmOrderName: string }) =>
-      json<{ ok: true; to: string }>(await fetch(`${BASE}/api/fulfilment/friday-check/orders/${v.orderId}/email`, {
+      json<RescheduleResult>(await fetch(`${BASE}/api/fulfilment/friday-check/orders/${v.orderId}/email`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },

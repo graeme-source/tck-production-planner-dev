@@ -4,18 +4,22 @@
  *
  *   GET  /friday-check?dispatchDate=YYYY-MM-DD        the check (read-only)
  *   GET  /friday-check/orders/:orderId/email?dispatchDate=   the exact email
- *   POST /friday-check/orders/:orderId/email          send it (confirmed in the UI)
+ *   POST /friday-check/orders/:orderId/email          reschedule + email (confirmed in the UI)
  *
- * Moving an order is the existing reschedule route (POST
- * /orders/:orderId/reschedule in routes/fulfilment.ts), which records the
- * move here when the Friday check passes its dispatch date.
+ * "Reschedule & email" (Graeme, 11 Nov 2026): one press moves the order to
+ * the Wednesday after (Tuesday's dispatch) exactly as the packing screen's
+ * reschedule does — date tag, weekday tag, dispatch tag off, Zapiet
+ * Delivery-Date, any old APC booking retired — then emails the customer that
+ * it HAS moved, with a link to the website assistant to choose a sooner day
+ * themselves. Orders holding test production or 8-pack bags are never moved
+ * from here (lib/date-locked-products-rules.ts): those are changed by hand.
  *
  * Reading follows the packing screen (requireFulfilmentAccess), as the
  * booking-issues report does. The email follows the courier-actions
  * permission (Book APC labels / "Fix APC booking problems"), as the
- * booking-issues emails and rescheduling do. Nothing here writes to
- * Shopify or books with APC; the only side effect is a customer email,
- * and only from a confirmed button press.
+ * booking-issues emails and rescheduling do. The only writes — the order's
+ * tags and delivery date, and the customer email — come from one confirmed
+ * button press. Nothing books with APC.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
@@ -26,11 +30,16 @@ import { requireFeature, userCan } from "../lib/feature-access";
 import { requireFulfilmentAccess, resolveRole } from "../lib/fulfilment-access";
 import { londonDateString } from "../lib/london-time";
 import { sendEmail } from "../lib/email";
-import { firstNameOf, greetingNameOf, friendlyDate } from "../lib/order-reschedule";
-import { noSaturdayThisWeekEmail, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
+import { firstNameOf, greetingNameOf, friendlyDate, rescheduleTags, withDeliveryDate } from "../lib/order-reschedule";
+import { rescheduledWithLinkEmail, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
+import { lockedLines, lockedReason } from "../lib/date-locked-products-rules";
+import { loadDateLockedProducts } from "../lib/date-locked-products";
+import { rescheduleLinkFor } from "../lib/cs-agent-links";
+import { supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
+import { londonDayStartUtc } from "../lib/london-time";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { lookupPostcodeService, POSTINFO_SOURCE } from "../services/apc-postinfo";
-import { getOrdersByTagIncludingCancelled, getOrderForReschedule, shopifyAdminOrderBase } from "../services/shopify";
+import { getOrdersByTagIncludingCancelled, getOrderById, getOrderForReschedule, shopifyAdminOrderBase, updateOrderTagsAndAttributes } from "../services/shopify";
 import {
   apcOrdersForCheck, checkOrder, comingFriday, doneStateByOrder, fridayDates, isFridayDate, runFridayCheck, DEPOT_REFUSAL_DAYS,
 } from "../lib/friday-dispatch-check";
@@ -83,12 +92,14 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
   }
 
   try {
-    const [context, refusals, actions, canCourier] = await Promise.all([
+    const [context, refusals, actions, canCourier, locked] = await Promise.all([
       loadPostcodeContext(),
       loadRecentSaturdayRefusals(dispatchDate),
       loadFridayActions(dispatchDate),
       viewerCanCourier(req),
+      loadDateLockedProducts(),
     ]);
+    const lockedById = new Map(shopifyOrders.map(o => [o.id, lockedReason(lockedLines(o.line_items, locked))]));
     const now = new Date();
     const { results, summary } = runFridayCheck({
       dispatchDate,
@@ -115,7 +126,7 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
         replyByLabel: friendlyDate(dates.replyBy),
       },
       summary: { ...summary, moved: moved.length },
-      results: results.map(r => ({ ...r, done: done.get(r.orderId) ?? null })),
+      results: results.map(r => ({ ...r, lockedReason: lockedById.get(r.orderId) ?? null, done: done.get(r.orderId) ?? null })),
       moved,
       canCourier,
       adminOrderBase: shopifyAdminOrderBase(),
@@ -154,15 +165,29 @@ async function emailPlan(req: Request, res: Response, dispatchDate: string) {
     res.status(409).json({ error: result.status === "ok" ? `${order.name} should get its Saturday delivery — no email needed.` : (result.emailNote ?? "That email isn't offered for this order.") });
     return null;
   }
+  if (!result.tuesday.possible) {
+    res.status(409).json({ error: `${order.name} can't go on ${friendlyDate(dates.tuesdayDelivery)} either — change it by hand.` });
+    return null;
+  }
+  // Test production / 8-pack bags: made for this date — never moved from here.
+  const full = await getOrderById(orderId);
+  if (!full) { res.status(502).json({ error: "Couldn't read that order's products from Shopify — nothing was changed." }); return null; }
+  const locked = lockedReason(lockedLines(full.line_items, await loadDateLockedProducts()));
+  if (locked) { res.status(409).json({ error: `${order.name}: ${locked}`, locked: true }); return null; }
   const sender = await userName(req);
-  const email = noSaturdayThisWeekEmail({
+  const who = {
     customerFirstName: greetingNameOf({ first: order.customerFirstName, last: order.customerLastName, full: order.shippingName }, "there"),
     senderFirstName: firstNameOf(sender, "The Calzone Kitchen"),
     orderName: order.name,
-    dates,
-    offerThursday: result.canOfferThursday,
-  });
-  return { order, result, sender, email, done: doneStateByOrder(actions).get(orderId) ?? null };
+    saturdayDelivery: dates.deliveryDate,
+    newDelivery: dates.tuesdayDelivery,
+  };
+  return {
+    order, result, sender, dates, who,
+    // The preview shows where the link goes; the real one is made on send.
+    email: rescheduledWithLinkEmail({ ...who, link: "[a link for them to choose another day — made when you press the button]" }),
+    done: doneStateByOrder(actions).get(orderId) ?? null,
+  };
 }
 
 const emailQuery = z.object({ dispatchDate: fridayDate });
@@ -180,6 +205,8 @@ router.get("/friday-check/orders/:orderId/email", requireCourier, validateQuery(
       subject: plan.email.subject,
       body: plan.email.body,
       offerThursday: plan.result.canOfferThursday,
+      newDelivery: plan.dates.tuesdayDelivery,
+      newDeliveryLabel: friendlyDate(plan.dates.tuesdayDelivery),
       alreadyEmailedAt: plan.done?.emailedAt ?? null,
       alreadyEmailedBy: plan.done?.emailedBy ?? null,
     });
@@ -206,25 +233,66 @@ router.post("/friday-check/orders/:orderId/email", requireCourier, validate(send
       res.status(409).json({ error: `This is ${plan.order.name}, not ${confirmOrderName} — nothing was sent.` });
       return;
     }
-    if (!plan.order.email) { res.status(409).json({ error: "No email address on this order." }); return; }
+    if (!plan.order.email) { res.status(409).json({ error: "No email address on this order — change it by hand." }); return; }
+    const fromDate = plan.dates.deliveryDate;
+    const toDate = plan.dates.tuesdayDelivery;
+
+    // 1. Move it — the same pieces the packing screen's reschedule uses.
+    const tagChange = rescheduleTags(plan.order.tags, fromDate, toDate);
+    const attrChange = withDeliveryDate(plan.order.noteAttributes, toDate);
     try {
-      await sendEmail({ to: plan.order.email, bcc: [CUSTOMER_EMAIL_BCC], subject: plan.email.subject, text: plan.email.body, html: plan.email.html });
+      await updateOrderTagsAndAttributes(plan.order.id, tagChange.after, attrChange.attributes);
     } catch (err) {
-      console.error(`[friday-check] email failed for ${plan.order.name}:`, errMsg(err));
-      res.status(502).json({ error: `The email didn't send: ${errMsg(err)}` });
+      console.error(`[friday-check] reschedule failed for ${plan.order.name}:`, errMsg(err));
+      res.status(502).json({ error: `Couldn't move ${plan.order.name} in Shopify — nothing was changed or sent: ${errMsg(err)}` });
       return;
     }
-    // Sent. A hiccup recording it must not read as a failed send.
+    console.log(`[friday-check] ${plan.order.name} rescheduled ${fromDate} → ${toDate} by ${plan.sender}`);
+    try {
+      await supersedeOrderConsignments(plan.order.id, `rescheduled ${fromDate} → ${toDate} by ${plan.sender} (Friday check)`);
+    } catch (err) {
+      console.error(`[friday-check] could not retire ${plan.order.name}'s old consignment:`, errMsg(err));
+    }
     try {
       await recordFridayAction({
-        dispatchDate, orderId: plan.order.id, orderName: plan.order.name, kind: "emailed",
-        detail: plan.order.email, byUserId: req.session.userId ?? null, byName: plan.sender,
+        dispatchDate, orderId: plan.order.id, orderName: plan.order.name, kind: "moved",
+        detail: toDate, byUserId: req.session.userId ?? null, byName: plan.sender,
       });
     } catch (logErr) {
-      console.warn(`[friday-check] email to ${plan.order.name} sent but not recorded:`, errMsg(logErr));
+      console.warn(`[friday-check] move of ${plan.order.name} not recorded:`, errMsg(logErr));
     }
-    console.log(`[friday-check] no-Saturday email sent for ${plan.order.name} by ${plan.sender}`);
-    res.json({ ok: true, to: plan.order.email });
+
+    // 2. The link, good until 1:45pm on the new dispatch day.
+    const expiresAt = new Date(londonDayStartUtc(plan.dates.tuesdayDispatch).getTime() + (13 * 60 + 45) * 60_000).toISOString();
+    const link = await rescheduleLinkFor({ orderId: plan.order.id, orderName: plan.order.name, expiresAt });
+    if (!link.url) console.warn(`[friday-check] no link for ${plan.order.name}: ${link.error}`);
+
+    // 3. Tell them. The order has moved either way; a failed email is reported, not undone.
+    const email = rescheduledWithLinkEmail({ ...plan.who, link: link.url });
+    let emailError: string | null = null;
+    try {
+      await sendEmail({ to: plan.order.email, bcc: [CUSTOMER_EMAIL_BCC], subject: email.subject, text: email.body, html: email.html });
+      try {
+        await recordFridayAction({
+          dispatchDate, orderId: plan.order.id, orderName: plan.order.name, kind: "emailed",
+          detail: plan.order.email, byUserId: req.session.userId ?? null, byName: plan.sender,
+        });
+      } catch (logErr) {
+        console.warn(`[friday-check] email to ${plan.order.name} sent but not recorded:`, errMsg(logErr));
+      }
+    } catch (err) {
+      emailError = errMsg(err);
+      console.error(`[friday-check] email failed for ${plan.order.name}:`, emailError);
+    }
+    res.json({
+      ok: true,
+      to: plan.order.email,
+      movedTo: toDate,
+      emailed: emailError == null,
+      emailError,
+      linkIncluded: !!link.url,
+      linkError: link.error,
+    });
   } catch (err) {
     console.error("[friday-check] email send failed:", errMsg(err));
     res.status(500).json({ error: `Couldn't send the email: ${errMsg(err)}` });
