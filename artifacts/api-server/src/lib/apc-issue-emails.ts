@@ -9,11 +9,15 @@
  *   saturday_temporary  → rescheduleEmailText  (the original wording,
  *                         lib/order-reschedule.ts — unchanged)
  *
+ * And one sent BEFORE the day, from the Friday dispatch check
+ * (lib/friday-dispatch-check.ts): noSaturdayThisWeekEmail.
+ *
  * Nothing here sends anything. Sending is always a person's confirmed
  * button press (routes/apc-booking-issues.ts, routes/fulfilment.ts).
  */
 import { friendlyDate, plainEmailHtml, rescheduleEmailText } from "./order-reschedule";
 import type { RescheduleEmailVariant } from "./apc-booking-issues";
+import type { FridayDates } from "./friday-dispatch-check";
 
 /** Copied on every customer email sent from a booking issue or a
  *  reschedule, so a send that fails is noticed — a copy landing in a real
@@ -71,6 +75,42 @@ export function rescheduleEmailFor(variant: RescheduleEmailVariant, opts: {
     : rescheduleEmailText(opts);
   return {
     subject: `Your Calzone Kitchen order ${opts.orderName} — new delivery date`,
+    body,
+    html: plainEmailHtml(body),
+  };
+}
+
+/** (d) Sent days ahead from the Friday dispatch check (Graeme, 11 Nov 2026):
+ *  APC won't deliver to this postcode this Saturday. Offers Thursday's
+ *  dispatch (Friday delivery) when there's still time to reply, otherwise
+ *  it goes out on Tuesday for Wednesday delivery. Nothing is moved by the
+ *  email itself — the order is moved by hand once the customer has replied
+ *  (or hasn't). */
+export function noSaturdayThisWeekEmail(opts: {
+  customerFirstName: string;
+  senderFirstName: string;
+  orderName: string;
+  dates: FridayDates;
+  offerThursday: boolean;
+}): CustomerEmail {
+  const d = opts.dates;
+  const offer = opts.offerThursday
+    ? `If you'd like it a day early instead, just reply to this email by the end of ${friendlyDate(d.replyBy)} and we'll send it out on Thursday for delivery on ${friendlyDate(d.thursdayDelivery)}.
+
+Otherwise, we'll send it out on Tuesday for delivery on ${friendlyDate(d.tuesdayDelivery)}.`
+    : `We'll send it out on Tuesday instead, for delivery on ${friendlyDate(d.tuesdayDelivery)}. If another weekday suits you better, just reply to this email.`;
+  const body = `Hi ${opts.customerFirstName}
+
+I'm sorry to let you know that our courier can't deliver to your postcode this Saturday (${friendlyDate(d.deliveryDate)}), so your order ${opts.orderName} can't arrive that day.
+
+${offer}
+
+Sorry for the change, and thank you for choosing The Calzone Kitchen.
+
+Kind regards
+${opts.senderFirstName}`;
+  return {
+    subject: `Your Calzone Kitchen order ${opts.orderName} — we can't deliver this Saturday`,
     body,
     html: plainEmailHtml(body),
   };

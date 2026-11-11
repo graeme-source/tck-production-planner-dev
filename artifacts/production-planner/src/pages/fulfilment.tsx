@@ -42,7 +42,7 @@ import {
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
   ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame, ShieldCheck,
-  Minus, Plus,
+  Minus, Plus, CalendarX,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
@@ -4548,6 +4548,17 @@ export default function Fulfilment() {
                     title="Orders that went out on an old or cancelled APC booking, and old bookings still live at APC"
                   >
                     <ShieldCheck className="w-5 h-5" /> APC check
+                  </button>
+                )}
+                {/* Any day before: which of this Friday's orders APC won't
+                    deliver on the Saturday (Graeme, 11 Nov 2026). */}
+                {apcMode !== "off" && (
+                  <button
+                    onClick={() => navigate("/fulfilment/friday-check")}
+                    className="px-5 py-3 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
+                    title="This Friday's orders that APC won't deliver on the Saturday"
+                  >
+                    <CalendarX className="w-5 h-5" /> Friday check
                   </button>
                 )}
                 {apcMode === "full" && (

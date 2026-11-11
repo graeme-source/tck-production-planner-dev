@@ -104,6 +104,13 @@ describe("rescheduleTags", () => {
     expect(r.added).toEqual(["2026-08-25", "delayed"]);
   });
 
+  it("moving to an EARLIER date swaps the date and weekday but isn't marked delayed", () => {
+    const r = rescheduleTags("2026-11-14, Saturday, Small Box", "2026-11-14", "2026-11-13");
+    expect(r.after.split(", ")).toEqual(["Small Box", "2026-11-13", "Friday"]);
+    expect(r.added).toEqual(["2026-11-13", "Friday"]);
+    expect(r.removed).toEqual(["2026-11-14", "Saturday"]);
+  });
+
   it("is idempotent — running it twice does not duplicate tags", () => {
     const once = rescheduleTags(TAGS, "2026-08-22", "2026-08-25").after;
     const twice = rescheduleTags(once, "2026-08-22", "2026-08-25").after;

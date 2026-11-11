@@ -82,7 +82,7 @@ import { JaneAvatar } from "@/components/jane-avatar";
 import { TodoSheet, TodoInterstitial, useMyOpenTodoCount } from "@/components/todo-lists";
 import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial";
 import { TestRequestCard } from "@/components/test-request-card";
-import { ClipboardCheck, Gift } from "lucide-react";
+import { CalendarX, ClipboardCheck, Gift } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
 import { AlertOctagon, Banknote, BookOpen, BookUser, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
@@ -163,11 +163,14 @@ export const analyticsSubItems: NavItem[] = [
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
-const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/case-orders"];
+const DISPATCH_PATHS = ["/dispatches", "/locations", "/fulfilment", "/fulfilment/friday-check", "/case-orders"];
 // Module-level so the top bar's page name can find these pages too.
 const DISPATCH_SUB_ITEMS = [
   { name: "Dispatches", href: "/dispatches", icon: Truck },
   { name: "Order Packing Live", href: "/fulfilment", icon: Scan },
+  // Run any day: which of this Friday's orders APC won't deliver on the
+  // Saturday (Graeme, 11 Nov 2026).
+  { name: "Friday dispatch check", href: "/fulfilment/friday-check", icon: CalendarX },
   { name: "Case Orders", href: "/case-orders", icon: Box },
   { name: "Bin Locations", href: "/locations", icon: MapPin },
 ];

@@ -148,7 +148,10 @@ export function rescheduleTags(currentTags: string, fromTagDate: string, toTagDa
   }
 
   if (!out.includes(toTagDate)) { out.push(toTagDate); added.push(toTagDate); }
-  if (!out.some(t => t.toLowerCase() === DELAYED_TAG)) { out.push(DELAYED_TAG); added.push(DELAYED_TAG); }
+  // Only a LATER date is a delay. Moving a Saturday order forward to Friday
+  // (the Friday dispatch check's Thursday offer, Nov 2026) isn't one.
+  const later = toTagDate > fromTagDate;
+  if (later && !out.some(t => t.toLowerCase() === DELAYED_TAG)) { out.push(DELAYED_TAG); added.push(DELAYED_TAG); }
   // Only restore a weekday tag if the order carried one to begin with.
   if (removed.some(t => t.toLowerCase() === oldDay.toLowerCase()) && !out.some(t => t.toLowerCase() === newDay.toLowerCase())) {
     out.push(newDay);
