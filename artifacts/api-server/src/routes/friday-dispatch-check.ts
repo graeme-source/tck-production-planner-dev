@@ -7,7 +7,7 @@
  *   POST /friday-check/orders/:orderId/email          reschedule + email (confirmed in the UI)
  *
  * "Reschedule & email" (Graeme, 11 Nov 2026): one press moves the order to
- * the Wednesday after (Tuesday's dispatch) exactly as the packing screen's
+ * the Tuesday after (Monday's dispatch) exactly as the packing screen's
  * reschedule does — date tag, weekday tag, dispatch tag off, Zapiet
  * Delivery-Date, any old APC booking retired — then emails the customer that
  * it HAS moved, with a link to the website assistant to choose a sooner day
@@ -37,6 +37,8 @@ import { loadDateLockedProducts } from "../lib/date-locked-products";
 import { rescheduleLinkFor } from "../lib/cs-agent-links";
 import { supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
 import { londonDayStartUtc } from "../lib/london-time";
+import { firstDeliveryAfterWeekend } from "../lib/next-delivery-after-weekend";
+import { loadDeliveryCalendar } from "../lib/next-delivery-calendar";
 import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { lookupPostcodeService, POSTINFO_SOURCE } from "../services/apc-postinfo";
 import { getOrdersByTagIncludingCancelled, getOrderById, getOrderForReschedule, shopifyAdminOrderBase, updateOrderTagsAndAttributes } from "../services/shopify";
@@ -78,7 +80,7 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
   const today = londonDateString();
   const { dispatchDate: asked } = res.locals["query"] as z.infer<typeof checkQuery>;
   const dispatchDate = asked ?? comingFriday(today);
-  const dates = fridayDates(dispatchDate);
+  const { dates, calendarChecked } = await datesFor(dispatchDate);
 
   // Shopify first, and on its own: a failed read must say so, never show
   // an empty Friday that reads as "all fine".
@@ -103,6 +105,7 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
     const now = new Date();
     const { results, summary } = runFridayCheck({
       dispatchDate,
+      dates,
       today,
       orders: apcOrdersForCheck(shopifyOrders),
       serviceFor: pc => lookupPostcodeService(pc, undefined, context.overrides, now),
@@ -132,6 +135,7 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
       adminOrderBase: shopifyAdminOrderBase(),
       refusalsConsidered: refusals.length,
       refusalDays: DEPOT_REFUSAL_DAYS,
+      calendarChecked,
       source: POSTINFO_SOURCE,
     });
   } catch (err) {
@@ -140,12 +144,30 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
   }
 });
 
+/** The Friday's dates, with "next week" = the first delivery day after that
+ *  weekend the calendar allows (bank holidays, Zapiet blackouts) — normally
+ *  Tuesday (Monday's dispatch), Graeme 11 Nov 2026. */
+async function datesFor(dispatchDate: string): Promise<{ dates: ReturnType<typeof fridayDates>; calendarChecked: boolean }> {
+  const base = fridayDates(dispatchDate);
+  const { calendar, zapiet } = await loadDeliveryCalendar();
+  const next = firstDeliveryAfterWeekend(base.deliveryDate, calendar);
+  return {
+    dates: next ? { ...base, nextWeekDispatch: next.dispatch, nextWeekDelivery: next.delivery } : base,
+    calendarChecked: zapiet,
+  };
+}
+
+/** Links stop working at 1:45pm on the new dispatch day. */
+function linkExpiry(dates: ReturnType<typeof fridayDates>): string {
+  return new Date(londonDayStartUtc(dates.nextWeekDispatch).getTime() + (13 * 60 + 45) * 60_000).toISOString();
+}
+
 /** The email for one order, built from Shopify as it is now and the check
  *  re-run for that order — never from what the browser last saw. */
 async function emailPlan(req: Request, res: Response, dispatchDate: string) {
   const orderId = Number(req.params["orderId"]);
   if (!Number.isInteger(orderId) || orderId <= 0) { res.status(400).json({ error: "Invalid order" }); return null; }
-  const dates = fridayDates(dispatchDate);
+  const { dates } = await datesFor(dispatchDate);
   const order = await getOrderForReschedule(orderId);
   if (!order) { res.status(502).json({ error: "Couldn't read that order from Shopify — nothing was sent." }); return null; }
   const tags = order.tags.split(",").map(t => t.trim());
@@ -165,8 +187,8 @@ async function emailPlan(req: Request, res: Response, dispatchDate: string) {
     res.status(409).json({ error: result.status === "ok" ? `${order.name} should get its Saturday delivery — no email needed.` : (result.emailNote ?? "That email isn't offered for this order.") });
     return null;
   }
-  if (!result.tuesday.possible) {
-    res.status(409).json({ error: `${order.name} can't go on ${friendlyDate(dates.tuesdayDelivery)} either — change it by hand.` });
+  if (!result.nextWeek.possible) {
+    res.status(409).json({ error: `${order.name} can't go on ${friendlyDate(dates.nextWeekDelivery)} either — change it by hand.` });
     return null;
   }
   // Test production / 8-pack bags: made for this date — never moved from here.
@@ -180,7 +202,7 @@ async function emailPlan(req: Request, res: Response, dispatchDate: string) {
     senderFirstName: firstNameOf(sender, "The Calzone Kitchen"),
     orderName: order.name,
     saturdayDelivery: dates.deliveryDate,
-    newDelivery: dates.tuesdayDelivery,
+    newDelivery: dates.nextWeekDelivery,
   };
   return {
     order, result, sender, dates, who,
@@ -198,15 +220,21 @@ router.get("/friday-check/orders/:orderId/email", requireCourier, validateQuery(
   try {
     const plan = await emailPlan(req, res, dispatchDate);
     if (!plan) return;
+    // A real link in the preview (Graeme, 11 Nov 2026), so it can be tried
+    // before sending. Making one changes nothing; the send makes its own.
+    const link = await rescheduleLinkFor({ orderId: plan.order.id, orderName: plan.order.name, expiresAt: linkExpiry(plan.dates) });
+    const email = rescheduledWithLinkEmail({ ...plan.who, link: link.url });
     res.json({
       orderName: plan.order.name,
       customerName: plan.order.shippingName,
       to: plan.order.email,
-      subject: plan.email.subject,
-      body: plan.email.body,
+      subject: email.subject,
+      body: email.body,
+      link: link.url,
+      linkError: link.error,
       offerThursday: plan.result.canOfferThursday,
-      newDelivery: plan.dates.tuesdayDelivery,
-      newDeliveryLabel: friendlyDate(plan.dates.tuesdayDelivery),
+      newDelivery: plan.dates.nextWeekDelivery,
+      newDeliveryLabel: friendlyDate(plan.dates.nextWeekDelivery),
       alreadyEmailedAt: plan.done?.emailedAt ?? null,
       alreadyEmailedBy: plan.done?.emailedBy ?? null,
     });
@@ -235,7 +263,7 @@ router.post("/friday-check/orders/:orderId/email", requireCourier, validate(send
     }
     if (!plan.order.email) { res.status(409).json({ error: "No email address on this order — change it by hand." }); return; }
     const fromDate = plan.dates.deliveryDate;
-    const toDate = plan.dates.tuesdayDelivery;
+    const toDate = plan.dates.nextWeekDelivery;
 
     // 1. Move it — the same pieces the packing screen's reschedule uses.
     const tagChange = rescheduleTags(plan.order.tags, fromDate, toDate);
@@ -263,8 +291,7 @@ router.post("/friday-check/orders/:orderId/email", requireCourier, validate(send
     }
 
     // 2. The link, good until 1:45pm on the new dispatch day.
-    const expiresAt = new Date(londonDayStartUtc(plan.dates.tuesdayDispatch).getTime() + (13 * 60 + 45) * 60_000).toISOString();
-    const link = await rescheduleLinkFor({ orderId: plan.order.id, orderName: plan.order.name, expiresAt });
+    const link = await rescheduleLinkFor({ orderId: plan.order.id, orderName: plan.order.name, expiresAt: linkExpiry(plan.dates) });
     if (!link.url) console.warn(`[friday-check] no link for ${plan.order.name}: ${link.error}`);
 
     // 3. Tell them. The order has moved either way; a failed email is reported, not undone.

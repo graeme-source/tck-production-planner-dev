@@ -83,7 +83,7 @@ export function rescheduleEmailFor(variant: RescheduleEmailVariant, opts: {
 /** (d) Sent days ahead from the Friday dispatch check (Graeme, 11 Nov 2026):
  *  APC won't deliver to this postcode this Saturday. Offers Thursday's
  *  dispatch (Friday delivery) when there's still time to reply, otherwise
- *  it goes out on Tuesday for Wednesday delivery. Nothing is moved by the
+ *  it goes out on Monday for Tuesday delivery. Nothing is moved by the
  *  email itself — the order is moved by hand once the customer has replied
  *  (or hasn't). */
 export function noSaturdayThisWeekEmail(opts: {
@@ -97,8 +97,8 @@ export function noSaturdayThisWeekEmail(opts: {
   const offer = opts.offerThursday
     ? `If you'd like it a day early instead, just reply to this email by the end of ${friendlyDate(d.replyBy)} and we'll send it out on Thursday for delivery on ${friendlyDate(d.thursdayDelivery)}.
 
-Otherwise, we'll send it out on Tuesday for delivery on ${friendlyDate(d.tuesdayDelivery)}.`
-    : `We'll send it out on Tuesday instead, for delivery on ${friendlyDate(d.tuesdayDelivery)}. If another weekday suits you better, just reply to this email.`;
+Otherwise, we'll send it out on Monday for delivery on ${friendlyDate(d.nextWeekDelivery)}.`
+    : `We'll send it out on Monday instead, for delivery on ${friendlyDate(d.nextWeekDelivery)}. If another weekday suits you better, just reply to this email.`;
   const body = `Hi ${opts.customerFirstName}
 
 I'm sorry to let you know that our courier can't deliver to your postcode this Saturday (${friendlyDate(d.deliveryDate)}), so your order ${opts.orderName} can't arrive that day.
@@ -117,7 +117,7 @@ ${opts.senderFirstName}`;
 }
 
 /** (e) Sent from the Friday dispatch check's "Reschedule & email" (Graeme,
- *  11 Nov 2026): the order HAS been moved to the Wednesday after, and the
+ *  11 Nov 2026): the order HAS been moved to the Tuesday after, and the
  *  customer can pick a sooner day themselves from the link (the website
  *  assistant; no code needed — the link proves it's them). Without a link
  *  (the assistant couldn't make one) it asks them to reply instead. */

@@ -64,8 +64,8 @@ describe("dates", () => {
       replyBy: "2026-11-11",
       thursdayDispatch: "2026-11-12",
       thursdayDelivery: "2026-11-13",
-      tuesdayDispatch: "2026-11-17",
-      tuesdayDelivery: "2026-11-18",
+      nextWeekDispatch: "2026-11-16",
+      nextWeekDelivery: "2026-11-17",
     });
   });
 });
@@ -102,7 +102,7 @@ describe("red — APC's table (or a permanent APC answer) says no Saturday", () 
       expect(r.status).toBe("no_saturday");
       expect(r.reason).toMatch(/lists no Saturday delivery/);
       expect(r.thursday.possible).toBe(true);
-      expect(r.tuesday.possible).toBe(true);
+      expect(r.nextWeek.possible).toBe(true);
       expect(r.canEmail).toBe(true);
       expect(r.canOfferThursday).toBe(true);
     });
@@ -175,7 +175,7 @@ describe("green and unknown", () => {
     const r = checkOrder(order("#301", "ZZ9 9ZZ"), serviceFor()("ZZ9 9ZZ"), REFUSALS, DATES, TODAY);
     expect(r.status).toBe("unknown");
     expect(r.reason).toContain("ZZ9 isn't in APC's postcode table");
-    expect(r.thursday.possible || r.tuesday.possible || r.canEmail).toBe(false);
+    expect(r.thursday.possible || r.nextWeek.possible || r.canEmail).toBe(false);
   });
 
   it("no postcode at all is unknown", () => {
@@ -186,11 +186,11 @@ describe("green and unknown", () => {
 });
 
 describe("alternatives", () => {
-  it("no next-day weekday service: neither Thursday nor Tuesday, and no email", () => {
+  it("no next-day weekday service: neither Thursday nor next week, and no email", () => {
     const r = checkOrder(order("#400", "PA20 0AA"), serviceFor()("PA20 0AA"), [], DATES, TODAY);
     expect(r.status).toBe("no_saturday");
     expect(r.thursday.possible).toBe(false);
-    expect(r.tuesday.possible).toBe(false);
+    expect(r.nextWeek.possible).toBe(false);
     expect(r.thursday.note).toContain("2 days in transit");
     expect(r.canEmail).toBe(false);
     expect(r.emailNote).toContain("Escalate");
@@ -203,13 +203,13 @@ describe("alternatives", () => {
     expect(thu.emailNote).toContain("past Wednesday");
     const fri = checkOrder(order("#402", "EX7 0EA"), serviceFor()("EX7 0EA"), [], DATES, "2026-11-13");
     expect(fri.thursday.possible).toBe(false);
-    expect(fri.tuesday.possible).toBe(true);
+    expect(fri.nextWeek.possible).toBe(true);
   });
 
-  it("moves to the Friday tag (Thursday dispatch) and the Wednesday tag (Tuesday dispatch)", () => {
+  it("moves to the Friday tag (Thursday dispatch) and the Tuesday tag (Monday dispatch)", () => {
     const r = checkOrder(order("#403", "EX7 0EA"), serviceFor()("EX7 0EA"), [], DATES, TODAY);
     expect(r.thursday).toMatchObject({ deliveryDate: "2026-11-13", label: "Thursday 12 November" });
-    expect(r.tuesday).toMatchObject({ deliveryDate: "2026-11-18", label: "Tuesday 17 November" });
+    expect(r.nextWeek).toMatchObject({ deliveryDate: "2026-11-17", label: "Monday 16 November" });
   });
 });
 
@@ -229,19 +229,19 @@ describe("runFridayCheck — the last four Fridays' pattern", () => {
 
 describe("the customer email", () => {
   const who = { customerFirstName: "Jo", senderFirstName: "Graeme", orderName: "#138001", dates: DATES };
-  it("offers Thursday with the reply-by Wednesday, otherwise Tuesday for Wednesday delivery", () => {
+  it("offers Thursday with the reply-by Wednesday, otherwise Monday for Tuesday delivery", () => {
     const e = noSaturdayThisWeekEmail({ ...who, offerThursday: true });
     expect(e.subject).toBe("Your Calzone Kitchen order #138001 — we can't deliver this Saturday");
     expect(e.body).toContain("can't deliver to your postcode this Saturday (Saturday 14 November)");
     expect(e.body).toContain("by the end of Wednesday 11 November");
     expect(e.body).toContain("send it out on Thursday for delivery on Friday 13 November");
-    expect(e.body).toContain("send it out on Tuesday for delivery on Wednesday 18 November");
-    expect(e.html).toContain("Wednesday 18 November");
+    expect(e.body).toContain("send it out on Monday for delivery on Tuesday 17 November");
+    expect(e.html).toContain("Tuesday 17 November");
   });
   it("without the offer, only Tuesday", () => {
     const e = noSaturdayThisWeekEmail({ ...who, offerThursday: false });
     expect(e.body).not.toContain("Thursday");
-    expect(e.body).toContain("send it out on Tuesday instead, for delivery on Wednesday 18 November");
+    expect(e.body).toContain("send it out on Monday instead, for delivery on Tuesday 17 November");
   });
 });
 

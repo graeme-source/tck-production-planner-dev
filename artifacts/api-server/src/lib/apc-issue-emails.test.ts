@@ -60,14 +60,14 @@ describe("weekday-only rescheduling", () => {
 });
 
 describe("rescheduledWithLinkEmail (11 Nov 2026)", () => {
-  const base = { customerFirstName: "Matt", senderFirstName: "Graeme", orderName: "#139320", saturdayDelivery: "2026-11-14", newDelivery: "2026-11-18" };
+  const base = { customerFirstName: "Matt", senderFirstName: "Graeme", orderName: "#139320", saturdayDelivery: "2026-11-14", newDelivery: "2026-11-17" };
   it("says it HAS moved, and gives the link as a button", async () => {
     const { rescheduledWithLinkEmail } = await import("./apc-issue-emails");
     const e = rescheduledWithLinkEmail({ ...base, link: "https://thecalzonekitchen.co.uk/pages/contact-us?chat=open&tckl=abc" });
-    expect(e.body).toMatch(/we've moved your order #139320 to Wednesday 18 November/);
+    expect(e.body).toMatch(/we've moved your order #139320 to Tuesday 17 November/);
     expect(e.body).toMatch(/you don't need to do anything/);
     expect(e.html).toMatch(/<a href="https:\/\/thecalzonekitchen\.co\.uk\/pages\/contact-us\?chat=open&amp;tckl=abc"[^>]*>Choose a delivery day<\/a>/);
-    expect(e.subject).toMatch(/moved to Wednesday 18 November/);
+    expect(e.subject).toMatch(/moved to Tuesday 17 November/);
   });
   it("without a link, asks them to reply", async () => {
     const { rescheduledWithLinkEmail } = await import("./apc-issue-emails");

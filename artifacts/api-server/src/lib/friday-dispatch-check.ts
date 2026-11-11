@@ -6,7 +6,7 @@
  * The team only found out when the label booking failed on Friday morning.
  * This runs any day before (Wednesday, say) over every order due out this
  * Friday and says which won't get a Saturday, so the customer can be offered
- * a Thursday dispatch (Friday delivery) or moved to Tuesday's (Wednesday
+ * a Thursday dispatch (Friday delivery) or moved to Monday's (Tuesday
  * delivery).
  *
  * The last four Fridays on live: 15 Saturday refusals. 8 were postcodes
@@ -54,9 +54,9 @@ export interface FridayDates {
   thursdayDispatch: string;
   /** The tag an order moved to Thursday's dispatch carries (the Friday). */
   thursdayDelivery: string;
-  tuesdayDispatch: string;
-  /** The tag an order moved to next Tuesday's dispatch carries (Wednesday). */
-  tuesdayDelivery: string;
+  nextWeekDispatch: string;
+  /** The tag an order moved to next Monday's dispatch carries (Tuesday). */
+  nextWeekDelivery: string;
 }
 
 export function fridayDates(dispatchDate: string): FridayDates {
@@ -66,8 +66,8 @@ export function fridayDates(dispatchDate: string): FridayDates {
     replyBy: addDaysToDateString(dispatchDate, -2),
     thursdayDispatch: addDaysToDateString(dispatchDate, -1),
     thursdayDelivery: dispatchDate,
-    tuesdayDispatch: addDaysToDateString(dispatchDate, 4),
-    tuesdayDelivery: addDaysToDateString(dispatchDate, 5),
+    nextWeekDispatch: addDaysToDateString(dispatchDate, 3),
+    nextWeekDelivery: addDaysToDateString(dispatchDate, 4),
   };
 }
 
@@ -176,8 +176,8 @@ export interface FridayCheckResult extends FridayCheckOrder {
   depot: string | null;
   /** Thursday dispatch → Friday delivery. */
   thursday: Alternative;
-  /** Next Tuesday dispatch → Wednesday delivery. */
-  tuesday: Alternative;
+  /** Next Monday dispatch → Tuesday delivery. */
+  nextWeek: Alternative;
   /** The customer can still be offered Thursday by email (before replyBy ends). */
   canOfferThursday: boolean;
   /** The "can't do Saturday" email makes sense for this order. */
@@ -194,7 +194,7 @@ export function checkOrder(
 ): FridayCheckResult {
   const outward = order.postcode ? outwardCode(order.postcode) || null : null;
   const thursdayLabel = friendlyDate(dates.thursdayDispatch);
-  const tuesdayLabel = friendlyDate(dates.tuesdayDispatch);
+  const nextWeekLabel = friendlyDate(dates.nextWeekDispatch);
 
   if (!service) {
     const reason = !order.postcode
@@ -204,7 +204,7 @@ export function checkOrder(
     return {
       ...order, status: "unknown", reason, outward, depot: null,
       thursday: no(dates.thursdayDelivery, thursdayLabel),
-      tuesday: no(dates.tuesdayDelivery, tuesdayLabel),
+      nextWeek: no(dates.nextWeekDelivery, nextWeekLabel),
       canOfferThursday: false, canEmail: false, emailNote: "Check the postcode before emailing.",
     };
   }
@@ -243,21 +243,21 @@ export function checkOrder(
     label: thursdayLabel,
     note: !service.nextDay ? noNextDay : !thursdayPossible ? "Thursday's dispatch has gone." : weekdayNote,
   };
-  const tuesday: Alternative = {
+  const nextWeek: Alternative = {
     possible: service.nextDay,
-    deliveryDate: dates.tuesdayDelivery,
-    label: tuesdayLabel,
+    deliveryDate: dates.nextWeekDelivery,
+    label: nextWeekLabel,
     note: !service.nextDay ? noNextDay : weekdayNote,
   };
   const canOfferThursday = service.nextDay && today <= dates.replyBy;
 
   return {
     ...order, status, reason, outward: service.matchedOn, depot: service.depot || null,
-    thursday, tuesday, canOfferThursday,
+    thursday, nextWeek, canOfferThursday,
     canEmail: status !== "ok" && service.nextDay,
     emailNote: status === "ok" ? null
       : !service.nextDay ? "APC have no next-day service here on any weekday — this isn't a Saturday problem. Escalate it."
-        : !canOfferThursday ? `It's past ${dayNameFor(dates.replyBy)}, so the email only offers ${tuesdayLabel}'s dispatch.`
+        : !canOfferThursday ? `It's past ${dayNameFor(dates.replyBy)}, so the email only offers ${nextWeekLabel}'s dispatch.`
           : null,
   };
 }
@@ -282,12 +282,15 @@ const ORDER: Record<FridayStatus, number> = { no_saturday: 0, at_risk: 1, unknow
 /** Every order judged, worst first, then by depot and order number. */
 export function runFridayCheck(input: {
   dispatchDate: string;
+  /** Dates with the next-week day already worked out from the delivery
+   *  calendar (bank holidays); default: fridayDates(dispatchDate). */
+  dates?: FridayDates;
   today: string;
   orders: readonly FridayCheckOrder[];
   serviceFor: (postcode: string | null) => PostcodeServiceAnswer | null;
   refusals: readonly DepotRefusal[];
 }): { dates: FridayDates; results: FridayCheckResult[]; summary: FridayCheckSummary } {
-  const dates = fridayDates(input.dispatchDate);
+  const dates = input.dates ?? fridayDates(input.dispatchDate);
   const results = input.orders
     .map(o => checkOrder(o, input.serviceFor(o.postcode), input.refusals, dates, input.today))
     .sort((a, b) => ORDER[a.status] - ORDER[b.status]

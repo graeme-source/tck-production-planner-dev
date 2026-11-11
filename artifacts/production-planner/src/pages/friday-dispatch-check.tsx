@@ -3,7 +3,7 @@
  *
  * Run any day before a Friday: which orders due out that Friday APC won't
  * deliver on the Saturday, so the customer can be offered Thursday's
- * dispatch (Friday delivery) or moved to next Tuesday's (Wednesday
+ * dispatch (Friday delivery) or moved to next Monday's (Tuesday
  * delivery). Rules: api-server lib/friday-dispatch-check.ts.
  *
  * Opening the page reads Shopify and our own records only. The email is
@@ -142,7 +142,7 @@ function OrderCard({ row, check, onEmail }: {
 
         <div className="space-y-1.5">
           <AltLine alt={row.thursday} dispatchWord="Thursday" />
-          <AltLine alt={row.tuesday} dispatchWord="Next Tuesday" />
+          <AltLine alt={row.nextWeek} dispatchWord="Next Monday" />
         </div>
 
         <div className="space-y-2 pt-1">
@@ -155,12 +155,12 @@ function OrderCard({ row, check, onEmail }: {
             </p>
           ) : (
             <BigButton onClick={() => onEmail(row)}
-              disabled={!row.canEmail || !row.tuesday.possible || !check.canCourier || !!row.done?.movedAt}
-              title={noPerm ?? row.emailNote ?? row.tuesday.note ?? undefined} icon={<CalendarClock className="w-5 h-5" />}
-              label={`Reschedule to ${shortDay(check.dates.tuesdayDelivery)} & email`} tone="red" />
+              disabled={!row.canEmail || !row.nextWeek.possible || !check.canCourier || !!row.done?.movedAt}
+              title={noPerm ?? row.emailNote ?? row.nextWeek.note ?? undefined} icon={<CalendarClock className="w-5 h-5" />}
+              label={`Reschedule to ${shortDay(check.dates.nextWeekDelivery)} & email`} tone="red" />
           )}
-          {!row.lockedReason && (noPerm || row.emailNote || (!row.tuesday.possible ? row.tuesday.note : null)) && (
-            <p className="text-sm text-muted-foreground">{noPerm ?? row.emailNote ?? row.tuesday.note}</p>
+          {!row.lockedReason && (noPerm || row.emailNote || (!row.nextWeek.possible ? row.nextWeek.note : null)) && (
+            <p className="text-sm text-muted-foreground">{noPerm ?? row.emailNote ?? row.nextWeek.note}</p>
           )}
         </div>
       </div>
@@ -209,11 +209,22 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
           )}
           {!d.to && <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">No email address on this order.</p>}
           <p className="rounded-xl border border-border bg-secondary/30 px-3 py-2 text-sm">
-            This moves the order to <span className="font-semibold">{d.newDeliveryLabel}</span> in Shopify straight away (Tuesday's dispatch), then sends this email.
+            This moves the order to <span className="font-semibold">{d.newDeliveryLabel}</span> in Shopify straight away (Monday's dispatch), then sends this email.
           </p>
           <p className="text-sm"><span className="font-semibold">To:</span> {d.to ?? "—"}</p>
           <p className="text-sm"><span className="font-semibold">Subject:</span> {d.subject}</p>
           <pre className="text-sm whitespace-pre-wrap font-sans bg-secondary/30 rounded-xl p-4">{d.body}</pre>
+          {d.link ? (
+            <p className="text-sm">
+              <span className="font-semibold">Try the link:</span>{" "}
+              <a href={d.link} target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 break-all">open what the customer will see</a>
+              <span className="block text-muted-foreground">Until you press the button below, the order is still on Saturday, so the chat will say Saturday.</span>
+            </p>
+          ) : (
+            <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-sm font-semibold text-amber-900 dark:text-amber-200">
+              No link could be made ({d.linkError ?? "the assistant didn't answer"}) — the email will ask them to reply instead.
+            </p>
+          )}
         </>
       )}
     </ConfirmSheet>
@@ -336,6 +347,11 @@ export default function FridayDispatchCheck() {
             </details>
           )}
 
+          {data.calendarChecked === false && (
+            <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm font-semibold text-amber-900 dark:text-amber-200">
+              Couldn't read the delivery calendar from Zapiet, so the move-to date ({shortDay(data.dates.nextWeekDelivery)}) only allows for our own closure days. Check it isn't a blacked-out day.
+            </p>
+          )}
           <p className="text-sm text-muted-foreground">
             Checked against {data.source}, recorded APC answers, and {data.refusalsConsidered} Saturday refusal{data.refusalsConsidered === 1 ? "" : "s"} in the {data.refusalDays} days before.
           </p>

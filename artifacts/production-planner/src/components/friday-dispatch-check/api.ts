@@ -27,7 +27,7 @@ export interface FridayCheckRow {
   outward: string | null;
   depot: string | null;
   thursday: Alternative;
-  tuesday: Alternative;
+  nextWeek: Alternative;
   canOfferThursday: boolean;
   canEmail: boolean;
   emailNote: string | null;
@@ -43,7 +43,7 @@ export interface FridayCheck {
   dispatchDate: string;
   dates: {
     dispatchDate: string; deliveryDate: string; replyBy: string;
-    thursdayDispatch: string; thursdayDelivery: string; tuesdayDispatch: string; tuesdayDelivery: string;
+    thursdayDispatch: string; thursdayDelivery: string; nextWeekDispatch: string; nextWeekDelivery: string;
     dispatchLabel: string; deliveryLabel: string; replyByLabel: string;
   };
   summary: { total: number; ok: number; noSaturday: number; atRisk: number; unknown: number; moved: number };
@@ -53,6 +53,8 @@ export interface FridayCheck {
   adminOrderBase: string;
   refusalsConsidered: number;
   refusalDays: number;
+  /** False: Zapiet's calendar couldn't be read, so the move-to date used our closure list only. */
+  calendarChecked?: boolean;
   source: string;
 }
 
@@ -79,8 +81,10 @@ export function useFridayCheck(dispatchDate: string | null) {
 export interface EmailDraft {
   orderName: string; customerName: string | null; to: string | null; subject: string; body: string;
   offerThursday: boolean; alreadyEmailedAt: string | null; alreadyEmailedBy: string | null;
-  /** Where "Reschedule & email" moves it: the Wednesday after (Tuesday's dispatch). */
+  /** Where "Reschedule & email" moves it: the Tuesday after (Monday's dispatch). */
   newDelivery: string; newDeliveryLabel: string;
+  /** The real choose-a-day link (null when the assistant couldn't make one). */
+  link: string | null; linkError: string | null;
 }
 
 export interface RescheduleResult {
