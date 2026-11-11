@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useCallback, useRef, type ReactNode } fr
 import { clearIngredientMark, OUTSTANDING_KEY } from "@/components/queued-production/api";
 import { QueuedOrdersReminder } from "@/components/queued-production/orders-reminder";
 import { NewerPlanBanner } from "@/components/newer-plan-banner";
-import { newerPlanThan } from "@/lib/newer-plan";
+import { orderingPlan, rememberedPlanId, staleOrderingPlan } from "@/lib/newer-plan";
 import { StandingOrderChip } from "@/components/standing-order-chip";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -261,6 +261,7 @@ type Plan = {
   name: string;
   planDate: string;
   status: string;
+  prepDate?: string | null;
 };
 
 /** A placed order reopened into the To Order view for editing. Its delivery
@@ -435,16 +436,16 @@ export default function Orders() {
   const initialPlanId = (() => {
     const urlParam = new URLSearchParams(window.location.search).get("planId");
     if (urlParam) return Number(urlParam);
-    const stored = sessionStorage.getItem("orders_selectedPlanId");
-    if (stored) return Number(stored);
-    return null;
+    // A choice made earlier today stands; one left from another day doesn't —
+    // the page then opens on the plan today's orders are for (11 Nov 2026).
+    return rememberedPlanId(sessionStorage.getItem("orders_selectedPlanId"), londonToday());
   })();
   const [selectedPlanId, setSelectedPlanIdRaw] = useState<number | null>(initialPlanId);
   const setSelectedPlanId = useCallback((id: number | null) => {
     setSelectedPlanIdRaw(id);
     setDeliveryDates({});
     if (id) {
-      sessionStorage.setItem("orders_selectedPlanId", String(id));
+      sessionStorage.setItem("orders_selectedPlanId", JSON.stringify({ id, on: londonToday() }));
     } else {
       sessionStorage.removeItem("orders_selectedPlanId");
     }
@@ -752,11 +753,14 @@ export default function Orders() {
 
   const activePlans = (plans ?? []).filter(p => p.status === "active");
   const selectedPlan = activePlans.find(p => p.id === selectedPlanId) ?? null;
-  const newerPlan = newerPlanThan(activePlans, selectedPlanId);
+  // The selected plan's prep has started (its stock is in), and a later plan
+  // is the one today's orders are for — offer it.
+  const newerPlan = staleOrderingPlan(activePlans, selectedPlanId, londonToday());
 
   useEffect(() => {
     if (activePlans.length > 0 && !selectedPlanId) {
-      setSelectedPlanId(activePlans[activePlans.length - 1].id);
+      const target = orderingPlan(activePlans, londonToday());
+      if (target) setSelectedPlanId(target.id);
     }
   }, [activePlans.length, selectedPlanId, setSelectedPlanId]);
 
