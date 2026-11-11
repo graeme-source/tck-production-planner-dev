@@ -25,6 +25,7 @@ import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, us
 import { SortableContext, useSortable, verticalListSortingStrategy, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { canRedo, canUndo, moveItem, record, redo, startHistory, undo, type History } from "@/lib/undo-history";
+import { SURVEY_OPTION_TYPES, surveySaveProblems } from "@/lib/survey-save-problems";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -167,7 +168,7 @@ const PROMPT_TEMPLATES: Record<QuestionType, (name: string) => string> = {
   rank: (name) => `Rank what you enjoyed most about ${withArticle(name)}`,
 };
 
-const OPTION_TYPES: QuestionType[] = ["choice", "multi", "rank"];
+const OPTION_TYPES = SURVEY_OPTION_TYPES as QuestionType[];
 
 let keyCounter = 0;
 const nextKey = () => `q-${++keyCounter}`;
@@ -1036,8 +1037,11 @@ function SortableQuestion({ id, children }: { id: string; children: (dragHandle:
   );
 }
 
-function QuestionEditor({ question, recipes, onChange, onRemove, onDuplicate, onMove, isFirst, isLast, dragHandle }: {
+function QuestionEditor({ question, number, problems = [], recipes, onChange, onRemove, onDuplicate, onMove, isFirst, isLast, dragHandle }: {
   question: DraftQuestion;
+  number: number;
+  /** What stops this question saving, e.g. no wording yet. */
+  problems?: string[];
   recipes: RecipeOption[];
   onChange: (q: DraftQuestion) => void;
   onRemove: () => void;
@@ -1060,7 +1064,11 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onDuplicate, on
   };
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4 space-y-3">
+    <div
+      id={`survey-q-${question.key}`}
+      aria-label={`Question ${number}`}
+      className={cn("rounded-xl border bg-card p-4 space-y-3", problems.length > 0 ? "border-amber-500/70" : "border-border")}
+    >
       <div className="flex items-start gap-2">
         {dragHandle && <div className="pt-1.5">{dragHandle}</div>}
         <div className="flex-1 min-w-0 space-y-3">
@@ -1096,6 +1104,12 @@ function QuestionEditor({ question, recipes, onChange, onRemove, onDuplicate, on
               onChange({ ...question, prompt, promptEdited: prompt.trim() !== "" });
             }}
           />
+          {problems.length > 0 && (
+            <p className="flex items-center gap-1.5 text-sm text-amber-700 dark:text-amber-400">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {problems.join(" · ")}
+            </p>
+          )}
         </div>
         <div className="flex flex-col gap-1">
           <Button variant="ghost" size="icon" className="h-7 w-7" disabled={isFirst} onClick={() => onMove(-1)}>
@@ -1534,12 +1548,24 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
 
   const finalProblems = finalPageProblems(finalPage);
   const isDirty = savedSnapshot !== formSnapshot({ title, intro, questions, finalPage });
-  const canSave = title.trim().length > 0 &&
-    finalProblems.length === 0 &&
-    questions.length > 0 &&
-    questions.every(q =>
-      q.prompt.trim().length > 0 &&
-      (!OPTION_TYPES.includes(q.type) || q.options.map(o => o.trim()).filter(Boolean).length >= 2));
+  // Save stays pressable and says what's missing, rather than greying out
+  // with no reason (a just-added question starts blank).
+  const saveProblems = surveySaveProblems({ title, questions, finalPageProblems: finalProblems });
+  const problemsByQuestion = new Map<string, string[]>();
+  for (const p of saveProblems) {
+    if (p.questionKey == null) continue;
+    problemsByQuestion.set(p.questionKey, [...(problemsByQuestion.get(p.questionKey) ?? []), p.message]);
+  }
+  const trySave = () => {
+    if (saveProblems.length === 0) { save.mutate(); return; }
+    toast({
+      title: "Not saved yet",
+      description: saveProblems.map(p => p.summary).join(" · "),
+      variant: "destructive",
+    });
+    const first = saveProblems.find(p => p.questionKey != null);
+    if (first) document.getElementById(`survey-q-${first.questionKey}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  };
 
   if (surveyId != null && isLoading) {
     return <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
@@ -1567,12 +1593,19 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
           >
             <ExternalLink className="w-4 h-4 mr-2" /> Preview
           </Button>
-          <Button onClick={() => save.mutate()} disabled={!canSave || save.isPending}>
+          <Button onClick={trySave} disabled={save.isPending}>
             {save.isPending && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
             Save survey
           </Button>
         </div>
       </div>
+
+      {saveProblems.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+          <span>To save: {saveProblems.map(p => p.summary).join(" · ")}</span>
+        </div>
+      )}
 
       {existing != null && existing.responseCount > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
@@ -1608,6 +1641,8 @@ function BuilderView({ surveyId, initial, onBack, onSaved }: {
                 {(dragHandle) => (
                   <QuestionEditor
                     question={q}
+                    number={i + 1}
+                    problems={problemsByQuestion.get(q.key) ?? []}
                     recipes={recipes ?? []}
                     isFirst={i === 0}
                     isLast={i === questions.length - 1}
