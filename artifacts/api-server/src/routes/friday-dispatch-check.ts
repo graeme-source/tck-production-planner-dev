@@ -56,8 +56,12 @@ const fridayDate = z.string()
 
 const checkQuery = z.object({ dispatchDate: fridayDate.optional() });
 
+/** The error in one readable line — Shopify's token errors carry a whole
+ *  HTML page after the first sentence. */
 function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
+  const msg = err instanceof Error ? err.message : String(err);
+  const plain = msg.split("<")[0].trim().replace(/:$/, "");
+  return (plain || msg).slice(0, 300);
 }
 
 // GET /friday-check — every APC order due out on the Friday, judged.
