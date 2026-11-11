@@ -79,7 +79,7 @@ function isSaturday(d: string): boolean {
   return new Date(`${d}T12:00:00Z`).getUTCDay() === 6;
 }
 
-export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, onClose, onDone, weekdaysOnly: weekdaysOnlyProp = false, defaultSendEmail = true }: {
+export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, onClose, onDone, weekdaysOnly: weekdaysOnlyProp = false, defaultSendEmail = true, initialDate, fridayCheckDispatchDate }: {
   orderId: number;
   orderName: string;
   /** The dispatch date the order is currently on — what we're moving it off. */
@@ -93,9 +93,16 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
   /** Whether "Send it" starts ticked. The standard email talks about a
    *  Saturday restriction, so it starts unticked for other problems. */
   defaultSendEmail?: boolean;
+  /** Start on this date instead of the next available — the Friday
+   *  dispatch check's "Move to Thursday" / "Move to next Wednesday". It may
+   *  be EARLIER than fromDate (Saturday → Friday). */
+  initialDate?: string;
+  /** The Friday the order was due out on, when moved from the Friday
+   *  dispatch check — the server notes the move there. */
+  fridayCheckDispatchDate?: string;
 }) {
   // null = "use the server's next-available default"; a string = operator pick.
-  const [chosenDate, setChosenDate] = useState<string | null>(null);
+  const [chosenDate, setChosenDate] = useState<string | null>(initialDate ?? null);
   const [sendCustomerEmail, setSendCustomerEmail] = useState(defaultSendEmail);
   const [done, setDone] = useState<{ toDate: string; emailed: boolean } | null>(null);
 
@@ -125,7 +132,7 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ date: preview.toDate, fromDate, sendCustomerEmail }),
+        body: JSON.stringify({ date: preview.toDate, fromDate, sendCustomerEmail, ...(fridayCheckDispatchDate ? { fridayCheckDispatchDate } : {}) }),
       });
       const body = await res.json();
       if (!res.ok) throw new Error(body.error ?? "Reschedule failed");
@@ -167,7 +174,7 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
           <div className="flex-1 min-w-0">
             <h2 className="text-xl font-bold leading-tight">Move {orderName}{preview?.customerName ? ` — ${preview.customerName}` : ""}</h2>
             <p className="text-sm text-muted-foreground">
-              to a later delivery date · currently {fromDate}
+              to {initialDate && initialDate < fromDate ? "an earlier" : "a later"} delivery date · currently {fromDate}
             </p>
           </div>
           {adminUrl && (
@@ -262,7 +269,7 @@ export function RescheduleOrderDialog({ orderId, orderName, fromDate, adminUrl, 
                   <input
                     type="date"
                     value={preview.toDate}
-                    min={preview.fromDate}
+                    min={initialDate && initialDate < preview.fromDate ? initialDate : preview.fromDate}
                     onChange={e => setChosenDate(e.target.value || null)}
                     className="px-3 py-2 rounded-lg border border-border bg-background text-sm"
                   />

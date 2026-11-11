@@ -62,6 +62,7 @@ import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
 import ApcConsignmentCheck from "@/pages/apc-consignment-check";
+import FridayDispatchCheck from "@/pages/friday-dispatch-check";
 import Locations from "@/pages/locations";
 import Orders from "@/pages/orders";
 import Deliveries from "@/pages/deliveries";
@@ -259,6 +260,7 @@ function Router() {
               {/* Orders that went out on an old or cancelled APC booking (incident
                   #136845). Courier managers; the API enforces the same. */}
               <Route path="/fulfilment/apc-check">{() => <ProtectedRoute component={ApcConsignmentCheck} pageKey="/fulfilment" />}</Route>
+              <Route path="/fulfilment/friday-check">{() => <ProtectedRoute component={FridayDispatchCheck} pageKey="/fulfilment" />}</Route>
               <Route path="/locations">{() => <ProtectedRoute component={Locations} pageKey="/locations" />}</Route>
               {/* Kanban board retired — kanban config lives on the ingredient
                   edit form, and scanning a card queues it for today's order
