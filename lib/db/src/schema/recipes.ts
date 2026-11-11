@@ -94,6 +94,9 @@ export const recipesTable = pgTable("recipes", {
   // @workspace/production-schedule recipe-route.ts, never by product name.
   // skipOvens: no ovens step; wrapping follows the builders' batches.
   skipOvens: boolean("skip_ovens").notNull().default(false),
+  // prepOnly (migration 0368): prepped as normal, then made by hand — off the
+  // dough, sheeting, mixing, building, ovens and wrapping stations.
+  prepOnly: boolean("prep_only").notNull().default(false),
   // Where the wrapping station sends packs by default: 'fridge' | 'freezer'.
   defaultStorage: text("default_storage").notNull().default("fridge"),
   // Each freezer add at wrapping adds +N to the mapped Shopify variant

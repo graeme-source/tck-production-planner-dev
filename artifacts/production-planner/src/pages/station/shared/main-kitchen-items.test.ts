@@ -18,3 +18,16 @@ describe("mainKitchenStationItems", () => {
     expect(mainKitchenStationItems(undefined)).toEqual([]);
   });
 });
+
+describe("prep-only recipes (Graeme, 11 Nov 2026: the gravy dipping pot)", () => {
+  it("leave the station lists, everything else stays", () => {
+    const items = [
+      { recipeId: 43, recipeCategory: "Sauces" },
+      { recipeId: 5, recipeCategory: "Calzones" },
+      { recipeId: 15, recipeCategory: MAC_CHEESE_CATEGORY },
+    ];
+    expect(mainKitchenStationItems(items, id => id === 43).map(i => i.recipeId)).toEqual([5, 15]);
+    // Without the lookup (routes not loaded yet) nothing is left out.
+    expect(mainKitchenStationItems(items).map(i => i.recipeId)).toEqual([43, 5, 15]);
+  });
+});

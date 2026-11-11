@@ -1,4 +1,5 @@
 import { formatBatches, batchesToPacks } from "../shared/format-batches";
+import { usePrepOnlyRecipe } from "@/lib/recipe-routes";
 import React, { useState, useEffect, useCallback } from "react";
 import {
   getGetProductionPlanQueryKey,
@@ -67,6 +68,8 @@ type WeightTargetsResponse = {
 };
 
 export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  // Made by hand after prep (route "prep only") — never on this station.
+  const isPrepOnly = usePrepOnlyRecipe();
   const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const { state } = useAuth();
@@ -173,7 +176,7 @@ export function OvensStation({ plan, isOnBreak = false }: { plan: ProductionPlan
 
   // Recipes flagged skip_ovens (migration 0202 — cinnamon buns, proofed and
   // baked by hand for now) go building → wrapping and never show here.
-  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items)
+  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items, isPrepOnly)
     .filter(it => !itemRoute(it).skipOvens)
     .sort(compareItemsForDisplay);
   const combinedBuildingCount = (it: ProductionPlanItem) =>

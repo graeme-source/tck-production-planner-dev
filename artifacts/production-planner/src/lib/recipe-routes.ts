@@ -24,3 +24,11 @@ export function useRecipeRoutes(enabled = true) {
   const byId = new Map<number, RecipeRoute>((q.data ?? []).map(r => [r.id, r]));
   return { ...q, routeOf: (recipeId: number): RecipeRoute => byId.get(recipeId) ?? STANDARD_ROUTE };
 }
+
+/** "Made by hand — prep only" recipes (Graeme, 11 Nov 2026): a lookup the
+ *  main-kitchen stations pass to mainKitchenStationItems so these never show
+ *  after prep. Until the routes load nothing is left out. */
+export function usePrepOnlyRecipe(): (recipeId: number) => boolean {
+  const { routeOf } = useRecipeRoutes();
+  return (recipeId: number) => routeOf(recipeId).prepOnly;
+}

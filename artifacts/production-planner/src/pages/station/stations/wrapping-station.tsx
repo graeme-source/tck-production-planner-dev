@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { usePrepOnlyRecipe } from "@/lib/recipe-routes";
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   getGetProductionPlanQueryKey,
@@ -119,6 +120,8 @@ interface WrappingSpeed {
 }
 
 export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  // Made by hand after prep (route "prep only") — never on this station.
+  const isPrepOnly = usePrepOnlyRecipe();
   const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
 
@@ -313,7 +316,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
 
   const STACK_SIZE = 24;
 
-  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items).sort(compareItemsForDisplay);
+  const items: StationPlanItem[] = mainKitchenStationItems<StationPlanItem>(plan.items, isPrepOnly).sort(compareItemsForDisplay);
 
   // Packs in the recipe's OWN pack size (÷2 until 16 Oct 2026: a bun sheet
   // of 48 in sixes read 24 packs, not 8). What reaches wrapping is the oven

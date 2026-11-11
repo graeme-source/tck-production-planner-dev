@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { usePrepOnlyRecipe } from "@/lib/recipe-routes";
 import React, { useState, useEffect, useCallback, useRef } from "react";
 import {
   useCreateBatchCompletion,
@@ -418,6 +419,8 @@ function SameDayDoughGroup({ group: g, isOnBreak, phase }: { group: SameDayGroup
 }
 
 export function DoughPrepStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  // Made by hand after prep (route "prep only") — never on this station.
+  const isPrepOnly = usePrepOnlyRecipe();
   const queryClient = useQueryClient();
   // ?direct=1 means the user clicked a calendar dough card for THIS specific
   // plan — pass mode=current so the backend uses planId as-is instead of
@@ -467,7 +470,7 @@ export function DoughPrepStation({ plan, isOnBreak = false }: { plan: Production
     },
   });
 
-  const items = mainKitchenStationItems(plan.items).sort(compareItemsForDisplay);
+  const items = mainKitchenStationItems(plan.items, isPrepOnly).sort(compareItemsForDisplay);
 
   // Dough prep tracks completions against the NEXT day's plan items (the ones we're prepping for).
   // The display target comes from doughData.recipes (next day), so tracking must match.

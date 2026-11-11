@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
+import { usePrepOnlyRecipe } from "@/lib/recipe-routes";
 import {
   useCreateBatchCompletion,
   getGetProductionPlanQueryKey,
@@ -22,6 +23,8 @@ import { useRecipeColourLookup } from "@/components/recipe-swatch";
 // Dough Sheeting Station
 // ──────────────────────────────────────────────────────────────────────────────
 export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  // Made by hand after prep (route "prep only") — never on this station.
+  const isPrepOnly = usePrepOnlyRecipe();
   const colourStyle = useRecipeColourLookup();
   const queryClient = useQueryClient();
   const { data: doughData } = useDoughPrepData(plan.id, "current");
@@ -106,7 +109,7 @@ export function DoughSheetingStation({ plan, isOnBreak = false }: { plan: Produc
   // display-only "No sheeting required" note at the bottom, never in the
   // work list or its totals (they were inflating the target count and
   // showing sheeting buttons for products with no dough, 2026-08-20).
-  const items = mainKitchenStationItems(plan.items)
+  const items = mainKitchenStationItems(plan.items, isPrepOnly)
     .filter(it => !isMacCheese(it as { recipeCategory?: string | null }))
     .sort(compareItemsForDisplay);
 

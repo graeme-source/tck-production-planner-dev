@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { usePrepOnlyRecipe } from "@/lib/recipe-routes";
 import { mixingTinLabel } from "@/lib/mixing-tin-label";
 import React from "react";
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -138,6 +139,8 @@ interface MixingStationProps {
 }
 
 export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & { isOnBreak?: boolean }) {
+  // Made by hand after prep (route "prep only") — never on this station.
+  const isPrepOnly = usePrepOnlyRecipe();
   const { state } = useAuth();
   const isAdmin = state.status === "authenticated" && state.user.role === "admin";
   const queryClient = useQueryClient();
@@ -577,7 +580,7 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
   });
 
   // Mac cheese has its own dedicated station and doesn't flow through mixing.
-  const items = mainKitchenStationItems(plan.items)
+  const items = mainKitchenStationItems(plan.items, isPrepOnly)
     .filter(it => !isMacCheese(it as any))
     .sort((a, b) => a.orderPosition - b.orderPosition);
 

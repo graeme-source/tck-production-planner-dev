@@ -1,4 +1,5 @@
 import { formatBatches, batchesToPacks } from "../shared/format-batches";
+import { usePrepOnlyRecipe } from "@/lib/recipe-routes";
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import {
@@ -403,6 +404,8 @@ function formatChangeover(ms: number): string {
 }
 
 export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = false }: BuildingStationProps) {
+  // Made by hand after prep (route "prep only") — never on this station.
+  const isPrepOnly = usePrepOnlyRecipe();
   const colourStyle = useRecipeColourLookup();
   const stationType: "building_1" | "building_2" = lineNumber === 1 ? "building_1" : "building_2";
   const queryClient = useQueryClient();
@@ -648,7 +651,7 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
     return bp?.[stationType] ?? { extraPacks: 0 };
   }
 
-  const items = mainKitchenStationItems(plan.items).sort(compareItemsForDisplay);
+  const items = mainKitchenStationItems(plan.items, isPrepOnly).sort(compareItemsForDisplay);
 
   // Recipe-level SOP links for every recipe on today's build list, in one
   // call — so "making the Godfather" carries the Godfather's build SOP

@@ -14,7 +14,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { useRecipeRoutes, RECIPE_ROUTES_QUERY_KEY } from "@/lib/recipe-routes";
 import { cn } from "@/lib/utils";
 
-type Patch = Partial<{ skipOvens: boolean; defaultStorage: "fridge" | "freezer"; shopifyPushOnWrap: boolean; excludeFromKpis: boolean; calzoneBatchEquivalent: number | null; billetWeightG: number | null }>;
+type Patch = Partial<{ skipOvens: boolean; prepOnly: boolean; defaultStorage: "fridge" | "freezer"; shopifyPushOnWrap: boolean; excludeFromKpis: boolean; calzoneBatchEquivalent: number | null; billetWeightG: number | null }>;
 
 interface WrapSettings {
   locationId: string | null;
@@ -122,6 +122,10 @@ export function RecipeProductionRoutePanel({ recipeId, portionsPerBatch, packSiz
       </div>
       {!isAdmin && <p className="text-xs text-muted-foreground">Only an admin can change the route.</p>}
       <div className="grid gap-2 md:grid-cols-2">
+        {/* Graeme, 11 Nov 2026 (the gravy dipping pot): prepped as normal, then
+            made by hand. Ticking it also leaves it out of the KPIs and the
+            day's capacity, since nobody on the line makes it. */}
+        <Toggle label="Made by hand — prep only" hint="Stays in prep. Leaves the dough, sheeting, mixing, building, ovens and wrapping stations, the calzone KPIs and the day's capacity." value={route.prepOnly} onChange={v => save.mutate(v ? { prepOnly: true, excludeFromKpis: true, calzoneBatchEquivalent: 0 } : { prepOnly: false })} />
         <Toggle label="No ovens step — wrap straight after building" hint="Leaves the ovens station; wrapping works to the builders' confirmed batches." value={route.skipOvens} onChange={v => save.mutate({ skipOvens: v })} />
         <Toggle label="Wrap into the freezer" hint="The wrapping station sends packs to the Product Freezer unless the wrapper flips it." value={route.defaultStorage === "freezer"} onChange={v => save.mutate({ defaultStorage: v ? "freezer" : "fridge" })} />
         <Toggle label="Send to Shopify on every wrap" hint="Each freezer add adds the packs to the linked Shopify variant; taking packs back out takes them off." value={route.shopifyPushOnWrap} onChange={v => save.mutate({ shopifyPushOnWrap: v })} />

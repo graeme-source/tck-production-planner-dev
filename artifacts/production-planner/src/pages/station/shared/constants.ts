@@ -48,8 +48,14 @@ export function isMacCheese(item: { recipeCategory?: string | null }): boolean {
  *  ovens, wrapping) works on. Fried chicken is made in a separate facility on
  *  its own station, so it never appears in these lists, totals or progress
  *  bars (Graeme, 2026-10-05: 154 bags were showing as calzone batches). */
-export function mainKitchenStationItems<T extends { recipeCategory?: string | null }>(items: readonly T[] | null | undefined): T[] {
-  return mainKitchenItems(items ?? []);
+export function mainKitchenStationItems<T extends { recipeCategory?: string | null; recipeId?: number | null }>(
+  items: readonly T[] | null | undefined,
+  /** Recipes made by hand after prep (route prepOnly, Graeme 11 Nov 2026 —
+   *  the gravy dipping pot): left off every station that passes this. */
+  isPrepOnly?: (recipeId: number) => boolean,
+): T[] {
+  const main = mainKitchenItems(items ?? []);
+  return isPrepOnly ? main.filter(it => it.recipeId == null || !isPrepOnly(it.recipeId)) : main;
 }
 
 /** Stable comparator for plan items across every station and the plans

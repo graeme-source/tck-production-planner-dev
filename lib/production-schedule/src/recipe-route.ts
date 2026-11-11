@@ -9,6 +9,9 @@
  * using the day's capacity — "48 packs of buns ≈ 20 calzone batches".
  *
  *   skipOvens               no ovens step: wrapping follows building.
+ *   prepOnly                prepped as normal, then made by hand — on no
+ *                           main-kitchen station after prep (Graeme, 11 Nov
+ *                           2026: the red wine gravy dipping pot).
  *   defaultStorage          where wrapping sends packs unless flipped.
  *   shopifyPushOnWrap       each freezer add at wrapping → +N on Shopify.
  *   excludeFromKpis         out of the calzone KPIs (still on the stations).
@@ -21,6 +24,7 @@ export type DefaultStorage = "fridge" | "freezer";
 
 export interface RecipeRoute {
   skipOvens: boolean;
+  prepOnly: boolean;
   defaultStorage: DefaultStorage;
   shopifyPushOnWrap: boolean;
   excludeFromKpis: boolean;
@@ -33,6 +37,7 @@ export interface RecipeRoute {
 /** How every recipe behaved before the route existed. */
 export const STANDARD_ROUTE: RecipeRoute = Object.freeze({
   skipOvens: false,
+  prepOnly: false,
   defaultStorage: "fridge",
   shopifyPushOnWrap: false,
   excludeFromKpis: false,
@@ -43,6 +48,7 @@ export const STANDARD_ROUTE: RecipeRoute = Object.freeze({
 /** The raw shape as it arrives from the DB / API (numerics as strings). */
 export interface RecipeRouteSource {
   skipOvens?: boolean | null;
+  prepOnly?: boolean | null;
   defaultStorage?: string | null;
   shopifyPushOnWrap?: boolean | null;
   excludeFromKpis?: boolean | null;
@@ -57,6 +63,7 @@ export function readRecipeRoute(src: RecipeRouteSource | null | undefined): Reci
   const eqNum = eq === null || eq === undefined || eq === "" ? null : Number(eq);
   return {
     skipOvens: src.skipOvens === true,
+    prepOnly: src.prepOnly === true,
     defaultStorage: src.defaultStorage === "freezer" ? "freezer" : "fridge",
     shopifyPushOnWrap: src.shopifyPushOnWrap === true,
     excludeFromKpis: src.excludeFromKpis === true,

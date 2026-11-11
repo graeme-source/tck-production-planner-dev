@@ -23,6 +23,7 @@ const router: IRouter = Router();
 const routeColumns = {
   id: recipesTable.id,
   skipOvens: recipesTable.skipOvens,
+  prepOnly: recipesTable.prepOnly,
   defaultStorage: recipesTable.defaultStorage,
   shopifyPushOnWrap: recipesTable.shopifyPushOnWrap,
   excludeFromKpis: recipesTable.excludeFromKpis,
@@ -37,6 +38,8 @@ router.get("/production-routes", async (_req: Request, res: Response) => {
 
 export const ProductionRouteBody = z.object({
   skipOvens: z.boolean().optional(),
+  /** Prepped, then made by hand: off every main-kitchen station after prep. */
+  prepOnly: z.boolean().optional(),
   defaultStorage: z.enum(["fridge", "freezer"]).optional(),
   shopifyPushOnWrap: z.boolean().optional(),
   excludeFromKpis: z.boolean().optional(),
@@ -52,6 +55,7 @@ router.patch("/:id/production-route", requireAdmin, validate(ProductionRouteBody
   const body = req.body as z.infer<typeof ProductionRouteBody>;
   const set: Partial<typeof recipesTable.$inferInsert> = {};
   if (body.skipOvens !== undefined) set.skipOvens = body.skipOvens;
+  if (body.prepOnly !== undefined) set.prepOnly = body.prepOnly;
   if (body.defaultStorage !== undefined) set.defaultStorage = body.defaultStorage;
   if (body.shopifyPushOnWrap !== undefined) set.shopifyPushOnWrap = body.shopifyPushOnWrap;
   if (body.excludeFromKpis !== undefined) set.excludeFromKpis = body.excludeFromKpis;

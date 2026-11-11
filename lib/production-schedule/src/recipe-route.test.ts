@@ -121,3 +121,12 @@ describe("usesShopifyStock", () => {
     expect(usesShopifyStock("Calzones", false)).toBe(false);
   });
 });
+
+describe("prep only (Graeme, 11 Nov 2026: the gravy dipping pot)", () => {
+  it("is off unless set", () => {
+    expect(readRecipeRoute({}).prepOnly).toBe(false);
+    expect(readRecipeRoute({ prepOnly: true }).prepOnly).toBe(true);
+    expect(readRecipeRoute({ prepOnly: null }).prepOnly).toBe(false);
+  });
+});
+
