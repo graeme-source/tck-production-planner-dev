@@ -120,3 +120,31 @@ describe("unchanged lines", () => {
       .toEqual({ unit: "kg", packs: 3, packWeight: 2.5, orderInPallets: false, palletSize: null });
   });
 });
+
+describe("sauce bottles in cases of 6 read the same however they got on the card (11 Nov 2026)", () => {
+  const base = { ingredientName: "Original Hot Sauce (160ml)", supplierPartNumber: null, packWeight: 6, costPerPack: 13.8, editedPacks: 3 };
+  it("a pulled kanban (pack-counted) line: cases first, bottles under", () => {
+    const kanban = { ...base, unit: "packs", nativeUnit: "pieces" };
+    expect(orderQtyDisplay(kanban)).toEqual({ primary: "3 packs", detail: "18 pieces" });
+    expect(lineOrderQty(kanban)).toBe("3 packs (18 pieces)");
+  });
+  it("an item added by hand (native pieces) reads the same", () => {
+    const manual = { ...base, unit: "pieces", nativeUnit: "pieces" };
+    expect(orderQtyDisplay(manual)).toEqual({ primary: "3 packs", detail: "18 pieces" });
+    expect(lineOrderQty(manual)).toBe("3 packs (18 pieces)");
+    // What's saved on the order is unchanged.
+    expect(placedLineQuantity(manual).quantityOrdered).toBe(18);
+    expect(placedLineQuantity({ ...base, unit: "packs", nativeUnit: "pieces" }).quantityOrdered).toBe(3);
+  });
+  it("tape in boxes of 36 rolls: '3 boxes / 108 rolls'", () => {
+    const tape = { ingredientName: "Packing Box Tape", supplierPartNumber: null, packWeight: 36, costPerPack: 62.71, editedPacks: 3, unit: "packs", nativeUnit: "rolls", packName: "box" };
+    expect(orderQtyDisplay(tape)).toEqual({ primary: "3 boxes", detail: "108 rolls" });
+  });
+  it("a named case says its name", () => {
+    expect(orderQtyDisplay({ ...base, unit: "pieces", packName: "case" }).primary).toBe("3 cases");
+  });
+  it("single items and weights are untouched", () => {
+    expect(orderQtyDisplay({ ...base, unit: "pieces", packWeight: 1 })).toEqual({ primary: "3 pieces", detail: null });
+    expect(orderQtyDisplay({ ...base, unit: "kg", packWeight: 2.5 }).primary).toBe("7.5 kg");
+  });
+});

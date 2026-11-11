@@ -50,11 +50,34 @@ export function readsInPallets(line: OrderLineForText): boolean {
   return !!line.orderInPallets && positivePalletSize(line.palletSize) != null && !isPackCountUnit(line.unit);
 }
 
+/** Units that count single items ("18 pieces"), as opposed to weights. */
+const COUNT_UNITS = new Set(["pieces", "piece", "each", "unit", "units", "pcs", "pc", "rolls", "roll"]);
+
+/**
+ * A count item bought in cases (a case of 6 sauce bottles): the case count
+ * leads and the items follow — "3 packs" / "18 pieces" — however the line
+ * got onto the card. A pulled kanban read "8 packs" while the same kind of
+ * item added by hand read "18 pieces", so it wasn't clear what to order
+ * (Graeme, 11 Nov 2026). Returns the item unit, or null when it doesn't apply.
+ */
+function caseOfCountUnit(line: OrderLineForText): string | null {
+  if (line.isMisc || line.orderInPallets || !(line.packWeight > 1)) return null;
+  const unit = isPackCountUnit(line.unit) ? line.nativeUnit : line.unit;
+  return unit && COUNT_UNITS.has(unit) ? unit : null;
+}
+
 /** Order Quantity cell: a headline and an optional sub-line. */
 export function orderQtyDisplay(line: OrderLineForText): { primary: string; detail: string | null } {
   if (readsInPallets(line)) {
     const d = describePalletOrder(line.editedPacks, line)!;
     return { primary: d.primary, detail: d.detail };
+  }
+  const itemUnit = caseOfCountUnit(line);
+  if (itemUnit) {
+    return {
+      primary: `${formatCount(line.editedPacks)} ${packNoun(itemUnit, line.editedPacks, line.packName)}`,
+      detail: line.editedPacks > 0 ? `${formatCount(line.editedPacks * line.packWeight)} ${itemUnit}` : null,
+    };
   }
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
     return {
@@ -81,6 +104,10 @@ export function orderQtyDisplay(line: OrderLineForText): { primary: string; deta
 /** The quantity as the supplier should read it in the order message. */
 export function lineOrderQty(line: OrderLineForText): string {
   if (readsInPallets(line)) return describePalletOrder(line.editedPacks, line)!.supplierText;
+  const itemUnit = caseOfCountUnit(line);
+  if (itemUnit) {
+    return `${line.editedPacks} ${packNoun(itemUnit, line.editedPacks, line.packName)} (${(line.editedPacks * line.packWeight).toLocaleString("en-GB")} ${itemUnit})`;
+  }
   if (line.stockInPacks || line.unit === "packs" || line.unit === "bottles") {
     return `${line.editedPacks} ${line.stockInPacks || line.packName ? packNoun(line.unit, line.editedPacks, line.packName) : line.unit}`;
   }
