@@ -1,5 +1,6 @@
 /**
- * Month view (2026-10-20): Monday-start weeks, PHASES as light bars in their
+ * Month view (2026-10-20): Sunday-to-Saturday weeks (2026-11-12 — offers run
+ * Sunday to Saturday), PHASES as light bars in their
  * own colour (2026-10-21) spanning their days and wrapping onto the next
  * week, KLAVIYO EMAILS as one-day teal
  * chips on their send day. Drag a phase to move it, drag its end to stretch
@@ -24,7 +25,7 @@ import type { CalEmail, Phase } from "./api";
 import { KLAVIYO_TONE, PHASE_CLS, usePhaseVars } from "./constants";
 import { dateFromElementsAt, useSpanDrag } from "./use-span-drag";
 
-const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const HEADER_PX = 30;
 const BAR_MIN_PX = 28;
 const GAP_PX = 4;

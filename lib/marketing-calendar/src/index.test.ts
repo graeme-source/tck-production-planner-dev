@@ -25,12 +25,23 @@ describe("day maths", () => {
 });
 
 describe("monthGridWeeks", () => {
-  it("covers October 2026 in Monday-start rows", () => {
+  // Offers run Sunday to Saturday (Graeme, 12 Nov 2026), so each row does.
+  it("covers October 2026 in Sunday-to-Saturday rows", () => {
     const weeks = monthGridWeeks("2026-10-16");
-    expect(weeks[0][0]).toBe("2026-09-28");
-    expect(weeks[weeks.length - 1][6]).toBe("2026-11-01");
+    expect(weeks[0][0]).toBe("2026-09-27"); // Sunday
+    expect(weeks[weeks.length - 1][6]).toBe("2026-10-31"); // Saturday
     expect(weeks).toHaveLength(5);
     expect(weeks.every(w => w.length === 7)).toBe(true);
+  });
+
+  it("a month starting on a Sunday starts its own row; one ending on a Saturday ends it", () => {
+    const nov = monthGridWeeks("2026-11-12"); // 1 Nov 2026 is a Sunday, 30 Nov a Monday
+    expect(nov[0][0]).toBe("2026-11-01");
+    expect(nov[nov.length - 1]).toContain("2026-11-30");
+    const feb = monthGridWeeks("2026-02-10"); // Feb 2026: Sun 1 to Sat 28
+    expect(feb).toHaveLength(4);
+    expect(feb[0][0]).toBe("2026-02-01");
+    expect(feb[3][6]).toBe("2026-02-28");
   });
 });
 
@@ -57,7 +68,7 @@ describe("assignLanes", () => {
 });
 
 describe("layoutWeek", () => {
-  const week = monthGridWeeks("2026-10-01")[2]; // Mon 12 – Sun 18 Oct
+  const week = monthGridWeeks("2026-10-01")[2]; // Sun 11 – Sat 17 Oct
   it("cuts a multi-week event at the week edges so it wraps", () => {
     const { segments, laneCount } = layoutWeek(week, [
       { id: 7, startDate: "2026-10-08", endDate: "2026-10-21" },
@@ -68,7 +79,7 @@ describe("layoutWeek", () => {
     const long = segments.find(s => s.event.id === 7)!;
     expect(long).toMatchObject({ startCol: 0, endCol: 6, continuesBefore: true, continuesAfter: true, lane: 0 });
     const single = segments.find(s => s.event.id === 8)!;
-    expect(single).toMatchObject({ startCol: 2, endCol: 2, continuesBefore: false, continuesAfter: false, lane: 1 });
+    expect(single).toMatchObject({ startCol: 3, endCol: 3, continuesBefore: false, continuesAfter: false, lane: 1 });
     expect(laneCount).toBe(2);
   });
   it("an empty week has no lanes", () => {

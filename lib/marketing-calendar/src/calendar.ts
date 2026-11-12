@@ -37,6 +37,12 @@ export function startOfWeek(iso: string): string {
   return addDays(iso, -mondayIndex(iso));
 }
 
+/** The Sunday on or before this day. Offers run Sunday to Saturday (Graeme,
+ *  12 Nov 2026), so the month view's weeks do too. */
+export function startOfOfferWeek(iso: string): string {
+  return addDays(iso, -new Date(toUtc(iso)).getUTCDay());
+}
+
 export function monthStart(iso: string): string {
   return `${iso.slice(0, 7)}-01`;
 }
@@ -54,15 +60,17 @@ export function daysInMonth(iso: string): number {
 }
 
 /**
- * The weeks shown for a month: Monday-start rows covering the whole month
- * (so the first row may begin in the previous month and the last row end in
- * the next). Each week is 7 ISO dates.
+ * The weeks shown for a month: Sunday-to-Saturday rows covering the whole
+ * month (so the first row may begin in the previous month and the last row
+ * end in the next). Each week is 7 ISO dates. Sunday first because a new
+ * offer starts on a Sunday and runs to the Saturday (Graeme, 12 Nov 2026), so
+ * an offer week sits on one row.
  */
 export function monthGridWeeks(anyDayInMonth: string): string[][] {
   const first = monthStart(anyDayInMonth);
   const last = addDays(addMonths(first, 1), -1);
   const weeks: string[][] = [];
-  for (let wk = startOfWeek(first); wk <= last; wk = addDays(wk, 7)) {
+  for (let wk = startOfOfferWeek(first); wk <= last; wk = addDays(wk, 7)) {
     weeks.push(Array.from({ length: 7 }, (_, i) => addDays(wk, i)));
   }
   return weeks;
