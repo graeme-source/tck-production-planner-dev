@@ -28,9 +28,10 @@ const budgetText = (row: AdRow) =>
     : row.lifetimeBudget != null ? `${money(row.lifetimeBudget)} in total`
       : null;
 
-export function AdDetailDialog({ row, grade, periodLabel, onClose }: {
+export function AdDetailDialog({ row, grade, newShade = null, periodLabel, onClose }: {
   row: AdRow;
   grade: AdGrade;
+  newShade?: RoasShade | null;
   periodLabel: string;
   onClose: () => void;
 }) {
@@ -82,6 +83,20 @@ export function AdDetailDialog({ row, grade, periodLabel, onClose }: {
             <Stat label="CPM" value={money(row.cpm)} />
             {budget && <Stat label="Budget" value={budget} />}
           </div>
+          {/* New customers, as Meta splits them (Graeme, 12 Nov 2026). */}
+          {row.newCustomerSpend != null && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <Stat label="New-customer ROAS" value={roasText(row.newCustomerRoas)} shade={newShade} />
+                <Stat label="New-customer purchases" value={count(row.newCustomerPurchases)} />
+                <Stat label="Spent on new customers" value={money(row.newCustomerSpend)} />
+                <Stat label="Spent on existing" value={money(Math.max(0, row.spend - row.newCustomerSpend))} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Meta's estimate: people it didn't match to your existing-customer list. An existing customer it can't match counts as new.
+              </p>
+            </div>
+          )}
           {/* Hook and hold (Graeme, 12 Nov 2026): how many stop on the video,
               and how many stay with it. Video ads only. */}
           {row.level === "ad" && (

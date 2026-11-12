@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLive, mergeLevel, parseAccount, parseEntity, parseInsight } from "./meta-ads-report-rules";
+import { isLive, mergeLevel, newCustomerSegments, parseAccount, parseEntity, parseInsight, withNewCustomers } from "./meta-ads-report-rules";
 
 // The shape Meta's insights edge sends, with the Black Friday campaign's real
 // figures from 6 Nov 2026, which Ads Manager showed as 3 results at £13.26.
@@ -148,5 +148,45 @@ describe("parseAccount", () => {
 
   it("nothing spent: Meta sends no row, so no panel figures", () => {
     expect(parseAccount([])).toBeNull();
+  });
+});
+
+describe("new-customer ROAS from Meta's audience segments (Graeme, 12 Nov 2026)", () => {
+  // The shape Meta sent for the account on 12 Nov 2026 (last 7 days).
+  const segRows = [
+    { account_id: "1", user_segment_key: "existing", spend: "1001.29", actions: [{ action_type: "omni_purchase", value: "74" }], action_values: [{ action_type: "omni_purchase", value: "4175.55" }] },
+    { account_id: "1", user_segment_key: "prospecting", spend: "3047.55", actions: [{ action_type: "omni_purchase", value: "101" }], action_values: [{ action_type: "omni_purchase", value: "5379.77" }] },
+    { account_id: "1", user_segment_key: "unknown", spend: "0.15" },
+  ];
+
+  it("takes the prospecting segment only", () => {
+    const s = newCustomerSegments(segRows, "account").get("1")!;
+    expect(s).toEqual({ spend: 3047.55, purchases: 101, value: 5379.77 });
+    const acct = parseAccount([{ account_id: "1", spend: "4048.99" }], newCustomerSegments(segRows, "account"))!;
+    expect(acct.newCustomerRoas).toBeCloseTo(1.765, 3);
+    expect(acct.newCustomerPurchases).toBe(101);
+  });
+
+  it("a row with no prospecting segment spent nothing on new customers: no ROAS, not 0", () => {
+    const f = withNewCustomers(parseInsight({ ad_id: "9", spend: "5" }, "ad")!, "9", new Map());
+    expect(f.newCustomerSpend).toBe(0);
+    expect(f.newCustomerRoas).toBeNull();
+  });
+
+  it("when Meta didn't answer the split, the figures are unknown (null), not zero", () => {
+    const f = withNewCustomers(parseInsight({ ad_id: "9", spend: "5" }, "ad")!, "9", null);
+    expect(f.newCustomerSpend).toBeNull();
+    expect(f.newCustomerRoas).toBeNull();
+  });
+
+  it("mergeLevel puts each ad's own split on it", () => {
+    const rows = mergeLevel(
+      [{ id: "a1", name: "Ad", effective_status: "ACTIVE" }],
+      [{ ad_id: "a1", spend: "20", action_values: [{ action_type: "omni_purchase", value: "60" }] }],
+      "ad",
+      newCustomerSegments([{ ad_id: "a1", user_segment_key: "prospecting", spend: "15", action_values: [{ action_type: "omni_purchase", value: "30" }] }], "ad"),
+    );
+    expect(rows[0].newCustomerRoas).toBe(2);
+    expect(rows[0].roas).toBe(3);
   });
 });

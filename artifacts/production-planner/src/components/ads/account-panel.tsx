@@ -25,7 +25,15 @@ function Tile({ label, value, shade }: { label: string; value: string; shade?: R
   );
 }
 
-export function AccountPanel({ figures, grade, periodLabel }: { figures: AdFigures; grade: AdGrade; periodLabel: string }) {
+export function AccountPanel({ figures, grade, periodLabel, shopify, newShade, shopifyShade }: {
+  figures: AdFigures;
+  grade: AdGrade;
+  periodLabel: string;
+  /** Shopify's new-customer orders for the period ÷ Meta spend — the real figure. */
+  shopify: { revenue: number; orders: number; roas: number | null } | null;
+  newShade: RoasShade | null;
+  shopifyShade: RoasShade | null;
+}) {
   return (
     <section aria-label="Whole account" className="rounded-3xl border-2 border-border bg-card shadow-sm overflow-hidden">
       <div
@@ -44,6 +52,25 @@ export function AccountPanel({ figures, grade, periodLabel }: { figures: AdFigur
         <Tile label="Spend" value={money(figures.spend)} />
         <Tile label="ROAS" value={roasText(figures.roas)} shade={grade.roas} />
         <Tile label="Reach" value={reachPctText(figures.costPerReachPct)} shade={grade.costPerReach} />
+      </div>
+      {/* New-customer ROAS (Graeme, 12 Nov 2026): the real figure from
+          Shopify's first orders, and Meta's own estimate beside it. Coloured
+          against the New customer ROAS target, as on Numbers. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 px-3 pb-3">
+        <div className="space-y-1">
+          <Tile label="New-customer ROAS · Shopify" value={roasText(shopify?.roas)} shade={shopifyShade} />
+          <p className="text-sm text-muted-foreground text-center">
+            {shopify ? `${count(shopify.orders)} first order${shopify.orders === 1 ? "" : "s"}, ${money(shopify.revenue)} — every source, ÷ Meta spend` : "Couldn't read Shopify's orders"}
+          </p>
+        </div>
+        <div className="space-y-1">
+          <Tile label="New-customer ROAS · Meta's estimate" value={roasText(figures.newCustomerRoas)} shade={newShade} />
+          <p className="text-sm text-muted-foreground text-center">
+            {figures.newCustomerSpend == null
+              ? "Meta didn't send its new-customer split"
+              : `${count(figures.newCustomerPurchases)} purchases Meta credits to ads, ${money(figures.newCustomerSpend)} spent on new customers`}
+          </p>
+        </div>
       </div>
     </section>
   );

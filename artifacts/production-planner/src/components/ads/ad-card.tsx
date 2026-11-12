@@ -10,7 +10,7 @@
  */
 import { Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { money, reachPctText, roasText, type AdGrade, type AdRow } from "@/lib/ads-page";
+import { count, money, reachPctText, roasText, type AdGrade, type AdRow } from "@/lib/ads-page";
 import type { RoasShade } from "@/lib/ad-efficiency";
 
 const shadeText = (shade: RoasShade) => (shade.darkBackground ? "text-white" : "text-stone-900");
@@ -39,6 +39,32 @@ const LEVEL: Record<AdLevel, { card: string; name: string; note: string; label: 
   ad: { card: "", name: "", note: "text-sm", label: "text-[11px]", value: "text-[13px]", dot: "w-2 h-2" },
 };
 
+/** The new-customer strip's text size per level. */
+const NEW_TEXT: Record<AdLevel, string> = { campaign: "text-base xl:text-lg", adSet: "text-sm xl:text-base", ad: "text-xs" };
+
+/** Meta's new-customer ROAS under the figures (Graeme, 12 Nov 2026). Hidden
+ *  when Meta didn't answer the split. */
+function NewCustomerStrip({ row, shade, level }: { row: AdRow; shade: RoasShade | null; level: AdLevel }) {
+  if (row.newCustomerSpend == null) return null;
+  const nothing = row.newCustomerSpend === 0;
+  return (
+    <div className={cn("bg-card border-t border-border px-3 py-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-center", NEW_TEXT[level])}>
+      <span className="inline-flex items-center gap-1 font-medium text-muted-foreground">
+        {shade && <span className={cn("rounded-full flex-shrink-0", LEVEL[level].dot)} style={{ backgroundColor: shade.hex }} />}
+        New customers
+      </span>
+      {nothing ? (
+        <span className="text-muted-foreground">no spend on new customers</span>
+      ) : (
+        <>
+          <span className="font-bold tabular-nums text-foreground">ROAS {roasText(row.newCustomerRoas)}</span>
+          <span className="text-muted-foreground tabular-nums">· {count(row.newCustomerPurchases)} bought · {money(row.newCustomerSpend)}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 function Figure({ label, value, shade = null, level }: { label: string; value: string; shade?: RoasShade | null; level: AdLevel }) {
   const l = LEVEL[level];
   return (
@@ -52,8 +78,10 @@ function Figure({ label, value, shade = null, level }: { label: string; value: s
   );
 }
 
-export function AdCard({ row, grade, canEdit, onOpen, onEditTargets, level = "ad" }: {
+export function AdCard({ row, grade, newShade = null, canEdit, onOpen, onEditTargets, level = "ad" }: {
   row: AdRow;
+  /** Colour of Meta's new-customer ROAS against the New customer ROAS target. */
+  newShade?: RoasShade | null;
   /** Campaign, ad set or ad: sets the card's height and text sizes. */
   level?: AdLevel;
   grade: AdGrade;
@@ -100,6 +128,7 @@ export function AdCard({ row, grade, canEdit, onOpen, onEditTargets, level = "ad
         <Figure level={level} label="ROAS" value={roasText(row.roas)} shade={grade.roas} />
         <Figure level={level} label="Reach" value={reachPctText(row.costPerReachPct)} shade={grade.costPerReach} />
       </div>
+      <NewCustomerStrip row={row} shade={newShade} level={level} />
     </div>
   );
 }

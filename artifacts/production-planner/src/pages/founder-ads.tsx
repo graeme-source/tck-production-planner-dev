@@ -21,7 +21,7 @@ import { AdDetailDialog } from "@/components/ads/ad-detail-dialog";
 import { useAdsReport } from "@/components/ads/api";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { cn } from "@/lib/utils";
-import { gradeAd, groupAds, type AdRow, type CampaignGroup } from "@/lib/ads-page";
+import { gradeAd, gradeNewCustomerRoas, groupAds, type AdRow, type CampaignGroup } from "@/lib/ads-page";
 
 export default function FounderAds() {
   const { ready, canNumbers, home } = useFounderArea();
@@ -48,6 +48,7 @@ function AdsPage() {
       row={row}
       level={level}
       grade={gradeAd(row, targets?.benchmarks)}
+      newShade={gradeNewCustomerRoas(row.newCustomerRoas, targets?.benchmarks)}
       canEdit={canEdit}
       onOpen={() => setOpen(row)}
       onEditTargets={() => setEditing(true)}
@@ -93,7 +94,14 @@ function AdsPage() {
       {data && "message" in data && <Problem text={data.message} />}
 
       {live?.account && (
-        <AccountPanel figures={live.account} grade={gradeAd(live.account, targets?.benchmarks)} periodLabel={describePeriod(period)} />
+        <AccountPanel
+          figures={live.account}
+          grade={gradeAd(live.account, targets?.benchmarks)}
+          shopify={live.shopifyNewCustomers ?? null}
+          newShade={gradeNewCustomerRoas(live.account.newCustomerRoas, targets?.benchmarks)}
+          shopifyShade={gradeNewCustomerRoas(live.shopifyNewCustomers?.roas, targets?.benchmarks)}
+          periodLabel={describePeriod(period)}
+        />
       )}
 
       {live ? (
@@ -107,7 +115,7 @@ function AdsPage() {
       )}
 
       {open && (
-        <AdDetailDialog row={open} grade={gradeAd(open, targets?.benchmarks)} periodLabel={describePeriod(period)} onClose={() => setOpen(null)} />
+        <AdDetailDialog row={open} grade={gradeAd(open, targets?.benchmarks)} newShade={gradeNewCustomerRoas(open.newCustomerRoas, targets?.benchmarks)} periodLabel={describePeriod(period)} onClose={() => setOpen(null)} />
       )}
       {editing && <BenchmarksDialog ads onClose={() => setEditing(false)} />}
     </div>

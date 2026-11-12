@@ -12,6 +12,10 @@
  *   hold rate       = ThruPlays ÷ impressions — ThruPlay is Meta's "played to
  *                     the end, or 15 seconds"
  * A static ad has no video plays, so no hook or hold rate (null, not 0%).
+ *   new-customer ROAS (Meta) = purchase value ÷ spend on the "prospecting"
+ *                     audience segment — people Meta didn't match to the
+ *                     existing-customer list (Graeme, 12 Nov 2026). Meta's
+ *                     estimate: an unmatched existing customer counts as new.
  */
 
 export type AdLevel = "campaign" | "adset" | "ad";
@@ -56,6 +60,12 @@ export interface AdFigures {
   hookRatePct: number | null;
   /** ThruPlays ÷ impressions, as a percentage. */
   holdRatePct: number | null;
+  /** Meta's new-customer split (prospecting segment); all null when Meta
+   *  didn't answer the breakdown. */
+  newCustomerSpend: number | null;
+  newCustomerPurchases: number | null;
+  newCustomerValue: number | null;
+  newCustomerRoas: number | null;
 }
 
 export type AdRow = AdEntity & AdFigures & { level: AdLevel };
@@ -64,7 +74,48 @@ const NO_FIGURES: AdFigures = {
   spend: 0, reach: 0, impressions: 0, purchases: 0, purchaseValue: 0, linkClicks: 0,
   frequency: null, cpm: null, ctr: null, roas: null, costPerResult: null, costPerReachPct: null,
   videoPlays3s: null, thruPlays: null, hookRatePct: null, holdRatePct: null,
+  newCustomerSpend: null, newCustomerPurchases: null, newCustomerValue: null, newCustomerRoas: null,
 };
+
+/** The audience segment Meta puts people it didn't match to the existing-customer list in. */
+export const NEW_CUSTOMER_SEGMENT = "prospecting";
+
+export interface SegmentFigures { spend: number; purchases: number; value: number }
+
+/** Meta's insights broken down by user_segment_key, as each row's new-customer
+ *  (prospecting) spend, purchases and value. An id Meta sent no prospecting
+ *  row for spent nothing on new customers. */
+export function newCustomerSegments(rows: unknown[], level: AdLevel | "account"): Map<string, SegmentFigures> {
+  const out = new Map<string, SegmentFigures>();
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const r = raw as Record<string, unknown>;
+    if (r["user_segment_key"] !== NEW_CUSTOMER_SEGMENT) continue;
+    const id = str(r[ID_FIELD[level]]);
+    if (!id) continue;
+    const prev = out.get(id) ?? { spend: 0, purchases: 0, value: 0 };
+    out.set(id, {
+      spend: prev.spend + (num(r["spend"]) ?? 0),
+      purchases: prev.purchases + (actionValue(r["actions"]) ?? 0),
+      value: prev.value + (actionValue(r["action_values"]) ?? 0),
+    });
+  }
+  return out;
+}
+
+/** The new-customer figures for one row. `segments` null = Meta didn't
+ *  answer, so unknown rather than zero. */
+export function withNewCustomers<T extends AdFigures>(figures: T, id: string, segments: Map<string, SegmentFigures> | null): T {
+  if (!segments) return figures;
+  const s = segments.get(id) ?? { spend: 0, purchases: 0, value: 0 };
+  return {
+    ...figures,
+    newCustomerSpend: s.spend,
+    newCustomerPurchases: s.purchases,
+    newCustomerValue: s.value,
+    newCustomerRoas: s.spend > 0 ? s.value / s.spend : null,
+  };
+}
 
 const num = (v: unknown): number | null => {
   if (v == null || v === "") return null;
@@ -163,6 +214,10 @@ export function parseInsight(raw: unknown, level: AdLevel | "account"): (AdFigur
     thruPlays,
     hookRatePct: pctOf(videoPlays3s, impressions),
     holdRatePct: pctOf(thruPlays, impressions),
+    newCustomerSpend: null,
+    newCustomerPurchases: null,
+    newCustomerValue: null,
+    newCustomerRoas: null,
   };
 }
 
@@ -179,14 +234,14 @@ export function isLive(status: string, spend: number): boolean {
 /** One level's rows: the live ones with their figures, biggest spend first. */
 /** The whole account's figures for the period, blended by Meta itself (reach
  *  de-duplicated across campaigns; non-live campaigns' spend included). */
-export function parseAccount(rows: unknown[]): AdFigures | null {
+export function parseAccount(rows: unknown[], segments: Map<string, SegmentFigures> | null = null): AdFigures | null {
   const row = rows.length > 0 ? parseInsight(rows[0], "account") : null;
   if (!row) return null;
-  const { id: _id, ...figures } = row;
-  return figures;
+  const { id, ...figures } = row;
+  return withNewCustomers(figures, id, segments);
 }
 
-export function mergeLevel(entities: unknown[], insights: unknown[], level: AdLevel): AdRow[] {
+export function mergeLevel(entities: unknown[], insights: unknown[], level: AdLevel, segments: Map<string, SegmentFigures> | null = null): AdRow[] {
   const figures = new Map<string, AdFigures>();
   for (const raw of insights) {
     const row = parseInsight(raw, level);
@@ -197,7 +252,7 @@ export function mergeLevel(entities: unknown[], insights: unknown[], level: AdLe
     const entity = parseEntity(raw);
     if (!entity) continue;
     const f = figures.get(entity.id) ?? NO_FIGURES;
-    if (isLive(entity.status, f.spend)) rows.push({ ...f, ...entity, level });
+    if (isLive(entity.status, f.spend)) rows.push({ ...withNewCustomers(f, entity.id, segments), ...entity, level });
   }
   return rows.sort((a, b) => b.spend - a.spend || a.name.localeCompare(b.name));
 }

@@ -45,6 +45,12 @@ export interface AdRow {
   hookRatePct?: number | null;
   /** ThruPlays ÷ impressions, %. Null on a static ad. */
   holdRatePct?: number | null;
+  /** Meta's new-customer split (people it didn't match to the existing-
+   *  customer list). Null = Meta didn't answer; 0 spend = none on new. */
+  newCustomerSpend?: number | null;
+  newCustomerPurchases?: number | null;
+  newCustomerValue?: number | null;
+  newCustomerRoas?: number | null;
 }
 
 /** The whole account's blended figures for the period (Meta's account row). */
@@ -152,6 +158,15 @@ export function gradeAd(row: Pick<AdRow, "spend" | "purchases" | "costPerResult"
     costPerReach: reach,
     note: overall ? null : "Set a target",
   };
+}
+
+const NEW_ROAS = kpiSpec("newCustomerRoas");
+
+/** New-customer ROAS against the New customer ROAS target (a %, 210 / 250),
+ *  so the same colours as the Numbers card. Null = no figure or no target. */
+export function gradeNewCustomerRoas(roas: number | null | undefined, benchmarks: BenchmarkMap | undefined): RoasShade | null {
+  if (roas == null) return null;
+  return shade(kpiRatio(roas * 100, benchmarks?.newCustomerRoas, NEW_ROAS)?.ratio);
 }
 
 export const money = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "£p"));

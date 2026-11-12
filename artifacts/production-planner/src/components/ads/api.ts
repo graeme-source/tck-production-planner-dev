@@ -8,7 +8,7 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 export type AdsReport =
   | { connected: false; ok: true; message: string }
   | { connected: true; ok: false; message: string }
-  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; account?: AdFigures | null; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
+  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; account?: AdFigures | null; shopifyNewCustomers?: { revenue: number; orders: number; roas: number | null } | null; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
 
 const fetchReport = async (from: string, to: string, refresh: boolean): Promise<AdsReport> => {
   const params = new URLSearchParams({ from, to, ...(refresh ? { refresh: "1" } : {}) });

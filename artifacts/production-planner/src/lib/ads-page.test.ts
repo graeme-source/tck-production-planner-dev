@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { gradeAd, groupAds, money, reachPctText, roasText, type AdRow } from "./ads-page";
+import { gradeAd, gradeNewCustomerRoas, groupAds, money, reachPctText, roasText, type AdRow } from "./ads-page";
 import { shadeAtRatio } from "./ad-efficiency";
 import type { BenchmarkMap } from "./numbers-benchmarks";
 
@@ -127,5 +127,21 @@ describe("formats", () => {
     expect(roasText(2.261)).toBe("2.26");
     expect(reachPctText(1.7258)).toBe("1.73%");
     expect(money(null)).toBe("—");
+  });
+});
+
+describe("new-customer ROAS colour (Graeme, 12 Nov 2026)", () => {
+  const nc: BenchmarkMap = { ...targets, newCustomerRoas: { minimum: 210, stretch: 250 } } as BenchmarkMap;
+  it("is graded against the New customer ROAS target, a %", () => {
+    // A ratio (1.77) is compared with the % target (210): 1.77 is under the
+    // minimum, 2.10 is on it, 2.60 is past the stretch — three different colours,
+    // and 2.10 is the same colour as the Numbers card gives 210%.
+    const under = gradeNewCustomerRoas(1.77, nc)!.hex, on = gradeNewCustomerRoas(2.1, nc)!.hex, past = gradeNewCustomerRoas(2.6, nc)!.hex;
+    expect(new Set([under, on, past]).size).toBe(3);
+    expect(on).toBe(shadeAtRatio(1).hex);
+  });
+  it("no figure or no target, no colour", () => {
+    expect(gradeNewCustomerRoas(null, nc)).toBeNull();
+    expect(gradeNewCustomerRoas(2, { ...targets } as BenchmarkMap)).toBeNull();
   });
 });

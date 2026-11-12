@@ -8,7 +8,9 @@
  * minutes old unless someone presses Refresh.
  */
 import { GRAPH_HOST, graphGetAll, type ConnectedMetaConfig } from "./meta-ads";
-import { LIVE_FETCH_STATUSES, mergeLevel, parseAccount, type AdFigures, type AdLevel, type AdRow } from "./meta-ads-report-rules";
+import { LIVE_FETCH_STATUSES, mergeLevel, newCustomerSegments, parseAccount, type AdFigures, type AdLevel, type AdRow, type SegmentFigures } from "./meta-ads-report-rules";
+import { getCachedOrdersLondonDays } from "./orders-cache";
+import { newVsReturningTotals } from "./order-revenue";
 import { notConnectedMessage, readMetaAdsConfig } from "./meta-ads-sync";
 
 const CACHE_MS = 5 * 60_000;
@@ -18,7 +20,14 @@ const CACHE_MAX = 30;
 export type AdsReport =
   | { connected: false; ok: true; message: string }
   | { connected: true; ok: false; message: string }
-  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; account: AdFigures | null; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
+  | {
+    connected: true; ok: true; from: string; to: string; fetchedAt: string;
+    account: AdFigures | null;
+    /** The real new-customer figure: Shopify's new-customer orders for the
+     *  period (the one "new-customer" tag rule) ÷ the account's Meta spend. */
+    shopifyNewCustomers: { revenue: number; orders: number; roas: number | null } | null;
+    campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[];
+  };
 
 const INSIGHT_FIELDS = "spend,reach,impressions,frequency,cpm,ctr,inline_link_clicks,purchase_roas,actions,action_values,video_thruplay_watched_actions";
 
@@ -27,6 +36,28 @@ const LEVELS = {
   adset: { edge: "adsets", idField: "adset_id", fields: "id,name,effective_status,daily_budget,lifetime_budget,campaign{id,name}" },
   ad: { edge: "ads", idField: "ad_id", fields: "id,name,effective_status,campaign{id,name},adset{id,name}" },
 } as const satisfies Record<AdLevel, { edge: string; idField: string; fields: string }>;
+
+/** Meta's new-customer split for a level (breakdown by audience segment).
+ *  Null when Meta won't answer, so the page shows "—" rather than £0, and
+ *  the rest of the report still loads. */
+async function fetchSegments(cfg: ConnectedMetaConfig, level: AdLevel | "account", from: string, to: string): Promise<Map<string, SegmentFigures> | null> {
+  const idField = level === "account" ? "account_id" : LEVELS[level].idField;
+  const insights = new URLSearchParams({
+    level,
+    breakdowns: "user_segment_key",
+    fields: `${idField},spend,actions,action_values`,
+    limit: "500",
+    time_range: JSON.stringify({ since: from, until: to }),
+    use_unified_attribution_setting: "true",
+    action_report_time: "mixed",
+  });
+  try {
+    return newCustomerSegments(await graphGetAll(cfg, `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}/insights?${insights}`), level);
+  } catch (err) {
+    console.error(`[meta-ads] new-customer split (${level}) failed:`, err instanceof Error ? err.message : String(err));
+    return null;
+  }
+}
 
 async function fetchLevel(cfg: ConnectedMetaConfig, level: AdLevel, from: string, to: string): Promise<AdRow[]> {
   const { edge, idField, fields } = LEVELS[level];
@@ -46,11 +77,12 @@ async function fetchLevel(cfg: ConnectedMetaConfig, level: AdLevel, from: string
     use_unified_attribution_setting: "true",
     action_report_time: "mixed",
   });
-  const [entities, rows] = await Promise.all([
+  const [entities, rows, segments] = await Promise.all([
     graphGetAll(cfg, `${base}/${edge}?${list}`),
     graphGetAll(cfg, `${base}/insights?${insights}`),
+    fetchSegments(cfg, level, from, to),
   ]);
-  return mergeLevel(entities, rows, level);
+  return mergeLevel(entities, rows, level, segments);
 }
 
 /** The account's own blended figures for the period (Graeme, 12 Nov 2026:
@@ -63,7 +95,23 @@ async function fetchAccount(cfg: ConnectedMetaConfig, from: string, to: string):
     use_unified_attribution_setting: "true",
     action_report_time: "mixed",
   });
-  return parseAccount(await graphGetAll(cfg, `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}/insights?${insights}`));
+  const [rows, segments] = await Promise.all([
+    graphGetAll(cfg, `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}/insights?${insights}`),
+    fetchSegments(cfg, "account", from, to),
+  ]);
+  return parseAccount(rows, segments);
+}
+
+/** Shopify's new-customer orders for the period ÷ Meta spend. Null if the
+ *  orders can't be read, so the page says so rather than showing 0. */
+async function shopifyNewCustomers(from: string, to: string, spend: number | null): Promise<{ revenue: number; orders: number; roas: number | null } | null> {
+  try {
+    const t = newVsReturningTotals(await getCachedOrdersLondonDays(from, to));
+    return { revenue: t.newCustomerRevenue, orders: t.newCustomerOrders, roas: spend && spend > 0 ? t.newCustomerRevenue / spend : null };
+  } catch (err) {
+    console.error("[meta-ads] Shopify new customers failed:", err instanceof Error ? err.message : String(err));
+    return null;
+  }
 }
 
 const cache = new Map<string, { at: number; report: AdsReport }>();
@@ -77,7 +125,8 @@ async function build(cfg: ConnectedMetaConfig, from: string, to: string): Promis
       fetchLevel(cfg, "adset", from, to),
       fetchLevel(cfg, "ad", from, to),
     ]);
-    return { connected: true, ok: true, from, to, fetchedAt: new Date().toISOString(), account, campaigns, adSets, ads };
+    const shopify = await shopifyNewCustomers(from, to, account?.spend ?? null);
+    return { connected: true, ok: true, from, to, fetchedAt: new Date().toISOString(), account, shopifyNewCustomers: shopify, campaigns, adSets, ads };
   } catch (err) {
     console.error("[meta-ads] ads report failed:", err instanceof Error ? err.message : String(err));
     return { connected: true, ok: false, message: "Couldn't reach Meta just now. Try Refresh in a moment." };
