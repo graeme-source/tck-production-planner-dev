@@ -26,7 +26,8 @@ router.get("/", async (req: Request, res: Response) => {
   if (!keyMatches(req.get("x-tck-cs-key") ?? undefined, secret)) { res.status(401).json({ error: "Unauthorised" }); return; }
   try {
     const list = await loadDateLockedProducts();
-    res.json({ ...list, generatedAt: new Date().toISOString() });
+    // Just the lists the assistant checks against — not the planner's product names.
+    res.json({ variantIds: list.variantIds, titlePatterns: list.titlePatterns, generatedAt: new Date().toISOString() });
   } catch (err) {
     console.error("[date-locked-products] failed:", err instanceof Error ? err.message : err);
     res.status(500).json({ error: "Couldn't load the list" });

@@ -15,19 +15,37 @@ const TTL_MS = 60_000;
 export async function loadDateLockedProducts(): Promise<DateLockedProducts> {
   if (cache && Date.now() - cache.at < TTL_MS) return cache.value;
   const from = addDaysToDateString(londonDateString(), -TEST_PRODUCTION_LOOKBACK_DAYS);
-  const rows = await db.execute<{ shopify_variant_id: string | null; wonky_variant_id: string | null }>(sql`
-    SELECT m.shopify_variant_id, m.wonky_variant_id
+  // A product marked "safe to move" (recipes.date_change_safe — always in
+  // stock, e.g. Garlic Mayo) never locks, whatever else applies.
+  const rows = await db.execute<{ shopify_variant_id: string | null; wonky_variant_id: string | null; recipe_id: number; name: string }>(sql`
+    SELECT m.shopify_variant_id, m.wonky_variant_id, r.id AS recipe_id, r.name
     FROM recipe_shopify_mappings m
     JOIN recipes r ON r.id = m.recipe_id
-    WHERE r.is_draft = true
-       OR r.id IN (SELECT recipe_id FROM queued_production WHERE production_date >= ${from} AND recipe_id IS NOT NULL)
+    WHERE NOT r.date_change_safe
+      AND (r.is_draft = true
+       OR r.id IN (SELECT recipe_id FROM queued_production WHERE production_date >= ${from} AND recipe_id IS NOT NULL))
   `);
   const ids = new Set<string>();
+  const products: Record<string, { recipeId: number; name: string }> = {};
   for (const r of rows.rows) {
-    if (r.shopify_variant_id) ids.add(String(r.shopify_variant_id));
-    if (r.wonky_variant_id) ids.add(String(r.wonky_variant_id));
+    for (const v of [r.shopify_variant_id, r.wonky_variant_id]) {
+      if (!v) continue;
+      ids.add(String(v));
+      products[String(v)] = { recipeId: Number(r.recipe_id), name: r.name };
+    }
   }
-  const value = { variantIds: [...ids], titlePatterns: [...LOCKED_TITLE_PATTERNS] };
+  const value = { variantIds: [...ids], titlePatterns: [...LOCKED_TITLE_PATTERNS], products };
   cache = { at: Date.now(), value };
   return value;
+}
+
+/** Forget the cached list — after a product is marked safe to move or not. */
+export function clearDateLockedProductsCache(): void {
+  cache = null;
+}
+
+/** The products marked safe to move, for the Friday check page. */
+export async function loadSafeToMoveProducts(): Promise<Array<{ recipeId: number; name: string }>> {
+  const rows = await db.execute<{ id: number; name: string }>(sql`SELECT id, name FROM recipes WHERE date_change_safe ORDER BY name`);
+  return rows.rows.map(r => ({ recipeId: Number(r.id), name: r.name }));
 }

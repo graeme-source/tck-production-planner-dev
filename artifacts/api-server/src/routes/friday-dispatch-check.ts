@@ -32,8 +32,8 @@ import { londonDateString } from "../lib/london-time";
 import { sendEmail } from "../lib/email";
 import { firstNameOf, greetingNameOf, friendlyDate, rescheduleTags, withDeliveryDate } from "../lib/order-reschedule";
 import { rescheduledWithLinkEmail, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
-import { lockedLines, lockedReason } from "../lib/date-locked-products-rules";
-import { loadDateLockedProducts } from "../lib/date-locked-products";
+import { lockedLines, lockedReason, safeToMoveCandidates } from "../lib/date-locked-products-rules";
+import { clearDateLockedProductsCache, loadDateLockedProducts, loadSafeToMoveProducts } from "../lib/date-locked-products";
 import { rescheduleLinkFor } from "../lib/cs-agent-links";
 import { supersedeOrderConsignments } from "../lib/apc-consignment-ledger";
 import { londonDayStartUtc } from "../lib/london-time";
@@ -94,14 +94,18 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
   }
 
   try {
-    const [context, refusals, actions, canCourier, locked] = await Promise.all([
+    const [context, refusals, actions, canCourier, locked, safeProducts] = await Promise.all([
       loadPostcodeContext(),
       loadRecentSaturdayRefusals(dispatchDate),
       loadFridayActions(dispatchDate),
       viewerCanCourier(req),
       loadDateLockedProducts(),
+      loadSafeToMoveProducts(),
     ]);
-    const lockedById = new Map(shopifyOrders.map(o => [o.id, lockedReason(lockedLines(o.line_items, locked))]));
+    const lockedById = new Map(shopifyOrders.map(o => {
+      const lines = lockedLines(o.line_items, locked);
+      return [o.id, { reason: lockedReason(lines), safeCandidates: safeToMoveCandidates(lines, locked) }];
+    }));
     const now = new Date();
     const { results, summary } = runFridayCheck({
       dispatchDate,
@@ -129,7 +133,13 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
         replyByLabel: friendlyDate(dates.replyBy),
       },
       summary: { ...summary, moved: moved.length },
-      results: results.map(r => ({ ...r, lockedReason: lockedById.get(r.orderId) ?? null, done: done.get(r.orderId) ?? null })),
+      results: results.map(r => ({
+        ...r,
+        lockedReason: lockedById.get(r.orderId)?.reason ?? null,
+        safeCandidates: lockedById.get(r.orderId)?.safeCandidates ?? [],
+        done: done.get(r.orderId) ?? null,
+      })),
+      safeProducts,
       moved,
       canCourier,
       adminOrderBase: shopifyAdminOrderBase(),
@@ -215,6 +225,27 @@ async function emailPlan(req: Request, res: Response, dispatchDate: string) {
 const emailQuery = z.object({ dispatchDate: fridayDate });
 
 // GET — the exact email, for the confirm step. Sends nothing.
+// "Safe to move" (Graeme, 12 Nov 2026: "the mayo is not an issue. We always
+// have stock of that … add the garlic mayo to the safe list"). Marks a
+// product so it never locks an order's date — here and in the website
+// assistant, which reads the same list. Same permission as rescheduling.
+const safeSchema = z.object({ recipeId: z.number().int().positive(), safe: z.boolean() });
+router.post("/friday-check/date-change-safe", requireCourier, validate(safeSchema), async (req: Request, res: Response) => {
+  const { recipeId, safe } = req.body as z.infer<typeof safeSchema>;
+  try {
+    const r = await db.execute<{ id: number; name: string }>(
+      sql`UPDATE recipes SET date_change_safe = ${safe} WHERE id = ${recipeId} RETURNING id, name`,
+    );
+    if (r.rows.length === 0) { res.status(404).json({ error: "Product not found" }); return; }
+    clearDateLockedProductsCache();
+    console.log(`[friday-check] ${await userName(req)} marked ${r.rows[0].name} (recipe ${recipeId}) ${safe ? "safe to move" : "not safe to move"}`);
+    res.json({ recipeId, name: r.rows[0].name, safe });
+  } catch (err) {
+    console.error("[friday-check] safe-to-move failed:", errMsg(err));
+    res.status(500).json({ error: "Couldn't save that" });
+  }
+});
+
 router.get("/friday-check/orders/:orderId/email", requireCourier, validateQuery(emailQuery), async (req: Request, res: Response) => {
   const { dispatchDate } = res.locals["query"] as z.infer<typeof emailQuery>;
   try {

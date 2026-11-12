@@ -20,6 +20,9 @@ export const LOCKED_TITLE_PATTERNS = ["8 pack bag", "test box", "test pack"] as 
 export interface DateLockedProducts {
   variantIds: string[];
   titlePatterns: string[];
+  /** Which product each locked variant is, so the Friday check can offer
+   *  "safe to move" on it. Planner only — not sent to the assistant. */
+  products?: Record<string, { recipeId: number; name: string }>;
 }
 
 export interface LockableLine {
@@ -51,4 +54,19 @@ export function lockedReason<T extends LockableLine>(lines: readonly T[]): strin
     ? "8-pack bags are made to order"
     : "Has products made to order for this date";
   return `${what} (${names.join(", ")}) — change the date by hand.`;
+}
+
+/** The products behind an order's locked lines that can be marked "safe to
+ *  move" — locked by product, not by a title rule (8-pack bags and test boxes
+ *  are always by hand). One entry per product. */
+export function safeToMoveCandidates<T extends LockableLine>(lines: readonly T[], locked: DateLockedProducts): Array<{ recipeId: number; name: string }> {
+  const out = new Map<number, { recipeId: number; name: string }>();
+  const patterns = locked.titlePatterns.map(p => p.toLowerCase()).filter(Boolean);
+  for (const l of lines) {
+    const hay = `${l.title ?? ""} ${l.variant_title ?? ""}`.toLowerCase();
+    if (patterns.some(p => hay.includes(p))) continue;
+    const product = l.variant_id != null ? locked.products?.[String(l.variant_id)] : undefined;
+    if (product && !out.has(product.recipeId)) out.set(product.recipeId, product);
+  }
+  return [...out.values()];
 }

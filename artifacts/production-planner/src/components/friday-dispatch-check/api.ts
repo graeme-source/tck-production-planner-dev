@@ -33,10 +33,14 @@ export interface FridayCheckRow {
   emailNote: string | null;
   /** Test production / 8-pack bags: never moved from here — by hand. */
   lockedReason: string | null;
+  /** Products behind the lock that can be marked "safe to move" (not 8-pack bags or test boxes). */
+  safeCandidates: SafeProduct[];
   done: DoneState | null;
 }
 
 export interface MovedRow extends DoneState { orderId: number; orderName: string }
+
+export interface SafeProduct { recipeId: number; name: string }
 
 export interface FridayCheck {
   today: string;
@@ -50,6 +54,8 @@ export interface FridayCheck {
   results: FridayCheckRow[];
   moved: MovedRow[];
   canCourier: boolean;
+  /** Products marked safe to move: they never lock an order's date. */
+  safeProducts: SafeProduct[];
   adminOrderBase: string;
   refusalsConsidered: number;
   refusalDays: number;
@@ -112,6 +118,22 @@ export function useSendNoSaturdayEmail() {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ dispatchDate: v.dispatchDate, confirmOrderName: v.confirmOrderName }),
+      })),
+    onSettled: () => qc.invalidateQueries({ queryKey: FRIDAY_CHECK_KEY }),
+  });
+}
+
+/** Mark a product safe to move (or not): it stops locking orders' dates,
+ *  here and in the website assistant. */
+export function useSetDateChangeSafe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (v: { recipeId: number; safe: boolean }) =>
+      json<{ recipeId: number; name: string; safe: boolean }>(await fetch(`${BASE}/api/fulfilment/friday-check/date-change-safe`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(v),
       })),
     onSettled: () => qc.invalidateQueries({ queryKey: FRIDAY_CHECK_KEY }),
   });

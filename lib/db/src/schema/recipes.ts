@@ -86,6 +86,9 @@ export const recipesTable = pgTable("recipes", {
   // production pickers, never Core menu or the current special. isDraft
   // survives archiving, so restoring an archived draft returns it to Drafts.
   isDraft: boolean("is_draft").notNull().default(false),
+  // Always in stock, so an order holding it can change delivery date even
+  // while the recipe is a draft or test production (date-locked-products).
+  dateChangeSafe: boolean("date_change_safe").notNull().default(false),
   draftedAt: timestamp("drafted_at"),
   draftedByName: text("drafted_by_name"),
   publishedAt: timestamp("published_at"),

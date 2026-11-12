@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ConfirmSheet } from "@/components/apc-booking-issues/confirm-sheet";
 import {
-  useFridayCheck, useNoSaturdayEmailDraft, useSendNoSaturdayEmail, addDays, fridayOnOrAfter, londonToday, shortDay, when,
+  useFridayCheck, useNoSaturdayEmailDraft, useSendNoSaturdayEmail, useSetDateChangeSafe, addDays, fridayOnOrAfter, londonToday, shortDay, when,
   type FridayCheck, type FridayCheckRow, type FridayStatus, type Alternative,
 } from "@/components/friday-dispatch-check/api";
 
@@ -150,9 +150,16 @@ function OrderCard({ row, check, onEmail }: {
               and email them a link to choose a sooner day themselves. Test
               production and 8-pack bags are changed by hand. */}
           {row.lockedReason ? (
-            <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-base font-semibold text-amber-900 dark:text-amber-200">
-              {row.lockedReason}
-            </p>
+            <>
+              <p className="rounded-xl border-2 border-amber-400 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-base font-semibold text-amber-900 dark:text-amber-200">
+                {row.lockedReason}
+              </p>
+              {/* Always in stock (Graeme, 12 Nov 2026: "the mayo is not an
+                  issue"): mark it safe and it stops locking any order. */}
+              {row.safeCandidates.map(p => (
+                <SafeToMoveButton key={p.recipeId} product={p} disabled={!check.canCourier} title={noPerm} />
+              ))}
+            </>
           ) : (
             <BigButton onClick={() => onEmail(row)}
               disabled={!row.canEmail || !row.nextWeek.possible || !check.canCourier || !!row.done?.movedAt}
@@ -165,6 +172,58 @@ function OrderCard({ row, check, onEmail }: {
         </div>
       </div>
     </article>
+  );
+}
+
+function SafeToMoveButton({ product, disabled, title }: { product: { recipeId: number; name: string }; disabled?: boolean; title?: string }) {
+  const setSafe = useSetDateChangeSafe();
+  return (
+    <button
+      type="button"
+      disabled={disabled || setSafe.isPending}
+      title={title ?? "It stops locking delivery dates, here and in the website assistant. Undo it at the bottom of this page."}
+      onClick={() => setSafe.mutate({ recipeId: product.recipeId, safe: true }, {
+        onSuccess: r => toast({ title: `${r.name} is safe to move`, description: "Orders holding it can change delivery date now." }),
+        onError: (e: Error) => toast({ title: "Not saved", description: e.message, variant: "destructive" }),
+      })}
+      className="w-full min-h-12 rounded-xl border-2 border-border bg-card px-4 py-2 text-base font-semibold hover:bg-secondary/50 disabled:opacity-50 flex items-center justify-center gap-2"
+    >
+      {setSafe.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <CheckCircle2 className="w-5 h-5 text-emerald-600" />}
+      {product.name} is always in stock — safe to move
+    </button>
+  );
+}
+
+function SafeProductsList({ products, canEdit }: { products: Array<{ recipeId: number; name: string }>; canEdit: boolean }) {
+  const setSafe = useSetDateChangeSafe();
+  if (products.length === 0) return null;
+  return (
+    <details className="rounded-2xl border-2 border-border bg-card">
+      <summary className="cursor-pointer select-none px-5 py-4 text-lg font-bold flex items-center gap-2">
+        <CheckCircle2 className="w-5 h-5 text-emerald-600" /> {products.length} product{products.length === 1 ? "" : "s"} safe to move
+      </summary>
+      <div className="px-5 pb-5 space-y-2">
+        <p className="text-sm text-muted-foreground">Always in stock, so they never stop an order changing delivery date — here or in the website assistant.</p>
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
+          {products.map(p => (
+            <div key={p.recipeId} className="rounded-xl border border-border px-4 py-3 flex items-center justify-between gap-3">
+              <span className="font-semibold">{p.name}</span>
+              <button
+                type="button"
+                disabled={!canEdit || setSafe.isPending}
+                onClick={() => setSafe.mutate({ recipeId: p.recipeId, safe: false }, {
+                  onSuccess: r => toast({ title: `${r.name} locks dates again` }),
+                  onError: (e: Error) => toast({ title: "Not saved", description: e.message, variant: "destructive" }),
+                })}
+                className="min-h-10 px-3 rounded-lg border border-border text-sm font-medium hover:bg-secondary/50 disabled:opacity-50"
+              >
+                Remove
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -326,6 +385,8 @@ export default function FridayDispatchCheck() {
               </div>
             </section>
           )}
+
+          <SafeProductsList products={data.safeProducts ?? []} canEdit={data.canCourier} />
 
           {willGo.length > 0 && (
             <details className="rounded-2xl border-2 border-border bg-card">

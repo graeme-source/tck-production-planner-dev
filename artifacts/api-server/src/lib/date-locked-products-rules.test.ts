@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { lockedLines, lockedReason, LOCKED_TITLE_PATTERNS } from "./date-locked-products-rules";
+import { lockedLines, lockedReason, LOCKED_TITLE_PATTERNS, safeToMoveCandidates } from "./date-locked-products-rules";
 
 const list = { variantIds: ["59189396865398", "56785048502646"], titlePatterns: [...LOCKED_TITLE_PATTERNS] };
 
@@ -27,5 +27,31 @@ describe("date-locked products (11 Nov 2026)", () => {
 
   it("still catches test boxes by name", () => {
     expect(lockedLines([{ variant_id: 1, title: "Winter Warmers Test Box" }], list)).toHaveLength(1);
+  });
+});
+
+describe("safeToMoveCandidates", () => {
+  const locked = {
+    variantIds: ["31277638844497", "555"],
+    titlePatterns: ["8 pack bag", "test box", "test pack"],
+    products: { "31277638844497": { recipeId: 31, name: "TCK Garlic Mayo 200ml" }, "555": { recipeId: 42, name: "Beef & Mushroom" } },
+  };
+
+  // Graeme, 12 Nov 2026: Garlic Mayo locked #139579 though it's always in stock.
+  it("offers the product behind a product-locked line, once", () => {
+    const lines = [
+      { variant_id: 31277638844497, title: "TCK Garlic Mayo" },
+      { variant_id: "31277638844497", title: "TCK Garlic Mayo" },
+    ];
+    expect(safeToMoveCandidates(lines, locked)).toEqual([{ recipeId: 31, name: "TCK Garlic Mayo 200ml" }]);
+  });
+
+  it("never offers 8-pack bags or test boxes — those stay by hand", () => {
+    const lines = [{ variant_id: 555, title: "Winter Warmers Test Box" }, { variant_id: 9, title: "Chicken 8 Pack Bag" }];
+    expect(safeToMoveCandidates(lines, locked)).toEqual([]);
+  });
+
+  it("offers nothing without the product names (the assistant's copy of the list)", () => {
+    expect(safeToMoveCandidates([{ variant_id: 555, title: "Beef" }], { variantIds: ["555"], titlePatterns: [] })).toEqual([]);
   });
 });
