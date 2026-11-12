@@ -555,6 +555,8 @@ function ReceivingDialog({
       productTitle: ol?.shopifyProductTitle,
       variantTitle: ol?.shopifyVariantTitle,
       unitsPerPack: ol?.shopifyUnitsPerPack,
+      unit: l.unit,
+      packWeight: l.packWeight,
       previousReceived: Number(ol?.quantityReceived ?? 0),
       newReceived: submitOf(l).quantityReceived,
     };

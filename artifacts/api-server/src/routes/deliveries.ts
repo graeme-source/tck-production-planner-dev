@@ -906,9 +906,10 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
     variantId: string | null,
     unitsPerPack: string | null,
     receivedDelta: number,
+    line: { unit: string | null; packWeight: string | number | null },
   ) => {
     if (!ingredientId || !variantId || receivedDelta === 0) return;
-    const units = shopifyUnitsFor(receivedDelta, unitsPerPack);
+    const units = shopifyUnitsFor(receivedDelta, unitsPerPack, line);
     if (units === 0) return;
     const existing = shopifyPushes.get(ingredientId);
     if (existing) existing.units += units;
@@ -951,7 +952,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
         location,
         useByDate: line.useByDate || null,
       });
-      queueShopifyPush(existing.ingredientId, existing.ingredientName, existing.shopifyVariantId, existing.shopifyUnitsPerPack, delta);
+      queueShopifyPush(existing.ingredientId, existing.ingredientName, existing.shopifyVariantId, existing.shopifyUnitsPerPack, delta, { unit: existing.unit, packWeight: existing.packWeight });
     }
   }
 
@@ -987,7 +988,7 @@ router.post("/:id/receive", validate(receiveBody), async (req, res) => {
         location,
         useByDate: nl.useByDate || null,
       });
-      queueShopifyPush(nl.ingredientId, ing.ingredientName, ing.shopifyVariantId, ing.shopifyUnitsPerPack, received);
+      queueShopifyPush(nl.ingredientId, ing.ingredientName, ing.shopifyVariantId, ing.shopifyUnitsPerPack, received, { unit: nl.unit, packWeight: ing.packWeight });
     }
     void inserted;
   }

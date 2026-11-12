@@ -25,6 +25,24 @@ describe("goods-in uploads to Shopify", () => {
     expect(shopifyUploadsOf([line({ variantTitle: "Default Title" })])[0].product).toBe("Rolo Chocolate Brownie");
   });
 
+  // Regression, Graeme 12 Nov 2026 (PO #786): 2 packs of 12 caramel
+  // shortbread offered "Adds 288 to Shopify". The line was ordered as 24
+  // pieces and was multiplied by 12 per pack as if it were 24 packs.
+  it("a line ordered in pieces is turned into packs first: 24 pieces of 12-per-pack = 24 units, not 288", () => {
+    const shortbread = line({ name: "Caramel Shortbread", unitsPerPack: "12.00", unit: "pieces", packWeight: "12.0000", newReceived: 24 });
+    expect(shopifyUploadsOf([shortbread])[0].units).toBe(24);
+    expect(shopifyUnitsFor(24, "12", { unit: "pieces", packWeight: 12 })).toBe(24);
+  });
+
+  it("a line ordered in packs is unchanged: 4 packs of 12 brownies = 48", () => {
+    const brownie = line({ unitsPerPack: "12.00", unit: "packs", packWeight: "12.0000", newReceived: 4 });
+    expect(shopifyUploadsOf([brownie])[0].units).toBe(48);
+  });
+
+  it("without a pack size the quantity is taken as packs, as before", () => {
+    expect(shopifyUnitsFor(3, "4", { unit: "pieces", packWeight: null })).toBe(12);
+  });
+
   it("matches the server's rounding", () => {
     expect(shopifyUnitsFor(2.5, "3")).toBe(8);
     expect(shopifyUnitsFor(5, "")).toBe(5);
