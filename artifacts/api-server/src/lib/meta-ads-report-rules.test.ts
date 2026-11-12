@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isLive, mergeLevel, parseEntity, parseInsight } from "./meta-ads-report-rules";
+import { isLive, mergeLevel, parseAccount, parseEntity, parseInsight } from "./meta-ads-report-rules";
 
 // The shape Meta's insights edge sends, with the Black Friday campaign's real
 // figures from 6 Nov 2026, which Ads Manager showed as 3 results at £13.26.
@@ -109,5 +109,44 @@ describe("mergeLevel", () => {
     expect(rows.map(r => r.name)).toEqual(["Big", "Small", "New, no spend"]);
     expect(rows[0]).toMatchObject({ level: "ad", spend: 50 });
     expect(rows[2]).toMatchObject({ spend: 0, roas: null });
+  });
+});
+
+describe("hook and hold rates (Graeme, 12 Nov 2026)", () => {
+  it("hook = 3-second plays ÷ impressions, hold = ThruPlays ÷ impressions, as %", () => {
+    const row = parseInsight({
+      ad_id: "1", spend: "20", impressions: "4000",
+      actions: [{ action_type: "video_view", value: "1200" }, { action_type: "omni_purchase", value: "1" }],
+      video_thruplay_watched_actions: [{ action_type: "video_view", value: "320" }],
+    }, "ad")!;
+    expect(row.videoPlays3s).toBe(1200);
+    expect(row.thruPlays).toBe(320);
+    expect(row.hookRatePct).toBeCloseTo(30, 5);
+    expect(row.holdRatePct).toBeCloseTo(8, 5);
+  });
+
+  it("a static ad has no hook or hold rate — not 0%", () => {
+    const row = parseInsight(blackFriday, "campaign")!;
+    expect(row.videoPlays3s).toBeNull();
+    expect(row.hookRatePct).toBeNull();
+    expect(row.holdRatePct).toBeNull();
+  });
+
+  it("no impressions, no rate", () => {
+    const row = parseInsight({ ad_id: "1", actions: [{ action_type: "video_view", value: "3" }] }, "ad")!;
+    expect(row.hookRatePct).toBeNull();
+  });
+});
+
+describe("parseAccount", () => {
+  it("the whole account's blended figures, from Meta's one account row", () => {
+    const acct = parseAccount([{ ...blackFriday, campaign_id: undefined, account_id: "act_1" }])!;
+    expect(acct.spend).toBe(39.77);
+    expect(acct.costPerResult).toBeCloseTo(13.26, 2);
+    expect(acct).not.toHaveProperty("id");
+  });
+
+  it("nothing spent: Meta sends no row, so no panel figures", () => {
+    expect(parseAccount([])).toBeNull();
   });
 });

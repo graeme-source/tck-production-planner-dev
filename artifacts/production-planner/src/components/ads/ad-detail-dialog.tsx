@@ -6,7 +6,7 @@ import { useEffect } from "react";
 import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { count, money, reachPctText, roasText, type AdGrade, type AdLevel, type AdRow } from "@/lib/ads-page";
+import { count, money, ratePct, reachPctText, roasText, type AdGrade, type AdLevel, type AdRow } from "@/lib/ads-page";
 import type { RoasShade } from "@/lib/ad-efficiency";
 
 const LEVEL_NAME: Record<AdLevel, string> = { campaign: "Campaign", adset: "Ad set", ad: "Ad" };
@@ -82,6 +82,25 @@ export function AdDetailDialog({ row, grade, periodLabel, onClose }: {
             <Stat label="CPM" value={money(row.cpm)} />
             {budget && <Stat label="Budget" value={budget} />}
           </div>
+          {/* Hook and hold (Graeme, 12 Nov 2026): how many stop on the video,
+              and how many stay with it. Video ads only. */}
+          {row.level === "ad" && (
+            row.hookRatePct != null || row.holdRatePct != null ? (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <Stat label="Hook rate" value={ratePct(row.hookRatePct)} />
+                  <Stat label="Hold rate" value={ratePct(row.holdRatePct)} />
+                  <Stat label="3-second plays" value={count(row.videoPlays3s)} />
+                  <Stat label="ThruPlays" value={count(row.thruPlays)} />
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Hook rate: 3-second plays ÷ impressions. Hold rate: ThruPlays (played to the end, or 15 seconds) ÷ impressions.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">No video plays in this period, so no hook or hold rate — a static ad, or one that hasn't shown yet.</p>
+            )
+          )}
           {row.status === "WITH_ISSUES" && (
             <p className="text-sm text-amber-700 dark:text-amber-400">Meta has flagged an issue on this one. It's still spending.</p>
           )}

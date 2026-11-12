@@ -15,7 +15,8 @@ import { FounderNav } from "@/components/founder-nav";
 import { describePeriod, PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import { useNumbersBenchmarks } from "@/components/numbers-benchmarks/api";
 import { BenchmarksDialog } from "@/components/numbers-benchmarks/benchmarks-dialog";
-import { AdCard } from "@/components/ads/ad-card";
+import { AdCard, type AdLevel } from "@/components/ads/ad-card";
+import { AccountPanel } from "@/components/ads/account-panel";
 import { AdDetailDialog } from "@/components/ads/ad-detail-dialog";
 import { useAdsReport } from "@/components/ads/api";
 import { useFounderArea } from "@/hooks/use-founder-area";
@@ -41,10 +42,11 @@ function AdsPage() {
   const data = report.data;
   const live = data?.connected && data.ok ? data : null;
 
-  const card = (row: AdRow) => (
+  const card = (row: AdRow, level: AdLevel = "ad") => (
     <AdCard
       key={row.id}
       row={row}
+      level={level}
       grade={gradeAd(row, targets?.benchmarks)}
       canEdit={canEdit}
       onOpen={() => setOpen(row)}
@@ -89,6 +91,10 @@ function AdsPage() {
 
       {report.isError && <Problem text="Couldn't load the ads. Try Refresh in a moment." />}
       {data && "message" in data && <Problem text={data.message} />}
+
+      {live?.account && (
+        <AccountPanel figures={live.account} grade={gradeAd(live.account, targets?.benchmarks)} periodLabel={describePeriod(period)} />
+      )}
 
       {live ? (
         <AdFolders
@@ -138,7 +144,7 @@ function NotLive({ name, what }: { name: string | null; what: string }) {
 function AdFolders({ groups, counts, card }: {
   groups: CampaignGroup[];
   counts: { campaigns: number; adSets: number; ads: number };
-  card: (row: AdRow) => ReactNode;
+  card: (row: AdRow, level?: AdLevel) => ReactNode;
 }) {
   return (
     <div>
@@ -153,16 +159,16 @@ function AdFolders({ groups, counts, card }: {
       {groups.map(group => (
         <section key={group.key} className="grid grid-cols-1 md:grid-cols-3 gap-4 items-start border-t-4 border-foreground/50 py-5">
           <div className="min-w-0 md:sticky md:top-2 md:z-10">
-            {group.campaign ? card(group.campaign) : <NotLive name={group.name} what="campaign" />}
+            {group.campaign ? card(group.campaign, "campaign") : <NotLive name={group.name} what="campaign" />}
           </div>
           <div className="md:col-span-2 min-w-0 space-y-4 pl-3 md:pl-0 border-l-2 md:border-l-0 border-border">
             {group.adSets.map((set, i) => (
               <div key={set.key} className={cn("grid grid-cols-1 md:grid-cols-2 gap-4 items-start", i > 0 && "border-t border-border pt-4")}>
                 <div className="min-w-0 md:sticky md:top-2 md:z-10">
-                  {set.adSet ? card(set.adSet) : <NotLive name={set.name} what="ad set" />}
+                  {set.adSet ? card(set.adSet, "adSet") : <NotLive name={set.name} what="ad set" />}
                 </div>
                 <div className="min-w-0 space-y-3 pl-3 md:pl-0 border-l-2 md:border-l-0 border-border">
-                  {set.ads.map(card)}
+                  {set.ads.map(ad => card(ad))}
                   {set.ads.length === 0 && <p className="text-sm text-muted-foreground">No live ads.</p>}
                 </div>
               </div>

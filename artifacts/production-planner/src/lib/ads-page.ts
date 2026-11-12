@@ -38,7 +38,17 @@ export interface AdRow {
   roas: number | null;
   costPerResult: number | null;
   costPerReachPct: number | null;
+  /** Video plays of 3s+ and ThruPlays; null on a static ad. */
+  videoPlays3s?: number | null;
+  thruPlays?: number | null;
+  /** 3-second plays ÷ impressions, %. Null on a static ad. */
+  hookRatePct?: number | null;
+  /** ThruPlays ÷ impressions, %. Null on a static ad. */
+  holdRatePct?: number | null;
 }
+
+/** The whole account's blended figures for the period (Meta's account row). */
+export type AdFigures = Omit<AdRow, "id" | "level" | "name" | "status" | "campaignId" | "campaignName" | "adSetId" | "adSetName" | "dailyBudget" | "lifetimeBudget">;
 
 /** An ad set and its ads. `adSet` is null when its ads are live but it isn't
  *  on the page itself (flagged with issues, on £0): they still need a home. */
@@ -114,7 +124,7 @@ const REACH = kpiSpec("adsCostPerReach");
 
 const shade = (ratio: number | null | undefined) => (ratio == null ? null : shadeAtRatio(ratio));
 
-export function gradeAd(row: AdRow, benchmarks: BenchmarkMap | undefined): AdGrade {
+export function gradeAd(row: Pick<AdRow, "spend" | "purchases" | "costPerResult" | "roas" | "costPerReachPct">, benchmarks: BenchmarkMap | undefined): AdGrade {
   const none = { overall: null, costPerResult: null, roas: null, costPerReach: null };
   if (!(row.spend > 0)) return { ...none, note: "No spend in this period" };
 
@@ -148,3 +158,5 @@ export const money = (n: number | null | undefined) => (n == null ? "—" : form
 export const roasText = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "ratio"));
 export const reachPctText = (n: number | null | undefined) => (n == null ? "—" : formatBenchmark(n, "%2"));
 export const count = (n: number | null | undefined) => (n == null ? "—" : Math.round(n).toLocaleString("en-GB"));
+/** "31.4%" — hook and hold rates. */
+export const ratePct = (n: number | null | undefined) => (n == null ? "—" : `${n.toFixed(1)}%`);

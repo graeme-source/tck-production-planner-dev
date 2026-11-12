@@ -1,14 +1,14 @@
 /** The Ads page's feed: GET /api/meta-ads/report (read-only, from Meta). */
 import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
-import type { AdRow } from "@/lib/ads-page";
+import type { AdFigures, AdRow } from "@/lib/ads-page";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 export type AdsReport =
   | { connected: false; ok: true; message: string }
   | { connected: true; ok: false; message: string }
-  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
+  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; account?: AdFigures | null; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
 
 const fetchReport = async (from: string, to: string, refresh: boolean): Promise<AdsReport> => {
   const params = new URLSearchParams({ from, to, ...(refresh ? { refresh: "1" } : {}) });

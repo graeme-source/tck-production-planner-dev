@@ -8,7 +8,7 @@
  * minutes old unless someone presses Refresh.
  */
 import { GRAPH_HOST, graphGetAll, type ConnectedMetaConfig } from "./meta-ads";
-import { LIVE_FETCH_STATUSES, mergeLevel, type AdLevel, type AdRow } from "./meta-ads-report-rules";
+import { LIVE_FETCH_STATUSES, mergeLevel, parseAccount, type AdFigures, type AdLevel, type AdRow } from "./meta-ads-report-rules";
 import { notConnectedMessage, readMetaAdsConfig } from "./meta-ads-sync";
 
 const CACHE_MS = 5 * 60_000;
@@ -18,9 +18,9 @@ const CACHE_MAX = 30;
 export type AdsReport =
   | { connected: false; ok: true; message: string }
   | { connected: true; ok: false; message: string }
-  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
+  | { connected: true; ok: true; from: string; to: string; fetchedAt: string; account: AdFigures | null; campaigns: AdRow[]; adSets: AdRow[]; ads: AdRow[] };
 
-const INSIGHT_FIELDS = "spend,reach,impressions,frequency,cpm,ctr,inline_link_clicks,purchase_roas,actions,action_values";
+const INSIGHT_FIELDS = "spend,reach,impressions,frequency,cpm,ctr,inline_link_clicks,purchase_roas,actions,action_values,video_thruplay_watched_actions";
 
 const LEVELS = {
   campaign: { edge: "campaigns", idField: "campaign_id", fields: "id,name,effective_status,daily_budget,lifetime_budget" },
@@ -53,17 +53,31 @@ async function fetchLevel(cfg: ConnectedMetaConfig, level: AdLevel, from: string
   return mergeLevel(entities, rows, level);
 }
 
+/** The account's own blended figures for the period (Graeme, 12 Nov 2026:
+ *  one panel of CPA, spend, ROAS and reach across the whole account). */
+async function fetchAccount(cfg: ConnectedMetaConfig, from: string, to: string): Promise<AdFigures | null> {
+  const insights = new URLSearchParams({
+    level: "account",
+    fields: `account_id,${INSIGHT_FIELDS}`,
+    time_range: JSON.stringify({ since: from, until: to }),
+    use_unified_attribution_setting: "true",
+    action_report_time: "mixed",
+  });
+  return parseAccount(await graphGetAll(cfg, `${GRAPH_HOST}/${cfg.graphVersion}/${cfg.accountId}/insights?${insights}`));
+}
+
 const cache = new Map<string, { at: number; report: AdsReport }>();
 const inFlight = new Map<string, Promise<AdsReport>>();
 
 async function build(cfg: ConnectedMetaConfig, from: string, to: string): Promise<AdsReport> {
   try {
-    const [campaigns, adSets, ads] = await Promise.all([
+    const [account, campaigns, adSets, ads] = await Promise.all([
+      fetchAccount(cfg, from, to),
       fetchLevel(cfg, "campaign", from, to),
       fetchLevel(cfg, "adset", from, to),
       fetchLevel(cfg, "ad", from, to),
     ]);
-    return { connected: true, ok: true, from, to, fetchedAt: new Date().toISOString(), campaigns, adSets, ads };
+    return { connected: true, ok: true, from, to, fetchedAt: new Date().toISOString(), account, campaigns, adSets, ads };
   } catch (err) {
     console.error("[meta-ads] ads report failed:", err instanceof Error ? err.message : String(err));
     return { connected: true, ok: false, message: "Couldn't reach Meta just now. Try Refresh in a moment." };

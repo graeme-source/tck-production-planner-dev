@@ -8,6 +8,10 @@
  *   purchase ROAS   = purchase value ÷ spend (Meta's own figure when it sends one)
  *   cost per reach  = spend ÷ reach, as a percentage (Graeme's custom column:
  *                     5 Nov 2026, £282.16 ÷ 16,350 = 1.73%, £575.44 ÷ 38,516 = 1.49%)
+ *   hook rate       = 3-second video plays ÷ impressions (Graeme, 12 Nov 2026)
+ *   hold rate       = ThruPlays ÷ impressions — ThruPlay is Meta's "played to
+ *                     the end, or 15 seconds"
+ * A static ad has no video plays, so no hook or hold rate (null, not 0%).
  */
 
 export type AdLevel = "campaign" | "adset" | "ad";
@@ -44,6 +48,14 @@ export interface AdFigures {
   roas: number | null;
   costPerResult: number | null;
   costPerReachPct: number | null;
+  /** Video plays of at least 3 seconds; null when Meta reports none (a static ad). */
+  videoPlays3s: number | null;
+  /** Plays to the end or 15 seconds; null when Meta reports none. */
+  thruPlays: number | null;
+  /** 3-second plays ÷ impressions, as a percentage. */
+  hookRatePct: number | null;
+  /** ThruPlays ÷ impressions, as a percentage. */
+  holdRatePct: number | null;
 }
 
 export type AdRow = AdEntity & AdFigures & { level: AdLevel };
@@ -51,6 +63,7 @@ export type AdRow = AdEntity & AdFigures & { level: AdLevel };
 const NO_FIGURES: AdFigures = {
   spend: 0, reach: 0, impressions: 0, purchases: 0, purchaseValue: 0, linkClicks: 0,
   frequency: null, cpm: null, ctr: null, roas: null, costPerResult: null, costPerReachPct: null,
+  videoPlays3s: null, thruPlays: null, hookRatePct: null, holdRatePct: null,
 };
 
 const num = (v: unknown): number | null => {
@@ -104,10 +117,20 @@ function actionValue(list: unknown): number | null {
   return null;
 }
 
-const ID_FIELD: Record<AdLevel, string> = { campaign: "campaign_id", adset: "adset_id", ad: "ad_id" };
+/** One named action's value — Meta reports a 3-second video play as "video_view". */
+function oneAction(list: unknown, type: string): number | null {
+  if (!Array.isArray(list)) return null;
+  const hit = (list as MetaAction[]).find(a => a?.action_type === type);
+  return hit ? num(hit.value) : null;
+}
+
+const pctOf = (part: number | null, whole: number): number | null =>
+  part != null && whole > 0 ? (part / whole) * 100 : null;
+
+const ID_FIELD: Record<AdLevel | "account", string> = { campaign: "campaign_id", adset: "adset_id", ad: "ad_id", account: "account_id" };
 
 /** One insights row: Meta's strings, as the figures the page shows. */
-export function parseInsight(raw: unknown, level: AdLevel): (AdFigures & { id: string }) | null {
+export function parseInsight(raw: unknown, level: AdLevel | "account"): (AdFigures & { id: string }) | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const id = str(r[ID_FIELD[level]]);
@@ -118,12 +141,15 @@ export function parseInsight(raw: unknown, level: AdLevel): (AdFigures & { id: s
   const purchases = actionValue(r["actions"]) ?? 0;
   const purchaseValue = actionValue(r["action_values"]) ?? 0;
   const metaRoas = Array.isArray(r["purchase_roas"]) ? num((r["purchase_roas"] as MetaAction[])[0]?.value) : null;
+  const impressions = num(r["impressions"]) ?? 0;
+  const videoPlays3s = oneAction(r["actions"], "video_view");
+  const thruPlays = oneAction(r["video_thruplay_watched_actions"], "video_view");
 
   return {
     id,
     spend,
     reach,
-    impressions: num(r["impressions"]) ?? 0,
+    impressions,
     purchases,
     purchaseValue,
     linkClicks: num(r["inline_link_clicks"]) ?? 0,
@@ -133,6 +159,10 @@ export function parseInsight(raw: unknown, level: AdLevel): (AdFigures & { id: s
     roas: metaRoas ?? (spend > 0 ? purchaseValue / spend : null),
     costPerResult: purchases > 0 ? spend / purchases : null,
     costPerReachPct: reach > 0 ? (spend / reach) * 100 : null,
+    videoPlays3s,
+    thruPlays,
+    hookRatePct: pctOf(videoPlays3s, impressions),
+    holdRatePct: pctOf(thruPlays, impressions),
   };
 }
 
@@ -147,6 +177,15 @@ export function isLive(status: string, spend: number): boolean {
 }
 
 /** One level's rows: the live ones with their figures, biggest spend first. */
+/** The whole account's figures for the period, blended by Meta itself (reach
+ *  de-duplicated across campaigns; non-live campaigns' spend included). */
+export function parseAccount(rows: unknown[]): AdFigures | null {
+  const row = rows.length > 0 ? parseInsight(rows[0], "account") : null;
+  if (!row) return null;
+  const { id: _id, ...figures } = row;
+  return figures;
+}
+
 export function mergeLevel(entities: unknown[], insights: unknown[], level: AdLevel): AdRow[] {
   const figures = new Map<string, AdFigures>();
   for (const raw of insights) {
