@@ -20,18 +20,17 @@ function Tile({ label, value, shade }: { label: string; value: string; shade?: R
       style={shade ? { backgroundColor: shade.hex } : undefined}
     >
       <p className={cn("text-base lg:text-lg font-semibold", shade ? "opacity-90" : "text-muted-foreground")}>{label}</p>
-      <p className="text-3xl xl:text-5xl font-display font-extrabold tabular-nums tracking-tight leading-tight">{value}</p>
+      <p className="text-3xl xl:text-4xl 2xl:text-5xl font-display font-extrabold tabular-nums tracking-tight leading-tight">{value}</p>
     </div>
   );
 }
 
-export function AccountPanel({ figures, grade, periodLabel, shopify, newShade, shopifyShade }: {
+export function AccountPanel({ figures, grade, periodLabel, shopify, shopifyShade }: {
   figures: AdFigures;
   grade: AdGrade;
   periodLabel: string;
   /** Shopify's new-customer orders for the period ÷ Meta spend — the real figure. */
   shopify: { revenue: number; orders: number; roas: number | null } | null;
-  newShade: RoasShade | null;
   shopifyShade: RoasShade | null;
 }) {
   return (
@@ -44,32 +43,23 @@ export function AccountPanel({ figures, grade, periodLabel, shopify, newShade, s
         <h2 className="text-xl lg:text-2xl font-display font-extrabold">Whole account</h2>
         <p className="text-sm font-semibold opacity-90">
           {periodLabel} · {count(figures.purchases)} result{figures.purchases === 1 ? "" : "s"} · {money(figures.purchaseValue)} in sales
+          {shopify ? ` · ${count(shopify.orders)} first order${shopify.orders === 1 ? "" : "s"} on Shopify` : ""}
           {grade.note ? ` · ${grade.note}` : ""}
         </p>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 p-3">
+      {/* Five equal tiles in one row (Graeme, 12 Nov 2026: one new-customer
+          ROAS only — the real one — as a fifth panel the same size as the
+          others). New-customer ROAS = Shopify's new-customer orders for the
+          period, every source, ÷ Meta spend; coloured against the New
+          customer ROAS target, as on Numbers. Meta's own estimate stays on
+          the campaign, ad set and ad cards. */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 p-3">
         <Tile label="CPA" value={money(figures.costPerResult)} shade={grade.costPerResult} />
         <Tile label="Spend" value={money(figures.spend)} />
         <Tile label="ROAS" value={roasText(figures.roas)} shade={grade.roas} />
         <Tile label="Reach" value={reachPctText(figures.costPerReachPct)} shade={grade.costPerReach} />
-      </div>
-      {/* New-customer ROAS (Graeme, 12 Nov 2026): the real figure from
-          Shopify's first orders, and Meta's own estimate beside it. Coloured
-          against the New customer ROAS target, as on Numbers. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 px-3 pb-3">
-        <div className="space-y-1">
-          <Tile label="New-customer ROAS · Shopify" value={roasText(shopify?.roas)} shade={shopifyShade} />
-          <p className="text-sm text-muted-foreground text-center">
-            {shopify ? `${count(shopify.orders)} first order${shopify.orders === 1 ? "" : "s"}, ${money(shopify.revenue)} — every source, ÷ Meta spend` : "Couldn't read Shopify's orders"}
-          </p>
-        </div>
-        <div className="space-y-1">
-          <Tile label="New-customer ROAS · Meta's estimate" value={roasText(figures.newCustomerRoas)} shade={newShade} />
-          <p className="text-sm text-muted-foreground text-center">
-            {figures.newCustomerSpend == null
-              ? "Meta didn't send its new-customer split"
-              : `${count(figures.newCustomerPurchases)} purchases Meta credits to ads, ${money(figures.newCustomerSpend)} spent on new customers`}
-          </p>
+        <div className="col-span-2 lg:col-span-1 grid">
+          <Tile label="New-customer ROAS" value={roasText(shopify?.roas)} shade={shopifyShade} />
         </div>
       </div>
     </section>

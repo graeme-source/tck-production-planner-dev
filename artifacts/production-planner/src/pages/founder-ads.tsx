@@ -98,7 +98,6 @@ function AdsPage() {
           figures={live.account}
           grade={gradeAd(live.account, targets?.benchmarks)}
           shopify={live.shopifyNewCustomers ?? null}
-          newShade={gradeNewCustomerRoas(live.account.newCustomerRoas, targets?.benchmarks)}
           shopifyShade={gradeNewCustomerRoas(live.shopifyNewCustomers?.roas, targets?.benchmarks)}
           periodLabel={describePeriod(period)}
         />
