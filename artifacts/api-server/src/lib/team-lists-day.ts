@@ -49,9 +49,12 @@ export function canCreateList(user: ListAccessUser): boolean {
 }
 
 /** Change the list itself (name, tasks, who has access, archive, import):
- *  managers and admins who can open it. */
+ *  anyone who can open it, whatever their role (Graeme, 12 Nov 2026: "anyone
+ *  that's got access to a list should be able to manage that list fully" —
+ *  Chris, a viewer ticked on Staff Room & Kitchen, couldn't add to it).
+ *  Creating a brand-new list stays with managers and admins. */
 export function canEditList(user: ListAccessUser, list: { memberIds: number[] | null }): boolean {
-  return canCreateList(user) && canAccessList(user, list);
+  return canAccessList(user, list);
 }
 
 /** Whether the Team lists section (dashboard row, quick-actions panel,

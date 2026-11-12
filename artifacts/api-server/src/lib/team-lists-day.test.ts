@@ -37,11 +37,14 @@ describe("access (Graeme, 2026-10-14: if I tick you, you've got access)", () => 
     expect(canAccessList(viewer, { memberIds: [] })).toBe(false);
     expect(canAccessList(viewer, { memberIds: null })).toBe(false);
   });
-  it("editing the list: managers and admins who can open it; ticked viewers only tick", () => {
+  it("editing the list: anyone who can open it, whatever their role", () => {
     expect(canEditList(admin, { memberIds: [] })).toBe(true);
     expect(canEditList(manager, { memberIds: [2] })).toBe(true);
     expect(canEditList(manager, { memberIds: [] })).toBe(false);
-    expect(canEditList(viewer, { memberIds: [3] })).toBe(false);
+    // Graeme, 12 Nov 2026: anyone on a list manages it fully — Chris, a
+    // viewer on Staff Room & Kitchen, couldn't add a task.
+    expect(canEditList(viewer, { memberIds: [3] })).toBe(true);
+    expect(canEditList(viewer, { memberIds: [99] })).toBe(false);
   });
   it("only managers and admins create lists", () => {
     expect(canCreateList(manager)).toBe(true);

@@ -23,10 +23,11 @@
  *
  * Access (lib/team-lists-day.ts, Graeme 2026-10-14 — "if I tick, you've got
  * access"): admins always; anyone else, any role, only when ticked on the
- * list. Everyone who can open a list can tick / skip / undo its tasks;
- * changing the list itself (name, tasks, people, archive, import) is for
- * managers and admins who can open it (canEditList). Enforced here on every
- * endpoint. The rules for what shows today are pure and tested there too.
+ * list. Everyone who can open a list can tick / skip / undo its tasks and
+ * change the list itself — name, tasks, people, archive, import (Graeme,
+ * 2026-11-12: "anyone that's got access to a list should be able to manage
+ * that list fully"). Creating a new list is for managers and admins.
+ * Enforced here on every endpoint. The rules for what shows today are pure and tested there too.
  */
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
@@ -227,9 +228,13 @@ router.get("/", async (req: Request, res: Response) => {
 });
 
 // Everyone active, any role (Graeme, 2026-10-14: "just have everyone
-// available in the list"). Only for the people who can set members.
+// available in the list"). For the people who can set members: managers and
+// admins, and anyone on a list (they manage it, people included).
 router.get("/people", async (req: Request, res: Response) => {
-  if (!requireCanCreate(req, res)) return;
+  if (!canCreateList(me(req))) {
+    const lists = await db.select({ memberIds: teamListsTable.memberIds }).from(teamListsTable).where(isNull(teamListsTable.archivedAt));
+    if (!lists.some(l => canEditList(me(req), l))) { res.status(403).json({ error: "You're not on any list" }); return; }
+  }
   const rows = await db.select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
     .from(usersTable)
     .where(eq(usersTable.isActive, true))
