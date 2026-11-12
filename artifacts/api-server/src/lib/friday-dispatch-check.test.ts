@@ -2,8 +2,8 @@ import { describe, it, expect } from "vitest";
 import { parsePostinfo, lookupPostcodeService } from "../services/apc-postinfo";
 import type { PostcodeOverride } from "../services/apc-postcode-overrides";
 import {
-  comingFriday, isFridayDate, fridayDates, apcOrdersForCheck, depotWarnings, checkOrder, runFridayCheck,
-  doneStateByOrder, DEPOT_REFUSAL_DAYS, type DepotRefusal, type FridayCheckOrder, type CheckableShopifyOrder,
+  comingFriday, isFridayDate, fridayDates, apcOrdersForCheck, repeatRefusals, checkOrder, runFridayCheck,
+  doneStateByOrder, REFUSAL_LOOKBACK_DAYS, REPEAT_REFUSAL_FRIDAYS, type DepotRefusal, type FridayCheckOrder, type CheckableShopifyOrder,
 } from "./friday-dispatch-check";
 import { noSaturdayThisWeekEmail } from "./apc-issue-emails";
 
@@ -37,13 +37,14 @@ const serviceFor = (overrides: PostcodeOverride[] = []) =>
 const order = (name: string, postcode: string | null, id = Number(name.replace(/\D/g, ""))): FridayCheckOrder =>
   ({ orderId: id, orderName: name, customerName: `Customer ${name}`, postcode });
 
-// Depot 60 refused three DH postcodes on one Friday; depot 28 refused CV
-// postcodes a week apart. EX7's refusal was expected (no Saturday listed).
+// Depot 60 refused three DH postcodes on one Friday (a bad day — it
+// delivered Saturdays again the next week); CV5 was refused on two different
+// Fridays (the area, not a bad day). EX7's refusal was expected (no Saturday listed).
 const REFUSALS: DepotRefusal[] = [
   { reportDate: "2026-10-30", depot: "60", outward: "DH1", orderName: "#1", tableListedSaturday: true },
   { reportDate: "2026-10-30", depot: "60", outward: "DH3", orderName: "#2", tableListedSaturday: true },
   { reportDate: "2026-10-30", depot: "60", outward: "DH1", orderName: "#3", tableListedSaturday: true },
-  { reportDate: "2026-10-30", depot: "28", outward: "CV2", orderName: "#4", tableListedSaturday: true },
+  { reportDate: "2026-10-30", depot: "28", outward: "CV5", orderName: "#4", tableListedSaturday: true },
   { reportDate: "2026-11-06", depot: "28", outward: "CV5", orderName: "#5", tableListedSaturday: true },
   { reportDate: "2026-11-06", depot: "1", outward: "EX7", orderName: "#6", tableListedSaturday: false },
 ];
@@ -119,36 +120,42 @@ describe("red — APC's table (or a permanent APC answer) says no Saturday", () 
   });
 });
 
-describe("amber — at risk", () => {
-  it("a depot that refused a Saturday the table promised in the last 21 days", () => {
-    const r = checkOrder(order("#200", "DH5 1AA"), serviceFor()("DH5 1AA"), REFUSALS, DATES, TODAY);
-    expect(r.status).toBe("at_risk");
-    expect(r.depot).toBe("60");
-    expect(r.reason).toContain("Depot 60 refused 3 Saturdays");
-    expect(r.reason).toContain("Fri 30 Oct (DH1, DH3)");
-    expect(r.reason).not.toContain("among them");
+describe("amber — at risk (high confidence only)", () => {
+  // Graeme, 12 Nov 2026: #139579 (SS0, depot 219) was flagged because depot
+  // 219 refused SS8 once on 30 Oct — a day APC refused six depots — and
+  // depot 219 delivered Saturdays again on 6 Nov. Not confident enough.
+  it("a depot's one-off refusal is not a warning, even three in one day", () => {
+    const r = checkOrder(order("#200", "DH1 5AA"), serviceFor()("DH1 5AA"), REFUSALS, DATES, TODAY);
+    expect(r.status).toBe("ok");
+    const oneOff: DepotRefusal[] = [{ reportDate: "2026-10-30", depot: "28", outward: "CV2", orderName: "#9", tableListedSaturday: true }];
+    expect(checkOrder(order("#204", "CV2 5LE"), serviceFor()("CV2 5LE"), oneOff, DATES, TODAY).status).toBe("ok");
   });
 
-  it("names the order's own area when it was one of the refused", () => {
-    const r = checkOrder(order("#201", "CV2 5LE"), serviceFor()("CV2 5LE"), REFUSALS, DATES, TODAY);
+  it("the order's own area refused on two different Fridays is", () => {
+    const r = checkOrder(order("#201", "CV5 1AA"), serviceFor()("CV5 1AA"), REFUSALS, DATES, TODAY);
     expect(r.status).toBe("at_risk");
-    expect(r.reason).toContain("Depot 28 refused 2 Saturdays in the last 21 days that APC's table says it delivers: Fri 6 Nov (CV5); Fri 30 Oct (CV2), CV2 among them.");
+    expect(r.reason).toBe("APC refused a Saturday to CV5 on 2 different Fridays (Fri 6 Nov, Fri 30 Oct), though its table lists one.");
   });
 
-  it("a refusal the table already predicted says nothing about the depot", () => {
-    // EX8 shares no depot with EX7 here, but even a same-depot expected
-    // refusal must not count.
-    const expected: DepotRefusal[] = [{ reportDate: "2026-11-06", depot: "2", outward: "EX8", orderName: "#7", tableListedSaturday: false }];
+  it("a refusal the table already predicted adds nothing", () => {
+    const expected: DepotRefusal[] = [
+      { reportDate: "2026-11-06", depot: "2", outward: "EX8", orderName: "#7", tableListedSaturday: false },
+      { reportDate: "2026-10-30", depot: "2", outward: "EX8", orderName: "#8", tableListedSaturday: false },
+    ];
     expect(checkOrder(order("#202", "EX8 1AA"), serviceFor()("EX8 1AA"), expected, DATES, TODAY).status).toBe("ok");
   });
 
-  it("only counts the last 21 days before the dispatch day", () => {
-    const old: DepotRefusal = { reportDate: "2026-10-22", depot: "30", outward: "MK17", orderName: "#8", tableListedSaturday: true };
-    const edge: DepotRefusal = { ...old, reportDate: "2026-10-23" };
-    const sameDay: DepotRefusal = { ...old, reportDate: FRIDAY };
-    expect(DEPOT_REFUSAL_DAYS).toBe(21);
-    expect(depotWarnings("30", [old, sameDay], FRIDAY)).toEqual([]);
-    expect(depotWarnings("30", [edge], FRIDAY)).toEqual([edge]);
+  it("only counts refusals in the 56 days before the dispatch day, and needs two Fridays", () => {
+    const a: DepotRefusal = { reportDate: "2026-09-17", depot: "30", outward: "MK17", orderName: "#8", tableListedSaturday: true };
+    const b: DepotRefusal = { ...a, reportDate: "2026-11-06" };
+    const edge: DepotRefusal = { ...a, reportDate: "2026-09-18" };
+    const sameDay: DepotRefusal = { ...a, reportDate: FRIDAY };
+    expect(REFUSAL_LOOKBACK_DAYS).toBe(56);
+    expect(REPEAT_REFUSAL_FRIDAYS).toBe(2);
+    expect(repeatRefusals("MK17", [a, b], FRIDAY)).toEqual([]);
+    expect(repeatRefusals("MK17", [b, sameDay], FRIDAY)).toEqual([]);
+    expect(repeatRefusals("MK17", [edge, b], FRIDAY)).toEqual([b, edge]);
+    expect(repeatRefusals("MK17", [b, { ...b, orderName: "#9" }], FRIDAY)).toEqual([]);
   });
 
   it("a temporary recorded Saturday restriction", () => {
@@ -214,14 +221,14 @@ describe("alternatives", () => {
 });
 
 describe("runFridayCheck — the last four Fridays' pattern", () => {
-  it("catches the table postcodes and the refusing depots, worst first, with counts", () => {
+  it("catches the table postcodes and the repeat-refused area, worst first, with counts", () => {
     const orders = [
-      order("#1", "MK17 9FX"), order("#2", "EX7 0EA"), order("#3", "DH5 2BB"), order("#4", "GL2 0PZ"),
+      order("#1", "MK17 9FX"), order("#2", "EX7 0EA"), order("#3", "DH1 2BB"), order("#4", "GL2 0PZ"),
       order("#5", "CV5 1AA"), order("#6", "ZZ9 9ZZ"), order("#7", "AB22 8AA"),
     ];
     const { results, summary } = runFridayCheck({ dispatchDate: FRIDAY, today: TODAY, orders, serviceFor: serviceFor(), refusals: REFUSALS });
-    expect(summary).toEqual({ total: 7, ok: 1, noSaturday: 3, atRisk: 2, unknown: 1 });
-    expect(results.map(r => r.status)).toEqual(["no_saturday", "no_saturday", "no_saturday", "at_risk", "at_risk", "unknown", "ok"]);
+    expect(summary).toEqual({ total: 7, ok: 2, noSaturday: 3, atRisk: 1, unknown: 1 });
+    expect(results.map(r => r.status)).toEqual(["no_saturday", "no_saturday", "no_saturday", "at_risk", "unknown", "ok", "ok"]);
     // Within a colour: by depot, numerically.
     expect(results.slice(0, 3).map(r => r.depot)).toEqual(["1", "45", "296"]);
   });

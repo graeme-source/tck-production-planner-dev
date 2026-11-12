@@ -43,7 +43,7 @@ import { loadPostcodeContext } from "../lib/apc-postcode-context";
 import { lookupPostcodeService, POSTINFO_SOURCE } from "../services/apc-postinfo";
 import { getOrdersByTagIncludingCancelled, getOrderById, getOrderForReschedule, shopifyAdminOrderBase, updateOrderTagsAndAttributes } from "../services/shopify";
 import {
-  apcOrdersForCheck, checkOrder, comingFriday, doneStateByOrder, fridayDates, isFridayDate, runFridayCheck, DEPOT_REFUSAL_DAYS,
+  apcOrdersForCheck, checkOrder, comingFriday, doneStateByOrder, fridayDates, isFridayDate, runFridayCheck, REFUSAL_LOOKBACK_DAYS,
 } from "../lib/friday-dispatch-check";
 import { loadFridayActions, loadRecentSaturdayRefusals, recordFridayAction } from "../lib/friday-dispatch-check-db";
 
@@ -144,7 +144,7 @@ router.get("/friday-check", requireFulfilmentAccess, validateQuery(checkQuery), 
       canCourier,
       adminOrderBase: shopifyAdminOrderBase(),
       refusalsConsidered: refusals.length,
-      refusalDays: DEPOT_REFUSAL_DAYS,
+      refusalDays: REFUSAL_LOOKBACK_DAYS,
       calendarChecked,
       source: POSTINFO_SOURCE,
     });

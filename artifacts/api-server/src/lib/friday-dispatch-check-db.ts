@@ -12,7 +12,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { addDaysToDateString } from "./london-time";
 import { lookupPostcodeService, outwardCode } from "../services/apc-postinfo";
-import { DEPOT_REFUSAL_DAYS, type DepotRefusal, type FridayAction } from "./friday-dispatch-check";
+import { REFUSAL_LOOKBACK_DAYS, type DepotRefusal, type FridayAction } from "./friday-dispatch-check";
 
 type RefusalRow = {
   report_date: string;
@@ -23,13 +23,13 @@ type RefusalRow = {
   table_saturday: boolean | null;
 };
 
-/** Saturday refusals in the DEPOT_REFUSAL_DAYS before `dispatchDate`.
+/** Saturday refusals in the REFUSAL_LOOKBACK_DAYS before `dispatchDate`.
  *  The depot and the table's own Saturday answer come from the snapshot
  *  taken at booking time; rows from before that snapshot carried them are
  *  looked up in the table again (without recorded APC answers — the point
  *  is what the table PROMISED). */
 export async function loadRecentSaturdayRefusals(dispatchDate: string): Promise<DepotRefusal[]> {
-  const from = addDaysToDateString(dispatchDate, -DEPOT_REFUSAL_DAYS);
+  const from = addDaysToDateString(dispatchDate, -REFUSAL_LOOKBACK_DAYS);
   const r = await db.execute<RefusalRow>(sql`
     SELECT report_date::text AS report_date, order_name, postcode,
            postcode_service->>'depot' AS depot,

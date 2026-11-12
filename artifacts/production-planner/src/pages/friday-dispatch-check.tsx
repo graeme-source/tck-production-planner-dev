@@ -414,7 +414,7 @@ export default function FridayDispatchCheck() {
             </p>
           )}
           <p className="text-sm text-muted-foreground">
-            Checked against {data.source}, recorded APC answers, and {data.refusalsConsidered} Saturday refusal{data.refusalsConsidered === 1 ? "" : "s"} in the {data.refusalDays} days before.
+            Checked against {data.source}, recorded APC answers, and {data.refusalsConsidered} Saturday refusal{data.refusalsConsidered === 1 ? "" : "s"} in the {data.refusalDays} days before. Only strong signs are flagged: no Saturday in APC's table, a restriction APC told us about, or the same postcode area refused on two different Fridays. A depot's one-off refusal isn't.
           </p>
         </>
       )}

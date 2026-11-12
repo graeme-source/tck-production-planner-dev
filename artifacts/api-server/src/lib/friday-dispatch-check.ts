@@ -10,10 +10,14 @@
  * delivery).
  *
  * The last four Fridays on live: 15 Saturday refusals. 8 were postcodes
- * APC's own table lists with no Saturday service (red here). The other 7
- * were listed WITH Saturdays but the depot refused that week — three from
- * one depot on one day, two from another a week apart — which is what the
- * "a depot refused a Saturday recently" signal (amber) is for.
+ * APC's own table lists with no Saturday service (red here) — and those
+ * areas were refused again and again. The other 7 were listed WITH
+ * Saturdays; every one of those depots delivered Saturdays again the very
+ * next week (depot 28 the same day). So a depot's one-off refusal is NOT a
+ * warning (Graeme, 12 Nov 2026: "I only want to reschedule orders that we
+ * are highly confident won't get through"). Amber is only ever strong
+ * evidence: an APC-recorded restriction, or the order's own postcode area
+ * refused on two different Fridays.
  *
  * Pure: the orders, the postcode answers (services/apc-postinfo.ts, with
  * recorded APC answers already merged) and the recent refusals are passed
@@ -25,8 +29,12 @@ import { addDaysToDateString } from "./london-time";
 import { friendlyDate, dayNameFor } from "./order-reschedule";
 import { isCancelledOrder, isCollectionOrder, isLocalDeliveryOrder } from "./dispatch-tag";
 
-/** How far back a depot's Saturday refusal still counts as a warning. */
-export const DEPOT_REFUSAL_DAYS = 21;
+/** How far back a refused Saturday to the same postcode area still counts. */
+export const REFUSAL_LOOKBACK_DAYS = 56;
+
+/** Different Fridays the same area must have been refused on to warn. One
+ *  refusal is a bad day; a repeat is the area. */
+export const REPEAT_REFUSAL_FRIDAYS = 2;
 
 export type FridayStatus = "ok" | "no_saturday" | "at_risk" | "unknown";
 
@@ -128,14 +136,17 @@ export interface DepotRefusal {
   tableListedSaturday: boolean;
 }
 
-/** The refusals that warn about this depot: same depot, the table expected
- *  a Saturday there, and inside DEPOT_REFUSAL_DAYS before the dispatch day. */
-export function depotWarnings(depot: string, refusals: readonly DepotRefusal[], dispatchDate: string): DepotRefusal[] {
-  if (!depot) return [];
-  const from = addDaysToDateString(dispatchDate, -DEPOT_REFUSAL_DAYS);
-  return refusals
-    .filter(r => r.depot === depot && r.tableListedSaturday && r.reportDate >= from && r.reportDate < dispatchDate)
-    .sort((a, b) => (a.reportDate < b.reportDate ? 1 : a.reportDate > b.reportDate ? -1 : a.outward.localeCompare(b.outward)));
+/** The refusals that warn about this order: its own postcode area, the
+ *  table expected a Saturday there, inside REFUSAL_LOOKBACK_DAYS before the
+ *  dispatch day — and on at least REPEAT_REFUSAL_FRIDAYS different Fridays.
+ *  Anything less returns nothing: it isn't confident enough to move an order. */
+export function repeatRefusals(outward: string, refusals: readonly DepotRefusal[], dispatchDate: string): DepotRefusal[] {
+  if (!outward) return [];
+  const from = addDaysToDateString(dispatchDate, -REFUSAL_LOOKBACK_DAYS);
+  const hits = refusals
+    .filter(r => r.outward === outward && r.tableListedSaturday && r.reportDate >= from && r.reportDate < dispatchDate)
+    .sort((a, b) => (a.reportDate < b.reportDate ? 1 : a.reportDate > b.reportDate ? -1 : 0));
+  return new Set(hits.map(h => h.reportDate)).size >= REPEAT_REFUSAL_FRIDAYS ? hits : [];
 }
 
 /** "Fri 24 Oct" */
@@ -145,15 +156,9 @@ function shortDay(date: string): string {
     .format(new Date(Date.UTC(y, m - 1, d, 12)));
 }
 
-function depotWarningText(depot: string, warnings: readonly DepotRefusal[], ownOutward: string): string {
-  const days = [...new Set(warnings.map(w => w.reportDate))];
-  const parts = days.map(day => {
-    const areas = [...new Set(warnings.filter(w => w.reportDate === day).map(w => w.outward))].sort();
-    return `${shortDay(day)} (${areas.join(", ")})`;
-  });
-  const same = warnings.some(w => w.outward === ownOutward) ? `, ${ownOutward} among them` : "";
-  const n = warnings.length;
-  return `Depot ${depot} refused ${n === 1 ? "a Saturday" : `${n} Saturdays`} in the last ${DEPOT_REFUSAL_DAYS} days that APC's table says it delivers: ${parts.join("; ")}${same}.`;
+function repeatRefusalText(outward: string, hits: readonly DepotRefusal[]): string {
+  const days = [...new Set(hits.map(w => w.reportDate))].map(shortDay);
+  return `APC refused a Saturday to ${outward} on ${days.length} different Fridays (${days.join(", ")}), though its table lists one.`;
 }
 
 // ── One order ───────────────────────────────────────────────────────────────
@@ -211,7 +216,7 @@ export function checkOrder(
 
   const where = `${service.matchedOn}${service.depot ? ` (depot ${service.depot})` : ""}`;
   const sat = service.restrictions.saturday;
-  const warnings = depotWarnings(service.depot, refusals, dates.dispatchDate);
+  const repeats = repeatRefusals(service.matchedOn, refusals, dates.dispatchDate);
 
   let status: FridayStatus;
   let reason: string;
@@ -223,9 +228,9 @@ export function checkOrder(
   } else if (sat?.kind === "temporary") {
     status = "at_risk";
     reason = `${sat.label}${sat.expiresOn ? ` (counts until ${sat.expiresOn})` : ""} for ${where}.`;
-  } else if (warnings.length > 0) {
+  } else if (repeats.length > 0) {
     status = "at_risk";
-    reason = depotWarningText(service.depot, warnings, service.matchedOn);
+    reason = repeatRefusalText(service.matchedOn, repeats);
   } else {
     status = "ok";
     reason = `Saturday delivery by ${service.saturday} to ${where}.`;
