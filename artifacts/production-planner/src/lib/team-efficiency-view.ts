@@ -5,6 +5,7 @@
  * The server decides what each viewer may see; these helpers only ever read
  * the fields that arrived (founder-only ones are optional here).
  */
+import { addDays, londonDayString } from "./roas";
 
 export type RangeKey = "30d" | "3m" | "6m" | "12m";
 export const RANGES: Array<{ key: RangeKey; label: string }> = [
@@ -112,6 +113,7 @@ const isIsoDate = (s: string | null): s is string => !!s && ISO.test(s) && !Numb
 
 export type RangeChoice =
   | { kind: "today" }
+  | { kind: "yesterday" }
   | { kind: "preset"; range: RangeKey }
   | { kind: "custom"; from: string; to: string };
 
@@ -126,6 +128,7 @@ export function parseRangeQuery(search: string): RangeChoice {
   if (isIsoDate(from) && isIsoDate(to) && to >= from) return { kind: "custom", from, to };
   const range = q.get("range");
   if (range === "today") return { kind: "today" };
+  if (range === "yesterday") return { kind: "yesterday" };
   if (range && RANGES.some(r => r.key === range)) return { kind: "preset", range: range as RangeKey };
   return DEFAULT_CHOICE;
 }
@@ -133,14 +136,22 @@ export function parseRangeQuery(search: string): RangeChoice {
 /** The page URL's query string for a choice. */
 export function rangeQuery(choice: RangeChoice): string {
   if (choice.kind === "today") return "range=today";
+  if (choice.kind === "yesterday") return "range=yesterday";
   return choice.kind === "custom" ? `from=${choice.from}&to=${choice.to}` : `range=${choice.range}`;
 }
 
 /** The stored-figures report to fetch for a choice. Today's own figure is a
  *  separate live estimate; alongside it the page shows the last 30 days for
- *  context (the last-7-days headline). */
-export function reportQuery(choice: RangeChoice): string {
-  return choice.kind === "today" ? "range=30d" : rangeQuery(choice);
+ *  context (the last-7-days headline). Yesterday is the one London day
+ *  before today, fetched as a one-day range, so its headline is that day
+ *  against the day before it. */
+export function reportQuery(choice: RangeChoice, now: number | Date = new Date()): string {
+  if (choice.kind === "today") return "range=30d";
+  if (choice.kind === "yesterday") {
+    const day = addDays(londonDayString(now), -1);
+    return `from=${day}&to=${day}`;
+  }
+  return rangeQuery(choice);
 }
 
 // ── Today's live estimate ─────────────────────────────────────────────────

@@ -283,6 +283,9 @@ export default function TeamEfficiencyPage() {
   const choice = useMemo(() => parseRangeQuery(search), [search]);
   const query = reportQuery(choice);
   const isToday = choice.kind === "today";
+  // One settled day: weekly and monthly views would just repeat it.
+  const isYesterday = choice.kind === "yesterday";
+  const shownView: View = isYesterday ? "daily" : view;
   const choose = (next: RangeChoice) => navigate(`${path}?${rangeQuery(next)}`, { replace: true });
 
   const q = useQuery({
@@ -310,8 +313,9 @@ export default function TeamEfficiencyPage() {
   const customShown = choice.kind === "custom"
     ? (report?.range && data?.range === "custom" ? report.range : { from: choice.from, to: choice.to })
     : null;
-  const pickRange = (key: RangeKey | "custom" | "today") => {
+  const pickRange = (key: RangeKey | "custom" | "today" | "yesterday") => {
     if (key === "today") { choose({ kind: "today" }); return; }
+    if (key === "yesterday") { choose({ kind: "yesterday" }); return; }
     if (key !== "custom") { choose({ kind: "preset", range: key }); return; }
     if (choice.kind === "custom") return;
     const start = startingCustomRange(report?.range, bounds, new Date().toISOString().slice(0, 10));
@@ -319,10 +323,10 @@ export default function TeamEfficiencyPage() {
   };
   const points = useMemo<ChartPoint[]>(() => {
     if (!report) return [];
-    if (view === "weekly") return periodPoints(report.weekly, p => p);
-    if (view === "monthly") return periodPoints(report.monthly, p => `${p}-15`);
+    if (shownView === "weekly") return periodPoints(report.weekly, p => p);
+    if (shownView === "monthly") return periodPoints(report.monthly, p => `${p}-15`);
     return chartPoints(report.days);
-  }, [report, view]);
+  }, [report, shownView]);
 
   const header = <PageHeader title="Team efficiency" />;
 
@@ -335,20 +339,21 @@ export default function TeamEfficiencyPage() {
   }
 
   return (
-    <div className="p-4 sm:p-8 space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-8 space-y-6">
       {header}
       <p className="text-lg text-muted-foreground">
         Good packs made (and orders sent) for every £1 of production wages, as a percentage of our standard. 100% is standard, 110% and up is great, under 90% is below.
       </p>
 
       <div className="flex flex-wrap items-center gap-3">
-        <Segmented<RangeKey | "custom" | "today">
+        {/* Today and Yesterday lead, as on every other period picker. */}
+        <Segmented<RangeKey | "custom" | "today" | "yesterday">
           label="Time range"
           value={choice.kind === "preset" ? choice.range : choice.kind}
-          options={[{ key: "today", label: "Today" }, ...RANGES, { key: "custom", label: "Custom range" }]}
+          options={[{ key: "today", label: "Today" }, { key: "yesterday", label: "Yesterday" }, ...RANGES, { key: "custom", label: "Custom range" }]}
           onChange={pickRange}
         />
-        {!isToday && (
+        {!isToday && !isYesterday && (
           <Segmented<View> label="Show" value={view} onChange={setView}
             options={[{ key: "daily", label: "Daily" }, { key: "weekly", label: "Weekly" }, { key: "monthly", label: "Monthly" }]} />
         )}
@@ -396,9 +401,9 @@ export default function TeamEfficiencyPage() {
           <section className="rounded-3xl border border-border bg-card p-5 sm:p-6 space-y-3">
             <div className="flex flex-wrap items-baseline justify-between gap-2">
               <h2 className="text-xl font-bold">
-                {view === "daily" ? "Each day, and the last-7-days line" : view === "weekly" ? "Week by week" : "Month by month"}
+                {shownView === "daily" ? "Each day, and the last-7-days line" : shownView === "weekly" ? "Week by week" : "Month by month"}
               </h2>
-              {view === "daily" && (
+              {shownView === "daily" && (
                 <div className="flex items-center gap-4 text-sm text-muted-foreground">
                   <span className="flex items-center gap-1.5"><span className="inline-block w-2.5 h-2.5 rounded-full bg-primary/40" /> A day</span>
                   <span className="flex items-center gap-1.5"><span className="inline-block w-5 h-0.5 bg-primary" /> Last 7 days</span>
@@ -407,8 +412,8 @@ export default function TeamEfficiencyPage() {
             </div>
             <TeamEfficiencyChart
               points={points}
-              mode={view === "daily" ? "daily" : "period"}
-              periodLabel={view === "weekly" ? weekLabel : view === "monthly" ? monthLabel : undefined}
+              mode={shownView === "daily" ? "daily" : "period"}
+              periodLabel={shownView === "weekly" ? weekLabel : shownView === "monthly" ? monthLabel : undefined}
             />
             {data?.meta?.historyFrom && (
               <p className="text-sm text-muted-foreground">
@@ -419,11 +424,11 @@ export default function TeamEfficiencyPage() {
 
           <section className="rounded-3xl border border-border bg-card p-5 sm:p-6 space-y-3">
             <h2 className="text-xl font-bold">
-              {view === "daily" ? "Day by day" : view === "weekly" ? "Weekly figures" : "Monthly figures"}
+              {shownView === "daily" ? "Day by day" : shownView === "weekly" ? "Weekly figures" : "Monthly figures"}
             </h2>
-            {view === "daily" && <DailyTable days={report.days} lines={lines} founder={founder} />}
-            {view === "weekly" && <PeriodTable periods={report.weekly} label={weekLabel} founder={founder} />}
-            {view === "monthly" && <PeriodTable periods={report.monthly} label={monthLabel} founder={founder} />}
+            {shownView === "daily" && <DailyTable days={report.days} lines={lines} founder={founder} />}
+            {shownView === "weekly" && <PeriodTable periods={report.weekly} label={weekLabel} founder={founder} />}
+            {shownView === "monthly" && <PeriodTable periods={report.monthly} label={monthLabel} founder={founder} />}
           </section>
 
           {founder && data?.settings && <TeamEfficiencySettings settings={data.settings} />}

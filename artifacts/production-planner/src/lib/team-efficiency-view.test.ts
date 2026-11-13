@@ -123,6 +123,16 @@ describe("Today", () => {
     expect(reportQuery({ kind: "preset", range: "6m" })).toBe("range=6m");
     expect(reportQuery({ kind: "custom", from: "2026-08-01", to: "2026-08-31" })).toBe("from=2026-08-01&to=2026-08-31");
   });
+  it("offers Yesterday as the one London day before today", () => {
+    expect(parseRangeQuery("?range=yesterday")).toEqual({ kind: "yesterday" });
+    expect(rangeQuery({ kind: "yesterday" })).toBe("range=yesterday");
+    // 13 Nov, mid-afternoon → 12 Nov.
+    expect(reportQuery({ kind: "yesterday" }, new Date("2026-11-13T15:00:00Z"))).toBe("from=2026-11-12&to=2026-11-12");
+    // 00:30 BST on 1 Aug is still 31 Jul in UTC — London's day decides.
+    expect(reportQuery({ kind: "yesterday" }, new Date("2026-07-31T23:30:00Z"))).toBe("from=2026-07-31&to=2026-07-31");
+    // Across a month end.
+    expect(reportQuery({ kind: "yesterday" }, new Date("2026-12-01T09:00:00Z"))).toBe("from=2026-11-30&to=2026-11-30");
+  });
   it("never shows a misleading number before there is one", () => {
     expect(todayMessage("estimate")).toBeNull();
     expect(todayMessage("waiting_for_counts")).toMatch(/counted/);
