@@ -772,7 +772,54 @@ function ReceivingDialog({
             </>
           ) : (
           <>
-          {/* Wide desktop: the lines on the left, temperatures / checks /
+          {/* The supplier's own checks lead the delivery (Graeme, 13 Nov
+              2026: AB Fruits' "give the driver back the boxes" has to be the
+              first thing seen, while the driver is still at the door). */}
+          {checks.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                <ClipboardCheck className="w-4 h-4" /> Delivery Checks
+              </h3>
+              <div className="space-y-2">
+                {checks.map((check) => {
+                  const result = checkResults.find((cr) => cr.checkConfigId === check.id);
+                  return (
+                    <div
+                      key={check.id}
+                      className={cn(
+                        "min-h-[52px] flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors cursor-pointer",
+                        result?.passed
+                          ? "border-green-300 bg-green-50/50 dark:bg-green-900/10 dark:border-green-700"
+                          : "border-border hover:bg-secondary/30"
+                      )}
+                      onClick={() => {
+                        editCheckResults((prev) =>
+                          prev.map((cr) =>
+                            cr.checkConfigId === check.id ? { ...cr, passed: !cr.passed } : cr
+                          )
+                        );
+                      }}
+                    >
+                      <div
+                        className={cn(
+                          "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0",
+                          result?.passed ? "bg-green-500 border-green-500" : "border-border"
+                        )}
+                      >
+                        {result?.passed && <Check className="w-3.5 h-3.5 text-white" />}
+                      </div>
+                      <span className="text-base sm:text-sm flex-1 min-w-0 break-words">{check.label}</span>
+                      {check.isRequired && (
+                        <span className="text-xs text-muted-foreground">Required</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Wide desktop: the lines on the left, temperatures and
               notes beside them, so the whole delivery is on one screen. */}
           <div className="space-y-6 xl:space-y-0 xl:grid xl:grid-cols-[minmax(0,1fr)_22rem] xl:gap-6 xl:items-start">
           <div style={receivingColumnVars(anyUseBy)}>
@@ -862,50 +909,6 @@ function ReceivingDialog({
                     )}
                   </div>
                 )}
-              </div>
-            </div>
-          )}
-
-          {checks.length > 0 && (
-            <div>
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                <ClipboardCheck className="w-4 h-4" /> Delivery Checks
-              </h3>
-              <div className="space-y-2">
-                {checks.map((check) => {
-                  const result = checkResults.find((cr) => cr.checkConfigId === check.id);
-                  return (
-                    <div
-                      key={check.id}
-                      className={cn(
-                        "min-h-[52px] flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors cursor-pointer",
-                        result?.passed
-                          ? "border-green-300 bg-green-50/50 dark:bg-green-900/10 dark:border-green-700"
-                          : "border-border hover:bg-secondary/30"
-                      )}
-                      onClick={() => {
-                        editCheckResults((prev) =>
-                          prev.map((cr) =>
-                            cr.checkConfigId === check.id ? { ...cr, passed: !cr.passed } : cr
-                          )
-                        );
-                      }}
-                    >
-                      <div
-                        className={cn(
-                          "w-5 h-5 rounded-md border-2 flex items-center justify-center transition-all flex-shrink-0",
-                          result?.passed ? "bg-green-500 border-green-500" : "border-border"
-                        )}
-                      >
-                        {result?.passed && <Check className="w-3.5 h-3.5 text-white" />}
-                      </div>
-                      <span className="text-base sm:text-sm flex-1 min-w-0 break-words">{check.label}</span>
-                      {check.isRequired && (
-                        <span className="text-xs text-muted-foreground">Required</span>
-                      )}
-                    </div>
-                  );
-                })}
               </div>
             </div>
           )}
