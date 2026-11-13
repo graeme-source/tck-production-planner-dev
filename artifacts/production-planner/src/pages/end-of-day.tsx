@@ -9,8 +9,10 @@
  * Analytics page came to disagree once before.
  *
  * Kept deliberately bare: four numbers, big enough to read from across the
- * room, and nothing else to click.
+ * room, and nothing else to click. The packing panel's number is the packing
+ * & wrapping room's run rate, with its breakdown under it (13 Nov 2026).
  */
+import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Hammer, PackageCheck, AlertTriangle, Trophy } from "lucide-react";
 import { formatQualityRejects } from "@/lib/quality-rejects";
@@ -36,12 +38,24 @@ interface EndOfDay {
   /** Defects KPI (wonkies + dog bins + recorded) ÷ packs made — the Defects
    *  page figure. null = lookup failed; optional for older payloads. */
   defects?: { count: number; pct: number | null; packsMade: number } | null;
+  /** The packing & wrapping room's run rate today (lib/room-kpi), worked out
+   *  live. estimate = today's shifts not approved yet, so the rota's hours.
+   *  null = couldn't be worked out / the room didn't work; optional for older payloads. */
+  room?: {
+    score: number | null;
+    estimate: boolean;
+    boxes: number; packs: number; deliveries: number; deliveryLines: number;
+    paidHours: number; people: number;
+    packingHours: number; wrappingHours: number; deliveryHours: number; earnedHours: number;
+  } | null;
 }
 
 const hours = (mins: number) => (mins / 60).toFixed(1);
 
-function KpiCard({ label, value, unit, second, sub, icon: Icon, tone }: {
+function KpiCard({ label, value, unit, second, sub, icon: Icon, tone, children }: {
   label: string;
+  /** More detail under the headline, in the same panel. */
+  children?: ReactNode;
   value: string;
   unit?: string;
   /** A second figure on the same line, e.g. dog bins beside wonkies. */
@@ -74,6 +88,34 @@ function KpiCard({ label, value, unit, second, sub, icon: Icon, tone }: {
         )}
       </p>
       <p className="text-base text-muted-foreground">{sub}</p>
+      {children}
+    </div>
+  );
+}
+
+/** Packing, wrapping and deliveries under the room's % — what the room did
+ *  and the hours of work each is worth at the standards. */
+function RoomBreakdown({ room, packing }: { room: NonNullable<EndOfDay["room"]>; packing: EndOfDay["packing"] }) {
+  const rows: Array<{ name: string; did: string; worth: number }> = [
+    { name: "Packing", did: `${room.boxes} boxes`, worth: room.packingHours },
+    { name: "Wrapping", did: `${room.packs} packs`, worth: room.wrappingHours },
+    { name: "Deliveries in", did: `${room.deliveries} deliver${room.deliveries === 1 ? "y" : "ies"} · ${room.deliveryLines} lines`, worth: room.deliveryHours },
+  ];
+  return (
+    <div className="mt-1 text-foreground">
+      {packing.boxesPerHour != null && (
+        <p className="flex items-baseline gap-2 pb-2">
+          <span className="text-3xl sm:text-4xl font-extrabold tabular-nums leading-none">{packing.boxesPerHour.toFixed(1)}</span>
+          <span className="text-lg font-semibold text-muted-foreground">boxes per hour packing</span>
+        </p>
+      )}
+      {rows.map((r) => (
+        <div key={r.name} className="flex items-baseline gap-3 py-1 border-t border-current/10 text-base">
+          <span className="font-semibold w-28 shrink-0">{r.name}</span>
+          <span className="flex-1 min-w-0 tabular-nums">{r.did}</span>
+          <span className="tabular-nums text-muted-foreground shrink-0">{r.worth.toFixed(1)} h</span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -127,16 +169,31 @@ export default function EndOfDayMeeting() {
             ? "Nothing built yet today."
             : `${data.builder.totalBatches} batches over ${hours(data.builder.activeMinutes)} hours on the line`}
         />
-        <KpiCard
-          label="Packing — boxes per hour"
-          icon={PackageCheck}
-          tone="blue"
-          value={data.packing.boxesPerHour == null ? "—" : data.packing.boxesPerHour.toFixed(1)}
-          unit={data.packing.boxesPerHour == null ? undefined : "per hour"}
-          sub={data.packing.boxesPerHour == null
-            ? "Nothing packed yet today."
-            : `${data.packing.totalBoxes} boxes over ${hours(data.packing.activeMinutes)} hours packing`}
-        />
+        {/* The packing & wrapping room's run rate is the headline, with
+            boxes per hour and the breakdown under it (Graeme, 13 Nov 2026). */}
+        {data.room ? (
+          <KpiCard
+            label="Packing & wrapping room"
+            icon={PackageCheck}
+            tone="blue"
+            value={data.room.score == null ? "—" : `${data.room.score}%`}
+            unit={data.room.score == null ? undefined : "of standard"}
+            sub={`${data.room.earnedHours.toFixed(1)} hours of work in ${data.room.paidHours.toFixed(1)} paid hours, ${data.room.people} ${data.room.people === 1 ? "person" : "people"}${data.room.estimate ? " — from today's rota until Planday approves the shifts" : ""}.`}
+          >
+            <RoomBreakdown room={data.room} packing={data.packing} />
+          </KpiCard>
+        ) : (
+          <KpiCard
+            label="Packing — boxes per hour"
+            icon={PackageCheck}
+            tone="blue"
+            value={data.packing.boxesPerHour == null ? "—" : data.packing.boxesPerHour.toFixed(1)}
+            unit={data.packing.boxesPerHour == null ? undefined : "per hour"}
+            sub={data.packing.boxesPerHour == null
+              ? "Nothing packed yet today."
+              : `${data.packing.totalBoxes} boxes over ${hours(data.packing.activeMinutes)} hours packing`}
+          />
+        )}
         <KpiCard
           label="Quality rejects"
           icon={AlertTriangle}

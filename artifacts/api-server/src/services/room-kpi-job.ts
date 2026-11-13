@@ -126,11 +126,17 @@ export async function computeRoomRange(from: string, to: string): Promise<number
   return written;
 }
 
-async function computeRoomWindow(from: string, to: string): Promise<number> {
-  if (from > to) return 0;
+type CountedDay = RoomDay & { pending: boolean };
+
+/** The room's raw counts and paid hours for each day in [from, to] it worked.
+ *  Approved Planday shifts only unless `approvedOnly` is false — today's live
+ *  estimate, priced from the rota (as Team efficiency's "today" does). A day
+ *  whose Shopify fulfilments couldn't be read is left out, not stored low. */
+async function roomDaysFor(from: string, to: string, opts: { approvedOnly?: boolean } = {}): Promise<CountedDay[]> {
+  if (from > to) return [];
   const config = await loadRoomConfig();
   const [payroll, rota, positions, shiftTypes, counts] = await Promise.all([
-    getPlandayPayrollRows(from, to),
+    getPlandayPayrollRows(from, to, opts),
     getPlandayShifts(from, to),
     getPlandayPositions(),
     getPlandayShiftTypes(),
@@ -143,7 +149,7 @@ async function computeRoomWindow(from: string, to: string): Promise<number> {
     positions, shiftTypes, positionNames: config.positions,
   });
   const days = [...new Set([...hours.keys(), ...counts.keys()])].filter(d => d >= from && d <= to).sort();
-  let written = 0;
+  const out: CountedDay[] = [];
   for (const d of days) {
     const h = hours.get(d);
     const c = counts.get(d) ?? { packs: 0, deliveries: 0, lines: 0 };
@@ -155,9 +161,20 @@ async function computeRoomWindow(from: string, to: string): Promise<number> {
       continue; // try again next night rather than store a false low
     }
     if (!h && boxes === 0 && c.packs === 0) continue; // the room didn't work
+    out.push({
+      date: d, boxes, packs: c.packs, deliveries: c.deliveries, deliveryLines: c.lines,
+      paidHours: h?.paidHours ?? 0, people: h?.people ?? 0, pending: Boolean(h?.pending),
+    });
+  }
+  return out;
+}
+
+async function computeRoomWindow(from: string, to: string): Promise<number> {
+  let written = 0;
+  for (const d of await roomDaysFor(from, to)) {
     await db.execute(sql`
       INSERT INTO room_kpi_days (date, boxes, packs, deliveries, delivery_lines, paid_hours, people, status, computed_at)
-      VALUES (${d}, ${boxes}, ${c.packs}, ${c.deliveries}, ${c.lines}, ${h?.paidHours ?? 0}, ${h?.people ?? 0}, ${h?.pending ? "pending" : "ok"}, NOW())
+      VALUES (${d.date}, ${d.boxes}, ${d.packs}, ${d.deliveries}, ${d.deliveryLines}, ${d.paidHours}, ${d.people}, ${d.pending ? "pending" : "ok"}, NOW())
       ON CONFLICT (date) DO UPDATE SET boxes = EXCLUDED.boxes, packs = EXCLUDED.packs, deliveries = EXCLUDED.deliveries,
         delivery_lines = EXCLUDED.delivery_lines, paid_hours = EXCLUDED.paid_hours, people = EXCLUDED.people,
         status = EXCLUDED.status, computed_at = NOW()
@@ -166,6 +183,14 @@ async function computeRoomWindow(from: string, to: string): Promise<number> {
   }
   console.log(`[room-kpi] stored ${written} day(s) ${from} → ${to}`);
   return written;
+}
+
+/** One day's room figures worked out now and NOT stored — today's live
+ *  estimate for the end-of-day meeting (Graeme, 13 Nov 2026). Hours include
+ *  shifts not yet approved, so they're the rota's until Planday approves.
+ *  null when the room didn't work that day. */
+export async function liveRoomDay(day: string): Promise<CountedDay | null> {
+  return (await roomDaysFor(day, day, { approvedOnly: false }))[0] ?? null;
 }
 
 export async function loadRoomDays(from: string, to: string): Promise<Array<RoomDay & { status: string }>> {

@@ -3,7 +3,8 @@
  * (Graeme, 2026-09-17; improvements added 2026-09-18):
  *
  *   • builders batches per hour
- *   • packing boxes per hour
+ *   • the packing & wrapping room's run rate (%), with packing boxes per
+ *     hour and the packing / wrapping / deliveries breakdown under it
  *   • quality rejects — wonkies and dog bins as separate figures
  *   • improvements completed (done work only, never ideas)
  *
@@ -30,6 +31,8 @@ import {
 } from "../lib/yesterday-kpis";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "../services/defects-summary";
+import { liveRoomDay, loadRoomConfig } from "../services/room-kpi-job";
+import { earnedHours, roomBand, roomRatio, roomScore } from "../lib/room-kpi";
 
 const router: IRouter = Router();
 
@@ -83,7 +86,7 @@ router.get("/", async (req: Request, res: Response) => {
     // Improvements completed is different: zero really means "the team
     // completed nothing today" and must show as 0. Only a failed lookup
     // comes back null (rendered as "—"), never as a fake zero.
-    const [builder, packing, improvementsCompleted, defects] = await Promise.all([
+    const [builder, packing, improvementsCompleted, defects, room] = await Promise.all([
       computeBuilderBatchesPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] builder BPH failed:", err);
         return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
@@ -102,6 +105,27 @@ router.get("/", async (req: Request, res: Response) => {
         console.warn("[end-of-day] defects failed:", err);
         return null;
       }),
+      // The packing & wrapping room's run rate (Graeme, 13 Nov 2026): the
+      // headline of the packing panel, worked out now from today's shifts
+      // (not yet approved, so the rota's hours) — the nightly job stores the
+      // approved figure. null when it can't be worked out.
+      (async () => {
+        const [d, config] = await Promise.all([liveRoomDay(day), loadRoomConfig()]);
+        if (!d) return null;
+        const e = earnedHours(d, config.weights);
+        const score = roomScore(roomRatio(d, config.weights), config.standardRatio);
+        const r2 = (n: number) => Math.round(n * 100) / 100;
+        return {
+          score, band: roomBand(score), estimate: d.pending,
+          boxes: d.boxes, packs: d.packs, deliveries: d.deliveries, deliveryLines: d.deliveryLines,
+          paidHours: d.paidHours, people: d.people,
+          packingHours: r2(e.packingHours), wrappingHours: r2(e.wrappingHours), deliveryHours: r2(e.deliveryHours), earnedHours: r2(e.earnedHours),
+          weights: config.weights,
+        };
+      })().catch(err => {
+        console.warn("[end-of-day] room KPI failed:", err);
+        return null;
+      }),
     ]);
 
     res.json({
@@ -117,6 +141,7 @@ router.get("/", async (req: Request, res: Response) => {
         totalBoxes: packing.totalOrders,
         activeMinutes: packing.activeMinutes,
       },
+      room,
       // Two classifications of quality reject, always reported separately:
       // wonkies are sold as Wonky stock, dog bins are thrown away.
       wonkies: { count: wonkyCount, batchesTarget },
