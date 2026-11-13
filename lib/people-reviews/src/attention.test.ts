@@ -87,4 +87,13 @@ describe("the one generic to-do", () => {
     expect(planAttentionTodo([], [5])).toEqual({ create: false, close: [5] });
     expect(planAttentionTodo(fyiOnly, [])).toEqual({ create: false, close: [] });
   });
+  // Regression (Graeme, 13 Nov 2026): Tommy's 6 Nov review, held with no
+  // notes, put the to-do back on his list every day after he ticked it off.
+  const meetingOnly = attentionQueue(facts({ meetings: [{ entryId: 11, userId: 1, meetingDate: "2026-10-06", writtenUp: false }] }));
+  it("a meeting to write up stays in the queue but never raises the to-do — and closes an open one", () => {
+    expect(meetingOnly.map(i => i.kind)).toEqual(["meeting_write_up"]);
+    expect(planAttentionTodo(meetingOnly, [])).toEqual({ create: false, close: [] });
+    expect(planAttentionTodo(meetingOnly, [425])).toEqual({ create: false, close: [425] });
+    expect(planAttentionTodo([...meetingOnly, ...item], [])).toEqual({ create: true, close: [] });
+  });
 });

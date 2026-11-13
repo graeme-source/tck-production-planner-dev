@@ -11,7 +11,8 @@
  *   • Nobody is told WHAT needs doing outside the People section: each
  *     person who can write employment records gets ONE generic to-do —
  *     "Your attention is required in HR — tap here" — no names, reasons or
- *     counts. It closes itself when their queue is empty. The details only
+ *     counts. It closes itself when nothing in their queue needs it (FYI
+ *     warnings and meetings to write up never raise it). The details only
  *     show behind the private People PIN.
  *
  * Pure; the server loads the facts and applies the shared write rule
@@ -154,11 +155,24 @@ export function hrAttentionTodo(ownerId: number) {
   };
 }
 
+/** Kinds that stay on the Needs attention page but never put the generic
+ *  to-do on anyone's list. Meetings to write up (Graeme, 13 Nov 2026: "I
+ *  don't want to create to-do items for meetings, just to be written up") —
+ *  a held 6 Nov review with no notes re-added his to-do every day. */
+export const NO_TODO_KINDS: ReadonlySet<AttentionKind> = new Set(["meeting_write_up"]);
+
+/** Does this item put the generic to-do on the list? FYI items and
+ *  NO_TODO_KINDS don't. */
+export function raisesAttentionTodo(i: AttentionItem): boolean {
+  return !i.fyi && !NO_TODO_KINDS.has(i.kind);
+}
+
 /** Keep exactly one open generic to-do while there's something to act on
- *  (FYI items alone don't count); tick it off when there's nothing. */
+ *  (FYI items and meeting write-ups alone don't count); tick it off when
+ *  there's nothing. */
 export function planAttentionTodo(items: readonly AttentionItem[], openTodoIds: readonly number[]):
   { create: boolean; close: number[] } {
-  const needed = items.some(i => !i.fyi);
+  const needed = items.some(raisesAttentionTodo);
   if (needed) return { create: openTodoIds.length === 0, close: openTodoIds.slice(1) };
   return { create: false, close: [...openTodoIds] };
 }
