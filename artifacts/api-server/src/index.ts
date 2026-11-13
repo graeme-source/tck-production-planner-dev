@@ -3441,6 +3441,11 @@ async function startup() {
     const { startTeamEfficiencyScheduler } = await import("./services/team-efficiency-job");
     startTeamEfficiencyScheduler();
 
+    // Packing & wrapping room run rate: 8-week backfill on first boot, then
+    // the last 10 days nightly (services/room-kpi-job.ts). Planday read-only.
+    const { startRoomKpiScheduler } = await import("./services/room-kpi-job");
+    startRoomKpiScheduler();
+
     // Stock gate — holds products back from next-day delivery when the
     // fridge-vs-despatch surplus runs low. Self-gates on stock_gate_enabled
     // (default false) + dry-run, so it's a no-op until configured. One

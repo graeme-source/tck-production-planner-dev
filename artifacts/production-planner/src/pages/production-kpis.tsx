@@ -21,6 +21,7 @@ import {
   type ProductionKpi, type ProductionKpiInfo, type ProductionKpiKey,
 } from "@/lib/production-kpis";
 import { cn } from "@/lib/utils";
+import { RoomKpiCard } from "@/components/room-kpi-card";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -156,6 +157,7 @@ export default function ProductionKpisPage() {
       )}
 
       <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
+        <RoomKpiCard />
         {PRODUCTION_KPI_INFO.map(info => (
           <EditableKpiCard key={info.key} info={info} kpi={kpis[info.key]} canEdit={canEdit} />
         ))}
