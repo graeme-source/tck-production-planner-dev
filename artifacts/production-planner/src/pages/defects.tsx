@@ -8,7 +8,8 @@
  * damaged packs, complaints…). Packs made is the same figure Team efficiency
  * uses. Waste (anything binned — an ingredient, a sub-recipe, finished packs)
  * is shown in £: ingredients, the time to make it again, and the two
- * together, for today, this week, this month or any range. Costs are
+ * together, for today, yesterday, this week, this month or any range (the
+ * custom card also takes the shared period presets). Costs are
  * snapshot when each entry is saved (api-server lib/waste-cost.ts).
  * The API does the maths (lib/defects-kpi.ts); this page only shows it.
  */
@@ -18,6 +19,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { londonDay } from "@/lib/day-rollover";
+import { addDays, PERIOD_PRESETS, periodWindow, type PeriodPresetId } from "@/lib/roas";
 import { RecordDefectModal, DEFECT_STATION_LABELS, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
 import {
   useDefectList, useDefectSummary, useDefectTypes, useDeleteDefect, useSaveDefectType, type DefectRange,
@@ -27,11 +29,17 @@ import {
   type DefectRecord, type DefectSummary, type DefectType,
 } from "@/lib/defects-view";
 
-type PeriodKey = "today" | "week" | "month" | "custom";
+type PeriodKey = "today" | "yesterday" | "week" | "month" | "custom";
 
 const PERIOD_LABEL: Record<PeriodKey, string> = {
-  today: "Today", week: "This week", month: "This month", custom: "Custom range",
+  today: "Today", yesterday: "Yesterday", week: "This week", month: "This month", custom: "Custom range",
 };
+
+const PERIOD_KEYS: PeriodKey[] = ["today", "yesterday", "week", "month", "custom"];
+
+// The shared period presets (as on Numbers, Ads and P&L) fill the custom
+// card's dates. Today and Yesterday are left out there — they have cards.
+const QUICK_PICKS = PERIOD_PRESETS.filter(p => p.id !== "today" && p.id !== "yesterday");
 
 export default function DefectsPage() {
   const { state } = useAuth();
@@ -41,27 +49,45 @@ export default function DefectsPage() {
 
   const [selected, setSelected] = useState<PeriodKey>("week");
   const [custom, setCustom] = useState({ from: `${today.slice(0, 7)}-01`, to: today });
+  // Which shared preset filled the custom dates; null once a date is typed.
+  const [quickPick, setQuickPick] = useState<PeriodPresetId | null>(null);
   const [recordOpen, setRecordOpen] = useState(false);
   const [editing, setEditing] = useState<DefectRecord | null>(null);
 
   const customValid = custom.from <= custom.to && custom.to <= today && /^\d{4}-\d{2}-\d{2}$/.test(custom.from);
+  const yesterday = addDays(today, -1);
   const ranges: Record<PeriodKey, DefectRange> = {
     today: { period: "today" },
+    yesterday: { from: yesterday, to: yesterday },
     week: { period: "week" },
     month: { period: "month" },
     custom: custom,
   };
+  const label = (key: PeriodKey) =>
+    key === "custom" && quickPick ? PERIOD_PRESETS.find(p => p.id === quickPick)?.label ?? PERIOD_LABEL.custom : PERIOD_LABEL[key];
+  const editCustom = (field: "from" | "to", value: string) => {
+    setCustom(c => ({ ...c, [field]: value }));
+    setQuickPick(null);
+    setSelected("custom");
+  };
+  const pickQuick = (id: PeriodPresetId) => {
+    const win = periodWindow(id, Date.now());
+    setCustom({ from: win.from, to: win.to });
+    setQuickPick(id);
+    setSelected("custom");
+  };
 
   const todayQ = useDefectSummary(ranges.today);
+  const yesterdayQ = useDefectSummary(ranges.yesterday);
   const weekQ = useDefectSummary(ranges.week);
   const monthQ = useDefectSummary(ranges.month);
   const customQ = useDefectSummary(ranges.custom, customValid);
-  const byPeriod = { today: todayQ, week: weekQ, month: monthQ, custom: customQ };
+  const byPeriod = { today: todayQ, yesterday: yesterdayQ, week: weekQ, month: monthQ, custom: customQ };
   const current = byPeriod[selected];
   const listQ = useDefectList(ranges[selected], selected !== "custom" || customValid);
 
   return (
-    <div className="p-4 sm:p-8 space-y-6 max-w-6xl mx-auto">
+    <div className="p-4 sm:p-8 space-y-6">
       <PageHeader title="Defects & waste" />
 
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -77,11 +103,13 @@ export default function DefectsPage() {
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
-        {(["today", "week", "month", "custom"] as PeriodKey[]).map(key => (
+      {/* Columns follow the panel's width: five across on a wide screen,
+          wrapping on an iPad. */}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,15rem),1fr))] gap-3">
+        {PERIOD_KEYS.map(key => (
           <KpiCard
             key={key}
-            label={PERIOD_LABEL[key]}
+            label={label(key)}
             active={selected === key}
             onSelect={() => setSelected(key)}
             summary={byPeriod[key].data}
@@ -91,11 +119,20 @@ export default function DefectsPage() {
           >
             {key === "custom" && (
               <div className="mt-3 grid grid-cols-2 gap-2" onClick={e => e.stopPropagation()}>
+                <select
+                  aria-label="Quick pick a period"
+                  value={quickPick ?? ""}
+                  onChange={e => { if (e.target.value) pickQuick(e.target.value as PeriodPresetId); }}
+                  className="col-span-2 h-11 px-2 rounded-xl border-2 border-border bg-background text-sm min-w-0"
+                >
+                  <option value="">Pick dates…</option>
+                  {QUICK_PICKS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                </select>
                 <input type="date" value={custom.from} max={today} aria-label="From"
-                  onChange={e => { setCustom(c => ({ ...c, from: e.target.value })); setSelected("custom"); }}
+                  onChange={e => editCustom("from", e.target.value)}
                   className="h-11 px-2 rounded-xl border-2 border-border bg-background text-sm min-w-0" />
                 <input type="date" value={custom.to} max={today} aria-label="To"
-                  onChange={e => { setCustom(c => ({ ...c, to: e.target.value })); setSelected("custom"); }}
+                  onChange={e => editCustom("to", e.target.value)}
                   className="h-11 px-2 rounded-xl border-2 border-border bg-background text-sm min-w-0" />
                 {!customValid && <p className="col-span-2 text-sm text-destructive">Pick a start on or before the end, up to today.</p>}
               </div>
@@ -127,7 +164,7 @@ export default function DefectsPage() {
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <h2 className="text-2xl font-bold">Recorded defects & waste</h2>
           {current.data && (
-            <span className="text-base text-muted-foreground">{PERIOD_LABEL[selected]} · {rangeText(current.data.from, current.data.to, today)}</span>
+            <span className="text-base text-muted-foreground">{label(selected)} · {rangeText(current.data.from, current.data.to, today)}</span>
           )}
         </div>
         {listQ.isLoading && <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />}
