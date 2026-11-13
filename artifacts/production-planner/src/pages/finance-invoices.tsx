@@ -8,6 +8,7 @@
  * aside as a possible duplicate. Every action is kept with who and when.
  */
 import { useMemo, useRef, useState } from "react";
+import { InvoiceDeliveryChip } from "@/components/invoice-delivery-chip";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { unzipSync } from "fflate";
 import {
@@ -493,6 +494,7 @@ function InvoiceList({ invoices, onOpen }: { invoices: Invoice[]; onOpen: (id: n
               {inv.readStatus === "pending" && <Badge variant="outline" className="shrink-0"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Reading</Badge>}
               {(inv.readStatus === "failed" || inv.readStatus === "not_available") && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">Check details</Badge>}
               {inv.docKind !== "invoice" && <Badge variant="outline" className="shrink-0">{KINDS[inv.docKind] ?? inv.docKind}</Badge>}
+              <InvoiceDeliveryChip invoiceId={inv.id} />
               {inv.paymentStatus === "unpaid" && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">Unpaid</Badge>}
               <Badge variant="outline" className={cn("shrink-0", inv.source === "transaction" ? "text-indigo-700 border-indigo-300" : "")}>
                 {inv.source === "transaction" ? "Card transaction" : "Uploaded"}

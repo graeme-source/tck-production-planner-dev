@@ -10,6 +10,7 @@ import { InvoiceNotes } from "@/pages/finance-invoice-notes";
 import { inboxEntries, matchesInboxSearch } from "@/lib/finance-inbox";
 import { CheckCircle2, Eye, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { InvoiceDeliveryChip } from "@/components/invoice-delivery-chip";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -114,6 +115,7 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
         <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
           <InvoiceNotes invoice={inv} layout="inline" />
           <PaymentTermsChip supplier={inv.supplier} />
+          <InvoiceDeliveryChip invoiceId={inv.id} link />
         </div>
         <div className="shrink-0 sm:text-right font-bold tabular-nums text-lg leading-9">{inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : "total not read"}</div>
       </div>
