@@ -107,7 +107,7 @@ export interface SupplierMatchBundle {
   deliveries: { id: number; date: string }[];
 }
 
-let cache: { at: number; today: string; bundles: SupplierMatchBundle[] } | null = null;
+let cache: { at: number; today: string; suppliers: string; bundles: SupplierMatchBundle[] } | null = null;
 
 export function forgetMatches(): void {
   cache = null;
@@ -116,8 +116,10 @@ export function forgetMatches(): void {
 /** Every ticked supplier's invoices matched against its deliveries (cached a minute). */
 export async function matchAllSuppliers(): Promise<SupplierMatchBundle[]> {
   const today = londonDateString();
-  if (cache && cache.today === today && Date.now() - cache.at < 60_000) return cache.bundles;
   const ids = await enabledSupplierIds();
+  // A supplier ticked or unticked anywhere (even straight in the database) starts afresh.
+  const suppliers = ids.join(",");
+  if (cache && cache.today === today && cache.suppliers === suppliers && Date.now() - cache.at < 60_000) return cache.bundles;
   const since = windowStart(today);
   const invoicesBy = await invoicesBySupplier(since, new Set(ids));
   const deliveriesSince = isoFromDay(dayNumber(since) + EARLIEST_GAP);
@@ -150,7 +152,7 @@ export async function matchAllSuppliers(): Promise<SupplierMatchBundle[]> {
     }));
     bundles.push({ supplierId, result: matchSupplierInvoices(matchInvoices, matchDeliveries, today), invoices, deliveries });
   }
-  cache = { at: Date.now(), today, bundles };
+  cache = { at: Date.now(), today, suppliers, bundles };
   return bundles;
 }
 

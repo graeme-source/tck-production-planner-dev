@@ -35,7 +35,10 @@ export function useInvoiceDeliveryStatus() {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json();
     },
-    staleTime: 60_000,
+    // Fresh every time a page with invoices opens: a supplier just ticked,
+    // or lines just read, show straight away.
+    refetchOnMount: "always",
+    refetchInterval: 60_000,
   });
 }
 
