@@ -6,12 +6,14 @@
  * Sits on every dessert report card (packing station, opening checklist,
  * fulfilment). API: /api/dessert-labels.
  *
- * "Print some" (fix-queue #374): a − / + per flavour, starting at each
- * flavour's day's quantity, for a second packing run. The server caps each
- * flavour at its day's quantity, so it can't over-print.
+ * 13 Nov 2026 (Graeme): the main button prints only the labels STILL needed
+ * — each flavour's orders minus what's already printed for the dispatch day
+ * (recorded server-side) — and greys out once everything's printed. "Print
+ * some" is ad hoc: any number per flavour, not capped at the orders.
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { DONE_BTN, PRIMARY_BTN, SOME_BTN } from "./despatch-labels";
 import { Check, ChevronDown, Loader2, Printer, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
@@ -24,21 +26,15 @@ interface FivePackLabels {
   useByDays: number;
   useBy: string;
   total: number;
-  lines: Array<{ variantId: string | null; productTitle: string; quantity: number; barcode: string | null; png: string; barcodeProblem: string | null }>;
+  /** Already printed for the dispatch day, and still needed. */
+  printed?: number;
+  left?: number;
+  lines: Array<{ variantId: string | null; productTitle: string; quantity: number; printed?: number; left?: number; barcode: string | null; png: string; barcodeProblem: string | null }>;
 }
 
-export function FivePackLabelsButton({ tag }: { tag: string }) {
-  const { state } = useAuth();
-  const role = state.status === "authenticated" ? state.user.role : "viewer";
-  const canEditUseBy = role === "admin" || role === "manager";
-  const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [printed, setPrinted] = useState(false);
-  const [someOpen, setSomeOpen] = useState(false);
-  const [some, setSome] = useState<Record<string, number>>({});
-  const [printedSome, setPrintedSome] = useState<number | null>(null);
-  const q = useQuery<FivePackLabels>({
+/** The day's 5-pack labels: per flavour ordered / printed / still needed. */
+export function useFivePackLabels(tag: string) {
+  return useQuery<FivePackLabels>({
     queryKey: ["five-pack-labels", tag],
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/dessert-labels?tag=${encodeURIComponent(tag)}`, { credentials: "include" });
@@ -46,14 +42,34 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
       if (!res.ok) throw new Error(body.error ?? `HTTP ${res.status}`);
       return body as FivePackLabels;
     },
-    staleTime: 60_000,
+    // New orders come in through the day — keep the "still needed" fresh.
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
+}
+
+/** Inline controls for the 5-pack row of the desserts report: they sit on
+ *  the same line as the row's name and number (the root is display:contents);
+ *  "Print some" and the flavour breakdown open full width underneath. */
+export function FivePackLabelsButton({ tag }: { tag: string }) {
+  const { state } = useAuth();
+  const role = state.status === "authenticated" ? state.user.role : "viewer";
+  const canEditUseBy = role === "admin" || role === "manager";
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [someOpen, setSomeOpen] = useState(false);
+  const qc = useQueryClient();
+  const [some, setSome] = useState<Record<string, number>>({});
+  const [printedSome, setPrintedSome] = useState<number | null>(null);
+  const q = useFivePackLabels(tag);
   const d = q.data;
   const missing = (d?.lines ?? []).filter(l => !l.barcode).length;
 
   // Same key the server uses: the variant, else the flavour's name.
   const keyOf = (l: { variantId: string | null; productTitle: string }) => l.variantId ?? l.productTitle;
-  const someCounts: Record<string, number> = Object.fromEntries((d?.lines ?? []).map(l => [keyOf(l), Math.min(l.quantity, Math.max(0, some[keyOf(l)] ?? l.quantity))]));
+  // Ad hoc: starts at what's still needed (or the day's quantity), any number up to 200.
+  const someCounts: Record<string, number> = Object.fromEntries((d?.lines ?? []).map(l => [keyOf(l), Math.min(200, Math.max(0, some[keyOf(l)] ?? (l.left ?? l.quantity)))]));
   const someTotal = Object.values(someCounts).reduce((t, n) => t + n, 0);
 
   /** No counts = every label for the day (the one-tap default). */
@@ -70,7 +86,8 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
       const url = URL.createObjectURL(await res.blob());
       if (tab) tab.location.href = url;
       else { const a = document.createElement("a"); a.href = url; a.download = `5-pack-labels-${tag}.pdf`; a.click(); }
-      if (counts) setPrintedSome(Object.values(counts).reduce((t, n) => t + n, 0)); else setPrinted(true);
+      if (counts) setPrintedSome(Object.values(counts).reduce((t, n) => t + n, 0));
+      await qc.invalidateQueries({ queryKey: ["five-pack-labels", tag] });
     } catch (e) {
       tab?.close();
       setError(e instanceof Error ? e.message : "Couldn't make the labels");
@@ -79,37 +96,40 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
     }
   };
 
-  if (q.isError) return <p className="text-sm text-destructive font-semibold mt-2">Couldn't load the 5-pack labels — {(q.error as Error).message}</p>;
+  if (q.isError) return <p className="basis-full text-sm text-destructive font-semibold">Couldn't load the 5-pack labels — {(q.error as Error).message}</p>;
   if (!d || d.total === 0) return null;
+  const left = d.left ?? d.total;
+  const printedSoFar = d.printed ?? 0;
   return (
-    <div className="mt-3 space-y-2">
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" onClick={() => print()} disabled={busy} data-tour="five-pack-labels"
-          className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
-          {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : printed ? <Check className="w-5 h-5" /> : <Printer className="w-5 h-5" />}
-          {printed ? "Print again" : `Print all ${d.total} 5-pack labels`}
-        </button>
-        <button type="button" onClick={() => setOpen(o => !o)} data-tour="five-pack-labels-see"
-          className="h-12 px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:bg-secondary inline-flex items-center gap-1">
-          See the labels <ChevronDown className={cn("w-4 h-4 transition-transform", open && "rotate-180")} />
-        </button>
-        <button type="button" onClick={() => setSomeOpen(o => !o)} aria-expanded={someOpen}
-          className="h-12 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary inline-flex items-center gap-1">
+    <div className="contents">
+        {left > 0 ? (
+          <button type="button" onClick={() => print()} disabled={busy} data-tour="five-pack-labels" className={PRIMARY_BTN}>
+            {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
+            Print {left}{printedSoFar > 0 ? " more" : ""} label{left === 1 ? "" : "s"}
+          </button>
+        ) : (
+          <span className={DONE_BTN} aria-disabled="true" data-tour="five-pack-labels">
+            <Check className="w-5 h-5" /> All labels printed today
+          </span>
+        )}
+        <button type="button" onClick={() => setSomeOpen(o => !o)} aria-expanded={someOpen} className={SOME_BTN}>
           Print some <ChevronDown className={cn("w-4 h-4 transition-transform", someOpen && "rotate-180")} />
         </button>
-      </div>
+        <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} data-tour="five-pack-labels-see"
+          className="h-12 px-3 rounded-xl text-sm font-semibold text-muted-foreground hover:bg-secondary inline-flex items-center gap-1">
+          Flavours <ChevronDown className={cn("w-4 h-4 transition-transform", open && "rotate-180")} />
+        </button>
       {someOpen && (
-        <div className="space-y-2 pt-1">
+        <div className="basis-full space-y-2 pt-1">
           {d.lines.map(l => (
             <div key={keyOf(l)} className="flex flex-wrap items-center justify-between gap-2 rounded-xl ring-1 ring-border px-3 py-2">
               <span className="font-semibold">{l.productTitle}</span>
-              <LabelCountStepper value={someCounts[keyOf(l)] ?? 0} min={0} max={l.quantity} label={`${l.productTitle} 5-pack labels`}
+              <LabelCountStepper value={someCounts[keyOf(l)] ?? 0} min={0} max={200} label={`${l.productTitle} 5-pack labels`}
                 onChange={n => setSome(s => ({ ...s, [keyOf(l)]: n }))} />
             </div>
           ))}
           <div className="flex flex-wrap items-center gap-3">
-            <button type="button" onClick={() => print(someCounts)} disabled={busy || someTotal < 1}
-              className="h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60">
+            <button type="button" onClick={() => print(someCounts)} disabled={busy || someTotal < 1} className={PRIMARY_BTN}>
               {busy ? <Loader2 className="w-5 h-5 animate-spin" /> : <Printer className="w-5 h-5" />}
               Print {someTotal} 5-pack label{someTotal === 1 ? "" : "s"}
             </button>
@@ -117,19 +137,21 @@ export function FivePackLabelsButton({ tag }: { tag: string }) {
           </div>
         </div>
       )}
-      <p className="text-xs text-muted-foreground">
-        Use by {d.useBy} ({d.useByDays} days from today). Print at Actual size on the 102 × 25 mm label printer.
-        {missing > 0 && <span className="text-amber-700 dark:text-amber-300 font-semibold"> {missing} flavour{missing === 1 ? " has" : "s have"} no barcode — {missing === 1 ? "it prints" : "they print"} without one.</span>}
-      </p>
-      {error && <p className="text-sm text-destructive font-semibold">{error}</p>}
+      {missing > 0 && (
+        <p className="basis-full text-xs text-amber-700 dark:text-amber-300 font-semibold">
+          {missing} flavour{missing === 1 ? " has" : "s have"} no barcode — {missing === 1 ? "it prints" : "they print"} without one.
+        </p>
+      )}
+      {error && <p className="basis-full text-sm text-destructive font-semibold">{error}</p>}
       {open && (
-        <div className="space-y-3 pt-1">
+        <div className="basis-full space-y-3 pt-1">
           {d.lines.map(l => (
             <div key={l.variantId ?? l.productTitle} className="space-y-1">
-              <p className="text-sm font-semibold">{l.productTitle} × {l.quantity}{l.barcode ? "" : " — no barcode"}</p>
+              <p className="text-sm font-semibold">{l.productTitle} × {l.quantity}{l.printed ? ` · ${l.printed} printed` : ""}{l.barcode ? "" : " — no barcode"}</p>
               <img src={l.png} alt={`5-pack label: ${l.productTitle}`} className="w-full max-w-xl rounded-lg ring-1 ring-border bg-white" />
             </div>
           ))}
+          <p className="text-xs text-muted-foreground">Use by {d.useBy} ({d.useByDays} days from today).</p>
           {canEditUseBy && <UseByDays tag={tag} days={d.useByDays} />}
         </div>
       )}

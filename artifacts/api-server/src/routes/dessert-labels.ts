@@ -36,7 +36,7 @@ import { getOrdersByTag, getProductsByTag } from "../services/shopify";
 import { scanQueueBarcodes } from "../lib/barcode-store";
 import { buildCurrentLabel, fonts, loadLiveVersion, loadRecipe } from "../lib/product-labels-store";
 import { shortError } from "../lib/finance/cash-flow";
-import { cappedLabelCount, fivePackLabelCopies } from "../lib/dessert-label-counts";
+import { fivePackLabelCopies, fivePackLineKey, labelCountToPrint, labelsLeft } from "../lib/dessert-label-counts";
 
 const router: IRouter = Router();
 router.use(requireFulfilmentAccess);
@@ -61,6 +61,30 @@ async function linesFor(tag: string): Promise<LabelLine[]> {
   return fivePackLabels.map(l => ({ ...l, barcode: (l.variantId && barcodes[l.variantId]) || null }));
 }
 
+// ── What's been printed for a dispatch day (Graeme, 13 Nov 2026) ──────────
+// Every print is recorded, so the report asks only for the labels still
+// needed: a second despatch prints just the new orders' labels.
+
+type PrintKind = "five_pack" | "despatch";
+
+async function printedFor(tag: string, kind: PrintKind): Promise<Record<string, number>> {
+  const r = await db.execute<{ item_key: string; copies: string }>(sql`
+    SELECT item_key, SUM(copies)::text AS copies FROM dessert_label_prints
+    WHERE tag = ${tag} AND kind = ${kind} GROUP BY item_key
+  `);
+  return Object.fromEntries(r.rows.map(x => [x.item_key, Number(x.copies)]));
+}
+
+async function recordPrinted(tag: string, kind: PrintKind, items: Array<{ key: string; copies: number }>, userId: number | null): Promise<void> {
+  for (const it of items) {
+    if (it.copies < 1) continue;
+    await db.execute(sql`
+      INSERT INTO dessert_label_prints (tag, kind, item_key, copies, printed_by)
+      VALUES (${tag}, ${kind}, ${it.key}, ${it.copies}, ${userId})
+    `);
+  }
+}
+
 function render(line: FivePackLabelLine & { barcode: string | null }, useBy: string) {
   return renderSmallLabel({ name: line.productTitle, secondLine: SECOND_LINE, useBy, barcode: line.barcode }, fonts());
 }
@@ -73,12 +97,18 @@ router.get("/", validateQuery(TagQuery), async (_req: Request, res: Response) =>
     const days = await useByDays();
     const useByIso = addDays(londonDateString(), days);
     const useBy = formatLabelDate(useByIso);
-    const lines = await linesFor(tag);
+    const [lines, printed] = await Promise.all([linesFor(tag), printedFor(tag, "five_pack")]);
+    const withLeft = lines.map(l => {
+      const done = printed[fivePackLineKey(l)] ?? 0;
+      return { ...l, printed: done, left: labelsLeft(l.quantity, done) };
+    });
     res.json({
       tag, useByDays: days, useBy, useByIso,
       total: lines.reduce((t, l) => t + l.quantity, 0),
+      printed: withLeft.reduce((t, l) => t + l.printed, 0),
+      left: withLeft.reduce((t, l) => t + l.left, 0),
       labelSize: { widthMm: SMALL_LABEL_PAGE.widthMm, heightMm: SMALL_LABEL_PAGE.heightMm },
-      lines: lines.map(l => {
+      lines: withLeft.map(l => {
         const { png, layout } = render(l, useBy);
         return { ...l, png, barcodeProblem: layout.barcodeProblem };
       }),
@@ -89,8 +119,8 @@ router.get("/", validateQuery(TagQuery), async (_req: Request, res: Response) =>
   }
 });
 
-/** "Print some" (fix-queue #374): optional per-flavour counts; the orders
- *  still cap each one, so the page can choose fewer but never more. */
+/** No counts = the labels still needed. "Print some" (ad hoc) = per-flavour
+ *  counts, printed as chosen (13 Nov 2026: no longer capped at the orders). */
 const FivePackPrintBody = TagQuery.extend({
   counts: z.record(z.string(), z.number().int().min(0).max(MAX_PRINT_COUNT)).optional(),
 });
@@ -99,12 +129,16 @@ router.post("/print", validate(FivePackPrintBody), async (req: Request, res: Res
   const { tag, counts } = req.body as z.infer<typeof FivePackPrintBody>;
   try {
     const useBy = formatLabelDate(addDays(londonDateString(), await useByDays()));
-    const lines = await linesFor(tag);
-    if (!lines.length) { res.status(409).json({ error: "No 5-packs on these orders." }); return; }
-    const chosen = fivePackLabelCopies(lines, counts);
-    if (!chosen.length) { res.status(409).json({ error: "Choose at least one label to print." }); return; }
+    const [lines, printed] = await Promise.all([linesFor(tag), printedFor(tag, "five_pack")]);
+    if (!lines.length && !counts) { res.status(409).json({ error: "No 5-packs on these orders." }); return; }
+    const chosen = fivePackLabelCopies(lines, counts, printed);
+    if (!chosen.length) {
+      res.status(409).json({ error: counts ? "Choose at least one label to print." : "All the 5-pack labels for these orders have been printed." });
+      return;
+    }
     const runs = chosen.map(l => ({ bitmap: render(l, useBy).bitmap, copies: l.copies }));
     const pdf = labelRunsPdf({ runs, dpi: SMALL_LABEL_PAGE.dpi, title: `5-pack labels ${tag}` });
+    await recordPrinted(tag, "five_pack", chosen.map(l => ({ key: fivePackLineKey(l), copies: l.copies })), req.session.userId ?? null);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="5-pack-labels-${tag}.pdf"`);
     res.setHeader("Cache-Control", "no-store");
@@ -125,7 +159,7 @@ router.post("/print", validate(FivePackPrintBody), async (req: Request, res: Res
 //
 //   GET  /despatch?tag=YYYY-MM-DD            each line: its recipe, count, ready or why not
 //   POST /despatch/print { tag, recipeId, count? }   one PDF: that recipe's label × its count
-//        (count = "Print some", capped at the day's total — fix-queue #374)
+//        (no count = the labels still needed; count = "Print some", ad hoc)
 
 /** Shopify variant → recipe, through the recipe ↔ Shopify link (pack,
  *  wonky and 8-pack variants), as the stock and P&L code reads it. */
@@ -166,7 +200,7 @@ async function despatchLabel(recipeId: number) {
 router.get("/despatch", validateQuery(TagQuery), async (_req: Request, res: Response) => {
   const { tag } = res.locals["query"] as z.infer<typeof TagQuery>;
   try {
-    const lines = await despatchLines(tag);
+    const [lines, printed] = await Promise.all([despatchLines(tag), printedFor(tag, "despatch")]);
     const byRecipe = new Map<number, Awaited<ReturnType<typeof despatchLabel>>>();
     const out = [];
     for (const l of lines) {
@@ -179,6 +213,8 @@ router.get("/despatch", validateQuery(TagQuery), async (_req: Request, res: Resp
       out.push({
         ...l,
         count: despatchLabelCount(lines, l.recipeId),
+        printed: printed[String(l.recipeId)] ?? 0,
+        left: labelsLeft(despatchLabelCount(lines, l.recipeId), printed[String(l.recipeId)] ?? 0),
         recipeName: d.recipeName,
         ready: d.ready,
         message: d.ready ? null : d.message,
@@ -195,16 +231,16 @@ router.get("/despatch", validateQuery(TagQuery), async (_req: Request, res: Resp
 
 const DespatchPrintBody = TagQuery.extend({
   recipeId: z.number().int().positive(),
-  /** "Print some" (fix-queue #374) — capped at the day's total below. */
+  /** "Print some" — ad hoc, printed as chosen. No count = still needed. */
   count: z.number().int().min(1).max(MAX_PRINT_COUNT).optional(),
 });
 
 router.post("/despatch/print", validate(DespatchPrintBody), async (req: Request, res: Response) => {
   const { tag, recipeId, count: requested } = req.body as z.infer<typeof DespatchPrintBody>;
   try {
-    // The orders set the ceiling; the page may only ask for fewer ("Print some").
-    const count = Math.min(MAX_PRINT_COUNT, cappedLabelCount(despatchLabelCount(await despatchLines(tag), recipeId), requested));
-    if (count < 1) { res.status(409).json({ error: "None of these on the orders for that day." }); return; }
+    const [lines, printed] = await Promise.all([despatchLines(tag), printedFor(tag, "despatch")]);
+    const count = Math.min(MAX_PRINT_COUNT, labelCountToPrint(despatchLabelCount(lines, recipeId), printed[String(recipeId)] ?? 0, requested));
+    if (count < 1) { res.status(409).json({ error: requested ? "Choose at least one label to print." : "All these labels have been printed for the day." }); return; }
     const d = await despatchLabel(recipeId);
     if (!d.ready) { res.status(409).json({ error: d.message }); return; }
     const pdf = labelsPdf({ bitmap: d.proof.bitmap, dpi: d.proof.layout.dpi, copies: count, title: `${d.recipe.name} - despatch labels ${tag}` });
@@ -220,6 +256,7 @@ router.post("/despatch/print", validate(DespatchPrintBody), async (req: Request,
       kind: "production",
       user: { id: userId, name: u?.name ?? null },
     }));
+    await recordPrinted(tag, "despatch", [{ key: String(recipeId), copies: count }], userId);
     const safe = d.recipe.name.replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${safe}-despatch-labels-${tag}-x${count}.pdf"`);

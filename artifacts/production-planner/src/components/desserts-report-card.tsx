@@ -1,16 +1,18 @@
-// Desserts report card — shared by Order Packing Live (top, full width) and
-// anywhere else the report is needed. Grouped
-// server-side (lib/desserts-report) so every surface agrees.
+// Desserts report — Order Packing Live's step 3 (after tagging and booking
+// the APC labels) and, read-only, the opening checklist. Grouped server-side
+// (lib/desserts-report) so every surface agrees.
 //
-// UI rule (Graeme, 2026-08-28): the 5-pack-labels row and each other
-// dessert (cinnamon buns) are EQUAL headline rows — same banner styling —
-// because the packer starts the day with two numbers, not one. Cinnamon
-// buns sit on top; the 5-pack banner keeps its per-recipe breakdown
-// underneath, as before.
+// 13 Nov 2026 (Graeme): one line per item — "Cinnamon Buns 3 · Print 3 labels
+// · Print some", "5-packs 4 · Print 4 labels · Print some" — with the flavour
+// breakdown behind "Flavours". The buttons ask only for the labels still
+// needed (orders − already printed for the dispatch day), and grey out with
+// "All labels printed today" once done, so a later despatch prints just the
+// new orders' labels.
 
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { FivePackLabelsButton } from "@/components/five-pack-labels";
-import { DespatchLabelsButton } from "@/components/despatch-labels";
+import { FivePackLabelsButton, useFivePackLabels } from "@/components/five-pack-labels";
+import { DespatchLabelsButton, useDespatchLabels } from "@/components/despatch-labels";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -29,59 +31,63 @@ export function useDessertsReport(tag: string) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       return res.json();
     },
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
   });
 }
 
-function BannerRow({ label, value }: { label: string; value: number }) {
+/** Are dessert labels still needed for this dispatch day? Only labels that
+ *  CAN print count (a dessert whose label isn't published can't hold up
+ *  packing). `loading` = not known yet. */
+export function useDessertLabelsStatus(tag: string, enabled = true): { loading: boolean; left: number } {
+  const despatch = useDespatchLabels(tag);
+  const fivePack = useFivePackLabels(tag);
+  if (!enabled) return { loading: false, left: 0 };
+  const loading = (despatch.isLoading && !despatch.isError) || (fivePack.isLoading && !fivePack.isError);
+  const despatchLeft = (despatch.data?.lines ?? [])
+    .filter(l => l.ready && l.recipeId != null)
+    // One recipe can come from several lines (2-pack, 8-pack) — count it once.
+    .reduce((m, l) => m.set(l.recipeId as number, l.left ?? l.count), new Map<number, number>());
+  const left = [...despatchLeft.values()].reduce((t, n) => t + n, 0) + (fivePack.data?.left ?? 0);
+  return { loading, left };
+}
+
+function Row({ name, value, children }: { name: string; value: number; children?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between">
-      <span className="font-semibold text-base text-pink-900 dark:text-pink-100">{label}</span>
-      <span className="font-bold tabular-nums text-xl text-pink-800 dark:text-pink-200">{value}</span>
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-4 py-2.5">
+      <span className="font-semibold text-base text-pink-900 dark:text-pink-100 min-w-[9rem]">{name}</span>
+      <span className="font-display font-extrabold tabular-nums text-2xl text-pink-800 dark:text-pink-200 min-w-[2.5rem]">{value}</span>
+      {children}
     </div>
   );
 }
 
-export function DessertsReportCard({ tag, className }: { tag: string; className?: string }) {
+/** printable=false: the counts only, and where to print them (the opening
+ *  checklist — printing happens on Order Packing Live after the APC labels
+ *  are booked, so the order can't be skipped). */
+export function DessertsReportCard({ tag, className, printable = true, title }: { tag: string; className?: string; printable?: boolean; title?: string }) {
   const { data: desserts } = useDessertsReport(tag);
   const fivePack = desserts?.fivePackProducts ?? [];
   if (!desserts || (desserts.products.length === 0 && fivePack.length === 0)) return null;
 
   return (
-    <div className={`bg-card border border-border rounded-xl overflow-hidden ${className ?? ""}`}>
-      <div className="px-4 py-2 border-b border-border/50 bg-pink-50/50 dark:bg-pink-900/10">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">🍰</span>
-          <h3 className="font-semibold text-base">Desserts Report</h3>
-          <span className="text-sm text-muted-foreground ml-auto">{desserts.totalQuantity} units total</span>
-        </div>
-      </div>
-      {/* Every headline number gets the same banner treatment — cinnamon
-          buns first, then the grouped 5-pack label count. Side by side
-          across the full width, so the card is short and the first orders
-          are in view (Graeme, 13 Nov 2026). */}
-      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-px bg-border/50">
+    <div className={`bg-pink-50 dark:bg-pink-950/30 border border-pink-200 dark:border-pink-900 rounded-xl overflow-hidden divide-y divide-pink-200/70 dark:divide-pink-900/60 ${className ?? ""}`}>
+      {title && <p className="px-4 pt-2.5 pb-1 text-sm font-bold uppercase tracking-wide text-pink-800 dark:text-pink-300">{title}</p>}
       {desserts.products.map(p => (
-        <div key={p.title} className="px-4 py-3 bg-pink-50 dark:bg-pink-950/40">
-          <BannerRow label={p.title} value={p.quantity} />
-          <DespatchLabelsButton tag={tag} title={p.title} />
-        </div>
+        <Row key={p.title} name={p.title} value={p.quantity}>
+          {printable && <DespatchLabelsButton tag={tag} title={p.title} />}
+        </Row>
       ))}
       {fivePack.length > 0 && (
-        <div className="px-4 py-3 bg-pink-50 dark:bg-pink-950/40">
-          <BannerRow label="5-Pack labels to print" value={desserts.fivePackTotal ?? 0} />
-          <div className="mt-1.5 space-y-1">
-            {fivePack.map(p => (
-              <div key={p.title} className="flex items-center justify-between text-sm text-pink-900/80 dark:text-pink-200/80">
-                <span className="min-w-0 break-words">{p.title}</span>
-                <span className="font-semibold tabular-nums shrink-0 ml-2">{p.quantity}</span>
-              </div>
-            ))}
-          </div>
-          <FivePackLabelsButton tag={tag} />
-        </div>
+        <Row name="5-packs" value={desserts.fivePackTotal ?? 0}>
+          {printable && <FivePackLabelsButton tag={tag} />}
+        </Row>
       )}
-      </div>
+      {!printable && (
+        <p className="px-4 py-2.5 text-sm text-pink-900/80 dark:text-pink-200/80">
+          Print these on <Link href={`/fulfilment?tag=${encodeURIComponent(tag)}`} className="font-semibold underline underline-offset-2">Order Packing Live</Link> once the APC labels are booked.
+        </p>
+      )}
     </div>
   );
 }

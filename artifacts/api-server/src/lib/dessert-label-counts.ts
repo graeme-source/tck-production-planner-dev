@@ -1,39 +1,53 @@
 /**
- * How many dessert labels print when someone asks for fewer than the whole
- * day (fix-queue #374, Grant, 2026-10-29: a second packing run later in the
- * day only needs the extra labels). Objective F.
+ * How many dessert labels print (Objective C).
  *
- * The day's orders stay the ceiling: a chosen count can only ever be LESS
- * than or equal to what the orders call for, never more, so "Print some"
- * can't over-print by mistake. No count = the whole day, as before.
+ * Graeme, 13 Nov 2026: the desserts report should always ask only for what's
+ * still needed — "once we've printed in the morning … if we receive more
+ * orders, count what is still to be printed" — and say when everything has
+ * been printed. So the one-tap default is the day's orders MINUS the labels
+ * already printed for that dispatch day (dessert_label_prints).
+ *
+ * "Print some" stays as an ad-hoc choice (fix-queue #374), and since 13 Nov
+ * it is no longer capped at the orders: "I could just choose to print
+ * brownie labels if the calculation gets this wrong." Whatever prints is
+ * recorded, so it counts towards the day.
  */
 
-/** Labels to print for one line: the day's total, or the chosen count
- *  capped at that total. Zero, negative or non-numbers print nothing. */
-export function cappedLabelCount(total: number, requested?: number | null): number {
-  const ceiling = Number.isFinite(total) ? Math.max(0, Math.floor(total)) : 0;
-  if (requested === undefined || requested === null) return ceiling;
-  if (!Number.isFinite(requested)) return 0;
-  return Math.min(ceiling, Math.max(0, Math.floor(requested)));
+/** The most labels one request may print. */
+export const MAX_AD_HOC_LABELS = 200;
+
+/** Labels still needed for one line: ordered − printed, never below zero. */
+export function labelsLeft(ordered: number, printed: number): number {
+  const o = Number.isFinite(ordered) ? Math.floor(ordered) : 0;
+  const p = Number.isFinite(printed) ? Math.floor(printed) : 0;
+  return Math.max(0, o - p);
 }
 
-/** The key a 5-pack flavour is chosen by: its variant, else its name. */
+/** What a request prints for one line: the chosen count (whole, 0–200,
+ *  not limited by the orders), or with no choice, what's still needed. */
+export function labelCountToPrint(ordered: number, printed: number, requested?: number | null): number {
+  if (requested === undefined || requested === null) return labelsLeft(ordered, printed);
+  if (!Number.isFinite(requested)) return 0;
+  return Math.min(MAX_AD_HOC_LABELS, Math.max(0, Math.floor(requested)));
+}
+
+/** The key a 5-pack flavour is chosen and recorded by: its variant, else its name. */
 export function fivePackLineKey(line: { variantId: string | null; productTitle: string }): string {
   return line.variantId ?? line.productTitle;
 }
 
 /** Each 5-pack flavour with how many labels to print. No `requested` =
- *  every flavour × its day's quantity. With `requested`, a flavour not in
- *  it prints none, and each one is capped at its own day's quantity.
- *  Flavours that come to zero are left out. */
+ *  each flavour's labels still needed (orders − printed). With `requested`,
+ *  a flavour not in it prints none. Flavours that come to zero are left out. */
 export function fivePackLabelCopies<L extends { variantId: string | null; productTitle: string; quantity: number }>(
   lines: L[],
   requested?: Record<string, number> | null,
+  printed: Record<string, number> = {},
 ): Array<L & { copies: number }> {
   return lines
-    .map(l => ({
-      ...l,
-      copies: requested ? cappedLabelCount(l.quantity, requested[fivePackLineKey(l)] ?? 0) : cappedLabelCount(l.quantity),
-    }))
+    .map(l => {
+      const key = fivePackLineKey(l);
+      return { ...l, copies: requested ? labelCountToPrint(l.quantity, printed[key] ?? 0, requested[key] ?? 0) : labelsLeft(l.quantity, printed[key] ?? 0) };
+    })
     .filter(l => l.copies > 0);
 }

@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { FivePackLabelsButton } from "@/components/five-pack-labels";
-import { DespatchLabelsButton } from "@/components/despatch-labels";
+import { DessertsReportCard } from "@/components/desserts-report-card";
 import {
   CheckCircle2, Circle, ClipboardCheck, Plus, Minus, Undo2, Loader2, XCircle,
   Sun, Sparkles, Moon, ChevronDown, ChevronUp, GripVertical, Trash2, Pencil, Eye, EyeOff, AlertTriangle,
@@ -1719,53 +1718,11 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
         </div>
       );
     }
+    // The same compact report as Order Packing Live, read-only here: the
+    // labels print there, after the APC labels are booked, so the order of
+    // the morning can't be skipped from the checklist (Graeme, 13 Nov 2026).
     return (
-      <div className="mb-4 p-4 bg-purple-50/60 dark:bg-purple-950/20 border border-purple-200 dark:border-purple-800 rounded-xl">
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-sm font-semibold text-purple-700 dark:text-purple-300">
-            Dessert Report
-          </p>
-          <span className="text-xs text-purple-600 dark:text-purple-400 font-medium">
-            Delivery: {report.deliveryLabel}
-          </span>
-        </div>
-        {/* Every headline number gets the SAME banner treatment (Graeme,
-            2026-08-28): cinnamon buns and the 5-pack label count are equal
-            starting numbers for the packer. Cinnamon on top; the 5-pack
-            banner keeps its per-recipe breakdown underneath, grouped
-            server-side so every surface of this report agrees. */}
-        {report.products.map((p, i) => (
-          <div key={`prod-${i}`} className="mb-3 p-3 rounded-lg bg-purple-100/70 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-purple-800 dark:text-purple-200">{p.title}</span>
-              <span className="text-2xl font-bold tabular-nums text-purple-800 dark:text-purple-200">{p.quantity}</span>
-            </div>
-            {/* Its despatch labels, one tap (cinnamon buns, 2026-10-27). */}
-            <DespatchLabelsButton tag={report.tag} title={p.title} />
-          </div>
-        ))}
-        {fivePack.length > 0 && (
-          <div className="mb-3 p-3 rounded-lg bg-purple-100/70 dark:bg-purple-900/30 border border-purple-300 dark:border-purple-700">
-            <div className="flex items-center justify-between">
-              <span className="text-sm font-bold text-purple-800 dark:text-purple-200">5-Pack labels to print</span>
-              <span className="text-2xl font-bold tabular-nums text-purple-800 dark:text-purple-200">{report.fivePackTotal ?? 0}</span>
-            </div>
-            <div className="mt-1.5 space-y-1">
-              {fivePack.map((p, i) => (
-                <div key={i} className="flex items-center justify-between text-xs text-purple-900/80 dark:text-purple-200/80">
-                  <span className="truncate">{p.title}</span>
-                  <span className="font-semibold tabular-nums w-8 text-right shrink-0 ml-2">{p.quantity}</span>
-                </div>
-              ))}
-            </div>
-            <FivePackLabelsButton tag={report.tag} />
-          </div>
-        )}
-        <div className="mt-3 pt-2 border-t border-purple-200 dark:border-purple-700 flex items-center justify-between">
-          <span className="text-sm font-semibold text-purple-700 dark:text-purple-300">Total</span>
-          <span className="text-lg font-bold tabular-nums text-purple-700 dark:text-purple-300">{report.totalQuantity}</span>
-        </div>
-      </div>
+      <DessertsReportCard tag={report.tag} printable={false} title={`Desserts — delivery ${report.deliveryLabel}`} className="mb-4" />
     );
   }
 

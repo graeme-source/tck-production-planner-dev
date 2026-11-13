@@ -1,30 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { cappedLabelCount, fivePackLabelCopies, fivePackLineKey } from "./dessert-label-counts";
+import { labelsLeft, labelCountToPrint, fivePackLabelCopies, fivePackLineKey, MAX_AD_HOC_LABELS } from "./dessert-label-counts";
 
-// Regression for fix-queue #374: the dessert label buttons could only print
-// the whole day; "Print some" may choose fewer, never more than the orders.
-describe("cappedLabelCount", () => {
-  it("no count = the day's full total (the one-tap default)", () => {
-    expect(cappedLabelCount(12)).toBe(12);
-    expect(cappedLabelCount(12, null)).toBe(12);
+// Regression (Graeme, 13 Nov 2026): the report still said "Print 3 labels"
+// after they'd been printed, and a later despatch had no labels for orders
+// placed since. The default is now what's still needed.
+describe("labels still needed", () => {
+  it("the morning print covers the orders so far; later orders need just the new ones", () => {
+    expect(labelsLeft(3, 0)).toBe(3);
+    expect(labelsLeft(3, 3)).toBe(0);
+    expect(labelsLeft(5, 3)).toBe(2);
   });
-
-  it("a smaller count prints just that many", () => {
-    expect(cappedLabelCount(12, 4)).toBe(4);
+  it("never below zero (extra printed by hand)", () => {
+    expect(labelsLeft(3, 5)).toBe(0);
   });
-
-  it("a count above the day's total is capped at the total", () => {
-    expect(cappedLabelCount(12, 50)).toBe(12);
+  it("no choice prints what's still needed", () => {
+    expect(labelCountToPrint(5, 3)).toBe(2);
+    expect(labelCountToPrint(5, 3, null)).toBe(2);
   });
-
-  it("zero, negative or nonsense counts print nothing", () => {
-    expect(cappedLabelCount(12, 0)).toBe(0);
-    expect(cappedLabelCount(12, -3)).toBe(0);
-    expect(cappedLabelCount(12, Number.NaN)).toBe(0);
+  it("an ad-hoc count prints that many, even above the orders (calculation wrong)", () => {
+    expect(labelCountToPrint(3, 3, 4)).toBe(4);
+    expect(labelCountToPrint(0, 0, 2)).toBe(2);
   });
-
-  it("whole labels only", () => {
-    expect(cappedLabelCount(12, 3.7)).toBe(3);
+  it("ad-hoc counts are whole, 0 to the limit; nonsense prints nothing", () => {
+    expect(labelCountToPrint(3, 0, 3.7)).toBe(3);
+    expect(labelCountToPrint(3, 0, -2)).toBe(0);
+    expect(labelCountToPrint(3, 0, Number.NaN)).toBe(0);
+    expect(labelCountToPrint(3, 0, 10_000)).toBe(MAX_AD_HOC_LABELS);
   });
 });
 
@@ -35,22 +36,22 @@ describe("fivePackLabelCopies", () => {
     { variantId: null, productTitle: "Flavour C", quantity: 3 },
   ];
 
-  it("no choice = every flavour × its day's quantity", () => {
+  it("no choice, nothing printed = every flavour × its day's quantity", () => {
     expect(fivePackLabelCopies(lines).map(l => l.copies)).toEqual([6, 2, 3]);
   });
 
-  it("caps each flavour at its own day's quantity", () => {
-    const out = fivePackLabelCopies(lines, { "111": 2, "222": 9, "Flavour C": 1 });
-    expect(out.map(l => [fivePackLineKey(l), l.copies])).toEqual([["111", 2], ["222", 2], ["Flavour C", 1]]);
+  it("no choice after a print = only each flavour's labels still needed", () => {
+    const out = fivePackLabelCopies(lines, null, { "111": 4, "222": 2, "Flavour C": 0 });
+    expect(out.map(l => [fivePackLineKey(l), l.copies])).toEqual([["111", 2], ["Flavour C", 3]]);
+  });
+
+  it("a choice prints exactly what's chosen, above the orders too", () => {
+    const out = fivePackLabelCopies(lines, { "111": 2, "222": 9, "Flavour C": 1 }, { "222": 2 });
+    expect(out.map(l => [fivePackLineKey(l), l.copies])).toEqual([["111", 2], ["222", 9], ["Flavour C", 1]]);
   });
 
   it("flavours not chosen, or set to zero/negative, print none", () => {
-    const out = fivePackLabelCopies(lines, { "111": 0, "222": -1 });
-    expect(out).toEqual([]);
+    expect(fivePackLabelCopies(lines, { "111": 0, "222": -1 })).toEqual([]);
     expect(fivePackLabelCopies(lines, { "222": 1 }).map(fivePackLineKey)).toEqual(["222"]);
-  });
-
-  it("ignores flavours that aren't on the day's orders", () => {
-    expect(fivePackLabelCopies(lines, { "999": 5 })).toEqual([]);
   });
 });
