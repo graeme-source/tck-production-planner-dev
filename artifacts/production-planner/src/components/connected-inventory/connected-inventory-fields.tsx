@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Refrigerator } from "lucide-react";
 import { useAutosave } from "@/hooks/use-autosave";
 import { SaveChip } from "@/components/save-chip";
+import { CONNECTED_INVENTORY_QUERY_OPTIONS, connectedInventoryQueryKey } from "@/lib/connected-inventory-query";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -40,9 +41,12 @@ export function ConnectedInventoryFields({ ingredientId, linked }: { ingredientI
 
 function Fields({ ingredientId }: { ingredientId: number }) {
   const qc = useQueryClient();
-  const key = ["connected-inventory", ingredientId];
+  const key = connectedInventoryQueryKey(ingredientId);
   const view = useQuery<View>({
     queryKey: key,
+    // Always fresh: an answer from before the link was saved must never be
+    // reused (lib/connected-inventory-query.ts).
+    ...CONNECTED_INVENTORY_QUERY_OPTIONS,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/ingredients/${ingredientId}/connected-inventory`, { credentials: "include" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
