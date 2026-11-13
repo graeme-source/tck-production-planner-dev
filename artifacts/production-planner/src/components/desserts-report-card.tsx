@@ -1,5 +1,5 @@
-// Desserts report card — shared by Order Packing Live (top, beside the
-// ice-pack banner) and anywhere else the report is needed. Grouped
+// Desserts report card — shared by Order Packing Live (top, full width) and
+// anywhere else the report is needed. Grouped
 // server-side (lib/desserts-report) so every surface agrees.
 //
 // UI rule (Graeme, 2026-08-28): the 5-pack-labels row and each other
@@ -49,7 +49,7 @@ export function DessertsReportCard({ tag, className }: { tag: string; className?
 
   return (
     <div className={`bg-card border border-border rounded-xl overflow-hidden ${className ?? ""}`}>
-      <div className="px-4 py-3 border-b border-border/50 bg-pink-50/50 dark:bg-pink-900/10">
+      <div className="px-4 py-2 border-b border-border/50 bg-pink-50/50 dark:bg-pink-900/10">
         <div className="flex items-center gap-2">
           <span className="text-lg">🍰</span>
           <h3 className="font-semibold text-base">Desserts Report</h3>
@@ -57,20 +57,23 @@ export function DessertsReportCard({ tag, className }: { tag: string; className?
         </div>
       </div>
       {/* Every headline number gets the same banner treatment — cinnamon
-          buns first, then the grouped 5-pack label count. */}
+          buns first, then the grouped 5-pack label count. Side by side
+          across the full width, so the card is short and the first orders
+          are in view (Graeme, 13 Nov 2026). */}
+      <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-px bg-border/50">
       {desserts.products.map(p => (
-        <div key={p.title} className="px-4 py-3 bg-pink-100/60 dark:bg-pink-900/20 border-b border-border/50">
+        <div key={p.title} className="px-4 py-3 bg-pink-50 dark:bg-pink-950/40">
           <BannerRow label={p.title} value={p.quantity} />
           <DespatchLabelsButton tag={tag} title={p.title} />
         </div>
       ))}
       {fivePack.length > 0 && (
-        <div className="px-4 py-3 bg-pink-100/60 dark:bg-pink-900/20 border-b border-border/50">
+        <div className="px-4 py-3 bg-pink-50 dark:bg-pink-950/40">
           <BannerRow label="5-Pack labels to print" value={desserts.fivePackTotal ?? 0} />
           <div className="mt-1.5 space-y-1">
             {fivePack.map(p => (
               <div key={p.title} className="flex items-center justify-between text-sm text-pink-900/80 dark:text-pink-200/80">
-                <span className="truncate">{p.title}</span>
+                <span className="min-w-0 break-words">{p.title}</span>
                 <span className="font-semibold tabular-nums shrink-0 ml-2">{p.quantity}</span>
               </div>
             ))}
@@ -78,6 +81,7 @@ export function DessertsReportCard({ tag, className }: { tag: string; className?
           <FivePackLabelsButton tag={tag} />
         </div>
       )}
+      </div>
     </div>
   );
 }

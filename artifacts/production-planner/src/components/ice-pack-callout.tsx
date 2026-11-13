@@ -13,11 +13,44 @@ function tempLine(data: IcePacksToday): string {
  * Prominent ice-pack instruction for the packing station — the first thing the
  * team should see when they open packing.
  */
-export function IcePackBanner() {
+export function IcePackBanner({ compact = false, className }: {
+  /** One small pill for a header row (Order Packing Live's top bar —
+   *  Graeme, 13 Nov 2026: "the ice packs panel can be smaller and on the
+   *  same line as the Check Factory Number and What's Changed buttons"). */
+  compact?: boolean;
+  className?: string;
+}) {
   const { data, isLoading } = useIcePacks();
   if (isLoading || !data || data.enabled === false) return null;
 
   const isFallback = data.forecastSource === "fallback";
+
+  if (compact) {
+    return (
+      <div
+        className={cn(
+          "flex items-center gap-2 rounded-lg border px-3 py-1.5 min-w-0",
+          isFallback
+            ? "bg-amber-50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-700"
+            : "bg-cyan-50 dark:bg-cyan-950/20 border-cyan-300 dark:border-cyan-700",
+          className,
+        )}
+        title={tempLine(data)}
+      >
+        {isFallback
+          ? <AlertTriangle className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          : <Snowflake className="w-4 h-4 shrink-0 text-cyan-600 dark:text-cyan-400" />}
+        <span className="text-sm font-semibold">Ice packs</span>
+        <span className="font-display font-bold tabular-nums">{data.smallBoxPacks}</span>
+        <span className="text-xs text-muted-foreground">small</span>
+        <span className="font-display font-bold tabular-nums">{data.largeBoxPacks}</span>
+        <span className="text-xs text-muted-foreground">large</span>
+        <span className={cn("hidden md:inline text-xs", isFallback ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground")}>
+          · {isFallback ? (data.message ?? "Weather unavailable") : `high ${data.highTemp}°C`}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div

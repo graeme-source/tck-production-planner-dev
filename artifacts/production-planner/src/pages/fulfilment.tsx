@@ -4473,9 +4473,11 @@ export default function Fulfilment() {
         {/* Daily factory-number check — the old packing station carried this
             before it was folded into this screen (Graeme, 2026-09-03). Jumps
             to stock control so the fridge count is verified each morning. */}
+        {/* Today's ice packs, as a small pill on this row (13 Nov 2026). */}
+        <IcePackBanner compact className="ml-auto" />
         <button
           onClick={() => navigate("/stock-control")}
-          className="flex items-center gap-1.5 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border rounded-lg px-3 py-2 transition-colors ml-auto"
+          className="flex items-center gap-1.5 text-sm font-medium text-foreground bg-secondary hover:bg-secondary/80 border border-border rounded-lg px-3 py-2 transition-colors"
           title="Verify production-fridge stock — updates the Factory Number"
         >
           <Refrigerator className="w-4 h-4 text-indigo-500" />
@@ -4500,12 +4502,9 @@ export default function Fulfilment() {
         </div>
       )}
 
-      {/* Today's ice-pack rule + dessert numbers, in sight before the first
-          box is opened — side by side where the width allows. */}
-      <div className="grid gap-3 lg:grid-cols-2 items-start">
-        <IcePackBanner />
-        <DessertsReportCard tag={queryTag} />
-      </div>
+      {/* Dessert numbers, full width and short, in sight before the first
+          box is opened; the ice packs sit in the top row (13 Nov 2026). */}
+      <DessertsReportCard tag={queryTag} />
 
       {/* Collections instruction banner — the orders themselves ride the
           main pick list below as amber rows (Graeme, 2026-08-28). */}
