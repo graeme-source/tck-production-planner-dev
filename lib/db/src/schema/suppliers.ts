@@ -24,6 +24,10 @@ export const suppliersTable = pgTable("suppliers", {
   // Orders go by email: the Orders card's main button is Email order
   // (migration 0355).
   orderByEmail: boolean("order_by_email").notNull().default(false),
+  // This supplier's driver takes our wholesale local-delivery orders
+  // (migration 0370, Graeme 13 Nov 2026): processing one books a collection
+  // on their delivery for the chosen day.
+  collectsLocalDeliveries: boolean("collects_local_deliveries").notNull().default(false),
   cutoffTime: text("cutoff_time").notNull().default("17:00"),
   // Minimum order spend in £ (e.g. 75.00). NULL = no minimum. The Orders page
   // warns when a draft order is below it and suggests items to move across.

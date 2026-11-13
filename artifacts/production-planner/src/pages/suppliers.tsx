@@ -41,6 +41,7 @@ const schema = z.object({
   cutoffTime: z.string().optional(),
   invoiceNotRequired: z.boolean().optional(),
   orderByEmail: z.boolean().optional(),
+  collectsLocalDeliveries: z.boolean().optional(),
   // Account manager (2026-10-16) — short-shelf-life reports from goods-in
   // are emailed here automatically.
   accountManagerName: z.string().optional(),
@@ -72,6 +73,7 @@ type SupplierBody = CreateSupplier & {
   cutoffTime?: string;
   invoiceNotRequired?: boolean;
   orderByEmail?: boolean;
+  collectsLocalDeliveries?: boolean;
   minimumOrderValue?: number | null;
   accountManagerName?: string | null;
   accountManagerEmail?: string | null;
@@ -94,6 +96,7 @@ type SupplierItem = {
   cutoffTime?: string;
   invoiceNotRequired?: boolean;
   orderByEmail?: boolean;
+  collectsLocalDeliveries?: boolean;
   minimumOrderValue?: number | null;
   accountManagerName?: string | null;
   accountManagerEmail?: string | null;
@@ -102,7 +105,7 @@ type SupplierItem = {
 };
 
 const defaultValues: FormValues = {
-  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, orderByEmail: false, minimumOrderValue: "", accountManagerName: "", accountManagerEmail: "", accountNumber: "",
+  name: "", contactName: "", email: "", phone: "", orderingPhone: "", website: "", address: "", notes: "", orderFrequency: "daily", orderDays: "", leadTimeDays: 1, cutoffTime: "17:00", invoiceNotRequired: false, orderByEmail: false, collectsLocalDeliveries: false, minimumOrderValue: "", accountManagerName: "", accountManagerEmail: "", accountNumber: "",
 };
 
 /** Form text → £ amount for the API: blank or 0 = no minimum (null). */
@@ -379,6 +382,16 @@ function SupplierForm({
               </label>
               <p className="text-xs text-muted-foreground mt-1 ml-6">
                 The main button on their order becomes Email order instead of Supplier website.
+              </p>
+            </div>
+
+            <div>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input type="checkbox" {...register("collectsLocalDeliveries")} className="w-4 h-4 rounded border-border" />
+                <span className="text-sm font-medium">Their driver collects our local-delivery orders</span>
+              </label>
+              <p className="text-xs text-muted-foreground mt-1 ml-6">
+                Processing a local-delivery wholesale order books a collection on their delivery for the chosen day, at the top of goods-in.
               </p>
             </div>
             </div>
@@ -691,7 +704,7 @@ export default function Suppliers() {
             isEdit={false}
             isPending={createSupplier.isPending}
             onSubmit={(data) => {
-              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, orderByEmail: data.orderByEmail ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null, accountNumber: data.accountNumber?.trim() || null };
+              const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, orderByEmail: data.orderByEmail ?? false, collectsLocalDeliveries: data.collectsLocalDeliveries ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null, accountNumber: data.accountNumber?.trim() || null };
               createSupplier.mutate(
                 { data: body },
                 { onSuccess: () => setIsAddOpen(false) }
@@ -724,6 +737,7 @@ export default function Suppliers() {
                 cutoffTime: editingItem.cutoffTime ?? "17:00",
                 invoiceNotRequired: editingItem.invoiceNotRequired ?? false,
                 orderByEmail: editingItem.orderByEmail ?? false,
+                collectsLocalDeliveries: editingItem.collectsLocalDeliveries ?? false,
                 minimumOrderValue: editingItem.minimumOrderValue != null ? String(editingItem.minimumOrderValue) : "",
                 accountManagerName: editingItem.accountManagerName ?? "",
                 accountManagerEmail: editingItem.accountManagerEmail ?? "",
@@ -732,7 +746,7 @@ export default function Suppliers() {
               editing={{ id: editingItem.id, accountNumber: editingItem.accountNumber ?? null }}
               isPending={updateSupplier.isPending}
               onSubmit={(data) => {
-                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, orderByEmail: data.orderByEmail ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null };
+                const body: SupplierBody = { ...data, email: data.email || undefined, contactName: data.contactName || undefined, phone: data.phone || undefined, website: data.website || undefined, address: data.address || undefined, notes: data.notes || undefined, orderFrequency: data.orderFrequency ?? "daily", orderDays: data.orderFrequency === "weekly" ? (data.orderDays || null) : null, leadTimeDays: data.leadTimeDays ?? 1, cutoffTime: data.cutoffTime || "17:00", invoiceNotRequired: data.invoiceNotRequired ?? false, orderByEmail: data.orderByEmail ?? false, collectsLocalDeliveries: data.collectsLocalDeliveries ?? false, minimumOrderValue: minimumFromForm(data.minimumOrderValue), accountManagerName: data.accountManagerName?.trim() || null, accountManagerEmail: data.accountManagerEmail?.trim() || null };
                 updateSupplier.mutate(
                   { id: editingItem.id, data: body },
                   { onSuccess: () => setEditingItem(null) }

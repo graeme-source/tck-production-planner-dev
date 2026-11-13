@@ -33,6 +33,9 @@ interface QueueOrder {
   note?: string | null;
   noteSuggestedDate?: string | null;
   noteMatchedText?: string | null;
+  // Tagged local-delivery: it leaves on a supplier's van, so processing books
+  // a collection with them (Graeme, 13 Nov 2026). Optional for older caches.
+  localDelivery?: boolean;
 }
 interface PlanInfo { planId: number; planDate: string; status: string; recipeIds: number[]; }
 interface QueuePayload {
@@ -48,6 +51,8 @@ interface QueuePayload {
   // delivery drops off. Optional for older cached server responses.
   wholesaleDeliveryDates?: string[];
   plansByDespatchDate: Record<string, PlanInfo>;
+  // Suppliers whose driver collects our local-delivery orders.
+  collectors?: Array<{ id: number; name: string }>;
   orders: QueueOrder[];
 }
 
@@ -75,6 +80,22 @@ function addDaysStr(s: string, n: number): string {
 function fmtNice(s: string): string {
   return new Date(`${s}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" });
 }
+
+// Collection days for a local-delivery order: delivery − 3 up to the
+// delivery day, never before today; defaults to the delivery day. Same rule
+// as the server (api-server lib/local-delivery-collection-rules.ts) —
+// change both together.
+const COLLECTION_MAX_DAYS_BEFORE_DELIVERY = 3;
+function collectionDateOptions(deliveryDate: string, today: string): string[] {
+  const out: string[] = [];
+  for (let back = COLLECTION_MAX_DAYS_BEFORE_DELIVERY; back >= 0; back--) {
+    const d = addDaysStr(deliveryDate, -back);
+    if (d >= today) out.push(d);
+  }
+  return out;
+}
+/** "" = No collection. */
+const NO_COLLECTION = "";
 
 type OrderStatus =
   | { ok: true; planId: number; despatchDate: string; productionDate: string; tagOnly?: boolean }
@@ -209,11 +230,35 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     for (const o of data.orders) init[o.orderId] = defaultProductionDate(o, o.proposedDeliveryDate, data.earliestProductionDate ?? data.today, data.plansByDespatchDate);
     return init;
   });
+  // Local-delivery orders: the day the collecting supplier's driver takes it
+  // ("" = No collection). Defaults to the delivery day.
+  const collectors = data.collectors ?? [];
+  const [selectedCollection, setSelectedCollection] = useState<Record<number, string>>(() => {
+    const init: Record<number, string> = {};
+    for (const o of data.orders) if (o.localDelivery) init[o.orderId] = o.proposedDeliveryDate;
+    return init;
+  });
+  const [selectedCollector, setSelectedCollector] = useState<Record<number, number>>({});
+  const collectorFor = (order: QueueOrder) =>
+    collectors.find(c => c.id === selectedCollector[order.orderId]) ?? collectors[0] ?? null;
   const [processing, setProcessing] = useState<number | null>(null);
   const [done, setDone] = useState<Set<number>>(new Set());
 
+  /** The plan/tag status, plus: a collection needs someone to collect it. */
+  const statusOf = (order: QueueOrder): OrderStatus => {
+    const s = evaluate(order, selected[order.orderId], selectedProduction[order.orderId], data.plansByDespatchDate);
+    if (s.ok && order.localDelivery && selectedCollection[order.orderId] && collectors.length === 0) {
+      return { ok: false, reason: "No supplier collects local deliveries — tick it on the supplier (Suppliers → Ordering), or choose No collection" };
+    }
+    return s;
+  };
+
   const changeDelivery = (order: QueueOrder, deliveryDate: string) => {
     setSelected(prev => ({ ...prev, [order.orderId]: deliveryDate }));
+    // The collection follows the delivery day unless it's been turned off.
+    if (order.localDelivery) {
+      setSelectedCollection(prev => ({ ...prev, [order.orderId]: prev[order.orderId] === NO_COLLECTION ? NO_COLLECTION : deliveryDate }));
+    }
     // Re-derive the best production day for the new delivery date.
     setSelectedProduction(prev => ({
       ...prev,
@@ -224,13 +269,15 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   async function processOrder(order: QueueOrder) {
     const deliveryDate = selected[order.orderId];
     const productionDate = selectedProduction[order.orderId];
+    const collectionDate = order.localDelivery ? (selectedCollection[order.orderId] ?? NO_COLLECTION) : NO_COLLECTION;
+    const collector = collectionDate ? collectorFor(order) : null;
     setProcessing(order.orderId);
     try {
       const res = await fetch(`${BASE}/api/wholesale-bags/process`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ orderId: order.orderId, deliveryDate, productionDate }),
+        body: JSON.stringify({ orderId: order.orderId, deliveryDate, productionDate, collectionDate, collectorSupplierId: collector?.id ?? null }),
       });
       const body = await res.json().catch(() => ({}));
       if (res.ok) {
@@ -241,11 +288,15 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
           : body.emailed === false
             ? " ⚠ Customer NOT emailed (no address or send failed)."
             : "";
+        const collectionNote = body.collection
+          ? ` Collection booked: ${body.collection.supplierName}, ${fmtNice(body.collection.date)}.`
+          : body.collectionError ? ` ⚠ ${body.collectionError}` : "";
         toast({
           title: `Processed ${order.name}`,
           description: (order.kind === "eight_pack"
             ? `Bags on the ${fmtNice(productionDate)} plan · delivering ${fmtNice(deliveryDate)}.`
-            : `Tagged for delivery ${fmtNice(deliveryDate)}.`) + emailNote,
+            : `Tagged for delivery ${fmtNice(deliveryDate)}.`) + collectionNote + emailNote,
+          variant: body.collectionError ? "destructive" : undefined,
         });
         setDone(prev => new Set(prev).add(order.orderId));
         onProcessed();
@@ -269,7 +320,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   }
 
   const remaining = data.orders.filter(o => !done.has(o.orderId));
-  const readyCount = remaining.filter(o => evaluate(o, selected[o.orderId], selectedProduction[o.orderId], data.plansByDespatchDate).ok).length;
+  const readyCount = remaining.filter(o => statusOf(o).ok).length;
   const eightPackOrders = data.orders.filter(o => o.kind === "eight_pack");
   const wholesaleOrders = data.orders.filter(o => o.kind === "wholesale_2pack");
 
@@ -291,7 +342,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
 
   async function processAllReady() {
     for (const o of remaining) {
-      if (evaluate(o, selected[o.orderId], selectedProduction[o.orderId], data.plansByDespatchDate).ok) {
+      if (statusOf(o).ok) {
         // sequential to keep Shopify writes orderly
         // eslint-disable-next-line no-await-in-loop
         await processOrder(o);
@@ -303,7 +354,10 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
     const isDone = done.has(order.orderId);
     const delivery = selected[order.orderId];
     const production = selectedProduction[order.orderId];
-    const status = evaluate(order, delivery, production, data.plansByDespatchDate);
+    const status = statusOf(order);
+    const collection = order.localDelivery ? (selectedCollection[order.orderId] ?? NO_COLLECTION) : null;
+    const collector = collectorFor(order);
+    const collectionOptions = collectionDateOptions(delivery, data.today);
     const isWholesale = order.kind === "wholesale_2pack";
     const prodCandidates = productionCandidates(delivery, earliestProduction);
     // 2-pack-only orders are limited by the 14:00 despatch cutoff, not by
@@ -401,6 +455,41 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
                 </>
               )}
 
+              {/* Local delivery: the day the collecting supplier's driver
+                  takes it — booked on their delivery at goods-in (Graeme,
+                  13 Nov 2026). Between Make and Deliver: the order things
+                  happen. */}
+              {collection != null && (
+                <>
+                  <label className="text-sm text-muted-foreground">Collect</label>
+                  <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    <select
+                      value={collection}
+                      onChange={e => setSelectedCollection(prev => ({ ...prev, [order.orderId]: e.target.value }))}
+                      className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+                      aria-label="Collection day"
+                      title="The day the driver collects this order — it goes at the top of their delivery at goods-in."
+                    >
+                      {collectionOptions.map(d => <option key={d} value={d}>{fmtNice(d)}{d === delivery ? " (delivery day)" : ""}</option>)}
+                      <option value={NO_COLLECTION}>No collection</option>
+                    </select>
+                    {collection && collectors.length > 1 && (
+                      <select
+                        value={collector?.id ?? ""}
+                        onChange={e => setSelectedCollector(prev => ({ ...prev, [order.orderId]: Number(e.target.value) }))}
+                        className="px-2 py-1.5 border border-border rounded-lg text-sm bg-background"
+                        aria-label="Collected by"
+                      >
+                        {collectors.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                      </select>
+                    )}
+                    {collection && collectors.length === 1 && collector && (
+                      <span className="text-sm text-muted-foreground">by {collector.name}</span>
+                    )}
+                  </div>
+                </>
+              )}
+
               <label className="text-sm text-muted-foreground">Deliver</label>
               <select
                 value={delivery}
@@ -417,6 +506,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
                   {status.tagOnly
                     ? `→ tag ${fmtNice(delivery)} + production`
                     : `→ bags on the ${fmtNice(production)} plan · delivers ${fmtNice(delivery)}`}
+                  {collection && collector ? ` · ${collector.name} collects ${fmtNice(collection)}` : ""}
                 </span>
               ) : (
                 <span className="flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400">

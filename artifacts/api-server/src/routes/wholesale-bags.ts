@@ -22,8 +22,10 @@
 
 import { DATE_TAG_RE, PRODUCTION_TAG, firstDateTag, hasWholesaleTag, isProcessedOrder } from "../lib/wholesale-order-tags";
 import { Router, type IRouter } from "express";
-import { db, productionPlanItemsTable } from "@workspace/db";
-import { inArray, sql } from "drizzle-orm";
+import { db, productionPlanItemsTable, collectionsTable, collectionLinesTable, suppliersTable } from "@workspace/db";
+import { asc, eq, inArray, sql } from "drizzle-orm";
+import { isLocalDeliveryOrder } from "../lib/dispatch-tag";
+import { collectionDateProblem, localDeliveryCollection } from "../lib/local-delivery-collection-rules";
 import { londonDateString } from "../lib/london-time";
 import { sendEmail } from "../lib/email";
 import {
@@ -102,6 +104,54 @@ async function loadPlansByDate(fromDay: string, toDay: string): Promise<Map<stri
   return byDate;
 }
 
+// ── Local-delivery collections (Graeme, 13 Nov 2026) ──
+// A wholesale order tagged local-delivery leaves on a supplier's van (The
+// Best Butcher): processing it books a collection on that supplier for the
+// chosen day, so goods-in sees it at the top of their delivery and can't
+// receive the delivery until it's handed over (routes/collections.ts).
+
+/** Suppliers whose driver takes our local-delivery orders, by name. */
+async function loadCollectors(): Promise<Array<{ id: number; name: string }>> {
+  return db.select({ id: suppliersTable.id, name: suppliersTable.name })
+    .from(suppliersTable)
+    .where(eq(suppliersTable.collectsLocalDeliveries, true))
+    .orderBy(asc(suppliersTable.name));
+}
+
+function customerNameOf(o: { shipping_address?: { name?: string | null } | null; customer?: { first_name?: string | null; last_name?: string | null } | null }): string {
+  return o.shipping_address?.name
+    || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
+    || "";
+}
+
+/** Book it — never failing the processing: the order is already tagged. */
+async function bookLocalDeliveryCollection(
+  collector: { id: number; name: string },
+  collectionDate: string,
+  order: { name: string; customerName: string },
+): Promise<{ collection: { id: number; date: string; supplierName: string } | null; collectionError?: string }> {
+  try {
+    const what = localDeliveryCollection(order);
+    const [created] = await db.insert(collectionsTable).values({
+      supplierId: collector.id,
+      collectionDate,
+      reference: what.reference,
+      notes: null,
+    }).returning({ id: collectionsTable.id });
+    await db.insert(collectionLinesTable).values({
+      collectionId: created.id,
+      description: what.line.description,
+      quantity: String(what.line.quantity),
+      unit: what.line.unit,
+      sortOrder: 0,
+    });
+    return { collection: { id: created.id, date: collectionDate, supplierName: collector.name } };
+  } catch (err) {
+    console.error(`[wholesale-bags] collection for ${order.name} not booked:`, err);
+    return { collection: null, collectionError: `${order.name} is processed, but the collection wasn't booked — add it on Deliveries → Add collection.` };
+  }
+}
+
 // ── GET /queue — unprocessed eight-pack orders + plan recipe sets for validation ──
 let queueCache: { at: number; payload: unknown } | null = null;
 
@@ -121,9 +171,10 @@ router.get("/queue", async (_req, res) => {
     // the earliest despatch is tomorrow, so the earliest delivery is the day
     // after.
     const wholesaleEarliestDelivery = earliestTagOnlyDeliveryDay();
-    const [orders, titleToRecipe] = await Promise.all([
+    const [orders, titleToRecipe, collectors] = await Promise.all([
       getRecentUnfulfilledOrders(SCAN_DAYS_BACK),
       loadTitleToRecipe(),
+      loadCollectors(),
     ]);
 
     const deliveryDates = deliveryDateOptions(earliestProductionDate, 18); // ~3 weeks of Tue–Sat
@@ -183,11 +234,11 @@ router.get("/queue", async (_req, res) => {
           : feasible(noteSuggestion?.date)
             ? noteSuggestion!.date
             : kindDefault;
-        const customerName = o.shipping_address?.name
-          || (o.customer ? `${o.customer.first_name ?? ""} ${o.customer.last_name ?? ""}`.trim() : "")
-          || "";
+        const customerName = customerNameOf(o);
         return {
           orderId: o.id, name: o.name, customerName, tags: o.tags, kind, existingDateTag, proposedDeliveryDate, lines,
+          // Goes on a supplier's van → the dialog asks for a collection day.
+          localDelivery: isLocalDeliveryOrder(o.tags),
           note,
           noteSuggestedDate: noteSuggestion?.date ?? null,
           noteMatchedText: noteSuggestion?.matched ?? null,
@@ -206,6 +257,8 @@ router.get("/queue", async (_req, res) => {
       deliveryDates,
       wholesaleDeliveryDates,
       plansByDespatchDate,
+      // Who takes local-delivery orders (suppliers with the box ticked).
+      collectors,
       orders: queueOrders,
     };
     queueCache = { at: Date.now(), payload };
@@ -295,11 +348,41 @@ router.post("/process", async (req, res) => {
     return;
   }
 
+  // Collection day for a local-delivery order (Graeme, 13 Nov 2026): absent
+  // or "" = no collection. Checked before anything is written.
+  const rawCollectionDate = req.body?.collectionDate;
+  const collectionDate: string | null = rawCollectionDate != null && rawCollectionDate !== "" ? String(rawCollectionDate) : null;
+  if (collectionDate) {
+    if (!DATE_TAG_RE.test(collectionDate)) { res.status(400).json({ error: "collectionDate must be YYYY-MM-DD when supplied" }); return; }
+    const problem = collectionDateProblem(collectionDate, deliveryDate, londonDateString());
+    if (problem) { res.status(400).json({ error: problem }); return; }
+  }
+  const rawCollector = req.body?.collectorSupplierId;
+  const collectorId = rawCollector != null && rawCollector !== "" ? Number(rawCollector) : null;
+  if (collectorId != null && !(Number.isInteger(collectorId) && collectorId > 0)) {
+    res.status(400).json({ error: "collectorSupplierId must be a supplier id" });
+    return;
+  }
+
   try {
     // Re-fetch live so we tag against current tags and current line items.
     const order = await getOrderById(orderId);
     if (!order) { res.status(404).json({ error: "Order not found" }); return; }
     if (isProcessedOrder(order.tags)) { res.status(409).json({ error: "Order is already processed (it has a delivery date and 'production')." }); return; }
+    // Which supplier collects it — chosen in the dialog, else the first
+    // ticked one. Only local-delivery orders get a collection.
+    let collector: { id: number; name: string } | null = null;
+    if (collectionDate && isLocalDeliveryOrder(order.tags)) {
+      const collectors = await loadCollectors();
+      collector = (collectorId != null ? collectors.find(c => c.id === collectorId) : collectors[0]) ?? null;
+      if (!collector) {
+        res.status(409).json({ error: "No supplier collects local deliveries — tick \"Their driver collects our local-delivery orders\" on the supplier (Suppliers → Ordering), or choose No collection." });
+        return;
+      }
+    }
+    const book = () => collector && collectionDate
+      ? bookLocalDeliveryCollection(collector, collectionDate, { name: order.name, customerName: customerNameOf(order) })
+      : Promise.resolve({ collection: null });
 
     const lines = (order.line_items ?? []).filter(is8PackLine);
     if (lines.length === 0) {
@@ -328,8 +411,9 @@ router.post("/process", async (req, res) => {
         return;
       }
       queueCache = null; // reflect the change on the next poll
+      const booked = await book();
       const emailed = await emailDeliverySchedule(order, deliveryDate);
-      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [], emailed });
+      res.json({ ok: true, orderId, deliveryDate, tagOnly: true, tags: updatedTags, added: [], emailed, ...booked });
       return;
     }
 
@@ -415,16 +499,16 @@ router.post("/process", async (req, res) => {
     }
 
     queueCache = null; // reflect the change on the next poll
-
+    const booked = await book();
     const emailed = await emailDeliverySchedule(order, deliveryDate);
     if (failedToAdd.length) {
       res.status(207).json({
         warning: "Order tagged, but some bags couldn't be added — add these manually on the production overview.",
-        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd, emailed,
+        orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, failedToAdd, emailed, ...booked,
       });
       return;
     }
-    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, emailed });
+    res.json({ ok: true, orderId, deliveryDate, despatchDate, productionDate, planId: plan.planId, tags: updatedTags, added, emailed, ...booked });
   } catch (err) {
     console.error("[wholesale-bags] process failed:", err);
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to process order" });
