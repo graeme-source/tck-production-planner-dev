@@ -149,7 +149,7 @@ export const bottomNavItems: NavItem[] = [
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
 // under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/production-kpis", "/analytics/defects", "/test-requests", "/finance", "/finance/cash-flow", "/finance/payroll"];
+const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/production-kpis", "/analytics/defects", "/test-requests"];
 export const analyticsSubItems: NavItem[] = [
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
@@ -161,9 +161,6 @@ export const analyticsSubItems: NavItem[] = [
   // other analytics.
   { name: "Defects & waste", href: "/analytics/defects", icon: AlertOctagon },
   { name: "Test requests", href: "/test-requests", icon: ClipboardCheck },
-  // Finance moved under Analytics (Graeme, 2026-10-07). Admins and
-  // bookkeepers only — filtered where the group is drawn.
-  { name: "Finance", href: "/finance", icon: Banknote },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
@@ -411,14 +408,12 @@ export function NavLinks({
 
   function renderNavItem(item: NavItem) {
     // The Business stays lit on every one of its tabs.
-    const isActive = location === item.href || (item.href.startsWith("/founder/") && location.startsWith("/founder/"));
+    const isActive = location === item.href || (item.href.startsWith("/founder/") && location.startsWith("/founder/"))
+      || (item.href === "/finance" && location.startsWith("/finance/"));
     const isDispatches = item.href === "/dispatches";
 
     if (item.href === "/reports" && (user?.role === "admin" || user?.role === "manager")) {
-      // Finance: the founder and the accountants only (2026-10-26).
-      const seesFinance = isFounderEmail(user?.email) || Boolean(user?.isBookkeeper);
-      const subs = analyticsSubItems.filter(i => !i.href.startsWith("/finance") || seesFinance);
-      return renderNavGroup("analytics", item.name, item.icon, subs, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
+      return renderNavGroup("analytics", item.name, item.icon, analyticsSubItems, analyticsOpen, setAnalyticsOpen, isOnAnalyticsPage);
     }
 
     if (isDispatches && user?.role === "admin") {
@@ -778,11 +773,15 @@ export function Layout({ children }: { children: ReactNode }) {
   // app is noise to them, and they are noise to it.
   const isBookkeeper = Boolean((user as { isBookkeeper?: boolean } | null)?.isBookkeeper);
   const accountantOnly = isBookkeeper && userRole !== "admin";
-  // Finance lives inside the Analytics group for admins (2026-10-07); an
-  // accountant's finance-only sidebar has no Analytics group, so it keeps
-  // its own top-level entry there.
-  if (accountantOnly) {
-    visibleNavItems.push({ name: "Finance", href: "/finance", icon: Banknote });
+  // Finance is its own top-level item, straight after Analytics (Graeme,
+  // 13 Nov 2026; it sat inside Analytics from 2026-10-07). The founder and
+  // the flagged accountants only — the same rule the server enforces on
+  // every /api/finance, cash-flow and payroll route (resolveFinanceAccess),
+  // so a manager or admin who isn't one of them sees no Finance at all.
+  const seesFinance = isFounderEmail(user?.email) || isBookkeeper;
+  if (seesFinance) {
+    const at = visibleNavItems.findIndex(i => i.href === "/reports");
+    visibleNavItems.splice(at >= 0 ? at + 1 : visibleNavItems.length, 0, { name: "Finance", href: "/finance", icon: Banknote });
   }
 
 

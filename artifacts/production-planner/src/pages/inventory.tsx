@@ -1,5 +1,6 @@
 import { useState, useRef, useMemo, useEffect } from "react";
 import { PriceReviewsCard } from "@/components/price-reviews-card";
+import { isFounderEmail } from "@workspace/feature-registry";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useListIngredients, useListSuppliers } from "@workspace/api-client-react";
 import type { Ingredient } from "@workspace/api-client-react";
@@ -456,7 +457,8 @@ export default function Inventory() {
         }
       />
 
-      {canManage && <PriceReviewsCard />}
+      {/* Finance people only: it shows invoice prices (Graeme, 13 Nov 2026). */}
+      {authState.status === "authenticated" && (isFounderEmail(authState.user.email) || Boolean((authState.user as { isBookkeeper?: boolean }).isBookkeeper)) && <PriceReviewsCard />}
 
       <div className="flex gap-0 p-1 bg-secondary/40 rounded-2xl w-full">
         <a
