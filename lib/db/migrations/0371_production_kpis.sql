@@ -5,8 +5,12 @@
 --
 -- Starting figures are what the screens used until now: packing 55 / 60
 -- orders an hour (the packing screen's "On target" / "Smashing it" — the
--- dashboard tile said 50, which is why the two disagreed), wrapping 180 /
--- 240 packs an hour. Anything already set is left alone. Safe to run twice.
+-- dashboard tile said 50, which is why the two disagreed). Wrapping 115 /
+-- 135 packs an hour: wrapping is now timed first wrap → last wrap minus the
+-- breaks (services/wrapping-pace.ts), on which 15 Oct–12 Nov read a median
+-- of 115 and a top quarter of 132+ — the old 180 / 240 belonged to the
+-- method that cut out every gap over 20 minutes. Anything already set is
+-- left alone. Safe to run twice.
 
 CREATE TABLE IF NOT EXISTS production_kpis (
   kpi TEXT PRIMARY KEY,
@@ -18,5 +22,5 @@ CREATE TABLE IF NOT EXISTS production_kpis (
 
 INSERT INTO production_kpis (kpi, standard, stretch) VALUES
   ('packing', 55, 60),
-  ('wrapping', 180, 240)
+  ('wrapping', 115, 135)
 ON CONFLICT (kpi) DO NOTHING;

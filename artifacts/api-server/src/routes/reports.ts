@@ -510,17 +510,11 @@ router.get("/packing-speed", async (req, res) => {
 //
 // Source of truth: fridge_stock_changes rows with source='wrapping' and a
 // positive delta — every "add to fridge/freezer" tap the wrappers make,
-// timestamped, in packs. Same active-time method as packing-speed, but with
-// a 20-MINUTE idle threshold (Graeme, 2026-08-19): wrapping is stop-start —
-// a 24-stack can legitimately take ten minutes, and the team gets pulled
-// onto deliveries — so only gaps longer than 20 minutes pause the clock,
-// and the whole gap is then excluded from active time.
-//
-// Standard bands derived from 2 weeks of live data (5–19 Aug 2026): active
-// -interval pace median 163 packs/hr, p75 212, p90 281; day-level median
-// ~192. Standard 180 (a 24-stack every 8 min), stretch 240 (every 6 min —
-// Graeme's own fast-day bursts). Bands live client-side so they're easy to
-// tune; this endpoint just reports honestly.
+// timestamped, in packs. First wrap → last wrap, minus the snack and lunch
+// breaks exactly as on the line run rate (services/wrapping-pace.ts —
+// Graeme, 13 Nov 2026; the old 20-minute idle-gap exclusion is gone). The
+// standard and stretch are set on Analytics → Production KPIs; this
+// endpoint just reports honestly.
 // ──────────────────────────────────────────────────────────────────────────────
 router.get("/wrapping-speed", async (req, res) => {
   const date = req.query.date ? String(req.query.date) : londonDateString(new Date());
@@ -536,7 +530,7 @@ router.get("/wrapping-speed", async (req, res) => {
       ORDER BY created_at
     `);
     const subs = (rows.rows ?? []).map(r => ({ ts: new Date(r.created_at + "Z").getTime(), packs: Number(r.delta) }));
-    const pace = paceFromSubs(subs);
+    const pace = paceFromSubs(subs, await getStandardBreakConfig());
     res.json({
       date,
       ...pace,
@@ -584,12 +578,13 @@ router.get("/wrapping-speed-history", async (req, res) => {
       day: londonDay.format(new Date(r.created_at + "Z")),
     })).filter(s => s.day >= from && s.day <= to);
 
+    const breaks = await getStandardBreakConfig();
     // Per day, whole team.
     const byDay = new Map<string, typeof subs>();
     for (const s of subs) (byDay.get(s.day) ?? byDay.set(s.day, []).get(s.day)!).push(s);
     const days = [...byDay.entries()]
       .sort((a, b) => b[0].localeCompare(a[0]))
-      .map(([day, daySubs]) => ({ date: day, ...paceFromSubs(daySubs) }));
+      .map(([day, daySubs]) => ({ date: day, ...paceFromSubs(daySubs, breaks) }));
 
     // Per person: their own stream, day by day, then totals. A person's
     // packs/hour uses only THEIR active minutes, so two people wrapping in
@@ -606,7 +601,7 @@ router.get("/wrapping-speed-history", async (req, res) => {
       for (const s of entry.subs) (personByDay.get(s.day) ?? personByDay.set(s.day, []).get(s.day)!).push(s);
       const personDays = [...personByDay.entries()]
         .sort((a, b) => b[0].localeCompare(a[0]))
-        .map(([day, daySubs]) => ({ date: day, ...paceFromSubs(daySubs) }));
+        .map(([day, daySubs]) => ({ date: day, ...paceFromSubs(daySubs, breaks) }));
       const packs = personDays.reduce((s, d) => s + d.packs, 0);
       const activeMinutes = personDays.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
       return {

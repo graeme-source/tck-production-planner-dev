@@ -1,47 +1,57 @@
 import { describe, it, expect } from "vitest";
-import { paceFromSubs, WRAPPING_IDLE_THRESHOLD_MS } from "./wrapping-pace";
+import { paceFromSubs } from "./wrapping-pace";
 
 const MIN = 60_000;
+// 13 Nov 2026 in London (GMT): minutes since midnight → epoch ms.
+const at = (h: number, m = 0) => Date.UTC(2026, 10, 13, h, m);
 
-describe("paceFromSubs", () => {
+describe("paceFromSubs — first wrap to last wrap, minus breaks (13 Nov 2026)", () => {
   it("fewer than two submissions gives packs but no rate", () => {
-    expect(paceFromSubs([{ ts: 0, packs: 24 }])).toMatchObject({ packs: 24, packsPerHour: null, activeMinutes: null });
+    expect(paceFromSubs([{ ts: at(11), packs: 24 }])).toMatchObject({ packs: 24, packsPerHour: null, activeMinutes: null });
   });
 
-  it("steady work: 24-pack stacks every 8 minutes = 216/hr over the window", () => {
-    const subs = Array.from({ length: 6 }, (_, i) => ({ ts: i * 8 * MIN, packs: 24 }));
+  it("no gap is excluded any more: a 25-minute stop for a delivery still counts", () => {
+    const subs = [
+      { ts: at(13, 0), packs: 24 },
+      { ts: at(13, 10), packs: 24 },
+      { ts: at(13, 35), packs: 24 }, // 25-min stop — used to be excluded
+      { ts: at(13, 40), packs: 24 },
+    ];
     const r = paceFromSubs(subs);
-    // 144 packs over 40 active minutes.
-    expect(r.packs).toBe(144);
+    expect(r.windowMinutes).toBe(40);
+    expect(r.idleMinutes).toBe(0);
     expect(r.activeMinutes).toBe(40);
-    expect(r.packsPerHour).toBe(216);
-    expect(r.idleBreaks).toBe(0);
+    expect(r.packsPerHour).toBe(144);
   });
 
-  it("a long gap pauses the clock and is excluded entirely", () => {
+  it("lunch comes off like the line: a 50-minute stop → 35 + 7 allowance", () => {
     const subs = [
-      { ts: 0, packs: 24 },
-      { ts: 10 * MIN, packs: 24 },
-      { ts: 70 * MIN, packs: 24 },   // 60-min gap → idle
-      { ts: 80 * MIN, packs: 24 },
+      { ts: at(11, 0), packs: 120 },
+      { ts: at(12, 0), packs: 120 },
+      { ts: at(12, 50), packs: 120 }, // lunch stop
+      { ts: at(15, 0), packs: 120 },
     ];
     const r = paceFromSubs(subs);
+    expect(r.windowMinutes).toBe(240);
     expect(r.idleBreaks).toBe(1);
-    expect(r.idleMinutes).toBe(60);
-    expect(r.activeMinutes).toBe(20);
-    expect(r.packsPerHour).toBe(288); // 96 packs / 20 active min
+    expect(r.idleMinutes).toBe(42);
+    expect(r.activeMinutes).toBe(198);
+    expect(r.packsPerHour).toBe(Math.round(480 / (198 / 60)));
   });
 
-  it("a gap exactly at the threshold does NOT count as idle", () => {
+  it("a typical day reads about 114/hr, not ~250", () => {
+    // 495 packs, 11:00 → 16:00 with a lunch stop.
     const subs = [
-      { ts: 0, packs: 10 },
-      { ts: WRAPPING_IDLE_THRESHOLD_MS, packs: 10 },
+      { ts: at(11, 0), packs: 100 }, { ts: at(12, 10), packs: 100 },
+      { ts: at(13, 0), packs: 100 }, { ts: at(14, 30), packs: 100 }, { ts: at(16, 0), packs: 95 },
     ];
-    expect(paceFromSubs(subs).idleBreaks).toBe(0);
+    const r = paceFromSubs(subs);
+    expect(r.packsPerHour).toBeGreaterThan(100);
+    expect(r.packsPerHour).toBeLessThan(130);
   });
 
   it("unsorted input is handled", () => {
-    const r = paceFromSubs([{ ts: 10 * MIN, packs: 5 }, { ts: 0, packs: 5 }]);
+    const r = paceFromSubs([{ ts: at(11, 10), packs: 5 }, { ts: at(11), packs: 5 }]);
     expect(r.windowMinutes).toBe(10);
   });
 });

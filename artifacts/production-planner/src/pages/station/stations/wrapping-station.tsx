@@ -101,19 +101,11 @@ function postOvenGramsPerPack(poi: PostOvenItem, item: ProductionPlanItem): numb
   return poi.weightPerBatch / packs;
 }
 
-// Wrapping pace bands, from 2 weeks of live submission data (5–19 Aug 2026):
-// active-interval pace median 163 packs/hr, p75 212, p90 281. Standard 180
-// = a 24-stack every 8 minutes; stretch 240 = every 6 minutes (Graeme's own
-// fast-day bursts, deliberately above the bar). Idle gaps over 20 minutes
-// are excluded server-side, so this judges pace only while wrapping.
-// The standard itself lives in lib/station-kpi-bands.ts so the dashboard's
-// Wrapping header colour judges against the same number.
-// Amber from 90% of standard (162), the same line the dashboard tile uses —
-// was 120. Graeme asked me to decide (2026-10-09): live median was ~163/hr
-// (Aug), so an average day now reads "just under" rather than "fine", and
-// under 162 is genuinely slow. One rule on the station and the dashboard.
-// The figures themselves are set on Analytics → Production KPIs (13 Nov
-// 2026); these are the bands they make, same rule as the dashboard tile.
+// Wrapping pace bands. The standard and stretch are set on Analytics →
+// Production KPIs (13 Nov 2026: 115 / 135 to start); the pace is first wrap
+// → last wrap less the snack and lunch breaks (server services/wrapping-
+// pace.ts). Green at standard, amber from 90% of it — the same rule as the
+// dashboard's Wrapping tile.
 function wrappingPaceBands(kpi: ProductionKpi): PaceBands {
   return { green: kpi.standard, amber: amberFrom(kpi), ...(kpi.stretch != null ? { stretch: kpi.stretch } : {}) };
 }

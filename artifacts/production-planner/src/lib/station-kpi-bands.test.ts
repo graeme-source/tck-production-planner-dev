@@ -22,7 +22,7 @@ describe("kpiBand — the 20 batches/hr run rate", () => {
 
 describe("kpiBand — other standards use the same ratios", () => {
   it("wrapping 180 packs/hr: 198 / 180 / 162", () => {
-    expect(WRAPPING_STANDARD_PACKS_PER_HOUR).toBe(180);
+    expect(WRAPPING_STANDARD_PACKS_PER_HOUR).toBe(115);
     expect(kpiBand(live(198), 180)).toBe("platinum");
     expect(kpiBand(live(197), 180)).toBe("green");
     expect(kpiBand(live(180), 180)).toBe("green");

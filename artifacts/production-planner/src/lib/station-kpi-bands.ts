@@ -30,10 +30,10 @@ export const BAND_RATIOS = { platinum: 1.1, green: 1.0, amber: 0.9 } as const;
  *  slow first batch would paint the line red at 7am. */
 export const MIN_ACTIVE_MINUTES = 30;
 
-/** Wrapping standard: a 24-stack every 8 minutes. Derived from 2 weeks of
- *  live data (5–19 Aug 2026: median 163, p75 212). Shared with the wrapping
- *  station's pace strip so the two can never disagree. */
-export const WRAPPING_STANDARD_PACKS_PER_HOUR = 180;
+/** Wrapping standard when nothing is stored: 115 packs/hr, timed first wrap
+ *  → last wrap less breaks (13 Nov 2026; median 115 over 15 Oct–12 Nov).
+ *  The real figure is set on Analytics → Production KPIs. */
+export const WRAPPING_STANDARD_PACKS_PER_HOUR = 115;
 
 /** Packing standard: 50 orders/hr for the whole packing team (fulfilled
  *  orders ÷ active packing time) — Graeme, 2026-10-09: "50 is the minimum

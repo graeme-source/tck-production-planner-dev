@@ -21,7 +21,7 @@ export interface ProductionKpi {
  *  the stored figures load. Same as migration 0371's starting figures. */
 export const DEFAULT_PRODUCTION_KPIS: Record<ProductionKpiKey, ProductionKpi> = {
   packing: { standard: 55, stretch: 60 },
-  wrapping: { standard: 180, stretch: 240 },
+  wrapping: { standard: 115, stretch: 135 },
 };
 
 export interface ProductionKpiInfo {
@@ -42,7 +42,7 @@ export const PRODUCTION_KPI_INFO: ProductionKpiInfo[] = [
   },
   {
     key: "wrapping", name: "Wrapping", unit: "packs an hour",
-    measure: "Packs wrapped ÷ active wrapping time (gaps over 20 minutes left out).",
+    measure: "Packs wrapped ÷ first wrap to last wrap, less the snack and lunch breaks (as on the line run rate).",
     usedOn: "The pace strip on the wrapping station and the Wrapping tile on the dashboard.",
   },
 ];
