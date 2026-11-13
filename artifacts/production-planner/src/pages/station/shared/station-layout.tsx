@@ -96,11 +96,8 @@ interface StationLayoutProps {
 export function StationLayout({ planId, stationType, plan, children, headerSlot, onBreakActiveChange }: StationLayoutProps) {
   const [location, navigate] = useLocation();
   const search = useSearch();
-  // Prep sub-sections keep the ?from flag while hopping so the Prep hub can
-  // pass it along; the exit itself now always lands on the Dashboard — the
-  // dashboard IS the station picker (Graeme, 2026-09-16).
-  const fromDashboard = new URLSearchParams(search).get("from") === "dashboard";
-  const fromSuffix = fromDashboard ? "?from=dashboard" : "";
+  // Exit always lands on the Dashboard — the dashboard IS the station picker
+  // (Graeme, 2026-09-16).
   const [navOpen, setNavOpen] = useState(false);
   const [standardsOpen, setStandardsOpen] = useState(false);
   // The Station menu next to Exit Station (was the ⋯ menu): contacts, the
@@ -283,19 +280,16 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
                 ]}
               />
 
-              {(() => {
-                const prepSubKeys = ["main_prep", "prep_bases", "prep_meat"] as const;
-                const isInPrepSub = (prepSubKeys as readonly string[]).includes(stationType);
-                return (
-                  <button
-                    onClick={() => navigate(isInPrepSub ? `/plans/${planId}/station/prep${fromSuffix}` : "/")}
-                    className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
-                  >
-                    <ChevronLeft className="w-4 h-4" />
-                    {isInPrepSub ? "Prep Sections" : "Exit Station"}
-                  </button>
-                );
-              })()}
+              {/* Prep sections used to go back to a "Select prep station" page;
+                  that's gone (13 Nov 2026) — the sections are tabs now, so
+                  every station exits the same way. */}
+              <button
+                onClick={() => navigate("/")}
+                className="flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors border border-border rounded-lg px-3 py-1.5"
+              >
+                <ChevronLeft className="w-4 h-4" />
+                Exit Station
+              </button>
             </div>
           </div>
         </div>

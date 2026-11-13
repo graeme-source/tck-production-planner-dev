@@ -275,7 +275,9 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [editingTinKey, setEditingTinKey] = useState<string | null>(null); // "ingredientId_recipeId"
   const [editTinValue, setEditTinValue] = useState("");
   const [savingTinOverride, setSavingTinOverride] = useState(false);
-  const [hideCompleted, setHideCompleted] = useState(false);
+  // On by default (Graeme, 13 Nov 2026): open on what is left to do;
+  // "Show all" still reveals the finished ones.
+  const [hideCompleted, setHideCompleted] = useState(true);
 
   const setTinOverride = async (recipeId: number, ingredientId: number, isFillingMix: boolean, tinCount: number | null) => {
     setSavingTinOverride(true);
@@ -780,7 +782,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
       <div className="space-y-4">
         <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
         {tabs}
-        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />
+        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} timingPlanId={isDraft ? null : targetPlanId} />
       </div>
     );
   }

@@ -79,7 +79,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const { state: authState } = useAuth();
   const currentUserId = authState.status === "authenticated" ? authState.user.id : null;
   const [selectedRecipeId, setSelectedRecipeId] = useState<number | null>(null);
-  const [hideCompleted, setHideCompleted] = useState(false);
+  // On by default (Graeme, 13 Nov 2026): open on what is left to do;
+  // "Show all" still reveals the finished ones.
+  const [hideCompleted, setHideCompleted] = useState(true);
   // A rub/marinade sub-recipe tapped on a meat row — opens the replenish
   // modal for it so it can be made without leaving this screen.
   const [replenishTarget, setReplenishTarget] = useState<ReplenishTarget | null>(null);
@@ -347,7 +349,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
       <div className="space-y-4">
         <PrepDateBanner currentPlanDate={plan.planDate} targetPlanDate={nextPlan?.planDate ?? null} targetPlanName={nextPlan?.planName ?? null} isLoading={false} />
         {tabs}
-        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />
+        <PrepStockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} timingPlanId={isDraft ? null : targetPlanId} />
       </div>
     );
   }

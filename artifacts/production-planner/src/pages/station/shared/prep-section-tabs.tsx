@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useLocation, useSearch } from "wouter";
-import { AlarmClock, Beef, ClipboardCheck, ClipboardList, Layers } from "lucide-react";
+import { AlarmClock, Beef, ClipboardCheck, ClipboardList, FlaskConical, Layers } from "lucide-react";
+import { useListSubRecipes } from "@workspace/api-client-react";
+import type { SubRecipe } from "@workspace/api-client-react";
 import { cn } from "@/lib/utils";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
@@ -8,6 +10,7 @@ import type { Count, PrepSectionKey } from "@/lib/prep-progress";
 import { sectionTabStatus, stockCheckTabStatus, type StockTabTone, type TabStatus } from "@/lib/prep-tab-status";
 import { StockCheckDuePopupHost, StockCheckList, usePrepStockChecks } from "./stock-check-status-panel";
 import type { PrepTarget } from "./stock-check-alarm";
+import { SubRecipeMakeFlow } from "../stations/prep-bases-station";
 
 // ─────────────────────────────────────────────────────────────────────────
 // Prep section tabs (Graeme, 22 Oct 2026):
@@ -27,6 +30,16 @@ import type { PrepTarget } from "./stock-check-alarm";
 // ─────────────────────────────────────────────────────────────────────────
 
 const STOCK_TAB = "stock-check";
+// Replenish Sub Recipes (Graeme, 13 Nov 2026): it lived on the "Select prep
+// station" page, which is gone — now the fifth tab, any time, from any
+// section (?tab=replenish).
+const REPLENISH_TAB = "replenish";
+type SideTab = typeof STOCK_TAB | typeof REPLENISH_TAB;
+
+function sideTabOf(search: string): SideTab | null {
+  const t = new URLSearchParams(search).get("tab");
+  return t === STOCK_TAB || t === REPLENISH_TAB ? t : null;
+}
 
 const SECTIONS: ReadonlyArray<{
   key: PrepSectionKey; label: string; icon: React.ComponentType<{ className?: string }>;
@@ -68,9 +81,10 @@ const STOCK_TONES: Record<StockTabTone, { active: string; inactive: string; bar:
   overdue: { active: "bg-red-700 text-white border-red-900 ring-4 ring-red-300", inactive: "bg-red-700 text-white border-red-800", bar: "bg-white" },
 };
 
-/** True when the Stock Check tab is the one selected. */
+/** True when Stock Check or Replenish Sub Recipes is the tab selected —
+ *  the section's own list is hidden and PrepStockCheckTabBody shows instead. */
 export function usePrepStockTabOpen(): boolean {
-  return new URLSearchParams(useSearch()).get("tab") === STOCK_TAB;
+  return sideTabOf(useSearch()) != null;
 }
 
 export interface PrepSectionTabsProps {
@@ -91,14 +105,16 @@ export function PrepSectionTabs({ planId, current, progressPlanId, currentProgre
   const [, navigate] = useLocation();
   const search = useSearch();
   const reducedMotion = usePrefersReducedMotion();
-  const stockOpen = usePrepStockTabOpen();
+  const sideTab = sideTabOf(search);
+  const stockOpen = sideTab === STOCK_TAB;
+  const replenishOpen = sideTab === REPLENISH_TAB;
   const { data: progress } = usePrepProgress(progressPlanId, { refetchInterval: 15_000 });
   const stock = usePrepStockChecks(checkDate, prepTarget);
 
   // Keep every other query param (?direct=1, ?from=dashboard) across hops.
-  const hrefFor = (section: PrepSectionKey, stockTab: boolean) => {
+  const hrefFor = (section: PrepSectionKey, tab: SideTab | null) => {
     const qs = new URLSearchParams(search);
-    if (stockTab) qs.set("tab", STOCK_TAB); else qs.delete("tab");
+    if (tab) qs.set("tab", tab); else qs.delete("tab");
     const s = qs.toString();
     return `/plans/${planId}/station/${section}${s ? `?${s}` : ""}`;
   };
@@ -117,16 +133,16 @@ export function PrepSectionTabs({ planId, current, progressPlanId, currentProgre
     <div
       role="tablist"
       aria-label="Prep sections"
-      className="grid grid-cols-2 md:grid-cols-4 gap-2 bg-card border border-border rounded-2xl p-2"
+      className="grid grid-cols-2 md:grid-cols-5 gap-2 bg-card border border-border rounded-2xl p-2"
     >
       {SECTIONS.map(s => {
-        const isActive = !stockOpen && s.key === current;
+        const isActive = sideTab == null && s.key === current;
         const count = s.key === current && currentProgress ? currentProgress : progress?.bySection[s.key];
         return (
           <TabButton
             key={s.key}
             active={isActive}
-            onClick={() => navigate(hrefFor(s.key, false))}
+            onClick={() => navigate(hrefFor(s.key, null))}
             icon={s.icon}
             label={s.label}
             status={sectionTabStatus(count)}
@@ -137,13 +153,24 @@ export function PrepSectionTabs({ planId, current, progressPlanId, currentProgre
       })}
       <TabButton
         active={stockOpen}
-        onClick={() => navigate(hrefFor(current, true))}
+        onClick={() => navigate(hrefFor(current, STOCK_TAB))}
         icon={stockRed ? AlarmClock : ClipboardCheck}
         label="Stock Check"
         status={stockStatus}
         className={cn(stockOpen ? stockTone.active : stockTone.inactive, stockStatus.tone === "warning" && !reducedMotion && "stock-alarm-flash")}
         barClass={stockOpen && !stockRed ? "bg-white" : stockTone.bar}
         alert={stockRed}
+      />
+      <TabButton
+        active={replenishOpen}
+        onClick={() => navigate(hrefFor(current, REPLENISH_TAB))}
+        icon={FlaskConical}
+        label="Replenish Sub Recipes"
+        status={{ line: "Any time", pct: null, complete: false }}
+        className={replenishOpen
+          ? "bg-violet-500 dark:bg-violet-600 text-white border-violet-600"
+          : "bg-violet-50 dark:bg-violet-950/30 text-violet-800 dark:text-violet-300 border-violet-200 dark:border-violet-900 hover:bg-violet-100 dark:hover:bg-violet-950/60"}
+        barClass="bg-violet-500"
       />
     </div>
     </>
@@ -190,9 +217,51 @@ function TabButton({ active, onClick, icon: Icon, label, status, className, barC
   );
 }
 
-/** The Stock Check tab's body — what the old bar's "Show" opened: today's
- *  stock checks with the usual entry flow. */
-export function PrepStockCheckTabBody({ checkDate, prepTarget }: { checkDate: string; prepTarget: PrepTarget | null }) {
+/** The body under the Stock Check or Replenish Sub Recipes tab, whichever is
+ *  selected. Stock Check: what the old bar's "Show" opened — today's stock
+ *  checks with the usual entry flow. */
+export function PrepStockCheckTabBody({ checkDate, prepTarget, timingPlanId }: {
+  checkDate: string;
+  prepTarget: PrepTarget | null;
+  /** The plan replenishing is timed against (null while it's a draft). */
+  timingPlanId?: number | null;
+}) {
+  if (sideTabOf(useSearch()) === REPLENISH_TAB) return <PrepReplenishTabBody timingPlanId={timingPlanId ?? null} />;
+  return <StockCheckTabBody checkDate={checkDate} prepTarget={prepTarget} />;
+}
+
+/** Replenish Sub Recipes — the same make flow the old prep hub opened:
+ *  pick a sub-recipe, choose a mix count, follow the checklist. */
+function PrepReplenishTabBody({ timingPlanId }: { timingPlanId: number | null }) {
+  const [location, navigate] = useLocation();
+  const search = useSearch();
+  const { data } = useListSubRecipes();
+  const allSubRecipes = (data ?? []) as SubRecipe[];
+  // Done or closed: back to the section underneath.
+  const close = () => {
+    const qs = new URLSearchParams(search);
+    qs.delete("tab");
+    const s = qs.toString();
+    navigate(`${location}${s ? `?${s}` : ""}`);
+  };
+  return (
+    <div className="bg-card border border-border rounded-2xl p-5 space-y-4">
+      <div>
+        <h3 className="font-bold text-xl">Replenish Sub Recipes</h3>
+        <p className="text-sm text-muted-foreground">Ad-hoc production of spice rubs, dough mixes, and other sub-recipes</p>
+      </div>
+      <SubRecipeMakeFlow
+        mode="standalone"
+        planRequirements={[]}
+        allSubRecipes={allSubRecipes}
+        onClose={close}
+        timing={timingPlanId != null ? { planId: timingPlanId, station: "prep" } : undefined}
+      />
+    </div>
+  );
+}
+
+function StockCheckTabBody({ checkDate, prepTarget }: { checkDate: string; prepTarget: PrepTarget | null }) {
   const checks = usePrepStockChecks(checkDate, prepTarget);
   const [activeId, setActiveId] = useState<number | null>(null);
   const red = checks.state === "warning" || checks.state === "overdue";
