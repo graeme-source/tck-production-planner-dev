@@ -4,7 +4,6 @@ import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } f
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
-import { TeamListsDashboardSection } from "@/components/team-lists/team-lists-dashboard";
 import { DispatchOrdersPanel, fetchWeeklyOrders, getMonday } from "@/components/dispatch-orders-panel";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { format, isToday, addDays } from "date-fns";
@@ -752,10 +751,8 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* Team lists (Graeme, 2026-10-13): the shared management routines —
-          Production planner, Scheduling manager… — with today's progress.
-          Managers/admins only; nothing renders for anyone else. */}
-      <TeamListsDashboardSection />
+      {/* Team lists live in Quick actions only — off the dashboard (Graeme,
+          13 Nov 2026). */}
 
       {/* The core calzone line — log in, tap where you work, no
           production-plan detour (Graeme, 2026-09-16). Exit Station brings
@@ -874,8 +871,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      <GoveeTempTile />
-
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-8">
         <Link href="/plans" className="glass-panel rounded-2xl flex flex-col group cursor-pointer hover-lift">
           <div className="p-6 border-b border-border flex items-center justify-between">
@@ -904,6 +899,10 @@ export default function Dashboard() {
         <DispatchOrdersPanel className="lg:col-span-2" />
 
       </div>
+
+      {/* Fridge & freezer temperatures last — Today's Production and the
+          dispatch orders matter more day to day (Graeme, 13 Nov 2026). */}
+      <GoveeTempTile />
 
     </div>
   );
