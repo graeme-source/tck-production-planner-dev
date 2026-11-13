@@ -9,6 +9,7 @@ import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
 import { DessertsReportCard, useDessertLabelsStatus } from "@/components/desserts-report-card";
 import { packingStep, packingBlocker, type PackingStep } from "@/lib/packing-sequence";
+import { WAVES, currentWave, waveFilters, waveOf, type WaveKey } from "@/lib/packing-waves";
 import { WhatsChangedButton } from "@/components/station-changes/station-menu";
 import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
@@ -1481,12 +1482,9 @@ export default function Fulfilment() {
   // Box categories are multi-select: the operator can pick a wave of Small +
   // Large together. An empty set means "no category constraint" (= All).
   //
-  // Starts empty and is set once, from the day's actual mix, by the effect
-  // below — large boxes first, small if the day has no large ones.
+  // Set by the current packing wave (see the waves below) unless the
+  // Filters panel has taken over.
   const [boxFilter, setBoxFilter] = useState<Set<BoxCategory>>(new Set<BoxCategory>());
-  // One-shot: applied when the day's orders first land, never again, so a
-  // deliberate choice by the operator is never overwritten by a refetch.
-  const boxDefaultApplied = useRef(false);
   // Fourth filter axis: how the order leaves. Courier orders split into No
   // label / Booked (only meaningful when the app books labels itself) so the
   // wave can be worked a slice at a time; Local delivery, Collection and
@@ -2101,18 +2099,26 @@ export default function Fulfilment() {
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
-  // The wave starts on LARGE boxes — they're the slow ones and they set the
-  // pace of the day, so the bench should open on them rather than on a mixed
-  // list. A day with no large boxes opens on small instead (Graeme,
-  // 2026-08-29). Runs once, when the day's orders first arrive.
-  const largeBoxCount = boxCounts["large box"];
-  const smallBoxCount = boxCounts["small box"];
+  // Waves (Graeme, 13 Nov 2026): local delivery → large → wholesale →
+  // small, booked orders only. The bench is put on the first wave with orders
+  // ready and moves on by itself when it's done (lib/packing-waves.ts); a
+  // tap on a wave chooses it; using the Filters panel takes over by hand
+  // until "Back to the waves".
+  const [chosenWave, setChosenWave] = useState<WaveKey | null>(null);
+  const [customFilters, setCustomFilters] = useState(false);
+  const waveCounts: Record<WaveKey, number> = { local: 0, large: 0, wholesale: 0, small: 0 };
+  for (const o of unfulfilledOrders) {
+    if (lacksLabel(o)) continue;
+    const w = waveOf(getOrderCategory(o));
+    if (w) waveCounts[w]++;
+  }
+  const wave = currentWave(waveCounts, chosenWave);
   useEffect(() => {
-    if (boxDefaultApplied.current) return;
-    if (largeBoxCount === 0 && smallBoxCount === 0) return;
-    boxDefaultApplied.current = true;
-    setBoxFilter(new Set<BoxCategory>([largeBoxCount > 0 ? "large box" : "small box"]));
-  }, [largeBoxCount, smallBoxCount]);
+    if (customFilters || !wave) return;
+    const f = waveFilters(wave, apcMode === "full");
+    setBoxFilter(new Set<BoxCategory>(f.box));
+    setLabelFilter(f.label);
+  }, [wave, customFilters, apcMode]);
 
   const taggedCounts = {
     "small box": unfulfilledOrders.filter(o => getOrderCategory(o) === "small box").length,
@@ -4661,80 +4667,112 @@ export default function Fulfilment() {
 
       {orders && (
         <div className="space-y-4">
-          <p className="text-base text-muted-foreground">
-            <span className="font-semibold text-foreground tabular-nums">{unfulfilledOrders.filter(o => !lacksLabel(o)).length}</span> ready to pack
-            {unfulfilledOrders.filter(lacksLabel).length > 0 && (
-              <span className="text-amber-700 dark:text-amber-400 font-medium"> &middot; {unfulfilledOrders.filter(lacksLabel).length} no label</span>
-            )}
-            {" "}&middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
-          </p>
-
-          {/* ── The filters that own the list below ──────────────────────
-              Every control here is a primary action at the bench, so they
-              are sized like Book APC labels rather than drawn as small grey
-              chips. Group names are plain headings ABOVE their row: sat
-              inside the row they read as one more filter (Graeme,
-              2026-08-29). Box × Label combine (AND): "Large + Booked" =
-              large boxes whose labels are already booked. */}
-          <div className="glass-panel rounded-2xl border-2 border-primary/30 p-4 space-y-4">
-            <div className="flex items-center gap-3 flex-wrap">
-              <p className="text-base font-bold uppercase tracking-wide text-primary flex items-center gap-2">
-                <Filter className="w-5 h-5" /> Showing these orders below
-              </p>
-              <div className="ml-auto flex items-center gap-2 flex-wrap">
-                {/* Booking is everyone's (Graeme, 9 Nov 2026); the APC check
-                    and rescheduling stay with canBookCourier ("Fix APC
-                    booking problems"). */}
+          {/* One compact action row (Graeme, 13 Nov 2026): the waves on the
+              left — the bench is put on the right one automatically — and
+              the occasional tools on the right. Box size, labels, the fridge
+              gate and tags/products live behind Filters. */}
+          <div className="glass-panel rounded-2xl border-2 border-primary/30 p-3 flex items-center gap-2 flex-wrap">
+            {customFilters ? (
+              <button
+                onClick={() => { setCustomFilters(false); setChosenWave(null); }}
+                className="px-4 py-2.5 rounded-xl text-base font-bold border-2 border-indigo-500 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/30 flex items-center gap-2"
+              >
+                <ArrowLeft className="w-5 h-5" /> Back to the waves
+              </button>
+            ) : WAVES.filter(w => waveCounts[w.key] > 0).map(w => (
+              <button
+                key={w.key}
+                onClick={() => setChosenWave(w.key)}
+                aria-pressed={wave === w.key}
+                className={cn(
+                  "px-4 py-2.5 rounded-xl text-base font-bold transition-colors flex items-center gap-2 border-2",
+                  wave === w.key
+                    ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                    : "bg-card border-border text-foreground hover:border-primary/50",
+                )}
+              >
+                {w.label}
+                <span className={cn("text-sm font-bold px-2 py-0.5 rounded-full tabular-nums", wave === w.key ? "bg-primary-foreground/20" : "bg-secondary")}>
+                  {waveCounts[w.key]}
+                </span>
+              </button>
+            ))}
+            <div className="ml-auto flex items-center gap-2 flex-wrap">
                 {apcMode === "full" && (
                   <BookingIssuesButton onOpen={() => setShowBookingIssues(true)} />
                 )}
                 {apcMode !== "off" && canBookCourier && (
                   <button
                     onClick={() => navigate("/fulfilment/apc-check")}
-                    className="px-5 py-3 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
+                    className="px-4 py-2.5 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
                     title="Orders that went out on an old or cancelled APC booking, and old bookings still live at APC"
                   >
                     <ShieldCheck className="w-5 h-5" /> APC check
                   </button>
                 )}
-                {/* Any day before: which of this Friday's orders APC won't
-                    deliver on the Saturday (Graeme, 11 Nov 2026). */}
                 {apcMode !== "off" && (
                   <button
                     onClick={() => navigate("/fulfilment/friday-check")}
-                    className="px-5 py-3 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
+                    className="px-4 py-2.5 rounded-xl text-base font-bold border-2 border-border bg-card text-foreground hover:border-primary/50 transition-colors flex items-center gap-2"
                     title="This Friday's orders that APC won't deliver on the Saturday"
                   >
                     <CalendarX className="w-5 h-5" /> Friday check
                   </button>
                 )}
-                {/* Book APC labels lives at the top as step 1 when it's
-                    needed (it tags first) — one button, not two (13 Nov 2026). */}
                 <button
                   onClick={() => setFiltersOpen(v => !v)}
+                  aria-expanded={filtersOpen}
                   className={cn(
-                    "px-5 py-3 rounded-xl text-base font-bold transition-all flex items-center gap-2 border-2",
-                    filtersActive
+                    "px-4 py-2.5 rounded-xl text-base font-bold transition-all flex items-center gap-2 border-2",
+                    filtersActive || customFilters || !fridgeGate
                       ? "bg-indigo-600 border-indigo-600 text-white shadow-sm"
                       : "bg-card border-border text-foreground hover:border-primary/50"
                   )}
                 >
                   <Filter className="w-5 h-5" />
-                  Tags &amp; Products
+                  Filters
                   {filtersActive && (
                     <span className="text-sm px-2 py-0.5 rounded-full bg-white/20 tabular-nums">
                       {includeTags.size + excludeTags.size + includeProducts.size + excludeProducts.size}
                     </span>
                   )}
                 </button>
-              </div>
             </div>
+          </div>
+            {rescheduleTarget && (
+              <RescheduleOrderDialog
+                orderId={rescheduleTarget.id}
+                orderName={rescheduleTarget.name}
+                fromDate={queryTag}
+                adminUrl={configStatus?.shopifyAdminOrderBase ? `${configStatus.shopifyAdminOrderBase}${rescheduleTarget.id}` : undefined}
+                onClose={() => setRescheduleTarget(null)}
+                onDone={() => { refetch(); refetchBooked(); refetchProgress(); }}
+              />
+            )}
+            {showBatchBooking && (
+              <ApcBatchBookingDialog
+                tag={queryTag}
+                adminBase={configStatus?.shopifyAdminOrderBase}
+                onClose={() => setShowBatchBooking(false)}
+                onBooked={() => { void refetchBooked(); void refetch(); }}
+                onOpenIssues={() => { setShowBatchBooking(false); setShowBookingIssues(true); }}
+              />
+            )}
+            {showBookingIssues && (
+              <BookingIssuesReport
+                onClose={() => setShowBookingIssues(false)}
+                onChanged={() => { void refetchBooked(); void refetch(); void refetchProgress(); }}
+              />
+            )}
 
+
+          {filtersOpen && (
+            <div className="glass-panel p-4 rounded-2xl border border-border space-y-4">
             <div className="space-y-2">
               <p className="text-sm font-bold uppercase tracking-widest text-foreground">Box size</p>
               <div className="flex gap-2 flex-wrap">
                 <button
-                  onClick={() => setBoxFilter(new Set())}
+                  onClick={() => { setCustomFilters(true); setBoxFilter(new Set()); }}
                   className={cn(
                     "px-5 py-3 rounded-xl text-base font-bold transition-colors border-2",
                     boxFilter.size === 0
@@ -4753,6 +4791,7 @@ export default function Fulfilment() {
                     <button
                       key={tab.key}
                       onClick={() => {
+                        setCustomFilters(true);
                         const next = new Set(boxFilter);
                         if (next.has(tab.key)) next.delete(tab.key); else next.add(tab.key);
                         setBoxFilter(next);
@@ -4784,7 +4823,6 @@ export default function Fulfilment() {
                 {([
                   { key: "all" as const, label: "All", count: null },
                   ...(apcMode === "full" ? [
-                    { key: "unbooked" as const, label: "No label (courier)", count: allUnfulfilledOrders.filter(o => isCourierOrder(o) && !bookedMap.has(o.id)).length },
                     { key: "booked" as const, label: "Booked (courier)", count: allUnfulfilledOrders.filter(o => isCourierOrder(o) && bookedMap.has(o.id)).length },
                   ] : []),
                   { key: "local" as const, label: "Local delivery", count: boxCounts["local delivery"] },
@@ -4796,6 +4834,7 @@ export default function Fulfilment() {
                     <button
                       key={opt.key}
                       onClick={() => {
+                        setCustomFilters(true);
                         setLabelFilter(opt.key);
                         // Local / Collection / Wholesale aren't a box size, so
                         // a box-size choice would hide every one of them.
@@ -4845,39 +4884,8 @@ export default function Fulfilment() {
               </div>
             )}
 
-            {rescheduleTarget && (
-              <RescheduleOrderDialog
-                orderId={rescheduleTarget.id}
-                orderName={rescheduleTarget.name}
-                fromDate={queryTag}
-                adminUrl={configStatus?.shopifyAdminOrderBase ? `${configStatus.shopifyAdminOrderBase}${rescheduleTarget.id}` : undefined}
-                onClose={() => setRescheduleTarget(null)}
-                onDone={() => { refetch(); refetchBooked(); refetchProgress(); }}
-              />
-            )}
-            {showBatchBooking && (
-              <ApcBatchBookingDialog
-                tag={queryTag}
-                adminBase={configStatus?.shopifyAdminOrderBase}
-                onClose={() => setShowBatchBooking(false)}
-                onBooked={() => { void refetchBooked(); void refetch(); }}
-                onOpenIssues={() => { setShowBatchBooking(false); setShowBookingIssues(true); }}
-              />
-            )}
-            {showBookingIssues && (
-              <BookingIssuesReport
-                onClose={() => setShowBookingIssues(false)}
-                onChanged={() => { void refetchBooked(); void refetch(); void refetchProgress(); }}
-              />
-            )}
-
-            {/* How many orders this wave will actually cycle through. */}
-            <p className="text-base font-medium border-t border-border pt-3">
-              Picking <span className="font-bold text-foreground tabular-nums text-lg">{filteredUnfulfilled.length}</span>
-              <span className="text-muted-foreground"> of {unfulfilledOrders.length} dispatch-tagged orders</span>
-              {filtersActive && <span className="text-indigo-600 dark:text-indigo-400 font-semibold"> · filters active</span>}
-            </p>
-          </div>
+            </div>
+          )}
 
           {filtersOpen && (
             <div className="glass-panel p-4 rounded-2xl border border-border space-y-4">
