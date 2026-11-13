@@ -19,7 +19,7 @@ import { doughMixProgressKey, fetchDoughMixProgress } from "@/hooks/use-dough-mi
 import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
-import { addDayItems, dayKind, EMPTY_DAY_TOTALS, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
+import { addDayItems, dayKind, EMPTY_DAY_TOTALS, isItemDone, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
 import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
@@ -208,15 +208,17 @@ function TodayPlanRecipes({ planId }: { planId: number }) {
         // Mac cheese is tracked in packs (1 batch = 1 pack); calzones in
         // batches. Match the unit the rest of the app uses for each.
         const isMac = it.recipeCategory === MAC_CHEESE_CATEGORY;
+        const done = isItemDone(it);
         const unit = isMac
           ? `pack${it.batchesTarget !== 1 ? "s" : ""}`
           : `batch${it.batchesTarget !== 1 ? "es" : ""}`;
         return (
-          <div key={it.id} className="flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors">
-            <span className="text-sm font-medium truncate pr-2" style={it.recipeColor ? colourStyle(it.recipeId, it.recipeColor, "text") : undefined}>
-              {it.recipeName ?? "Unknown"}
+          // Struck through once every pack is wrapped (Graeme, 13 Nov 2026).
+          <div key={it.id} className={cn("flex items-center justify-between py-1.5 px-3 rounded-lg hover:bg-secondary/50 transition-colors", done && "opacity-50")}>
+            <span className={cn("text-sm font-medium truncate pr-2", done && "line-through")} style={it.recipeColor ? colourStyle(it.recipeId, it.recipeColor, "text") : undefined}>
+              {done && <span className="sr-only">Done: </span>}{it.recipeName ?? "Unknown"}
             </span>
-            <span className="text-sm font-bold tabular-nums shrink-0" style={it.recipeColor ? { color: it.recipeColor } : undefined}>
+            <span className={cn("text-sm font-bold tabular-nums shrink-0", done && "line-through")} style={it.recipeColor ? { color: it.recipeColor } : undefined}>
               {it.batchesTarget} <span className="text-xs font-normal text-muted-foreground">{unit}</span>
             </span>
           </div>

@@ -34,6 +34,8 @@ export interface DayItem {
   fridgeEightPackQty?: number | null;
   freezerEightPackQty?: number | null;
   stationCompletions?: Partial<Record<"building_1" | "building_2" | "ovens" | "mixing", number>> | null;
+  /** Ticked finished at the wrapping station (a few short for wonkies is normal). */
+  wrappingComplete?: boolean | null;
 }
 
 export interface DayTotals {
@@ -70,19 +72,38 @@ export function addDayItems(totals: DayTotals, items: readonly DayItem[]): DayTo
       t.calzoneMixed += Math.min(sc.mixing ?? 0, target);
     }
     if (target > 0) {
-      // Planned pack units: 2-packs after the 8-pack bags take their 4
-      // two-packs' worth of portions, plus the bags themselves. (Mac falls
-      // out naturally: 2 portions/batch ÷ pack of 2.)
-      // In the recipe's own pack size (÷2 until 16 Oct 2026 — a bun sheet
-      // read 24 packs instead of 8). A bag is 8 portions = 8 / packSize packs.
-      const bags = it.eightPackBagCount ?? 0;
-      const bagPacks = Math.round((bags * 8) / (Number(it.packSize) || 2));
-      const plannedTwoPacks = Math.max(0, packsFromBatches(target, it.portionsPerBatch, it.packSize) - bagPacks);
-      const itemTotal = plannedTwoPacks + bags;
-      const wrapped = (it.fridgeQty ?? 0) + (it.freezerQty ?? 0) + (it.fridgeEightPackQty ?? 0) + (it.freezerEightPackQty ?? 0);
-      t.packsTotal += itemTotal;
-      t.packsWrapped += Math.min(wrapped, itemTotal);
+      const p = itemPacks(it);
+      t.packsTotal += p.total;
+      t.packsWrapped += Math.min(p.wrapped, p.total);
     }
   }
   return t;
+}
+
+/** One item's packs planned and wrapped into the fridge or freezer — the
+ *  Wrapping tile's measure, per recipe. */
+export function itemPacks(it: DayItem): { total: number; wrapped: number } {
+  const target = it.batchesTarget ?? 0;
+  if (!(target > 0)) return { total: 0, wrapped: 0 };
+  // Planned pack units: 2-packs after the 8-pack bags take their 4
+  // two-packs' worth of portions, plus the bags themselves. (Mac falls
+  // out naturally: 2 portions/batch ÷ pack of 2.)
+  // In the recipe's own pack size (÷2 until 16 Oct 2026 — a bun sheet
+  // read 24 packs instead of 8). A bag is 8 portions = 8 / packSize packs.
+  const bags = it.eightPackBagCount ?? 0;
+  const bagPacks = Math.round((bags * 8) / (Number(it.packSize) || 2));
+  const plannedTwoPacks = Math.max(0, packsFromBatches(target, it.portionsPerBatch, it.packSize) - bagPacks);
+  const wrapped = (it.fridgeQty ?? 0) + (it.freezerQty ?? 0) + (it.fridgeEightPackQty ?? 0) + (it.freezerEightPackQty ?? 0);
+  return { total: plannedTwoPacks + bags, wrapped };
+}
+
+/** A recipe is done for the day once wrapping has ticked it finished, or
+ *  every planned pack is in (Graeme, 13 Nov 2026: struck through on the
+ *  dashboard's Today's Production). The tick wins because a recipe often
+ *  finishes a few packs short — wonkies and dog bins. */
+export function isItemDone(it: DayItem): boolean {
+  if ((it.batchesTarget ?? 0) <= 0) return false;
+  if (it.wrappingComplete) return true;
+  const p = itemPacks(it);
+  return p.total > 0 && p.wrapped >= p.total;
 }

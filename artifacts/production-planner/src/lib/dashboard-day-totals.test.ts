@@ -37,3 +37,24 @@ describe("dashboard day totals (regression: 259 'batches' on a 105-batch day, 20
     expect(dayKind(null)).toBe("calzone");
   });
 });
+
+describe("isItemDone (Today's Production strike-through, 13 Nov 2026)", () => {
+  // 13 batches of 10 calzones in 2-packs = 65 packs.
+  const godfather = { recipeCategory: "Calzone", batchesTarget: 13, portionsPerBatch: 10, packSize: 2 };
+  it("is done once every planned pack is in the fridge or freezer", async () => {
+    const { isItemDone, itemPacks } = await import("./dashboard-day-totals");
+    expect(itemPacks(godfather).total).toBe(65);
+    expect(isItemDone({ ...godfather, fridgeQty: 60, freezerQty: 5 })).toBe(true);
+    expect(isItemDone({ ...godfather, fridgeQty: 70 })).toBe(true);
+  });
+  it("is done when wrapping ticks it finished, even a few packs short (Godfather 61 of 65 on 13 Nov)", async () => {
+    const { isItemDone } = await import("./dashboard-day-totals");
+    expect(isItemDone({ ...godfather, fridgeQty: 61, wrappingComplete: true })).toBe(true);
+  });
+  it("is not done while packs are still to wrap, or with nothing planned", async () => {
+    const { isItemDone } = await import("./dashboard-day-totals");
+    expect(isItemDone({ ...godfather, fridgeQty: 64 })).toBe(false);
+    expect(isItemDone({ ...godfather })).toBe(false);
+    expect(isItemDone({ ...godfather, batchesTarget: 0, fridgeQty: 5 })).toBe(false);
+  });
+});
