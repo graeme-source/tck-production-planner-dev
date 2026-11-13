@@ -42,3 +42,28 @@ export function settledOrders<T extends { created_at?: string | null }>(
 ): T[] {
   return orders.filter(o => isSettledOrder(o.created_at, now));
 }
+
+/** An order the packing list is holding back, and when it comes on. */
+export interface SettlingOrder {
+  orderId: number;
+  name: string;
+  /** created_at + ORDER_SETTLE_MINUTES, ISO. */
+  releasesAt: string;
+}
+
+/** Unfulfilled orders still inside their 15 minutes, soonest first — so the
+ *  packing screen can say "1 new order held back — on the list in 9 min"
+ *  instead of a 53/54 with nothing to pack (Graeme, 13 Nov 2026, #139679). */
+export function settlingOrders<T extends { id: number; name: string; created_at?: string | null; fulfillment_status?: string | null }>(
+  orders: readonly T[],
+  now: Date = new Date(),
+): SettlingOrder[] {
+  return orders
+    .filter(o => o.fulfillment_status !== "fulfilled" && !isSettledOrder(o.created_at, now))
+    .map(o => ({
+      orderId: o.id,
+      name: o.name,
+      releasesAt: new Date(Date.parse(o.created_at as string) + ORDER_SETTLE_MINUTES * 60_000).toISOString(),
+    }))
+    .sort((a, b) => a.releasesAt.localeCompare(b.releasesAt));
+}

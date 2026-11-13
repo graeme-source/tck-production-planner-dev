@@ -21,7 +21,7 @@ import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as 
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure, isDataFixableFailure } from "../lib/apc-failure-tags";
-import { settledOrders } from "../lib/order-age";
+import { settledOrders, settlingOrders } from "../lib/order-age";
 import { isDispatchTagged, isCollectionOrder, isLocalDeliveryTag, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
@@ -3763,7 +3763,11 @@ router.get("/dispatch-progress", async (req: Request, res: Response) => {
     const totalOrders = allOrders.length;
     const totalFulfilled = allOrders.filter(o => o.fulfillment_status === "fulfilled").length;
 
-    res.json({ tag, totalOrders, totalFulfilled, categories });
+    // Counted above but not yet on the pack list (under 15 minutes old —
+    // lib/order-age.ts): the screen says so, with when each comes on.
+    const settling = settlingOrders(allOrders);
+
+    res.json({ tag, totalOrders, totalFulfilled, categories, settling });
   } catch (err: any) {
     console.error("[Fulfilment] dispatch-progress error:", err.message);
     res.status(502).json({ error: err.message });

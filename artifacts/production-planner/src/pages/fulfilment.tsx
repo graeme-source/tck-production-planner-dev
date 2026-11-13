@@ -42,7 +42,7 @@ import {
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
   ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame, ShieldCheck,
-  Minus, Plus, CalendarX,
+  Minus, Plus, CalendarX, Hourglass,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
@@ -55,6 +55,7 @@ import { barcodeFor, canTickByHand, decideScan, scanMessage, shouldRefreshOnMiss
 import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
 import { recipeColourStyle } from "@/lib/recipe-colour-style";
+import { settlingMessage, nextReleaseAt, type SettlingOrder } from "@/lib/settling-orders";
 import {
   usablePreload, shouldRefreshPreload, nextOrderToPrepare, labelPreloadUrl,
   LABEL_PRELOAD_REFRESH_MS, type PreloadedLabel,
@@ -585,6 +586,9 @@ interface DispatchProgress {
     wholesale: { total: number; fulfilled: number };
     other: { total: number; fulfilled: number };
   };
+  /** Counted in the total but not on the pack list yet — under 15 minutes
+   *  old (AfterSell can still add items). Optional for an older server. */
+  settling?: SettlingOrder[];
 }
 
 async function fetchDispatchProgress(tag: string): Promise<DispatchProgress> {
@@ -1194,6 +1198,17 @@ function DispatchSummary({
   const band = oph != null ? paceBand(oph) : null;
   const cats = progress?.categories;
   const remaining = (total ?? 0) - (packed ?? 0);
+  // New orders held back for their first 15 minutes, with a live countdown
+  // (Graeme, 13 Nov 2026: 53/54 with nothing to pack looked like a lost
+  // order). Re-renders every 15s so "in 9 min" counts down.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const anySettling = (progress?.settling?.length ?? 0) > 0;
+  useEffect(() => {
+    if (!anySettling) return;
+    const t = setInterval(() => setNowMs(Date.now()), 15_000);
+    return () => clearInterval(t);
+  }, [anySettling]);
+  const heldMessage = settlingMessage(progress?.settling, nowMs);
 
   return (
     <div className="glass-panel rounded-2xl border border-border p-5 space-y-4">
@@ -1215,7 +1230,20 @@ function DispatchSummary({
                 All done!
               </span>
             )}
+            {heldMessage && (
+              <span
+                role="status"
+                className="inline-flex items-center gap-1.5 text-sm px-3 py-1 rounded-full bg-sky-100 text-sky-900 dark:bg-sky-900/40 dark:text-sky-200 font-semibold"
+              >
+                <Hourglass className="w-4 h-4 shrink-0" /> {heldMessage}
+              </span>
+            )}
           </div>
+          {heldMessage && (
+            <p className="text-sm text-muted-foreground mt-1.5">
+              New orders wait 15 minutes before they can be tagged, booked or packed, in case the customer adds an upsell. It appears on its own — no need to refresh.
+            </p>
+          )}
           <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mt-3">
             <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${pct}%` }} />
           </div>
@@ -1690,6 +1718,16 @@ export default function Fulfilment() {
     // a second packer on another iPad is completing orders in the same wave.
     refetchInterval: 60_000,
   });
+
+  // A held-back new order comes off its 15 minutes: reload the pack list and
+  // the counts at that moment, so it appears without anyone refreshing.
+  const releaseAt = nextReleaseAt(progress?.settling, Date.now());
+  useEffect(() => {
+    if (releaseAt == null) return;
+    const t = setTimeout(() => { void refetch(); void refetchProgress(); }, Math.max(0, releaseAt - Date.now()) + 2_000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [releaseAt]);
 
   // Live packing pace — the SAME orders/hr number the dashboard and the
   // packing-speed report show (Shopify fulfilment timestamps, gaps over

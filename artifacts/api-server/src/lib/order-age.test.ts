@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { isSettledOrder, settledOrders, ORDER_SETTLE_MINUTES } from "./order-age";
+import { isSettledOrder, settledOrders, settlingOrders, ORDER_SETTLE_MINUTES } from "./order-age";
 
 const NOW = new Date("2026-08-21T14:00:00Z");
 const minutesAgo = (m: number) => new Date(NOW.getTime() - m * 60_000).toISOString();
@@ -44,5 +44,23 @@ describe("settledOrders", () => {
       { id: 3, created_at: minutesAgo(30) },
     ];
     expect(settledOrders(orders, NOW).map(o => o.id)).toEqual([1, 3]);
+  });
+});
+
+describe("settlingOrders — what the packing screen says it's holding back", () => {
+  it("lists unfulfilled orders under 15 minutes old with when they come on, soonest first", () => {
+    const out = settlingOrders([
+      { id: 1, name: "#1", created_at: minutesAgo(2), fulfillment_status: null },
+      { id: 2, name: "#2", created_at: minutesAgo(11), fulfillment_status: null },
+      { id: 3, name: "#3", created_at: minutesAgo(30), fulfillment_status: null },
+      { id: 4, name: "#4", created_at: minutesAgo(1), fulfillment_status: "fulfilled" },
+    ], NOW);
+    expect(out).toEqual([
+      { orderId: 2, name: "#2", releasesAt: new Date(NOW.getTime() + 4 * 60_000).toISOString() },
+      { orderId: 1, name: "#1", releasesAt: new Date(NOW.getTime() + 13 * 60_000).toISOString() },
+    ]);
+  });
+  it("nothing held → empty", () => {
+    expect(settlingOrders([{ id: 3, name: "#3", created_at: minutesAgo(30) }], NOW)).toEqual([]);
   });
 });
