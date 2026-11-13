@@ -6,11 +6,10 @@ import { PageHeader } from "@/components/page-header";
 import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
-import { format, startOfMonth, subDays, subMonths, endOfMonth } from "date-fns";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import {
   TrendingUp,
   TrendingDown,
-  Calendar,
   RefreshCw,
   Package,
   DollarSign,
@@ -151,20 +150,6 @@ function formatPct(n: number): string {
   return `${n.toFixed(1)}%`;
 }
 
-// ── Date presets ────────────────────────────────────────────────────────────
-
-function buildPresets() {
-  const today = new Date();
-  const todayStr = format(today, "yyyy-MM-dd");
-  return [
-    { label: "Today", from: todayStr, to: todayStr },
-    { label: "Last 7 days", from: format(subDays(today, 6), "yyyy-MM-dd"), to: todayStr },
-    { label: "Month to date", from: format(startOfMonth(today), "yyyy-MM-dd"), to: todayStr },
-    { label: "Last month", from: format(startOfMonth(subMonths(today, 1)), "yyyy-MM-dd"), to: format(endOfMonth(subMonths(today, 1)), "yyyy-MM-dd") },
-    { label: "Last 6 months", from: format(subMonths(today, 6), "yyyy-MM-dd"), to: todayStr },
-  ] as const;
-}
-
 // ── Main component ──────────────────────────────────────────────────────────
 
 export default function FounderPnL() {
@@ -179,29 +164,14 @@ export default function FounderPnL() {
 function PnLDashboard() {
   const queryClient = useQueryClient();
   const refreshSpin = useRefreshSpin();
-  const todayStr = format(new Date(), "yyyy-MM-dd");
-
-  const [from, setFrom] = useState(format(startOfMonth(new Date()), "yyyy-MM-dd"));
-  const [to, setTo] = useState(todayStr);
-  const [activePreset, setActivePreset] = useState("Month to date");
+  // The shared period selector (same presets as Numbers and Ads). Month to
+  // date stays this page's default.
+  const picker = usePeriodChoice("monthToDate");
+  const { from, to } = picker.period;
   const [showSettings, setShowSettings] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(true);
   const [sortField, setSortField] = useState<"revenue" | "totalCost" | "marginPercent" | "unitsSold">("revenue");
   const [sortAsc, setSortAsc] = useState(false);
-
-  const presets = useMemo(() => buildPresets(), [todayStr]);
-
-  function applyPreset(p: { label: string; from: string; to: string }) {
-    setFrom(p.from);
-    setTo(p.to);
-    setActivePreset(p.label);
-  }
-
-  function handleManualDateChange(field: "from" | "to", val: string) {
-    if (field === "from") setFrom(val);
-    else setTo(val);
-    setActivePreset("custom");
-  }
 
   // ── Queries ─────────────────────────────────────────────────────────────
 
@@ -350,47 +320,7 @@ function PnLDashboard() {
       />
 
       {/* ── Date Picker ──────────────────────────────────────────────────── */}
-      <div className="glass-panel p-4 rounded-2xl space-y-3">
-        <div className="flex flex-wrap gap-2">
-          {presets.map((p) => (
-            <button
-              key={p.label}
-              onClick={() => applyPreset(p)}
-              className={`text-xs font-medium px-3 py-1.5 rounded-lg transition-all border ${
-                activePreset === p.label
-                  ? "bg-primary text-primary-foreground border-primary"
-                  : "border-border text-muted-foreground hover:text-foreground hover:bg-secondary"
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <Calendar className="w-4 h-4 text-muted-foreground shrink-0" />
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground">From</label>
-            <input
-              type="date"
-              value={from}
-              max={to}
-              onChange={(e) => handleManualDateChange("from", e.target.value)}
-              className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-muted-foreground">To</label>
-            <input
-              type="date"
-              value={to}
-              min={from}
-              max={todayStr}
-              onChange={(e) => handleManualDateChange("to", e.target.value)}
-              className="text-sm bg-secondary border border-border rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-primary"
-            />
-          </div>
-        </div>
-      </div>
+      <PeriodPicker {...picker} />
 
       {/* ── Error state ──────────────────────────────────────────────────── */}
       {summaryError && (
