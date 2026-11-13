@@ -7,6 +7,7 @@ import { validate } from "../middleware/validate";
 import { reconcileRecipesUsing } from "../lib/quid-store";
 import { declarationToStore } from "../lib/ingredient-declaration";
 import { requireManagerOrAdmin } from "../middleware/roles";
+import { packPriceTarget } from "../lib/pack-price-target";
 import { generateQrCode } from "../lib/qr-code";
 import { kanbanLocationsLabel } from "../lib/kanban-card-text";
 import { loadIngredientUsageCounts } from "../lib/ingredient-usage-counts";
@@ -747,6 +748,35 @@ router.put("/:id/meat-portioning", requireManagerOrAdmin, validate(MeatPortionin
     });
   if (!row) { res.status(404).json({ error: "Not found" }); return; }
   res.json(row);
+});
+
+// Pack price from the Orders screen (Graeme, 13 Nov 2026): the unlock icon
+// beside a line's price changes it there and then, without leaving the
+// order being built. Saves the main or second supplier's price, whichever
+// card the line is on.
+const PackPriceBody = z.object({
+  supplierId: z.number().int().positive(),
+  costPerPack: z.number().min(0).max(100000),
+});
+
+router.put("/:id/pack-price", requireManagerOrAdmin, validate(PackPriceBody), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid ingredient id" }); return; }
+  const { supplierId, costPerPack } = PackPriceBody.parse(req.body);
+  const [ing] = await db.select({ supplierId: ingredientsTable.supplierId, secondarySupplierId: ingredientsTable.secondarySupplierId })
+    .from(ingredientsTable).where(eq(ingredientsTable.id, id));
+  if (!ing) { res.status(404).json({ error: "Not found" }); return; }
+  const target = packPriceTarget(ing, supplierId);
+  if (!target) {
+    res.status(409).json({ error: "This supplier isn't this item's main or second supplier, so there's no price to change here. Set the supplier on the ingredient first." });
+    return;
+  }
+  const price = costPerPack.toFixed(4);
+  await db.update(ingredientsTable)
+    .set(target === "primary" ? { costPerPack: price } : { secondaryCostPerPack: price })
+    .where(eq(ingredientsTable.id, id));
+  console.log(`[ingredients] ${id} ${target} pack price → £${price} from Orders by user ${req.session.userId}`);
+  res.json({ ok: true, target, costPerPack: Number(price) });
 });
 
 // Sixteen tables hold foreign keys into ingredients — recipes and prep the

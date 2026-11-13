@@ -98,6 +98,7 @@ import {
   type TopUpSuggestion,
 } from "@/lib/minimum-order";
 import { MinimumOrderNotice } from "@/components/minimum-order-notice";
+import { PackPriceEditor } from "@/components/pack-price-editor";
 import { suggestedPacks, surplusDependsOnDeliveryDay, withDeliverySurplus, type SurplusLineFields } from "@/lib/order-line-surplus";
 import {
   expectedAtCountLabel,
@@ -1648,6 +1649,20 @@ export default function Orders() {
     });
   }, []);
 
+  // A price changed from the line's unlock icon (PackPriceEditor): the new
+  // price shows straight away; the order being built is kept as it is.
+  const updateLinePrice = useCallback((supplierId: number, idx: number, price: number) => {
+    setEditableLines(prev => {
+      const updated = { ...prev };
+      const lines = [...(updated[supplierId] || [])];
+      if (!lines[idx]) return prev;
+      lines[idx] = { ...lines[idx], costPerPack: price };
+      updated[supplierId] = lines;
+      return updated;
+    });
+    queryClient.invalidateQueries({ queryKey: ["supplier-pricing"] });
+  }, [queryClient]);
+
   const updateStock = useCallback((supplierId: number, idx: number, newStock: number) => {
     setEditableLines(prev => {
       const updated = { ...prev };
@@ -2871,6 +2886,15 @@ export default function Orders() {
                               )}
                               {palletPriceLabel(line) && (
                                 <span className="block text-xs text-muted-foreground">{palletPriceLabel(line)}</span>
+                              )}
+                              {!line.isMisc && line.ingredientId > 0 && (
+                                <PackPriceEditor
+                                  ingredientId={line.ingredientId}
+                                  supplierId={so.supplier.id}
+                                  costPerPack={line.costPerPack}
+                                  perLabel={line.packWeight > 0 ? `${packNoun("packs", 1, line.packName)} of ${line.packWeight} ${line.unit}` : (line.unit || "unit")}
+                                  onSaved={(price) => updateLinePrice(so.supplier.id, idx, price)}
+                                />
                               )}
                             </td>
                           )}
