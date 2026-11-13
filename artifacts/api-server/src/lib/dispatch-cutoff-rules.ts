@@ -32,11 +32,6 @@ interface CheckOrder {
   note_attributes?: Array<{ name?: string | null; value?: string | null }> | null;
 }
 
-/** Held on purpose until nearer its date (subscription renewals sit as
- *  "waiting"), so never a missed order. */
-const isWaiting = (tags: string | null | undefined) =>
-  (tags ?? "").split(",").some(t => t.trim().toLowerCase() === "waiting");
-
 /** Zapiet's chosen delivery day (`Delivery-Date`, YYYY/MM/DD) as YYYY-MM-DD, or null. */
 export function zapietDeliveryDate(attrs: CheckOrder["note_attributes"]): string | null {
   const v = (attrs ?? []).find(a => a?.name === "Delivery-Date")?.value?.trim() ?? "";
@@ -54,18 +49,19 @@ export interface MissingOrder {
 
 /** Unfulfilled courier orders placed before 2:00 today that won't go out for
  *  tomorrow unless someone acts: tagged for tomorrow but not for dispatch, or
- *  placed today with no delivery date at all. Orders held as "waiting", or
- *  booked (Zapiet Delivery-Date) for after tomorrow, are left out. */
+ *  placed today with no delivery date at all. Orders booked (Zapiet
+ *  Delivery-Date) for after tomorrow are left out. */
 export function ordersMissingCutoff(orders: CheckOrder[], today: string): MissingOrder[] {
   const tomorrow = addDaysToDateString(today, 1);
   const missing: MissingOrder[] = [];
   for (const o of orders) {
     const placed = new Date(o.created_at);
     if (Number.isNaN(placed.getTime()) || !isPartOfDespatchWave(o.tags)) continue;
-    // Booked for a later day, or held as "waiting" (a subscription renewal
-    // created early for next week): not tomorrow's run, so not missing
-    // (Graeme, 13 Nov 2026 — #139661, renewal for 20 Nov, flagged on 13 Nov).
-    if (isWaiting(o.tags)) continue;
+    // Booked for a later day: not tomorrow's run, so not missing (Graeme,
+    // 13 Nov 2026 — #139661, a renewal for 20 Nov, flagged on 13 Nov). A
+    // "waiting" tag alone is NOT a reason to skip: something outside the app
+    // strips the date tag and adds it, and two such orders (#138394, #139224)
+    // were never sent — one due tomorrow must still be flagged.
     const booked = zapietDeliveryDate(o.note_attributes);
     if (booked && booked > tomorrow) continue;
     const day = londonDateString(placed);

@@ -84,8 +84,11 @@ describe("orders held or booked for later (regression: #139661, 13 Nov 2026)", (
     ...order(139661, tags, "2026-11-05T04:02:53Z"),
     note_attributes: deliveryDate ? [{ name: "Delivery-Date", value: deliveryDate }, { name: "Checkout-Method", value: "delivery" }] : [],
   });
-  it("leaves out an order tagged waiting", () => {
-    expect(ordersMissingCutoff([renewal("Small Box, Subscription Recurring Order, waiting")], today)).toEqual([]);
+  it("leaves out the real #139661: tagged waiting, booked for a week later", () => {
+    expect(ordersMissingCutoff([renewal("Small Box, Subscription Recurring Order, waiting", "2026/11/12")], today)).toEqual([]);
+  });
+  it("still flags a waiting order booked for tomorrow (regression: waiting orders #138394 and #139224 were never sent)", () => {
+    expect(ordersMissingCutoff([renewal("Small Box, Subscription Recurring Order, waiting", "2026/11/06")], today)).toHaveLength(1);
   });
   it("leaves out an order booked for a day after tomorrow, even without the waiting tag", () => {
     expect(ordersMissingCutoff([renewal("Small Box", "2026/11/12")], today)).toEqual([]);
