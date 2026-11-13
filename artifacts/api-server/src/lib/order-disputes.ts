@@ -207,6 +207,8 @@ export const DISPATCH_PATHS = {
   "POST /shipments": "list",
   "POST /shipments/:waybill/add-parcel": "list",
   "POST /shipments/:waybill/reprint-label": "list",
+  // A prepared label has just printed — tell APC (label preload, 13 Nov 2026).
+  "POST /shipments/:waybill/mark-printed": "list",
   "GET /shipments/:waybill/label.pdf": "list",
   // Batch APC booking (first run + retries) and its preview.
   "POST /batch-book": "listOnly",

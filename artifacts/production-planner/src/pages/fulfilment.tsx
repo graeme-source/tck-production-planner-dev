@@ -55,6 +55,10 @@ import { barcodeFor, canTickByHand, decideScan, scanMessage, shouldRefreshOnMiss
 import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/components/barcodes/api";
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
 import { recipeColourStyle } from "@/lib/recipe-colour-style";
+import {
+  usablePreload, shouldRefreshPreload, nextOrderToPrepare, labelPreloadUrl,
+  LABEL_PRELOAD_REFRESH_MS, type PreloadedLabel,
+} from "@/lib/label-preload";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -589,16 +593,41 @@ async function fetchDispatchProgress(tag: string): Promise<DispatchProgress> {
   return res.json();
 }
 
-async function createShipment(orderId: number, tag: string, dispatchDate?: string): Promise<ShipmentResult> {
+async function createShipment(orderId: number, tag: string, dispatchDate?: string, opts?: { reuseOnly?: boolean }): Promise<ShipmentResult> {
   const res = await fetch(`${BASE}/api/fulfilment/shipments`, {
     method: "POST",
     credentials: "include",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ orderId, tag, dispatchDate }),
+    // reuseOnly: preparing the next order's label — find today's booking,
+    // never raise one (server answers 409 NOT_BOOKED instead).
+    body: JSON.stringify({ orderId, tag, dispatchDate, ...(opts?.reuseOnly ? { reuseOnly: true } : {}) }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error ?? "Failed to create shipment");
   return data;
+}
+
+/** A prepared label has just printed: tell APC now (that's what puts it on
+ *  the manifest) and stamp our ledger. Retries — a missed mark leaves a
+ *  shipped parcel off the manifest. */
+async function markLabelPrinted(waybill: string): Promise<void> {
+  let lastError = "";
+  for (const wait of [0, 2_000, 5_000]) {
+    if (wait) await new Promise(r => setTimeout(r, wait));
+    try {
+      const res = await fetch(`${BASE}/api/fulfilment/shipments/${encodeURIComponent(waybill)}/mark-printed`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (res.ok) return;
+      const data = await res.json().catch(() => ({}));
+      lastError = data.error ?? `server replied ${res.status}`;
+      // A refusal (held order, stale booking) won't change on retry.
+      if (res.status >= 400 && res.status < 500) break;
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err);
+    }
+  }
+  throw new Error(lastError || "Could not reach the server.");
 }
 
 /** Reconcile mode: fetch the hand-raised APC consignment for an order, keyed on
@@ -846,6 +875,9 @@ function printLabel(
   onPrinted: () => void,
   onPrintFailed: (reason: string) => void,
   frameId = "label-print-frame",
+  // The label is already sitting loaded in this frame (next-label preload,
+  // 13 Nov 2026): print it now — no load, no 800ms viewer wait.
+  opts?: { alreadyLoaded?: boolean },
 ) {
   // Each failure path names its own cause and hands it back to the caller, so
   // the packing bench sees WHY the label didn't print instead of a bare "Print
@@ -918,73 +950,80 @@ function printLabel(
 
   iframe.onerror = () => settle(false, "The print frame could not load the label PDF.");
 
+  const doPrint = () => {
+    try {
+      // afterprint is unreliable for iframe PDFs on newer Chrome: it may
+      // fire on the parent window, the frame's window, or neither. Listen
+      // to both, but do not DEPEND on either — in kiosk mode the job has
+      // spooled the moment print() returns, so a clean return settles as
+      // printed after a short grace. (Non-kiosk was already optimistic:
+      // dismissing the dialog counted as done.) The cost when the printer
+      // itself jams is a false "printed" — the Reprint Label button is
+      // the recovery, and the waybill is correct either way.
+      // The label route answers failures with a JSON body and a 5xx. The
+      // frame renders that quite happily, so without this check a dead APC
+      // would print its error message onto a thermal label and report
+      // success. Same-origin means we can actually look — which the old
+      // blob: path could not do.
+      try {
+        const doc = iframe.contentDocument;
+        if (doc && doc.contentType && doc.contentType !== "application/pdf") {
+          const body = (doc.body?.innerText ?? "").trim().slice(0, 300);
+          let detail = body;
+          try { detail = JSON.parse(body).error ?? body; } catch { /* not JSON — use the raw text */ }
+          settle(false, `APC did not return a label: ${detail || `the server replied with ${doc.contentType}`}`);
+          return;
+        }
+      } catch {
+        // contentDocument is opaque for Chrome's PDF viewer on some
+        // versions. That is the SUCCESS shape, not a failure — fall through
+        // and print.
+      }
+
+      window.addEventListener("afterprint", handleAfterPrint, { once: true });
+      try { iframe.contentWindow?.addEventListener("afterprint", handleAfterPrint, { once: true }); } catch { /* opaque PDF frame — parent listener still applies */ }
+      if (iframe.contentWindow == null) {
+        // Not a throw, so it would otherwise settle as an optimistic
+        // success — a "Label printed" with an empty tray.
+        settle(false, "The print frame had no document to print. Nothing was sent to the printer.");
+        return;
+      }
+      const printCalledAt = performance.now();
+      iframe.contentWindow.print();
+      // In kiosk mode print() spools and returns within milliseconds. A
+      // call that blocked for over a second means Chrome put its print
+      // dialog up and someone clicked it away — this machine has lost
+      // --kiosk-printing. The page can't suppress the dialog itself, so
+      // tell the bench how to fix the machine instead of leaving them
+      // clicking Print on every label (Graeme, 2026-09-08).
+      if (printDialogLikelyShown(performance.now() - printCalledAt)) {
+        window.dispatchEvent(new CustomEvent("apc-print-dialog-shown"));
+      }
+      clearTimeout(fallbackTimer);
+      fallbackTimer = setTimeout(() => settle(true), 5_000);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn("[Fulfilment] Print failed:", err);
+      settle(
+        false,
+        err instanceof DOMException && err.name === "SecurityError"
+          ? `The browser refused access to the print frame (${msg}). This normally means the label PDF was blocked before it loaded — check the console for a Content-Security-Policy violation.`
+          : `The browser rejected the print call: ${msg}`,
+      );
+    }
+  };
+
+  if (opts?.alreadyLoaded) {
+    doPrint();
+    return;
+  }
+
   iframe.onload = () => {
     // Chrome's PDF viewer swallows a print() that arrives the moment the
     // frame loads — the viewer process isn't ready yet, the call no-ops and
     // nothing ever prints. A short delay makes the print reliable
     // (kitchen Citizen printer, Chrome 151, 2026-08-14).
-    setTimeout(() => {
-      try {
-        // afterprint is unreliable for iframe PDFs on newer Chrome: it may
-        // fire on the parent window, the frame's window, or neither. Listen
-        // to both, but do not DEPEND on either — in kiosk mode the job has
-        // spooled the moment print() returns, so a clean return settles as
-        // printed after a short grace. (Non-kiosk was already optimistic:
-        // dismissing the dialog counted as done.) The cost when the printer
-        // itself jams is a false "printed" — the Reprint Label button is
-        // the recovery, and the waybill is correct either way.
-        // The label route answers failures with a JSON body and a 5xx. The
-        // frame renders that quite happily, so without this check a dead APC
-        // would print its error message onto a thermal label and report
-        // success. Same-origin means we can actually look — which the old
-        // blob: path could not do.
-        try {
-          const doc = iframe.contentDocument;
-          if (doc && doc.contentType && doc.contentType !== "application/pdf") {
-            const body = (doc.body?.innerText ?? "").trim().slice(0, 300);
-            let detail = body;
-            try { detail = JSON.parse(body).error ?? body; } catch { /* not JSON — use the raw text */ }
-            settle(false, `APC did not return a label: ${detail || `the server replied with ${doc.contentType}`}`);
-            return;
-          }
-        } catch {
-          // contentDocument is opaque for Chrome's PDF viewer on some
-          // versions. That is the SUCCESS shape, not a failure — fall through
-          // and print.
-        }
-
-        window.addEventListener("afterprint", handleAfterPrint, { once: true });
-        try { iframe.contentWindow?.addEventListener("afterprint", handleAfterPrint, { once: true }); } catch { /* opaque PDF frame — parent listener still applies */ }
-        if (iframe.contentWindow == null) {
-          // Not a throw, so it would otherwise settle as an optimistic
-          // success — a "Label printed" with an empty tray.
-          settle(false, "The print frame had no document to print. Nothing was sent to the printer.");
-          return;
-        }
-        const printCalledAt = performance.now();
-        iframe.contentWindow.print();
-        // In kiosk mode print() spools and returns within milliseconds. A
-        // call that blocked for over a second means Chrome put its print
-        // dialog up and someone clicked it away — this machine has lost
-        // --kiosk-printing. The page can't suppress the dialog itself, so
-        // tell the bench how to fix the machine instead of leaving them
-        // clicking Print on every label (Graeme, 2026-09-08).
-        if (printDialogLikelyShown(performance.now() - printCalledAt)) {
-          window.dispatchEvent(new CustomEvent("apc-print-dialog-shown"));
-        }
-        clearTimeout(fallbackTimer);
-        fallbackTimer = setTimeout(() => settle(true), 5_000);
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn("[Fulfilment] Print failed:", err);
-        settle(
-          false,
-          err instanceof DOMException && err.name === "SecurityError"
-            ? `The browser refused access to the print frame (${msg}). This normally means the label PDF was blocked before it loaded — check the console for a Content-Security-Policy violation.`
-            : `The browser rejected the print call: ${msg}`,
-        );
-      }
-    }, 800);
+    setTimeout(doPrint, 800);
   };
 
   // Point the frame straight at the PDF. Do NOT wrap it in HTML with an
@@ -1414,10 +1453,36 @@ export default function Fulfilment() {
   const itemRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
   const preQueueRef = useRef<Map<number, Promise<ShipmentResult>>>(new Map());
   const prePrintRef = useRef<Map<number, PrintStatus>>(new Map());
+  // When each pre-queued shipment lookup was made — an old one is looked up
+  // again at open rather than trusted.
+  const preQueueAtRef = useRef<Map<number, number>>(new Map());
+  // Next-label preload (Graeme, 13 Nov 2026): the next order's label sits
+  // loaded in a hidden frame so opening the order prints it at once. See
+  // lib/label-preload.ts.
+  const preloadRef = useRef<PreloadedLabel | null>(null);
+  const preloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Tracks which order ids have been spoken aloud — prevents the picker
   // from hearing the same name twice if the picking view re-mounts (e.g.
   // after dismissing an error or scrolling back from pre-confirm).
   const spokenOrderIdsRef = useRef<Set<number>>(new Set());
+
+  // The preload frame lives on <body>, not in a view's JSX, so it survives
+  // the screen moving between orders and the list. Off-screen, NOT
+  // display:none — Chrome won't start its PDF viewer in a hidden frame.
+  useEffect(() => {
+    const frame = document.createElement("iframe");
+    frame.id = "label-preload-frame";
+    frame.title = "Next label";
+    frame.setAttribute("aria-hidden", "true");
+    frame.tabIndex = -1;
+    Object.assign(frame.style, { position: "fixed", top: "-9999px", left: "-9997px", width: "100mm", height: "150mm", border: "0" });
+    document.body.appendChild(frame);
+    return () => {
+      if (preloadTimerRef.current) clearTimeout(preloadTimerRef.current);
+      preloadRef.current = null;
+      frame.remove();
+    };
+  }, []);
 
   const { data: configStatus, isLoading: configStatusLoading } = useQuery({
     queryKey: ["fulfilment-config-status"],
@@ -2097,10 +2162,74 @@ export default function Fulfilment() {
     preQueueRef.current.set(nextOrderId, promise);
   }
 
-  function clearPreQueue() {
-    preQueueRef.current.clear();
-    prePrintRef.current.clear();
+  /** Prepare the next order's label (look-up only, never books): find its
+   *  booked consignment, then load the label into the preload frame without
+   *  telling APC it's printed. Refreshed before it goes stale while nobody
+   *  opens it; see lib/label-preload.ts. */
+  function prepareNextLabel(nextOrderId: number, firstPreparedAt = Date.now()) {
+    if (preloadTimerRef.current) { clearTimeout(preloadTimerRef.current); preloadTimerRef.current = null; }
+    const frame = document.getElementById("label-preload-frame") as HTMLIFrameElement | null;
+    if (!frame) return;
+    preQueueRef.current.delete(nextOrderId);
+    const lookup = createShipment(nextOrderId, queryTag, queryTag, { reuseOnly: true });
+    preQueueRef.current.set(nextOrderId, lookup);
+    preQueueAtRef.current.set(nextOrderId, Date.now());
+    lookup.then((result) => {
+      // Already off the printer today (a reopened order) → nothing to prepare.
+      if (wasLabelPrinted(result.consignmentNumber)) return;
+      const entry: PreloadedLabel = {
+        orderId: nextOrderId, waybill: result.consignmentNumber,
+        url: labelPreloadUrl(BASE, result.consignmentNumber),
+        state: "loading", loadedAt: 0, firstPreparedAt,
+      };
+      preloadRef.current = entry;
+      frame.onerror = () => { if (preloadRef.current === entry) entry.state = "failed"; };
+      frame.onload = () => {
+        // Same viewer warm-up the print path waits for.
+        setTimeout(() => {
+          if (preloadRef.current !== entry) return;
+          try {
+            const doc = frame.contentDocument;
+            // A refusal (held order, old booking) comes back as JSON, not a
+            // label — never print that; the order opens the normal way.
+            if (doc && doc.contentType && doc.contentType !== "application/pdf") {
+              entry.state = "failed";
+              return;
+            }
+          } catch { /* opaque PDF viewer = a loaded PDF */ }
+          entry.state = "ready";
+          entry.loadedAt = Date.now();
+          // Fetch it again before it's too old to trust, until the bench
+          // goes quiet.
+          preloadTimerRef.current = setTimeout(() => {
+            if (preloadRef.current === entry && shouldRefreshPreload(entry, Date.now())) {
+              prepareNextLabel(nextOrderId, entry.firstPreparedAt);
+            }
+          }, LABEL_PRELOAD_REFRESH_MS);
+        }, 800);
+      };
+      frame.src = entry.url;
+    }).catch(() => {
+      // Not booked yet, APC down, held… — the order opens the normal way.
+      preQueueRef.current.delete(nextOrderId);
+      preQueueAtRef.current.delete(nextOrderId);
+    });
+  }
+
+  /** Forget work done ahead — except for the order being opened now, whose
+   *  look-up and prepared label are exactly what it needs. */
+  function clearPreQueue(keepOrderId?: number) {
+    for (const id of [...preQueueRef.current.keys()]) {
+      if (id !== keepOrderId) { preQueueRef.current.delete(id); preQueueAtRef.current.delete(id); }
+    }
+    for (const id of [...prePrintRef.current.keys()]) {
+      if (id !== keepOrderId) prePrintRef.current.delete(id);
+    }
     consignmentCacheRef.current.clear();
+    if (preloadRef.current && preloadRef.current.orderId !== keepOrderId) {
+      preloadRef.current = null;
+      if (preloadTimerRef.current) { clearTimeout(preloadTimerRef.current); preloadTimerRef.current = null; }
+    }
   }
 
   function handleOrderSelect(order: ShopifyOrder) {
@@ -2112,7 +2241,7 @@ export default function Fulfilment() {
         return next;
       });
     }
-    clearPreQueue();
+    clearPreQueue(order.id);
     // Live-mode confirmation only matters when a real APC consignment
     // is about to be created. With APC off, or in reconcile mode where the
     // consignment already exists, there's nothing to confirm — go straight in.
@@ -2201,13 +2330,17 @@ export default function Fulfilment() {
     setCreatingShipment(true);
 
     try {
-      let result: ShipmentResult;
-      if (preQueueRef.current.has(order.id)) {
-        result = await preQueueRef.current.get(order.id)!;
-        preQueueRef.current.delete(order.id);
-      } else {
-        result = await createShipment(order.id, queryTag, queryTag);
+      // A look-up made ahead (next-label preload, or test-mode pre-queue) is
+      // used when it's recent; otherwise — or if it failed — look up now.
+      let result: ShipmentResult | null = null;
+      const queued = preQueueRef.current.get(order.id);
+      const queuedAt = preQueueAtRef.current.get(order.id) ?? 0;
+      preQueueRef.current.delete(order.id);
+      preQueueAtRef.current.delete(order.id);
+      if (queued && (configStatus?.testMode || Date.now() - queuedAt < 5 * 60_000)) {
+        try { result = await queued; } catch { result = null; }
       }
+      if (!result) result = await createShipment(order.id, queryTag, queryTag);
       setShipment(result);
       // A new booking changes what the queue should show next time.
       if (!result.reused) void refetchBooked();
@@ -2216,9 +2349,15 @@ export default function Fulfilment() {
       const prePrinted = prePrintRef.current.get(order.id);
       prePrintRef.current.delete(order.id);
 
+      const preloaded = preloadRef.current;
       if (prePrinted === "done") {
         // Label already printed in background — no need to print again
         printSucceeded();
+      } else if (preloaded && usablePreload(preloaded, order.id, result.consignmentNumber, Date.now()) && !wasLabelPrinted(result.consignmentNumber)) {
+        // Prepared while the last order was packed: print it at once.
+        preloadRef.current = null;
+        if (preloadTimerRef.current) { clearTimeout(preloadTimerRef.current); preloadTimerRef.current = null; }
+        printAllLabels(result.consignmentNumber, result.pieceCount ?? 1, { firstPreloadedUrl: preloaded.url });
       } else {
         // Print now (either first time or pre-print failed). Every piece, each
         // fetched live at the moment it prints.
@@ -2234,6 +2373,13 @@ export default function Fulfilment() {
         const currentPos = filteredUnfulfilled.findIndex(o => o.id === order.id);
         const nextOrder = filteredUnfulfilled.slice(currentPos + 1).find(o => !skippedIds.has(o.id));
         if (nextOrder && !isLocalDelivery(nextOrder) && !isCollection(nextOrder)) preQueueNextOrder(nextOrder.id);
+      } else {
+        // Live: get the next order's label ready while this one is packed —
+        // only when it's already booked (look-up only; never books).
+        const nextOrder = nextOrderToPrepare(filteredUnfulfilled, order.id, skippedIds);
+        if (nextOrder && !isLocalDelivery(nextOrder) && !isCollection(nextOrder) && bookedMap.has(nextOrder.id)) {
+          prepareNextLabel(nextOrder.id);
+        }
       }
     } catch (err: any) {
       setShipmentError(err.message ?? "Failed to create APC shipment");
@@ -2650,7 +2796,7 @@ export default function Fulfilment() {
    *  order open — a deliberate button press (Reprint, Retry, Add box,
    *  reconcile print) always prints, because the packer pressing it is
    *  holding a damaged label or an empty tray (Graeme, 2026-09-14). */
-  function printAllLabels(waybill: string, pieces: number, opts?: { force?: boolean }) {
+  function printAllLabels(waybill: string, pieces: number, opts?: { force?: boolean; firstPreloadedUrl?: string }) {
     const count = Math.max(1, pieces);
     // Already off the printer today? Don't send it again — tell the packer
     // to find it in the printed stack instead of making a duplicate.
@@ -2668,6 +2814,26 @@ export default function Fulfilment() {
       if (index > count) {
         recordLabelPrinted(waybill);
         printSucceeded();
+        return;
+      }
+      if (index === 1 && opts?.firstPreloadedUrl) {
+        // Label 1 is already loaded (next-label preload): tell APC it's
+        // printed — the step print=1 does at fetch time on a normal print —
+        // and print it now.
+        markLabelPrinted(waybill).catch((err) => {
+          toast({
+            title: "Label printed, but APC wasn't told",
+            description: `${waybill}: ${err instanceof Error ? err.message : "unknown error"}. It may miss today's manifest — tell the office.`,
+            variant: "destructive",
+          });
+        });
+        printLabel(
+          opts.firstPreloadedUrl,
+          () => printNext(2),
+          reason => printFailed(count > 1 ? `Label 1 of ${count}: ${reason}` : reason),
+          "label-preload-frame",
+          { alreadyLoaded: true },
+        );
         return;
       }
       printLabel(

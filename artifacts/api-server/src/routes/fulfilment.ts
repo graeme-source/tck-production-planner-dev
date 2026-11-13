@@ -755,6 +755,11 @@ const CreateShipmentBody = z.object({
   orderId: z.number(),
   tag: z.string(),
   dispatchDate: z.string().optional(), // ISO date string e.g. "2025-01-17"
+  // Look up only — never book (Graeme, 13 Nov 2026). The packing screen
+  // prepares the NEXT order's label while the current one is packed; that
+  // must only ever find today's existing booking, whatever apc_book_on_open
+  // says. Unbooked → 409 NOT_BOOKED and nothing is raised at APC.
+  reuseOnly: z.boolean().optional(),
 });
 
 router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Response) => {
@@ -769,7 +774,7 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
     return;
   }
 
-  const { orderId, tag, dispatchDate: dispatchDateStr } = parsed.data;
+  const { orderId, tag, dispatchDate: dispatchDateStr, reuseOnly } = parsed.data;
   const dispatchDate = dispatchDateStr ? new Date(dispatchDateStr) : new Date();
 
   try {
@@ -929,6 +934,11 @@ router.post("/shipments", requireFulfilmentAccess, async (req: Request, res: Res
         ...(apcNotice ? { apcNotice } : {}),
         ...(replacedOldBooking ? { replacedOldBooking } : {}),
       });
+      return;
+    }
+
+    if (reuseOnly) {
+      res.status(409).json({ error: `${order.name} has no consignment for today yet — nothing prepared, nothing booked.`, code: "NOT_BOOKED" });
       return;
     }
 
@@ -1480,6 +1490,40 @@ router.post("/shipments/:waybill/add-parcel", requireFulfilmentAccess, async (re
   }
 });
 
+// POST /api/fulfilment/shipments/:waybill/mark-printed
+// A label prepared earlier (label.pdf?preload=1) has just come off the
+// printer: tell APC now, exactly as a print=1 fetch would — marked printed is
+// what puts it on the manifest (2026-08-21) — and stamp our ledger. Same
+// guards as printing. The bytes APC returns are thrown away.
+const MarkPrintedBody = z.object({});
+router.post("/shipments/:waybill/mark-printed", requireFulfilmentAccess, validate(MarkPrintedBody), async (req: Request<{ waybill: string }>, res: Response) => {
+  const { waybill } = req.params;
+  if (!/^\d{10,30}$/.test(waybill)) {
+    res.status(400).json({ error: "waybill must be digits" });
+    return;
+  }
+  if (await refuseIfChargebackWaybill(res, "POST /shipments/:waybill/mark-printed", waybill)) return;
+  if (!isApcConfigured()) {
+    res.status(503).json({ error: "APC credentials not configured." });
+    return;
+  }
+  if (await refuseStaleWaybill(res, waybill)) return;
+  try {
+    const apiBase = await getTestModeApiBase();
+    await fetchLabel(waybill, apiBase, 2, 750, /* markPrinted */ true);
+    await db.execute(sql`
+      UPDATE apc_consignments
+      SET label_printed_at = COALESCE(label_printed_at, NOW())
+      WHERE waybill = ${waybill}
+    `);
+    res.json({ ok: true, waybill });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Fulfilment] mark-printed error for ${waybill}:`, msg);
+    res.status(502).json({ error: msg });
+  }
+});
+
 router.post("/shipments/:waybill/reprint-label", requireFulfilmentAccess, async (req: Request<{ waybill: string }>, res: Response) => {
   const { waybill } = req.params;
   if (await refuseIfChargebackWaybill(res, "POST /shipments/:waybill/reprint-label", waybill)) return;
@@ -1548,6 +1592,12 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
   // how Graeme wants APC informed. A fetch WITHOUT print=1 (checking a label
   // in a browser tab) still marks nothing, so looking never manifests.
   const forPrint = req.query.print === "1";
+  // preload=1: the packing screen getting the NEXT order's label ready
+  // before it's opened (Graeme, 13 Nov 2026). It's going on a box, so the
+  // print guards apply — but APC is NOT told it's printed yet: that happens
+  // via /mark-printed the moment the order is opened and it prints, so an
+  // order that's skipped or held never reaches the manifest.
+  const forPreload = req.query.preload === "1";
 
   // A held order's label is never printed (and so never marked printed/manifested).
   if (await refuseIfChargebackWaybill(res, "GET /shipments/:waybill/label.pdf", waybill)) return;
@@ -1558,7 +1608,7 @@ router.get("/shipments/:waybill/label.pdf", requireFulfilmentAccess, async (req:
   }
   // Printing for a box: refuse an old or cancelled booking's label
   // (incident #136845 shipped one). Viewing without print=1 stays open.
-  if (forPrint && (await refuseStaleWaybill(res, waybill))) return;
+  if ((forPrint || forPreload) && (await refuseStaleWaybill(res, waybill))) return;
 
   try {
     const apiBase = await getTestModeApiBase();
