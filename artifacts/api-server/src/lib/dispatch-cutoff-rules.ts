@@ -29,6 +29,19 @@ interface CheckOrder {
   tags?: string | null;
   created_at: string;
   customer?: { first_name?: string | null; last_name?: string | null } | null;
+  note_attributes?: Array<{ name?: string | null; value?: string | null }> | null;
+}
+
+/** Held on purpose until nearer its date (subscription renewals sit as
+ *  "waiting"), so never a missed order. */
+const isWaiting = (tags: string | null | undefined) =>
+  (tags ?? "").split(",").some(t => t.trim().toLowerCase() === "waiting");
+
+/** Zapiet's chosen delivery day (`Delivery-Date`, YYYY/MM/DD) as YYYY-MM-DD, or null. */
+export function zapietDeliveryDate(attrs: CheckOrder["note_attributes"]): string | null {
+  const v = (attrs ?? []).find(a => a?.name === "Delivery-Date")?.value?.trim() ?? "";
+  const m = /^(\d{4})[/-](\d{2})[/-](\d{2})$/.exec(v);
+  return m ? `${m[1]}-${m[2]}-${m[3]}` : null;
 }
 
 export interface MissingOrder {
@@ -41,13 +54,20 @@ export interface MissingOrder {
 
 /** Unfulfilled courier orders placed before 2:00 today that won't go out for
  *  tomorrow unless someone acts: tagged for tomorrow but not for dispatch, or
- *  placed today with no delivery date at all. */
+ *  placed today with no delivery date at all. Orders held as "waiting", or
+ *  booked (Zapiet Delivery-Date) for after tomorrow, are left out. */
 export function ordersMissingCutoff(orders: CheckOrder[], today: string): MissingOrder[] {
   const tomorrow = addDaysToDateString(today, 1);
   const missing: MissingOrder[] = [];
   for (const o of orders) {
     const placed = new Date(o.created_at);
     if (Number.isNaN(placed.getTime()) || !isPartOfDespatchWave(o.tags)) continue;
+    // Booked for a later day, or held as "waiting" (a subscription renewal
+    // created early for next week): not tomorrow's run, so not missing
+    // (Graeme, 13 Nov 2026 — #139661, renewal for 20 Nov, flagged on 13 Nov).
+    if (isWaiting(o.tags)) continue;
+    const booked = zapietDeliveryDate(o.note_attributes);
+    if (booked && booked > tomorrow) continue;
     const day = londonDateString(placed);
     if (day > today || (day === today && londonMinuteOfDay(placed) >= CUTOFF_ORDERS_BEFORE)) continue;
     const dateTags = (o.tags ?? "").split(",").map(t => t.trim()).filter(t => DATE_TAG.test(t));

@@ -76,3 +76,30 @@ describe("alertToShow", () => {
     expect(alertToShow({ ...alert, orders: [] }, today)).toBeNull();
   });
 });
+
+describe("orders held or booked for later (regression: #139661, 13 Nov 2026)", () => {
+  // A subscription renewal Shopify created at 04:02 for delivery on 20 Nov:
+  // no date tag yet, tagged "waiting".
+  const renewal = (tags: string, deliveryDate?: string) => ({
+    ...order(139661, tags, "2026-11-05T04:02:53Z"),
+    note_attributes: deliveryDate ? [{ name: "Delivery-Date", value: deliveryDate }, { name: "Checkout-Method", value: "delivery" }] : [],
+  });
+  it("leaves out an order tagged waiting", () => {
+    expect(ordersMissingCutoff([renewal("Small Box, Subscription Recurring Order, waiting")], today)).toEqual([]);
+  });
+  it("leaves out an order booked for a day after tomorrow, even without the waiting tag", () => {
+    expect(ordersMissingCutoff([renewal("Small Box", "2026/11/12")], today)).toEqual([]);
+  });
+  it("still flags one booked for tomorrow with no date tag", () => {
+    expect(ordersMissingCutoff([renewal("Small Box", "2026/11/06")], today)).toHaveLength(1);
+  });
+});
+
+describe("zapietDeliveryDate", () => {
+  it("reads Zapiet's slashes, and nothing else", async () => {
+    const { zapietDeliveryDate } = await import("./dispatch-cutoff-rules");
+    expect(zapietDeliveryDate([{ name: "Delivery-Date", value: "2026/11/20" }])).toBe("2026-11-20");
+    expect(zapietDeliveryDate([{ name: "Delivery-Date", value: "soon" }])).toBeNull();
+    expect(zapietDeliveryDate(null)).toBeNull();
+  });
+});

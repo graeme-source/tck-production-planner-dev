@@ -864,7 +864,9 @@ export async function getRecentUnfulfilledOrders(daysBack = 30): Promise<Shopify
           fulfillment_status: "unfulfilled",
           created_at_min: since,
           fields:
-            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note",
+            // note_attributes carries Zapiet's Delivery-Date, which the 2:16
+            // order check reads (Graeme, 13 Nov 2026).
+            "id,name,tags,created_at,cancelled_at,financial_status,fulfillment_status,total_price,subtotal_price,total_discounts,total_weight,customer,shipping_address,line_items,note,note_attributes",
         };
 
     const res = await shopifyFetchRaw("/orders.json", params);
