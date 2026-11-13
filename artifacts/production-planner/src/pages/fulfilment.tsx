@@ -2099,7 +2099,7 @@ export default function Fulfilment() {
     "other": allUnfulfilledOrders.filter(o => getOrderCategory(o) === "other").length,
   };
 
-  // Waves (Graeme, 13 Nov 2026): local delivery → large → wholesale →
+  // Waves (Graeme, 13 Nov 2026): local delivery → wholesale → large →
   // small, booked orders only. The bench is put on the first wave with orders
   // ready and moves on by itself when it's done (lib/packing-waves.ts); a
   // tap on a wave chooses it; using the Filters panel takes over by hand

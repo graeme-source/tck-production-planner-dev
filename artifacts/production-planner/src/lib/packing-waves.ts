@@ -1,10 +1,9 @@
 /**
  * Packing waves (Graeme, 13 Nov 2026): "we always pack these boxes in the
- * same order — local delivery, large boxes, small boxes … just put the
- * person on the view that we want." The bench opens on the first wave that
- * has orders ready (label booked) and moves on by itself when it's done; a
- * tap on another wave jumps there. Wholesale bags sit after the large boxes
- * so they're never left out. Pure.
+ * same order … just put the person on the view that we want." Order (Graeme,
+ * 13 Nov 2026): local delivery, wholesale, large boxes, small boxes. The
+ * bench opens on the first wave that has orders ready (label booked) and
+ * moves on by itself when it's done; a tap on another wave jumps there. Pure.
  */
 import type { BoxCategory, LabelFilter } from "./dispatch-tagging";
 
@@ -12,8 +11,8 @@ export type WaveKey = "local" | "large" | "wholesale" | "small";
 
 export const WAVES: ReadonlyArray<{ key: WaveKey; label: string }> = [
   { key: "local", label: "Local delivery" },
-  { key: "large", label: "Large boxes" },
   { key: "wholesale", label: "Wholesale" },
+  { key: "large", label: "Large boxes" },
   { key: "small", label: "Small boxes" },
 ];
 

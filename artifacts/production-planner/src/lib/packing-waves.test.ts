@@ -1,11 +1,12 @@
 import { describe, it, expect } from "vitest";
 import { waveOf, currentWave, waveFilters } from "./packing-waves";
 
-describe("packing waves — local, large, wholesale, small", () => {
+describe("packing waves — local, wholesale, large, small", () => {
   it("opens on the first wave with orders ready", () => {
     expect(currentWave({ local: 2, large: 1, small: 4 }, null)).toBe("local");
     expect(currentWave({ local: 0, large: 1, small: 4 }, null)).toBe("large");
     expect(currentWave({ local: 0, large: 0, wholesale: 0, small: 4 }, null)).toBe("small");
+    expect(currentWave({ local: 0, wholesale: 1, large: 3, small: 4 }, null)).toBe("wholesale");
   });
   it("moves on by itself when a wave is done, and stays on one that's chosen", () => {
     expect(currentWave({ local: 0, large: 3, small: 4 }, "local")).toBe("large");
