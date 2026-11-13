@@ -688,7 +688,7 @@ export default function Dashboard() {
           own colour so the green below means exactly one thing: the core
           production line (Graeme, 2026-09-16). */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Today's Admin</p>
+        <p className="text-sm font-extrabold uppercase tracking-wider text-muted-foreground mb-2">Today's Admin</p>
         {/* Same grid as Core Production and Other Lines below, so the cards are
             the same width and the four admin tiles sit on ONE row. It was a
             fixed 3 columns, which pushed End-of-Day Meeting onto a second line
@@ -766,7 +766,7 @@ export default function Dashboard() {
       <div>
         {/* No colour key (Graeme, 2026-10-10: "It should be intuitive"); the
             header tooltip still gives the figure, e.g. "On standard — 20.4/hr". */}
-        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Core Production</p>
+        <p className="text-sm font-extrabold uppercase tracking-wider text-muted-foreground mb-2">Core Production</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           {CORE_TILE_ORDER.map(key => <Fragment key={key}>{coreTiles[key]}</Fragment>)}
         </div>
@@ -775,7 +775,7 @@ export default function Dashboard() {
       {/* The other lines — they run on their own days, separate from the
           calzone flow, so they get their own colour and row. */}
       <div>
-        <p className="text-xs font-bold uppercase tracking-wider text-muted-foreground mb-2">Other Lines</p>
+        <p className="text-sm font-extrabold uppercase tracking-wider text-muted-foreground mb-2">Other Lines</p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard
           title="Mac Cheese"
@@ -1014,17 +1014,21 @@ function StatCard({ title, value, subtitle, icon: Icon, color, bg, href, onClick
             with the words in the tooltip and for screen readers. */}
         <div
           className={cn(
-            "px-2 py-2 flex items-center justify-center gap-1.5 min-w-0",
+            // Same height across a row on iPad, where long names wrap.
+            "px-2 py-2.5 flex items-center justify-center gap-1.5 min-w-0 md:min-h-[4.5rem] xl:min-h-0",
             status ? BAND_HEADER_CLASS[status.band] : (headerClass ?? "bg-primary"),
           )}
           title={status?.label}
         >
-          {status?.band === "platinum" && <Sparkles className="w-4 h-4 text-white shrink-0" aria-hidden="true" />}
-          <p className={cn("font-display font-bold text-base lg:text-lg leading-tight text-center truncate", status ? BAND_TEXT_CLASS[status.band] : "text-white")}>
+          {status?.band === "platinum" && <Sparkles className="w-5 h-5 text-white shrink-0" aria-hidden="true" />}
+          {/* Bigger and heavier so the right panel is found at a glance
+              across a screen of them (Graeme, 13 Nov 2026); wraps rather
+              than cutting a long name off. */}
+          <p className={cn("font-display font-extrabold text-xl xl:text-2xl leading-tight text-center break-words min-w-0", status ? BAND_TEXT_CLASS[status.band] : "text-white")}>
             {title}
             {status && <span className="sr-only">: {status.label}</span>}
           </p>
-          {status?.band === "platinum" && <Sparkles className="w-4 h-4 text-white shrink-0" aria-hidden="true" />}
+          {status?.band === "platinum" && <Sparkles className="w-5 h-5 text-white shrink-0" aria-hidden="true" />}
         </div>
         <div className="p-4 pt-3 flex flex-col items-center text-center gap-2 flex-1 w-full">
         <div className={cn("p-2.5 rounded-2xl transition-transform group-hover:scale-110", status ? BAND_ICON_CLASS[status.band] : `${bg} ${color}`)}>
