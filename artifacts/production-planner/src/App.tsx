@@ -58,6 +58,7 @@ import PeopleSection from "@/pages/people";
 import Reports from "@/pages/reports";
 import TeamEfficiencyPage from "@/pages/team-efficiency";
 import DefectsPage from "@/pages/defects";
+import ProductionKpisPage from "@/pages/production-kpis";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
@@ -305,6 +306,7 @@ function Router() {
               <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />
               {/* Defects KPI + recorded defects (Graeme, 2026-10-01). Listed under Analytics; anyone signed in may record, so the page itself is open. */}
               <Route path="/analytics/defects" component={DefectsPage} />
+              <Route path="/analytics/production-kpis" component={ProductionKpisPage} />
               {/* Forced testing (Graeme, 2026-10-10). Managers/admins; server-enforced. */}
               <Route path="/test-requests" component={TestRequestsPage} />
               {/* Training is for everyone: station matrices are self-service;

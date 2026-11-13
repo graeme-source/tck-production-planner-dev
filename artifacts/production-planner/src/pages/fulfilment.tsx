@@ -56,6 +56,8 @@ import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/compone
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
 import { recipeColourStyle } from "@/lib/recipe-colour-style";
 import { settlingMessage, nextReleaseAt, type SettlingOrder } from "@/lib/settling-orders";
+import { useProductionKpis } from "@/hooks/use-production-kpis";
+import { paceLevel, type ProductionKpi } from "@/lib/production-kpis";
 import {
   usablePreload, shouldRefreshPreload, nextOrderToPrepare, labelPreloadUrl,
   LABEL_PRELOAD_REFRESH_MS, type PreloadedLabel,
@@ -1073,11 +1075,15 @@ function ProgressBar({ label, fulfilled, total, color, weight }: { label: string
 /** Encouraging pace bands. The bottom band used to bark "Speed up!" at the
  *  packer; it now points at the lean habit instead — find the five seconds,
  *  don't just run faster (Graeme, 2026-08-28). */
-function paceBand(oph: number): { tile: string; label: string } {
-  if (oph > 60) return { tile: "bg-purple-600 text-white", label: "Smashing it! 🔥" };
-  if (oph >= 55) return { tile: "bg-green-600 text-white", label: "On target — nice work" };
-  if (oph >= 50) return { tile: "bg-amber-500 text-white", label: "Close — what would save 5s?" };
-  return { tile: "bg-sky-600 text-white", label: "Spot a 5s saving?" };
+function paceBand(oph: number, kpi: ProductionKpi): { tile: string; label: string } {
+  // The figures are set on Analytics → Production KPIs (13 Nov 2026) — the
+  // same ones the dashboard's Packing tile uses. Were fixed at 50/55/60.
+  switch (paceLevel(oph, kpi)) {
+    case "stretch": return { tile: "bg-purple-600 text-white", label: "Smashing it! 🔥" };
+    case "standard": return { tile: "bg-green-600 text-white", label: "On target — nice work" };
+    case "close": return { tile: "bg-amber-500 text-white", label: "Close — what would save 5s?" };
+    default: return { tile: "bg-sky-600 text-white", label: "Spot a 5s saving?" };
+  }
 }
 
 /** Always-on pace strip for the mid-pick screens (picking, label booking,
@@ -1090,7 +1096,8 @@ function PickingPaceStrip({ packed, total, oph }: {
   total: number | null;
   oph: number | null;
 }) {
-  const band = oph != null ? paceBand(oph) : null;
+  const { kpis: productionKpis } = useProductionKpis();
+  const band = oph != null ? paceBand(oph, productionKpis.packing) : null;
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <span className="text-2xl font-extrabold tabular-nums leading-none">
@@ -1195,7 +1202,8 @@ function DispatchSummary({
   uncheckedOpen: boolean;
 }) {
   const pct = packed != null && total ? Math.min(100, Math.round((packed / total) * 100)) : 0;
-  const band = oph != null ? paceBand(oph) : null;
+  const { kpis: productionKpis } = useProductionKpis();
+  const band = oph != null ? paceBand(oph, productionKpis.packing) : null;
   const cats = progress?.categories;
   const remaining = (total ?? 0) - (packed ?? 0);
   // New orders held back for their first 15 minutes, with a live countdown

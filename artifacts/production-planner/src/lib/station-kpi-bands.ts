@@ -55,6 +55,9 @@ export function kpiBand(
   reading: KpiReading | null | undefined,
   standard: number | null | undefined,
   minActiveMinutes: number = MIN_ACTIVE_MINUTES,
+  /** A stored stretch (Production KPIs page) is the platinum line; without
+   *  one, platinum is 10% over standard. */
+  stretch?: number | null,
 ): KpiBand {
   if (!standard || standard <= 0 || !reading) return "neutral";
   const { rate, activeMinutes } = reading;
@@ -64,7 +67,7 @@ export function kpiBand(
   // point, which would make exactly 22/hr miss platinum.
   const ratio = rate / standard;
   const EPS = 1e-9;
-  if (ratio + EPS >= BAND_RATIOS.platinum) return "platinum";
+  if (stretch != null && stretch > 0 ? rate + EPS >= stretch : ratio + EPS >= BAND_RATIOS.platinum) return "platinum";
   if (ratio + EPS >= BAND_RATIOS.green) return "green";
   if (ratio + EPS >= BAND_RATIOS.amber) return "amber";
   return "red";
@@ -131,10 +134,16 @@ function shown(rate: number, decimals: number): number {
 }
 
 /** Status for every Core Production tile from the three live readings. */
-export function coreTileStatuses(readings: Partial<Record<KpiSource, KpiReading | null>>): Record<CoreTileKey, TileKpiStatus> {
+export function coreTileStatuses(
+  readings: Partial<Record<KpiSource, KpiReading | null>>,
+  /** The stored figures from Analytics → Production KPIs (13 Nov 2026);
+   *  missing → the built-in standard above. */
+  kpis?: Partial<Record<KpiSource, { standard: number; stretch: number | null }>>,
+): Record<CoreTileKey, TileKpiStatus> {
   const bySource = {} as Record<KpiSource, TileKpiStatus>;
   for (const source of Object.keys(SOURCE_STANDARD) as KpiSource[]) {
-    const standard = SOURCE_STANDARD[source];
+    const standard = kpis?.[source]?.standard ?? SOURCE_STANDARD[source];
+    const stretch = kpis?.[source]?.stretch ?? null;
     const { unit, decimals, name } = SOURCE_UNIT[source];
     const r = readings[source];
     if (standard == null) {
@@ -142,7 +151,7 @@ export function coreTileStatuses(readings: Partial<Record<KpiSource, KpiReading 
       continue;
     }
     const rate = r?.rate != null && r.rate > 0 ? shown(r.rate, decimals) : null;
-    const band = kpiBand(r ? { rate, activeMinutes: r.activeMinutes } : null, standard);
+    const band = kpiBand(r ? { rate, activeMinutes: r.activeMinutes } : null, standard, MIN_ACTIVE_MINUTES, stretch);
     const vs = `${rate != null ? rate.toFixed(decimals) : "—"}${unit} vs ${standard}${unit}`;
     bySource[source] = band === "neutral"
       ? { band, label: `${name}: not enough data yet (needs ${MIN_ACTIVE_MINUTES} active minutes) — ${vs}` }
@@ -201,7 +210,7 @@ export const BAND_TEXT_CLASS: Record<KpiBand, string> = {
 
 /** Legend order and wording (dashboard). */
 export const BAND_LEGEND: { band: KpiBand; label: string; hint: string }[] = [
-  { band: "platinum", label: "Platinum", hint: "10%+ ahead" },
+  { band: "platinum", label: "Platinum", hint: "at stretch, or 10%+ ahead" },
   { band: "green", label: "Green", hint: "on standard" },
   { band: "amber", label: "Yellow", hint: "up to 10% under" },
   { band: "red", label: "Red", hint: "over 10% under" },

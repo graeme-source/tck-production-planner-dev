@@ -107,3 +107,16 @@ describe("CORE_TILE_ORDER", () => {
     expect(CORE_TILE_ORDER.slice(0, 4).some(k => TILE_KPI_SOURCE[k] === "run_rate")).toBe(false);
   });
 });
+
+describe("stored production KPIs (Production KPIs page, 13 Nov 2026)", () => {
+  const at = (rate: number) => ({ rate, activeMinutes: 60 });
+  it("a stored stretch is the platinum line", () => {
+    expect(kpiBand(at(59), 55, 30, 60)).toBe("green");
+    expect(kpiBand(at(60), 55, 30, 60)).toBe("platinum");
+  });
+  it("the packing tile judges against the stored standard, not the built-in 50", () => {
+    const s = coreTileStatuses({ packing: at(52) }, { packing: { standard: 55, stretch: 60 } });
+    expect(s.packing.band).toBe("amber");
+    expect(coreTileStatuses({ packing: at(52) }).packing.band).toBe("green");
+  });
+});

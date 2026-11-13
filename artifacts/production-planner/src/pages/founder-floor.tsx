@@ -10,6 +10,7 @@
  * worked out a second way. Layout and matching: lib/floor-map.ts.
  */
 import { useEffect, useMemo, useState } from "react";
+import { useProductionKpis } from "@/hooks/use-production-kpis";
 import { Redirect } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { useListProductionPlans } from "@workspace/api-client-react";
@@ -105,11 +106,13 @@ export default function FounderFloor() {
     enabled, refetchInterval: 60_000, retry: false,
   });
 
+  // Analytics → Production KPIs: the stored packing and wrapping figures.
+  const { kpis: productionKpis } = useProductionKpis();
   const kpis = coreTileStatuses({
     run_rate: todayPlanId != null && build.data ? { rate: build.data.batchesPerHour ?? null, activeMinutes: build.data.activeMinutes ?? null } : null,
     wrapping: wrapping.data ? { rate: wrapping.data.packsPerHour, activeMinutes: wrapping.data.activeMinutes } : null,
-    packing: packing.data ? { rate: packing.data.ordersPerHour, activeMinutes: packing.data.activeMinutes ?? null } : null,
-  });
+    packing: packing.data ? { rate: packing.data.ordersPerHour, activeMinutes: packing.data.activeMinutes ?? null } : null
+  }, productionKpis);
 
   const peopleByArea = useMemo(() => {
     const m = new Map<AreaId, Array<RotaPerson & { station: string }>>();

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, Fragment, type ReactNode } from "react";
+import { useProductionKpis } from "@/hooks/use-production-kpis";
 import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } from "@workspace/api-client-react";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
@@ -358,13 +359,15 @@ export default function Dashboard() {
   // Live header colour per Core Production tile — rides on the three pace
   // queries above (30s / 60s refresh), no extra polling. One rule in
   // lib/station-kpi-bands.ts; no plan today = no run rate = neutral.
+  // Analytics → Production KPIs: the stored packing and wrapping figures.
+  const { kpis: productionKpis } = useProductionKpis();
   const coreStatus = coreTileStatuses({
     run_rate: todayPlanIds.length > 0 && buildKpi
       ? { rate: buildKpi.batchesPerHour ?? null, activeMinutes: buildKpi.activeMinutes ?? null }
       : null,
     wrapping: wrappingSpeed ? { rate: wrappingSpeed.packsPerHour, activeMinutes: wrappingSpeed.activeMinutes } : null,
-    packing: packingSpeed ? { rate: packingSpeed.ordersPerHour, activeMinutes: packingSpeed.activeMinutes ?? null } : null,
-  });
+    packing: packingSpeed ? { rate: packingSpeed.ordersPerHour, activeMinutes: packingSpeed.activeMinutes ?? null } : null
+  }, productionKpis);
 
   // The "Packing" card is pinned to the REAL current week, not the
   // weekly panel's selection — getDefaultWeekOffset rolls the panel to next

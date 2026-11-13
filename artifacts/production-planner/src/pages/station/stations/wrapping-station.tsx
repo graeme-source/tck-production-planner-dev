@@ -16,7 +16,8 @@ import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { ShopifyConfirmDialog } from "@/components/shopify-confirm-dialog";
 import { BreakTracker } from "../shared/break-tracker";
 import { PaceKpiStrip, type PaceBands } from "../shared/pace-kpi-strip";
-import { BAND_RATIOS, WRAPPING_STANDARD_PACKS_PER_HOUR } from "@/lib/station-kpi-bands";
+import { useProductionKpis } from "@/hooks/use-production-kpis";
+import { amberFrom, type ProductionKpi } from "@/lib/production-kpis";
 import { useModalScrollKeeper } from "@/hooks/use-modal-scroll";
 import { createPortal } from "react-dom";
 import { getStationCount, getAvailableFromPrev, compareItemsForDisplay, mainKitchenStationItems, STATION_VIEW_ROW_SLOT_ID, type StationPlanItem } from "../shared/constants";
@@ -111,7 +112,11 @@ function postOvenGramsPerPack(poi: PostOvenItem, item: ProductionPlanItem): numb
 // was 120. Graeme asked me to decide (2026-10-09): live median was ~163/hr
 // (Aug), so an average day now reads "just under" rather than "fine", and
 // under 162 is genuinely slow. One rule on the station and the dashboard.
-const WRAPPING_PACE_BANDS: PaceBands = { green: WRAPPING_STANDARD_PACKS_PER_HOUR, amber: Math.round(WRAPPING_STANDARD_PACKS_PER_HOUR * BAND_RATIOS.amber), stretch: 240 };
+// The figures themselves are set on Analytics → Production KPIs (13 Nov
+// 2026); these are the bands they make, same rule as the dashboard tile.
+function wrappingPaceBands(kpi: ProductionKpi): PaceBands {
+  return { green: kpi.standard, amber: amberFrom(kpi), ...(kpi.stretch != null ? { stretch: kpi.stretch } : {}) };
+}
 
 interface WrappingSpeed {
   packs: number;
@@ -120,6 +125,8 @@ interface WrappingSpeed {
 }
 
 export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
+  const { kpis: productionKpis } = useProductionKpis();
+  const wrappingBands = wrappingPaceBands(productionKpis.wrapping);
   // Made by hand after prep (route "prep only") — never on this station.
   const isPrepOnly = usePrepOnlyRecipe();
   const colourStyle = useRecipeColourLookup();
@@ -1480,7 +1487,7 @@ export function WrappingStation({ plan, isOnBreak = false }: { plan: ProductionP
               count={wrappingSpeed?.packs ?? 0}
               countLabel="Wrapped today"
               activeMinutes={wrappingSpeed?.activeMinutes ?? null}
-              bands={WRAPPING_PACE_BANDS}
+              bands={wrappingBands}
               unitNoun="pack"
             />
 
