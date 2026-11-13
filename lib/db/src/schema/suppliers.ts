@@ -28,6 +28,9 @@ export const suppliersTable = pgTable("suppliers", {
   // (migration 0370, Graeme 13 Nov 2026): processing one books a collection
   // on their delivery for the chosen day.
   collectsLocalDeliveries: boolean("collects_local_deliveries").notNull().default(false),
+  // Check this supplier's invoices against goods-in deliveries (migration
+  // 0374, Graeme 13 Nov 2026) — Finance → Deliveries.
+  matchInvoicesToDeliveries: boolean("match_invoices_to_deliveries").notNull().default(false),
   cutoffTime: text("cutoff_time").notNull().default("17:00"),
   // Minimum order spend in £ (e.g. 75.00). NULL = no minimum. The Orders page
   // warns when a draft order is below it and suggests items to move across.

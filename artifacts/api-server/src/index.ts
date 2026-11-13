@@ -3540,6 +3540,8 @@ async function startup() {
     startFinanceMailboxTimer();
     const { startInvoiceReaderTimer } = await import("./lib/finance/invoice-store");
     startInvoiceReaderTimer();
+    const { startLineReaderTimer } = await import("./lib/finance/delivery-match-store");
+    startLineReaderTimer();
   } catch (err) {
     console.error(
       "Background startup tasks failed:",

@@ -230,6 +230,10 @@ export const finInvoicesTable = pgTable("fin_invoices", {
   // Waiting for its card transaction (migration 0353). NULL = not queued.
   awaitingTransactionAt: timestamp("awaiting_transaction_at"),
   rejectedLineIds: integer("rejected_line_ids").array().notNull().default([]),
+  // Line items read for delivery matching (migration 0374): 'pending' |
+  // 'done' | 'failed'; NULL = not wanted (supplier not ticked).
+  linesStatus: text("lines_status"),
+  linesReadAt: timestamp("lines_read_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -294,3 +298,32 @@ export const finQboTxnsTable = pgTable("fin_qbo_txns", {
 
 export type FinQboConnection = typeof finQboConnectionTable.$inferSelect;
 export type FinQboTxn = typeof finQboTxnsTable.$inferSelect;
+
+// An invoice's line items, read by Claude for suppliers whose invoices are
+// checked against deliveries (migration 0374, Graeme 13 Nov 2026).
+export const finInvoiceLinesTable = pgTable("fin_invoice_lines", {
+  id: serial("id").primaryKey(),
+  invoiceId: integer("invoice_id").notNull(),
+  position: integer("position").notNull(),
+  code: text("code"),
+  description: text("description").notNull(),
+  quantity: numeric("quantity", { precision: 14, scale: 4 }),
+  unit: text("unit"),
+  unitPrice: numeric("unit_price", { precision: 14, scale: 4 }),
+  lineTotal: numeric("line_total", { precision: 14, scale: 2 }),
+  isCharge: boolean("is_charge").notNull().default(false),
+  ingredientId: integer("ingredient_id"),
+  nativePerUnit: numeric("native_per_unit", { precision: 14, scale: 4 }),
+});
+
+// "Update our price" / "Leave ours" on a price an invoice disagrees with.
+export const ingredientPriceReviewsTable = pgTable("ingredient_price_reviews", {
+  id: serial("id").primaryKey(),
+  invoiceLineId: integer("invoice_line_id").notNull(),
+  ingredientId: integer("ingredient_id").notNull(),
+  decision: text("decision").notNull(),
+  oldCostPerPack: numeric("old_cost_per_pack", { precision: 10, scale: 4 }),
+  newCostPerPack: numeric("new_cost_per_pack", { precision: 10, scale: 4 }),
+  decidedBy: integer("decided_by"),
+  decidedAt: timestamp("decided_at").notNull().defaultNow(),
+});

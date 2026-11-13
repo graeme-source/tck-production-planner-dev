@@ -85,7 +85,7 @@ export type QueueEntry = {
 } & InvoiceMatches;
 
 /** Every supplier with the other names on their invoices, for matching. */
-async function suppliersForMatch(): Promise<SupplierForMatch[]> {
+export async function suppliersForMatch(): Promise<SupplierForMatch[]> {
   const [suppliers, names] = await Promise.all([
     db.select({ id: suppliersTable.id, name: suppliersTable.name, paymentTerms: suppliersTable.paymentTerms }).from(suppliersTable),
     db.select({ supplierId: supplierInvoiceNamesTable.supplierId, name: supplierInvoiceNamesTable.name }).from(supplierInvoiceNamesTable),
