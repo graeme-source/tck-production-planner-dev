@@ -2580,11 +2580,18 @@ export default function Orders() {
                             line.checked ? "bg-green-500/5" : "hover:bg-secondary/20"
                           )}
                         >
-                          <td className="p-3">
+                          {/* A big tick, and the whole cell around it taps too
+                              (Graeme, 13 Nov 2026: the little circle was hard to hit). */}
+                          <td
+                            className={cn("p-1.5 w-14", !isNonOrderable && "cursor-pointer")}
+                            onClick={(e) => { if (e.target === e.currentTarget && !isNonOrderable) toggleLineCheck(so.supplier.id, idx); }}
+                          >
                             <Checkbox
                               checked={line.checked}
                               onCheckedChange={() => toggleLineCheck(so.supplier.id, idx)}
                               disabled={isNonOrderable}
+                              aria-label={`Tick ${line.ingredientName ?? "this line"}`}
+                              className="h-10 w-10 rounded-full border-2 [&_svg]:h-6 [&_svg]:w-6"
                             />
                           </td>
                           <td className="p-3">
