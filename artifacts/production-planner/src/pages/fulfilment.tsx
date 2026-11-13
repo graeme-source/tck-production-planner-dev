@@ -8,7 +8,7 @@ import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
 import { DessertsReportCard, useDessertLabelsStatus } from "@/components/desserts-report-card";
-import { packingStep, packingBlocker, type PackingStep } from "@/lib/packing-sequence";
+import { packingStep, packingBlocker } from "@/lib/packing-sequence";
 import { WAVES, currentWave, waveFilters, waveOf, type WaveKey } from "@/lib/packing-waves";
 import { WhatsChangedButton } from "@/components/station-changes/station-menu";
 import { useIcePacks } from "@/hooks/use-ice-packs";
@@ -876,32 +876,6 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
  * keeps every label live: the route holds no cache, so a consignment amended
  * at the bench reprints as amended.
  */
-/** 1 Tag · 2 Book · 3 Desserts · Pack — where the morning is (13 Nov 2026). */
-function SequencePills({ step }: { step: PackingStep }) {
-  const steps = [
-    { key: "book", label: "1 · Book APC labels" },
-    { key: "desserts", label: "2 · Print desserts" },
-    { key: "ready", label: "3 · Pack" },
-  ] as const;
-  const at = steps.findIndex(s => s.key === step);
-  return (
-    <ol className="flex flex-wrap items-center gap-1.5 text-sm font-semibold" aria-label="Before packing">
-      {steps.map((s, i) => (
-        <li key={s.key}
-          aria-current={i === at ? "step" : undefined}
-          className={cn(
-            "px-3 py-1 rounded-full border inline-flex items-center gap-1",
-            i < at ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
-              : i === at ? "border-primary bg-primary text-primary-foreground"
-                : "border-border text-muted-foreground",
-          )}>
-          {i < at && <Check className="w-3.5 h-3.5" />}{s.label}
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 function printLabel(
   pdfUrl: string,
   onPrinted: () => void,
@@ -4557,32 +4531,6 @@ export default function Fulfilment() {
         </div>
       )}
 
-      {/* The order of the morning — tag → book → desserts → pack — in one
-          strip at the top, so the orders below are close (13 Nov 2026). */}
-      <div ref={stepsRef} className="space-y-2 scroll-mt-4">
-        <SequencePills step={sequenceStep} />
-        {sequenceStep === "book" && (
-          <div className="glass-panel rounded-2xl border-2 border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 p-4 flex items-center gap-3 flex-wrap">
-            <span className="text-lg font-bold text-blue-900 dark:text-blue-200">
-              {needLabelCount} {needLabelCount === 1 ? "order needs" : "orders need"} an APC label
-            </span>
-            <div className="ml-auto flex items-center gap-3 flex-wrap">
-              <button type="button"
-                onClick={() => { setCarryOnTagIds(new Set(untaggedOrders.map(o => o.id))); setCarryOnBookIds(new Set(toBook.map(o => o.id))); }}
-                className="text-sm font-semibold text-muted-foreground underline underline-offset-2 hover:text-foreground">
-                Carry on without {needLabelCount === 1 ? "it" : "them"}
-              </button>
-              <button onClick={() => void bookWithTagging()} disabled={bulkTagging}
-                className="px-5 py-3 rounded-xl text-base font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2 disabled:opacity-60">
-                {bulkTagging ? <><Loader2 className="w-5 h-5 animate-spin" /> Tagging the orders…</> : <><PackageCheck className="w-5 h-5" /> Book APC labels</>}
-              </button>
-            </div>
-          </div>
-        )}
-        {(sequenceStep === "desserts" || sequenceStep === "ready") && (
-          <DessertsReportCard tag={queryTag} />
-        )}
-      </div>
 
       {/* Collections instruction banner — the orders themselves ride the
           main pick list below as amber rows (Graeme, 2026-08-28). */}
@@ -4664,6 +4612,33 @@ export default function Fulfilment() {
         onOpenUnchecked={() => setUncheckedPanelOpen(v => !v)}
         uncheckedOpen={uncheckedPanelOpen}
       />
+
+      {/* The next thing to do — book the APC labels (tagging first), then
+          the dessert labels — shown, not explained: no step pills (Graeme,
+          13 Nov 2026). Under the day's headline, above the orders. */}
+      <div ref={stepsRef} className="space-y-2 scroll-mt-4">
+        {sequenceStep === "book" && (
+          <div className="glass-panel rounded-2xl border-2 border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 p-4 flex items-center gap-3 flex-wrap">
+            <span className="text-lg font-bold text-blue-900 dark:text-blue-200">
+              {needLabelCount} {needLabelCount === 1 ? "order needs" : "orders need"} an APC label
+            </span>
+            <div className="ml-auto flex items-center gap-3 flex-wrap">
+              <button type="button"
+                onClick={() => { setCarryOnTagIds(new Set(untaggedOrders.map(o => o.id))); setCarryOnBookIds(new Set(toBook.map(o => o.id))); }}
+                className="text-sm font-semibold text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                Carry on without {needLabelCount === 1 ? "it" : "them"}
+              </button>
+              <button onClick={() => void bookWithTagging()} disabled={bulkTagging}
+                className="px-5 py-3 rounded-xl text-base font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2 disabled:opacity-60">
+                {bulkTagging ? <><Loader2 className="w-5 h-5 animate-spin" /> Tagging the orders…</> : <><PackageCheck className="w-5 h-5" /> Book APC labels</>}
+              </button>
+            </div>
+          </div>
+        )}
+        {(sequenceStep === "desserts" || sequenceStep === "ready") && (
+          <DessertsReportCard tag={queryTag} />
+        )}
+      </div>
 
       {orders && (
         <div className="space-y-4">
