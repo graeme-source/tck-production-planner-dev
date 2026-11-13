@@ -7,7 +7,8 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
-import { DessertsReportCard } from "@/components/desserts-report-card";
+import { DessertsReportCard, useDessertLabelsStatus } from "@/components/desserts-report-card";
+import { packingStep, packingBlocker, type PackingStep } from "@/lib/packing-sequence";
 import { WhatsChangedButton } from "@/components/station-changes/station-menu";
 import { useIcePacks } from "@/hooks/use-ice-packs";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
@@ -19,13 +20,11 @@ import {
   isCollection,
   isDispatchTagged,
   boxCategoryOf,
-  ordersForTagging,
   passesLabelFilter,
   isCourierOrder,
   LABEL_KIND_FILTERS,
   type BoxCategory as LibBoxCategory,
   type LabelFilter,
-  type TagScope,
 } from "@/lib/dispatch-tagging";
 import { clampBoxes, localDeliveryBoxLabels, localDeliveryLabelHtml, MAX_LOCAL_BOXES } from "@/lib/local-delivery-label";
 import { shouldReclaimScanFocus } from "@/lib/scan-focus";
@@ -42,7 +41,7 @@ import {
   ArrowLeft, Truck, Tag, ShieldAlert, PlusCircle, Ban, X, Filter, ArrowUpDown,
   Volume2, VolumeX, AlertTriangle, PackageCheck, Snowflake, CalendarClock,
   ClipboardCheck, Factory, ShoppingBag, Refrigerator, Flame, ShieldCheck,
-  Minus, Plus, CalendarX, Hourglass,
+  Minus, Plus, CalendarX, Hourglass, Check,
 } from "lucide-react";
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
@@ -876,6 +875,32 @@ const ZONE_STYLES: Record<string, { bg: string; border: string; text: string; ba
  * keeps every label live: the route holds no cache, so a consignment amended
  * at the bench reprints as amended.
  */
+/** 1 Tag · 2 Book · 3 Desserts · Pack — where the morning is (13 Nov 2026). */
+function SequencePills({ step }: { step: PackingStep }) {
+  const steps = [
+    { key: "book", label: "1 · Book APC labels" },
+    { key: "desserts", label: "2 · Print desserts" },
+    { key: "ready", label: "3 · Pack" },
+  ] as const;
+  const at = steps.findIndex(s => s.key === step);
+  return (
+    <ol className="flex flex-wrap items-center gap-1.5 text-sm font-semibold" aria-label="Before packing">
+      {steps.map((s, i) => (
+        <li key={s.key}
+          aria-current={i === at ? "step" : undefined}
+          className={cn(
+            "px-3 py-1 rounded-full border inline-flex items-center gap-1",
+            i < at ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/30 dark:text-emerald-300"
+              : i === at ? "border-primary bg-primary text-primary-foreground"
+                : "border-border text-muted-foreground",
+          )}>
+          {i < at && <Check className="w-3.5 h-3.5" />}{s.label}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function printLabel(
   pdfUrl: string,
   onPrinted: () => void,
@@ -1247,11 +1272,7 @@ function DispatchSummary({
               </span>
             )}
           </div>
-          {heldMessage && (
-            <p className="text-sm text-muted-foreground mt-1.5">
-              New orders wait 15 minutes before they can be tagged, booked or packed, in case the customer adds an upsell. It appears on its own — no need to refresh.
-            </p>
-          )}
+
           <div className="w-full h-3 bg-secondary rounded-full overflow-hidden mt-3">
             <div className="h-full rounded-full bg-primary transition-all duration-700" style={{ width: `${pct}%` }} />
           </div>
@@ -1843,9 +1864,8 @@ export default function Fulfilment() {
   const [fridgeGate, setFridgeGate] = useState(true);
   // Filter sheet reachable from inside the picking cycle.
   const [pickingFiltersOpen, setPickingFiltersOpen] = useState(false);
-  // Both collapsed by default: they're pre/post-picking concerns, and a
-  // packer mid-wave shouldn't have to read past them.
-  const [awaitingPanelOpen, setAwaitingPanelOpen] = useState(false);
+  // Collapsed by default: a pre/post-picking concern a packer mid-wave
+  // shouldn't have to read past.
   const [uncheckedPanelOpen, setUncheckedPanelOpen] = useState(false);
   const { data: fridgeAvailability } = useQuery({
     queryKey: ["fulfilment-fridge-availability"],
@@ -1969,6 +1989,25 @@ export default function Fulfilment() {
   const noLabelOrders = filteredUnfulfilledOrdered.filter(lacksLabel);
   const labelledOrdered = filteredUnfulfilledOrdered.filter(o => !lacksLabel(o));
 
+  // ── The order of the morning (Graeme, 13 Nov 2026): 1 tag the orders,
+  // 2 book the APC labels, 3 print the dessert labels, then pack. Each step
+  // is worked out from what's true now, so a later despatch (new orders in)
+  // goes round again. Nothing can dead-end: an order that can't be tagged or
+  // booked yet can be deliberately left out ("Carry on without them"), and a
+  // day with no dessert labels to print goes straight to packing.
+  const [carryOnTagIds, setCarryOnTagIds] = useState<Set<number>>(new Set());
+  const [carryOnBookIds, setCarryOnBookIds] = useState<Set<number>>(new Set());
+  const toTag = untaggedOrders.filter(o => !carryOnTagIds.has(o.id));
+  const toBook = labelGateActive ? unfulfilledOrders.filter(o => lacksLabel(o) && !carryOnBookIds.has(o.id)) : [];
+  const dessertStatus = useDessertLabelsStatus(queryTag, !!queryTag);
+  // Tagging folds into booking (Graeme, 13 Nov 2026: "why don't we just put
+  // that into one action?") — Book APC labels tags every order waiting for
+  // approval first, then books. So the steps are: book → desserts → pack.
+  const needLabelCount = toTag.length + toBook.length;
+  const sequenceStep = packingStep({ toTag: toTag.length, toBook: toBook.length, dessertLabelsLeft: dessertStatus.loading ? null : dessertStatus.left });
+  const stepsRef = useRef<HTMLDivElement | null>(null);
+  const sequenceBlocker = packingBlocker(sequenceStep, dessertStatus.loading);
+
   // ── Fridge gate ─────────────────────────────────────────────────────────
   // The allocation walk lives in lib/fridge-gate.ts (shared verbatim with
   // the wrapping station's release banner): walk the pick list in display
@@ -1993,25 +2032,6 @@ export default function Fulfilment() {
   // Held orders drop out of the pickable list entirely, so the picking
   // cycle, counts, and advance-to-next all respect the gate automatically.
   const filteredUnfulfilled = fridgeAllocation.pickable;
-  const [tagScope, setTagScope] = useState<TagScope>("all");
-  // Tagging deliberately ignores the pick filters below it: those narrow the
-  // wave a packer is working through, but the day's approval is an all-or-
-  // nothing job and a filtered tag button silently left orders untagged
-  // (Graeme, 2026-08-26). Scope defaults to the whole day and is changed only
-  // inside the confirmation dialog.
-  const ordersToTag = ordersForTagging(allUnfulfilledOrders, tagScope);
-  // Offered inside the confirmation dialog. Only box sizes that actually have
-  // something awaiting approval are shown, so there is never a dead chip.
-  const tagScopeOptions: { key: TagScope; label: string; count: number }[] = [
-    { key: "all", label: "All orders", count: untaggedOrders.length },
-    ...BOX_TABS
-      .map(t => ({
-        key: t.key as TagScope,
-        label: t.label,
-        count: untaggedOrders.filter(o => getOrderCategory(o) === t.key).length,
-      }))
-      .filter(t => t.count > 0),
-  ];
   // Skipped orders still showing in this wave — counted against the filtered
   // list so ids left over from completed or filtered-out orders don't inflate
   // the "bring back" banner.
@@ -2117,7 +2137,6 @@ export default function Fulfilment() {
   const canBookCourier = can("ability.book_apc_labels");
   const canTagDispatch = can("ability.tag_dispatch");
   const [bulkTagging, setBulkTagging] = useState(false);
-  const [showBulkTagConfirm, setShowBulkTagConfirm] = useState(false);
   const [consignmentAction, setConsignmentAction] = useState<"idle" | "adding-box" | "reprinting" | "cancelling">("idle");
   const [consignmentActionError, setConsignmentActionError] = useState<string | null>(null);
   const [showAddBoxConfirm, setShowAddBoxConfirm] = useState(false);
@@ -2278,7 +2297,37 @@ export default function Fulfilment() {
     }
   }
 
-  function handleOrderSelect(order: ShopifyOrder) {
+  /** One tap: tag every order waiting for approval, then open the booking —
+   *  orders change through the day, so the tagging always comes first. */
+  async function bookWithTagging() {
+    if (toTag.length > 0) {
+      if (!canTagDispatch) {
+        toast({ title: "Tagging needs permission", description: "Ask an admin for “Tag orders for dispatch” (Settings → Team & Access).", variant: "destructive" });
+        return;
+      }
+      setBulkTagging(true);
+      try {
+        await bulkTagDispatch(queryTag, toTag.map(o => o.id));
+        await Promise.all([refetch(), refetchProgress(), refetchTags(), refetchPostcodes()]);
+      } catch (err) {
+        console.warn("[Fulfilment] tagging before booking failed:", err);
+        toast({ title: "Couldn't tag the orders", description: "Nothing was booked. Please try again.", variant: "destructive" });
+        return;
+      } finally {
+        setBulkTagging(false);
+      }
+    }
+    setShowBatchBooking(true);
+  }
+
+  function handleOrderSelect(order: ShopifyOrder, opts?: { advancing?: boolean }) {
+    // Starting a packing session follows the order of the morning; moving
+    // on to the next order inside a session doesn't stop the bench.
+    if (!opts?.advancing && sequenceBlocker) {
+      toast({ title: "Not yet", description: sequenceBlocker });
+      stepsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      return;
+    }
     // Picking an order by hand (or cycling back round to it) un-skips it.
     if (skippedIds.has(order.id)) {
       setSkippedIds(prev => {
@@ -2783,7 +2832,7 @@ export default function Fulfilment() {
     if (nextOrder) {
       // Route through handleOrderSelect so that live-mode confirmation dialog
       // is shown before any real APC consignment is created.
-      handleOrderSelect(nextOrder);
+      handleOrderSelect(nextOrder, { advancing: true });
     } else {
       setView("list");
       setActiveOrder(null);
@@ -4502,9 +4551,32 @@ export default function Fulfilment() {
         </div>
       )}
 
-      {/* Dessert numbers, full width and short, in sight before the first
-          box is opened; the ice packs sit in the top row (13 Nov 2026). */}
-      <DessertsReportCard tag={queryTag} />
+      {/* The order of the morning — tag → book → desserts → pack — in one
+          strip at the top, so the orders below are close (13 Nov 2026). */}
+      <div ref={stepsRef} className="space-y-2 scroll-mt-4">
+        <SequencePills step={sequenceStep} />
+        {sequenceStep === "book" && (
+          <div className="glass-panel rounded-2xl border-2 border-blue-300 dark:border-blue-800 bg-blue-50/60 dark:bg-blue-950/20 p-4 flex items-center gap-3 flex-wrap">
+            <span className="text-lg font-bold text-blue-900 dark:text-blue-200">
+              {needLabelCount} {needLabelCount === 1 ? "order needs" : "orders need"} an APC label
+            </span>
+            <div className="ml-auto flex items-center gap-3 flex-wrap">
+              <button type="button"
+                onClick={() => { setCarryOnTagIds(new Set(untaggedOrders.map(o => o.id))); setCarryOnBookIds(new Set(toBook.map(o => o.id))); }}
+                className="text-sm font-semibold text-muted-foreground underline underline-offset-2 hover:text-foreground">
+                Carry on without {needLabelCount === 1 ? "it" : "them"}
+              </button>
+              <button onClick={() => void bookWithTagging()} disabled={bulkTagging}
+                className="px-5 py-3 rounded-xl text-base font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2 disabled:opacity-60">
+                {bulkTagging ? <><Loader2 className="w-5 h-5 animate-spin" /> Tagging the orders…</> : <><PackageCheck className="w-5 h-5" /> Book APC labels</>}
+              </button>
+            </div>
+          </div>
+        )}
+        {(sequenceStep === "desserts" || sequenceStep === "ready") && (
+          <DessertsReportCard tag={queryTag} />
+        )}
+      </div>
 
       {/* Collections instruction banner — the orders themselves ride the
           main pick list below as amber rows (Graeme, 2026-08-28). */}
@@ -4597,142 +4669,6 @@ export default function Fulfilment() {
             {" "}&middot; {progress ? progress.totalFulfilled : fulfilledOrders.length} fulfilled
           </p>
 
-          {/* ── Step 1 of the day: TAGGING ───────────────────────────────
-              Tagging happens before booking and before picking, so it sits
-              ABOVE the filters and above Book APC labels rather than behind
-              a button on the summary (Graeme, 2026-08-29). It counts EVERY
-              untagged order of the day — the filters below belong to the
-              pick list, not to the day's approval — and the one-click path
-              is "tag everything", because that is every normal day. The
-              order list stays collapsed: the count and the action are what
-              matter at a glance. */}
-          {untaggedOrders.length > 0 && (
-            <div className="glass-panel rounded-2xl border-2 border-orange-300 dark:border-orange-800 bg-orange-50/60 dark:bg-orange-950/20 p-4 space-y-3">
-              <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-sm font-bold uppercase tracking-widest text-orange-700 dark:text-orange-400 flex items-center gap-2">
-                  <Tag className="w-4 h-4" /> Step 1 — tag
-                </span>
-                <span className="text-lg font-bold text-orange-900 dark:text-orange-200">
-                  {untaggedOrders.length} {untaggedOrders.length === 1 ? "order" : "orders"} awaiting approval
-                </span>
-                <div className="ml-auto flex items-center gap-2 flex-wrap">
-                  <button
-                    onClick={() => setAwaitingPanelOpen(v => !v)}
-                    aria-expanded={awaitingPanelOpen}
-                    className="px-5 py-3 rounded-xl text-base font-semibold border-2 border-orange-300 dark:border-orange-800 text-orange-900 dark:text-orange-200 hover:bg-orange-100 dark:hover:bg-orange-900/30 transition-colors"
-                  >
-                    {awaitingPanelOpen ? "Hide orders" : "Show orders"}
-                  </button>
-                  {canTagDispatch ? (
-                    <button
-                      // Always reopens at "all orders": narrowing is a one-off
-                      // decision made in the dialog, never a setting that can
-                      // quietly persist into tomorrow's tagging.
-                      onClick={() => { setTagScope("all"); setShowBulkTagConfirm(true); }}
-                      disabled={bulkTagging}
-                      className="flex items-center gap-2 px-5 py-3 bg-orange-600 text-white rounded-xl text-base font-bold hover:bg-orange-700 transition-colors disabled:opacity-50"
-                    >
-                      {bulkTagging ? (
-                        <><Loader2 className="w-5 h-5 animate-spin" /> Tagging…</>
-                      ) : (
-                        <><Tag className="w-5 h-5" /> Tag all {untaggedOrders.length} for dispatch</>
-                      )}
-                    </button>
-                  ) : (
-                    // Says WHY there's no button rather than hiding the
-                    // day's approval step from view — and names the exact
-                    // grant an admin needs to flick.
-                    <span className="text-sm font-medium text-orange-800 dark:text-orange-300 max-w-[18rem]">
-                      Tagging needs the &ldquo;Tag orders for dispatch&rdquo; grant —
-                      an admin can add it in Settings → Team &amp; Access.
-                    </span>
-                  )}
-                </div>
-              </div>
-              {/* Says out loud why this panel is first: booking skips
-                  untagged orders, so a label can never run ahead of the
-                  approval. The API enforces it — this only explains it. */}
-              <p className="text-sm font-medium text-orange-800 dark:text-orange-300">
-                APC labels are only ever booked for tagged orders — tag these before booking.
-                {" "}Counts every order awaiting approval, whatever the filters below are showing.
-              </p>
-              {showBulkTagConfirm && (
-                <ShopifyConfirmDialog
-                  title="Tag orders for dispatch?"
-                  description={`This will tag ${ordersToTag.length} order${ordersToTag.length === 1 ? "" : "s"} on Shopify as ready to dispatch. This cannot be undone.`}
-                  // Narrowing lives HERE, out of the way of the everyday
-                  // path: open, confirm, done.
-                  extra={
-                    <div className="space-y-1.5">
-                      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Which orders</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {tagScopeOptions.map(opt => (
-                            <button
-                              key={String(opt.key)}
-                              type="button"
-                              onClick={() => setTagScope(opt.key)}
-                              className={cn(
-                                "px-3 py-1.5 rounded-lg text-sm font-semibold border transition-colors flex items-center gap-1.5",
-                                tagScope === opt.key
-                                  ? "bg-primary border-primary text-primary-foreground"
-                                  : "bg-secondary/60 border-transparent text-muted-foreground hover:bg-secondary hover:text-foreground",
-                              )}
-                            >
-                              {opt.label}
-                              <span className="tabular-nums opacity-80">{opt.count}</span>
-                            </button>
-                          ))}
-                      </div>
-                    </div>
-                  }
-                  products={ordersToTag.slice(0, 10).map(o => ({
-                    name: `${o.name} — ${o.shipping_address?.name ?? `${o.customer?.first_name ?? ""} ${o.customer?.last_name ?? ""}`.trim()}`,
-                  }))}
-                  confirmLabel={tagScope === "all" ? `Tag all ${ordersToTag.length}` : `Tag ${ordersToTag.length}`}
-                  confirmDisabled={ordersToTag.length === 0}
-                  onConfirm={async () => {
-                    setShowBulkTagConfirm(false);
-                    setBulkTagging(true);
-                    try {
-                      await bulkTagDispatch(queryTag, ordersToTag.map(o => o.id));
-                      refetch();
-                      refetchProgress();
-                      refetchTags();
-                      refetchPostcodes();
-                    } catch (err) {
-                      console.warn("[Fulfilment] Bulk tag dispatch failed:", err);
-                      toast({ title: "Bulk tagging failed", description: "Please try again.", variant: "destructive" });
-                    } finally {
-                      setTagScope("all");
-                      setBulkTagging(false);
-                    }
-                  }}
-                  onCancel={() => { setTagScope("all"); setShowBulkTagConfirm(false); }}
-                />
-              )}
-              {awaitingPanelOpen && (
-                <div className="space-y-1.5 max-h-48 overflow-y-auto">
-                  {untaggedOrders.map(order => (
-                    <div key={order.id} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-orange-100/60 dark:bg-orange-900/20 text-base">
-                      <OrderNumber
-                        orderId={order.id}
-                        name={order.name}
-                        adminBase={configStatus?.shopifyAdminOrderBase}
-                        className="font-mono font-bold text-orange-900 dark:text-orange-200"
-                      />
-                      <span className="text-orange-800 dark:text-orange-300 truncate flex-1">
-                        {order.shipping_address?.name ?? `${order.customer?.first_name} ${order.customer?.last_name}`}
-                      </span>
-                      <span className="text-sm font-semibold text-orange-700 dark:text-orange-400">
-                        {order.line_items.reduce((s, i) => s + i.quantity, 0)} items
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
           {/* ── The filters that own the list below ──────────────────────
               Every control here is a primary action at the bench, so they
               are sized like Book APC labels rather than drawn as small grey
@@ -4772,15 +4708,8 @@ export default function Fulfilment() {
                     <CalendarX className="w-5 h-5" /> Friday check
                   </button>
                 )}
-                {apcMode === "full" && (
-                  <button
-                    onClick={() => setShowBatchBooking(true)}
-                    className="px-5 py-3 rounded-xl text-base font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
-                    title="Raise APC consignments — pick first 5, all, small boxes, or large boxes. Untagged orders are never booked."
-                  >
-                    <PackageCheck className="w-5 h-5" /> Book APC labels
-                  </button>
-                )}
+                {/* Book APC labels lives at the top as step 1 when it's
+                    needed (it tags first) — one button, not two (13 Nov 2026). */}
                 <button
                   onClick={() => setFiltersOpen(v => !v)}
                   className={cn(

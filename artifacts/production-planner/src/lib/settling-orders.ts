@@ -18,16 +18,16 @@ export function minutesUntil(releasesAt: string, now: number): number {
   return Math.max(1, Math.ceil(ms / 60_000));
 }
 
-/** "1 new order held back — on the list in 9 min" / "2 new orders held
- *  back — the first comes on in 3 min". null when nothing is held. */
+/** Plain words, the next thing to do (Graeme, 13 Nov 2026): "Come back in
+ *  3 minutes — 1 new order will be ready". null when nothing is held. */
 export function settlingMessage(settling: readonly SettlingOrder[] | undefined, now: number): string | null {
   const still = (settling ?? []).filter(s => Date.parse(s.releasesAt) > now);
   if (still.length === 0) return null;
   const mins = minutesUntil(still[0].releasesAt, now);
-  const when = `${mins} min`;
+  const when = `${mins} minute${mins === 1 ? "" : "s"}`;
   return still.length === 1
-    ? `1 new order held back — on the list in ${when}`
-    : `${still.length} new orders held back — the first comes on in ${when}`;
+    ? `Come back in ${when} — 1 new order will be ready`
+    : `Come back in ${when} — ${still.length} new orders will be ready`;
 }
 
 /** When the screen should reload the list next: the soonest release still
