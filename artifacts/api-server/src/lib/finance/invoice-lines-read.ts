@@ -131,16 +131,18 @@ export function normaliseInvoiceLines(raw: unknown, ingredientUnits: ReadonlyMap
 }
 
 /**
- * The price an invoice line works out at for one of OUR packs, given how
- * many of our units it was really for. null when it can't be worked out.
+ * The price an invoice line works out at for one of OUR packs. null when it
+ * can't be worked out. A supplier's usual count ratio is NOT applied: that
+ * ratio is goods-in recording a different number from what arrives (Puffin:
+ * 600 typed for a 1,200-liner pallet, Graeme 13 Nov 2026), not a different
+ * item, so the price per item is the invoice's own.
  */
 export function invoicePricePerOurPack(
   line: { lineTotal: number | null; quantity: number | null; nativePerUnit: number | null },
   packWeight: number,
-  usualRatio = 1,
 ): number | null {
   if (line.lineTotal == null || line.quantity == null || line.nativePerUnit == null) return null;
-  const ourUnits = (line.quantity * line.nativePerUnit) / (usualRatio > 0 ? usualRatio : 1);
+  const ourUnits = line.quantity * line.nativePerUnit;
   if (!(ourUnits > 0) || !(line.lineTotal > 0)) return null;
   return (line.lineTotal / ourUnits) * (packWeight > 0 ? packWeight : 1);
 }

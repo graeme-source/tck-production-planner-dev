@@ -303,7 +303,7 @@ export async function priceReviews(): Promise<PriceReview[]> {
     db.select().from(ingredientPriceReviewsTable),
     db.select({ id: suppliersTable.id, name: suppliersTable.name }).from(suppliersTable),
   ]);
-  const invoiceById = new Map(bundles.flatMap((b) => b.invoices.map((i) => [i.id, { inv: i, supplierId: b.supplierId, ratios: b.result.profile.usualRatios }] as const)));
+  const invoiceById = new Map(bundles.flatMap((b) => b.invoices.map((i) => [i.id, { inv: i, supplierId: b.supplierId }] as const)));
 
   // Newest invoice line per (ingredient, supplier).
   const newest = new Map<string, typeof lines[number]>();
@@ -316,7 +316,7 @@ export async function priceReviews(): Promise<PriceReview[]> {
 
   const out: PriceReview[] = [];
   for (const l of newest.values()) {
-    const { inv, supplierId, ratios } = invoiceById.get(l.invoiceId)!;
+    const { inv, supplierId } = invoiceById.get(l.invoiceId)!;
     const ing = ingredients.find((i) => i.id === l.ingredientId);
     if (!ing) continue;
     const secondary = ing.supplierId !== supplierId && ing.secondarySupplierId === supplierId;
@@ -326,7 +326,7 @@ export async function priceReviews(): Promise<PriceReview[]> {
       lineTotal: l.lineTotal != null ? Number(l.lineTotal) : null,
       quantity: l.quantity != null ? Number(l.quantity) : null,
       nativePerUnit: l.nativePerUnit != null ? Number(l.nativePerUnit) : null,
-    }, packWeight, ratios[ing.id] ?? 1);
+    }, packWeight);
     if (price == null) continue;
     const ours = Number(secondary ? ing.secondaryCostPerPack : ing.costPerPack) || 0;
     if (!priceDiffers(ours, price)) continue;

@@ -39,8 +39,9 @@ describe("invoicePricePerOurPack", () => {
   it("Best Butcher: pork 19.49 kg less 10% works out per kg", () => {
     expect(invoicePricePerOurPack({ lineTotal: 114.02, quantity: 19.49, nativePerUnit: 1 }, 1)).toBeCloseTo(5.85, 2);
   });
-  it("Puffin: 1,200 liners invoiced for the 600 we count → price per one we count", () => {
-    expect(invoicePricePerOurPack({ lineTotal: 888, quantity: 1200, nativePerUnit: 1 }, 0, 2)).toBeCloseTo(1.48, 4);
+  it("Puffin: 1,200 liners at 74p is £148 for our box of 200 (regression: the 2-for-1 goods-in count doubled it)", () => {
+    expect(invoicePricePerOurPack({ lineTotal: 888, quantity: 1200, nativePerUnit: 1 }, 200)).toBeCloseTo(148, 4);
+    expect(invoicePricePerOurPack({ lineTotal: 888, quantity: 1200, nativePerUnit: 1 }, 0)).toBeCloseTo(0.74, 4);
   });
   it("null when it can't be worked out", () => {
     expect(invoicePricePerOurPack({ lineTotal: 10, quantity: null, nativePerUnit: 1 }, 1)).toBeNull();
