@@ -246,3 +246,16 @@ describe("linkedRowsAllTicked", () => {
     expect(linkedRowsAllTicked([{}], new Set())).toBe(true);
   });
 });
+
+describe("showPrepRow", () => {
+  it("hides a done row when Hide completed is on (regression: Tomato Base stayed because the screen opens on it)", async () => {
+    const { showPrepRow } = await import("./prep-progress");
+    expect(showPrepRow({ done: true, openedByTap: false }, true)).toBe(false);
+  });
+  it("keeps a done row someone has tapped open, and everything when showing all", async () => {
+    const { showPrepRow } = await import("./prep-progress");
+    expect(showPrepRow({ done: true, openedByTap: true }, true)).toBe(true);
+    expect(showPrepRow({ done: true, openedByTap: false }, false)).toBe(true);
+    expect(showPrepRow({ done: false, openedByTap: false }, true)).toBe(true);
+  });
+});

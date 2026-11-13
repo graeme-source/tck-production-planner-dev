@@ -33,7 +33,7 @@ import { StationStockChecks } from "../shared/station-stock-checks";
 import { useMainPrepData, prepRowSopAmounts } from "./main-prep-station";
 import type { MainPrepIngredient, LinkedItem } from "./main-prep-station";
 import { NumberInput } from "@/components/ui/number-input";
-import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, tasksLine } from "@/lib/prep-progress";
+import { basesProgress, isBaseSubRecipe, isBasesSauceLine, progressPct, showPrepRow, tasksLine } from "@/lib/prep-progress";
 import { usePrepSessionCapture, type PrepSessionStation } from "@/hooks/use-prep-session-capture";
 import { londonToday } from "@/lib/hours-worked-view";
 import { browserStore, clearProgress, loadProgress, progressKey, saveProgress } from "@/lib/sub-recipe-progress";
@@ -928,6 +928,9 @@ function usePlanSubRecipeRequirements(planId: number) {
 
 export function PrepBasesStation({ plan, isOnBreak = false }: { plan: ProductionPlanDetail; isOnBreak?: boolean }) {
   const [selectedItem, setSelectedItem] = useState<"tomato_base" | number>("tomato_base");
+  // The screen opens on Tomato Base; only a tap counts as opening a row for
+  // "Hide completed" (showPrepRow), so a done Tomato Base hides like the rest.
+  const [openedByTap, setOpenedByTap] = useState(false);
   // On by default (Graeme, 13 Nov 2026): open on what is left to do;
   // "Show all" still reveals the finished ones.
   const [hideCompleted, setHideCompleted] = useState(true);
@@ -1297,9 +1300,9 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
             </div>
             <div className="max-h-[calc(100vh-300px)] overflow-y-auto">
               {/* Tomato Base — special pinned item (hidden when done + Hide completed is on) */}
-              {!(hideCompleted && tomatoBaseDone && selectedItem !== "tomato_base") && (
+              {showPrepRow({ done: tomatoBaseDone, openedByTap: openedByTap && selectedItem === "tomato_base" }, hideCompleted) && (
               <button
-                onClick={() => { setSelectedItem("tomato_base"); showOpenedItem(); }}
+                onClick={() => { setSelectedItem("tomato_base"); setOpenedByTap(true); showOpenedItem(); }}
                 className={cn(
                   "w-full flex items-center gap-3 px-4 py-3 text-left transition-colors border-b border-border",
                   tomatoBaseDone
@@ -1341,8 +1344,10 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                 // When "Hide completed" is on, drop fully-done items (keeping the
                 // selected one visible) and skip the whole group if nothing's left.
                 const visibleItems = hideCompleted
-                  ? group.items.filter(({ ing }) =>
-                      !recipeIngredientStatus(ing, group.recipeId).allDone || selectedItem === ing.ingredientId)
+                  ? group.items.filter(({ ing }) => showPrepRow({
+                      done: recipeIngredientStatus(ing, group.recipeId).allDone,
+                      openedByTap: openedByTap && selectedItem === ing.ingredientId,
+                    }, hideCompleted))
                   : group.items;
                 if (visibleItems.length === 0) return null;
                 return (
@@ -1363,7 +1368,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     return (
                       <React.Fragment key={`${group.recipeId}-${ing.ingredientId}`}>
                       <button
-                        onClick={() => { setSelectedItem(ing.ingredientId); showOpenedItem(); }}
+                        onClick={() => { setSelectedItem(ing.ingredientId); setOpenedByTap(true); showOpenedItem(); }}
                         className={cn(
                           "w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors border-t border-border/30",
                           isSelected

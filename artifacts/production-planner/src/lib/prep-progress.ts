@@ -235,3 +235,13 @@ export function progressPct(c: Count): number {
 export function tasksLine(c: Count): string {
   return `${c.done} of ${c.total} task${c.total === 1 ? "" : "s"}`;
 }
+
+/**
+ * Whether a prep row shows on the list. With "Hide completed" on, a done row
+ * goes — unless someone has tapped it open, so it doesn't vanish from under
+ * them. Being open only because the screen opened on it doesn't count: the
+ * Tomato Base is opened by default and so never hid (Graeme, 13 Nov 2026).
+ */
+export function showPrepRow(row: { done: boolean; openedByTap: boolean }, hideCompleted: boolean): boolean {
+  return !hideCompleted || !row.done || row.openedByTap;
+}
