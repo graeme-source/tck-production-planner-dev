@@ -48,7 +48,7 @@ export function NewVsReturningCard({
       type="button"
       onClick={onToggleTrend}
       aria-expanded={trendOpen}
-      className={`glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 col-span-full text-left w-full hover-lift transition-all cursor-pointer ${trendOpen ? "ring-2 ring-primary" : "ring-0"}`}
+      className={`glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 text-left w-full hover-lift transition-all cursor-pointer ${trendOpen ? "ring-2 ring-primary" : "ring-0"}`}
     >
       <div className="-mx-5 -mt-5 mb-1">{grade}</div>
 
@@ -62,19 +62,20 @@ export function NewVsReturningCard({
           <AlertCircle className="w-4 h-4" /> {(error as Error).message}
         </p>
       ) : !t || !byOrders ? (
-        <p className="text-3xl font-display font-bold text-muted-foreground">
+        <p className="text-2xl font-display font-bold text-muted-foreground">
           — <span className="text-sm font-sans font-normal">No paid orders in this period</span>
         </p>
       ) : (
         <>
-          <p className="text-3xl font-display font-bold">
+          {/* Panel-sized like every other Numbers tile (13 Nov 2026). */}
+          <p className="text-2xl font-display font-bold leading-tight">
             <span className="text-primary">{byOrders.new}% new</span>
             <span className="text-muted-foreground font-normal"> · </span>
             <span>{byOrders.returning}% returning</span>
           </p>
           {/* Two-colour bar: brand green for new, a calm neutral for returning. */}
           <div
-            className="flex h-4 w-full overflow-hidden rounded-full bg-muted-foreground/20"
+            className="flex h-2.5 w-full overflow-hidden rounded-full bg-muted-foreground/20"
             role="img"
             aria-label={`${byOrders.new}% new customers, ${byOrders.returning}% returning`}
           >

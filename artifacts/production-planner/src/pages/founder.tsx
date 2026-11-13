@@ -997,11 +997,30 @@ function FounderDashboard() {
     queryFn: fetchMetaStatus,
     staleTime: 5 * 60 * 1000,
   });
+  const metaQueryClient = useQueryClient();
   const metaRefresh = useMutation({
     mutationFn: refreshFromMeta,
-    // A sync writes several days at once, so the whole period is stale.
-    onSuccess: () => { refetchAdSpend(); refetchMetaStatus(); },
+    // A sync writes several days at once, so the whole period is stale —
+    // including the New customers today tile's ROAS, which reads its spend
+    // through the ad-efficiency queries.
+    onSuccess: () => {
+      refetchAdSpend();
+      refetchMetaStatus();
+      for (const key of ["ad-efficiency-spend-sources", "founder-ad-spend-range", "founder-numbers-trend"]) {
+        void metaQueryClient.invalidateQueries({ queryKey: [key] });
+      }
+    },
   });
+  // Pull the latest spend from Meta as the page opens (Graeme, 13 Nov 2026:
+  // "I always have to refresh it … so I don't have to keep clicking the
+  // button"). Once per visit, only when Meta is connected.
+  const autoMetaRefreshed = useRef(false);
+  useEffect(() => {
+    if (autoMetaRefreshed.current || !metaStatus?.connected) return;
+    autoMetaRefreshed.current = true;
+    metaRefresh.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metaStatus?.connected]);
   const lastSync = metaRefresh.data ?? metaStatus?.lastSync ?? null;
 
   // The one line under the Ad Spend figure. Every branch has to be true
@@ -1429,8 +1448,12 @@ function FounderDashboard() {
               </div>
             )}
 
-            {/* Period totals */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 grid-flow-row-dense">
+            {/* Every panel the same size, in ONE grid (Graeme, 13 Nov 2026:
+                "there's no more weight or importance on the other ones"):
+                the period totals lead, then new customers and spend, then
+                subscriptions and conversion, and New vs returning and Email
+                revenue last. Trend panels open full width under their row. */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 grid-flow-row-dense">
               <KpiCard
                 title={`Total Sales — ${period.label}`}
                 value={periodSummary ? formatGBP(periodSummary.totalRevenue) : "—"}
@@ -1453,24 +1476,9 @@ function FounderDashboard() {
                 grade={<KpiGradeStrip kpi="aov" value={periodSummary?.aov} />}
               />
               {periodPanel(["aov"])}
-              {/* New vs returning, full width under the two totals (Graeme, 2026-10-13). */}
-              <NewVsReturningCard
-                from={from}
-                to={to}
-                periodLabel={period.label}
-                trendOpen={periodTrend === "newCustomerShare"}
-                onToggleTrend={periodToggle("newCustomerShare").onToggle}
-                grade={<KpiGradeStrip kpi="newCustomerShare" title={`New vs returning customers — ${period.label}`} qualifier="Share of the paid orders received in this period" value={periodTrendData?.totals.newCustomerSharePercent} />}
-              />
-              {periodPanel(["newCustomerShare"])}
-              {/* Klaviyo's email revenue, flows vs campaigns (Graeme, 2026-11-09). */}
-              <EmailRevenueCard from={from} to={to} periodLabel={period.label} totalSales={periodSummary?.totalRevenue} />
-            </div>
-            <div className="mb-6" />
 
-            {/* Row 1 — new customers, and what they cost.
-                The count tile is also the drill-down: tap it for the orders. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 grid-flow-row-dense">
+              {/* New customers, and what they cost. The count tile is also
+                  the drill-down: tap it for the orders. */}
               <OrderTypeCard
                 type={customerType("newCustomer")}
                 count={getGroupCount(customerType("newCustomer").tag)}
@@ -1588,13 +1596,10 @@ function FounderDashboard() {
                 </div>
               </div>
               {periodPanel(["adSpend"])}
-            </div>
-            <div className="mb-4" />
 
-            {/* Row 2 — subscriptions, and the storefront's own conversion.
-                Conversion Rate has no graph: it is Shopify's own session
-                metric (ShopifyQL), not something the orders mirror holds. */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 grid-flow-row-dense">
+              {/* Subscriptions, and the storefront's own conversion.
+                  Conversion Rate has no graph: it is Shopify's own session
+                  metric (ShopifyQL), not something the orders mirror holds. */}
               {(["recurringSub", "newSub"] as const).map((id) => (
                 <Fragment key={id}>
                 <OrderTypeCard
@@ -1651,6 +1656,19 @@ function FounderDashboard() {
                 </div>
                 </div>
               </div>
+              {/* New vs returning and Email revenue, same size as the rest, last
+                  (Graeme, 13 Nov 2026). */}
+              <NewVsReturningCard
+                from={from}
+                to={to}
+                periodLabel={period.label}
+                trendOpen={periodTrend === "newCustomerShare"}
+                onToggleTrend={periodToggle("newCustomerShare").onToggle}
+                grade={<KpiGradeStrip kpi="newCustomerShare" title={`New vs returning customers — ${period.label}`} qualifier="Share of the paid orders received in this period" value={periodTrendData?.totals.newCustomerSharePercent} />}
+              />
+              {periodPanel(["newCustomerShare"])}
+              {/* Klaviyo's email revenue, flows vs campaigns (Graeme, 2026-11-09). */}
+              <EmailRevenueCard from={from} to={to} periodLabel={period.label} totalSales={periodSummary?.totalRevenue} />
             </div>
 
             {/* Drill-down. Tap any count tile above to open the orders behind

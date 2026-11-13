@@ -55,14 +55,19 @@ export function EmailRevenueCard({ from, to, periodLabel, totalSales }: {
   const salesPct = s && totalSales && totalSales > 0 ? Math.round((s.revenue / totalSales) * 100) : null;
 
   return (
-    <div className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3 col-span-full">
-      <p className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-        <Mail className="w-4 h-4" /> Email revenue (Klaviyo) — {periodLabel}
-      </p>
+    <div className="glass-panel p-5 rounded-2xl overflow-hidden flex flex-col gap-3">
+      {/* Panel-sized with a header bar like the other Numbers tiles
+          (13 Nov 2026). */}
+      <div className="-mx-5 -mt-5 mb-1 px-5 py-3 bg-sky-600 text-white">
+        <p className="font-display font-bold text-lg leading-tight flex items-center gap-2">
+          <Mail className="w-4 h-4 shrink-0" /> Email revenue — {periodLabel}
+        </p>
+        <p className="text-xs opacity-90">Klaviyo · flows and campaigns</p>
+      </div>
 
       {isLoading ? (
         <>
-          <Skeleton className="h-9 w-64" />
+          <Skeleton className="h-8 w-40" />
           <Skeleton className="h-4 w-full rounded-full" />
         </>
       ) : error ? (
@@ -77,16 +82,16 @@ export function EmailRevenueCard({ from, to, periodLabel, totalSales }: {
         </p>
       ) : s && (
         <>
-          <p className="text-3xl font-display font-bold">
-            {gbp(s.revenue)}
-            <span className="text-sm font-sans font-normal text-muted-foreground">
-              {" "}· {orders(s.orders)}{salesPct != null ? ` · ${salesPct}% of total sales` : ""}
-            </span>
-          </p>
+          <div>
+            <p className="text-2xl font-display font-bold">{gbp(s.revenue)}</p>
+            <p className="text-xs text-muted-foreground">
+              {orders(s.orders)}{salesPct != null ? ` · ${salesPct}% of total sales` : ""}
+            </p>
+          </div>
 
           {s.revenue > 0 && flowPct != null && (
             <div
-              className="flex h-4 w-full overflow-hidden rounded-full bg-sky-500/70"
+              className="flex h-2.5 w-full overflow-hidden rounded-full bg-sky-500/70"
               role="img"
               aria-label={`${flowPct}% flows, ${100 - flowPct}% campaigns`}
             >
@@ -99,14 +104,14 @@ export function EmailRevenueCard({ from, to, periodLabel, totalSales }: {
               <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                 <span className="inline-block w-2.5 h-2.5 rounded-full bg-primary" /> Flows{flowPct != null ? ` · ${flowPct}%` : ""}
               </p>
-              <p className="text-xl font-display font-bold">{gbp(s.flows.revenue)}</p>
+              <p className="text-lg font-display font-bold">{gbp(s.flows.revenue)}</p>
               <p className="text-xs text-muted-foreground">{orders(s.flows.orders)}</p>
             </div>
             <div>
               <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
                 <span className="inline-block w-2.5 h-2.5 rounded-full bg-sky-500/70" /> Campaigns{flowPct != null ? ` · ${100 - flowPct}%` : ""}
               </p>
-              <p className="text-xl font-display font-bold">{gbp(s.campaigns.revenue)}</p>
+              <p className="text-lg font-display font-bold">{gbp(s.campaigns.revenue)}</p>
               <p className="text-xs text-muted-foreground">{orders(s.campaigns.orders)}</p>
             </div>
           </div>
