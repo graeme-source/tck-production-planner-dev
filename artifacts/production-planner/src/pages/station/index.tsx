@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { useParams, useLocation } from "wouter";
 import { useGetProductionPlan, getGetProductionPlanQueryKey } from "@workspace/api-client-react";
 import type { ProductionPlanDetail } from "@workspace/api-client-react";
-import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, ClipboardList, Factory, Lock } from "lucide-react";
+import { Loader2, AlertTriangle, RotateCw, ClipboardCheck, ClipboardList, Factory, Lock, ArrowLeftRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useFeatureFlags } from "@/hooks/use-feature-flags";
 import { StationLayout } from "./shared/station-layout";
@@ -23,6 +23,10 @@ import { MacaroniCheeseStation } from "./stations/macaroni-cheese-station";
 import { FriedChickenStation } from "./stations/fried-chicken-station";
 import { STATION_VIEW_ROW_SLOT_ID, type StationType } from "./shared/constants";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
+import { checklistSwitchTargets } from "./shared/checklist/switch-targets";
+import {
+  DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 // "prep" is only offered by stations that have a prep sheet of their own
 // (fried chicken). Everywhere else the tab simply isn't rendered.
@@ -266,6 +270,27 @@ export default function StationPage() {
             Production
           </button>
         </div>
+        {/* Hop straight to another station's checklist for the same plan —
+            closing down packing and wrapping no longer means a trip to the
+            main page between the two (issue #399). */}
+        {activeView === "checklist" && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium bg-secondary/40 text-foreground hover:bg-secondary/70 transition-colors flex-shrink-0">
+                <ArrowLeftRight className="w-4 h-4" />
+                Switch checklist
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="max-h-[70dvh] overflow-y-auto">
+              <DropdownMenuLabel>Open another station's checklist</DropdownMenuLabel>
+              {checklistSwitchTargets(planId, stationType).map(t => (
+                <DropdownMenuItem key={t.key} className="py-3 text-base" onSelect={() => navigate(t.href)}>
+                  {t.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
         <div id={STATION_VIEW_ROW_SLOT_ID} className="flex-1 min-w-0 empty:hidden" />
         </div>
       )}
