@@ -254,6 +254,7 @@ function Router() {
               <Route path="/finance/cash-flow" component={FinancePage} />
               <Route path="/finance/payroll" component={FinancePage} />
               <Route path="/finance/deliveries" component={FinancePage} />
+              <Route path="/finance/inbox" component={FinancePage} />
               <Route path="/finance/invoices" component={FinancePage} />
               <Route path="/finance" component={FinancePage} />
               <Route path="/supplies">{() => <Redirect to="/inventory?tab=supplies" />}</Route>

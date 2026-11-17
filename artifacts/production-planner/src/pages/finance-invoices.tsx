@@ -199,9 +199,79 @@ async function uploadAll(files: File[], onProgress: (p: Progress) => void): Prom
 
 // ---------------------------------------------------------------------------
 
-export function InvoicesLibraryPanel() {
+/** The one place invoices are added (Graeme, 17 Nov 2026: "just one place
+ *  for everyone to add invoices"). Single PDFs and photos wait in the Inbox
+ *  until someone marks them posted in QuickBooks; a zip is history, so it
+ *  goes straight into the library. */
+export function InvoiceUploadCard({ className }: { className?: string }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [dragOver, setDragOver] = useState(false);
+  const [progress, setProgress] = useState<Progress | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const reads = useQuery<ListResponse>({
+    queryKey: ["/api/finance/invoices", "years-only"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/invoices?yearsOnly=1`),
+    refetchInterval: (query) => ((query.state.data as ListResponse | undefined)?.pendingReads ?? 0) > 0 ? 8000 : false,
+  });
+  const pending = reads.data?.pendingReads ?? 0;
+  const busy = progress != null && progress.phase !== "done" && progress.phase !== "stopped";
+  const sendFiles = async (files: FileList | File[] | null) => {
+    const arr = Array.from(files ?? []);
+    if (!arr.length || busy) return;
+    const zipsOnly = arr.every((f) => /\.zip$/i.test(f.name));
+    const result = await uploadAll(arr, setProgress).catch((e: Error) => {
+      toast({ title: "Upload couldn't start", description: e.message, variant: "destructive" });
+      return null;
+    });
+    if (result) {
+      toast(result.phase === "done"
+        ? {
+            title: `${result.added} invoice${result.added === 1 ? "" : "s"} added`,
+            description: [result.held ? `${result.held} were already in the library.` : null,
+              zipsOnly ? "Filed in the library." : "They're in the Inbox until someone marks them posted."].filter(Boolean).join(" "),
+          }
+        : { title: "Upload stopped part-way", description: result.error, variant: "destructive" });
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices/uploads"] });
+  };
+  return (
+    <Card className={className}>
+      <CardContent
+        className={cn("p-5 rounded-xl transition-colors h-full flex flex-col justify-center gap-3",
+          dragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : "")}
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); sendFiles(e.dataTransfer.files); }}
+      >
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="h-12 w-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
+            <FileArchive className="h-6 w-6" />
+          </div>
+          <div className="flex-1 min-w-[220px]">
+            <div className="font-semibold">Add invoices</div>
+            <div className="text-sm text-muted-foreground">Drop PDFs or photos here — they wait in the Inbox until marked posted. Zips of old invoices go straight into the library. Files already held are skipped.</div>
+          </div>
+          <input ref={fileInput} type="file" multiple accept=".zip,application/zip,.pdf,application/pdf,image/*" className="hidden"
+            onChange={(e) => { const f = e.target.files ? Array.from(e.target.files) : []; e.target.value = ""; sendFiles(f); }} />
+          <Button onClick={() => fileInput.current?.click()} disabled={busy}>
+            {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+            {busy ? "Uploading…" : "Choose files"}
+          </Button>
+        </div>
+        {progress && <UploadProgress p={progress} />}
+        {pending > 0 && (
+          <div className="text-sm flex items-center gap-2 text-sky-800 dark:text-sky-300">
+            <Loader2 className="h-4 w-4 animate-spin" /> Reading {pending.toLocaleString("en-GB")} invoice{pending === 1 ? "" : "s"} for supplier, date and amounts.
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+export function InvoicesLibraryPanel({ showUpload = true }: { showUpload?: boolean } = {}) {
   const [q, setQ] = useState("");
   // null until the first load picks the latest year; "all" = every year.
   const [fy, setFy] = useState<string | null>(null);
@@ -211,9 +281,6 @@ export function InvoicesLibraryPanel() {
   const [dupes, setDupes] = useState(false);
   const [openId, setOpenId] = useState<number | null>(null);
   const [openMonths, setOpenMonths] = useState<Set<string>>(new Set());
-  const [dragOver, setDragOver] = useState(false);
-  const [progress, setProgress] = useState<Progress | null>(null);
-  const fileInput = useRef<HTMLInputElement>(null);
 
   const params = new URLSearchParams();
   if (q.trim()) params.set("q", q.trim());
@@ -246,29 +313,11 @@ export function InvoicesLibraryPanel() {
     queryFn: () => jsonFetch(`${BASE}/api/finance/invoices/uploads`),
   });
 
-  const busy = progress != null && progress.phase !== "done" && progress.phase !== "stopped";
-  const sendFiles = async (files: FileList | File[] | null) => {
-    const arr = Array.from(files ?? []);
-    if (!arr.length || busy) return;
-    const result = await uploadAll(arr, setProgress).catch((e: Error) => {
-      toast({ title: "Upload couldn't start", description: e.message, variant: "destructive" });
-      return null;
-    });
-    if (result) {
-      toast(result.phase === "done"
-        ? { title: `${result.added} invoice${result.added === 1 ? "" : "s"} added`, description: result.held ? `${result.held} were already in the library.` : "Reading them now." }
-        : { title: "Upload stopped part-way", description: result.error, variant: "destructive" });
-    }
-    queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
-    queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices/uploads"] });
-  };
-
   const data = list.data ?? (fy === null ? firstYears.data : undefined);
   const invoices = list.data?.invoices ?? [];
   const years = data?.years ?? [];
   const total = useMemo(() => invoices.reduce((s, i) => s + Number(i.totalAmount ?? 0), 0), [invoices]);
   const searching = Boolean(q.trim() || from || to || source !== "all");
-  const pending = data?.pendingReads ?? 0;
 
   // Month sections (by the invoice's own date); "Not dated yet" is flat.
   const months = useMemo(() => {
@@ -284,39 +333,8 @@ export function InvoicesLibraryPanel() {
 
   return (
     <div className="space-y-5">
-      <div className="grid gap-4 md:grid-cols-3">
-        {/* Upload */}
-        <Card className="md:col-span-2">
-          <CardContent
-            className={cn("p-5 rounded-xl transition-colors h-full flex flex-col justify-center gap-3",
-              dragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : "")}
-            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); sendFiles(e.dataTransfer.files); }}
-          >
-            <div className="flex items-center gap-4 flex-wrap">
-              <div className="h-12 w-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
-                <FileArchive className="h-6 w-6" />
-              </div>
-              <div className="flex-1 min-w-[220px]">
-                <div className="font-semibold">Add invoices</div>
-                <div className="text-sm text-muted-foreground">Drop zip folders, PDFs or photos here — several at once is fine, any size. Files already in the library are skipped, never added twice.</div>
-              </div>
-              <input ref={fileInput} type="file" multiple accept=".zip,application/zip,.pdf,application/pdf,image/*" className="hidden"
-                onChange={(e) => { const f = e.target.files ? Array.from(e.target.files) : []; e.target.value = ""; sendFiles(f); }} />
-              <Button onClick={() => fileInput.current?.click()} disabled={busy}>
-                {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-                {busy ? "Uploading…" : "Choose files"}
-              </Button>
-            </div>
-            {progress && <UploadProgress p={progress} />}
-            {pending > 0 && (
-              <div className="text-sm flex items-center gap-2 text-sky-800 dark:text-sky-300">
-                <Loader2 className="h-4 w-4 animate-spin" /> Reading {pending.toLocaleString("en-GB")} invoice{pending === 1 ? "" : "s"} for supplier, date and amounts — they move into their year as each is read.
-              </div>
-            )}
-          </CardContent>
-        </Card>
+      <div className={cn("grid gap-4", showUpload ? "md:grid-cols-3" : "sm:grid-cols-2 lg:grid-cols-3")}>
+        {showUpload && <InvoiceUploadCard className="md:col-span-2" />}
         <Card>
           <CardContent className="p-5 h-full flex flex-col justify-center">
             <div className="text-sm text-muted-foreground flex items-center gap-2"><FileText className="h-4 w-4" />
@@ -573,10 +591,37 @@ function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; onClose:
               <div>Uploaded{invoice.uploadedByName ? ` by ${invoice.uploadedByName}` : ""}, {fmtWhen(invoice.createdAt)}.</div>
             )}
             {invoice.source === "upload" && invoice.postedAt && !invoice.lineId && <BackToInbox invoice={invoice} onDone={onClose} />}
+            {invoice.source === "upload" && !invoice.postedAt && !invoice.lineId && !invoice.duplicateOf && <MarkPostedButton invoice={invoice} onDone={onClose} />}
           </div>
           <HistoryList type="invoice" id={invoice.id} />
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Uploaded and posted in QuickBooks straight away (Graeme, 17 Nov 2026:
+ *  the accounts team "will mark it as posted once they've uploaded it"). */
+function MarkPostedButton({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const mark = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/invoices/${invoice.id}/posted`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posted: true }),
+    }),
+    onSuccess: () => {
+      toast({ title: "Marked as posted", description: "Out of the Inbox." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+      onDone();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1">
+      <span>Not posted in QuickBooks yet.</span>
+      <Button size="sm" disabled={mark.isPending} onClick={() => mark.mutate()}>
+        {mark.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Mark as posted
+      </Button>
     </div>
   );
 }

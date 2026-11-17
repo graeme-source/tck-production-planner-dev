@@ -10,6 +10,7 @@ import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMi
 import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
 import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
+import { goesToInbox } from "../lib/finance/inbox-rules";
 import { invoiceQueue, queueInvoice, rejectLineForInvoice, setInvoicePosted, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
 // Finance → Invoices: the searchable library of every invoice we hold
@@ -244,7 +245,8 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
       const name = file.originalname || "upload";
       const path = typeof paths[i] === "string" && paths[i] ? paths[i] : name;
       const bytes = new Uint8Array(file.buffer);
-      const found = /\.zip$/i.test(name) || file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed"
+      const fromZip = /\.zip$/i.test(name) || file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed";
+      const found = fromZip
         ? extractInvoiceFiles(bytes, `${name}/`)
         : (() => {
             const mime = invoiceMimeFor(name) ?? (file.mimetype === "application/pdf" || file.mimetype.startsWith("image/") ? file.mimetype : null);
@@ -263,6 +265,10 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
         else {
           summary.filesAdded++;
           await logFinEvent("invoice", r.id, "uploaded", userId, { path: f.path, uploadId: batchId });
+          // One place to add invoices (Graeme, 17 Nov 2026): a PDF or photo
+          // waits in the Inbox until it's marked posted, and meets its card
+          // transaction if one turns up. A zip is history: library only.
+          if (goesToInbox(f.path, fromZip)) await queueInvoice(r.id);
         }
       }
     }

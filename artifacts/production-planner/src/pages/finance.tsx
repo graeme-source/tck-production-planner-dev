@@ -5,8 +5,7 @@ import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { DeliveriesPanel } from "@/pages/finance-deliveries";
-import { InvoicesLibraryPanel, HistoryList, FilePreview } from "@/pages/finance-invoices";
-import { InvoiceDropPanel } from "@/pages/finance-invoice-drop";
+import { InvoicesLibraryPanel, InvoiceUploadCard, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
 import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
 import { inboxEntries, inboxTotal } from "@/lib/finance-inbox";
@@ -175,20 +174,21 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
 const FILTERS = [
   // Transactions with no invoice yet (Graeme, 6 Nov 2026: not just invoices).
   { key: "outstanding", label: "Outstanding transactions" },
-  // Invoices with no transaction yet, for the bookkeeper to post in QuickBooks.
-  { key: "inbox", label: "Inbox" },
   // The bookkeeper's queue: a VAT invoice attached, or the team has said
   // there won't be one and how to post it (Graeme, 2026-11-03).
   { key: "matched", label: "To be processed" },
   { key: "done", label: "Completed" },
+  // Every invoice we hold (Graeme, 17 Nov 2026: the Invoices tab holds the
+  // outstanding sections and the library together).
+  { key: "library", label: "All invoices" },
 ] as const;
 
 /** What each section's total means, under its count on the tab. */
 const SECTION_NOTES: Record<(typeof FILTERS)[number]["key"], string> = {
   outstanding: "awaiting documents",
-  inbox: "to post in QuickBooks",
   matched: "ready for the bookkeeper",
   done: "done",
+  library: "in the library",
 };
 
 const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -212,8 +212,11 @@ type SortKey = (typeof SORTS)[number]["key"];
 
 /**
  * Finance: the founder's and the accountants' only (Graeme, 2026-10-26 — not
- * managers, not other admins; the server enforces it). Two tabs: outstanding
- * invoices, and the cash flow ("cash flow should be on the finance page").
+ * managers, not other admins; the server enforces it).
+ *
+ * Tabs (Graeme, 17 Nov 2026): Invoices first — the one place to add an
+ * invoice, with the card transactions and the library — then the Inbox:
+ * every invoice uploaded but not yet marked posted in QuickBooks.
  */
 export default function FinancePage() {
   const { state } = useAuth();
@@ -229,28 +232,64 @@ export default function FinancePage() {
   const allowed = founder || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
   if (!allowed) return <Redirect to="/" />;
   const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : location.startsWith("/finance/payroll") ? "payroll"
-    : location.startsWith("/finance/invoices") ? "library" : location.startsWith("/finance/deliveries") ? "deliveries" : "invoices";
+    : location.startsWith("/finance/inbox") ? "inbox" : location.startsWith("/finance/deliveries") ? "deliveries" : "invoices";
   return (
     <div className="space-y-5">
       <PageHeader title="Finance" description={tab === "cash-flow"
         ? "The bank balance day by day: Shopify payouts in, QuickBooks bills out on their due dates, and anything you add."
-        : tab === "library"
-        ? "Every invoice we hold: drop a zip of invoices, and every transaction marked done files its invoice here too. Search by supplier, financial year, period or dates."
+        : tab === "inbox"
+        ? "Every invoice uploaded but not yet posted in QuickBooks. Post it, then mark it posted."
         : tab === "deliveries"
         ? "Every delivery taken in at goods-in, and which invoice it was for."
         : tab === "payroll"
         ? "The monthly payroll report from Planday (25th to 24th): hours, pay, sick days, joiners and leavers — download or email it."
-        : "Every card transaction that still needs its invoice or receipt. Upload the Capital on Tap export; the app hunts the mailbox and stores what it finds."} />
+        : "Add invoices here. Card transactions that still need their invoice, what's ready for the bookkeeper, and every invoice we hold."} />
       <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit max-w-full overflow-x-auto" aria-label="Finance">
-        {[{ href: "/finance/invoices", label: "Invoices", key: "library" }, { href: "/finance", label: "Outstanding invoices", key: "invoices" }, { href: "/finance/deliveries", label: "Deliveries", key: "deliveries" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
+        {[{ href: "/finance", label: "Invoices", key: "invoices" }, { href: "/finance/inbox", label: "Inbox", key: "inbox" }, { href: "/finance/deliveries", label: "Deliveries", key: "deliveries" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
           <Link key={t.key} href={t.href}
-            className={cn("px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors",
+            className={cn("px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5",
               tab === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60")}>
             {t.label}
+            {t.key === "inbox" && <InboxCount active={tab === "inbox"} />}
           </Link>
         ))}
       </nav>
-      {tab === "cash-flow" ? <CashFlowPanel /> : tab === "payroll" ? <PayrollPanel /> : tab === "library" ? <InvoicesLibraryPanel /> : tab === "deliveries" ? <DeliveriesPanel /> : <InvoicesTab />}
+      {tab === "cash-flow" ? <CashFlowPanel /> : tab === "payroll" ? <PayrollPanel /> : tab === "inbox" ? <InboxTab /> : tab === "deliveries" ? <DeliveriesPanel /> : <InvoicesTab />}
+    </div>
+  );
+}
+
+/** How many invoices wait in the Inbox, on its tab. */
+function InboxCount({ active }: { active: boolean }) {
+  const inbox = useInvoiceQueue();
+  const n = inboxEntries(inbox.data).length;
+  if (!n) return null;
+  return <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-amber-100 text-amber-900")}>{n}</span>;
+}
+
+/** The Inbox (Graeme, 17 Nov 2026): uploaded, not yet posted in QuickBooks. */
+function InboxTab() {
+  const inbox = useInvoiceQueue();
+  const [search, setSearch] = useState("");
+  const entries = inboxEntries(inbox.data);
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <div className="text-sm text-muted-foreground tabular-nums">
+          {entries.length} invoice{entries.length === 1 ? "" : "s"} · {gbp(inboxTotal(entries))} to post in QuickBooks
+        </div>
+        <div className="relative flex-1 min-w-[220px]">
+          <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
+          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search supplier, amount, invoice number…"
+            className="pl-12 pr-10 h-12 text-base bg-white dark:bg-card shadow-sm" />
+          {search && (
+            <button onClick={() => setSearch("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground" aria-label="Clear search">
+              <XCircle className="h-5 w-5" />
+            </button>
+          )}
+        </div>
+      </div>
+      <InboxPanel hiddenIds={[]} search={search} />
     </div>
   );
 }
@@ -269,9 +308,11 @@ function InvoicesTab() {
   const [csvDragOver, setCsvDragOver] = useState(false);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [adding, setAdding] = useState(false);
-  const [onDropCards, setOnDropCards] = useState<number[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
-  const inbox = useInvoiceQueue();
+  const libraryYears = useQuery<{ years: Array<{ fy: string; n: number }> }>({
+    queryKey: ["/api/finance/invoices", "years-only"],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/invoices?yearsOnly=1`),
+  });
 
   const linesQuery = useQuery<LinesResponse>({
     queryKey: ["/api/finance/lines"],
@@ -356,19 +397,18 @@ function InvoicesTab() {
     return {
       outstanding: sum(lines.filter((l) => l.status === "open" || l.status === "identified")),
       matched: sum(lines.filter((l) => l.status === "matched")),
-      inbox: { count: inboxEntries(inbox.data).length, total: inboxTotal(inboxEntries(inbox.data)) },
       done: sum(lines.filter((l) => l.status === "done" || l.status === "not_needed")),
-    } satisfies Record<(typeof FILTERS)[number]["key"], { count: number; total: number }>;
-  }, [data, inbox.data]);
+      library: { count: (libraryYears.data?.years ?? []).reduce((n, y) => n + y.n, 0), total: null },
+    } satisfies Record<(typeof FILTERS)[number]["key"], { count: number; total: number | null }>;
+  }, [data, libraryYears.data]);
 
 
   return (
     <div className="space-y-6">
-      {/* Drop an invoice beside the card statement upload (Graeme, 2026-11-03:
-          one row, far less height; the counts live on the tabs below). */}
-      <InvoiceDropPanel
-        onCardsChange={setOnDropCards}
-        companion={
+      {/* The one place to add invoices, beside the card statement upload
+          (Graeme, 17 Nov 2026). */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <InvoiceUploadCard className="lg:col-span-2" />
           <Card
             className={`h-full rounded-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
             onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
@@ -405,8 +445,7 @@ function InvoicesTab() {
               </div>
             </CardContent>
           </Card>
-        }
-      />
+      </div>
 
       {/* Section tabs, then that section's action + Filter / Sort, then search
           (Graeme, 2026-11-03: make it obvious which section you're in). */}
@@ -433,7 +472,7 @@ function InvoicesTab() {
                   <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{count}</span>
                 </span>
                 <span className={cn("block text-xs mt-0.5 tabular-nums", active ? "text-primary-foreground/85" : "text-muted-foreground")}>
-                  {gbp(total)} {SECTION_NOTES[f.key]}
+                  {total == null ? SECTION_NOTES[f.key] : `${gbp(total)} ${SECTION_NOTES[f.key]}`}
                 </span>
               </button>
             );
@@ -453,7 +492,7 @@ function InvoicesTab() {
               {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
             </Button>
           )}
-          {filter !== "inbox" && <div className="ml-auto flex gap-2">
+          {filter !== "library" && <div className="ml-auto flex gap-2">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant={postedFilter === "any" ? "outline" : "default"}>
@@ -485,7 +524,7 @@ function InvoicesTab() {
           </div>}
         </div>
 
-        <div className="relative">
+        {filter !== "library" && <div className="relative">
           <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
           <Input
             value={search}
@@ -502,12 +541,12 @@ function InvoicesTab() {
               <XCircle className="h-5 w-5" />
             </button>
           )}
-        </div>
+        </div>}
       </div>
 
-      {/* Lines, or the Inbox's invoices */}
-      {filter === "inbox" ? (
-        <InboxPanel hiddenIds={onDropCards} search={search} />
+      {/* Lines, or every invoice we hold */}
+      {filter === "library" ? (
+        <InvoicesLibraryPanel showUpload={false} />
       ) : linesQuery.isLoading ? (
         <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       ) : filtered.length === 0 ? (
