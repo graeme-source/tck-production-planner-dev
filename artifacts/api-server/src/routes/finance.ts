@@ -6,6 +6,7 @@ import {
   db,
   finDocumentsTable,
   finEmailIndexTable,
+  finEventsTable,
   finLinesTable,
   finMailboxTable,
   finMatchesTable,
@@ -28,6 +29,7 @@ import { authorizeUrl, exchangeCode, newStateToken, qboConfigured, qboStatus, ru
 import { db as dbForQbo, finQboConnectionTable } from "@workspace/db";
 import { buildChaseEmail } from "../lib/finance/chase-email";
 import { NO_VAT_REASONS, storedFileHeaders } from "../lib/finance/posted-rules";
+import { isMatchAction, matchedByFromEvents } from "../lib/finance/inbox-rules";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
@@ -166,8 +168,20 @@ router.get("/lines", requireFinanceAccess, async (req: Request, res: Response) =
       ? await db.select().from(finVendorsTable).where(inArray(finVendorsTable.id, vendorIds))
       : [];
 
+    // Who put each transaction in the Inbox, when and how (Graeme, 17 Nov
+    // 2026: "Graeme manually matched this on this date from outstanding
+    // transactions").
+    const inboxIds = lines.filter((l) => l.status !== "open" && l.status !== "identified").map((l) => l.id);
+    const lineEvents = inboxIds.length
+      ? (await db.select({ entityId: finEventsTable.entityId, action: finEventsTable.action, userName: finEventsTable.userName, createdAt: finEventsTable.createdAt })
+          .from(finEventsTable)
+          .where(and(eq(finEventsTable.entityType, "line"), inArray(finEventsTable.entityId, inboxIds))))
+          .filter((e) => isMatchAction(e.action))
+      : [];
+
     res.json({
       lines,
+      matchedBy: matchedByFromEvents(lineEvents),
       documentsByLine: groupBy(docs.map((d) => ({ ...d, coversLines: coversLines.get(d.sourceRef) ?? 1 })), (d) => d.lineId),
       suggestionCounts: Object.fromEntries(suggestions.map((s) => [s.lineId, s.n])),
       vendors: Object.fromEntries(vendors.map((v) => [v.id, v])),

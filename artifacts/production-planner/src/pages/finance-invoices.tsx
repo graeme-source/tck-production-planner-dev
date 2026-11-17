@@ -34,7 +34,7 @@ async function jsonFetch(url: string, init?: RequestInit) {
   return body;
 }
 
-type Invoice = {
+export type Invoice = {
   id: number;
   fileName: string;
   fileMime: string;
@@ -239,35 +239,50 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
   return (
     <Card className={className}>
       <CardContent
-        className={cn("p-5 rounded-xl transition-colors h-full flex flex-col justify-center gap-3",
+        className={cn("p-3 sm:px-4 rounded-xl transition-colors flex flex-col gap-2",
           dragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : "")}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={(e) => { e.preventDefault(); setDragOver(false); sendFiles(e.dataTransfer.files); }}
       >
-        <div className="flex items-center gap-4 flex-wrap">
-          <div className="h-12 w-12 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0">
-            <FileArchive className="h-6 w-6" />
-          </div>
-          <div className="flex-1 min-w-[220px]">
-            <div className="font-semibold">Add invoices</div>
-            <div className="text-sm text-muted-foreground">Drop PDFs or photos here — they wait in the Inbox until marked posted. Zips of old invoices go straight into the library. Files already held are skipped.</div>
-          </div>
+        <div className="flex items-center gap-3 flex-wrap">
           <input ref={fileInput} type="file" multiple accept=".zip,application/zip,.pdf,application/pdf,image/*" className="hidden"
             onChange={(e) => { const f = e.target.files ? Array.from(e.target.files) : []; e.target.value = ""; sendFiles(f); }} />
           <Button onClick={() => fileInput.current?.click()} disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-            {busy ? "Uploading…" : "Choose files"}
+            {busy ? "Uploading…" : "Add invoices"}
           </Button>
+          <div className="flex-1 min-w-[200px] text-sm text-muted-foreground">
+            Or drop PDFs or photos here. They go to the Inbox until they're posted. (A zip of old invoices goes straight into the library.)
+          </div>
+          {pending > 0 && (
+            <div className="text-sm flex items-center gap-2 text-sky-800 dark:text-sky-300">
+              <Loader2 className="h-4 w-4 animate-spin" /> Reading {pending.toLocaleString("en-GB")}…
+            </div>
+          )}
         </div>
         {progress && <UploadProgress p={progress} />}
-        {pending > 0 && (
-          <div className="text-sm flex items-center gap-2 text-sky-800 dark:text-sky-300">
-            <Loader2 className="h-4 w-4 animate-spin" /> Reading {pending.toLocaleString("en-GB")} invoice{pending === 1 ? "" : "s"} for supplier, date and amounts.
-          </div>
-        )}
       </CardContent>
     </Card>
+  );
+}
+
+/** The Inbox's Completed view, invoice side: uploaded invoices marked posted. */
+export function PostedInvoicesList({ search }: { search: string }) {
+  const [openId, setOpenId] = useState<number | null>(null);
+  const qs = new URLSearchParams({ posted: "only", ...(search.trim() ? { q: search.trim() } : {}) }).toString();
+  const list = useQuery<ListResponse>({
+    queryKey: ["/api/finance/invoices", qs],
+    queryFn: () => jsonFetch(`${BASE}/api/finance/invoices?${qs}`),
+  });
+  if (list.isLoading) return <div className="flex justify-center py-8"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>;
+  const invoices = list.data?.invoices ?? [];
+  if (!invoices.length) return <Card><CardContent className="py-8 text-center text-muted-foreground">No posted invoices yet.</CardContent></Card>;
+  return (
+    <>
+      <InvoiceList invoices={invoices} onOpen={setOpenId} />
+      {openId != null && <InvoiceDetail invoice={invoices.find((i) => i.id === openId) ?? null} onClose={() => setOpenId(null)} />}
+    </>
   );
 }
 
@@ -489,7 +504,7 @@ function UploadHistory({ rows }: { rows: UploadRow[] }) {
   );
 }
 
-function InvoiceList({ invoices, onOpen }: { invoices: Invoice[]; onOpen: (id: number) => void }) {
+export function InvoiceList({ invoices, onOpen }: { invoices: Invoice[]; onOpen: (id: number) => void }) {
   return (
     <div className="space-y-2">
       {invoices.map((inv) => (
@@ -538,7 +553,7 @@ export function FilePreview({ url, mime, name, className }: { url: string; mime:
   return <p className="text-sm text-muted-foreground">This kind of file can't be shown here — open or download it.</p>;
 }
 
-function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; onClose: () => void }) {
+export function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; onClose: () => void }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const notDup = useMutation({

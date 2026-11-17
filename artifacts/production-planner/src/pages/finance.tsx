@@ -5,7 +5,7 @@ import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { DeliveriesPanel } from "@/pages/finance-deliveries";
-import { InvoicesLibraryPanel, InvoiceUploadCard, HistoryList, FilePreview } from "@/pages/finance-invoices";
+import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
 import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
 import { inboxEntries, inboxTotal } from "@/lib/finance-inbox";
@@ -122,8 +122,12 @@ const DOC_KINDS: Array<{ value: string; label: string }> = [
   { value: "other", label: "Other" },
 ];
 
+type MatchedBy = { name: string | null; at: string; how: "by_hand" | "automatically" | "from_email" | "no_vat" };
+
 type LinesResponse = {
   lines: FinLine[];
+  /** Who put each transaction in the Inbox, when and how. */
+  matchedBy?: Record<number, MatchedBy>;
   documentsByLine: Record<number, FinDocMeta[]>;
   suggestionCounts: Record<number, number>;
   vendors: Record<number, FinVendor>;
@@ -173,21 +177,16 @@ const STATUS_LABELS: Record<string, { label: string; tone: string }> = {
 
 const FILTERS = [
   // Transactions with no invoice yet (Graeme, 6 Nov 2026: not just invoices).
+  // Once one has its invoice (or is marked "no VAT invoice") it moves to the
+  // Inbox, which is "to be processed" (Graeme, 17 Nov 2026).
   { key: "outstanding", label: "Outstanding transactions" },
-  // The bookkeeper's queue: a VAT invoice attached, or the team has said
-  // there won't be one and how to post it (Graeme, 2026-11-03).
-  { key: "matched", label: "To be processed" },
-  { key: "done", label: "Completed" },
-  // Every invoice we hold (Graeme, 17 Nov 2026: the Invoices tab holds the
-  // outstanding sections and the library together).
+  // Every invoice we hold.
   { key: "library", label: "All invoices" },
 ] as const;
 
 /** What each section's total means, under its count on the tab. */
 const SECTION_NOTES: Record<(typeof FILTERS)[number]["key"], string> = {
   outstanding: "awaiting documents",
-  matched: "ready for the bookkeeper",
-  done: "done",
   library: "in the library",
 };
 
@@ -238,12 +237,15 @@ export default function FinancePage() {
       <PageHeader title="Finance" description={tab === "cash-flow"
         ? "The bank balance day by day: Shopify payouts in, QuickBooks bills out on their due dates, and anything you add."
         : tab === "inbox"
-        ? "Every invoice uploaded but not yet posted in QuickBooks. Post it, then mark it posted."
+        ? "Everything to be processed: invoices not yet posted, and card transactions that have their invoice."
         : tab === "deliveries"
         ? "Every delivery taken in at goods-in, and which invoice it was for."
         : tab === "payroll"
         ? "The monthly payroll report from Planday (25th to 24th): hours, pay, sick days, joiners and leavers — download or email it."
-        : "Add invoices here. Card transactions that still need their invoice, what's ready for the bookkeeper, and every invoice we hold."} />
+        : "Card transactions that still need their invoice, and every invoice we hold."} />
+      {/* The only place to add invoices, above the tabs so it's there from
+          every Finance page (Graeme, 17 Nov 2026). Uploads go to the Inbox. */}
+      <InvoiceUploadCard />
       <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit max-w-full overflow-x-auto" aria-label="Finance">
         {[{ href: "/finance", label: "Invoices", key: "invoices" }, { href: "/finance/inbox", label: "Inbox", key: "inbox" }, { href: "/finance/deliveries", label: "Deliveries", key: "deliveries" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
           <Link key={t.key} href={t.href}
@@ -262,22 +264,127 @@ export default function FinancePage() {
 /** How many invoices wait in the Inbox, on its tab. */
 function InboxCount({ active }: { active: boolean }) {
   const inbox = useInvoiceQueue();
-  const n = inboxEntries(inbox.data).length;
+  const lines = useQuery<LinesResponse>({ queryKey: ["/api/finance/lines"], queryFn: () => jsonFetch(`${BASE}/api/finance/lines`) });
+  const n = inboxEntries(inbox.data).length + (lines.data?.lines ?? []).filter((l) => l.status === "matched").length;
   if (!n) return null;
   return <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-amber-100 text-amber-900")}>{n}</span>;
 }
 
-/** The Inbox (Graeme, 17 Nov 2026): uploaded, not yet posted in QuickBooks. */
+/** Change a card transaction's status, from either tab. */
+function useLineStatus() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, status, statusNote }: { id: number; status: string; statusNote?: string | null }) =>
+      jsonFetch(`${BASE}/api/finance/lines/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, statusNote }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
+  });
+}
+
+/** "Check QuickBooks now" (Graeme, 2026-11-03): after posting, the team
+ *  flushes it through instead of waiting for the hourly check. */
+function useQboCheck() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/check-now`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }) as Promise<{ linesMarkedPosted: number; linesAutoDone: number }>,
+    onSuccess: (r) => {
+      toast(r.linesMarkedPosted === 0
+        ? { title: "QuickBooks checked — nothing new found posted", description: "If you've just posted something, check the amount and date match the card line, or tick Posted on the line." }
+        : { title: `QuickBooks checked: ${r.linesMarkedPosted} marked posted`, description: r.linesAutoDone ? `${r.linesAutoDone} had their VAT invoice — done and filed in Invoices.` : "None had a VAT invoice attached yet, so they stay in the Inbox." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't check QuickBooks", description: e.message, variant: "destructive" }),
+  });
+}
+
+/** "Graeme Carter matched this from Outstanding transactions on 17 Nov". */
+function provenanceText(m: MatchedBy | undefined): string | null {
+  if (!m) return null;
+  const when = new Date(m.at).toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+  const who = m.name ?? "Someone";
+  if (m.how === "automatically") return `Invoice matched automatically on ${when}`;
+  if (m.how === "from_email") return `${who} attached the invoice from the mailbox on ${when}`;
+  if (m.how === "no_vat") return `${who} marked this "no VAT invoice" from Outstanding transactions on ${when}`;
+  return `${who} matched this from Outstanding transactions on ${when}`;
+}
+
+const INBOX_VIEWS = [
+  { key: "todo", label: "To process" },
+  { key: "matched", label: "Matched to a transaction" },
+  { key: "invoice", label: "Just an invoice" },
+  { key: "completed", label: "Completed" },
+] as const;
+type InboxView = (typeof INBOX_VIEWS)[number]["key"];
+
+/** The Inbox (Graeme, 17 Nov 2026) is "to be processed": every uploaded
+ *  invoice not yet posted, and every card transaction that has its invoice
+ *  (or is marked "no VAT invoice") and isn't done. A matched one carries
+ *  its transaction and who matched it. Completed is a filter here. */
 function InboxTab() {
   const inbox = useInvoiceQueue();
+  const lines = useQuery<LinesResponse>({ queryKey: ["/api/finance/lines"], queryFn: () => jsonFetch(`${BASE}/api/finance/lines`) });
+  const statusMutation = useLineStatus();
+  const qboCheck = useQboCheck();
+  const [view, setView] = useState<InboxView>("todo");
   const [search, setSearch] = useState("");
-  const entries = inboxEntries(inbox.data);
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const data = lines.data;
+  const q = search.trim().toLowerCase();
+  const lineMatches = (l: FinLine) => !q || [l.descriptor, l.merchant, l.vendorId ? data?.vendors[l.vendorId]?.name : null, l.cardholder, l.amount, l.lineDate, l.statusNote]
+    .some((v) => v && String(v).toLowerCase().includes(q));
+  const matched = (data?.lines ?? []).filter((l) => l.status === "matched").filter(lineMatches);
+  const done = (data?.lines ?? []).filter((l) => l.status === "done" || l.status === "not_needed").filter(lineMatches);
+  const invoices = inboxEntries(inbox.data);
+  const counts: Record<InboxView, number | null> = { todo: matched.length + invoices.length, matched: matched.length, invoice: invoices.length, completed: null };
+
+  const lineList = (ls: FinLine[]) => (
+    <div className="space-y-2">
+      {ls.map((line) => (
+        <LineRow
+          key={line.id}
+          line={line}
+          vendor={line.vendorId ? data?.vendors[line.vendorId] ?? null : null}
+          docs={data?.documentsByLine[line.id] ?? []}
+          suggestionCount={data?.suggestionCounts[line.id] ?? 0}
+          expanded={expanded === line.id}
+          onToggle={() => setExpanded(expanded === line.id ? null : line.id)}
+          onStatus={(status, note) => statusMutation.mutate({ id: line.id, status, statusNote: note })}
+          provenance={provenanceText(data?.matchedBy?.[line.id])}
+        />
+      ))}
+    </div>
+  );
+  const heading = (text: string, n: number) => (
+    <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">{text} <span className="tabular-nums">· {n}</span></h3>
+  );
+  const loading = lines.isLoading || inbox.isLoading;
+
   return (
     <div className="space-y-4">
+      <div role="tablist" aria-label="Inbox" className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        {INBOX_VIEWS.map((v) => {
+          const active = view === v.key;
+          const n = counts[v.key];
+          return (
+            <button key={v.key} role="tab" aria-selected={active} onClick={() => setView(v.key)}
+              className={cn("rounded-2xl border-2 px-3 py-2.5 text-center text-sm lg:text-base font-semibold transition-colors flex items-center justify-center gap-2",
+                active ? "bg-primary border-primary text-primary-foreground shadow-md" : "bg-white dark:bg-card border-border shadow-sm hover:border-primary/60 hover:bg-primary/5")}>
+              {v.label}
+              {n != null && <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{n}</span>}
+            </button>
+          );
+        })}
+      </div>
       <div className="flex flex-wrap items-center gap-3">
-        <div className="text-sm text-muted-foreground tabular-nums">
-          {entries.length} invoice{entries.length === 1 ? "" : "s"} · {gbp(inboxTotal(entries))} to post in QuickBooks
-        </div>
         <div className="relative flex-1 min-w-[220px]">
           <SearchIcon className="absolute left-4 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground pointer-events-none" />
           <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search supplier, amount, invoice number…"
@@ -288,8 +395,36 @@ function InboxTab() {
             </button>
           )}
         </div>
+        <Button variant="outline" className="h-12" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
+          title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
+          {qboCheck.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+          {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
+        </Button>
       </div>
-      <InboxPanel hiddenIds={[]} search={search} />
+
+      {loading ? (
+        <div className="flex justify-center py-12"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
+      ) : view === "completed" ? (
+        <div className="space-y-6">
+          <section className="space-y-2">{heading("Transactions done", done.length)}{done.length ? lineList(done) : <p className="text-sm text-muted-foreground">None yet.</p>}</section>
+          <section className="space-y-2"><h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Invoices posted</h3><PostedInvoicesList search={search} /></section>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {view !== "invoice" && (
+            <section className="space-y-2">
+              {heading("Matched to a card transaction", matched.length)}
+              {matched.length ? lineList(matched) : <p className="text-sm text-muted-foreground">Nothing matched waiting.</p>}
+            </section>
+          )}
+          {view !== "matched" && (
+            <section className="space-y-2">
+              {heading("Just an invoice — find its transaction", invoices.length)}
+              <InboxPanel hiddenIds={[]} search={search} />
+            </section>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -333,40 +468,13 @@ function InvoicesTab() {
     onError: (e: Error) => toast({ title: "Import failed", description: e.message, variant: "destructive" }),
   });
 
-  const statusMutation = useMutation({
-    mutationFn: ({ id, status, statusNote }: { id: number; status: string; statusNote?: string | null }) =>
-      jsonFetch(`${BASE}/api/finance/lines/${id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, statusNote }),
-      }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
-    onError: (e: Error) => toast({ title: "Update failed", description: e.message, variant: "destructive" }),
-  });
-
-  // "Check QuickBooks now" (Graeme, 2026-11-03): after posting, the team
-  // flushes it through instead of waiting for the hourly check.
-  const qboCheck = useMutation({
-    mutationFn: () => jsonFetch(`${BASE}/api/finance/qbo/check-now`, {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
-    }) as Promise<{ linesMarkedPosted: number; linesAutoDone: number }>,
-    onSuccess: (r) => {
-      toast(r.linesMarkedPosted === 0
-        ? { title: "QuickBooks checked — nothing new found posted", description: "If you've just posted something, check the amount and date match the card line, or tick Posted on the line." }
-        : { title: `QuickBooks checked: ${r.linesMarkedPosted} marked posted`, description: r.linesAutoDone ? `${r.linesAutoDone} had their VAT invoice — done and filed in Invoices.` : "None had a VAT invoice attached yet, so they stay open." });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
-    },
-    onError: (e: Error) => toast({ title: "Couldn't check QuickBooks", description: e.message, variant: "destructive" }),
-  });
+  const statusMutation = useLineStatus();
 
   const data = linesQuery.data;
   const filtered = useMemo(() => {
     const lines = data?.lines ?? [];
     let out = lines;
     if (filter === "outstanding") out = lines.filter((l) => l.status === "open" || l.status === "identified");
-    else if (filter === "matched") out = lines.filter((l) => l.status === "matched");
-    else if (filter === "done") out = lines.filter((l) => l.status === "done" || l.status === "not_needed");
     if (postedFilter === "posted") out = out.filter((l) => l.postedDetectedAt);
     else if (postedFilter === "not_posted") out = out.filter((l) => !l.postedDetectedAt);
     const q = search.trim().toLowerCase();
@@ -396,8 +504,6 @@ function InvoicesTab() {
     const sum = (ls: FinLine[]) => ({ count: ls.length, total: ls.reduce((s, l) => s + Number(l.amount), 0) });
     return {
       outstanding: sum(lines.filter((l) => l.status === "open" || l.status === "identified")),
-      matched: sum(lines.filter((l) => l.status === "matched")),
-      done: sum(lines.filter((l) => l.status === "done" || l.status === "not_needed")),
       library: { count: (libraryYears.data?.years ?? []).reduce((n, y) => n + y.n, 0), total: null },
     } satisfies Record<(typeof FILTERS)[number]["key"], { count: number; total: number | null }>;
   }, [data, libraryYears.data]);
@@ -405,52 +511,10 @@ function InvoicesTab() {
 
   return (
     <div className="space-y-6">
-      {/* The one place to add invoices, beside the card statement upload
-          (Graeme, 17 Nov 2026). */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <InvoiceUploadCard className="lg:col-span-2" />
-          <Card
-            className={`h-full rounded-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
-            onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
-            onDragLeave={() => setCsvDragOver(false)}
-            onDrop={(e) => {
-              e.preventDefault();
-              setCsvDragOver(false);
-              const f = Array.from(e.dataTransfer.files).find((x) => x.name.toLowerCase().endsWith(".csv"));
-              if (f) uploadMutation.mutate(f);
-            }}
-          >
-            <CardContent className="p-4 h-full flex flex-col xl:flex-row xl:items-center gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="font-semibold flex items-start gap-2"><Upload className="h-4 w-4 mt-1 shrink-0 text-primary" /> Card statement</div>
-                <div className="text-xs text-muted-foreground">Capital on Tap CSV — drop it here. Re-uploading overlapping exports is safe.</div>
-              </div>
-              <input
-                ref={fileInput}
-                type="file"
-                accept=".csv,text/csv"
-                className="hidden"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) uploadMutation.mutate(f);
-                  e.target.value = "";
-                }}
-              />
-              <div className="shrink-0 flex flex-col items-start xl:items-end self-start xl:self-auto">
-                <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending}>
-                  {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
-                  {uploadMutation.isPending ? "Uploading and matching…" : "Upload CSV"}
-                </Button>
-                <UndoUploadLink />
-              </div>
-            </CardContent>
-          </Card>
-      </div>
-
       {/* Section tabs, then that section's action + Filter / Sort, then search
           (Graeme, 2026-11-03: make it obvious which section you're in). */}
       <div className="space-y-3">
-        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+        <div role="tablist" aria-label="Transactions" className="grid grid-cols-2 gap-2">
           {FILTERS.map((f) => {
             const active = filter === f.key;
             const { count, total } = sections[f.key];
@@ -479,17 +543,50 @@ function InvoicesTab() {
           })}
         </div>
 
+        {/* The card statement belongs with the transactions it brings in. */}
+        {filter === "outstanding" && (
+          <Card
+            className={`rounded-xl transition-colors ${csvDragOver ? "bg-primary/10 outline-dashed outline-2 outline-primary" : ""}`}
+            onDragOver={(e) => { e.preventDefault(); setCsvDragOver(true); }}
+            onDragLeave={() => setCsvDragOver(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setCsvDragOver(false);
+              const f = Array.from(e.dataTransfer.files).find((x) => x.name.toLowerCase().endsWith(".csv"));
+              if (f) uploadMutation.mutate(f);
+            }}
+          >
+            <CardContent className="p-3 sm:px-4 flex flex-col sm:flex-row sm:items-center gap-3">
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold flex items-start gap-2"><Upload className="h-4 w-4 mt-1 shrink-0 text-primary" /> Card statement</div>
+                <div className="text-xs text-muted-foreground">Capital on Tap CSV — drop it here. Re-uploading overlapping exports is safe.</div>
+              </div>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) uploadMutation.mutate(f);
+                  e.target.value = "";
+                }}
+              />
+              <div className="shrink-0 flex flex-col items-start sm:items-end">
+                <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending}>
+                  {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+                  {uploadMutation.isPending ? "Uploading and matching…" : "Upload CSV"}
+                </Button>
+                <UndoUploadLink />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
         <div className="flex flex-wrap items-center gap-2">
           {filter === "outstanding" && (
             <Button variant="secondary" onClick={() => setAdding(true)}>
               <Plus className="h-4 w-4 mr-1" /> Add a transaction
-            </Button>
-          )}
-          {filter === "matched" && (
-            <Button variant="outline" onClick={() => qboCheck.mutate()} disabled={qboCheck.isPending}
-              title="Look for anything just posted in QuickBooks now, instead of waiting for the hourly check">
-              {qboCheck.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
-              {qboCheck.isPending ? "Checking QuickBooks…" : "Check QuickBooks now"}
             </Button>
           )}
           {filter !== "library" && <div className="ml-auto flex gap-2">
@@ -669,6 +766,7 @@ function LineRow({
   expanded,
   onToggle,
   onStatus,
+  provenance,
 }: {
   line: FinLine;
   vendor: FinVendor | null;
@@ -677,6 +775,8 @@ function LineRow({
   expanded: boolean;
   onToggle: () => void;
   onStatus: (status: string, note?: string | null) => void;
+  /** In the Inbox: who matched it, when and how. */
+  provenance?: string | null;
 }) {
   // The pill says what we actually HOLD, not just "Document found": a VAT
   // invoice beats an order confirmation beats the generic label (Graeme,
@@ -713,6 +813,7 @@ function LineRow({
               {line.originalCurrency && line.originalCurrency !== "GBP" ? ` · ${line.originalAmount} ${line.originalCurrency}` : ""}
               {line.source === "manual" ? " · added by hand" : ""}
             </div>
+            {provenance && <div className="text-xs font-medium text-primary">{provenance}</div>}
           </div>
           <div className="text-right shrink-0">
             <div className="font-semibold tabular-nums">£{Number(line.amount).toFixed(2)}</div>

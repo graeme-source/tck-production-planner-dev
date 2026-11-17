@@ -55,6 +55,8 @@ const listQuery = z.object({
   duplicates: z.enum(["hide", "only"]).optional(),
   // Just the year tabs (first visit, to open on the latest year).
   yearsOnly: z.literal("1").optional(),
+  // The Inbox's Completed view: uploaded invoices marked posted.
+  posted: z.literal("only").optional(),
 });
 
 /** FY start year of the invoice's own date ("2025" for 2025/26). */
@@ -79,6 +81,7 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
       )!);
     }
     if (f.source) common.push(eq(finInvoicesTable.source, f.source));
+    if (f.posted === "only") common.push(isNotNull(finInvoicesTable.postedAt), isNull(finInvoicesTable.lineId));
     common.push(f.duplicates === "only" ? isNotNull(finInvoicesTable.duplicateOfId) : isNull(finInvoicesTable.duplicateOfId));
 
     const where = [...common];
