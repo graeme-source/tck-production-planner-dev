@@ -41,7 +41,8 @@ const PERIOD_KEYS: PeriodKey[] = ["today", "yesterday", "week", "month", "custom
 // card's dates. Today and Yesterday are left out there — they have cards.
 const QUICK_PICKS = PERIOD_PRESETS.filter(p => p.id !== "today" && p.id !== "yesterday");
 
-export default function DefectsPage() {
+/** `embedded`: shown inside Analytics → KPIs (17 Nov 2026), which has the page title. */
+export default function DefectsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const isAdmin = role === "admin";
@@ -87,8 +88,8 @@ export default function DefectsPage() {
   const listQ = useDefectList(ranges[selected], selected !== "custom" || customValid);
 
   return (
-    <div className="p-4 sm:p-8 space-y-6">
-      <PageHeader title="Defects & waste" />
+    <div className={cn(!embedded && "p-4 sm:p-8", "space-y-6")}>
+      {!embedded && <PageHeader title="Defects & waste" />}
 
       <div className="flex flex-wrap items-start justify-between gap-4">
         <p className="text-lg text-muted-foreground max-w-2xl">

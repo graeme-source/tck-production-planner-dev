@@ -18,13 +18,13 @@ const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 const KEY = ["production-kpis", "room"] as const;
 
 type Band = "platinum" | "green" | "amber" | "red" | "neutral";
-interface RoomDayRow {
+export interface RoomDayRow {
   date: string; boxes: number; packs: number; deliveries: number; deliveryLines: number;
   paidHours: number; people: number; status: string;
   packingHours: number; wrappingHours: number; deliveryHours: number; earnedHours: number;
   score: number | null; band: Band;
 }
-interface RoomResponse {
+export interface RoomResponse {
   days: RoomDayRow[];
   weights: { packingPerHour: number; wrappingPerHour: number; deliveryMinutes: number; lineMinutes: number };
   positions: string[];
@@ -101,8 +101,9 @@ function Settings({ data }: { data: RoomResponse }) {
   );
 }
 
-export function RoomKpiCard() {
-  const { data, isLoading, isError } = useQuery<RoomResponse>({
+/** The room's scored days (last six weeks, newest first). Shared with the KPIs overview. */
+export function useRoomKpi() {
+  return useQuery<RoomResponse>({
     queryKey: KEY,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/production-kpis/room`, { credentials: "include" });
@@ -111,7 +112,16 @@ export function RoomKpiCard() {
     },
     staleTime: 5 * 60_000,
   });
-  const latest = data?.days.find(d => d.status === "ok" && d.score != null) ?? data?.days[0] ?? null;
+}
+
+/** The most recent day with a score. */
+export function latestRoomDay(data: RoomResponse | undefined): RoomDayRow | null {
+  return data?.days.find(d => d.status === "ok" && d.score != null) ?? data?.days[0] ?? null;
+}
+
+export function RoomKpiCard() {
+  const { data, isLoading, isError } = useRoomKpi();
+  const latest = latestRoomDay(data);
 
   return (
     <section className="rounded-3xl border-2 border-border bg-card p-5 lg:p-6 space-y-4 shadow-sm md:col-span-2 2xl:col-span-3">
@@ -143,7 +153,7 @@ export function RoomKpiCard() {
                   Credited {h(latest.earnedHours)}: packing {h(latest.packingHours)}, wrapping {h(latest.wrappingHours)}, deliveries {h(latest.deliveryHours)}.
                 </p>
                 <p className="text-sm text-muted-foreground">
-                  A box = 1 of {data.weights.packingPerHour}/hr, a pack = 1 of {data.weights.wrappingPerHour}/hr (the standards above), a delivery {data.weights.deliveryMinutes} min + {data.weights.lineMinutes} min a line.
+                  A box = 1 of {data.weights.packingPerHour}/hr, a pack = 1 of {data.weights.wrappingPerHour}/hr (the packing and wrapping standards), a delivery {data.weights.deliveryMinutes} min + {data.weights.lineMinutes} min a line.
                   {data.standardSetOn ? ` 100% set from the days before ${day(data.standardSetOn)}.` : " The 100% line is set from the first weeks of history."}
                 </p>
               </div>

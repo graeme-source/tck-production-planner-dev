@@ -27,108 +27,14 @@ import { HaccpRecordsTab } from "@/components/haccp-records-tab";
 import { AttendanceFreshness } from "@/components/attendance-freshness";
 import { AttendanceAdminNotices } from "@/components/attendance-admin-notices";
 import { SickLeaveModal } from "@/components/sick-leave-modal";
-import { WrappingSpeedReport } from "@/components/wrapping-speed-report";
 import { SummaryCard } from "@/components/reports/summary-card";
 import { BreaksTab } from "@/components/reports/breaks-tab";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
-type KpiStatus = "above" | "on-target" | "below" | "unknown";
-
-interface KpiOverview {
-  totalBatches: number;
-  totalActiveMinutes: number;
-  overallBph: number | null;
-  uniqueDays: number;
-  avgBatchesPerDay: number;
-  productionStartTime: string | null;
-  productionFinishTime: string | null;
-  wallClockMinutes: number;
-  targetBph: number | null;
-  minBph: number | null;
-}
-
-interface KpiBuilder {
-  userId: number;
-  userName: string;
-  totalBatches: number;
-  totalActiveMinutes: number;
-  daysWorked: number;
-  bph: number | null;
-  status: KpiStatus;
-}
-
-interface KpiDayBuilder {
-  userId: number;
-  userName: string;
-  batches: number;
-  activeMinutes: number;
-  breakMinutesDeducted: number;
-  bph: number | null;
-  status: KpiStatus;
-}
-
-interface KpiDay {
-  date: string;
-  planId: number;
-  planName: string;
-  batches: number;
-  windowStart: string | null;
-  windowEnd: string | null;
-  finishSource: "marked" | "last-batch";
-  wallClockMinutes: number;
-  morningBreakDeducted: boolean;
-  lunchBreakDeducted: boolean;
-  breakMinutesDeducted: number;
-  activeMinutes: number;
-  bph: number | null;
-  status: KpiStatus;
-  recipes: Array<{ name: string; count: number }>;
-  builders: KpiDayBuilder[];
-}
-
-interface KpiReportData {
-  overview: KpiOverview;
-  breakConfig: {
-    morningMinutes: number;
-    lunchMinutes: number;
-    morningAnchorMinutes: number;
-    lunchAnchorMinutes: number;
-  };
-  builders: KpiBuilder[];
-  dailyDetail: KpiDay[];
-}
-
-interface PackingDayRow {
-  date: string;
-  count: number;
-  firstFulfilledAt: string | null;
-  lastFulfilledAt: string | null;
-  windowMinutes: number | null;
-  activeMinutes: number | null;
-  idleMinutes: number | null;
-  idleBreaks: number;
-  ordersPerHour: number | null;
-}
-
-interface PackingSpeedData {
-  totalOrders: number;
-  totalDays: number;
-  ordersPerHour: number;
-  avgPerDay: number;
-  busiestDay: { date: string; count: number } | null;
-  fastestDay: { date: string; ordersPerHour: number } | null;
-  slowestDay: { date: string; ordersPerHour: number } | null;
-  totalIdleMinutes: number;
-  totalActiveMinutes: number;
-  dailyRows: PackingDayRow[];
-  source?: string;
-}
-
-// Packing-speed is now a subsection inside the Production KPIs view, so it's
-// no longer a top-level tab. The URL ?tab=packing-speed redirects to ?tab=kpis
-// for backward compat.
-type TabId = "kpis" | "breaks" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
+// Production KPIs (and Packing Speed inside it) moved to Analytics → KPIs on
+// 17 Nov 2026; App.tsx sends ?tab=kpis and ?tab=packing-speed there.
+type TabId = "breaks" | "haccp" | "risk-assessments" | "improvements" | "issues" | "leftover-filling" | "employees" | "printables";
 
 // HACCP is being built out into a full food-safety system, so it gets its
 // own sub-navigation. Temperature Log lives here too — fridge, freezer, and
@@ -227,7 +133,7 @@ function DateShortcutsDropdown({ onSelect }: { onSelect: (from: string, to: stri
   );
 }
 
-const VALID_TABS: TabId[] = ["kpis", "breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
+const VALID_TABS: TabId[] = ["breaks", "haccp", "risk-assessments", "improvements", "issues", "leftover-filling", "employees", "printables"];
 const VALID_HACCP_SUBTABS: HaccpSubTabId[] = ["evidence", "temperatures", "cooling-weights", "readings", "sensors", "visitors", "incidents"];
 
 interface ReportsNavItem {
@@ -237,7 +143,6 @@ interface ReportsNavItem {
 }
 
 const REPORTS_NAV_ITEMS: ReportsNavItem[] = [
-  { id: "kpis", label: "Production KPIs", icon: TrendingUp },
   { id: "breaks", label: "Breaks & Lunches", icon: Coffee },
   { id: "haccp", label: "HACCP", icon: ShieldCheck },
   { id: "risk-assessments", label: "Documents", icon: ClipboardList },
@@ -298,13 +203,11 @@ export default function Reports() {
   const issueIdParam = new URLSearchParams(search).get("issueId");
   // Sensor deep-linked from the dashboard fridge/freezer tile.
   const deviceParam = new URLSearchParams(search).get("device");
-  // Backward compat: legacy "andon" redirects to "issues", "packing-speed"
-  // redirects to "kpis" (now a subsection there), the old top-level
+  // Backward compat: legacy "andon" redirects to "issues", the old top-level
   // "batch-weights" tab now lives under HACCP → Cooling & Weights, and
   // the old top-level "temperature" tab now lives under HACCP → Temperature Log.
   const normalisedTab =
     rawTab === "andon" ? "issues"
-      : rawTab === "packing-speed" ? "kpis"
       : rawTab === "batch-weights" ? "haccp"
       : rawTab === "temperature" ? "haccp"
       : rawTab;
@@ -325,7 +228,7 @@ export default function Reports() {
   function switchTab(tab: TabId) {
     setActiveTab(tab);
     const params = new URLSearchParams();
-    if (tab !== "kpis") params.set("tab", tab);
+    if (tab !== allowedTabIds[0]) params.set("tab", tab);
     // Preserve the HACCP sub-tab when switching into HACCP so deep links
     // stay intact; other tabs drop the sub-tab param.
     if (tab === "haccp" && haccpSubTab !== "evidence") params.set("haccp", haccpSubTab);
@@ -367,7 +270,7 @@ export default function Reports() {
     <div className="space-y-6">
       <PageHeader
         title={isManagerOrAdmin ? "Analytics" : "Issue Log"}
-        description={isManagerOrAdmin ? "Production KPIs, break and lunch tracking analytics." : "View and respond to reported issues."}
+        description={isManagerOrAdmin ? "Breaks, HACCP, documents and the issue log." : "View and respond to reported issues."}
       />
 
       <div className="flex flex-col md:flex-row gap-6 md:items-start">
@@ -477,7 +380,6 @@ export default function Reports() {
             </div>
           )}
 
-          {activeTab === "kpis" && <ProductionKpisTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "breaks" && <BreaksTab fromDate={fromDate} toDate={toDate} />}
           {activeTab === "haccp" && (
             <>
@@ -524,280 +426,6 @@ export default function Reports() {
         </div>
       </div>
     </div>
-  );
-}
-
-function ProductionKpisTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
-  const [data, setData] = useState<KpiReportData | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [expandedDates, setExpandedDates] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setLoading(true);
-    const params = new URLSearchParams();
-    if (fromDate) params.set("from", fromDate);
-    if (toDate) params.set("to", toDate);
-    fetch(`${BASE}/api/reports/production-kpis?${params.toString()}`, { credentials: "include" })
-      .then(r => { if (!r.ok) throw new Error("Failed"); return r.json(); })
-      .then(d => { setData(d); setLoading(false); })
-      .catch((err) => { console.warn("[Reports] KPI fetch failed:", err); toast({ title: "Failed to load KPIs", variant: "destructive" }); setData(null); setLoading(false); });
-  }, [fromDate, toDate]);
-
-  if (loading) {
-    return (
-      <div className="flex justify-center py-12">
-        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (!data) {
-    return <div className="text-center text-muted-foreground py-8">Failed to load production KPI data</div>;
-  }
-
-  const toggleDate = (date: string) => {
-    setExpandedDates(prev => {
-      const next = new Set(prev);
-      if (next.has(date)) next.delete(date);
-      else next.add(date);
-      return next;
-    });
-  };
-
-  const fmtMins = (mins: number) =>
-    mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
-
-  return (
-    <>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <SummaryCard
-          icon={<Play className="w-5 h-5 text-emerald-600" />}
-          label="Start Time"
-          value={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "HH:mm") : "—"}
-          sub={data.overview.productionStartTime ? format(new Date(data.overview.productionStartTime), "d MMM yyyy") : "No data"}
-        />
-        <SummaryCard
-          icon={<Square className="w-5 h-5 text-red-500" />}
-          label="Finish Time"
-          value={data.overview.productionFinishTime ? format(new Date(data.overview.productionFinishTime), "HH:mm") : "—"}
-          sub={data.overview.wallClockMinutes > 0
-            ? `${fmtMins(data.overview.wallClockMinutes)} wall clock`
-            : "No data"}
-        />
-        <SummaryCard
-          icon={<Layers className="w-5 h-5 text-blue-600" />}
-          label="Total Batches"
-          value={String(data.overview.totalBatches)}
-          sub="Calzone batches only"
-        />
-        <SummaryCard
-          icon={<Activity className="w-5 h-5 text-violet-600" />}
-          label="TCK run rate"
-          value={data.overview.overallBph != null ? String(data.overview.overallBph) : "—"}
-          sub={data.overview.targetBph != null ? `Target ${data.overview.targetBph}/hr` : "Start→finish minus standard breaks"}
-        />
-        <SummaryCard
-          icon={<Timer className="w-5 h-5 text-amber-600" />}
-          label="Active Time"
-          value={fmtMins(data.overview.totalActiveMinutes)}
-          sub={`Minus standard breaks (${data.breakConfig.morningMinutes}m + ${data.breakConfig.lunchMinutes}m lunch)`}
-        />
-      </div>
-
-      {data.builders.length > 0 && (
-        <div>
-          <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-            <Users className="w-4 h-4 text-primary" /> Builders
-            <span className="text-xs text-muted-foreground font-normal">same calculation as the team number</span>
-          </h2>
-          <div className="rounded-2xl border border-border bg-card overflow-hidden">
-            <table className="w-full text-sm">
-              <thead className="bg-secondary/30 text-muted-foreground text-xs">
-                <tr>
-                  <th className="px-4 py-3 font-medium text-left">Builder</th>
-                  <th className="px-4 py-3 font-medium text-center">Batches</th>
-                  <th className="px-4 py-3 font-medium text-center">Run rate per builder</th>
-                  <th className="px-4 py-3 font-medium text-center">Active Time</th>
-                  <th className="px-4 py-3 font-medium text-center">Days</th>
-                  <th className="px-4 py-3 font-medium text-center">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border/50">
-                {data.builders.map(b => (
-                  <tr key={b.userId} className="hover:bg-secondary/10 transition-colors">
-                    <td className="px-4 py-3 font-medium">{b.userName}</td>
-                    <td className="px-4 py-3 text-center tabular-nums font-semibold">{b.totalBatches}</td>
-                    <td className={cn("px-4 py-3 text-center tabular-nums font-bold", bphColor(b.status))}>
-                      {b.bph ?? "—"}
-                    </td>
-                    <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                      {fmtMins(b.totalActiveMinutes)}
-                    </td>
-                    <td className="px-4 py-3 text-center tabular-nums">{b.daysWorked}</td>
-                    <td className="px-4 py-3 text-center">
-                      <StatusBadge status={b.status} />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      <WrappingSpeedReport fromDate={fromDate} toDate={toDate} />
-
-      <div>
-        <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
-          <Clock className="w-4 h-4 text-primary" /> Daily Detail
-        </h2>
-        {data.dailyDetail.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-border p-8 text-center text-muted-foreground">
-            <TrendingUp className="w-8 h-8 mx-auto mb-2 opacity-40" />
-            <p className="font-medium">No production data found for this period</p>
-          </div>
-        ) : (
-          <div className="space-y-2">
-            {data.dailyDetail.map(day => {
-              const isExpanded = expandedDates.has(day.date);
-              return (
-                <div key={day.date} className="rounded-2xl border border-border bg-card overflow-hidden">
-                  <button
-                    onClick={() => toggleDate(day.date)}
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-secondary/10 transition-colors"
-                  >
-                    {isExpanded
-                      ? <ChevronDown className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                      : <ChevronRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                    }
-                    <span className="font-semibold text-sm">{format(new Date(day.date + "T00:00:00"), "EEE dd MMM yyyy")}</span>
-                    <span className="text-xs text-muted-foreground ml-2">
-                      {day.batches} batch{day.batches !== 1 ? "es" : ""}
-                      {day.windowStart && day.windowEnd && (
-                        <> · {format(new Date(day.windowStart), "HH:mm")}–{format(new Date(day.windowEnd), "HH:mm")}</>
-                      )}
-                    </span>
-                    <div className="ml-auto flex items-center gap-3">
-                      <span className={cn("text-sm font-bold tabular-nums", bphColor(day.status))}>
-                        {day.bph != null ? `${day.bph}/hr` : "—"}
-                      </span>
-                      <StatusBadge status={day.status} />
-                    </div>
-                  </button>
-                  {isExpanded && (
-                    <div className="border-t border-border px-4 py-3 space-y-3">
-                      <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted-foreground">
-                        <span className="inline-flex items-center gap-1">
-                          <Clock className="w-3.5 h-3.5" /> Wall clock {fmtMins(day.wallClockMinutes)}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Coffee className="w-3.5 h-3.5" />
-                          {day.morningBreakDeducted ? `Morning break −${data.breakConfig.morningMinutes}m` : "Morning break not spanned"}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Utensils className="w-3.5 h-3.5" />
-                          {day.lunchBreakDeducted ? `Lunch −${data.breakConfig.lunchMinutes}m` : "Finished before lunch"}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <Timer className="w-3.5 h-3.5" /> Active {fmtMins(day.activeMinutes)}
-                        </span>
-                        <span className="inline-flex items-center gap-1">
-                          <CheckCircle className="w-3.5 h-3.5" />
-                          {day.finishSource === "marked" ? "Finish marked by builder" : "Finish = last batch (not marked)"}
-                        </span>
-                      </div>
-                      {day.builders.length > 0 && (
-                        <table className="w-full text-sm">
-                          <thead className="bg-secondary/20 text-muted-foreground text-xs">
-                            <tr>
-                              <th className="px-3 py-2 font-medium text-left">Builder</th>
-                              <th className="px-3 py-2 font-medium text-center">Batches</th>
-                              <th className="px-3 py-2 font-medium text-center">Active</th>
-                              <th className="px-3 py-2 font-medium text-center">Breaks</th>
-                              <th className="px-3 py-2 font-medium text-center">Run rate per builder</th>
-                              <th className="px-3 py-2 font-medium text-center">Status</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-border/30">
-                            {day.builders.map(b => (
-                              <tr key={b.userId} className="hover:bg-secondary/5 transition-colors">
-                                <td className="px-3 py-2 font-medium">{b.userName}</td>
-                                <td className="px-3 py-2 text-center tabular-nums font-semibold">{b.batches}</td>
-                                <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">{fmtMins(b.activeMinutes)}</td>
-                                <td className="px-3 py-2 text-center tabular-nums text-muted-foreground">{b.breakMinutesDeducted}m</td>
-                                <td className={cn("px-3 py-2 text-center tabular-nums font-bold", bphColor(b.status))}>
-                                  {b.bph ?? "—"}
-                                </td>
-                                <td className="px-3 py-2 text-center">
-                                  <StatusBadge status={b.status} />
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      )}
-                      {day.recipes.length > 0 && (
-                        <p className="text-xs text-muted-foreground">
-                          {day.recipes.map(r => `${r.name} (${r.count})`).join(", ")}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Packing speed — previously a separate tab, now a section inside
-          Production KPIs since packing throughput is a production metric.
-          Has its own "today" + custom date range controls because its
-          reporting window is typically wider than the KPI date range. */}
-      <div className="pt-8 border-t border-border">
-        <div className="flex items-center gap-2 mb-4">
-          <Zap className="w-5 h-5 text-amber-500" />
-          <h2 className="text-lg font-bold">Packing Speed</h2>
-        </div>
-        <PackingSpeedTab />
-      </div>
-    </>
-  );
-}
-
-function bphColor(status: string) {
-  if (status === "above") return "text-emerald-600";
-  if (status === "on-target") return "text-amber-600";
-  if (status === "below") return "text-red-600";
-  return "text-foreground";
-}
-
-function StatusBadge({ status }: { status: string }) {
-  if (status === "above") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300">
-        <ArrowUp className="w-3 h-3" /> Above
-      </span>
-    );
-  }
-  if (status === "on-target") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">
-        <MinusIcon className="w-3 h-3" /> On Target
-      </span>
-    );
-  }
-  if (status === "below") {
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300">
-        <ArrowDown className="w-3 h-3" /> Below
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-secondary text-muted-foreground">
-      — No Target
-    </span>
   );
 }
 
@@ -2392,276 +2020,6 @@ function HaccpTab({ fromDate, toDate }: { fromDate: string; toDate: string }) {
         </div>
       )}
 
-    </div>
-  );
-}
-
-// ── Packing Speed Tab ──────────────────────────────────────────────────────
-function PackingSpeedTab() {
-  const todayStr = format(new Date(), "yyyy-MM-dd");
-  const defaultFrom = format(startOfMonth(new Date()), "yyyy-MM-dd");
-
-  // Today section — always fixed to today
-  const [todayData, setTodayData] = useState<PackingSpeedData | null>(null);
-  const [todayLoading, setTodayLoading] = useState(true);
-  const [todayError, setTodayError] = useState<string | null>(null);
-
-  // Range section — user-controlled date picker
-  const [fromDate, setFromDate] = useState(defaultFrom);
-  const [toDate, setToDate] = useState(todayStr);
-  const [rangeData, setRangeData] = useState<PackingSpeedData | null>(null);
-  const [rangeLoading, setRangeLoading] = useState(true);
-  const [rangeError, setRangeError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setTodayLoading(true);
-    setTodayError(null);
-    fetch(`${BASE}/api/reports/packing-speed?from=${todayStr}&to=${todayStr}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : r.json().then((d: { error?: string }) => { throw new Error(d.error || "Failed"); }))
-      .then((d: PackingSpeedData) => { setTodayData(d); setTodayLoading(false); })
-      .catch((err: Error) => { setTodayError(err.message); setTodayLoading(false); });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [todayStr]);
-
-  useEffect(() => {
-    setRangeLoading(true);
-    setRangeError(null);
-    const params = new URLSearchParams({ from: fromDate, to: toDate });
-    fetch(`${BASE}/api/reports/packing-speed?${params}`, { credentials: "include" })
-      .then(r => r.ok ? r.json() : r.json().then((d: { error?: string }) => { throw new Error(d.error || "Failed"); }))
-      .then((d: PackingSpeedData) => { setRangeData(d); setRangeLoading(false); })
-      .catch((err: Error) => { setRangeError(err.message); setRangeLoading(false); });
-  }, [fromDate, toDate]);
-
-  const fmtMins = (m: number | null) => {
-    if (m == null || m === 0) return "—";
-    return m >= 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m}m`;
-  };
-
-  const todayRow = todayData?.dailyRows[0] ?? null;
-
-  return (
-    <div className="space-y-8">
-
-      {/* ── TODAY: Fixed KPIs ──────────────────────────────────────────────── */}
-      <section>
-        <div className="flex items-center gap-3 mb-4">
-          <h2 className="text-base font-semibold">Today's Packing</h2>
-          <span className="text-xs text-muted-foreground bg-secondary px-2.5 py-1 rounded-full font-medium">
-            {format(new Date(), "EEEE d MMMM yyyy")}
-          </span>
-          {todayLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-        </div>
-
-        {todayError ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{todayError}</div>
-        ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <SummaryCard
-              icon={<Package className="w-4 h-4 text-blue-500" />}
-              label="Orders Packed"
-              value={todayData ? String(todayData.totalOrders) : "—"}
-              sub={todayData?.totalOrders === 0 ? "None fulfilled yet today" : undefined}
-            />
-            <SummaryCard
-              icon={<Zap className="w-4 h-4 text-amber-500" />}
-              label="Packing Speed"
-              value={todayData && todayData.ordersPerHour > 0 ? `${todayData.ordersPerHour}/hr` : "—"}
-              sub="orders/hr · idle deducted"
-            />
-            <SummaryCard
-              icon={<Timer className="w-4 h-4 text-emerald-500" />}
-              label="Active Packing Time"
-              value={todayData ? fmtMins(todayData.totalActiveMinutes) : "—"}
-              sub={todayRow?.firstFulfilledAt ? `Started ${format(new Date(todayRow.firstFulfilledAt), "HH:mm")}` : undefined}
-            />
-            <SummaryCard
-              icon={<Coffee className="w-4 h-4 text-orange-400" />}
-              label="Idle / Breaks"
-              value={todayData ? fmtMins(todayData.totalIdleMinutes) : "—"}
-              sub={todayRow && todayRow.idleBreaks > 0 ? `${todayRow.idleBreaks} break${todayRow.idleBreaks !== 1 ? "s" : ""} detected` : "No idle gaps"}
-            />
-          </div>
-        )}
-      </section>
-
-      {/* ── DIVIDER + DATE PICKER ──────────────────────────────────────────── */}
-      <div className="border-t border-border pt-6">
-        <div className="flex items-center gap-4 flex-wrap justify-between mb-6">
-          <div>
-            <h2 className="text-base font-semibold">Period Analysis</h2>
-            <p className="text-xs text-muted-foreground mt-0.5">KPIs for the selected date range</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <DateShortcutsDropdown onSelect={(f, t) => { setFromDate(f); setToDate(t); }} />
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-muted-foreground">From</label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={e => setFromDate(e.target.value)}
-                className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-sm font-medium text-muted-foreground">To</label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={e => setToDate(e.target.value)}
-                className="px-3 py-2 border border-border rounded-lg text-sm bg-background"
-              />
-            </div>
-            {rangeLoading && <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />}
-          </div>
-        </div>
-
-        {/* ── RANGE KPIs ──────────────────────────────────────────────────── */}
-        {rangeError ? (
-          <div className="rounded-xl border border-red-200 bg-red-50 dark:bg-red-900/20 p-4 text-red-700 dark:text-red-400 text-sm">{rangeError}</div>
-        ) : (
-          <>
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 mb-6">
-              <SummaryCard
-                icon={<Package className="w-4 h-4 text-blue-500" />}
-                label="Total Orders Packed"
-                value={rangeData ? String(rangeData.totalOrders) : "—"}
-                sub={rangeData ? `across ${rangeData.totalDays} day${rangeData.totalDays !== 1 ? "s" : ""}` : undefined}
-              />
-              <SummaryCard
-                icon={<Zap className="w-4 h-4 text-amber-500" />}
-                label="Avg Packing Speed"
-                value={rangeData && rangeData.ordersPerHour > 0 ? `${rangeData.ordersPerHour}/hr` : "—"}
-                sub="orders/hr · active time only"
-              />
-              <SummaryCard
-                icon={<Activity className="w-4 h-4 text-violet-500" />}
-                label="Avg Orders / Day"
-                value={rangeData && rangeData.avgPerDay > 0 ? String(rangeData.avgPerDay) : "—"}
-                sub={rangeData && rangeData.totalDays > 0 ? `over ${rangeData.totalDays} packing day${rangeData.totalDays !== 1 ? "s" : ""}` : undefined}
-              />
-              <SummaryCard
-                icon={<Trophy className="w-4 h-4 text-amber-500" />}
-                label="Fastest Day"
-                value={rangeData?.fastestDay ? `${rangeData.fastestDay.ordersPerHour}/hr` : "—"}
-                sub={rangeData?.fastestDay ? format(new Date(rangeData.fastestDay.date + "T00:00:00"), "EEE d MMM") : undefined}
-                highlight="green"
-              />
-              <SummaryCard
-                icon={<Snail className="w-4 h-4 text-muted-foreground" />}
-                label="Slowest Day"
-                value={rangeData?.slowestDay ? `${rangeData.slowestDay.ordersPerHour}/hr` : "—"}
-                sub={rangeData?.slowestDay ? format(new Date(rangeData.slowestDay.date + "T00:00:00"), "EEE d MMM") : undefined}
-              />
-              <SummaryCard
-                icon={<TrendingUp className="w-4 h-4 text-emerald-500" />}
-                label="Most Orders in a Day"
-                value={rangeData?.busiestDay ? String(rangeData.busiestDay.count) : "—"}
-                sub={rangeData?.busiestDay ? format(new Date(rangeData.busiestDay.date + "T00:00:00"), "EEE d MMM") : undefined}
-                highlight="green"
-              />
-              <SummaryCard
-                icon={<Timer className="w-4 h-4 text-emerald-500" />}
-                label="Total Active Time"
-                value={rangeData ? fmtMins(rangeData.totalActiveMinutes) : "—"}
-                sub="packing time · idle deducted"
-              />
-              <SummaryCard
-                icon={<Hourglass className="w-4 h-4 text-orange-400" />}
-                label="Total Idle Time"
-                value={rangeData ? fmtMins(rangeData.totalIdleMinutes) : "—"}
-                sub="gaps >5 min between fulfillments"
-              />
-            </div>
-
-            {/* ── Daily Breakdown Table ─────────────────────────────────── */}
-            {rangeData && rangeData.totalOrders === 0 ? (
-              <div className="rounded-xl border border-border bg-card p-8 text-center text-muted-foreground text-sm">
-                No fulfilled orders found for this date range. Orders are counted when their status is set to "fulfilled".
-              </div>
-            ) : rangeData ? (
-              <div className="rounded-xl border border-border bg-card overflow-hidden">
-                <div className="px-4 py-3 border-b border-border bg-secondary/10">
-                  <h3 className="text-sm font-semibold text-foreground">Daily Breakdown</h3>
-                  <p className="text-xs text-muted-foreground mt-0.5">Based on Shopify fulfilled orders — start/end times are from the first and last fulfillment of the day</p>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-border bg-secondary/20">
-                        <th className="text-left px-4 py-3 font-semibold text-muted-foreground">Date</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Orders</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">First</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Last</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Window</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Active</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Idle</th>
-                        <th className="text-center px-4 py-3 font-semibold text-muted-foreground">Rate</th>
-                        <th className="px-4 py-3 w-32"><span className="sr-only">Bar</span></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-border">
-                      {rangeData.dailyRows.map(row => {
-                        const maxCount = Math.max(...rangeData.dailyRows.map(r => r.count), 1);
-                        const pct = Math.round((row.count / maxCount) * 100);
-                        const isFastest = rangeData.fastestDay?.date === row.date;
-                        const isBusiest = rangeData.busiestDay?.date === row.date;
-                        return (
-                          <tr key={row.date} className="hover:bg-secondary/10 transition-colors">
-                            <td className="px-4 py-3 font-medium whitespace-nowrap">
-                              {format(new Date(row.date + "T00:00:00"), "EEE dd MMM yyyy")}
-                              {isFastest && <span className="ml-2 text-xs text-amber-600 dark:text-amber-400 font-semibold">⚡ fastest</span>}
-                              {isBusiest && !isFastest && <span className="ml-2 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">★ busiest</span>}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums font-semibold">
-                              {row.count}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums text-muted-foreground whitespace-nowrap">
-                              {row.firstFulfilledAt ? format(new Date(row.firstFulfilledAt), "HH:mm") : "—"}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums text-muted-foreground whitespace-nowrap">
-                              {row.lastFulfilledAt ? format(new Date(row.lastFulfilledAt), "HH:mm") : "—"}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                              {fmtMins(row.windowMinutes)}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums font-medium text-emerald-600 dark:text-emerald-400">
-                              {fmtMins(row.activeMinutes)}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums text-muted-foreground">
-                              {row.idleMinutes && row.idleMinutes > 0 ? (
-                                <span className="text-amber-600 dark:text-amber-400" title={`${row.idleBreaks} break${row.idleBreaks !== 1 ? "s" : ""} detected`}>
-                                  {fmtMins(row.idleMinutes)}
-                                  <span className="text-xs ml-1 opacity-70">({row.idleBreaks})</span>
-                                </span>
-                              ) : "—"}
-                            </td>
-                            <td className="px-4 py-3 text-center tabular-nums font-medium">
-                              {row.ordersPerHour != null ? `${row.ordersPerHour}/hr` : "—"}
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="w-full bg-secondary/40 rounded-full h-2">
-                                <div
-                                  className="bg-blue-500 h-2 rounded-full transition-all"
-                                  style={{ width: `${pct}%` }}
-                                />
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            ) : null}
-          </>
-        )}
-      </div>
-
-      <p className="text-xs text-muted-foreground">
-        * Data sourced from Shopify fulfilled orders. Rate is based on active packing time — gaps longer than 5 minutes between fulfillments are automatically detected and deducted as idle time. The "Idle" column shows total idle time with the number of breaks in brackets. Days with only one fulfillment show "—" for rate.
-      </p>
     </div>
   );
 }

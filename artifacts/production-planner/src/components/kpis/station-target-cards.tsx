@@ -1,27 +1,20 @@
 /**
- * Analytics → Production KPIs (Graeme, 13 Nov 2026: "Where is this set? Is
- * there a place I can look at all my production KPIs?"). Every station's
- * target in one place. Packing and wrapping are set here (founder only,
- * autosaved) and read by the dashboard tiles, the wrapping station and the
- * packing screen. The line run rate and the builders' table targets are
- * shown with where they're set. Objective G.
+ * Target cards for Analytics → KPIs (moved from the old Analytics →
+ * Production KPIs page, 13 Nov 2026, when the KPIs got one page on
+ * 17 Nov 2026). Packing and wrapping: standard + stretch, founder only,
+ * autosaved with a visible save state, read by the dashboard tiles, the
+ * wrapping station and the packing screen. Objective G.
  */
 import { useEffect, useState } from "react";
-import { Link } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
-import { useListTimingStandards } from "@workspace/api-client-react";
-import { BUILDING_TARGET_BATCHES_PER_HOUR } from "@workspace/production-schedule";
-import { Gauge, Package, Layers, Factory, Hammer, Lock } from "lucide-react";
-import { PageHeader } from "@/components/page-header";
+import { Gauge, Package, Layers } from "lucide-react";
 import { SaveChip } from "@/components/save-chip";
 import { useAutosave } from "@/hooks/use-autosave";
-import { useProductionKpis, PRODUCTION_KPIS_KEY } from "@/hooks/use-production-kpis";
+import { PRODUCTION_KPIS_KEY } from "@/hooks/use-production-kpis";
 import {
-  PRODUCTION_KPI_INFO, amberFrom, kpiProblem,
+  amberFrom, kpiProblem,
   type ProductionKpi, type ProductionKpiInfo, type ProductionKpiKey,
 } from "@/lib/production-kpis";
-import { cn } from "@/lib/utils";
-import { RoomKpiCard } from "@/components/room-kpi-card";
 
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 
@@ -40,7 +33,7 @@ async function saveKpi(key: ProductionKpiKey, kpi: ProductionKpi): Promise<void>
 
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
-function Bands({ kpi }: { kpi: ProductionKpi }) {
+export function Bands({ kpi }: { kpi: ProductionKpi }) {
   return (
     <div className="flex flex-wrap gap-2 text-sm font-semibold">
       {kpi.stretch != null && <span className="px-3 py-1 rounded-full bg-purple-600 text-white">{fmt(kpi.stretch)}+ smashing it</span>}
@@ -51,7 +44,7 @@ function Bands({ kpi }: { kpi: ProductionKpi }) {
   );
 }
 
-function EditableKpiCard({ info, kpi, canEdit }: { info: ProductionKpiInfo; kpi: ProductionKpi; canEdit: boolean }) {
+export function EditableKpiCard({ info, kpi, canEdit }: { info: ProductionKpiInfo; kpi: ProductionKpi; canEdit: boolean }) {
   const queryClient = useQueryClient();
   const [standard, setStandard] = useState(String(kpi.standard));
   const [stretch, setStretch] = useState(kpi.stretch == null ? "" : String(kpi.stretch));
@@ -126,7 +119,7 @@ function EditableKpiCard({ info, kpi, canEdit }: { info: ProductionKpiInfo; kpi:
   );
 }
 
-function FixedCard({ icon: Icon, name, unit, value, children }: { icon: typeof Gauge; name: string; unit: string; value: string; children: React.ReactNode }) {
+export function FixedCard({ icon: Icon, name, unit, value, children }: { icon: typeof Gauge; name: string; unit: string; value: string; children: React.ReactNode }) {
   return (
     <section className="rounded-3xl border-2 border-border bg-card p-5 lg:p-6 space-y-3 shadow-sm">
       <div className="flex items-start gap-3">
@@ -142,46 +135,3 @@ function FixedCard({ icon: Icon, name, unit, value, children }: { icon: typeof G
   );
 }
 
-export default function ProductionKpisPage() {
-  const { kpis, data, isLoading, isError } = useProductionKpis();
-  const canEdit = data?.canEdit === true;
-  const { data: timing } = useListTimingStandards();
-  const builders = (timing ?? []) as Array<{ id: number; stationLabel?: string; targetBatchesPerHour?: number | string; minBatchesPerHour?: number | string }>;
-
-  return (
-    <div className="space-y-6">
-      <PageHeader title="Production KPIs" description="Every station's target in one place." />
-      {isError && <p className="text-red-600 font-semibold">Couldn't load the stored figures — showing the defaults.</p>}
-      {!canEdit && !isLoading && (
-        <p className="flex items-center gap-2 text-muted-foreground"><Lock className="w-4 h-4" /> Only Graeme can change these.</p>
-      )}
-
-      <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-3">
-        <RoomKpiCard />
-        {PRODUCTION_KPI_INFO.map(info => (
-          <EditableKpiCard key={info.key} info={info} kpi={kpis[info.key]} canEdit={canEdit} />
-        ))}
-
-        <FixedCard icon={Factory} name="Line run rate" unit="batches an hour" value={String(BUILDING_TARGET_BATCHES_PER_HOUR)}>
-          <p>Colours the Mixing, Sheeting, Building and Ovens tiles on the dashboard: {Math.round(BUILDING_TARGET_BATCHES_PER_HOUR * 1.1)}+ way ahead, under {Math.round(BUILDING_TARGET_BATCHES_PER_HOUR * 0.9)} too slow.</p>
-          <p>It also sets each day's planned finish time, so it isn't changed here — ask Claude.</p>
-        </FixedCard>
-
-        <FixedCard icon={Hammer} name="Building tables" unit="batches an hour, per table" value={builders.length ? builders.map(b => fmt(Number(b.targetBatchesPerHour ?? 0))).join(" / ") : "—"}>
-          {builders.length ? (
-            <ul className="space-y-0.5">
-              {builders.map(b => (
-                <li key={b.id}>{b.stationLabel ?? "Table"}: target {fmt(Number(b.targetBatchesPerHour ?? 0))}, minimum {fmt(Number(b.minBatchesPerHour ?? 0))}</li>
-              ))}
-            </ul>
-          ) : <p>Not loaded.</p>}
-          <p>The pace tile on the building station. Set in <Link href="/settings?section=production" className="font-semibold text-primary underline">Settings → Production</Link>.</p>
-        </FixedCard>
-
-        <FixedCard icon={Gauge} name="Dough Prep and Prepping For" unit="no KPI yet" value="—">
-          <p>Their dashboard tiles stay grey until a target is agreed.</p>
-        </FixedCard>
-      </div>
-    </div>
-  );
-}

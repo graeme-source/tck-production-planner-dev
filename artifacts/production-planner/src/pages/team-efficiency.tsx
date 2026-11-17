@@ -271,7 +271,8 @@ function periodPoints(periods: EffPeriod[], toDate: (p: string) => string): Char
   });
 }
 
-export default function TeamEfficiencyPage() {
+/** `embedded`: shown inside Analytics → KPIs (17 Nov 2026), which has the page title. */
+export default function TeamEfficiencyPage({ embedded = false }: { embedded?: boolean } = {}) {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const allowed = role === "admin" || role === "manager";
@@ -286,7 +287,13 @@ export default function TeamEfficiencyPage() {
   // One settled day: weekly and monthly views would just repeat it.
   const isYesterday = choice.kind === "yesterday";
   const shownView: View = isYesterday ? "daily" : view;
-  const choose = (next: RangeChoice) => navigate(`${path}?${rangeQuery(next)}`, { replace: true });
+  // Keep anything else in the address (the KPIs page's ?kpi=efficiency).
+  const choose = (next: RangeChoice) => {
+    const keep = new URLSearchParams(search);
+    for (const k of ["range", "from", "to"]) keep.delete(k);
+    const rest = keep.toString();
+    navigate(`${path}?${rest ? `${rest}&` : ""}${rangeQuery(next)}`, { replace: true });
+  };
 
   const q = useQuery({
     queryKey: ["team-efficiency", query],
@@ -328,18 +335,19 @@ export default function TeamEfficiencyPage() {
     return chartPoints(report.days);
   }, [report, shownView]);
 
-  const header = <PageHeader title="Team efficiency" />;
+  const header = embedded ? null : <PageHeader title="Team efficiency" />;
+  const pad = embedded ? "" : "p-4 sm:p-8";
 
   if (!allowed) {
     return (
-      <div className="p-5 sm:p-8">{header}
+      <div className={pad}>{header}
         <div className="rounded-3xl border border-border bg-card p-8 text-lg">Team efficiency is for managers.</div>
       </div>
     );
   }
 
   return (
-    <div className="p-4 sm:p-8 space-y-6">
+    <div className={cn(pad, "space-y-6")}>
       {header}
       <p className="text-lg text-muted-foreground">
         Good packs made (and orders sent) for every £1 of production wages, as a percentage of our standard. 100% is standard, 110% and up is great, under 90% is below.
