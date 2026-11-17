@@ -130,6 +130,7 @@ export type PeriodPresetId =
   | "last30"
   | "monthToDate"
   | "lastMonth"
+  | "last3Months"
   | "last6Months"
   | "last12Months";
 
@@ -156,6 +157,9 @@ export const PERIOD_PRESETS: readonly PeriodPreset[] = [
   { id: "last30", label: "Last 30 days" },
   { id: "monthToDate", label: "Month to date" },
   { id: "lastMonth", label: "Last month" },
+  // The KPIs page opens on this (Graeme, 17 Nov 2026: the run rate "over the
+  // last 3 months ... to show whether it's going up or down").
+  { id: "last3Months", label: "Last 3 months" },
   { id: "last6Months", label: "Last 6 months" },
   { id: "last12Months", label: "Last 12 months" },
 ] as const;
@@ -207,6 +211,8 @@ export function periodWindow(id: PeriodPresetId, now: number | Date): PeriodWind
       const inLastMonth = addMonths(startOfMonth(todayStr), -1);
       return windowFrom(id, label, startOfMonth(inLastMonth), endOfMonth(inLastMonth), false);
     }
+    case "last3Months":
+      return windowFrom(id, label, addMonths(yesterday, -3), yesterday, false);
     case "last6Months":
       return windowFrom(id, label, addMonths(yesterday, -6), yesterday, false);
     case "last12Months":
