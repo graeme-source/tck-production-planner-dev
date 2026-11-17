@@ -28,6 +28,7 @@ import { db, stockGateHoldsTable, appSettingsTable } from "@workspace/db";
 import { sql, eq, isNull, desc, inArray } from "drizzle-orm";
 import { londonDateString } from "./london-time";
 import { isStaging, shouldSkipSideEffect, logSkippedSideEffect } from "./app-env";
+import { productOrderability, type Orderability } from "./stock-gate-orderable";
 
 // ── Settings ────────────────────────────────────────────────────────────────
 
@@ -113,22 +114,64 @@ export async function setStockGateSettings(patch: Partial<Record<keyof typeof KE
 
 // ── Shopify: variant → product resolution and product tagging ───────────────
 
-type ProductRef = { productGid: string; productId: string; title: string; status: string };
+type ProductRef = {
+  productGid: string;
+  productId: string;
+  title: string;
+  status: string;
+  /** Whether a customer can buy it at all — see stock-gate-orderable.ts. */
+  orderability: Orderability;
+};
 
 async function resolveProductForVariant(variantId: string): Promise<ProductRef | null> {
   const { shopifyGraphQL } = await import("../services/shopify");
-  const data = await shopifyGraphQL<{
-    nodes: Array<{ id: string; product: { id: string; title: string; status: string } } | null>;
-  }>(
-    `query ($ids: [ID!]!) {
-      nodes(ids: $ids) {
-        ... on ProductVariant { id product { id title status } }
-      }
-    }`,
-    { ids: [`gid://shopify/ProductVariant/${variantId}`] },
-  );
+  type VariantStock = {
+    inventoryQuantity: number | null;
+    inventoryPolicy: string | null;
+    inventoryItem: { tracked: boolean | null } | null;
+  };
+  type Resp = {
+    nodes: Array<{
+      id: string;
+      product: { id: string; title: string; status: string; variants?: { nodes: VariantStock[] } };
+    } | null>;
+  };
+  const ids = { ids: [`gid://shopify/ProductVariant/${variantId}`] };
+  let data: Resp;
+  try {
+    // Status and every variant's stock come back in this one call, so the
+    // "can anyone buy it?" check costs no extra request.
+    data = await shopifyGraphQL<Resp>(
+      `query ($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant {
+            id
+            product {
+              id title status
+              variants(first: 100) { nodes { inventoryQuantity inventoryPolicy inventoryItem { tracked } } }
+            }
+          }
+        }
+      }`,
+      ids,
+    );
+  } catch (err) {
+    // If Shopify ever refuses the stock fields (scope or schema change), fall
+    // back to status only rather than failing the lookup — a failed lookup
+    // means nothing gets held at all. No variants = treated as orderable.
+    console.warn("[stock-gate] stock fields unavailable, checking status only:", err instanceof Error ? err.message : err);
+    data = await shopifyGraphQL<Resp>(
+      `query ($ids: [ID!]!) {
+        nodes(ids: $ids) {
+          ... on ProductVariant { id product { id title status } }
+        }
+      }`,
+      ids,
+    );
+  }
   const node = data.nodes.find(n => n && n.product);
   if (!node) return null;
+  const status = node.product.status;
   return {
     productGid: node.product.id,
     productId: node.product.id.split("/").pop() ?? "",
@@ -136,7 +179,17 @@ async function resolveProductForVariant(variantId: string): Promise<ProductRef |
     // ACTIVE | DRAFT | ARCHIVED — a non-active product can't be bought, so
     // holding it only produces warnings nobody can act on (Graeme,
     // 2026-09-10: the Don Bacon / Open Fire BBQ nag loop).
-    status: node.product.status,
+    status,
+    // Same for an active product that's sold out on Shopify and set not to
+    // sell when out of stock (Graeme, 17 Nov 2026: clearance stock).
+    orderability: productOrderability({
+      status,
+      variants: (node.product.variants?.nodes ?? []).map(v => ({
+        inventoryQuantity: v.inventoryQuantity,
+        inventoryPolicy: v.inventoryPolicy,
+        tracked: v.inventoryItem?.tracked ?? null,
+      })),
+    }),
   };
 }
 
@@ -159,14 +212,17 @@ async function setProductTag(productGid: string, tag: string, add: boolean): Pro
   }
 }
 
-/** True when the variant's product is draft/archived. Lookup failures count
- *  as "still active" — a transient Shopify error must not release holds. */
-async function productGoneInactive(variantId: string): Promise<boolean> {
+/** Why the variant's product can no longer be bought (draft/archived, or
+ *  sold out with "continue selling" off), or null when it still can. Lookup
+ *  failures count as "still orderable" — a transient Shopify error must not
+ *  release holds. */
+async function productNoLongerOrderable(variantId: string): Promise<Extract<Orderability, { orderable: false }> | null> {
   try {
     const product = await resolveProductForVariant(variantId);
-    return product != null && product.status !== "ACTIVE";
+    if (!product || product.orderability.orderable) return null;
+    return product.orderability;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -325,12 +381,18 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
 
     // Holds on recipes no longer in scope are released immediately — a
     // product we can't measure must not stay blocked on a stale number.
-    // And holds on products that have gone draft/archived release HERE,
+    // And holds on products nobody can buy any more — draft/archived, or
+    // sold out on Shopify with "continue selling" off — release HERE,
     // unconditionally: the per-row loop below skips rows without live
     // Shopify sales, and a draft product stops selling — which is exactly
     // why the first version of this check (inside that loop) never fired
     // for Open Fire BBQ (Graeme, 2026-09-11). The hold's own stored
     // variant id keys the lookup, independent of today's calc.
+    //
+    // Releasing (rather than leaving the tag on) is safe: while it can't be
+    // sold there's no order to protect tomorrow from, and the moment it can
+    // be sold again the loop below re-holds it on the same cycle if its
+    // surplus is still low. Leaving it would keep a dead warning on screen.
     for (const h of activeHolds) {
       if (!inScope(h.recipeId)) {
         try {
@@ -342,11 +404,18 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
         }
         continue;
       }
-      if (h.shopifyVariantId && await productGoneInactive(h.shopifyVariantId)) {
+      const unorderable = h.shopifyVariantId ? await productNoLongerOrderable(h.shopifyVariantId) : null;
+      if (unorderable) {
         try {
-          await releaseHold(h, "auto (product no longer active on Shopify)", null);
+          await releaseHold(
+            h,
+            unorderable.reason === "inactive"
+              ? "auto (product no longer active on Shopify)"
+              : "auto (sold out on Shopify, not selling when out of stock)",
+            null,
+          );
           holdByRecipe.delete(h.recipeId);
-          released.push(`${h.recipeName} (off the menu)`);
+          released.push(`${h.recipeName} (${unorderable.reason === "inactive" ? "off the menu" : "can't be ordered"})`);
         } catch (err) {
           console.error(`[stock-gate] inactive-release failed for ${h.recipeName}:`, err);
         }
@@ -375,10 +444,11 @@ export async function runStockGateCycle(trigger: "timer" | "manual"): Promise<St
           console.error(`[stock-gate] product lookup failed for ${row.recipeName}:`, err);
         }
         if (!product) continue;
-        // Draft/archived = off the menu = nothing to protect. It rejoins
-        // the gate automatically the day it's set active again.
-        if (product.status !== "ACTIVE") {
-          console.log(`[stock-gate] skip ${row.recipeName}: product is ${product.status} on Shopify`);
+        // Draft/archived, or sold out with "continue selling" off = nobody
+        // can order it = nothing to protect. It rejoins the gate
+        // automatically the cycle it can be bought again.
+        if (!product.orderability.orderable) {
+          console.log(`[stock-gate] skip ${row.recipeName}: ${product.orderability.label}`);
           continue;
         }
         if (!settings.dryRun) {
