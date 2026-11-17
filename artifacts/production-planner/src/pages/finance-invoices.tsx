@@ -253,7 +253,8 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
         <div className="flex items-center gap-3 flex-wrap">
           <input ref={fileInput} type="file" multiple accept=".zip,application/zip,.pdf,application/pdf,image/*" className="hidden"
             onChange={(e) => { const f = e.target.files ? Array.from(e.target.files) : []; e.target.value = ""; sendFiles(f); }} />
-          <Button onClick={() => fileInput.current?.click()} disabled={busy}>
+          {/* Dark, so the green stays for the tab you're on (Graeme, 17 Nov 2026). */}
+          <Button className="bg-foreground text-background hover:bg-foreground/85" onClick={() => fileInput.current?.click()} disabled={busy}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
             {busy ? "Uploading…" : "Add invoices"}
           </Button>

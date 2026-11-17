@@ -37,7 +37,9 @@ import {
   ChevronRight,
   FileText,
   Inbox,
+  LineChart,
   Loader2,
+  Truck,
   Mail,
   Paperclip,
   Plus,
@@ -191,6 +193,14 @@ const SECTION_NOTES: Record<(typeof FILTERS)[number]["key"], string> = {
   library: "in the library",
 };
 
+/** Section tabs under the main Finance tabs: the active one gets a green
+ *  outline, not a big green block (Graeme, 17 Nov 2026) — the filled green
+ *  is kept for the main tabs so they read as the main thing. */
+const sectionTabClass = (active: boolean) => cn(
+  "rounded-2xl border-2 px-3 py-2 text-center transition-colors bg-white dark:bg-card",
+  active ? "border-primary text-primary ring-1 ring-primary shadow-sm" : "border-border text-muted-foreground hover:text-foreground hover:border-primary/50",
+);
+
 const gbp = (n: number) => `£${n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const POSTED_FILTERS = [
@@ -209,6 +219,14 @@ const SORTS = [
   { key: "amount_asc", label: "Amount — lowest first" },
 ] as const;
 type SortKey = (typeof SORTS)[number]["key"];
+
+const FINANCE_TABS = [
+  { href: "/finance", label: "Invoices", key: "invoices", icon: FileText },
+  { href: "/finance/inbox", label: "Inbox", key: "inbox", icon: Inbox },
+  { href: "/finance/deliveries", label: "Deliveries", key: "deliveries", icon: Truck },
+  { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow", icon: LineChart },
+  { href: "/finance/payroll", label: "Payroll", key: "payroll", icon: Banknote },
+] as const;
 
 /**
  * Finance: the founder's and the accountants' only (Graeme, 2026-10-26 — not
@@ -247,15 +265,21 @@ export default function FinancePage() {
       {/* The only place to add invoices, above the tabs so it's there from
           every Finance page (Graeme, 17 Nov 2026). Uploads go to the Inbox. */}
       <InvoiceUploadCard />
-      <nav className="flex gap-1.5 p-1.5 rounded-2xl border border-border bg-card/60 w-fit max-w-full overflow-x-auto" aria-label="Finance">
-        {[{ href: "/finance", label: "Invoices", key: "invoices" }, { href: "/finance/inbox", label: "Inbox", key: "inbox" }, { href: "/finance/deliveries", label: "Deliveries", key: "deliveries" }, { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow" }, { href: "/finance/payroll", label: "Payroll", key: "payroll" }].map(t => (
-          <Link key={t.key} href={t.href}
-            className={cn("px-4 py-2 rounded-xl text-sm font-semibold whitespace-nowrap transition-colors flex items-center gap-1.5",
-              tab === t.key ? "bg-primary text-primary-foreground shadow-sm" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60")}>
-            {t.label}
-            {t.key === "inbox" && <InboxCount active={tab === "inbox"} />}
-          </Link>
-        ))}
+      {/* The main tabs: one full-width row floating on the page, a line
+          between each, like The Business tabs (Graeme, 17 Nov 2026). */}
+      <nav className="@container flex rounded-2xl border border-border bg-card shadow-sm overflow-hidden divide-x divide-border" aria-label="Finance">
+        {FINANCE_TABS.map(t => {
+          const active = tab === t.key;
+          return (
+            <Link key={t.key} href={t.href} aria-current={active ? "page" : undefined}
+              className={cn("flex-1 basis-0 min-w-0 min-h-14 flex items-center justify-center gap-2 px-2 text-sm @2xl:text-base font-semibold transition-colors",
+                active ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/60")}>
+              <t.icon className="hidden @xl:block w-5 h-5 flex-shrink-0" />
+              <span className="min-w-0 truncate">{t.label}</span>
+              {t.key === "inbox" && <InboxCount active={active} />}
+            </Link>
+          );
+        })}
       </nav>
       {tab === "cash-flow" ? <CashFlowPanel /> : tab === "payroll" ? <PayrollPanel /> : tab === "inbox" ? <InboxTab /> : tab === "deliveries" ? <DeliveriesPanel /> : <InvoicesTab />}
     </div>
@@ -377,10 +401,9 @@ function InboxTab() {
           const n = counts[v.key];
           return (
             <button key={v.key} role="tab" aria-selected={active} onClick={() => setView(v.key)}
-              className={cn("rounded-2xl border-2 px-3 py-2.5 text-center text-sm lg:text-base font-semibold transition-colors flex items-center justify-center gap-2",
-                active ? "bg-primary border-primary text-primary-foreground shadow-md" : "bg-white dark:bg-card border-border shadow-sm hover:border-primary/60 hover:bg-primary/5")}>
+              className={cn(sectionTabClass(active), "text-sm lg:text-base font-semibold flex items-center justify-center gap-2")}>
               {v.label}
-              {n != null && <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{n}</span>}
+              {n != null && <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-primary/10" : "bg-secondary text-foreground")}>{n}</span>}
             </button>
           );
         })}
@@ -525,18 +548,13 @@ function InvoicesTab() {
                 role="tab"
                 aria-selected={active}
                 onClick={() => setFilter(f.key)}
-                className={cn(
-                  "rounded-2xl border-2 px-3 py-2.5 text-center transition-colors",
-                  active
-                    ? "bg-primary border-primary text-primary-foreground shadow-md"
-                    : "bg-white dark:bg-card border-border text-foreground shadow-sm hover:border-primary/60 hover:bg-primary/5",
-                )}
+                className={sectionTabClass(active)}
               >
                 <span className="flex items-center justify-center gap-2 text-sm lg:text-base font-semibold">
                   {f.label}
-                  <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-white/25" : "bg-secondary")}>{count}</span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-xs tabular-nums", active ? "bg-primary/10" : "bg-secondary text-foreground")}>{count}</span>
                 </span>
-                <span className={cn("block text-xs mt-0.5 tabular-nums", active ? "text-primary-foreground/85" : "text-muted-foreground")}>
+                <span className="block text-xs mt-0.5 tabular-nums text-muted-foreground">
                   {total == null ? SECTION_NOTES[f.key] : `${gbp(total)} ${SECTION_NOTES[f.key]}`}
                 </span>
               </button>
@@ -574,7 +592,7 @@ function InvoicesTab() {
                 }}
               />
               <div className="shrink-0 flex flex-col items-start sm:items-end">
-                <Button onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending}>
+                <Button variant="outline" onClick={() => fileInput.current?.click()} disabled={uploadMutation.isPending}>
                   {uploadMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
                   {uploadMutation.isPending ? "Uploading and matching…" : "Upload CSV"}
                 </Button>
