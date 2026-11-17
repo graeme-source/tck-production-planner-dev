@@ -16,6 +16,7 @@ import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import { RoomKpiCard } from "@/components/room-kpi-card";
 import { WrappingSpeedReport } from "@/components/wrapping-speed-report";
 import { KpiOverview } from "@/components/kpis/kpi-overview";
+import { PackingTrend, TrendCard, WrappingTrend } from "@/components/kpis/kpi-trends";
 import { RunRateView } from "@/components/kpis/run-rate-view";
 import { PackingSpeedReport } from "@/components/kpis/packing-speed-report";
 import { AllTargets, StationTargetCard } from "@/components/kpis/all-targets";
@@ -90,12 +91,14 @@ export default function KpisPage() {
       )}
       {view.id === "packing" && (
         <div className="space-y-6">
+          <TrendCard id="packing"><PackingTrend from={from} to={to} /></TrendCard>
           <div className="grid gap-5 md:grid-cols-2"><StationTargetCard kpiKey="packing" /></div>
           <PackingSpeedReport fromDate={from} toDate={to} />
         </div>
       )}
       {view.id === "wrapping" && (
         <div className="space-y-6">
+          <TrendCard id="wrapping"><WrappingTrend from={from} to={to} /></TrendCard>
           <div className="grid gap-5 md:grid-cols-2"><StationTargetCard kpiKey="wrapping" /></div>
           <WrappingSpeedReport fromDate={from} toDate={to} />
         </div>

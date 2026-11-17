@@ -4,7 +4,7 @@
  * KPI. Every figure comes from the KPI's own existing endpoint — nothing is
  * worked out here. Objective G.
  */
-import { useMemo, type ReactNode } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Loader2 } from "lucide-react";
 import { LineChart, Line, ResponsiveContainer, YAxis } from "recharts";
@@ -21,6 +21,8 @@ import { band as effBand, BAND_LABEL as EFF_LABEL, pctLabel, type EffHeadline } 
 import { latestRoomDay, useRoomKpi } from "@/components/room-kpi-card";
 import { overallWrappingRate, useWrappingSpeedHistory } from "@/components/wrapping-speed-report";
 import { usePackingSpeed } from "./packing-speed-report";
+import { TrendChip } from "@/components/sales-trend-panel";
+import { KpiTrend, TrendCard } from "./kpi-trends";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -38,15 +40,19 @@ interface TileProps {
   sub?: ReactNode;
   children?: ReactNode;
   onOpen: () => void;
+  /** The Trend button at the foot (Graeme, 17 Nov 2026, like the Numbers tiles). */
+  trend?: { open: boolean; onToggle: () => void };
   className?: string;
 }
 
-function Tile({ name, unit, loading, value, chip, sub, children, onOpen, className }: TileProps) {
+function Tile({ name, unit, loading, value, chip, sub, children, onOpen, trend, className }: TileProps) {
   return (
+    <div className={cn("rounded-3xl border-2 bg-card shadow-sm transition-all min-w-0 flex flex-col",
+      trend?.open ? "border-primary" : "border-border hover:border-primary/50 hover:shadow-md", className)}>
     <button
       type="button"
       onClick={onOpen}
-      className={cn("group text-left rounded-3xl border-2 border-border bg-card p-5 lg:p-6 shadow-sm hover:border-primary/50 hover:shadow-md transition-all min-w-0 flex flex-col gap-2", className)}
+      className="group text-left p-5 lg:p-6 pb-3 lg:pb-3 flex flex-col gap-2 flex-1 min-w-0 rounded-3xl"
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
@@ -68,10 +74,16 @@ function Tile({ name, unit, loading, value, chip, sub, children, onOpen, classNa
       )}
       {children}
     </button>
+    {trend && (
+      <div className="px-5 lg:px-6 pb-4">
+        <TrendChip open={trend.open} onClick={trend.onToggle} />
+      </div>
+    )}
+    </div>
   );
 }
 
-function RunRateTile({ from, to, onOpen }: { from: string; to: string; onOpen: () => void }) {
+function RunRateTile({ from, to, onOpen, trendToggle }: { from: string; to: string; onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   const { data, isLoading } = useRunRateReport(from, to);
   const points = useMemo(() => runRateSeries(data?.dailyDetail ?? [], RUN_RATE_STANDARD), [data]);
   const trend = rangeTrend(points);
@@ -85,6 +97,7 @@ function RunRateTile({ from, to, onOpen }: { from: string; to: string; onOpen: (
       chip={avg != null ? { text: BAND_WORDS[b], band: b } : undefined}
       sub={trend ? `${trendWords(trend)} over the range` : undefined}
       onOpen={onOpen}
+      trend={trendToggle}
       className="sm:col-span-2"
     >
       {line.length >= 2 && (
@@ -101,7 +114,7 @@ function RunRateTile({ from, to, onOpen }: { from: string; to: string; onOpen: (
   );
 }
 
-function PackingTile({ from, to, onOpen }: { from: string; to: string; onOpen: () => void }) {
+function PackingTile({ from, to, onOpen, trendToggle }: { from: string; to: string; onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   // Live Shopify, one call per day — the overview asks for the last week only.
   const win = capRange(from, to, PACKING_OVERVIEW_DAYS);
   const { data, isLoading, isError } = usePackingSpeed(win.from, win.to);
@@ -115,11 +128,12 @@ function PackingTile({ from, to, onOpen }: { from: string; to: string; onOpen: (
       chip={level ? { text: PACE_WORDS[level], band: PACE_BAND[level] } : undefined}
       sub={isError ? "Couldn't reach Shopify" : data ? `${data.totalOrders.toLocaleString("en-GB")} orders${win.capped ? ` · last ${PACKING_OVERVIEW_DAYS} days` : ""}` : undefined}
       onOpen={onOpen}
+      trend={trendToggle}
     />
   );
 }
 
-function WrappingTile({ from, to, onOpen }: { from: string; to: string; onOpen: () => void }) {
+function WrappingTile({ from, to, onOpen, trendToggle }: { from: string; to: string; onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   const { data, isLoading } = useWrappingSpeedHistory(from, to);
   const { kpis } = useProductionKpis();
   const o = overallWrappingRate(data?.days ?? []);
@@ -131,11 +145,12 @@ function WrappingTile({ from, to, onOpen }: { from: string; to: string; onOpen: 
       chip={level ? { text: PACE_WORDS[level], band: PACE_BAND[level] } : undefined}
       sub={`${o.packs.toLocaleString("en-GB")} packs`}
       onOpen={onOpen}
+      trend={trendToggle}
     />
   );
 }
 
-function RoomTile({ onOpen }: { onOpen: () => void }) {
+function RoomTile({ onOpen, trendToggle }: { onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   const { data, isLoading } = useRoomKpi();
   const latest = latestRoomDay(data);
   return (
@@ -145,13 +160,14 @@ function RoomTile({ onOpen }: { onOpen: () => void }) {
       chip={latest && latest.band !== "neutral" ? { text: BAND_WORDS[latest.band], band: latest.band } : undefined}
       sub={latest ? day(latest.date) : undefined}
       onOpen={onOpen}
+      trend={trendToggle}
     />
   );
 }
 
 const EFF_BAND: Record<ReturnType<typeof effBand>, KpiBand> = { great: "platinum", on: "green", below: "red", none: "neutral" };
 
-function EfficiencyTile({ from, to, onOpen }: { from: string; to: string; onOpen: () => void }) {
+function EfficiencyTile({ from, to, onOpen, trendToggle }: { from: string; to: string; onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   const query = `from=${from}&to=${to}`;
   const { data, isLoading } = useQuery<{ ready: boolean; report?: { headline: EffHeadline } }>({
     queryKey: ["team-efficiency", query],
@@ -170,11 +186,12 @@ function EfficiencyTile({ from, to, onOpen }: { from: string; to: string; onOpen
       loading={isLoading} value={pctLabel(pct)}
       chip={pct != null ? { text: EFF_LABEL[b], band: EFF_BAND[b] } : undefined}
       onOpen={onOpen}
+      trend={trendToggle}
     />
   );
 }
 
-function DefectsTile({ from, to, onOpen }: { from: string; to: string; onOpen: () => void }) {
+function DefectsTile({ from, to, onOpen, trendToggle }: { from: string; to: string; onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   const { data, isLoading } = useDefectSummary({ from, to });
   return (
     <Tile
@@ -182,6 +199,7 @@ function DefectsTile({ from, to, onOpen }: { from: string; to: string; onOpen: (
       loading={isLoading} value={pctText(data?.pct ?? null)}
       sub={data ? `${data.defects.toLocaleString("en-GB")} of ${data.packsMade.toLocaleString("en-GB")} packs · £${Math.round(data.waste.totalCost).toLocaleString("en-GB")} waste` : undefined}
       onOpen={onOpen}
+      trend={trendToggle}
     />
   );
 }
@@ -190,14 +208,29 @@ export function KpiOverview({ from, to, onOpen }: { from: string; to: string; on
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : "viewer";
   const isManagerOrAdmin = role === "admin" || role === "manager";
+  // One trend open at a time, full width under its card.
+  const [trendOf, setTrendOf] = useState<KpiViewId | null>(null);
+  const trend = (id: KpiViewId) => ({ open: trendOf === id, onToggle: () => setTrendOf(t => (t === id ? null : id)) });
+  const tiles: Array<{ id: KpiViewId; node: ReactNode }> = [
+    { id: "run-rate", node: <RunRateTile from={from} to={to} onOpen={() => onOpen("run-rate")} trendToggle={trend("run-rate")} /> },
+    { id: "room", node: <RoomTile onOpen={() => onOpen("room")} trendToggle={trend("room")} /> },
+    { id: "packing", node: <PackingTile from={from} to={to} onOpen={() => onOpen("packing")} trendToggle={trend("packing")} /> },
+    { id: "wrapping", node: <WrappingTile from={from} to={to} onOpen={() => onOpen("wrapping")} trendToggle={trend("wrapping")} /> },
+    ...(isManagerOrAdmin ? [{ id: "efficiency" as const, node: <EfficiencyTile from={from} to={to} onOpen={() => onOpen("efficiency")} trendToggle={trend("efficiency")} /> }] : []),
+    { id: "defects", node: <DefectsTile from={from} to={to} onOpen={() => onOpen("defects")} trendToggle={trend("defects")} /> },
+  ];
   return (
     <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-      <RunRateTile from={from} to={to} onOpen={() => onOpen("run-rate")} />
-      <RoomTile onOpen={() => onOpen("room")} />
-      <PackingTile from={from} to={to} onOpen={() => onOpen("packing")} />
-      <WrappingTile from={from} to={to} onOpen={() => onOpen("wrapping")} />
-      {isManagerOrAdmin && <EfficiencyTile from={from} to={to} onOpen={() => onOpen("efficiency")} />}
-      <DefectsTile from={from} to={to} onOpen={() => onOpen("defects")} />
+      {tiles.map(t => (
+        <Fragment key={t.id}>
+          {t.node}
+          {trendOf === t.id && (
+            <TrendCard id={t.id} onClose={() => setTrendOf(null)} className="col-span-full">
+              <KpiTrend id={t.id} from={from} to={to} />
+            </TrendCard>
+          )}
+        </Fragment>
+      ))}
     </div>
   );
 }

@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { Boxes, Loader2, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { KpiTrendChart } from "@/components/kpis/kpi-trend-chart";
 import { SaveChip } from "@/components/save-chip";
 import { useAutosave } from "@/hooks/use-autosave";
 import { toast } from "@/hooks/use-toast";
@@ -160,9 +161,19 @@ export function RoomKpiCard() {
             </div>
           )}
 
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {data.days.slice(0, 15).map(d => (
-              <div key={d.date} className="flex items-center gap-3 rounded-xl border border-border px-3 py-2">
+          {/* The days as a trend, oldest to newest (Graeme, 17 Nov 2026: the
+              three-column grid "is really hard to read"). */}
+          <KpiTrendChart
+            rows={data.days.filter(d => d.status === "ok").map(d => ({ date: d.date, value: d.score, note: `${d.boxes} boxes · ${d.packs} packs · ${d.deliveries} deliveries · ${h(d.paidHours)} paid` }))}
+            unit="% of a typical day" format={n => `${Number.isInteger(n) ? n : n.toFixed(1)}%`}
+            bands={{ stretch: 110, standard: 100, close: 90 }} bandLabels={{ standard: "Typical day" }}
+          />
+
+          <details className="group rounded-2xl border border-border">
+            <summary className="cursor-pointer px-4 py-3 font-semibold">Day by day, newest first</summary>
+          <div className="divide-y divide-border border-t border-border">
+            {data.days.map(d => (
+              <div key={d.date} className="flex items-center gap-3 px-4 py-2">
                 <span className={cn("rounded-lg px-2.5 py-1 font-display font-extrabold tabular-nums min-w-[4rem] text-center", BAND_BG[d.band])}>
                   {d.score != null ? `${d.score}%` : "—"}
                 </span>
@@ -173,6 +184,7 @@ export function RoomKpiCard() {
               </div>
             ))}
           </div>
+          </details>
 
           {data.canEdit && <Settings data={data} />}
         </>

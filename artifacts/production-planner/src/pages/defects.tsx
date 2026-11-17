@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 import { londonDay } from "@/lib/day-rollover";
 import { addDays, PERIOD_PRESETS, periodWindow, type PeriodPresetId } from "@/lib/roas";
 import { RecordDefectModal, DEFECT_STATION_LABELS, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
+import { DefectsTrendChart } from "@/components/kpis/kpi-trends";
 import {
   useDefectList, useDefectSummary, useDefectTypes, useDeleteDefect, useSaveDefectType, type DefectRange,
 } from "@/hooks/use-defects";
@@ -157,6 +158,13 @@ export default function DefectsPage({ embedded = false }: { embedded?: boolean }
         </div>
       )}
 
+      {/* The defect rate day by day, like every KPI (Graeme, 17 Nov 2026). */}
+      {current.data && current.data.byDay.filter(d => d.packsMade > 0).length > 1 && (
+        <section className="rounded-3xl border border-border bg-card p-5 space-y-3">
+          <h2 className="text-xl font-extrabold">Defect rate — trend</h2>
+          <DefectsTrendChart byDay={current.data.byDay} />
+        </section>
+      )}
       {current.data && current.data.byDay.length > 1 && current.data.waste.totalCost > 0 && (
         <WasteByDay rows={current.data.byDay} today={today} />
       )}
