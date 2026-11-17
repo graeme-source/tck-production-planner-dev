@@ -408,6 +408,30 @@ describe("F2F copies — the same pack, marked once", () => {
       c("x8", "Chicken no Chorizo (F2F)", "5065018206009"),
     ], packs)).toEqual([]);
   });
+  // Regression (Graeme, 17 Nov 2026): the new "F2F - Philly Cheesesteak
+  // Calzones 2.0" and "FREE TCK Garlic Mayo" carried the same printed
+  // barcode as the normal product but were never linked, so the packing
+  // scanner refused them as "Wrong item".
+  it("links a FREE copy to its recipe pack, like F2F", () => {
+    const r = suggestF2fLinks([c("fr", "FREE BBQ Pulled Pork", "5065018206016")], packs);
+    expect(r.map(x => [x.variantId, x.sameAs, x.recipeId])).toEqual([["fr", "21", 3]]);
+  });
+  it("links a FREE copy of a non-recipe item to the listing with the same name and barcode", () => {
+    const r = suggestF2fLinks([
+      c("m1", "TCK Garlic Mayo", "97748478844497"),
+      c("m2", "FREE TCK Garlic Mayo", "97748478844497"),
+    ], packs);
+    expect(r).toEqual([{ variantId: "m2", name: "FREE TCK Garlic Mayo", barcode: "97748478844497", sameAs: "m1", sameAsName: "TCK Garlic Mayo", recipeId: null }]);
+  });
+  it("won't link a non-recipe copy when the name differs, the code differs, or two originals match", () => {
+    expect(suggestF2fLinks([c("m1", "TCK Chilli Mayo", "97748478844497"), c("m2", "FREE TCK Garlic Mayo", "97748478844497")], packs)).toEqual([]);
+    expect(suggestF2fLinks([c("m1", "TCK Garlic Mayo", "97748478844411"), c("m2", "FREE TCK Garlic Mayo", "97748478844497")], packs)).toEqual([]);
+    expect(suggestF2fLinks([
+      c("m1", "TCK Garlic Mayo", "97748478844497"), c("m3", "TCK Garlic Mayo", "97748478844497"),
+      c("m2", "FREE TCK Garlic Mayo", "97748478844497"),
+    ], packs)).toEqual([]);
+    expect(suggestF2fLinks([c("m1", "TCK Garlic Mayo", "97748478844497", { current: false }), c("m2", "FREE TCK Garlic Mayo", "97748478844497")], packs)).toEqual([]);
+  });
 });
 
 // Regression (Graeme, 27 Oct 2026): TCK Garlic Mayo's Shopify code

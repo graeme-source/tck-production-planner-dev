@@ -221,7 +221,7 @@ function DisagreementsCard({ groups, canEdit }: { groups: GroupView[]; canEdit: 
   );
 }
 
-function ClashCard({ clash, isAdmin }: { clash: ClashView; isAdmin: boolean }) {
+function ClashCard({ clash, canEdit }: { clash: ClashView; canEdit: boolean }) {
   const invalidate = useInvalidateBarcodes();
   const [error, setError] = useState<string | null>(null);
   const keeperVariant = clash.keeper?.variants[0]?.variantId ?? null;
@@ -238,7 +238,7 @@ function ClashCard({ clash, isAdmin }: { clash: ClashView; isAdmin: boolean }) {
       {clash.losers.map(l => (
         <div key={l.identity.key} className="text-sm space-y-1">
           <p>Can't scan with it: <ProductName identityKey={l.identity.key} name={l.identity.name} /></p>
-          {isAdmin && keeperVariant && recipeIdOf(l.identity.key) == null && l.variants.map(v => (
+          {canEdit && keeperVariant && recipeIdOf(l.identity.key) == null && l.variants.map(v => (
             <button key={v.variantId} type="button" disabled={same.isPending} onClick={() => same.mutate(v.variantId)} className="h-10 px-3 rounded-lg border-2 border-border text-xs font-bold disabled:opacity-50">
               "{v.name}" is the same product as {clash.keeper!.identity.name}
             </button>
@@ -253,7 +253,7 @@ function ClashCard({ clash, isAdmin }: { clash: ClashView; isAdmin: boolean }) {
 /** F2F copies are the same pack with the same printed barcode (Graeme,
  *  2026-10-10). One reviewed step marks each "same product as" its
  *  recipe's pack — barcodes only; stock and sales counts are untouched. */
-function F2fCard({ links, isAdmin }: { links: CopyLink[]; isAdmin: boolean }) {
+function F2fCard({ links, canEdit }: { links: CopyLink[]; canEdit: boolean }) {
   const invalidate = useInvalidateBarcodes();
   const [done, setDone] = useState<CopyLink[] | null>(null);
   const apply = useMutation({
@@ -262,21 +262,23 @@ function F2fCard({ links, isAdmin }: { links: CopyLink[]; isAdmin: boolean }) {
   });
   if (!links.length && !done) return null;
   return (
-    <Card title={`F2F copies to link (${links.length})`} icon={<Copy className="w-5 h-5 text-primary" />}>
+    <Card title={`F2F and FREE copies to link (${links.length})`} icon={<Copy className="w-5 h-5 text-primary" />}>
       <p className="text-sm text-muted-foreground">
-        Each F2F listing below carries its recipe's printed barcode. Linking marks it the same product, so both scan and neither shows as a clash.
+        Each F2F or FREE listing below carries the normal product's printed barcode. Linking marks it the same product, so both scan and neither shows as a clash. The hourly Shopify check links these by itself; this button just does it now.
         This only affects barcodes — stock, sales counts and the stock gate don't change. Check the list, then link.
       </p>
       <ul className="space-y-1 text-sm">
         {links.map(l => (
-          <li key={l.variantId}><b>{l.name}</b> → <Link href={`/recipes?edit=${l.recipeId}`} className="font-semibold text-primary">{l.sameAsName}</Link> <span className="font-mono text-muted-foreground">{l.barcode}</span></li>
+          <li key={l.variantId}><b>{l.name}</b> → {l.recipeId != null
+            ? <Link href={`/recipes?edit=${l.recipeId}`} className="font-semibold text-primary">{l.sameAsName}</Link>
+            : <b>{l.sameAsName}</b>} <span className="font-mono text-muted-foreground">{l.barcode}</span></li>
         ))}
       </ul>
-      {isAdmin && links.length > 0 && (
+      {canEdit && links.length > 0 && (
         <button
           type="button"
           disabled={apply.isPending}
-          onClick={() => { if (window.confirm(`Link these ${links.length} F2F listing${links.length !== 1 ? "s" : ""} to their recipe's pack?`)) apply.mutate(); }}
+          onClick={() => { if (window.confirm(`Link these ${links.length} listing${links.length !== 1 ? "s" : ""} to the normal product?`)) apply.mutate(); }}
           className="h-12 px-4 rounded-xl bg-primary text-primary-foreground font-bold disabled:opacity-50"
         >
           {apply.isPending ? "Linking…" : `Link all ${links.length}`}
@@ -316,6 +318,9 @@ export default function BarcodesPage() {
   const { state } = useAuth();
   const role = state.status === "authenticated" ? state.user.role : null;
   const isAdmin = role === "admin";
+  // Managers may link copies and say two listings are the same product
+  // (Graeme, 17 Nov 2026); pulling from Shopify and bulk sends stay admin.
+  const canEdit = role === "admin" || role === "manager";
   const overview = useBarcodeOverview();
   const rejections = useScanRejections();
   const o = overview.data;
@@ -326,17 +331,17 @@ export default function BarcodesPage() {
       {overview.isLoading && <p className="text-muted-foreground">Loading…</p>}
       {overview.error && <p className="text-destructive">Couldn't load barcodes: {(overview.error as Error).message}</p>}
 
-      {o && <DisagreementsCard groups={o.groups} canEdit={role === "admin" || role === "manager"} />}
+      {o && <DisagreementsCard groups={o.groups} canEdit={canEdit} />}
       <ShopifySyncCard isAdmin={isAdmin} writesBlocked={o?.shopifyWritesBlocked ?? null} />
       <PullCard isAdmin={isAdmin} firstPullAt={o?.firstPullAt ?? null} />
 
       {o && (
         <>
-          <F2fCard links={o.f2fSuggestions} isAdmin={isAdmin} />
+          <F2fCard links={o.f2fSuggestions} canEdit={canEdit} />
           <ClubSpecialCard rows={o.clubSpecial} />
           <Card title={`Products sharing a barcode (${o.clashes.length})`} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} tone={o.clashes.length ? "warn" : undefined}>
             <p className="text-sm text-muted-foreground">Two products you still sell with the same code. The scanner lets only one of them use it, so the other is checked by eye until it has its own barcode. If they really are the same pack (an F2F or CFF copy), say so and both scan.</p>
-            {o.clashes.length === 0 ? <p className="text-sm">None.</p> : <ul className="space-y-3">{o.clashes.map(c => <ClashCard key={c.barcode} clash={c} isAdmin={isAdmin} />)}</ul>}
+            {o.clashes.length === 0 ? <p className="text-sm">None.</p> : <ul className="space-y-3">{o.clashes.map(c => <ClashCard key={c.barcode} clash={c} canEdit={canEdit} />)}</ul>}
           </Card>
 
           <Card title={`Old products still holding a reused barcode (${o.reused.length})`} icon={<Info className="w-5 h-5 text-sky-600" />}>

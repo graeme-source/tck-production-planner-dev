@@ -22,6 +22,17 @@
  *    is marked "same product as" the recipe's listing (sku_barcodes.
  *    same_product_as — barcodes only). suggestF2fLinks lists the copies to
  *    mark, for a person to review and apply once.
+ *
+ * 3. FREE copies ("FREE TCK Garlic Mayo") — the same item given away, with
+ *    the same printed barcode (Graeme, 17 Nov 2026). Treated like F2F. When
+ *    the item isn't a recipe (a sauce, a dessert bought in), the copy is
+ *    matched to the ordinary listing with the same name and barcode.
+ *
+ * Since 17 Nov 2026 the hourly Shopify check applies these links by itself
+ * (Graeme: "we do often have barcodes that are the same… F2F products, in
+ * all cases, have the same barcode as the non-F2F version"). The rule stays
+ * strict: the title must say F2F/FREE, the barcode must already be the
+ * same, and it must point at exactly one product.
  */
 import { gtinKey } from "./set";
 import type { KnownCodes } from "./scan";
@@ -68,6 +79,14 @@ export function clubSpecialScan(specialCode: string | null, specialKey: string |
 /** The marker an F2F copy carries at the start of its product title. */
 export const F2F_TITLE_PREFIX = /^\s*f2f\b/i;
 
+/** Any copy marker: "F2F - …" or "FREE …", with the dash or colon after it. */
+export const COPY_TITLE_PREFIX = /^\s*(?:f2f|free)\b[\s\-–—:]*/i;
+
+/** A product title without its copy marker, for comparing names. */
+export function titleWithoutCopyMarker(title: string | null | undefined): string {
+  return (title ?? "").replace(COPY_TITLE_PREFIX, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 export interface CopyCandidate {
   variantId: string;
   name: string;
@@ -95,14 +114,19 @@ export interface CopyLink {
   barcode: string;
   sameAs: string;
   sameAsName: string;
-  recipeId: number;
+  /** Null when the copy is of a listing that isn't a recipe (e.g. a sauce). */
+  recipeId: number | null;
 }
 
 /**
- * F2F copies to mark "same product as": a CURRENT listing, not linked to a
- * recipe and not already marked, whose title starts "F2F" and whose barcode
- * is a recipe pack's barcode — of exactly one recipe (anything less certain
- * is left alone for a person).
+ * F2F / FREE copies to mark "same product as": a CURRENT listing, not linked
+ * to a recipe and not already marked, whose title starts "F2F" or "FREE"
+ * and whose barcode is
+ *   1. a recipe pack's barcode — of exactly one recipe, else
+ *   2. the barcode of exactly one other current, unmarked listing with the
+ *      same name once the marker is taken off (FREE TCK Garlic Mayo →
+ *      TCK Garlic Mayo).
+ * Anything less certain is left alone for a person.
  */
 export function suggestF2fLinks(candidates: CopyCandidate[], packs: PackListing[]): CopyLink[] {
   const byCode = new Map<string, PackListing[]>();
@@ -113,12 +137,24 @@ export function suggestF2fLinks(candidates: CopyCandidate[], packs: PackListing[
   }
   const out: CopyLink[] = [];
   for (const c of candidates) {
-    if (!c.current || c.linked || c.sameProductAs || !c.barcode || !F2F_TITLE_PREFIX.test(c.productTitle ?? "")) continue;
-    const hits = byCode.get(gtinKey(c.barcode)) ?? [];
+    if (!c.current || c.linked || c.sameProductAs || !c.barcode || !COPY_TITLE_PREFIX.test(c.productTitle ?? "")) continue;
+    const key = gtinKey(c.barcode);
+    const hits = byCode.get(key) ?? [];
     const recipes = new Set(hits.map(h => h.recipeId));
-    if (recipes.size !== 1) continue;
-    const target = hits[0];
-    out.push({ variantId: c.variantId, name: c.name, barcode: c.barcode, sameAs: target.variantId, sameAsName: target.productName, recipeId: target.recipeId });
+    if (recipes.size === 1) {
+      const target = hits[0];
+      out.push({ variantId: c.variantId, name: c.name, barcode: c.barcode, sameAs: target.variantId, sameAsName: target.productName, recipeId: target.recipeId });
+      continue;
+    }
+    if (recipes.size > 1) continue;
+    const plain = titleWithoutCopyMarker(c.productTitle);
+    if (!plain) continue;
+    const originals = candidates.filter(o => o.variantId !== c.variantId && o.current && !o.sameProductAs
+      && !COPY_TITLE_PREFIX.test(o.productTitle ?? "") && o.barcode != null && gtinKey(o.barcode) === key
+      && titleWithoutCopyMarker(o.productTitle) === plain);
+    if (originals.length !== 1) continue;
+    const o = originals[0];
+    out.push({ variantId: c.variantId, name: c.name, barcode: c.barcode, sameAs: o.variantId, sameAsName: o.name, recipeId: null });
   }
   return out.sort((a, b) => a.sameAsName.localeCompare(b.sameAsName, "en-GB") || a.name.localeCompare(b.name));
 }

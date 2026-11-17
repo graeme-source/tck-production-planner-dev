@@ -12,7 +12,7 @@
  *   POST /variants/:variantId/use-shopify   take Shopify's barcode (manager/admin)
  *   POST /variants/:variantId/send-ours     send ours over a different number in Shopify (manager/admin)
  *   POST /variants/:variantId/retry-push    send again after "Not sent" (manager/admin)
- *   PUT  /variants/:variantId/same-product  mark a listing the same product as another (admin)
+ *   PUT  /variants/:variantId/same-product  mark a listing the same product as another (manager/admin)
  *   POST /variants/:variantId/packer-set    packing bench: set the barcode of a product that has NONE,
  *                                           scanned off the pack after a check by eye (packing access)
  *   GET  /overview                       every group, clashes, reused codes (manager/admin)
@@ -23,7 +23,7 @@
  *   POST /scan-rejections                log a refused / unmatched scan (packing screen)
  *   GET  /scan-rejections                recent refused scans (manager/admin)
  *   GET  /f2f-links                      F2F copies to mark "same product as" their recipe's pack (dry run)
- *   POST /f2f-links                      apply the chosen ones (admin) — barcodes only, no recipe mapping
+ *   POST /f2f-links                      apply the chosen ones (manager/admin) — barcodes only, no recipe mapping
  *   POST /variants/:variantId/packer-share  packing bench (manager/admin): same product as the code's holder — share its barcode
  */
 import { Router, type IRouter, type Request, type Response } from "express";
@@ -92,7 +92,7 @@ router.post("/variants/:variantId/use-shopify", requireManagerOrAdmin, validate(
 
 const SameBody = z.object({ sameAs: z.string().regex(/^\d{1,20}$/).nullable() });
 
-router.put("/variants/:variantId/same-product", requireAdmin, validate(SameBody), async (req, res) => {
+router.put("/variants/:variantId/same-product", requireManagerOrAdmin, validate(SameBody), async (req, res) => {
   const p = VariantParams.safeParse(req.params);
   if (!p.success) { res.status(400).json({ error: "Invalid variant id" }); return; }
   try {
@@ -180,7 +180,7 @@ router.get("/f2f-links", requireManagerOrAdmin, async (_req, res) => {
 
 const F2fBody = z.object({ variantIds: z.array(z.string().regex(/^\d{1,20}$/)).min(1).max(500) });
 
-router.post("/f2f-links", requireAdmin, validate(F2fBody), async (req, res) => {
+router.post("/f2f-links", requireManagerOrAdmin, validate(F2fBody), async (req, res) => {
   try {
     const applied = await applyF2fLinks((req.body as z.infer<typeof F2fBody>).variantIds, await actor(req));
     res.json({ applied });

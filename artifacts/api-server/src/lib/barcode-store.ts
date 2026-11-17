@@ -480,11 +480,18 @@ export async function applyF2fLinks(variantIds: string[], actor: Actor): Promise
     for (const link of f2fSuggestions(s)) {
       if (!wanted.has(link.variantId)) continue;
       await tx.update(skuBarcodesTable).set({ sameProductAs: link.sameAs, updatedAt: new Date() }).where(eq(skuBarcodesTable.variantId, link.variantId));
-      await logEvent({ variantId: link.variantId, recipeId: link.recipeId, productName: link.name, action: "same-product", oldBarcode: link.barcode, newBarcode: link.barcode, result: "ok", message: `F2F copy — marked the same product as ${link.sameAsName}`, actor }, tx);
+      await logEvent({ variantId: link.variantId, recipeId: link.recipeId, productName: link.name, action: "same-product", oldBarcode: link.barcode, newBarcode: link.barcode, result: "ok", message: `${/^\s*free\b/i.test(link.name) ? "FREE" : "F2F"} copy — marked the same product as ${link.sameAsName}`, actor }, tx);
       applied.push(link);
     }
   });
   return applied;
+}
+
+/** The hourly Shopify check links every F2F / FREE copy the strict rule is
+ *  sure of (Graeme, 17 Nov 2026) — no one has to remember to press Link. */
+export async function autoLinkCopies(actor: Actor): Promise<CopyLink[]> {
+  const ids = f2fSuggestions(await loadOwnership()).map(l => l.variantId);
+  return ids.length ? applyF2fLinks(ids, actor) : [];
 }
 
 // ── Packing scanner ─────────────────────────────────────────────────────────
@@ -1254,6 +1261,10 @@ async function runReconcile({ mode, dryRun, actor }: { mode: "pull" | "check"; d
     }
     // Shopify → app adopts: send the number to the product's other listings.
     for (const t of touched.values()) await pushProduct(t.recipeId, t.kind, null, before, actor ?? { id: null, name: "Shopify check" });
+    // New F2F / FREE listings carry the normal product's barcode: link them
+    // so the packing scanner accepts that code for either.
+    await autoLinkCopies(actor ?? { id: null, name: "Shopify check" })
+      .catch(err => console.error("[barcodes] linking F2F/FREE copies failed:", err));
   }
 
   // Clashes and reused codes as they stand after this run (simulated for a dry run).
