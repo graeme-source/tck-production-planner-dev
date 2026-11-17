@@ -149,18 +149,14 @@ export const bottomNavItems: NavItem[] = [
 ];
 
 // Analytics becomes a group for managers/admins so its analytics pages sit
-// under it. Team efficiency lives here only for now (Graeme, 2026-09-25).
-const ANALYTICS_PATHS = ["/reports", "/analytics/efficiency", "/analytics/production-kpis", "/analytics/defects", "/test-requests"];
+// under it. KPIs comes first: every KPI, its trend and its targets on one
+// page (Graeme, 17 Nov 2026 — it replaced the separate Team efficiency,
+// Production KPIs and Defects & waste entries, whose addresses redirect
+// there). Anyone may still report a defect or waste from quick actions.
+const ANALYTICS_PATHS = ["/analytics/kpis", "/reports", "/analytics/efficiency", "/analytics/production-kpis", "/analytics/defects", "/test-requests"];
 export const analyticsSubItems: NavItem[] = [
+  { name: "KPIs", href: "/analytics/kpis", icon: Target },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
-  { name: "Team efficiency", href: "/analytics/efficiency", icon: Gauge },
-  // Every station's target in one place; packing and wrapping set here
-  // (Graeme, 13 Nov 2026).
-  { name: "Production KPIs", href: "/analytics/production-kpis", icon: Target },
-  // Defects KPI (Graeme, 2026-10-01; waste £ 2026-10-09). Anyone may report a
-  // defect or waste from the quick-actions panel; the page sits with the
-  // other analytics.
-  { name: "Defects & waste", href: "/analytics/defects", icon: AlertOctagon },
   { name: "Test requests", href: "/test-requests", icon: ClipboardCheck },
 ];
 

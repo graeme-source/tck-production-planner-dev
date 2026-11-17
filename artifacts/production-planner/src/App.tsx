@@ -56,9 +56,8 @@ import PeoplePinPage from "@/pages/people-pin";
 import MyEmergencyContactPage from "@/pages/my-emergency-contact";
 import PeopleSection from "@/pages/people";
 import Reports from "@/pages/reports";
-import TeamEfficiencyPage from "@/pages/team-efficiency";
-import DefectsPage from "@/pages/defects";
-import ProductionKpisPage from "@/pages/production-kpis";
+import KpisPage from "@/pages/kpis";
+import { legacyKpiHref } from "@/lib/kpis-page";
 import Improvements from "@/pages/improvements";
 import EmployeeHub from "@/pages/employee-hub";
 import Fulfilment from "@/pages/fulfilment";
@@ -181,6 +180,20 @@ function FounderHome() {
 }
 
 // For moved pages: send old links to the new address, keeping ?query.
+/** An old KPI address → Analytics → KPIs (17 Nov 2026), keeping its query. */
+function LegacyKpiRedirect({ path }: { path: string }) {
+  const search = useSearch();
+  return <Redirect to={legacyKpiHref(path, search) ?? "/analytics/kpis"} replace />;
+}
+
+/** Analytics; its old Production KPIs / Packing Speed tabs now open the KPIs page. */
+function ReportsRoute() {
+  const search = useSearch();
+  const kpis = legacyKpiHref("/reports", search);
+  if (kpis) return <Redirect to={kpis} replace />;
+  return <ProtectedRoute component={Reports} pageKey="/reports" />;
+}
+
 function RedirectKeepingQuery({ to }: { to: string }) {
   const search = useSearch();
   return <Redirect to={search ? `${to}?${search}` : to} replace />;
@@ -303,12 +316,15 @@ function Router() {
               {/* Test boxes — reached from Sales & Marketing; same access. */}
               <Route path="/test-boxes" component={TestBoxesPage} />
               <Route path="/test-boxes/:id" component={TestBoxesPage} />
-              <Route path="/reports">{() => <ProtectedRoute component={Reports} pageKey="/reports" />}</Route>
-              {/* Team efficiency KPI — Analytics only for now (Graeme, 2026-09-25). Managers/admins; server-enforced. */}
-              <Route path="/analytics/efficiency" component={TeamEfficiencyPage} />
-              {/* Defects KPI + recorded defects (Graeme, 2026-10-01). Listed under Analytics; anyone signed in may record, so the page itself is open. */}
-              <Route path="/analytics/defects" component={DefectsPage} />
-              <Route path="/analytics/production-kpis" component={ProductionKpisPage} />
+              <Route path="/reports">{() => <ReportsRoute />}</Route>
+              {/* Every KPI in one place (Graeme, 17 Nov 2026). Team efficiency
+                  (managers/admins, server-enforced) and Defects & waste
+                  (anyone signed in may record) are tabs on it; the old
+                  addresses land on the matching tab. */}
+              <Route path="/analytics/kpis" component={KpisPage} />
+              <Route path="/analytics/efficiency">{() => <LegacyKpiRedirect path="/analytics/efficiency" />}</Route>
+              <Route path="/analytics/defects">{() => <LegacyKpiRedirect path="/analytics/defects" />}</Route>
+              <Route path="/analytics/production-kpis">{() => <LegacyKpiRedirect path="/analytics/production-kpis" />}</Route>
               {/* Forced testing (Graeme, 2026-10-10). Managers/admins; server-enforced. */}
               <Route path="/test-requests" component={TestRequestsPage} />
               {/* Training is for everyone: station matrices are self-service;

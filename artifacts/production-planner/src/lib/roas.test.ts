@@ -405,7 +405,9 @@ describe("periodWindow", () => {
     expect(ids.indexOf("last30")).toBe(ids.indexOf("last7") + 1);
   });
 
-  it("Last 6 and 12 months end yesterday", () => {
+  it("Last 3, 6 and 12 months end yesterday", () => {
+    expect(periodWindow("last3Months", now).from).toBe("2026-06-17");
+    expect(periodWindow("last3Months", now).to).toBe("2026-09-17");
     expect(periodWindow("last6Months", now).from).toBe("2026-03-17");
     expect(periodWindow("last6Months", now).to).toBe("2026-09-17");
     expect(periodWindow("last12Months", now).from).toBe("2025-09-17");
