@@ -3,28 +3,53 @@
  * 2026-09-15): the station's packs/hour KPI over the report's date range,
  * per day and per person. Same maths as the live station strip (20-minute
  * idle gaps pause the clock), so the numbers here match what the wrapper
- * saw at the bench. Colour bands mirror the strip: 180 standard / 240
- * stretch. Lives in its own file because pages/reports.tsx is frozen.
+ * saw at the bench. Colours follow the stored wrapping KPI (standard and
+ * stretch, set on Analytics → KPIs) — until 17 Nov 2026 this report had its
+ * own 180 / 240 while the station and dashboard used the stored figures.
+ * Lives in its own file because pages/reports.tsx is frozen.
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, Gift, ChevronDown, ChevronUp } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useProductionKpis } from "@/hooks/use-production-kpis";
+import { paceLevel, type ProductionKpi } from "@/lib/production-kpis";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface DayPace { date: string; packs: number; submissions: number; activeMinutes: number | null; idleMinutes: number | null; packsPerHour: number | null }
 interface PersonPace { userId: number; name: string; packs: number; daysWorked: number; activeMinutes: number; packsPerHour: number | null; days: DayPace[] }
 
-const STANDARD = 180;
-const STRETCH = 240;
+const TONE = {
+  stretch: "text-emerald-600 font-bold",
+  standard: "text-emerald-700 font-semibold",
+  close: "text-amber-600 font-semibold",
+  below: "text-rose-600 font-semibold",
+} as const;
 
-const rateTone = (rate: number | null) =>
-  rate == null ? "text-muted-foreground"
-  : rate >= STRETCH ? "text-emerald-600 font-bold"
-  : rate >= STANDARD ? "text-emerald-700 font-semibold"
-  : rate >= STANDARD * 0.8 ? "text-amber-600 font-semibold"
-  : "text-rose-600 font-semibold";
+const toneFor = (kpi: ProductionKpi) => (rate: number | null) =>
+  rate == null ? "text-muted-foreground" : TONE[paceLevel(rate, kpi)];
+
+/** The wrapping history for a range. Shared with the KPIs overview. */
+export function useWrappingSpeedHistory(fromDate: string, toDate: string) {
+  return useQuery<{ days: DayPace[]; people: PersonPace[] }>({
+    queryKey: ["wrapping-speed-history", fromDate, toDate],
+    enabled: !!fromDate && !!toDate,
+    queryFn: async () => {
+      const r = await fetch(`${BASE}/api/reports/wrapping-speed-history?from=${fromDate}&to=${toDate}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load wrapping speed");
+      return r.json();
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** Packs ÷ active hours over the days given (the report's "Overall packs / hour"). */
+export function overallWrappingRate(days: readonly DayPace[]): { packs: number; activeMinutes: number; rate: number | null } {
+  const packs = days.reduce((s, d) => s + d.packs, 0);
+  const activeMinutes = days.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
+  return { packs, activeMinutes, rate: activeMinutes > 1 ? Math.round(packs / (activeMinutes / 60)) : null };
+}
 
 const fmtMins = (mins: number | null) =>
   mins == null ? "—" : mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
@@ -35,16 +60,9 @@ export function WrappingSpeedReport({ fromDate, toDate }: { fromDate: string; to
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [showDays, setShowDays] = useState(false);
 
-  const { data, isLoading } = useQuery<{ days: DayPace[]; people: PersonPace[] }>({
-    queryKey: ["wrapping-speed-history", fromDate, toDate],
-    enabled: !!fromDate && !!toDate,
-    queryFn: async () => {
-      const r = await fetch(`${BASE}/api/reports/wrapping-speed-history?from=${fromDate}&to=${toDate}`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load wrapping speed");
-      return r.json();
-    },
-    staleTime: 60_000,
-  });
+  const { data, isLoading } = useWrappingSpeedHistory(fromDate, toDate);
+  const { kpis } = useProductionKpis();
+  const rateTone = toneFor(kpis.wrapping);
 
   if (isLoading) return <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></div>;
   if (!data || (data.days.length === 0 && data.people.length === 0)) {
@@ -64,15 +82,13 @@ export function WrappingSpeedReport({ fromDate, toDate }: { fromDate: string; to
     return next;
   });
 
-  const totalPacks = data.days.reduce((s, d) => s + d.packs, 0);
-  const totalActive = data.days.reduce((s, d) => s + (d.activeMinutes ?? 0), 0);
-  const overallRate = totalActive > 1 ? Math.round(totalPacks / (totalActive / 60)) : null;
+  const { packs: totalPacks, activeMinutes: totalActive, rate: overallRate } = overallWrappingRate(data.days);
 
   return (
     <div className="mt-8 space-y-4">
       <h3 className="font-semibold flex items-center gap-2">
         <Gift className="w-4 h-4 text-purple-500" /> Wrapping Speed
-        <span className="text-xs font-normal text-muted-foreground">packs/hour of active time · standard {STANDARD} · stretch {STRETCH}</span>
+        <span className="text-xs font-normal text-muted-foreground">packs/hour of active time · standard {kpis.wrapping.standard}{kpis.wrapping.stretch != null ? ` · stretch ${kpis.wrapping.stretch}` : ""}</span>
       </h3>
 
       <div className="grid grid-cols-3 gap-4">
