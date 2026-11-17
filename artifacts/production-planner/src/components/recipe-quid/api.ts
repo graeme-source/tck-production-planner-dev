@@ -56,7 +56,8 @@ export function useSetQuid(recipeId: number) {
     mutationFn: (v: { key: string; quid: boolean | null }) =>
       api<QuidView>(`/recipes/${recipeId}/quid`, { method: "PUT", body: JSON.stringify(v) }),
     onSuccess: (view) => {
-      qc.setQueryData(recipeQuidKey(recipeId), view);
+      // Typed here: inferring it from the key took the typecheck 15 minutes (17 Nov 2026).
+      qc.setQueryData<QuidView>(recipeQuidKey(recipeId), view);
       // The deck changed → the label list's "update needed" too.
       qc.invalidateQueries({ queryKey: ["product-labels"] });
     },
