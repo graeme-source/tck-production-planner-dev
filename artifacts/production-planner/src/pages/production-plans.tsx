@@ -87,6 +87,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useRecipeColourLookup, RecipeSwatch } from "@/components/recipe-swatch";
+import { PlanCardRecipes } from "@/components/plan-card-recipes";
 
 type PlanView = "list" | "detail";
 
@@ -6723,25 +6724,8 @@ function PlansList({ onViewPlan, onCreatePlan, onGoToday, currentDate, setCurren
                         <span>Recipe</span>
                         <span>Batches</span>
                       </div>
-                      <div className="space-y-1">
-                        {planItems.map(item => {
-                          const colorStyle = item.recipeColor ? { color: item.recipeColor } : undefined;
-                          const nameStyle = item.recipeColor ? colourStyle(item.recipeId, item.recipeColor, "text") : undefined;
-                          return (
-                            <div
-                              key={item.id}
-                              className="flex items-baseline justify-between gap-3 text-sm min-w-0"
-                            >
-                              <span className="truncate font-medium" style={nameStyle}>
-                                {item.recipeName}
-                              </span>
-                              <span className="tabular-nums font-bold whitespace-nowrap" style={colorStyle}>
-                                {item.batchesTarget}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
+                      {/* Struck through once built (Graeme, 17 Nov 2026). */}
+                      <PlanCardRecipes planId={plan.id} items={planItems} live={plan.status !== "draft"} />
                     </div>
                   )}
                 </div>

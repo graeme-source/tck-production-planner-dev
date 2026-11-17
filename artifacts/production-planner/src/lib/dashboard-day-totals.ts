@@ -36,6 +36,8 @@ export interface DayItem {
   stationCompletions?: Partial<Record<"building_1" | "building_2" | "ovens" | "mixing", number>> | null;
   /** Ticked finished at the wrapping station (a few short for wonkies is normal). */
   wrappingComplete?: boolean | null;
+  /** Both builders have moved on from this recipe (building station). */
+  builderMarkedCompleteAt?: string | null;
 }
 
 export interface DayTotals {
@@ -106,4 +108,17 @@ export function isItemDone(it: DayItem): boolean {
   if (it.wrappingComplete) return true;
   const p = itemPacks(it);
   return p.total > 0 && p.wrapped >= p.total;
+}
+
+/** A recipe is finished at the building table: every batch built across both
+ *  builders, or the builders have moved on from it (Graeme, 17 Nov 2026: the
+ *  dashboard's Today's Production and the production plans screen strike it
+ *  through so you can see where building is up to at a glance). "Moved on" is
+ *  only pressed for some recipes, so the batch count carries most days. */
+export function isItemBuilt(it: DayItem): boolean {
+  const target = it.batchesTarget ?? 0;
+  if (target <= 0) return false;
+  if (it.builderMarkedCompleteAt) return true;
+  const sc = it.stationCompletions ?? {};
+  return (sc.building_1 ?? 0) + (sc.building_2 ?? 0) >= target;
 }

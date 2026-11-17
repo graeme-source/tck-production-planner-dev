@@ -58,3 +58,20 @@ describe("isItemDone (Today's Production strike-through, 13 Nov 2026)", () => {
     expect(isItemDone({ ...godfather, batchesTarget: 0, fridgeQty: 5 })).toBe(false);
   });
 });
+
+describe("isItemBuilt (strike-through at building, 17 Nov 2026)", () => {
+  it("is built once every batch is built across both builders (BBQ 14 of 14 on 17 Nov)", async () => {
+    const { isItemBuilt } = await import("./dashboard-day-totals");
+    expect(isItemBuilt({ batchesTarget: 14, stationCompletions: { building_1: 9, building_2: 5 } })).toBe(true);
+    expect(isItemBuilt({ batchesTarget: 13, stationCompletions: { building_1: 3 } })).toBe(false);
+  });
+  it("is built when the builders moved on, even short", async () => {
+    const { isItemBuilt } = await import("./dashboard-day-totals");
+    expect(isItemBuilt({ batchesTarget: 13, stationCompletions: { building_1: 12 }, builderMarkedCompleteAt: "2026-11-17T10:00:00Z" })).toBe(true);
+  });
+  it("is never built with nothing planned, and wrapping alone doesn't count", async () => {
+    const { isItemBuilt } = await import("./dashboard-day-totals");
+    expect(isItemBuilt({ batchesTarget: 0, stationCompletions: { building_1: 3 } })).toBe(false);
+    expect(isItemBuilt({ batchesTarget: 4, wrappingComplete: true })).toBe(false);
+  });
+});
