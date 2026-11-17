@@ -31,6 +31,8 @@ export function invoiceSourceText(f: InvoiceSourceFacts): string {
   let how: string;
   if (f.source === "transaction") {
     how = `Added ${by} to a card transaction`;
+  } else if (f.via === "quick_action") {
+    how = `Sent ${by} from Quick actions`;
   } else if (f.via === "outstanding_find_transaction") {
     how = `Uploaded ${by} on the Finance page`;
   } else if (f.uploadId != null) {

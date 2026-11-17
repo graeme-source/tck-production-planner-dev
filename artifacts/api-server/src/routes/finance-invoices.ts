@@ -11,6 +11,7 @@ import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
 import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
 import { goesToInbox } from "../lib/finance/inbox-rules";
+import { requireFeature } from "../lib/feature-access";
 import { invoiceQueue, queueInvoice, rejectLineForInvoice, setInvoicePosted, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
 // Finance → Invoices: the searchable library of every invoice we hold
@@ -287,6 +288,40 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
   } catch (err) {
     console.error("[finance] invoice upload error:", err);
     res.status(500).json({ error: "Upload failed part-way — what arrived before the error is kept. Try again: files already in are skipped." });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Quick actions → "Add receipt or invoice" (Graeme, 17 Nov 2026): a photo
+// taken or chosen on a phone or iPad goes straight into the Finance Inbox,
+// as if uploaded with Add invoices. Open to whoever has the grant, who may
+// not have Finance at all — so it only adds, and answers with nothing more
+// than a count.
+
+router.post("/quick-add", requireFeature("finance.add_receipt"), receiveFiles, validate(z.object({})), async (req: Request, res: Response) => {
+  try {
+    const incoming = (req.files as Express.Multer.File[] | undefined) ?? [];
+    if (incoming.length === 0) { res.status(400).json({ error: "No photo or file arrived — try again." }); return; }
+    const userId = req.session.userId ?? null;
+    let added = 0;
+    let already = 0;
+    const refused: string[] = [];
+    for (const file of incoming) {
+      const name = file.originalname || "receipt";
+      const mime = invoiceMimeFor(name) ?? (file.mimetype === "application/pdf" || file.mimetype.startsWith("image/") ? file.mimetype : null);
+      if (!mime) { refused.push(name); continue; }
+      const r = await addInvoiceFile({ bytes: new Uint8Array(file.buffer), mime, name, sourcePath: name, source: "upload", uploadedBy: userId });
+      if (r.duplicate) { already++; continue; }
+      added++;
+      await logFinEvent("invoice", r.id, "uploaded", userId, { via: "quick_action" });
+      await refreshDuplicate(r.id);
+      await queueInvoice(r.id);
+    }
+    if (added > 0) kickInvoiceReader();
+    res.json({ added, already, refused });
+  } catch (err) {
+    console.error("[finance] quick-add error:", err);
+    res.status(500).json({ error: "Couldn't send it — try again." });
   }
 });
 

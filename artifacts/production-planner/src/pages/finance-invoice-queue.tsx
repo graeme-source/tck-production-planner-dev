@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ConfirmPostedDialog } from "@/components/finance/confirm-posted";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -66,6 +67,7 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
   const { invoice: inv } = entry;
   const [showFile, setShowFile] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [confirmPost, setConfirmPost] = useState(false);
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: QUEUE_KEY });
     queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
@@ -123,7 +125,7 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
       <MatchOptions quiet invoice={inv} matches={entry} busy={busy} onAttach={(lines) => attach.mutate(lines.map((l) => l.lineId))} onReject={(id) => reject.mutate(id)} />
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy} onClick={() => markPosted.mutate()}>
+        <Button disabled={busy} onClick={() => setConfirmPost(true)}>
           {markPosted.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Mark as posted
         </Button>
         {/* Same size as Mark as posted, with a border: the bookkeeper opens the
@@ -133,6 +135,9 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
         <Button variant="ghost" size="sm" className="sm:ml-auto" disabled={busy} onClick={() => leave.mutate()}>Remove from Inbox</Button>
       </div>
 
+      <ConfirmPostedDialog open={confirmPost} onOpenChange={setConfirmPost}
+        what={[inv.supplierName ?? inv.fileName, inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : null].filter(Boolean).join(" · ")}
+        onConfirm={() => markPosted.mutate()} />
       {showFile && <FilePreview url={`${BASE}/api/finance/invoices/${inv.id}/file`} mime={inv.fileMime} name={inv.fileName} />}
       {editing && <DetailsEditor invoice={inv} busy={false} onSaved={refresh} />}
     </CardContent></Card>

@@ -10,6 +10,11 @@ describe("invoiceSourceText", () => {
       .toBe("Uploaded by Gillian on the Finance page · 9 Nov, 13:18");
   });
 
+  it("says it was sent from Quick actions (Add receipt or invoice)", () => {
+    expect(invoiceSourceText({ ...base, uploaderName: "Graeme Carter", via: "quick_action", createdAt: "2026-11-17T16:40:00Z" }))
+      .toBe("Sent by Graeme Carter from Quick actions · 17 Nov, 16:40");
+  });
+
   it("says which zip a library upload came in", () => {
     expect(invoiceSourceText({ ...base, uploaderName: "Graeme Carter", uploadId: 2, uploadFileName: "TCK 2026 Supplier Invoices.zip", createdAt: "2026-11-03T12:04:46Z" }))
       .toBe("Uploaded by Graeme Carter to the Invoices library (TCK 2026 Supplier Invoices.zip) · 3 Nov, 12:04");

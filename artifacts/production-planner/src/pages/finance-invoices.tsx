@@ -9,6 +9,7 @@
  */
 import { useMemo, useRef, useState } from "react";
 import { InvoiceDeliveryChip } from "@/components/invoice-delivery-chip";
+import { ConfirmPostedDialog } from "@/components/finance/confirm-posted";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { unzipSync } from "fflate";
 import {
@@ -220,6 +221,10 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
     const arr = Array.from(files ?? []);
     if (!arr.length || busy) return;
     const zipsOnly = arr.every((f) => /\.zip$/i.test(f.name));
+    // A phone's photo picker makes it easy to tick several by accident
+    // (Graeme, 17 Nov 2026: one receipt went up as five photos). Check first.
+    const photos = arr.filter((f) => !/\.zip$/i.test(f.name));
+    if (photos.length > 1 && !window.confirm(`You chose ${photos.length} files:\n${photos.map((f) => f.name).join("\n")}\n\nSend all ${photos.length} to the Inbox?`)) return;
     const result = await uploadAll(arr, setProgress).catch((e: Error) => {
       toast({ title: "Upload couldn't start", description: e.message, variant: "destructive" });
       return null;
@@ -618,6 +623,7 @@ export function InvoiceDetail({ invoice, onClose }: { invoice: Invoice | null; o
 /** Uploaded and posted in QuickBooks straight away (Graeme, 17 Nov 2026:
  *  the accounts team "will mark it as posted once they've uploaded it"). */
 function MarkPostedButton({ invoice, onDone }: { invoice: Invoice; onDone: () => void }) {
+  const [confirm, setConfirm] = useState(false);
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const mark = useMutation({
@@ -634,9 +640,12 @@ function MarkPostedButton({ invoice, onDone }: { invoice: Invoice; onDone: () =>
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1">
       <span>Not posted in QuickBooks yet.</span>
-      <Button size="sm" disabled={mark.isPending} onClick={() => mark.mutate()}>
+      <Button size="sm" disabled={mark.isPending} onClick={() => setConfirm(true)}>
         {mark.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : null} Mark as posted
       </Button>
+      <ConfirmPostedDialog open={confirm} onOpenChange={setConfirm}
+        what={[invoice.supplierName ?? invoice.fileName, invoice.totalAmount ? money(invoice.totalAmount) : null].filter(Boolean).join(" · ")}
+        onConfirm={() => mark.mutate()} />
     </div>
   );
 }

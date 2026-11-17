@@ -85,7 +85,8 @@ import { FixedNoticeInterstitial } from "@/components/fixed-notice-interstitial"
 import { TestRequestCard } from "@/components/test-request-card";
 import { CalendarX, ClipboardCheck, Gift } from "lucide-react";
 import { DptSuggestionPrompt } from "@/components/dpt-suggestion-prompt";
-import { AlertOctagon, Banknote, BookOpen, BookUser, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
+import { AddReceiptModal } from "@/components/add-receipt-modal";
+import { AlertOctagon, Receipt, Banknote, BookOpen, BookUser, GraduationCap, ChevronRight, HeartPulse, ListTodo, ScanLine, ShieldAlert } from "lucide-react";
 import { StationPinnedContacts, StationContactsButton, StationContactsDialog } from "@/components/contacts/station-contacts";
 import { PAGE_STATION_KEYS } from "@/components/contacts/contacts-api";
 
@@ -1039,6 +1040,11 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
   const [defectOpen, setDefectOpen] = useState(false);
   const [incidentOpen, setIncidentOpen] = useState(false);
   const [wishOpen, setWishOpen] = useState(false);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  // Add receipt or invoice → the Finance Inbox (Graeme, 17 Nov 2026): his by
+  // default, and anyone granted it in Team & Access.
+  const { can } = useFeatureAccess();
+  const canAddReceipt = can("finance.add_receipt");
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
   // Accident & incident reports are managers and admins only (the
   // /api/incidents router and the HACCP tab are behind the same guard).
@@ -1079,7 +1085,9 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
         onOpenDefect={() => setDefectOpen(true)}
         onOpenWishList={() => setWishOpen(true)}
         onOpenIncident={canReportIncident ? () => setIncidentOpen(true) : undefined}
+        onOpenReceipt={canAddReceipt ? () => setReceiptOpen(true) : undefined}
       />
+      {canAddReceipt && <AddReceiptModal open={receiptOpen} onClose={() => setReceiptOpen(false)} />}
       {canReportIncident && <ReportIncidentModal open={incidentOpen} onClose={() => setIncidentOpen(false)} />}
       <RecordImprovementModal open={improvementOpen} onClose={() => setImprovementOpen(false)} />
       <RecordIssueModal open={issueOpen} onClose={() => setIssueOpen(false)} />
@@ -1115,7 +1123,7 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
 // opens it. ALWAYS starts
 // shut: a shared iPad must never greet the next person with it open
 // (Graeme, 2026-08-22). The swipe rules: lib/swipe-snap.ts.
-function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenWishList, onOpenIncident }: {
+function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, onOpenImprovement, onOpenIssue, onOpenKanban, onOpenDefect, onOpenWishList, onOpenIncident, onOpenReceipt }: {
   /** Show just these actions (and no team lists) — the accountants' dock. */
   only?: string[];
   assistantOpen: boolean;
@@ -1128,6 +1136,8 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
   onOpenWishList: () => void;
   /** Managers and admins only; absent → no "Report accident / incident" button. */
   onOpenIncident?: () => void;
+  /** The "Add receipt or invoice" grant only; absent → no button. */
+  onOpenReceipt?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const { openDock } = useTeamListDock();
@@ -1165,6 +1175,7 @@ function QuickActionsPanel({ only, assistantOpen, onOpenAssistant, onOpenTodos, 
     { key: "defect", label: REPORT_DEFECT_LABEL, hint: "Mislabel, binned, left out…", icon: AlertOctagon, tone: "bg-amber-600 text-white shadow-amber-600/30", onClick: run(onOpenDefect) },
     // Wish List (Graeme, 23 Oct 2026): paste a link to ask for kit.
     { key: "wish-list", label: `Add to ${WISH_LIST_NAME}`, hint: WISH_LIST_SUBTITLE, icon: Gift, tone: "bg-pink-500 text-white shadow-pink-500/30", onClick: run(onOpenWishList) },
+    { key: "receipt", label: "Add receipt or invoice", hint: "Photo straight to the Finance Inbox", icon: Receipt, tone: "bg-emerald-600 text-white shadow-emerald-600/30", onClick: run(() => onOpenReceipt?.()), hidden: !onOpenReceipt },
     { key: "kanban", label: "Pull kanban", hint: "Scan or pick an item", icon: ScanLine, tone: "bg-violet-500 text-white shadow-violet-500/30", onClick: run(onOpenKanban) },
     { key: "assistant", label: `Ask ${ASSISTANT_NAME}`, hint: "Ask a question", icon: JaneAvatar, tone: "bg-orange-500 text-white shadow-orange-500/30", onClick: run(onOpenAssistant), hidden: assistantOpen },
   ].map(a => (only && !only.includes(a.key) ? { ...a, hidden: true } : a));

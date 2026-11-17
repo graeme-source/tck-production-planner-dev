@@ -88,6 +88,10 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // Back-label printing from the wrapping station (Graeme, 2026-10-12):
   // founder only while he tests it; grant it here when the team takes over.
   { key: "labels.print_back", name: "Test-print labels", description: "Label review page: Test print, including a stamped proof of a label that isn't approved yet. (Back labels at the wrapping station are open to everyone.)", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
+  // Graeme, 17 Nov 2026: snap a receipt or invoice from Quick actions and it
+  // lands in the Finance Inbox — his, and anyone he grants (e.g. the people
+  // who do production planning). It never opens Finance itself.
+  { key: "finance.add_receipt", name: "Add receipt or invoice", description: "Quick actions → Add receipt or invoice: take a photo or choose one, and it goes straight into the Finance Inbox for the accounts team. Doesn't open Finance itself.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
   { key: "marketing.approve_emails", name: "Approve marketing emails", description: "Sales & Marketing: approve (or undo approval of) planned emails and Klaviyo campaigns before they go out, and get the \"need your approval\" reminder.", area: "The Business", kind: "ability", minRole: "admin", founderOnly: true },
 ];
 

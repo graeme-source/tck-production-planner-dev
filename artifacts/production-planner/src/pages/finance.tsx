@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { ConfirmPostedDialog } from "@/components/finance/confirm-posted";
 import { cn } from "@/lib/utils";
 import { Link, Redirect, useLocation } from "wouter";
 import { isFounderEmail } from "@workspace/feature-registry";
@@ -1526,9 +1527,13 @@ function PostedToggle({ line }: { line: FinLine }) {
     onError: (e: Error) => toast({ title: "Couldn't save posted", description: e.message, variant: "destructive" }),
   });
   const posted = save.isPending ? Boolean(save.variables) : Boolean(line.postedDetectedAt);
+  const [confirm, setConfirm] = useState(false);
   return (
     <div className="flex items-center gap-3">
-      <Switch id={`posted-${line.id}`} checked={posted} onCheckedChange={(v) => save.mutate(v)} disabled={save.isPending} />
+      <Switch id={`posted-${line.id}`} checked={posted} onCheckedChange={(v) => (v ? setConfirm(true) : save.mutate(false))} disabled={save.isPending} />
+      <ConfirmPostedDialog open={confirm} onOpenChange={setConfirm}
+        what={`${line.merchant ?? line.descriptor} · £${Number(line.amount).toFixed(2)}`}
+        onConfirm={() => save.mutate(true)} />
       <Label htmlFor={`posted-${line.id}`} className="text-sm">Posted in QuickBooks</Label>
       <span className="text-xs text-muted-foreground">
         {save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? "Saved" : "Done by itself once it's posted and has a VAT invoice."}
