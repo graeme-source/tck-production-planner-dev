@@ -97,6 +97,12 @@ describe("soldVsDispatched", () => {
     expect(r.totals).toMatchObject({ sold: 3, dispatched: 3, difference: 0, soldValue: 60.6, dispatchedValue: 60.6, valueDifference: 0 });
   });
 
+  it("doesn't count a pre-order as dispatched before its dispatch day comes", () => {
+    const orders = [order("2026-11-02T10:00:00Z", "2026-11-25"), order("2026-11-02T10:00:00Z", "2026-11-10")];
+    const r = soldVsDispatched(orders, oct, undefined, "2026-11-18");
+    expect(r.rows[1]).toMatchObject({ sold: 2, dispatched: 1 });
+  });
+
   it("shows APC only for periods starting on or after the first APC scan", () => {
     const p = monthPeriods("2026-07", "2026-08", "2026-11-18");
     const r = soldVsDispatched([], p, { scannedByPeriod: new Map([["2026-08", 1838]]), apcFrom: "2026-07-30" });

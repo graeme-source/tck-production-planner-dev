@@ -86,6 +86,7 @@ import qrRouter from "./qr";
 import pnlRouter from "./pnl";
 import pnlQboRouter from "./pnl-qbo";
 import profitTrackerRouter from "./profit-tracker";
+import pnlSoldVsDispatchedRouter from "./pnl-sold-vs-dispatched";
 import checklistsRouter from "./checklists";
 import improvementPromptRouter from "./improvement-prompt";
 import checklistReadingsRouter from "./checklist-readings";
@@ -552,6 +553,8 @@ router.use("/pnl", pnlRouter);
 router.use("/pnl-qbo", pnlQboRouter);
 // The profit tracker: predicted P&L, every order costed, vs QuickBooks (founder only).
 router.use("/pnl-tracker", profitTrackerRouter);
+// Orders sold vs dispatched on the founder P&L page (founder only).
+router.use("/pnl-sold-vs-dispatched", pnlSoldVsDispatchedRouter);
 router.use("/checklists", checklistsRouter);
 // "Have you made an improvement today?" — the optional last closing-checklist
 // item (signed-in person only; uptake is manager-guarded in the file).

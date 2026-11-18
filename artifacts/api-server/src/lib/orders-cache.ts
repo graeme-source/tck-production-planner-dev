@@ -229,6 +229,39 @@ export async function getCachedOrdersLondonDays(fromDate: string, toDate: string
   return rows.rows.map(r => r.payload);
 }
 
+/** The four fields a count-and-value report needs, without the payload. */
+export interface OrderSummaryRow {
+  createdAt: string;
+  cancelledAt: string | null;
+  tags: string | null;
+  totalPrice: string | null;
+}
+
+/**
+ * The same mirror read as getCachedOrders (UTC day bounds on created_at),
+ * but only created_at, cancelled_at, tags and total_price — for reports
+ * that count months of orders (Orders sold vs dispatched reads ~15k at a
+ * time, too many full payloads to parse per request).
+ */
+export async function getCachedOrderSummaries(fromDate: string, toDate: string): Promise<OrderSummaryRow[]> {
+  await ensureOrdersFresh(fromDate);
+  const rows = await db.execute<{ created_at: string | Date; cancelled_at: string | null; tags: string | null; total_price: string | null }>(sql`
+    SELECT created_at,
+           payload->>'cancelled_at' AS cancelled_at,
+           payload->>'tags' AS tags,
+           payload->>'total_price' AS total_price
+    FROM shopify_orders_cache
+    WHERE created_at >= ${`${fromDate}T00:00:00Z`}::timestamptz
+      AND created_at <= ${`${toDate}T23:59:59Z`}::timestamptz
+  `);
+  return rows.rows.map(r => ({
+    createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : new Date(r.created_at).toISOString(),
+    cancelledAt: r.cancelled_at,
+    tags: r.tags,
+    totalPrice: r.total_price,
+  }));
+}
+
 /**
  * Boot-time warm (fire and forget): pre-cover from the 1st of last month so
  * the first founder page load after a deploy doesn't pay the backfill.
