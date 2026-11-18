@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ConfirmPostedDialog } from "@/components/finance/confirm-posted";
 import { cn } from "@/lib/utils";
 import { Link, Redirect, useLocation } from "wouter";
@@ -11,6 +11,8 @@ import { CategoriesEditor } from "@/components/finance/categories-editor";
 import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
 import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
+import { InvoiceNotes } from "@/pages/finance-invoice-notes";
+import { invoiceMoney, ukDate } from "@/pages/finance-invoice-drop";
 import { inboxEntries, inboxTotal } from "@/lib/finance-inbox";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
@@ -35,6 +37,7 @@ import {
   Download,
   ExternalLink,
   CheckCircle2,
+  Eye,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -131,8 +134,16 @@ const DOC_KINDS: Array<{ value: string; label: string }> = [
 
 type MatchedBy = { name: string | null; at: string; how: "by_hand" | "automatically" | "from_email" | "no_vat" };
 
+type AttachedInvoice = {
+  id: number; supplierName: string | null; invoiceDate: string | null; invoiceNumber: string | null;
+  totalAmount: string | null; vatAmount: string | null; currency: string | null; notes: string | null;
+  paymentStatus: "paid" | "unpaid" | null; postedAt: string | null;
+};
+
 type LinesResponse = {
   lines: FinLine[];
+  /** The library invoice behind each attached document, by invoice id. */
+  attachedInvoices?: Record<number, AttachedInvoice>;
   /** Who put each transaction in the Inbox, when and how. */
   matchedBy?: Record<number, MatchedBy>;
   documentsByLine: Record<number, FinDocMeta[]>;
@@ -375,6 +386,41 @@ function InboxTab() {
   const invoices = inboxEntries(inbox.data);
   const counts: Record<InboxView, number | null> = { todo: matched.length + invoices.length, matched: matched.length, invoice: invoices.length, completed: null };
 
+  // Matched transactions look like the invoices below them — same size, same
+  // Mark as posted / View invoice — plus what they're attached to (Graeme,
+  // 18 Nov 2026: matched doesn't mean posted).
+  const matchedList = (ls: FinLine[]) => (
+    <div className="space-y-3">
+      {ls.map((line) => {
+        const docs = data?.documentsByLine[line.id] ?? [];
+        const doc = docs.find((d) => d.docKind === "invoice") ?? docs[0] ?? null;
+        const invId = doc ? invoiceIdOf(doc) : null;
+        return (
+          <MatchedLineCard
+            key={line.id}
+            line={line}
+            vendor={line.vendorId ? data?.vendors[line.vendorId] ?? null : null}
+            doc={doc}
+            invoice={invId ? data?.attachedInvoices?.[Number(invId)] ?? null : null}
+            provenance={provenanceText(data?.matchedBy?.[line.id])}
+            details={expanded === line.id}
+            onDetails={() => setExpanded(expanded === line.id ? null : line.id)}
+            detailsRow={
+              <LineRow
+                line={line}
+                vendor={line.vendorId ? data?.vendors[line.vendorId] ?? null : null}
+                docs={docs}
+                suggestionCount={data?.suggestionCounts[line.id] ?? 0}
+                expanded
+                onToggle={() => setExpanded(null)}
+                onStatus={(status, note) => statusMutation.mutate({ id: line.id, status, statusNote: note })}
+              />
+            }
+          />
+        );
+      })}
+    </div>
+  );
   const lineList = (ls: FinLine[]) => (
     <div className="space-y-2">
       {ls.map((line) => (
@@ -442,7 +488,7 @@ function InboxTab() {
           {view !== "invoice" && (
             <section className="space-y-2">
               {heading("Matched to a card transaction", matched.length)}
-              {matched.length ? lineList(matched) : <p className="text-sm text-muted-foreground">Nothing matched waiting.</p>}
+              {matched.length ? matchedList(matched) : <p className="text-sm text-muted-foreground">Nothing matched waiting.</p>}
             </section>
           )}
           {view !== "matched" && (
@@ -779,6 +825,137 @@ function AddLineDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () 
       </DialogContent>
     </Dialog>
   );
+}
+
+const TRANSACTION_SOURCE: Record<string, string> = {
+  capital_on_tap: "Capital on Tap card, from a CSV upload",
+  allica: "Allica bank, from a CSV upload",
+  manual: "added by hand",
+  backlog_seed: "from the backlog list",
+};
+
+/**
+ * An Inbox transaction that has its invoice but isn't posted yet (Graeme,
+ * 18 Nov 2026). Laid out like the invoice cards: who and when on the left,
+ * what it is and the note, the amount on the right; then what it's attached
+ * to; then Mark as posted and View invoice. Posting closes it once posted
+ * and invoiced, exactly as the switch on the transaction does.
+ */
+function MatchedLineCard({ line, vendor, doc, invoice, provenance, details, onDetails, detailsRow }: {
+  line: FinLine;
+  vendor: FinVendor | null;
+  doc: FinDocMeta | null;
+  invoice: AttachedInvoice | null;
+  provenance: string | null;
+  details: boolean;
+  onDetails: () => void;
+  detailsRow: ReactNode;
+}) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [showFile, setShowFile] = useState(false);
+  const [confirmPost, setConfirmPost] = useState(false);
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
+  };
+  const markPosted = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/lines/${line.id}/posted`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ posted: true }),
+    }),
+    onSuccess: (r: { autoDone?: boolean }) => {
+      toast(r.autoDone ? AUTO_DONE_TOAST : { title: "Marked as posted", description: "It stays in the Inbox until it has its VAT invoice." });
+      refresh();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't save that", description: e.message, variant: "destructive" }),
+  });
+  const detach = useMutation({
+    mutationFn: () => jsonFetch(`${BASE}/api/finance/invoices/${invoice!.id}/detach`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: "{}",
+    }),
+    onSuccess: () => { toast({ title: "Invoice taken off this transaction", description: "It's back in the Inbox to match again." }); refresh(); },
+    onError: (e: Error) => toast({ title: "Couldn't take it off", description: e.message, variant: "destructive" }),
+  });
+  const supplier = invoice?.supplierName ?? vendor?.name ?? line.merchant ?? line.descriptor;
+  const amount = invoice?.totalAmount ? invoiceMoney(invoice.totalAmount, invoice.currency) : `£${Number(line.amount).toFixed(2)}`;
+  const onCard = [
+    `${vendor?.name ?? line.merchant ?? line.descriptor}`,
+    `£${Number(line.amount).toFixed(2)} on ${ukDate(line.lineDate)}`,
+    line.cardLast4 ? `card ${line.cardLast4}` : null,
+    line.cardholder,
+  ].filter(Boolean).join(" · ");
+  const source = TRANSACTION_SOURCE[line.source] ?? null;
+  const busy = markPosted.isPending || detach.isPending;
+  return (
+    <Card><CardContent className="p-4 space-y-3">
+      <div className="flex flex-col sm:flex-row sm:items-start gap-x-4 gap-y-2">
+        <div className="sm:w-56 lg:w-64 shrink-0 min-w-0">
+          <div className="font-semibold break-words">{supplier}</div>
+          <div className="text-sm text-muted-foreground break-words">
+            {invoice?.invoiceDate ? ukDate(invoice.invoiceDate) : line.lineDate}
+            {invoice?.invoiceNumber ? ` · No. ${invoice.invoiceNumber}` : ""}
+          </div>
+          {provenance && <div className="text-xs text-muted-foreground break-words">{provenance}</div>}
+        </div>
+        <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+          <LineCategoryInline line={line} />
+          {invoice
+            ? <InvoiceNotes invoice={invoice} layout="inline" showCategory={false} />
+            : <span className="text-sm text-muted-foreground italic">{line.statusNote ?? ""}</span>}
+        </div>
+        <div className="shrink-0 sm:text-right font-bold tabular-nums text-lg leading-9">{amount}</div>
+      </div>
+
+      <div className="rounded-xl border-2 border-emerald-300 bg-emerald-50/60 dark:bg-emerald-950/20 px-4 py-3 flex items-start gap-3">
+        <Paperclip className="h-5 w-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
+        <div className="min-w-0">
+          <div className="font-semibold">Invoice attached to this transaction — not posted yet</div>
+          <div className="text-sm break-words">{onCard}</div>
+          <div className="text-xs text-muted-foreground break-words">
+            {source ? `${source[0].toUpperCase()}${source.slice(1)}` : null}
+            {invoice?.vatAmount != null ? `${source ? " · " : ""}VAT on the invoice ${invoiceMoney(invoice.vatAmount, invoice.currency)}` : ""}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button disabled={busy} onClick={() => setConfirmPost(true)}>
+          {markPosted.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Mark as posted
+        </Button>
+        {doc && (
+          <Button variant="outline" aria-expanded={showFile} onClick={() => setShowFile((v) => !v)}>
+            <Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide invoice" : "View invoice"}
+          </Button>
+        )}
+        <Button variant="ghost" size="sm" aria-expanded={details} onClick={onDetails}>{details ? "Hide transaction" : "Transaction details"}</Button>
+        {invoice && (
+          <Button variant="ghost" size="sm" className="sm:ml-auto" disabled={busy} onClick={() => detach.mutate()}>Wrong transaction — take it off</Button>
+        )}
+      </div>
+
+      <ConfirmPostedDialog open={confirmPost} onOpenChange={setConfirmPost}
+        what={`${supplier} · ${amount}`}
+        onConfirm={() => markPosted.mutate()} />
+      {showFile && doc && <FilePreview url={`${BASE}/api/finance/documents/${doc.id}/file`} mime={doc.fileMime} name={doc.fileName} />}
+      {details && detailsRow}
+    </CardContent></Card>
+  );
+}
+
+/** The transaction's category, compact, for the matched card's headline row. */
+function LineCategoryInline({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (categoryId: number | null) =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/category`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ categoryId }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onError: (e: Error) => toast({ title: "Couldn't save the category", description: e.message, variant: "destructive" }),
+  });
+  const value = save.isPending ? (save.variables ?? null) : line.categoryId;
+  return <CategorySelect value={value} onChange={(id) => save.mutate(id)} required disabled={save.isPending} className="shrink-0 max-w-full" />;
 }
 
 /** The category on a transaction's row, on its own line under the name so

@@ -128,6 +128,12 @@ export async function attachInvoiceToLine(invoiceId: number, lineId: number, use
 
   await db.update(finLinesTable).set({ status: "matched", updatedAt: new Date() })
     .where(and(eq(finLinesTable.id, lineId), inArray(finLinesTable.status, ["open", "identified"])));
+  // "What is this item?" chosen at upload carries onto the transaction,
+  // unless it already has one (Graeme, 18 Nov 2026).
+  if (inv.categoryId) {
+    await db.update(finLinesTable).set({ categoryId: inv.categoryId })
+      .where(and(eq(finLinesTable.id, lineId), isNull(finLinesTable.categoryId)));
+  }
   await db.update(finInvoicesTable).set({ ...(opts.alsoCovers ? {} : { lineId, documentId: doc.id }), awaitingTransactionAt: null, updatedAt: new Date() }).where(eq(finInvoicesTable.id, invoiceId));
 
   await logFinEvent("line", lineId, opts.auto ? "invoice_matched_automatically" : "document_added", userId, { fileName: inv.fileName, documentId: doc.id, fromInvoice: inv.id, reasons: opts.reasons });

@@ -9,6 +9,7 @@ import {
   finEventsTable,
   finLinesTable,
   finCategoriesTable,
+  finInvoicesTable,
   finMailboxTable,
   finMatchesTable,
   finStatementUploadsTable,
@@ -157,6 +158,19 @@ router.get("/lines", requireFinanceAccess, async (req: Request, res: Response) =
           .groupBy(finDocumentsTable.sourceRef)
       : [];
     const coversLines = new Map(shared.map((r) => [r.sourceRef, r.n]));
+    // The library invoice behind each attached document — what the Inbox's
+    // matched card shows for posting (Graeme, 18 Nov 2026).
+    const invoiceIds = invoiceRefs.map((r) => Number(r.slice("invoice:".length))).filter((n) => Number.isInteger(n) && n > 0);
+    const attachedInvoices = invoiceIds.length
+      ? await db
+          .select({
+            id: finInvoicesTable.id, supplierName: finInvoicesTable.supplierName, invoiceDate: finInvoicesTable.invoiceDate,
+            invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount, vatAmount: finInvoicesTable.vatAmount,
+            currency: finInvoicesTable.currency, notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus, postedAt: finInvoicesTable.postedAt,
+          })
+          .from(finInvoicesTable)
+          .where(inArray(finInvoicesTable.id, invoiceIds))
+      : [];
     const suggestions = lineIds.length
       ? await db
           .select({ lineId: finMatchesTable.lineId, n: sql<number>`count(*)::int` })
@@ -182,6 +196,7 @@ router.get("/lines", requireFinanceAccess, async (req: Request, res: Response) =
 
     res.json({
       lines,
+      attachedInvoices: Object.fromEntries(attachedInvoices.map((i) => [i.id, i])),
       matchedBy: matchedByFromEvents(lineEvents),
       documentsByLine: groupBy(docs.map((d) => ({ ...d, coversLines: coversLines.get(d.sourceRef) ?? 1 })), (d) => d.lineId),
       suggestionCounts: Object.fromEntries(suggestions.map((s) => [s.lineId, s.n])),

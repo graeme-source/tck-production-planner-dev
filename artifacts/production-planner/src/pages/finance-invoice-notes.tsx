@@ -19,9 +19,11 @@ export type PaymentStatus = "paid" | "unpaid" | null;
 // had said so. Both save on their own. `inline` lays them out in a card's
 // headline row (the Inbox), `stacked` in their own box (Outstanding's drop).
 
-export function InvoiceNotes({ invoice, layout = "stacked" }: {
+export function InvoiceNotes({ invoice, layout = "stacked", showCategory = true }: {
   invoice: { id: number; notes: string | null; paymentStatus: PaymentStatus; categoryId?: number | null };
   layout?: "stacked" | "inline";
+  /** Off where the card shows its transaction's category instead. */
+  showCategory?: boolean;
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -54,7 +56,7 @@ export function InvoiceNotes({ invoice, layout = "stacked" }: {
       toast({ title: "Couldn't save the category", description: e.message, variant: "destructive" });
     },
   });
-  const category = (
+  const category = !showCategory ? null : (
     <CategorySelect value={categoryId} onChange={(id) => saveCategory.mutate(id)} required disabled={saveCategory.isPending} className="shrink-0 max-w-full" />
   );
   const choice = (value: "unpaid" | "paid", label: string) => (
