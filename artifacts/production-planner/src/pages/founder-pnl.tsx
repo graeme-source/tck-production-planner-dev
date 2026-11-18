@@ -7,6 +7,7 @@ import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
+import { PnlByMonthCard } from "@/components/founder/pnl-by-month-card";
 import {
   TrendingUp,
   TrendingDown,
@@ -318,6 +319,11 @@ function PnLDashboard() {
           </div>
         }
       />
+
+      {/* QuickBooks, the real books — month by month (18 Nov 2026). */}
+      <PnlByMonthCard />
+
+      <h2 className="text-lg font-display font-bold pt-2">Estimate from Shopify orders</h2>
 
       {/* ── Date Picker ──────────────────────────────────────────────────── */}
       <PeriodPicker {...picker} />
