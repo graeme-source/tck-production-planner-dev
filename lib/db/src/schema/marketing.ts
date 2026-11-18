@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, timestamp, date, jsonb, boolean } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, timestamp, date, jsonb, boolean, primaryKey } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
 import { testBoxesTable } from "./test_boxes";
@@ -253,3 +253,29 @@ export const marketingEmailApprovalHistoryTable = pgTable("marketing_email_appro
 });
 
 export type MarketingEmailApproval = typeof marketingEmailApprovalsTable.$inferSelect;
+
+// Reasons to Buy (migration 0376, Graeme 18 Nov 2026). The list, and which
+// sent Klaviyo campaigns used each reason (matched automatically).
+export const marketingReasonsToBuyTable = pgTable("marketing_reasons_to_buy", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull(),
+  description: text("description"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  deletedAt: timestamp("deleted_at", { withTimezone: true }),
+});
+
+export const marketingCampaignReasonsReadTable = pgTable("marketing_campaign_reasons_read", {
+  campaignId: text("campaign_id").primaryKey(),
+  signature: text("signature").notNull(),
+  bodyText: text("body_text"),
+  readAt: timestamp("read_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const marketingCampaignReasonMatchesTable = pgTable("marketing_campaign_reason_matches", {
+  campaignId: text("campaign_id").notNull(),
+  reasonId: integer("reason_id").notNull().references(() => marketingReasonsToBuyTable.id, { onDelete: "cascade" }),
+  why: text("why"),
+}, t => [primaryKey({ columns: [t.campaignId, t.reasonId] })]);

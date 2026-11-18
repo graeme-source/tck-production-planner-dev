@@ -272,3 +272,18 @@ export async function klaviyoCampaignResults(): Promise<{
     ...(resultsError ? { error: "Couldn't load Klaviyo results just now" } : {}),
   };
 }
+
+// ── An email's words (Reasons to Buy, Graeme 18 Nov 2026) ─────────────────
+// The first message's template, for reading which reason to buy a sent
+// email used. One GET per campaign, only for campaigns not read before
+// (the words are kept in marketing_campaign_reasons_read). READ-ONLY.
+export async function klaviyoCampaignHtml(campaignId: string): Promise<string | null> {
+  const apiKey = await getKlaviyoKey();
+  if (!apiKey) return null;
+  const page = await loadCampaigns(apiKey, "2000-01-01");
+  const c = page.campaigns.find(x => x.id === campaignId);
+  const msgId = c?.relationships?.["campaign-messages"]?.data?.[0]?.id;
+  if (!msgId) return null;
+  const r = await kFetch<{ data?: { attributes?: { html?: string | null; text?: string | null } } }>(apiKey, `/api/campaign-messages/${msgId}/template/`);
+  return r.data?.attributes?.html || r.data?.attributes?.text || null;
+}

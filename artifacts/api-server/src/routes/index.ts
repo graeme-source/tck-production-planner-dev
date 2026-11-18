@@ -171,6 +171,7 @@ import revenueTargetsRouter from "./revenue-targets";
 import marketingCalendarRouter from "./marketing-calendar";
 import marketingApprovalsRouter from "./marketing-approvals";
 import marketingOffersRouter from "./marketing-offers";
+import marketingReasonsRouter from "./marketing-reasons";
 import testBoxesRouter from "./test-boxes";
 import testBoxShopifyRouter from "./test-box-shopify";
 import testBoxProductionRouter from "./test-box-production";
@@ -504,6 +505,8 @@ router.use("/revenue-targets", revenueTargetsRouter);
 router.use("/marketing-calendar/approvals", marketingApprovalsRouter);
 // The offer library (same access, guarded inside the router).
 router.use("/marketing-calendar/offers", marketingOffersRouter);
+// Reasons to Buy (18 Nov 2026): same access as the calendar.
+router.use("/marketing-calendar/reasons", marketingReasonsRouter);
 router.use("/marketing-calendar", marketingCalendarRouter);
 // Test-box scheduling (same access as Sales & Marketing, guarded inside).
 // /:id/shopify/* — draft Shopify products for a box (guarded inside; writes

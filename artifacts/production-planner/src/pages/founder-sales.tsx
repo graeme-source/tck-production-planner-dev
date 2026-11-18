@@ -7,6 +7,7 @@ import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Loader2, Check, AlertTriangle } from "lucide-react";
 import { MarketingCalendar } from "@/components/marketing-calendar/marketing-calendar";
+import { ReasonsToBuyPanel } from "@/components/marketing-calendar/reasons-to-buy-panel";
 import { EmailRevenuePanel } from "@/components/marketing-calendar/email-revenue-panel";
 import { SalesDriversSection } from "@/components/sales-drivers/sales-drivers-section";
 import { ChangeLog } from "@/components/sales-drivers/change-log";
@@ -125,6 +126,8 @@ export default function FounderSales() {
             connected={!!data?.email.configured}
             footer={isFounder ? <KlaviyoControls email={data?.email} onChanged={invalidate} /> : undefined}
           />
+          {/* Reasons to buy, least recently used first (Graeme, 18 Nov 2026). */}
+          <ReasonsToBuyPanel />
           <MarketingCalendar />
 
           {/* What's driving sales — delivery wait, conversion and the website
