@@ -84,6 +84,8 @@ import dailyCheckinRouter from "./daily-checkin";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
+import pnlQboRouter from "./pnl-qbo";
+import profitTrackerRouter from "./profit-tracker";
 import checklistsRouter from "./checklists";
 import improvementPromptRouter from "./improvement-prompt";
 import checklistReadingsRouter from "./checklist-readings";
@@ -546,6 +548,10 @@ router.use("/andon", andonRouter);
 router.use("/issue-pipeline", issuePipelineRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
+// QuickBooks Profit and Loss by Month on the founder P&L page (founder only).
+router.use("/pnl-qbo", pnlQboRouter);
+// The profit tracker: predicted P&L, every order costed, vs QuickBooks (founder only).
+router.use("/pnl-tracker", profitTrackerRouter);
 router.use("/checklists", checklistsRouter);
 // "Have you made an improvement today?" — the optional last closing-checklist
 // item (signed-in person only; uptake is manager-guarded in the file).
