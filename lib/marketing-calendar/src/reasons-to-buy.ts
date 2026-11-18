@@ -50,6 +50,8 @@ export interface ReasonEmail {
   /** The email's own words that show the reason (copied by the reader and
    *  checked to be really in the email). */
   evidence?: string | null;
+  /** The email in Klaviyo (its report page, where it can be cloned). */
+  klaviyoUrl?: string | null;
 }
 
 /** One use: a run of emails about the same reason with no long gap. */
@@ -154,6 +156,34 @@ export function readyFrom(lastUseTo: string | null, minGapDays: number | null): 
 export function isReady(lastUseTo: string | null, minGapDays: number | null, today: string): boolean {
   const from = readyFrom(lastUseTo, minGapDays);
   return from == null || from <= today;
+}
+
+/** How many days before its date a resting reason starts showing as due
+ *  soon, so it can be planned in (credit for Black Friday, 18 Nov 2026). */
+export const DUE_SOON_DAYS = 14;
+
+export type RestState =
+  /** Its shortest gap is a while off yet — yellow. */
+  | { kind: "resting"; date: string }
+  /** Can be used again within DUE_SOON_DAYS — green. */
+  | { kind: "due_soon"; date: string }
+  /** Can be used again from today — green. */
+  | { kind: "due_today"; date: string }
+  /** Could have been used again since `date` and hasn't been — dark green. */
+  | { kind: "overdue"; date: string };
+
+/**
+ * Where a reason stands against its shortest gap (Graeme, 18 Nov 2026):
+ * yellow while resting, green once it's due within two weeks or today, dark
+ * green when it's gone past its date unused. null = no gap set or never used.
+ * Guidance, not a rule — it can still be used while resting.
+ */
+export function restState(lastUseTo: string | null, minGapDays: number | null, today: string): RestState | null {
+  const date = readyFrom(lastUseTo, minGapDays);
+  if (!date) return null;
+  if (date < today) return { kind: "overdue", date };
+  if (date === today) return { kind: "due_today", date };
+  return addDays(today, DUE_SOON_DAYS) >= date ? { kind: "due_soon", date } : { kind: "resting", date };
 }
 
 /**

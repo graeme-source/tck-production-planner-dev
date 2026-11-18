@@ -10,15 +10,15 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
-import { Check, ChevronDown, ChevronRight, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
-import { AUDIENCES, guideWords, sinceWords, type AudienceKey, type ReasonGuide, type ReasonSummary } from "@workspace/marketing-calendar";
+import { Check, ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { AUDIENCES, guideWords, sinceWords, type AudienceKey, type ReasonGuide, type ReasonSummary, type RestState } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { calApi, CAL_KEY } from "./api";
 
 interface UseSales { perDayDuring: number; perDayBefore: number; changePct: number | null }
 interface ReasonsReport {
   connected: boolean;
-  reasons: Array<ReasonSummary & { lastUseSales: UseSales | null; guide: ReasonGuide; readyFrom: string | null; ready: boolean }>;
+  reasons: Array<ReasonSummary & { lastUseSales: UseSales | null; guide: ReasonGuide; readyFrom: string | null; ready: boolean; rest: RestState | null }>;
   unread: number;
   reading: boolean;
   error: string | null;
@@ -122,11 +122,7 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
             <span className={cn("block font-display font-extrabold", never ? "text-primary" : pending ? "text-muted-foreground font-semibold" : "text-foreground")}>
               {pending ? "Still checking emails…" : sinceWords(r.daysSince)}
             </span>
-            {!pending && r.lastUse && r.guide.minGapDays && (
-              r.ready
-                ? <span className="inline-block mt-0.5 text-xs font-semibold rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">Ready to use</span>
-                : <span className="inline-block mt-0.5 text-xs font-semibold rounded-full px-2 py-0.5 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">Resting until {day(r.readyFrom!)}</span>
-            )}
+            {!pending && r.rest && <RestPill rest={r.rest} />}
           </span>
           <span className="text-sm text-muted-foreground min-w-0">
             {u ? <>
@@ -140,7 +136,7 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
 
       {open && (
         <div className="pl-12 pr-4 pb-4 space-y-3">
-          {r.reason.description && <p className="text-sm text-muted-foreground max-w-prose break-words">{r.reason.description}</p>}
+          {r.reason.description && <p className="text-base font-semibold text-foreground max-w-prose break-words">{r.reason.description}</p>}
           {u && (
             <div className="text-sm space-y-0.5">
               <p>
@@ -162,7 +158,14 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
               <ul className="text-sm text-muted-foreground space-y-1">
                 {use.emails.map(e => (
                   <li key={e.campaignId} className="break-words">
-                    {day(e.date)} · {e.subject ?? e.name} <span className="tabular-nums">· {gbp(e.revenue)}</span>
+                    {day(e.date)} ·{" "}
+                    {e.klaviyoUrl ? (
+                      <a href={e.klaviyoUrl} target="_blank" rel="noopener noreferrer" title="Open in Klaviyo — Clone is at the top"
+                        className="font-semibold text-foreground underline underline-offset-2 decoration-muted-foreground/50 hover:decoration-foreground inline-flex items-baseline gap-1">
+                        {e.subject ?? e.name}<ExternalLink className="w-3.5 h-3.5 self-center shrink-0" />
+                      </a>
+                    ) : (e.subject ?? e.name)}{" "}
+                    <span className="tabular-nums">· {gbp(e.revenue)}</span>
                     {e.evidence && <span className="block text-xs italic">“{e.evidence}”</span>}
                   </li>
                 ))}
@@ -177,6 +180,26 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
       )}
     </div>
   );
+}
+
+/** Where a reason stands against its shortest gap — guidance, not a rule
+ *  (Graeme, 18 Nov 2026): yellow resting, green due soon / today, dark green
+ *  overdue. */
+function RestPill({ rest }: { rest: RestState }) {
+  const base = "inline-block mt-1 text-xs font-semibold rounded-full px-2.5 py-0.5 whitespace-nowrap";
+  const green = "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
+  switch (rest.kind) {
+    case "resting":
+      return <span className={cn(base, "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200")}
+        title={`Used recently — by its guide, it's next due ${day(rest.date)}. It can still be used before then.`}>Resting until {day(rest.date)}</span>;
+    case "due_soon":
+      return <span className={cn(base, green)} title={`Due to be used again from ${day(rest.date)} — plan it in.`}>Due soon · from {day(rest.date)}</span>;
+    case "due_today":
+      return <span className={cn(base, green)} title="Due to be used again from today.">Due today</span>;
+    case "overdue":
+      return <span className={cn(base, "bg-emerald-700 text-white dark:bg-emerald-600")}
+        title={`Could have been used again since ${day(rest.date)} and hasn't been.`}>Overdue · since {day(rest.date)}</span>;
+  }
 }
 
 /** Name + "what counts", saved as you leave each box. */

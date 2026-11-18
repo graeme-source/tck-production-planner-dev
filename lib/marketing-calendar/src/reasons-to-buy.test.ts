@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailText, evidenceFound, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { emailText, evidenceFound, restState, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -126,5 +126,23 @@ describe("guidance", () => {
       row(5, "2026-08-01", "2026-10-01", true),
     ]).map(r => r.id);
     expect(order).toEqual([3, 5, 2, 4, 1]);
+  });
+});
+
+describe("restState", () => {
+  it("is yellow while the gap is more than two weeks off", () => {
+    expect(restState("2026-11-17", 30, "2026-11-18")).toEqual({ kind: "resting", date: "2026-12-17" });
+  });
+  it("turns green (due soon) within two weeks of the date — credit for Black Friday", () => {
+    expect(restState("2026-09-27", 60, "2026-11-18")).toEqual({ kind: "due_soon", date: "2026-11-26" });
+    expect(restState("2026-11-17", 30, "2026-12-03")).toEqual({ kind: "due_soon", date: "2026-12-17" });
+  });
+  it("is due today on the date, and overdue after it while unused", () => {
+    expect(restState("2026-09-27", 60, "2026-11-26")).toEqual({ kind: "due_today", date: "2026-11-26" });
+    expect(restState("2026-09-27", 60, "2026-11-27")).toEqual({ kind: "overdue", date: "2026-11-26" });
+  });
+  it("says nothing with no gap set or no use yet", () => {
+    expect(restState("2026-09-27", null, "2026-11-18")).toBeNull();
+    expect(restState(null, 60, "2026-11-18")).toBeNull();
   });
 });

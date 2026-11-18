@@ -14,8 +14,8 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
-  addDays, emailText, evidenceFound, isReady, planningOrder, readyFrom, reasonsSignature, summariseReasons,
-  AUDIENCES, type AudienceKey, type ReasonDef, type ReasonEmail, type ReasonGuide, type ReasonSummary, type ReasonWithGuide,
+  addDays, emailText, evidenceFound, isReady, planningOrder, readyFrom, restState, reasonsSignature, summariseReasons,
+  AUDIENCES, type AudienceKey, type ReasonDef, type RestState, type ReasonEmail, type ReasonGuide, type ReasonSummary, type ReasonWithGuide,
 } from "@workspace/marketing-calendar";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "./ai/claude";
@@ -229,6 +229,8 @@ export interface ReasonsReport {
     /** When its shortest gap has passed; null = no gap set or never used. */
     readyFrom: string | null;
     ready: boolean;
+    /** Resting (yellow) / due soon, due today (green) / overdue (dark green). */
+    rest: RestState | null;
   }>;
   /** Sent emails not yet read against the current list. */
   unread: number;
@@ -283,6 +285,7 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
       campaignId: c.id, date: c.date, subject: c.subject, name: c.name,
       recipients: r?.recipients ?? 0, orders: r?.orders ?? 0, revenue: r?.revenue ?? 0,
       evidence: m.why,
+      klaviyoUrl: c.klaviyoUrl,
     });
     emailsByReason.set(m.reasonId, list);
   }
@@ -298,6 +301,7 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
       guide,
       readyFrom: readyFrom(lastTo, g.minGapDays),
       ready: isReady(lastTo, g.minGapDays, today),
+      rest: restState(lastTo, g.minGapDays, today),
     };
   })));
   const unread = reasons.length ? Math.max(0, sent.length - read.length) : 0;
