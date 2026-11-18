@@ -84,6 +84,7 @@ import dailyCheckinRouter from "./daily-checkin";
 import andonRouter from "./andon";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
+import pnlSoldVsDispatchedRouter from "./pnl-sold-vs-dispatched";
 import checklistsRouter from "./checklists";
 import improvementPromptRouter from "./improvement-prompt";
 import checklistReadingsRouter from "./checklist-readings";
@@ -546,6 +547,8 @@ router.use("/andon", andonRouter);
 router.use("/issue-pipeline", issuePipelineRouter);
 router.use("/qr", qrRouter);
 router.use("/pnl", pnlRouter);
+// Orders sold vs dispatched on the founder P&L page (founder only).
+router.use("/pnl-sold-vs-dispatched", pnlSoldVsDispatchedRouter);
 router.use("/checklists", checklistsRouter);
 // "Have you made an improvement today?" — the optional last closing-checklist
 // item (signed-in person only; uptake is manager-guarded in the file).

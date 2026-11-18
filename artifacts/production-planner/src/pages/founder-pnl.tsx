@@ -7,6 +7,7 @@ import { FounderNav } from "@/components/founder-nav";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
+import { SoldVsDispatchedCard } from "@/components/finance/sold-vs-dispatched-card";
 import {
   TrendingUp,
   TrendingDown,
@@ -560,6 +561,8 @@ function PnLDashboard() {
           </div>
         )}
       </div>
+
+      <SoldVsDispatchedCard />
 
       {/* ── Settings Panel ────────────────────────────────────────────────── */}
       <div className="glass-panel rounded-2xl overflow-hidden">

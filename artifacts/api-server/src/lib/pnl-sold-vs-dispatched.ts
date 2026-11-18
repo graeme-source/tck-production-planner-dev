@@ -155,11 +155,15 @@ function periodOf(day: string, periods: readonly Period[]): Period | undefined {
  * `apcScanned` per period key is the distinct orders scanned onto APC in
  * the period; a period starting before `apcFrom` shows null (a dash), since
  * a part-month count would look like a shortfall.
+ *
+ * `asOf` (today) stops a running month counting pre-orders that haven't
+ * gone out yet: a dispatch day after it isn't dispatched.
  */
 export function soldVsDispatched(
   orders: readonly SvdOrder[],
   periods: readonly Period[],
   apc: { scannedByPeriod: ReadonlyMap<string, number>; apcFrom: string | null } = { scannedByPeriod: new Map(), apcFrom: null },
+  asOf: string | null = null,
 ): SvdReport {
   const acc = new Map(periods.map(p => [p.key, { sold: 0, dispatched: 0, soldValue: 0, dispatchedValue: 0, noDeliveryDate: 0 }]));
 
@@ -178,6 +182,7 @@ export function soldVsDispatched(
       if (soldIn) acc.get(soldIn.key)!.noDeliveryDate += 1;
       continue;
     }
+    if (asOf != null && day > asOf) continue;
     const sentIn = periodOf(day, periods);
     if (sentIn) {
       const a = acc.get(sentIn.key)!;
