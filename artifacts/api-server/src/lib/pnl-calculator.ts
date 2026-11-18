@@ -4,6 +4,7 @@ import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
 import type { ShopifyOrder } from "../services/shopify";
 import { getVariantCosts } from "../services/shopify";
+import { boxSizeFor, type VariantCosting } from "./finance/profit-tracker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -277,25 +278,56 @@ export function classifyBoxes(
   const countable = orders.filter(isCountableOrder);
 
   for (const order of countable) {
-    const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
-    const weightG = order.total_weight ?? 0;
-
-    // Digital products (gift cards, memberships) have 0 weight and no shipping
-    if (weightG === 0 && !tags.includes("large box") && !tags.includes("small box") && !tags.includes("wholesale")) {
-      noShipCount++;
-      continue;
-    }
-
-    const hasLargeTag = tags.includes("large box") || tags.includes("wholesale");
-    const hasSmallTag = tags.includes("small box");
-    const isLargeBox = hasLargeTag || (!hasSmallTag && weightG >= weightThresholdGrams);
-
-    if (isLargeBox) {
-      largeBoxCount++;
-    } else {
-      smallBoxCount++;
-    }
+    // One rule, shared with the profit tracker (lib/finance/profit-tracker.ts).
+    const size = boxSizeFor(order.tags, order.total_weight ?? 0, weightThresholdGrams);
+    if (size === "none") noShipCount++;
+    else if (size === "large") largeBoxCount++;
+    else smallBoxCount++;
   }
 
   return { smallBoxCount, largeBoxCount, noShipCount };
+}
+
+// ── Per-variant costing for the profit tracker ─────────────────────────────
+
+/**
+ * What one unit of each variant costs, split the way QuickBooks splits it:
+ * food (recipe ingredients, or Shopify's cost for bought-in items) and the
+ * recipe's own packaging. The same recipe mapping and costings as
+ * calculateCogs. Variants with neither are left out (uncosted).
+ */
+export async function loadVariantCosting(
+  items: ReadonlyArray<{ variantId: string; title: string }>,
+): Promise<Map<string, VariantCosting>> {
+  const mappings = await loadMappings();
+  const variantToRecipe = new Map<string, number>();
+  for (const m of mappings) {
+    variantToRecipe.set(m.shopifyVariantId, m.recipeId);
+    if (m.wonkyVariantId) variantToRecipe.set(m.wonkyVariantId, m.recipeId);
+  }
+  const wanted = new Map(items.map(i => [i.variantId, i.title]));
+  const recipeIds = [...new Set([...wanted.keys()].map(v => variantToRecipe.get(v)).filter((x): x is number => x != null))];
+  const recipeCosts = await loadRecipeCosts(recipeIds);
+
+  const out = new Map<string, VariantCosting>();
+  const unmapped: string[] = [];
+  for (const vid of wanted.keys()) {
+    const rid = variantToRecipe.get(vid);
+    const c = rid != null ? recipeCosts.get(rid) : undefined;
+    if (!c) { unmapped.push(vid); continue; }
+    const perPortion = c.servings > 0 ? c.rawMaterialCostPerBatch / c.servings : 0;
+    out.set(vid, { name: c.name, food: perPortion * c.packSize, packaging: c.packagingCost, isPack: true });
+  }
+  if (unmapped.length > 0) {
+    try {
+      const costs = await getVariantCosts(unmapped);
+      for (const vid of unmapped) {
+        const cost = costs.get(vid);
+        if (cost != null && cost > 0) out.set(vid, { name: wanted.get(vid) || "Unknown item", food: cost, packaging: 0, isPack: false });
+      }
+    } catch (err) {
+      console.warn("[pnl-calculator] Shopify cost lookup failed:", err instanceof Error ? err.message : err);
+    }
+  }
+  return out;
 }
