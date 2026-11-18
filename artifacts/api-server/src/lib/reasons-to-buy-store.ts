@@ -100,6 +100,43 @@ const READ_RULES = [
   "Use the record_reasons tool only, with one entry per email given.",
 ].join("\n");
 
+// The second look (Graeme, 18 Nov 2026: "you've got credit" picked up a
+// free-pack email on a re-read). Every match the first pass proposes is
+// checked again on its own, against the reason's own description, and only
+// kept on a clear yes.
+const CHECK_TOOL: Anthropic.Tool = {
+  name: "check_matches",
+  description: "Give a verdict on each proposed match.",
+  input_schema: {
+    type: "object",
+    properties: {
+      verdicts: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            campaignId: { type: "string" },
+            reasonId: { type: "integer" },
+            yes: { type: "boolean", description: "True only if the email is clearly built around exactly this reason." },
+            why: { type: "string", description: "A few words." },
+          },
+          required: ["campaignId", "reasonId", "yes"],
+        },
+      },
+    },
+    required: ["verdicts"],
+  },
+};
+
+const CHECK_RULES = [
+  "You check proposed matches between marketing emails from The Calzone Kitchen and their REASONS TO BUY. Someone else proposed each match; your job is to catch the wrong ones.",
+  "A wrong match is far worse than a missed one. Say yes ONLY when the email's main hook is exactly this reason, as its description defines it.",
+  "- Say no when the email's hook is a different thing that merely resembles the reason, even if the same words like \"expiring\", \"unclaimed\", \"last chance\" or \"free\" appear. Examples: a free pack (something added to an order) is not credit (money on the customer's account); a recipe leaving the menu is not a clearance sale; a deadline alone is not any particular reason.",
+  "- Say no unless the email's own words name the reason's specific thing.",
+  "- When in doubt, say no.",
+  "Use the check_matches tool only, with one verdict per proposed match.",
+].join("\n");
+
 let reading: Promise<void> | null = null;
 let lastReadError: string | null = null;
 
@@ -141,38 +178,41 @@ async function readPending(): Promise<void> {
   }
 }
 
-/** Read one batch and store it. True when Claude answered for any email. */
-async function readBatch(
-  todo: SentCampaign[], reasons: ReasonDef[], signature: string,
-  doneById: Map<string, { bodyText: string | null }>,
-): Promise<boolean> {
-  const items: Array<{ c: SentCampaign; body: string }> = [];
-  for (const c of todo) {
-    let body = doneById.get(c.id)?.bodyText ?? null;
-    if (body == null) {
-      try { body = emailText(await klaviyoCampaignHtml(c.id)); } catch { body = ""; }
-    }
-    items.push({ c, body });
-  }
-  const shown = (body: string) => body.slice(0, BODY_CHARS);
+export interface BatchItem { c: SentCampaign; body: string }
 
-  const response = await getClaudeClient().messages.create({
+/** What an email is shown as: subject, preview and the top of its body. */
+function emailForAi(c: SentCampaign, body: string): string[] {
+  return [
+    `### campaignId ${c.id} (sent ${c.date})`,
+    `Subject: ${c.subject ?? ""}`,
+    `Preview: ${c.previewText ?? ""}`,
+    `Body: ${body ? body.slice(0, BODY_CHARS) : "(not available)"}`,
+  ];
+}
+
+const reasonLine = (r: ReasonDef) => `- id ${r.id}: ${r.name}${r.description ? ` — what counts: ${r.description}` : ""}`;
+
+/**
+ * Judge a batch of emails against the reasons — no saving. First pass:
+ * which reasons each email uses, quoting its own words (a quote that isn't
+ * really in the email is dropped). Second pass: each proposed match is
+ * checked again on its own and kept only on a clear yes. Both at
+ * temperature 0, so a re-read gives the same answer. Returns a map for
+ * every email Claude answered (an empty map = no reasons); emails missing
+ * from it weren't answered and stay unread.
+ */
+export async function judgeBatch(items: BatchItem[], reasons: ReasonDef[]): Promise<Map<string, Map<number, string>>> {
+  const client = getClaudeClient();
+  const response = await client.messages.create({
     model: CLAUDE_MODELS.sonnet,
     max_tokens: 2000,
+    temperature: 0,
     system: READ_RULES,
     messages: [{
       role: "user",
       content: [
-        "Reasons to buy:",
-        ...reasons.map(r => `- id ${r.id}: ${r.name}${r.description ? ` — what counts: ${r.description}` : ""}`),
-        "",
-        "Emails:",
-        ...items.map(({ c, body }) => [
-          `### campaignId ${c.id} (sent ${c.date})`,
-          `Subject: ${c.subject ?? ""}`,
-          `Preview: ${c.previewText ?? ""}`,
-          `Body: ${body ? shown(body) : "(not available)"}`,
-        ].join("\n")),
+        "Reasons to buy:", ...reasons.map(reasonLine), "",
+        "Emails:", ...items.map(({ c, body }) => emailForAi(c, body).join("\n")),
       ].join("\n"),
     }],
     tools: [READ_TOOL],
@@ -181,22 +221,77 @@ async function readBatch(
   const tool = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
   type Answer = { campaignId?: string; matches?: Array<{ reasonId?: number; evidence?: string }> };
   const answers = ((tool?.input ?? {}) as { emails?: Answer[] }).emails ?? [];
-  const valid = new Set(reasons.map(r => r.id));
+  const reasonById = new Map(reasons.map(r => [r.id, r]));
   const byId = new Map(answers.map(a => [String(a.campaignId), a]));
+
+  const out = new Map<string, Map<number, string>>();
+  const proposed: Array<{ item: BatchItem; reasonId: number; evidence: string }> = [];
+  for (const item of items) {
+    const a = byId.get(item.c.id);
+    if (!a) continue;
+    out.set(item.c.id, new Map());
+    // Only matches whose quoted words really are in what Claude was shown.
+    const words = [item.c.subject ?? "", item.c.previewText ?? "", item.body.slice(0, BODY_CHARS)].join("\n");
+    const seen = new Set<number>();
+    for (const m of a.matches ?? []) {
+      if (typeof m.reasonId !== "number" || !reasonById.has(m.reasonId) || seen.has(m.reasonId)) continue;
+      if (!evidenceFound(m.evidence, words)) continue;
+      seen.add(m.reasonId);
+      proposed.push({ item, reasonId: m.reasonId, evidence: (m.evidence ?? "").trim().slice(0, 300) });
+    }
+  }
+  if (!proposed.length) return out;
+
+  const check = await client.messages.create({
+    model: CLAUDE_MODELS.sonnet,
+    max_tokens: 1500,
+    temperature: 0,
+    system: CHECK_RULES,
+    messages: [{
+      role: "user",
+      content: proposed.map((p, i) => {
+        const r = reasonById.get(p.reasonId)!;
+        return [
+          `## Proposed match ${i + 1}: campaignId ${p.item.c.id} → reasonId ${r.id}`,
+          `Reason: ${r.name}${r.description ? ` — what counts: ${r.description}` : ""}`,
+          `Words quoted as showing it: "${p.evidence}"`,
+          ...emailForAi(p.item.c, p.item.body),
+        ].join("\n");
+      }).join("\n\n"),
+    }],
+    tools: [CHECK_TOOL],
+    tool_choice: { type: "tool", name: "check_matches" },
+  });
+  const checkTool = check.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+  const verdicts = ((checkTool?.input ?? {}) as { verdicts?: Array<{ campaignId?: string; reasonId?: number; yes?: boolean }> }).verdicts ?? [];
+  const yes = new Set(verdicts.filter(v => v.yes === true).map(v => `${v.campaignId}|${v.reasonId}`));
+  // No verdict = not confirmed = not kept.
+  for (const p of proposed) {
+    if (yes.has(`${p.item.c.id}|${p.reasonId}`)) out.get(p.item.c.id)!.set(p.reasonId, p.evidence);
+  }
+  return out;
+}
+
+/** Read one batch and store it. True when Claude answered for any email. */
+async function readBatch(
+  todo: SentCampaign[], reasons: ReasonDef[], signature: string,
+  doneById: Map<string, { bodyText: string | null }>,
+): Promise<boolean> {
+  const items: BatchItem[] = [];
+  for (const c of todo) {
+    let body = doneById.get(c.id)?.bodyText ?? null;
+    if (body == null) {
+      try { body = emailText(await klaviyoCampaignHtml(c.id)); } catch { body = ""; }
+    }
+    items.push({ c, body });
+  }
+  const judged = await judgeBatch(items, reasons);
 
   await db.transaction(async tx => {
     for (const { c, body } of items) {
-      const a = byId.get(c.id);
+      const kept = judged.get(c.id);
       // An email Claude skipped is left unread, to try again next round.
-      if (!a) continue;
-      // Only matches whose quoted words really are in what Claude was shown.
-      const words = [c.subject ?? "", c.previewText ?? "", shown(body)].join("\n");
-      const kept = new Map<number, string>();
-      for (const m of a.matches ?? []) {
-        if (typeof m.reasonId !== "number" || !valid.has(m.reasonId) || kept.has(m.reasonId)) continue;
-        if (!evidenceFound(m.evidence, words)) continue;
-        kept.set(m.reasonId, (m.evidence ?? "").trim().slice(0, 300));
-      }
+      if (!kept) continue;
       await tx.delete(marketingCampaignReasonMatchesTable).where(eq(marketingCampaignReasonMatchesTable.campaignId, c.id));
       if (kept.size) {
         await tx.insert(marketingCampaignReasonMatchesTable)
@@ -207,7 +302,7 @@ async function readBatch(
         .onConflictDoUpdate({ target: marketingCampaignReasonsReadTable.campaignId, set: { signature, bodyText: body, readAt: new Date() } });
     }
   });
-  return byId.size > 0;
+  return judged.size > 0;
 }
 
 // ── The report ───────────────────────────────────────────────────────────
@@ -311,11 +406,15 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
 
 // ── Editing the list ──────────────────────────────────────────────────────
 
-export async function addReason(input: { name: string; description: string | null }, userId: number | null): Promise<number> {
+export async function addReason(input: { name: string; description: string | null } & ReasonGuide, userId: number | null): Promise<number> {
   const [last] = await db.select({ sortOrder: marketingReasonsToBuyTable.sortOrder }).from(marketingReasonsToBuyTable)
     .where(isNull(marketingReasonsToBuyTable.deletedAt)).orderBy(desc(marketingReasonsToBuyTable.sortOrder)).limit(1);
   const [row] = await db.insert(marketingReasonsToBuyTable)
-    .values({ name: input.name, description: input.description, sortOrder: (last?.sortOrder ?? 0) + 1, createdBy: userId })
+    .values({
+      name: input.name, description: input.description,
+      emailsPerUse: input.emailsPerUse, daysPerUse: input.daysPerUse, minGapDays: input.minGapDays, audiences: input.audiences,
+      sortOrder: (last?.sortOrder ?? 0) + 1, createdBy: userId,
+    })
     .returning({ id: marketingReasonsToBuyTable.id });
   void kickReasonReader();
   return row.id;

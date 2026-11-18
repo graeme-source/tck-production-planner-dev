@@ -2,7 +2,7 @@
  * Reasons to Buy on the Sales & Marketing page (Graeme, 18 Nov 2026).
  *
  *   GET    /marketing-calendar/reasons            the list, least recently used first, with each reason's uses
- *   POST   /marketing-calendar/reasons            add a reason
+ *   POST   /marketing-calendar/reasons            add a reason (and its guide)
  *   PATCH  /marketing-calendar/reasons/:id        rename / reword / set its guidance
  *   DELETE /marketing-calendar/reasons/:id        remove (soft)
  *   POST   /marketing-calendar/reasons/read-now   read any unread emails now
@@ -36,10 +36,26 @@ const ReasonBody = z.object({
   description: z.string().trim().max(600).nullable().optional(),
 });
 
-router.post("/", validate(ReasonBody), async (req: Request, res: Response) => {
-  const b = req.body as z.infer<typeof ReasonBody>;
+const AUDIENCE_KEYS = AUDIENCES.map(a => a.key) as [string, ...string[]];
+// Guidance (0377) — all optional; null clears it.
+const GuideBody = z.object({
+  emailsPerUse: z.number().int().min(1).max(30).nullable().optional(),
+  daysPerUse: z.number().int().min(1).max(90).nullable().optional(),
+  minGapDays: z.number().int().min(1).max(730).nullable().optional(),
+  audiences: z.array(z.enum(AUDIENCE_KEYS)).max(AUDIENCES.length).optional(),
+});
+type AudienceKey = typeof AUDIENCES[number]["key"];
+// The guide can be set when a reason is added (Graeme, 18 Nov 2026).
+const AddBody = ReasonBody.merge(GuideBody);
+
+router.post("/", validate(AddBody), async (req: Request, res: Response) => {
+  const b = req.body as z.infer<typeof AddBody>;
   try {
-    const id = await addReason({ name: b.name, description: b.description || null }, req.session.userId ?? null);
+    const id = await addReason({
+      name: b.name, description: b.description || null,
+      emailsPerUse: b.emailsPerUse ?? null, daysPerUse: b.daysPerUse ?? null, minGapDays: b.minGapDays ?? null,
+      audiences: [...new Set(b.audiences ?? [])] as AudienceKey[],
+    }, req.session.userId ?? null);
     res.status(201).json({ id });
   } catch (err) {
     console.error("[reasons-to-buy] add failed:", err);
@@ -48,14 +64,7 @@ router.post("/", validate(ReasonBody), async (req: Request, res: Response) => {
 });
 
 const Params = z.object({ id: z.coerce.number().int().positive() });
-const AUDIENCE_KEYS = AUDIENCES.map(a => a.key) as [string, ...string[]];
-// Guidance (0377) — all optional; null clears it.
-const PatchBody = ReasonBody.partial().extend({
-  emailsPerUse: z.number().int().min(1).max(30).nullable().optional(),
-  daysPerUse: z.number().int().min(1).max(90).nullable().optional(),
-  minGapDays: z.number().int().min(1).max(730).nullable().optional(),
-  audiences: z.array(z.enum(AUDIENCE_KEYS)).max(AUDIENCES.length).optional(),
-});
+const PatchBody = ReasonBody.partial().merge(GuideBody);
 
 router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) => {
   const p = Params.safeParse(req.params);
@@ -68,7 +77,7 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
       ...(b.emailsPerUse !== undefined ? { emailsPerUse: b.emailsPerUse } : {}),
       ...(b.daysPerUse !== undefined ? { daysPerUse: b.daysPerUse } : {}),
       ...(b.minGapDays !== undefined ? { minGapDays: b.minGapDays } : {}),
-      ...(b.audiences !== undefined ? { audiences: [...new Set(b.audiences)] as typeof AUDIENCES[number]["key"][] } : {}),
+      ...(b.audiences !== undefined ? { audiences: [...new Set(b.audiences)] as AudienceKey[] } : {}),
     });
     if (!ok) { res.status(404).json({ error: "Not found" }); return; }
     res.json({ ok: true });

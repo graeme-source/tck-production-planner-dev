@@ -82,8 +82,10 @@ const pennies = (n: number) => Math.round(n * 100) / 100;
 
 /** How the emails are read. Bump it when the reading rules change so every
  *  email is read again under the new rules (v2, 18 Nov: strict — the email's
- *  own words must show the reason, after "credit" picked up free-pack emails). */
-export const READ_RULES_VERSION = 2;
+ *  own words must show the reason, after "credit" picked up free-pack emails;
+ *  v3, same day: a second strict check of every match, temperature 0, after
+ *  a re-read let a free-pack email back in). */
+export const READ_RULES_VERSION = 3;
 
 /** The reasons list as the matcher saw it: a changed name or description
  *  (or new reading rules) means every email is read again. */
