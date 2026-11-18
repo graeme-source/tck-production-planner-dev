@@ -1,19 +1,16 @@
 /**
  * The second confirmation before goods-in puts stock on Shopify (Graeme,
- * 28 Oct 2026): received bought-in brownies — any ingredient linked to a
- * Shopify variant — go straight on sale, so the receiver reads what's about
- * to upload and types each quantity again before "Upload" unlocks.
+ * 28 Oct 2026): received bought-in items linked to a Shopify variant go
+ * straight on sale, so the receiver sees what's about to upload — with the
+ * working, packs × units per pack — and confirms with one button. Typing the
+ * number again was dropped on 18 Nov 2026 ("there are enough checks").
  *
  * Rendered INSIDE the receive dialog's card (the dialog is modal, so a portal
  * outside it wouldn't take taps): covers the card, X / "Back" close it, and
  * it scrolls inside if there are several items.
  */
-import { useState } from "react";
 import { Loader2, ShoppingBag, Upload, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import {
-  SHOPIFY_UPLOAD_CONFIRM, SHOPIFY_UPLOAD_WARNING, shopifyQuantityConfirmed, type ShopifyUpload,
-} from "@workspace/goods-in";
+import { SHOPIFY_UPLOAD_CONFIRM, SHOPIFY_UPLOAD_WARNING, type ShopifyUpload } from "@workspace/goods-in";
 
 export function ShopifyUploadConfirm({ uploads, saving, onConfirm, onClose }: {
   uploads: ShopifyUpload[];
@@ -21,8 +18,6 @@ export function ShopifyUploadConfirm({ uploads, saving, onConfirm, onClose }: {
   onConfirm: () => void;
   onClose: () => void;
 }) {
-  const [typed, setTyped] = useState<Record<number, string>>({});
-  const allMatch = uploads.every(u => shopifyQuantityConfirmed(typed[u.lineId] ?? "", u.units));
 
   return (
     <div className="absolute inset-0 z-50 bg-black/60 flex items-center justify-center p-2 sm:p-4" onClick={saving ? undefined : onClose}>
@@ -46,39 +41,18 @@ export function ShopifyUploadConfirm({ uploads, saving, onConfirm, onClose }: {
             {SHOPIFY_UPLOAD_WARNING}
           </p>
 
-          {uploads.map(u => {
-            const value = typed[u.lineId] ?? "";
-            const ok = shopifyQuantityConfirmed(value, u.units);
-            const wrong = value.trim() !== "" && !ok;
-            return (
-              <div key={u.lineId} className="rounded-2xl border-2 border-border p-4 space-y-3">
-                <div>
-                  <p className="text-xl font-bold leading-tight">{u.product}</p>
-                  <p className="text-base text-muted-foreground mt-1">
-                    {u.units > 0
-                      ? <>Adds <span className="font-bold text-foreground tabular-nums">{u.units}</span> to Shopify</>
-                      : <>Takes <span className="font-bold text-foreground tabular-nums">{Math.abs(u.units)}</span> off Shopify</>}
-                    {u.name !== u.product && <> · received as {u.name}</>}
-                  </p>
-                </div>
-                <label className="block">
-                  <span className="text-sm font-semibold">Type the quantity again</span>
-                  <input
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    autoComplete="off"
-                    value={value}
-                    onChange={e => setTyped(t => ({ ...t, [u.lineId]: e.target.value }))}
-                    className={cn(
-                      "mt-1 w-full h-14 rounded-xl border-2 bg-card px-4 text-2xl font-bold tabular-nums outline-none",
-                      ok ? "border-emerald-500" : wrong ? "border-red-500" : "border-border focus:border-primary",
-                    )}
-                  />
-                  {wrong && <span className="block mt-1 text-sm text-red-600">That doesn't match — count them again.</span>}
-                </label>
-              </div>
-            );
-          })}
+          {uploads.map(u => (
+            <div key={u.lineId} className="rounded-2xl border-2 border-border p-4 space-y-1">
+              <p className="text-xl font-bold leading-tight">{u.product}</p>
+              <p className="text-2xl font-bold tabular-nums">
+                {u.units > 0 ? "Adds " : "Takes "}{Math.abs(u.units)} {u.units > 0 ? "to" : "off"} Shopify
+              </p>
+              <p className="text-base text-muted-foreground tabular-nums">
+                {Math.abs(u.packs)} {Math.abs(u.packs) === 1 ? "pack" : "packs"} × {u.perPack} each
+                {u.name !== u.product && <> · received as {u.name}</>}
+              </p>
+            </div>
+          ))}
         </div>
 
         <div className="shrink-0 border-t border-border px-4 sm:px-5 py-3 grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -93,7 +67,7 @@ export function ShopifyUploadConfirm({ uploads, saving, onConfirm, onClose }: {
           <button
             type="button"
             onClick={onConfirm}
-            disabled={!allMatch || saving}
+            disabled={saving}
             className="sm:col-span-2 min-h-[56px] px-3 rounded-xl bg-primary text-primary-foreground font-bold text-base hover:bg-primary/90 inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {saving ? <><Loader2 className="w-5 h-5 animate-spin" /> Saving…</> : <><Upload className="w-5 h-5 shrink-0" /> {SHOPIFY_UPLOAD_CONFIRM}</>}

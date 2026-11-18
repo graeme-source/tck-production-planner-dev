@@ -10,6 +10,7 @@
  * lib/ingredient-form.ts so this file is purely UI + wiring.
  */
 import { MeatPortioningFields } from "@/components/meat-portioning/meat-portioning-fields";
+import { unitsPerPackMismatch } from "@workspace/goods-in";
 import { ConnectedInventoryFields } from "@/components/connected-inventory/connected-inventory-fields";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
@@ -1866,6 +1867,9 @@ function ShopifyLinkSection({ watch, setValue, register, inputClass }: {
   const linkedVariantId = watch("shopifyVariantId");
   const linkedProduct = watch("shopifyProductTitle");
   const linkedVariant = watch("shopifyVariantTitle");
+  const unitsMismatch = unitsPerPackMismatch({
+    ingredientUnit: watch("unit"), packWeight: watch("packWeight"), unitsPerPack: watch("shopifyUnitsPerPack"),
+  });
 
   const [options, setOptions] = useState<ShopifyVariantOption[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1943,6 +1947,14 @@ function ShopifyLinkSection({ watch, setValue, register, inputClass }: {
               className={cn(inputClass, "w-24 text-right")}
             />
           </div>
+          {/* Honey Sriracha, 18 Nov 2026: 6 bottles a pack but 1 here, so goods-in
+              offered 8 for 8 packs. Say so where it's set. */}
+          {unitsMismatch && (
+            <p className="text-sm text-amber-800 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg px-3 py-2">
+              One pack is {unitsMismatch.packHolds} {watch("unit") || "pieces"}, but each pack received adds {unitsMismatch.storeGets} to Shopify.
+              If Shopify sells them one at a time, set this to {unitsMismatch.packHolds}.
+            </p>
+          )}
         </div>
       ) : !pickerOpen ? (
         <button

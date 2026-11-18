@@ -2,14 +2,16 @@
  * Goods-in → Shopify stock for bought-in retail items (the brownies): an
  * ingredient linked to a Shopify variant has what's received added straight
  * to the store, so it goes on sale. Because that puts stock in front of
- * customers, the receiver confirms it on a second screen and types the
- * number again (Graeme, 28 Oct 2026). The server pushes only when the screen
- * says that happened. Objectives C and D.
+ * customers, the receiver confirms it on a second screen (Graeme, 28 Oct
+ * 2026). Typing the number again was dropped on 18 Nov 2026 ("there are
+ * enough checks"): the screen shows the sum — packs × units per pack — and
+ * one button. The server pushes only when the screen says it was confirmed.
+ * Objectives C and D.
  */
 
 export const SHOPIFY_UPLOAD_WARNING =
-  "This will upload this quantity and recipe directly to Shopify and begin selling it. Please confirm the quantity again.";
-export const SHOPIFY_UPLOAD_CONFIRM = "Yep, that quantity and recipe is accurate. Upload";
+  "These go straight onto Shopify and on sale. Check the numbers below match what arrived.";
+export const SHOPIFY_UPLOAD_CONFIRM = "Yes, all these arrived — add to Shopify";
 export const SHOPIFY_UPLOAD_NOT_CONFIRMED =
   "Not sent — the Shopify upload wasn't confirmed on screen. Update the store stock by hand, or open the delivery and save it again.";
 
@@ -41,9 +43,30 @@ function receivedPacks(receivedDelta: number, line: ShopifyLineUnit | undefined)
  *  Shopify". The line was ordered as 24 pieces, and 24 was multiplied by 12
  *  per pack as if it were 24 packs. Pass the line's unit and pack size. */
 export function shopifyUnitsFor(receivedDelta: number, unitsPerPack: number | string | null | undefined, line?: ShopifyLineUnit): number {
-  const perPack = Number(unitsPerPack) || 1;
-  const units = Math.round(receivedPacks(receivedDelta, line) * perPack);
+  const units = Math.round(receivedPacks(receivedDelta, line) * perPackOf(unitsPerPack));
   return Number.isFinite(units) ? units : 0;
+}
+
+/** Store units per supplier pack (blank = 1). */
+function perPackOf(unitsPerPack: number | string | null | undefined): number {
+  return Number(unitsPerPack) || 1;
+}
+
+/** Units a pack counted in its own pieces holds, when that differs from the
+ *  store units per pack — the slip that offered 8 Honey Sriracha for 8 packs
+ *  of 6 (Graeme, 18 Nov 2026). Null when they agree, or the item isn't
+ *  counted in pieces (a weighed item's pack size isn't a count of units). */
+export function unitsPerPackMismatch(input: {
+  ingredientUnit: string | null | undefined;
+  packWeight: number | string | null | undefined;
+  unitsPerPack: number | string | null | undefined;
+}): { packHolds: number; storeGets: number } | null {
+  const unit = (input.ingredientUnit ?? "").trim().toLowerCase();
+  if (!["pieces", "piece", "each", "bottles", "bottle", "units", "unit"].includes(unit)) return null;
+  const packHolds = Number(input.packWeight);
+  if (!Number.isFinite(packHolds) || packHolds <= 1) return null;
+  const storeGets = perPackOf(input.unitsPerPack);
+  return storeGets === packHolds ? null : { packHolds, storeGets };
 }
 
 export interface ShopifyUploadLine {
@@ -70,6 +93,9 @@ export interface ShopifyUpload {
   product: string;
   /** Positive = added to Shopify; negative = taken off (an edit). */
   units: number;
+  /** The working, shown on screen: supplier packs × store units per pack. */
+  packs: number;
+  perPack: number;
 }
 
 /** The Shopify stock changes this save would make — one per linked line
@@ -78,16 +104,12 @@ export function shopifyUploadsOf(lines: ShopifyUploadLine[]): ShopifyUpload[] {
   const out: ShopifyUpload[] = [];
   for (const l of lines) {
     if (!l.variantId) continue;
-    const units = shopifyUnitsFor(l.newReceived - l.previousReceived, l.unitsPerPack, { unit: l.unit, packWeight: l.packWeight });
+    const lineUnit = { unit: l.unit, packWeight: l.packWeight };
+    const units = shopifyUnitsFor(l.newReceived - l.previousReceived, l.unitsPerPack, lineUnit);
     if (units === 0) continue;
     const variant = l.variantTitle && l.variantTitle !== "Default Title" ? ` — ${l.variantTitle}` : "";
-    out.push({ lineId: l.lineId, name: l.name, product: `${l.productTitle || l.name}${variant}`, units });
+    const packs = Math.round(receivedPacks(l.newReceived - l.previousReceived, lineUnit) * 100) / 100;
+    out.push({ lineId: l.lineId, name: l.name, product: `${l.productTitle || l.name}${variant}`, units, packs, perPack: perPackOf(l.unitsPerPack) });
   }
   return out;
-}
-
-/** The typed-again number matches what will go to Shopify (whole units). */
-export function shopifyQuantityConfirmed(typed: string, units: number): boolean {
-  const t = typed.trim();
-  return /^\d+$/.test(t) && Number(t) === Math.abs(units);
 }

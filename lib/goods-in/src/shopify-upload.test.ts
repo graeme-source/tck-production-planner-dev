@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shopifyQuantityConfirmed, shopifyUnitsFor, shopifyUploadsOf, type ShopifyUploadLine } from "./shopify-upload";
+import { shopifyUnitsFor, shopifyUploadsOf, unitsPerPackMismatch, type ShopifyUploadLine } from "./shopify-upload";
 
 const line = (over: Partial<ShopifyUploadLine> = {}): ShopifyUploadLine => ({
   lineId: 1, name: "Brownie (Rolo)", variantId: "56599907565942", productTitle: "Rolo Chocolate Brownie",
@@ -8,7 +8,7 @@ const line = (over: Partial<ShopifyUploadLine> = {}): ShopifyUploadLine => ({
 
 describe("goods-in uploads to Shopify", () => {
   it("a linked line received for the first time adds its quantity × units per pack", () => {
-    expect(shopifyUploadsOf([line()])).toEqual([{ lineId: 1, name: "Brownie (Rolo)", product: "Rolo Chocolate Brownie — 5 Pack", units: 12 }]);
+    expect(shopifyUploadsOf([line()])).toEqual([{ lineId: 1, name: "Brownie (Rolo)", product: "Rolo Chocolate Brownie — 5 Pack", units: 12, packs: 12, perPack: 1 }]);
     expect(shopifyUploadsOf([line({ unitsPerPack: "4", newReceived: 3 })])[0].units).toBe(12);
   });
 
@@ -48,11 +48,19 @@ describe("goods-in uploads to Shopify", () => {
     expect(shopifyUnitsFor(5, "")).toBe(5);
   });
 
-  it("the typed-again number must match exactly", () => {
-    expect(shopifyQuantityConfirmed(" 12 ", 12)).toBe(true);
-    expect(shopifyQuantityConfirmed("3", -3)).toBe(true);
-    expect(shopifyQuantityConfirmed("11", 12)).toBe(false);
-    expect(shopifyQuantityConfirmed("12.0", 12)).toBe(false);
-    expect(shopifyQuantityConfirmed("", 12)).toBe(false);
+  it("shows its working: packs × units per pack", () => {
+    const sauce = line({ name: "Original Hot Sauce (160ml)", unitsPerPack: "6.00", unit: "packs", packWeight: "6", newReceived: 3 });
+    expect(shopifyUploadsOf([sauce])[0]).toMatchObject({ packs: 3, perPack: 6, units: 18 });
+  });
+
+  // Regression, Graeme 18 Nov 2026 (PO #785): Honey Sriracha, 6 bottles a
+  // pack, had its store units per pack set to 1, so 8 packs offered "Adds 8"
+  // beside Original Hot Sauce's 3 packs → 18.
+  it("flags an item counted in pieces whose store units per pack isn't its pack size", () => {
+    expect(unitsPerPackMismatch({ ingredientUnit: "pieces", packWeight: "6.0000", unitsPerPack: "1.00" })).toEqual({ packHolds: 6, storeGets: 1 });
+    expect(unitsPerPackMismatch({ ingredientUnit: "pieces", packWeight: "6.0000", unitsPerPack: null })).toEqual({ packHolds: 6, storeGets: 1 });
+    expect(unitsPerPackMismatch({ ingredientUnit: "pieces", packWeight: "6.0000", unitsPerPack: "6" })).toBeNull();
+    expect(unitsPerPackMismatch({ ingredientUnit: "g", packWeight: "500", unitsPerPack: "1" })).toBeNull();
+    expect(unitsPerPackMismatch({ ingredientUnit: "pieces", packWeight: "1", unitsPerPack: null })).toBeNull();
   });
 });
