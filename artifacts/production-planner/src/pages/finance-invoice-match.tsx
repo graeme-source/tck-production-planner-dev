@@ -24,6 +24,8 @@ export type Suggestion = {
   mismatches: string[];
   doubts: string[];
   evidence: { amount: boolean; supplier: boolean; date: boolean; reference: boolean };
+  /** Where the transaction came from: "uploaded from CSV file" + who/when. */
+  origin?: { short: string; detail: string | null } | null;
 };
 
 export type InvoiceMatches = { suggestions: Suggestion[]; confident: boolean; addsUp: number[] | null };
@@ -73,9 +75,14 @@ function SuggestionBox({ s, heading, busy, onAttach }: { s: Suggestion; heading:
   return (
     <div className="rounded-xl border border-primary/50 bg-primary/5 p-4 flex flex-col sm:flex-row sm:items-center gap-3">
       <div className="flex-1 min-w-0">
-        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{heading}</div>
+        {/* Say it's a TRANSACTION and where it came from (Graeme, 18 Nov
+            2026: "I don't know what I'm attaching it to"). */}
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {heading}{s.origin ? <span className="normal-case tracking-normal font-medium"> ({s.origin.short})</span> : null}
+        </div>
         <div className="text-base font-semibold break-words">{s.supplier}</div>
         <div className="text-sm break-words">{chargeDetails(s)}</div>
+        {s.origin?.detail && <div className="text-xs text-muted-foreground break-words">{s.origin.detail}</div>}
         {s.reasons.length > 0 && <div className="text-xs text-muted-foreground mt-1">{s.reasons.join(" · ")}</div>}
         {s.doubts.length > 0 && (
           <div className="text-sm font-medium text-amber-700 dark:text-amber-400 mt-1 flex items-start gap-1.5">
@@ -182,7 +189,7 @@ export function MatchOptions({ invoice, matches, busy, onAttach, onReject, quiet
 
   return (
     <div className="space-y-3">
-      {matched && <SuggestionBox s={top} heading={confident ? "I think it's this one" : "Same amount, check it's right"} busy={busy} onAttach={() => onAttach([top])} />}
+      {matched && <SuggestionBox s={top} heading={confident ? "I think it's this transaction" : "Same amount — check it's the right transaction"} busy={busy} onAttach={() => onAttach([top])} />}
       {!top && !quiet && <NothingYet invoice={invoice} />}
       {addsUpToIt && <AddsUpBox invoice={invoice} lines={together} busy={busy} onAttach={() => onAttach(together)} />}
       {top && !matched && !addsUpToIt && (quiet ? <div>{chooseButton}</div> : <DoesntMatchWarning issues={top.mismatches}>{moreButton}</DoesntMatchWarning>)}

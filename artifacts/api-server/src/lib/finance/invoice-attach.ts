@@ -1,5 +1,6 @@
 import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
-import { db, finDocumentsTable, finInvoicesTable, finLinesTable, finVendorsTable } from "@workspace/db";
+import { db, finDocumentsTable, finInvoicesTable, finLinesTable, finStatementUploadsTable, finVendorsTable, usersTable } from "@workspace/db";
+import { transactionOrigin } from "./inbox-rules";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, logFinEvent } from "./invoice-store";
 import { withGbpRate } from "./fx-rates";
 import { chargesThatAddUp, isConfidentPick, rankLinesForInvoice, withoutRejected, type InvoiceForMatch, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
@@ -17,9 +18,14 @@ export interface SuggestedLine extends LineSuggestion {
   cardholder: string | null;
   status: string;
   posted: boolean;
+  /** Where the transaction came from, for the match box (18 Nov 2026). */
+  origin: { short: string; detail: string | null } | null;
 }
 
-export type WaitingLine = LineCandidate & { cardLast4: string | null; cardholder: string | null; status: string; postedDetectedAt: Date | null };
+export type WaitingLine = LineCandidate & {
+  cardLast4: string | null; cardholder: string | null; status: string; postedDetectedAt: Date | null;
+  source?: string; uploadFileName?: string | null; uploadedByName?: string | null; uploadedDay?: string | null;
+};
 
 /** Transactions still waiting for a VAT invoice. */
 export async function waitingLines(): Promise<WaitingLine[]> {
@@ -30,9 +36,13 @@ export async function waitingLines(): Promise<WaitingLine[]> {
       originalAmount: finLinesTable.originalAmount, orderReference: finLinesTable.orderReference,
       cardLast4: finLinesTable.cardLast4, cardholder: finLinesTable.cardholder, status: finLinesTable.status,
       postedDetectedAt: finLinesTable.postedDetectedAt, vendorName: finVendorsTable.name,
+      source: finLinesTable.source, uploadFileName: finStatementUploadsTable.fileName, uploadedByName: usersTable.name,
+      uploadedDay: sql<string | null>`to_char(${finStatementUploadsTable.createdAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London', 'YYYY-MM-DD')`,
     })
     .from(finLinesTable)
     .leftJoin(finVendorsTable, eq(finVendorsTable.id, finLinesTable.vendorId))
+    .leftJoin(finStatementUploadsTable, eq(finStatementUploadsTable.id, finLinesTable.uploadId))
+    .leftJoin(usersTable, eq(usersTable.id, finStatementUploadsTable.uploadedBy))
     .where(and(
       inArray(finLinesTable.status, ["open", "identified", "matched"]),
       isNull(finLinesTable.noVatReason), // a DLA purchase never takes an invoice
@@ -66,6 +76,7 @@ export function rankForInvoice(
       return {
         ...s, lineDate: l.lineDate, supplier: l.vendorName ?? l.merchant ?? l.descriptor, descriptor: l.descriptor,
         amount: l.amount, cardLast4: l.cardLast4, cardholder: l.cardholder, status: l.status, posted: !!l.postedDetectedAt,
+        origin: l.source ? transactionOrigin({ source: l.source, fileName: l.uploadFileName, uploadedByName: l.uploadedByName, uploadedDay: l.uploadedDay }) : null,
       };
     }),
   };
