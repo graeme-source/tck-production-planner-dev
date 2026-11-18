@@ -136,7 +136,16 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
 
       {open && (
         <div className="pl-12 pr-4 pb-4 space-y-3">
-          {r.reason.description && <p className="text-base font-semibold text-foreground max-w-prose break-words">{r.reason.description}</p>}
+          <div className="flex items-start gap-3">
+            {r.reason.description
+              ? <p className="flex-1 text-base font-semibold text-foreground max-w-prose break-words">{r.reason.description}</p>
+              : <span className="flex-1" />}
+            <button type="button" onClick={() => setEditing(e => !e)}
+              className="shrink-0 min-h-[44px] px-4 rounded-xl bg-foreground text-background text-sm font-bold hover:opacity-90">
+              {editing ? "Done" : "Edit"}
+            </button>
+          </div>
+          {editing && <EditReason id={r.reason.id} name={r.reason.name} description={r.reason.description} guide={r.guide} />}
           {u && (
             <div className="text-sm space-y-0.5">
               <p>
@@ -152,31 +161,55 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
               )}
             </div>
           )}
-          {r.uses.map(use => (
-            <div key={use.from} className="space-y-1">
-              <p className="text-sm font-semibold">{range(use.from, use.to)} · {gbp(use.revenue)} from {use.orders} orders</p>
-              <ul className="text-sm text-muted-foreground space-y-1">
-                {use.emails.map(e => (
-                  <li key={e.campaignId} className="break-words">
-                    {day(e.date)} ·{" "}
-                    {e.klaviyoUrl ? (
-                      <a href={e.klaviyoUrl} target="_blank" rel="noopener noreferrer" title="Open in Klaviyo — Clone is at the top"
-                        className="font-semibold text-foreground underline underline-offset-2 decoration-muted-foreground/50 hover:decoration-foreground inline-flex items-baseline gap-1">
-                        {e.subject ?? e.name}<ExternalLink className="w-3.5 h-3.5 self-center shrink-0" />
-                      </a>
-                    ) : (e.subject ?? e.name)}{" "}
-                    <span className="tabular-nums">· {gbp(e.revenue)}</span>
-                    {e.evidence && <span className="block text-xs italic">“{e.evidence}”</span>}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-          <button type="button" onClick={() => setEditing(e => !e)} className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2">
-            {editing ? "Done editing" : "Edit this reason"}
-          </button>
-          {editing && <EditReason id={r.reason.id} name={r.reason.name} description={r.reason.description} guide={r.guide} />}
+          <ReasonEmails uses={r.uses} />
         </div>
+      )}
+    </div>
+  );
+}
+
+/** How many of a reason's emails show before "Show earlier" (Graeme,
+ *  18 Nov 2026: a long list hid the Edit button). */
+const EMAILS_SHOWN = 3;
+
+/** A reason's emails, newest first, grouped by use: the last three, then a
+ *  link for the rest. */
+function ReasonEmails({ uses }: { uses: ReasonsReport["reasons"][number]["uses"] }) {
+  const [all, setAll] = useState(false);
+  const total = uses.reduce((n, u) => n + u.emails.length, 0);
+  let left = all ? Infinity : EMAILS_SHOWN;
+  const shown = uses.map(use => {
+    const emails = [...use.emails].sort((a, b) => b.date.localeCompare(a.date)).slice(0, Math.max(0, left));
+    left -= emails.length;
+    return { use, emails };
+  }).filter(x => x.emails.length > 0);
+  return (
+    <div className="space-y-3">
+      {shown.map(({ use, emails }) => (
+        <div key={use.from} className="space-y-1">
+          <p className="text-sm font-semibold">{range(use.from, use.to)} · {gbp(use.revenue)} from {use.orders} orders</p>
+          <ul className="text-sm text-muted-foreground space-y-1">
+            {emails.map(e => (
+              <li key={e.campaignId} className="break-words">
+                {day(e.date)} ·{" "}
+                {e.klaviyoUrl ? (
+                  <a href={e.klaviyoUrl} target="_blank" rel="noopener noreferrer" title="Open in Klaviyo — Clone is at the top"
+                    className="font-semibold text-foreground underline underline-offset-2 decoration-muted-foreground/50 hover:decoration-foreground inline-flex items-baseline gap-1">
+                    {e.subject ?? e.name}<ExternalLink className="w-3.5 h-3.5 self-center shrink-0" />
+                  </a>
+                ) : (e.subject ?? e.name)}{" "}
+                <span className="tabular-nums">· {gbp(e.revenue)}</span>
+                {e.evidence && <span className="block text-xs italic">“{e.evidence}”</span>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+      {total > EMAILS_SHOWN && (
+        <button type="button" onClick={() => setAll(a => !a)}
+          className="text-sm font-semibold text-muted-foreground hover:text-foreground underline underline-offset-2">
+          {all ? "Show only the last 3" : `Show ${total - EMAILS_SHOWN} earlier email${total - EMAILS_SHOWN === 1 ? "" : "s"}`}
+        </button>
       )}
     </div>
   );
@@ -307,13 +340,20 @@ function GuideFields({ guide, onSave }: { guide: ReasonGuide; onSave: (body: Par
   );
 }
 
+const NO_GUIDE: ReasonGuide = { emailsPerUse: null, daysPerUse: null, minGapDays: null, audiences: [] };
+
 function AddReason({ onDone }: { onDone: () => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  // Guidance set up front (Graeme, 18 Nov 2026), saved with the reason.
+  const [guide, setGuide] = useState<ReasonGuide>(NO_GUIDE);
   const add = useMutation({
-    mutationFn: () => calApi("/marketing-calendar/reasons", { method: "POST", body: JSON.stringify({ name: name.trim(), description: description.trim() || null }) }),
-    onSuccess: async () => { await qc.invalidateQueries({ queryKey: REASONS_KEY }); setName(""); setDescription(""); onDone(); },
+    mutationFn: () => calApi("/marketing-calendar/reasons", {
+      method: "POST",
+      body: JSON.stringify({ name: name.trim(), description: description.trim() || null, ...guide }),
+    }),
+    onSuccess: async () => { await qc.invalidateQueries({ queryKey: REASONS_KEY }); setName(""); setDescription(""); setGuide(NO_GUIDE); onDone(); },
   });
   return (
     <div className="rounded-2xl border-2 border-primary/40 p-4 space-y-2">
@@ -326,6 +366,7 @@ function AddReason({ onDone }: { onDone: () => void }) {
           placeholder="e.g. Customers with unused credit, told to use it before it expires"
           className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-normal" />
       </label>
+      <GuideFields guide={guide} onSave={body => setGuide(g => ({ ...g, ...body }))} />
       {add.isError && <p className="text-sm text-destructive">{(add.error as Error).message}</p>}
       <div className="flex gap-2">
         <button type="button" onClick={onDone} className="min-h-[48px] px-4 rounded-xl border-2 border-border font-semibold">Cancel</button>
