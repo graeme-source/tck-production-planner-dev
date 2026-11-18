@@ -7,11 +7,35 @@
  * reading each email) is the server's. Objective I.
  */
 
+import { addDays } from "./calendar";
+
 export interface ReasonDef {
   id: number;
   name: string;
   description: string | null;
 }
+
+/** Who a reason is usually sent to. Several can be picked. */
+export const AUDIENCES = [
+  { key: "subscription", label: "Subscription customers" },
+  { key: "existing", label: "Existing customers" },
+  { key: "not_ordered", label: "Haven't ordered yet" },
+] as const;
+export type AudienceKey = (typeof AUDIENCES)[number]["key"];
+
+/**
+ * How a reason is usually run (Graeme, 18 Nov 2026) — guidance for whoever
+ * plans the emails, "not rules that we can definitely not break". Every
+ * part is optional. minGapDays is the SHORTEST gap before using it again.
+ */
+export interface ReasonGuide {
+  emailsPerUse: number | null;
+  daysPerUse: number | null;
+  minGapDays: number | null;
+  audiences: AudienceKey[];
+}
+
+export type ReasonWithGuide = ReasonDef & ReasonGuide;
 
 /** One sent email that used a reason, with Klaviyo's results for it. */
 export interface ReasonEmail {
@@ -117,6 +141,58 @@ export function summariseReasons(
     return da.localeCompare(db) || a.order - b.order;
   });
   return rows.map(r => r.summary);
+}
+
+/** When a reason has rested long enough to use again, going by its
+ *  shortest gap: null = no gap set or never used (ready now). */
+export function readyFrom(lastUseTo: string | null, minGapDays: number | null): string | null {
+  if (!lastUseTo || !minGapDays || minGapDays <= 0) return null;
+  return addDays(lastUseTo, minGapDays);
+}
+
+/** Ready to use again today? (No gap set, or never used = ready.) */
+export function isReady(lastUseTo: string | null, minGapDays: number | null, today: string): boolean {
+  const from = readyFrom(lastUseTo, minGapDays);
+  return from == null || from <= today;
+}
+
+/**
+ * The order to plan from: reasons ready to use first, least recently used
+ * at the top (never-used first of all); then the ones still resting, the
+ * soonest ready first. Stable on the list's own order.
+ */
+export function planningOrder<T extends { lastUse: { to: string } | null; readyFrom: string | null; ready: boolean }>(rows: readonly T[]): T[] {
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => {
+    if (a.r.ready !== b.r.ready) return a.r.ready ? -1 : 1;
+    if (!a.r.ready) return (a.r.readyFrom ?? "").localeCompare(b.r.readyFrom ?? "") || a.i - b.i;
+    const da = a.r.lastUse?.to ?? null;
+    const db = b.r.lastUse?.to ?? null;
+    if (da == null || db == null) return da == null && db == null ? a.i - b.i : da == null ? -1 : 1;
+    return da.localeCompare(db) || a.i - b.i;
+  }).map(x => x.r);
+}
+
+/** "every 2 months", "every 3 weeks", "every 10 days" — a gap in words. */
+export function gapWords(days: number): string {
+  if (days % 30 === 0) return days === 30 ? "every month" : `every ${days / 30} months`;
+  if (days % 7 === 0) return days === 7 ? "every week" : `every ${days / 7} weeks`;
+  return days === 1 ? "every day" : `every ${days} days`;
+}
+
+/** The guidance in one line: "4 emails over 7 days · Existing customers ·
+ *  at most every 2 months". Empty when nothing is set. */
+export function guideWords(g: ReasonGuide): string {
+  const parts: string[] = [];
+  if (g.emailsPerUse) {
+    const emails = `${g.emailsPerUse} email${g.emailsPerUse === 1 ? "" : "s"}`;
+    parts.push(g.daysPerUse && g.emailsPerUse > 1 ? `${emails} over ${g.daysPerUse} day${g.daysPerUse === 1 ? "" : "s"}` : emails);
+  } else if (g.daysPerUse) {
+    parts.push(`runs ${g.daysPerUse} day${g.daysPerUse === 1 ? "" : "s"}`);
+  }
+  const who = AUDIENCES.filter(a => g.audiences.includes(a.key)).map(a => a.label);
+  if (who.length) parts.push(who.join(", "));
+  if (g.minGapDays) parts.push(`at most ${gapWords(g.minGapDays)}`);
+  return parts.join(" · ");
 }
 
 /** "Not used for 7 weeks", "Used 3 days ago", "Not used in the last year" (only a year of emails is read). */

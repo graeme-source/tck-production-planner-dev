@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailText, evidenceFound, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { emailText, evidenceFound, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -92,5 +92,39 @@ describe("evidenceFound", () => {
     expect(evidenceFound("", email)).toBe(false);
     expect(evidenceFound(null, email)).toBe(false);
     expect(evidenceFound("our cred", email)).toBe(false);
+  });
+});
+
+describe("guidance", () => {
+  it("says the guide in one line", () => {
+    expect(guideWords({ emailsPerUse: 4, daysPerUse: 7, minGapDays: 60, audiences: ["existing"] }))
+      .toBe("4 emails over 7 days · Existing customers · at most every 2 months");
+    expect(guideWords({ emailsPerUse: 1, daysPerUse: 1, minGapDays: 30, audiences: ["subscription", "not_ordered"] }))
+      .toBe("1 email · Subscription customers, Haven't ordered yet · at most every month");
+    expect(guideWords({ emailsPerUse: null, daysPerUse: null, minGapDays: null, audiences: [] })).toBe("");
+  });
+  it("words gaps in months, weeks or days", () => {
+    expect(gapWords(90)).toBe("every 3 months");
+    expect(gapWords(14)).toBe("every 2 weeks");
+    expect(gapWords(7)).toBe("every week");
+    expect(gapWords(10)).toBe("every 10 days");
+  });
+  it("is ready once the shortest gap has passed since the last use ended", () => {
+    expect(readyFrom("2026-09-27", 60)).toBe("2026-11-26");
+    expect(isReady("2026-09-27", 60, "2026-11-25")).toBe(false);
+    expect(isReady("2026-09-27", 60, "2026-11-26")).toBe(true);
+    expect(isReady("2026-09-27", null, "2026-09-28")).toBe(true);
+    expect(isReady(null, 60, "2026-09-28")).toBe(true);
+  });
+  it("plans from ready reasons first (least recently used on top), then resting ones soonest first", () => {
+    const row = (id: number, to: string | null, from: string | null, ready: boolean) => ({ id, lastUse: to ? { to } : null, readyFrom: from, ready });
+    const order = planningOrder([
+      row(1, "2026-11-10", "2026-12-10", false),
+      row(2, "2026-10-01", null, true),
+      row(3, null, null, true),
+      row(4, "2026-11-01", "2026-11-29", false),
+      row(5, "2026-08-01", "2026-10-01", true),
+    ]).map(r => r.id);
+    expect(order).toEqual([3, 5, 2, 4, 1]);
   });
 });

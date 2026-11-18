@@ -14,8 +14,8 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
-  addDays, emailText, evidenceFound, reasonsSignature, summariseReasons,
-  type ReasonDef, type ReasonEmail, type ReasonSummary,
+  addDays, emailText, evidenceFound, isReady, planningOrder, readyFrom, reasonsSignature, summariseReasons,
+  AUDIENCES, type AudienceKey, type ReasonDef, type ReasonEmail, type ReasonGuide, type ReasonSummary, type ReasonWithGuide,
 } from "@workspace/marketing-calendar";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "./ai/claude";
@@ -34,13 +34,17 @@ const BODY_CHARS = 1200;
 /** The days before a use that its sales are compared with. */
 const BEFORE_DAYS = 28;
 
-export async function listReasons(): Promise<ReasonDef[]> {
+const AUDIENCE_KEYS = new Set<string>(AUDIENCES.map(a => a.key));
+
+export async function listReasons(): Promise<ReasonWithGuide[]> {
   const rows = await db.select({
     id: marketingReasonsToBuyTable.id, name: marketingReasonsToBuyTable.name, description: marketingReasonsToBuyTable.description,
+    emailsPerUse: marketingReasonsToBuyTable.emailsPerUse, daysPerUse: marketingReasonsToBuyTable.daysPerUse,
+    minGapDays: marketingReasonsToBuyTable.minGapDays, audiences: marketingReasonsToBuyTable.audiences,
   }).from(marketingReasonsToBuyTable)
     .where(isNull(marketingReasonsToBuyTable.deletedAt))
     .orderBy(asc(marketingReasonsToBuyTable.sortOrder), asc(marketingReasonsToBuyTable.id));
-  return rows;
+  return rows.map(r => ({ ...r, audiences: (r.audiences ?? []).filter((a): a is AudienceKey => AUDIENCE_KEYS.has(a)) }));
 }
 
 async function sentCampaigns(today: string): Promise<KlaviyoCalendarEmail[] | null> {
@@ -218,7 +222,14 @@ export interface UseSales {
 
 export interface ReasonsReport {
   connected: boolean;
-  reasons: Array<ReasonSummary & { lastUseSales: UseSales | null }>;
+  /** Ready ones first (least recently used on top), then resting ones. */
+  reasons: Array<ReasonSummary & {
+    lastUseSales: UseSales | null;
+    guide: ReasonGuide;
+    /** When its shortest gap has passed; null = no gap set or never used. */
+    readyFrom: string | null;
+    ready: boolean;
+  }>;
   /** Sent emails not yet read against the current list. */
   unread: number;
   reading: boolean;
@@ -276,9 +287,18 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
     emailsByReason.set(m.reasonId, list);
   }
   const summaries = summariseReasons(reasons, emailsByReason, today);
-  const withSales = await Promise.all(summaries.map(async s => ({
-    ...s,
-    lastUseSales: s.lastUse ? await salesAround(s.lastUse.from, s.lastUse.to) : null,
+  const guideById = new Map(reasons.map(r => [r.id, r]));
+  const withSales = planningOrder(await Promise.all(summaries.map(async s => {
+    const g = guideById.get(s.reason.id)!;
+    const guide: ReasonGuide = { emailsPerUse: g.emailsPerUse, daysPerUse: g.daysPerUse, minGapDays: g.minGapDays, audiences: g.audiences };
+    const lastTo = s.lastUse?.to ?? null;
+    return {
+      ...s,
+      lastUseSales: s.lastUse ? await salesAround(s.lastUse.from, s.lastUse.to) : null,
+      guide,
+      readyFrom: readyFrom(lastTo, g.minGapDays),
+      ready: isReady(lastTo, g.minGapDays, today),
+    };
   })));
   const unread = reasons.length ? Math.max(0, sent.length - read.length) : 0;
   if (unread > 0 && isClaudeConfigured()) void kickReasonReader();
@@ -297,12 +317,13 @@ export async function addReason(input: { name: string; description: string | nul
   return row.id;
 }
 
-export async function updateReason(id: number, input: { name?: string; description?: string | null }): Promise<boolean> {
+export async function updateReason(id: number, input: { name?: string; description?: string | null } & Partial<ReasonGuide>): Promise<boolean> {
   const rows = await db.update(marketingReasonsToBuyTable)
     .set({ ...input, updatedAt: new Date() })
     .where(and(eq(marketingReasonsToBuyTable.id, id), isNull(marketingReasonsToBuyTable.deletedAt)))
     .returning({ id: marketingReasonsToBuyTable.id });
-  if (rows.length) void kickReasonReader();
+  // Only the name and "what counts" change the matching; guidance doesn't.
+  if (rows.length && (input.name !== undefined || input.description !== undefined)) void kickReasonReader();
   return rows.length > 0;
 }
 

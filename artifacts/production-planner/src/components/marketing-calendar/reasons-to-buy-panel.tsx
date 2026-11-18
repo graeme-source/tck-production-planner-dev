@@ -11,14 +11,14 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { Check, ChevronDown, ChevronRight, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
-import { sinceWords, type ReasonSummary } from "@workspace/marketing-calendar";
+import { AUDIENCES, guideWords, sinceWords, type AudienceKey, type ReasonGuide, type ReasonSummary } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { calApi, CAL_KEY } from "./api";
 
 interface UseSales { perDayDuring: number; perDayBefore: number; changePct: number | null }
 interface ReasonsReport {
   connected: boolean;
-  reasons: Array<ReasonSummary & { lastUseSales: UseSales | null }>;
+  reasons: Array<ReasonSummary & { lastUseSales: UseSales | null; guide: ReasonGuide; readyFrom: string | null; ready: boolean }>;
   unread: number;
   reading: boolean;
   error: string | null;
@@ -50,7 +50,7 @@ export function ReasonsToBuyPanel() {
         <span className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0"><Sparkles className="w-5 h-5" /></span>
         <span className="flex-1 min-w-0">
           <span className="block text-xl font-display font-extrabold">Reasons to buy</span>
-          <span className="block text-sm text-muted-foreground">Least recently used first — pick one we haven't leaned on lately.</span>
+          <span className="block text-sm text-muted-foreground">Ready to use first, least recently used at the top — then the ones still resting.</span>
         </span>
         {open ? <ChevronDown className="w-5 h-5 text-muted-foreground" /> : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
       </button>
@@ -107,15 +107,26 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
   // used" can't be said until every email has been read.
   const pending = r.daysSince == null && stillReading;
   const never = r.daysSince == null && !stillReading;
+  const guide = guideWords(r.guide);
   return (
     <div className={cn(never && "bg-primary/5")}>
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
         className="w-full min-h-[56px] px-4 py-3 text-left hover:bg-secondary/40 flex items-start gap-3">
         {open ? <ChevronDown className="w-5 h-5 mt-0.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-5 h-5 mt-0.5 text-muted-foreground shrink-0" />}
         <span className="flex-1 min-w-0 grid gap-x-6 gap-y-0.5 md:grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(0,2.4fr)] md:items-baseline">
-          <span className="font-bold text-base leading-tight break-words">{r.reason.name}</span>
-          <span className={cn("font-display font-extrabold", never ? "text-primary" : pending ? "text-muted-foreground font-semibold" : "text-foreground")}>
-            {pending ? "Still checking emails…" : sinceWords(r.daysSince)}
+          <span className="min-w-0">
+            <span className="block font-bold text-base leading-tight break-words">{r.reason.name}</span>
+            {guide && <span className="block text-xs text-muted-foreground break-words mt-0.5">{guide}</span>}
+          </span>
+          <span className="min-w-0">
+            <span className={cn("block font-display font-extrabold", never ? "text-primary" : pending ? "text-muted-foreground font-semibold" : "text-foreground")}>
+              {pending ? "Still checking emails…" : sinceWords(r.daysSince)}
+            </span>
+            {!pending && r.lastUse && r.guide.minGapDays && (
+              r.ready
+                ? <span className="inline-block mt-0.5 text-xs font-semibold rounded-full px-2 py-0.5 bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">Ready to use</span>
+                : <span className="inline-block mt-0.5 text-xs font-semibold rounded-full px-2 py-0.5 bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200">Resting until {day(r.readyFrom!)}</span>
+            )}
           </span>
           <span className="text-sm text-muted-foreground min-w-0">
             {u ? <>
@@ -161,7 +172,7 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
           <button type="button" onClick={() => setEditing(e => !e)} className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2">
             {editing ? "Done editing" : "Edit this reason"}
           </button>
-          {editing && <EditReason id={r.reason.id} name={r.reason.name} description={r.reason.description} />}
+          {editing && <EditReason id={r.reason.id} name={r.reason.name} description={r.reason.description} guide={r.guide} />}
         </div>
       )}
     </div>
@@ -169,13 +180,14 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
 }
 
 /** Name + "what counts", saved as you leave each box. */
-function EditReason({ id, name, description }: { id: number; name: string; description: string | null }) {
+function EditReason({ id, name, description, guide }: { id: number; name: string; description: string | null; guide: ReasonGuide }) {
   const qc = useQueryClient();
   const [n, setN] = useState(name);
   const [d, setD] = useState(description ?? "");
   useEffect(() => { setN(name); setD(description ?? ""); }, [name, description]);
+  const [rereads, setRereads] = useState(false);
   const save = useMutation({
-    mutationFn: (body: { name?: string; description?: string | null }) =>
+    mutationFn: (body: { name?: string; description?: string | null } & Partial<ReasonGuide>) =>
       calApi(`/marketing-calendar/reasons/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: REASONS_KEY }),
   });
@@ -186,23 +198,87 @@ function EditReason({ id, name, description }: { id: number; name: string; descr
   return (
     <div className="space-y-2 border-t border-border pt-3">
       <label className="block text-sm font-semibold">Name
-        <input value={n} onChange={e => setN(e.target.value)} onBlur={() => n.trim() && n.trim() !== name && save.mutate({ name: n.trim() })}
+        <input value={n} onChange={e => setN(e.target.value)} onBlur={() => { if (n.trim() && n.trim() !== name) { setRereads(true); save.mutate({ name: n.trim() }); } }}
           className="mt-1 w-full h-11 rounded-xl border border-border bg-card px-3 font-normal" />
       </label>
       <label className="block text-sm font-semibold">What counts as this reason
-        <textarea value={d} onChange={e => setD(e.target.value)} onBlur={() => d.trim() !== (description ?? "") && save.mutate({ description: d.trim() || null })}
+        <textarea value={d} onChange={e => setD(e.target.value)} onBlur={() => { if (d.trim() !== (description ?? "")) { setRereads(true); save.mutate({ description: d.trim() || null }); } }}
           rows={2} placeholder="e.g. Customers with unused credit, told to use it before it expires"
           className="mt-1 w-full rounded-xl border border-border bg-card px-3 py-2 font-normal" />
       </label>
+      <GuideFields guide={guide} onSave={body => { setRereads(false); save.mutate(body); }} />
       <div className="flex items-center gap-3 text-sm">
         <span className="text-muted-foreground">
-          {save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? <span className="inline-flex items-center gap-1"><Check className="w-4 h-4" /> Saved — past emails are read again</span> : "Changes save as you leave a box."}
+          {save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? <span className="inline-flex items-center gap-1"><Check className="w-4 h-4" /> Saved{rereads ? " — past emails are read again" : ""}</span> : "Changes save as you go."}
         </span>
         <button type="button" disabled={remove.isPending}
           onClick={() => { if (window.confirm(`Remove "${name}" from the reasons to buy?`)) remove.mutate(); }}
           className="ml-auto inline-flex items-center gap-1 text-destructive hover:underline">
           <Trash2 className="w-4 h-4" /> Remove
         </button>
+      </div>
+    </div>
+  );
+}
+
+const toNum = (v: string): number | null => {
+  const n = Math.round(Number(v));
+  return v.trim() && Number.isFinite(n) && n > 0 ? n : null;
+};
+
+/** How it's usually run — guidance, not rules (Graeme, 18 Nov 2026). */
+function GuideFields({ guide, onSave }: { guide: ReasonGuide; onSave: (body: Partial<ReasonGuide>) => void }) {
+  const [emails, setEmails] = useState(guide.emailsPerUse?.toString() ?? "");
+  const [days, setDays] = useState(guide.daysPerUse?.toString() ?? "");
+  const startUnit = guide.minGapDays && guide.minGapDays % 30 === 0 ? 30 : guide.minGapDays && guide.minGapDays % 7 === 0 ? 7 : guide.minGapDays ? 1 : 30;
+  const [unit, setUnit] = useState<number>(startUnit);
+  const [gap, setGap] = useState(guide.minGapDays ? String(guide.minGapDays / startUnit) : "");
+  const [who, setWho] = useState<AudienceKey[]>(guide.audiences);
+  const saveGap = (g: string, u: number) => {
+    const n = toNum(g);
+    const next = n == null ? null : Math.min(730, n * u);
+    if (next !== guide.minGapDays) onSave({ minGapDays: next });
+  };
+  const box = "mt-1 w-full h-11 rounded-xl border border-border bg-card px-3 font-normal";
+  return (
+    <div className="space-y-2 rounded-xl bg-secondary/40 p-3">
+      <p className="text-sm font-semibold">How it's usually run <span className="font-normal text-muted-foreground">— a guide for planning, not a rule</span></p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        <label className="block text-sm font-semibold">About how many emails
+          <input inputMode="numeric" value={emails} onChange={e => setEmails(e.target.value)} placeholder="e.g. 4"
+            onBlur={() => { const v = toNum(emails); if (v !== guide.emailsPerUse) onSave({ emailsPerUse: v }); }} className={box} />
+        </label>
+        <label className="block text-sm font-semibold">Over how many days
+          <input inputMode="numeric" value={days} onChange={e => setDays(e.target.value)} placeholder="e.g. 7"
+            onBlur={() => { const v = toNum(days); if (v !== guide.daysPerUse) onSave({ daysPerUse: v }); }} className={box} />
+        </label>
+        <div className="block text-sm font-semibold">Use it at most every
+          <div className="mt-1 flex gap-2">
+            <input inputMode="numeric" aria-label="Shortest gap" value={gap} onChange={e => setGap(e.target.value)} placeholder="e.g. 2"
+              onBlur={() => saveGap(gap, unit)} className="w-20 h-11 rounded-xl border border-border bg-card px-3 font-normal" />
+            <select aria-label="Gap unit" value={unit} onChange={e => { const u = Number(e.target.value); setUnit(u); saveGap(gap, u); }}
+              className="flex-1 h-11 rounded-xl border border-border bg-card px-2 font-normal">
+              <option value={7}>weeks</option>
+              <option value={30}>months</option>
+              <option value={1}>days</option>
+            </select>
+          </div>
+        </div>
+      </div>
+      <div className="text-sm font-semibold">Who it goes to
+        <div className="mt-1 flex flex-wrap gap-2">
+          {AUDIENCES.map(a => {
+            const on = who.includes(a.key);
+            return (
+              <button key={a.key} type="button" aria-pressed={on}
+                onClick={() => { const next = on ? who.filter(k => k !== a.key) : [...who, a.key]; setWho(next); onSave({ audiences: next }); }}
+                className={cn("min-h-[44px] px-3 rounded-full border-2 font-semibold inline-flex items-center gap-1",
+                  on ? "border-primary bg-primary/10 text-foreground" : "border-border text-muted-foreground hover:text-foreground")}>
+                {on && <Check className="w-4 h-4" />} {a.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

@@ -260,6 +260,12 @@ export const marketingReasonsToBuyTable = pgTable("marketing_reasons_to_buy", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description"),
+  // Guidance (0377): about how many emails, over how many days, the
+  // shortest gap before using it again, and who it goes to.
+  emailsPerUse: integer("emails_per_use"),
+  daysPerUse: integer("days_per_use"),
+  minGapDays: integer("min_gap_days"),
+  audiences: text("audiences").array().notNull().default([]),
   sortOrder: integer("sort_order").notNull().default(0),
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
