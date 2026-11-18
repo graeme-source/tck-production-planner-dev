@@ -121,6 +121,43 @@ export function rankOpenOrderMatches(
   return out.slice(0, limit);
 }
 
+export interface OpenOrderListing extends OpenOrderCandidate {
+  /** Days from today to the booked date: negative = was due in the past. */
+  daysFromToday: number | null;
+}
+
+/**
+ * Every open order, for "Add delivery" to open on (Graeme, 2026-11-18: an
+ * order booked for Friday turned up on Monday and nobody could find it).
+ * Same stale cut-off as the matches. Closest to today first — what's at
+ * the door is nearly always due around now (today, then a day either side,
+ * late before early on a tie), so weeks-old leftovers sink to the bottom.
+ * Orders with no date last.
+ */
+export function listOpenOrders(
+  candidates: OpenOrderCandidate[],
+  today: string,
+  staleAfterDays = STALE_OPEN_ORDER_DAYS,
+): OpenOrderListing[] {
+  const out: OpenOrderListing[] = [];
+  for (const c of candidates) {
+    const daysFromToday = c.expectedDeliveryDate ? daysBetween(today, c.expectedDeliveryDate) : null;
+    if (daysFromToday != null && daysFromToday < -staleAfterDays) continue;
+    out.push({ ...c, daysFromToday });
+  }
+  out.sort((a, b) => {
+    if (a.daysFromToday == null || b.daysFromToday == null) {
+      if (a.daysFromToday == null && b.daysFromToday == null) return a.id - b.id;
+      return a.daysFromToday == null ? 1 : -1;
+    }
+    return Math.abs(a.daysFromToday) - Math.abs(b.daysFromToday)
+      || a.daysFromToday - b.daysFromToday
+      || a.supplierName.localeCompare(b.supplierName)
+      || a.id - b.id;
+  });
+  return out;
+}
+
 /**
  * "Yes, it's this one" on an order booked for another day: move it to today
  * so it sits with today's deliveries and its use-by dates count from the day

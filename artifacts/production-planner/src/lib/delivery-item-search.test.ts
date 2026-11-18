@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   compactCode,
   editDistanceWithin,
+  filterOpenOrders,
   inferDeliverySupplier,
   normaliseSearchText,
   searchDeliveryItems,
@@ -116,5 +117,29 @@ describe("inferDeliverySupplier", () => {
   it("returns null when nobody knows — the UI then asks", () => {
     expect(inferDeliverySupplier(null, item({ name: "x" }))).toBeNull();
     expect(inferDeliverySupplier(null, null)).toBeNull();
+  });
+});
+
+describe("filterOpenOrders — finding an open order to receive", () => {
+  const orders = [
+    { id: 654, supplierName: "Puffin Produce", lines: [{ name: "Onions" }, { name: "Red peppers" }] },
+    { id: 700, supplierName: "Brakes", lines: [{ name: "Unsalted butter 250g" }, { name: "Double cream" }] },
+    { id: 701, supplierName: "Andrews Meat", lines: [{ name: "Chicken thigh" }] },
+  ];
+
+  it("shows every order when the box is empty", () => {
+    expect(filterOpenOrders(orders, "  ").map(o => o.id)).toEqual([654, 700, 701]);
+  });
+
+  it("finds by supplier, by an item on the order, or by PO number", () => {
+    expect(filterOpenOrders(orders, "puffin").map(o => o.id)).toEqual([654]);
+    expect(filterOpenOrders(orders, "butter").map(o => o.id)).toEqual([700]);
+    expect(filterOpenOrders(orders, "#701").map(o => o.id)).toEqual([701]);
+  });
+
+  it("forgives a typo and needs every word to match", () => {
+    expect(filterOpenOrders(orders, "chiken").map(o => o.id)).toEqual([701]);
+    expect(filterOpenOrders(orders, "brakes cream").map(o => o.id)).toEqual([700]);
+    expect(filterOpenOrders(orders, "brakes onions")).toEqual([]);
   });
 });

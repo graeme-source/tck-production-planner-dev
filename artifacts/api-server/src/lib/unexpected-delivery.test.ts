@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   arrivedTodayChange,
   buildUnexpectedPurchaseOrder,
+  listOpenOrders,
   rankOpenOrderMatches,
   unexpectedLineUnit,
   type CatalogueItemInfo,
@@ -81,6 +82,34 @@ describe("rankOpenOrderMatches — 'Is it one of these?'", () => {
     };
     const ranked = rankOpenOrderMatches([c], { supplierId: 3, ingredientIds: [] }, TODAY);
     expect(ranked[0].daysFromToday).toBeNull();
+  });
+});
+
+describe("listOpenOrders — Add delivery opens on every open order", () => {
+  it("lists a Friday order on the Monday it really arrived, closest to today first and undated last", () => {
+    const list = listOpenOrders([
+      order(1, 1, null, [10]),
+      order(2, 2, "2026-09-29", [11]), // booked for a later day — still found
+      order(3, 3, "2026-09-23", [12]), // was due two days ago
+      order(4, 4, TODAY, [13]),
+      order(5, 5, "2026-08-30", [14]), // a leftover from weeks back sinks
+      order(6, 6, "2026-09-27", [15]), // two days ahead: after two days late
+    ], TODAY);
+    expect(list.map(o => o.id)).toEqual([4, 3, 6, 2, 5, 1]);
+    expect(list.map(o => o.daysFromToday)).toEqual([0, -2, 2, 4, -26, null]);
+  });
+
+  it("leaves out orders booked more than 60 days ago", () => {
+    const list = listOpenOrders([order(1, 1, "2026-07-01", [10]), order(2, 1, "2026-08-01", [10])], TODAY);
+    expect(list.map(o => o.id)).toEqual([2]);
+  });
+
+  it("sorts orders booked for the same day by supplier", () => {
+    const list = listOpenOrders([
+      { ...order(1, 1, TODAY, [10]), supplierName: "Brakes" },
+      { ...order(2, 2, TODAY, [11]), supplierName: "Andrews" },
+    ], TODAY);
+    expect(list.map(o => o.supplierName)).toEqual(["Andrews", "Brakes"]);
   });
 });
 

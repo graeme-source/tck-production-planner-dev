@@ -1467,7 +1467,7 @@ export default function Deliveries() {
               <button
                 onClick={() => setUnexpectedOpen(true)}
                 className="min-h-[44px] px-3 py-1.5 border border-amber-300 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 text-amber-900 dark:text-amber-200 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-amber-100 dark:hover:bg-amber-950/50 transition-colors"
-                title="Something arrived that isn't on the list"
+                title="Something has arrived — find its open order (any day), or record it"
               >
                 <Truck className="w-4 h-4" />
                 Add delivery

@@ -2,9 +2,14 @@
  * "Record an unexpected delivery" (Graeme, 2026-09-25).
  *
  * A supplier sends something nobody booked in the app — a back order, an
- * auto-generated repeat — and it turns up at the door. Two steps here, then
+ * auto-generated repeat — and it turns up at the door. Steps here, then
  * the NORMAL goods-in receive takes over:
  *
+ *   0. Is it an order we already have? (Graeme, 2026-11-18) "Add delivery"
+ *      opens on EVERY open order, any day, with one search box (supplier,
+ *      item or PO number) — an order booked for Friday that turns up on
+ *      Monday is found and checked in today without typing in its items.
+ *      "It's not on the list" goes on to step 1.
  *   1. What's arrived? One forgiving search box (name, supplier, brand or
  *      item number), optional supplier to narrow it, a basket of items with
  *      pack counts, and a free-text line for anything not in the system.
@@ -33,6 +38,7 @@ import { toast } from "@/hooks/use-toast";
 import { NumberInput } from "@/components/ui/number-input";
 import { formatLineQtyParts, packSizeHint } from "@/pages/station/shared/prep-helpers";
 import {
+  filterOpenOrders,
   inferDeliverySupplier,
   itemComesFrom,
   searchDeliveryItems,
@@ -66,17 +72,20 @@ interface MatchLine {
   stockInPacks: boolean;
 }
 
-interface OpenOrderMatch {
+interface OpenOrderCard {
   id: number;
   supplierId: number;
   supplierName: string;
   expectedDeliveryDate: string | null;
   origin: string;
+  daysFromToday: number | null;
+  lines: MatchLine[];
+}
+
+interface OpenOrderMatch extends OpenOrderCard {
   matchedIngredientIds: number[];
   sameSupplier: boolean;
-  daysFromToday: number | null;
   reasons: string[];
-  lines: MatchLine[];
 }
 
 function readDraft(): Draft | null {
@@ -120,7 +129,7 @@ function money(n: number): string {
   return `£${n.toFixed(2)}`;
 }
 
-function dueLabel(m: OpenOrderMatch): { text: string; tone: "today" | "past" | "future" | "none" } {
+function dueLabel(m: OpenOrderCard): { text: string; tone: "today" | "past" | "future" | "none" } {
   if (!m.expectedDeliveryDate || m.daysFromToday == null) return { text: "No delivery date", tone: "none" };
   const day = format(parseISO(m.expectedDeliveryDate), "EEE d MMM");
   const d = m.daysFromToday;
@@ -139,7 +148,9 @@ export function UnexpectedDeliveryDialog({
   /** Hand the chosen / created order to the normal receive dialog. */
   onReceive: (orderId: number) => void;
 }) {
-  const [step, setStep] = useState<"items" | "matches">("items");
+  const [step, setStep] = useState<"orders" | "items" | "matches">("orders");
+  const [orderQuery, setOrderQuery] = useState("");
+  const orderSearchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [filterSupplierId, setFilterSupplierId] = useState<number | null>(null);
   const [lines, setLines] = useState<BasketLine[]>([]);
@@ -151,16 +162,20 @@ export function UnexpectedDeliveryDialog({
   // Restore the draft once per open; reset the step each time.
   useEffect(() => {
     if (!open) { loadedDraft.current = false; return; }
-    setStep("items");
     setQuery("");
+    setOrderQuery("");
     setEditingPriceKey(null);
+    let resumeBasket = false;
     if (!loadedDraft.current) {
       const d = readDraft();
       setFilterSupplierId(d?.filterSupplierId ?? null);
       setLines(d?.lines ?? []);
+      resumeBasket = (d?.lines.length ?? 0) > 0;
       loadedDraft.current = true;
     }
-    setTimeout(() => searchRef.current?.focus(), 50);
+    // Open orders first; a half-built basket from earlier picks up where it was.
+    setStep(resumeBasket ? "items" : "orders");
+    setTimeout(() => (resumeBasket ? searchRef : orderSearchRef).current?.focus(), 50);
   }, [open]);
 
   // Keep the draft on the device after every change.
@@ -191,6 +206,22 @@ export function UnexpectedDeliveryDialog({
     enabled: open,
     staleTime: 5 * 60 * 1000,
   });
+
+  const openOrdersQuery = useQuery<{ today: string; orders: OpenOrderCard[] }>({
+    queryKey: ["/api/deliveries/unexpected/open-orders"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/deliveries/unexpected/open-orders`, { credentials: "include" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error((data as { error?: string }).error ?? "Couldn't load the open orders");
+      return data as { today: string; orders: OpenOrderCard[] };
+    },
+    enabled: open && step === "orders",
+    staleTime: 0,
+  });
+  const shownOrders = useMemo(
+    () => filterOpenOrders(openOrdersQuery.data?.orders ?? [], orderQuery),
+    [openOrdersQuery.data, orderQuery],
+  );
 
   const itemsById = useMemo(
     () => new Map((catalogueQuery.data?.items ?? []).map(i => [i.id, i])),
@@ -487,39 +518,12 @@ export function UnexpectedDeliveryDialog({
     </div>
   );
 
-  const matchesStep = () => {
-    if (matchesQuery.isLoading) {
-      return (
-        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
-          <Loader2 className="w-8 h-8 animate-spin" />
-          <p>Checking open orders…</p>
-        </div>
-      );
-    }
-    if (matchesQuery.isError) {
-      return (
-        <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
-          <p className="text-destructive font-semibold">{(matchesQuery.error as Error).message}</p>
-          <button type="button" onClick={() => matchesQuery.refetch()} className="h-11 px-4 rounded-xl bg-secondary font-semibold">Try again</button>
-        </div>
-      );
-    }
-    const matches = matchesQuery.data?.matches ?? [];
-    const wanted = new Set(ingredientIds);
+  // One open order as a big card: who, when it was booked for, every item
+  // on it, and the button that moves it to today and checks it in.
+  const orderCard = (m: OpenOrderCard, wanted: Set<number>, reasons: string[]) => {
+    const due = dueLabel(m);
     return (
-      <div className="space-y-4">
-        <div>
-          <h3 className="text-2xl font-bold">Is it one of these?</h3>
-          <p className="text-muted-foreground mt-1">
-            {matches.length > 0
-              ? "These orders are still open for the same supplier or items — maybe booked for another day. If the delivery is one of them, tap it."
-              : "No open orders match, so this is a new delivery."}
-          </p>
-        </div>
 
-        {matches.map(m => {
-          const due = dueLabel(m);
-          return (
             <div key={m.id} className="rounded-2xl border-2 border-border bg-card overflow-hidden">
               <div className="p-4 space-y-2">
                 <div className="flex items-start gap-3">
@@ -541,7 +545,7 @@ export function UnexpectedDeliveryDialog({
                   )}>
                     <CalendarClock className="w-4 h-4" /> {due.text}
                   </span>
-                  {m.reasons.map(r => (
+                  {reasons.map(r => (
                     <span key={r} className="text-sm font-medium px-2.5 py-1 rounded-full bg-secondary">{r}</span>
                   ))}
                 </div>
@@ -573,8 +577,91 @@ export function UnexpectedDeliveryDialog({
                 Yes — it's this one, check it in
               </button>
             </div>
-          );
-        })}
+    );
+  };
+
+  const matchesStep = () => {
+    if (matchesQuery.isLoading) {
+      return (
+        <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+          <Loader2 className="w-8 h-8 animate-spin" />
+          <p>Checking open orders…</p>
+        </div>
+      );
+    }
+    if (matchesQuery.isError) {
+      return (
+        <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
+          <p className="text-destructive font-semibold">{(matchesQuery.error as Error).message}</p>
+          <button type="button" onClick={() => matchesQuery.refetch()} className="h-11 px-4 rounded-xl bg-secondary font-semibold">Try again</button>
+        </div>
+      );
+    }
+    const matches = matchesQuery.data?.matches ?? [];
+    const wanted = new Set(ingredientIds);
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-2xl font-bold">Is it one of these?</h3>
+          <p className="text-muted-foreground mt-1">
+            {matches.length > 0
+              ? "These orders are still open for the same supplier or items — maybe booked for another day. If the delivery is one of them, tap it."
+              : "No open orders match, so this is a new delivery."}
+          </p>
+        </div>
+
+        {matches.map(m => orderCard(m, wanted, m.reasons))}
+      </div>
+    );
+  };
+
+  const ordersStep = () => {
+    const all = openOrdersQuery.data?.orders ?? [];
+    return (
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-2xl font-bold">Is it one of these orders?</h3>
+          <p className="text-muted-foreground mt-1">
+            Every order we're still waiting for, whatever day it was booked for. Find it, check the items match, and check it in today.
+          </p>
+        </div>
+        <div className="relative">
+          <Search className="w-5 h-5 absolute left-4 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            ref={orderSearchRef}
+            value={orderQuery}
+            onChange={e => setOrderQuery(e.target.value)}
+            placeholder="Supplier, an item on it, or PO number"
+            enterKeyHint="search"
+            autoComplete="off"
+            className="w-full h-14 pl-12 pr-12 rounded-2xl border-2 border-border bg-background text-lg focus:outline-none focus:border-primary"
+          />
+          {orderQuery && (
+            <button type="button" onClick={() => { setOrderQuery(""); orderSearchRef.current?.focus(); }} aria-label="Clear search"
+              className="absolute right-2 top-1/2 -translate-y-1/2 w-10 h-10 rounded-xl flex items-center justify-center hover:bg-secondary">
+              <X className="w-5 h-5" />
+            </button>
+          )}
+        </div>
+        {openOrdersQuery.isLoading ? (
+          <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+            <Loader2 className="w-8 h-8 animate-spin" />
+            <p>Loading open orders…</p>
+          </div>
+        ) : openOrdersQuery.isError ? (
+          <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
+            <p className="text-destructive font-semibold">{(openOrdersQuery.error as Error).message}</p>
+            <button type="button" onClick={() => openOrdersQuery.refetch()} className="h-11 px-4 rounded-xl bg-secondary font-semibold">Try again</button>
+          </div>
+        ) : all.length === 0 ? (
+          <p className="text-muted-foreground text-center py-10">No open orders — this is a new delivery.</p>
+        ) : shownOrders.length === 0 ? (
+          <p className="text-muted-foreground text-center py-10">No open order matches “{orderQuery.trim()}”.</p>
+        ) : (
+          <div className="grid gap-3 lg:grid-cols-2 items-start">
+            {shownOrders.map(o => orderCard(o, new Set(), []))}
+          </div>
+        )}
       </div>
     );
   };
@@ -586,7 +673,7 @@ export function UnexpectedDeliveryDialog({
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Record an unexpected delivery"
+        aria-label="Add a delivery"
         className="bg-background border-2 border-border rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92dvh] flex flex-col overflow-hidden"
         onClick={e => e.stopPropagation()}
       >
@@ -596,9 +683,11 @@ export function UnexpectedDeliveryDialog({
             <Sparkles className="w-5 h-5 text-amber-700 dark:text-amber-300" />
           </div>
           <div className="flex-1 min-w-0">
-            <h2 className="font-display font-bold text-xl leading-tight">Record an unexpected delivery</h2>
+            <h2 className="font-display font-bold text-xl leading-tight">Add a delivery</h2>
             <p className="text-sm text-muted-foreground">
-              Step {step === "items" ? 1 : 2} of 3 · {step === "items" ? "What's arrived?" : "Is it an order we already have?"} · then check it in
+              {step === "orders"
+                ? "Pick the order that's arrived · then check it in"
+                : <>Not on an order · step {step === "items" ? 1 : 2} of 3 · {step === "items" ? "What's arrived?" : "Is it an order we already have?"} · then check it in</>}
             </p>
           </div>
           <button type="button" onClick={close} disabled={busy} aria-label="Close"
@@ -609,7 +698,9 @@ export function UnexpectedDeliveryDialog({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-5">
-          {catalogueQuery.isLoading ? (
+          {step === "orders" ? (
+            ordersStep()
+          ) : catalogueQuery.isLoading ? (
             <div className="flex justify-center py-16"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>
           ) : catalogueQuery.isError ? (
             <div className="rounded-2xl border border-destructive/40 bg-destructive/5 p-4 space-y-3">
@@ -680,8 +771,26 @@ export function UnexpectedDeliveryDialog({
 
         {/* Footer */}
         <div className="border-t border-border px-4 sm:px-5 py-3 shrink-0 flex items-center gap-3 flex-wrap bg-card">
-          {step === "items" ? (
+          {step === "orders" ? (
             <>
+              <p className="text-xs text-muted-foreground flex-1 min-w-[140px]">
+                Not on an order? Record what's arrived instead.
+              </p>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => { setStep("items"); setTimeout(() => searchRef.current?.focus(), 50); }}
+                className="h-14 px-5 rounded-xl border-2 border-foreground/80 text-lg font-bold flex items-center justify-center gap-2 flex-1 sm:flex-none hover:bg-secondary/50 disabled:opacity-50"
+              >
+                <PackagePlus className="w-5 h-5" /> It's not on the list
+              </button>
+            </>
+          ) : step === "items" ? (
+            <>
+              <button type="button" onClick={() => setStep("orders")}
+                className="h-14 px-4 rounded-xl border border-border font-semibold flex items-center gap-2 hover:bg-secondary/50">
+                <ArrowLeft className="w-5 h-5" /> Open orders
+              </button>
               <p className="text-xs text-muted-foreground flex-1 min-w-[140px]">
                 {lines.length === 0
                   ? "Nothing is saved until you check it in."

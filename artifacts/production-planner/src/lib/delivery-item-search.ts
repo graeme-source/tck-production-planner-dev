@@ -198,3 +198,26 @@ export function inferDeliverySupplier(
   if (chosenSupplierId != null) return chosenSupplierId;
   return firstItem?.supplierId ?? firstItem?.secondarySupplierId ?? null;
 }
+
+/**
+ * The search box on "Add delivery"'s open-orders list (Graeme, 2026-11-18).
+ * Every typed word must hit the supplier, one of the order's items, or the
+ * PO number ("654" or "#654") — same forgiving word matching as the item
+ * search. Keeps the list's own order (booked date); an empty box shows all.
+ */
+export function filterOpenOrders<
+  T extends { id: number; supplierName: string; lines: Array<{ name: string }> },
+>(orders: T[], query: string): T[] {
+  const tokens = normaliseSearchText(query).split(" ").filter(Boolean);
+  if (tokens.length === 0) return orders;
+  return orders.filter(o => {
+    const supplier = normaliseSearchText(o.supplierName);
+    const items = o.lines.map(l => normaliseSearchText(l.name));
+    const po = String(o.id);
+    return tokens.every(t =>
+      t === po
+      || wordScore(t, supplier) > 0
+      || items.some(i => wordScore(t, i) > 0),
+    );
+  });
+}

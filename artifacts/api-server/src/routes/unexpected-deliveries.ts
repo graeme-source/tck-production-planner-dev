@@ -6,6 +6,9 @@
 //
 //   GET  /catalogue            everything that can be delivered, for the
 //                              search box (items + supplies + suppliers)
+//   GET  /open-orders          every open order, any day — what "Add
+//                              delivery" opens on, so an order booked for
+//                              Friday that turns up Monday is one tap away
 //   POST /matches              "Is it one of these?" — open orders the
 //                              delivery could really be, any day
 //   POST /:id/arrived-today    "Yes, that one" — move that open order to
@@ -40,6 +43,7 @@ import { londonDateString } from "../lib/london-time";
 import {
   arrivedTodayChange,
   buildUnexpectedPurchaseOrder,
+  listOpenOrders,
   rankOpenOrderMatches,
   type CatalogueItemInfo,
   type OpenOrderCandidate,
@@ -99,6 +103,94 @@ router.get("/catalogue", canReceive, async (_req, res) => {
   }
 });
 
+// ─── Shared: an open order's lines, as the cards show them ────────────────
+
+interface CardLine {
+  ingredientId: number | null;
+  name: string;
+  quantityOrdered: number;
+  unit: string;
+  nativeUnit: string | null;
+  packWeight: number | null;
+  stockInPacks: boolean;
+}
+
+async function loadOrderLines(ids: number[]): Promise<Map<number, CardLine[]>> {
+  const byOrder = new Map<number, CardLine[]>();
+  if (ids.length === 0) return byOrder;
+  const rows = await db
+    .select({
+      purchaseOrderId: purchaseOrderLinesTable.purchaseOrderId,
+      ingredientId: purchaseOrderLinesTable.ingredientId,
+      ingredientName: ingredientsTable.name,
+      description: purchaseOrderLinesTable.description,
+      quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
+      unit: purchaseOrderLinesTable.unit,
+      nativeUnit: ingredientsTable.unit,
+      packWeight: ingredientsTable.packWeight,
+      stockInPacks: ingredientsTable.stockInPacks,
+    })
+    .from(purchaseOrderLinesTable)
+    .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+    .where(inArray(purchaseOrderLinesTable.purchaseOrderId, ids))
+    .orderBy(asc(purchaseOrderLinesTable.id));
+  for (const l of rows) {
+    const list = byOrder.get(l.purchaseOrderId) ?? [];
+    list.push({
+      ingredientId: l.ingredientId,
+      name: l.ingredientName ?? l.description ?? "Miscellaneous item",
+      quantityOrdered: Number(l.quantityOrdered),
+      unit: l.unit,
+      nativeUnit: l.nativeUnit,
+      packWeight: l.packWeight != null ? Number(l.packWeight) : null,
+      stockInPacks: l.stockInPacks ?? false,
+    });
+    byOrder.set(l.purchaseOrderId, list);
+  }
+  return byOrder;
+}
+
+// ─── Every open order ──────────────────────────────────────────────────────
+
+router.get("/open-orders", canReceive, async (_req, res) => {
+  try {
+    const orders = await db
+      .select({
+        id: purchaseOrdersTable.id,
+        supplierId: purchaseOrdersTable.supplierId,
+        supplierName: suppliersTable.name,
+        expectedDeliveryDate: purchaseOrdersTable.expectedDeliveryDate,
+        origin: purchaseOrdersTable.origin,
+      })
+      .from(purchaseOrdersTable)
+      .innerJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
+      .where(eq(purchaseOrdersTable.status, "placed"));
+
+    const linesByOrder = await loadOrderLines(orders.map(o => o.id));
+    const originById = new Map(orders.map(o => [o.id, o.origin]));
+    const today = londonDateString();
+    const listed = listOpenOrders(
+      orders.map(o => ({ ...o, lines: linesByOrder.get(o.id) ?? [] })),
+      today,
+    );
+    res.json({
+      today,
+      orders: listed.map(o => ({
+        id: o.id,
+        supplierId: o.supplierId,
+        supplierName: o.supplierName,
+        expectedDeliveryDate: o.expectedDeliveryDate,
+        daysFromToday: o.daysFromToday,
+        origin: originById.get(o.id) ?? "planned",
+        lines: linesByOrder.get(o.id) ?? [],
+      })),
+    });
+  } catch (err) {
+    console.error("[unexpected-deliveries] open orders failed:", err);
+    res.status(500).json({ error: "Couldn't load the open orders" });
+  }
+});
+
 // ─── "Is it one of these?" ─────────────────────────────────────────────────
 
 const MatchesBody = z.object({
@@ -140,29 +232,7 @@ router.post("/matches", canReceive, validate(MatchesBody), async (req, res) => {
       .innerJoin(suppliersTable, eq(purchaseOrdersTable.supplierId, suppliersTable.id))
       .where(and(eq(purchaseOrdersTable.status, "placed"), or(...conditions)));
 
-    const ids = orders.map(o => o.id);
-    const lines = ids.length === 0 ? [] : await db
-      .select({
-        purchaseOrderId: purchaseOrderLinesTable.purchaseOrderId,
-        ingredientId: purchaseOrderLinesTable.ingredientId,
-        ingredientName: ingredientsTable.name,
-        description: purchaseOrderLinesTable.description,
-        quantityOrdered: purchaseOrderLinesTable.quantityOrdered,
-        unit: purchaseOrderLinesTable.unit,
-        nativeUnit: ingredientsTable.unit,
-        packWeight: ingredientsTable.packWeight,
-        stockInPacks: ingredientsTable.stockInPacks,
-      })
-      .from(purchaseOrderLinesTable)
-      .leftJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
-      .where(inArray(purchaseOrderLinesTable.purchaseOrderId, ids));
-
-    const linesByOrder = new Map<number, typeof lines>();
-    for (const l of lines) {
-      const list = linesByOrder.get(l.purchaseOrderId) ?? [];
-      list.push(l);
-      linesByOrder.set(l.purchaseOrderId, list);
-    }
+    const linesByOrder = await loadOrderLines(orders.map(o => o.id));
 
     const originById = new Map(orders.map(o => [o.id, o.origin]));
     const candidates: OpenOrderCandidate[] = orders.map(o => ({
@@ -172,8 +242,8 @@ router.post("/matches", canReceive, validate(MatchesBody), async (req, res) => {
       expectedDeliveryDate: o.expectedDeliveryDate,
       lines: (linesByOrder.get(o.id) ?? []).map(l => ({
         ingredientId: l.ingredientId,
-        name: l.ingredientName ?? l.description ?? "Miscellaneous item",
-        quantityOrdered: Number(l.quantityOrdered),
+        name: l.name,
+        quantityOrdered: l.quantityOrdered,
         unit: l.unit,
       })),
     }));
@@ -188,15 +258,7 @@ router.post("/matches", canReceive, validate(MatchesBody), async (req, res) => {
         origin: originById.get(m.id) ?? "planned",
         // Re-sent with the extra fields the card needs to show pack sizes
         // the same way the deliveries list does.
-        lines: (linesByOrder.get(m.id) ?? []).map(l => ({
-          ingredientId: l.ingredientId,
-          name: l.ingredientName ?? l.description ?? "Miscellaneous item",
-          quantityOrdered: Number(l.quantityOrdered),
-          unit: l.unit,
-          nativeUnit: l.nativeUnit,
-          packWeight: l.packWeight != null ? Number(l.packWeight) : null,
-          stockInPacks: l.stockInPacks ?? false,
-        })),
+        lines: linesByOrder.get(m.id) ?? [],
       })),
     });
   } catch (err) {
