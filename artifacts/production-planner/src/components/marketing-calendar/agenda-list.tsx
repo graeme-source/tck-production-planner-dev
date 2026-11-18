@@ -134,7 +134,7 @@ export function AgendaList({
       {loading && (
         <div className="absolute inset-0 z-20 flex items-start justify-center pt-24 bg-card/60"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       )}
-      <div ref={box} className="relative rounded-xl border border-border bg-background">
+      <div ref={box} className="relative rounded-2xl border border-border bg-card">
         <div className="p-2 border-b border-border">
           <button type="button" onClick={showEarlier}
             className="w-full h-11 rounded-xl border-2 border-dashed border-border text-sm font-semibold text-muted-foreground flex items-center justify-center gap-1.5 hover:bg-secondary/40">
@@ -169,11 +169,11 @@ function Stripes({ phases, laneCount }: { phases: PhaseOnRow<Phase>[]; laneCount
   if (laneCount === 0) return null;
   const byLane = new Map(phases.map(p => [p.lane, p.phase]));
   return (
-    <div className="flex gap-0.5 self-stretch flex-shrink-0 pl-1" aria-hidden>
+    <div className="flex gap-0.5 self-stretch flex-shrink-0 pl-1.5" aria-hidden>
       {Array.from({ length: laneCount }, (_, lane) => {
         const p = byLane.get(lane);
         return (
-          <span key={lane} className={cn("w-1.5 rounded-full", p ? PHASE_CLS.stripe : "bg-transparent")}
+          <span key={lane} className={cn("w-1 rounded-full", p ? cn(PHASE_CLS.stripe, "opacity-70") : "bg-transparent")}
             style={p ? phaseVars(p.color) : undefined} />
         );
       })}
@@ -188,10 +188,9 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   const phaseVars = usePhaseVars();
   if (r.kind === "week") {
     return (
-      <div className={cn("px-3 py-2 border-b border-border flex items-center gap-2 backdrop-blur",
-        r.current ? "bg-primary/10" : "bg-secondary/90")}>
-        <h3 className="text-sm font-bold">Week of {day(r.weekStart, "EEE d MMM")}</h3>
-        {r.current && <span className="text-xs font-bold uppercase px-2 py-0.5 rounded-full bg-primary text-primary-foreground">This week</span>}
+      <div className="px-4 pt-4 pb-1.5 border-b border-border bg-card/95 backdrop-blur flex items-baseline gap-2">
+        <h3 className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Week of {day(r.weekStart, "EEE d MMM")}</h3>
+        {r.current && <span className="text-xs font-bold uppercase tracking-wide text-primary">This week</span>}
       </div>
     );
   }
@@ -199,11 +198,11 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   if (r.kind === "quiet") {
     const names = r.phases.map(p => p.phase.title).join(" · ");
     return (
-      <div className={cn("flex items-stretch gap-2 min-h-7 border-b border-border/60", r.isPast && "opacity-60")}>
+      <div className={cn("flex items-stretch gap-2 min-h-7 border-b border-border/50", r.isPast && "opacity-60")}>
         <Stripes phases={r.phases} laneCount={laneCount} />
-        <p className="flex-1 py-1 pr-3 text-xs text-muted-foreground flex flex-wrap items-center gap-x-2">
-          <span>Quiet · {r.days === 1 ? day(r.from, "EEE d MMM") : `${day(r.from, "EEE d")} – ${day(r.to, "EEE d MMM")}`}</span>
-          {names && <span className="font-semibold">{names}</span>}
+        <p className="flex-1 py-1 pr-3 text-xs text-muted-foreground/80 flex flex-wrap items-center gap-x-2">
+          <span>Nothing sending · {r.days === 1 ? day(r.from, "EEE d MMM") : `${day(r.from, "EEE d")} – ${day(r.to, "EEE d MMM")}`}</span>
+          {names && <span>{names}</span>}
         </p>
       </div>
     );
@@ -214,21 +213,23 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   const startingIds = new Set(r.starts.map(p => p.id));
   const runningOn = r.phases.filter(p => !startingIds.has(p.phase.id));
   const body = (
-    <div className={cn("flex items-stretch gap-2", !r.isToday && "border-b border-border", r.isPast && "opacity-70")}>
+    <div className={cn("flex items-stretch gap-2", !r.isToday && "border-b border-border/70", r.isPast && "opacity-70")}>
       <Stripes phases={r.phases} laneCount={laneCount} />
-      <div className={cn("flex-1 min-w-0 pr-2 sm:pr-3 flex flex-col sm:flex-row gap-1.5 sm:gap-3", r.isToday ? "pt-1 pb-3 pl-1" : "py-2.5")}>
+      <div className={cn("flex-1 min-w-0 pr-2 sm:pr-3 flex flex-col sm:flex-row gap-1.5 sm:gap-3", r.isToday ? "pt-1 pb-3 pl-1" : "py-3")}>
         {!r.isToday && (
           <div className="sm:w-24 flex-shrink-0">
-            <p className="text-base font-bold leading-tight">{day(r.date, "EEE d MMM")}</p>
+            <p className="text-sm font-semibold leading-tight">{day(r.date, "EEE")}</p>
+            <p className="text-base font-bold leading-tight">{day(r.date, "d MMM")}</p>
           </div>
         )}
         <div className="flex-1 min-w-0 space-y-2">
           {r.starts.map(p => <PhaseStart key={`s${p.id}`} phase={p} onOpen={() => onOpenPhase(p)} />)}
           {runningOn.length > 0 && (
-            <div className="flex flex-wrap gap-1.5">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
               {runningOn.map(({ phase: p }) => (
-                <button key={p.id} type="button" onClick={() => onOpenPhase(p)} style={phaseVars(p.color)}
-                  className={cn("inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs font-semibold break-words text-left", PHASE_CLS.fill)}>
+                <button key={p.id} type="button" onClick={() => onOpenPhase(p)}
+                  className="inline-flex items-center gap-1.5 min-h-8 text-sm text-muted-foreground hover:text-foreground break-words text-left">
+                  <span style={phaseVars(p.color)} className={cn("w-2 h-2 rounded-full flex-shrink-0", PHASE_CLS.stripe)} />
                   {p.title}
                 </button>
               ))}
@@ -240,8 +241,8 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
           {r.emails.map(m => <EmailRow key={m.id} email={m} canApprove={canApprove} onOpen={() => onOpenEmail(m)} />)}
           {r.ends.map(p => (
             <button key={`e${p.id}`} type="button" onClick={() => onOpenPhase(p)}
-              className="flex items-center gap-1.5 text-sm font-semibold text-muted-foreground hover:text-foreground text-left">
-              <Flag style={phaseVars(p.color)} className={cn("w-5 h-5 flex-shrink-0 rounded-md border p-0.5", PHASE_CLS.fill)} />
+              className="flex items-center gap-1.5 min-h-8 text-sm text-muted-foreground hover:text-foreground text-left">
+              <Flag style={phaseVars(p.color)} className={cn("w-4 h-4 flex-shrink-0", PHASE_CLS.text)} />
               <span className="break-words">{p.title} ends</span>
             </button>
           ))}
@@ -251,11 +252,12 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   );
   if (!r.isToday) return body;
   return (
-    <div className="border-y-2 border-primary bg-primary/10">
-      <div className="px-3 py-2 flex items-center gap-2 text-primary flex-wrap">
-        <span className="w-3 h-3 rounded-full bg-primary ring-4 ring-primary/25" />
-        <span className="text-base font-bold">Today · {day(r.date, "EEEE d MMMM")}</span>
-        <span className="text-sm font-medium text-muted-foreground">— past above, coming up below</span>
+    <div className="border-b border-border/70">
+      <div className="px-3 pt-3 pb-1.5 flex items-center gap-2 flex-wrap">
+        <span className="w-2.5 h-2.5 rounded-full bg-primary flex-shrink-0" />
+        <span className="text-base font-bold text-primary">Today · {day(r.date, "EEEE d MMMM")}</span>
+        <span className="flex-1 min-w-8 h-0.5 rounded-full bg-primary/60" aria-hidden />
+        <span className="text-xs text-muted-foreground">past above, coming up below</span>
       </div>
       {body}
     </div>
@@ -266,31 +268,38 @@ function PhaseStart({ phase: p, onOpen }: { phase: Phase; onOpen: () => void }) 
   const phaseVars = usePhaseVars();
   const group = customerGroupChip(p.customerGroup);
   return (
-    <button type="button" onClick={onOpen} style={phaseVars(p.color)}
-      className={cn("w-full text-left rounded-xl border-2 px-3 py-2 space-y-1 hover:brightness-95", PHASE_CLS.fill)}>
-      <span className="flex items-center gap-2 flex-wrap">
-        <Play className="w-4 h-4 flex-shrink-0" />
-        <span className="text-base font-bold break-words">{p.title} starts</span>
-        <span className="text-sm font-medium opacity-80">{formatRange(p.startDate, p.endDate)}</span>
+    <button type="button" onClick={onOpen}
+      className="w-full min-h-11 text-left rounded-xl px-1 py-1 space-y-1 hover:bg-secondary/40">
+      {/* Bar and icon stay beside the title however it wraps. */}
+      <span className="flex items-start gap-2">
+        <span style={phaseVars(p.color)} className={cn("w-1 h-5 mt-0.5 rounded-full flex-shrink-0", PHASE_CLS.stripe)} />
+        <Play className="w-3.5 h-3.5 mt-1 flex-shrink-0 text-muted-foreground" />
+        <span className="min-w-0">
+          <span className="text-base font-bold break-words">{p.title} starts</span>
+          <span className="text-sm text-muted-foreground"> · {formatRange(p.startDate, p.endDate)}</span>
+        </span>
       </span>
       {(p.offers.length > 0 || group) && (
-        <span className="flex flex-wrap gap-1.5">
+        <span className="flex flex-wrap gap-1.5 pl-3">
           {p.offers.map(o => (
-            <span key={o} className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2.5 py-0.5 text-sm font-semibold break-words">
-              <Tag className="w-3.5 h-3.5 flex-shrink-0" />{o}
+            <span key={o} className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground break-words">
+              <Tag className="w-3 h-3 flex-shrink-0" />{o}
             </span>
           ))}
-          {group && <span className="inline-flex items-center gap-1 rounded-full bg-background/70 px-2.5 py-0.5 text-sm font-semibold"><Users className="w-3.5 h-3.5" />{group}</span>}
+          {group && <span className="inline-flex items-center gap-1 rounded-full border border-border px-2.5 py-0.5 text-xs font-medium text-muted-foreground"><Users className="w-3 h-3" />{group}</span>}
         </span>
       )}
     </button>
   );
 }
 
+// One strong colour on the list (Graeme, 18 Nov 2026: "so many different
+// colour blocks"): amber for what needs acting on. Approved and sent read as
+// plain text with a small tick.
 const STATUS_PILL: Record<EmailRowStatus, string> = {
-  sent: "bg-secondary text-muted-foreground border-border",
-  sent_unapproved: "bg-secondary text-muted-foreground border-border",
-  approved: "bg-emerald-500/15 text-emerald-800 dark:text-emerald-300 border-emerald-500/40",
+  sent: "border-transparent text-muted-foreground",
+  sent_unapproved: "border-transparent text-muted-foreground",
+  approved: "border-transparent text-muted-foreground",
   changed: "bg-amber-500/15 text-amber-900 dark:text-amber-200 border-amber-500/50",
   needs_approval: "bg-amber-500/15 text-amber-900 dark:text-amber-200 border-amber-500/50",
 };
@@ -311,12 +320,12 @@ export function EmailRow({ email: m, canApprove, onOpen }: { email: CalEmail; ca
   const sent = s === "sent" || s === "sent_unapproved";
   const time = m.sendAt ? format(parseISO(m.sendAt), "HH:mm") : null;
   return (
-    <div className={cn("rounded-xl border-2 bg-card flex flex-wrap items-start gap-x-3 gap-y-2 p-2.5",
-      rowWantsApproval(s) ? "border-amber-500/60" : s === "approved" ? "border-emerald-500/40" : "border-border")}>
+    <div className={cn("rounded-xl border bg-card flex flex-wrap items-start gap-x-3 gap-y-2 p-2.5 shadow-sm",
+      rowWantsApproval(s) ? "border-amber-500/50 border-l-4 border-l-amber-500" : "border-border")}>
       <button type="button" onClick={onOpen} className="flex-1 min-w-[12rem] text-left flex gap-2.5">
         <span className="w-14 flex-shrink-0 text-center">
           <span className={cn("block text-base font-bold tabular-nums", sent && "text-muted-foreground")}>{time ?? "—"}</span>
-          <span className="flex justify-center text-teal-600">
+          <span className="flex justify-center text-muted-foreground">
             {m.status === "Draft" ? <PencilLine className="w-4 h-4" /> : <Mail className="w-4 h-4" />}
           </span>
         </span>
@@ -330,7 +339,7 @@ export function EmailRow({ email: m, canApprove, onOpen }: { email: CalEmail; ca
         </span>
       </button>
       <div className="flex items-center gap-2 flex-wrap justify-end ml-auto">
-        <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-semibold break-words", STATUS_PILL[s])}>
+        <span className={cn("inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-sm font-medium break-words", STATUS_PILL[s])}>
           {s === "approved" || s === "sent"
             ? <BadgeCheck className={cn("w-4 h-4 flex-shrink-0", s === "approved" && "text-emerald-600")} />
             : rowWantsApproval(s) && <span className="w-2.5 h-2.5 rounded-full bg-amber-500 flex-shrink-0" />}
