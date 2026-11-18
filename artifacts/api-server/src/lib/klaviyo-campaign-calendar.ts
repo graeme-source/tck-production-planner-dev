@@ -197,6 +197,22 @@ export async function klaviyoCampaignsForMatching(since: string): Promise<Klaviy
   return [...sends, ...draftEmails];
 }
 
+/**
+ * SENT email campaigns from `since` on, straight from Klaviyo's campaign list
+ * (no drafts) — for topping up the saved copy (klaviyo-sent-mirror.ts).
+ * The list is newest first and stops paging once it reaches `since`, so a
+ * few days back is one page. null = Klaviyo isn't connected. READ-ONLY.
+ */
+export async function klaviyoSentSince(since: string): Promise<KlaviyoCalendarEmail[] | null> {
+  const apiKey = await getKlaviyoKey();
+  if (!apiKey) return null;
+  const page = await loadCampaigns(apiKey, since);
+  return campaignsToCalendar({
+    campaigns: page.campaigns.filter(c => c.attributes.status === "Sent"), messages: page.messages,
+    audienceNames: new Map(), from: since, to: "9999-12-31",
+  }).filter(c => c.status === "Sent");
+}
+
 // ── Results per sent campaign (email list view, 2026-10-14) ───────────────
 // Klaviyo's campaign values report: recipients, open / click rate, placed
 // orders and their value, per campaign, last 365 days. Klaviyo allows only a

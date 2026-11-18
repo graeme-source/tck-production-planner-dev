@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailText, evidenceFound, restState, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -144,5 +144,17 @@ describe("restState", () => {
   it("says nothing with no gap set or no use yet", () => {
     expect(restState("2026-09-27", null, "2026-11-18")).toBeNull();
     expect(restState(null, 60, "2026-11-18")).toBeNull();
+  });
+});
+
+describe("sentSyncFrom", () => {
+  it("asks for the whole year the first time", () => {
+    expect(sentSyncFrom(null, "2026-11-18", 365)).toBe("2025-11-18");
+  });
+  it("then only from a few days before the newest saved send", () => {
+    expect(sentSyncFrom("2026-11-17", "2026-11-18", 365)).toBe("2026-11-14");
+  });
+  it("never further back than the year", () => {
+    expect(sentSyncFrom("2025-11-19", "2026-11-18", 365)).toBe("2025-11-18");
   });
 });

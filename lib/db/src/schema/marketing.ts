@@ -285,3 +285,17 @@ export const marketingCampaignReasonMatchesTable = pgTable("marketing_campaign_r
   reasonId: integer("reason_id").notNull().references(() => marketingReasonsToBuyTable.id, { onDelete: "cascade" }),
   why: text("why"),
 }, t => [primaryKey({ columns: [t.campaignId, t.reasonId] })]);
+
+/** A saved copy of every SENT Klaviyo email campaign (0378): Reasons to Buy
+ *  reads the year from here and only asks Klaviyo for the last few days. */
+export const klaviyoSentCampaignsTable = pgTable("klaviyo_sent_campaigns", {
+  campaignId: text("campaign_id").primaryKey(),
+  /** London day it sent (YYYY-MM-DD). */
+  sendDay: text("send_day").notNull(),
+  sendAt: timestamp("send_at", { withTimezone: true }),
+  name: text("name").notNull(),
+  subject: text("subject"),
+  previewText: text("preview_text"),
+  klaviyoUrl: text("klaviyo_url").notNull(),
+  syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+});

@@ -274,3 +274,19 @@ export function evidenceFound(evidence: string | null | undefined, emailWords: s
   const hay = ` ${plain(emailWords)} `;
   return pieces.every(p => hay.includes(` ${p} `));
 }
+
+/** Days back to re-check from the newest saved send, so an email that was
+ *  still sending at the last check is picked up once it's sent. */
+export const SENT_RECHECK_DAYS = 3;
+
+/**
+ * Where to ask Klaviyo from when topping up the saved copy of sent
+ * campaigns: a few days before the newest one saved, or the whole lookback
+ * the first time (nothing saved yet).
+ */
+export function sentSyncFrom(newestSaved: string | null, today: string, lookbackDays: number): string {
+  const floor = addDays(today, -lookbackDays);
+  if (!newestSaved) return floor;
+  const from = addDays(newestSaved, -SENT_RECHECK_DAYS);
+  return from < floor ? floor : from;
+}

@@ -19,8 +19,8 @@ import {
 } from "@workspace/marketing-calendar";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "./ai/claude";
-import { klaviyoCampaignHtml, klaviyoCampaignResults, klaviyoCampaignsForMatching } from "./klaviyo-campaign-calendar";
-import type { KlaviyoCalendarEmail } from "./klaviyo-campaign-map";
+import { klaviyoCampaignHtml, klaviyoCampaignResults } from "./klaviyo-campaign-calendar";
+import { savedSentCampaigns, type SentCampaign } from "./klaviyo-sent-mirror";
 import { getCachedOrdersLondonDays } from "./orders-cache";
 import { newVsReturningTotals } from "./order-revenue";
 
@@ -47,10 +47,10 @@ export async function listReasons(): Promise<ReasonWithGuide[]> {
   return rows.map(r => ({ ...r, audiences: (r.audiences ?? []).filter((a): a is AudienceKey => AUDIENCE_KEYS.has(a)) }));
 }
 
-async function sentCampaigns(today: string): Promise<KlaviyoCalendarEmail[] | null> {
-  const all = await klaviyoCampaignsForMatching(addDays(today, -LOOKBACK_DAYS));
-  if (!all) return null;
-  return all.filter(c => c.status === "Sent" && c.date <= today);
+/** Sent emails of the last year, from our saved copy (topped up from
+ *  Klaviyo in the background) — not a year's fetch from Klaviyo each time. */
+function sentCampaigns(today: string): Promise<SentCampaign[] | null> {
+  return savedSentCampaigns(today, LOOKBACK_DAYS);
 }
 
 // ── Reading emails against the list ───────────────────────────────────────
@@ -134,7 +134,7 @@ async function readPending(): Promise<void> {
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, BATCH * PARALLEL);
     if (!todo.length) return;
-    const batches: KlaviyoCalendarEmail[][] = [];
+    const batches: SentCampaign[][] = [];
     for (let i = 0; i < todo.length; i += BATCH) batches.push(todo.slice(i, i + BATCH));
     const answered = await Promise.all(batches.map(b => readBatch(b, reasons, signature, doneById)));
     if (!answered.some(Boolean)) return; // Claude answered nothing: stop rather than loop.
@@ -143,10 +143,10 @@ async function readPending(): Promise<void> {
 
 /** Read one batch and store it. True when Claude answered for any email. */
 async function readBatch(
-  todo: KlaviyoCalendarEmail[], reasons: ReasonDef[], signature: string,
+  todo: SentCampaign[], reasons: ReasonDef[], signature: string,
   doneById: Map<string, { bodyText: string | null }>,
 ): Promise<boolean> {
-  const items: Array<{ c: KlaviyoCalendarEmail; body: string }> = [];
+  const items: Array<{ c: SentCampaign; body: string }> = [];
   for (const c of todo) {
     let body = doneById.get(c.id)?.bodyText ?? null;
     if (body == null) {
