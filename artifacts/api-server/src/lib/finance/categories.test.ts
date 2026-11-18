@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { cleanCategoryName, parseCategoryId } from "./categories";
+import { canTagOwnUpload, cleanCategoryName, parseCategoryId } from "./categories";
 
 describe("parseCategoryId", () => {
   it("reads a form field or a number", () => {
@@ -22,5 +22,20 @@ describe("cleanCategoryName — named exactly as in QuickBooks", () => {
   });
   it("lets a category keep its own name when renamed", () => {
     expect(cleanCategoryName("Dues and Subscriptions", existing, 2)).toEqual({ name: "Dues and Subscriptions" });
+  });
+});
+
+describe("canTagOwnUpload — saying what a just-sent receipt is", () => {
+  const now = new Date("2026-11-18T17:00:00Z");
+  const sent = (p: Partial<{ uploadedBy: number | null; createdAt: Date; postedAt: Date | null }> = {}) =>
+    ({ uploadedBy: 6, createdAt: new Date("2026-11-18T16:55:00Z"), postedAt: null, ...p });
+  it("lets the sender tag their own fresh, unposted receipt", () => {
+    expect(canTagOwnUpload(sent(), 6, now)).toBe(true);
+  });
+  it("refuses someone else's, a posted one, or one over a day old", () => {
+    expect(canTagOwnUpload(sent(), 7, now)).toBe(false);
+    expect(canTagOwnUpload(sent({ postedAt: now }), 6, now)).toBe(false);
+    expect(canTagOwnUpload(sent({ createdAt: new Date("2026-11-17T16:00:00Z") }), 6, now)).toBe(false);
+    expect(canTagOwnUpload(sent({ uploadedBy: null }), 6, now)).toBe(false);
   });
 });

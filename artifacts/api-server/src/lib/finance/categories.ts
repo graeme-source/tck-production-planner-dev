@@ -22,3 +22,22 @@ export function cleanCategoryName(raw: string, existing: Array<{ id: number; nam
   if (clash) return { error: `"${clash.name}" is already a category` };
   return { name };
 }
+
+/** How long after sending a receipt from Quick actions its sender can still
+ *  say what it is (they may not have Finance, so it's their own, fresh ones). */
+export const OWN_UPLOAD_TAG_HOURS = 24;
+
+/**
+ * Quick actions: send first, then say what it is (Graeme, 18 Nov 2026: "we
+ * might upload four invoices at once, and they might all be different").
+ * Someone without Finance may set the category and note only on an invoice
+ * they sent themselves, in the last day, that isn't posted yet.
+ */
+export function canTagOwnUpload(
+  inv: { uploadedBy: number | null; createdAt: Date; postedAt: Date | null },
+  userId: number,
+  now: Date,
+): boolean {
+  if (inv.uploadedBy !== userId || inv.postedAt != null) return false;
+  return now.getTime() - inv.createdAt.getTime() <= OWN_UPLOAD_TAG_HOURS * 3600_000;
+}

@@ -11,7 +11,7 @@ import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
 import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
 import { goesToInbox, quickAddNote, QUICK_ADD_NOTE_MAX } from "../lib/finance/inbox-rules";
-import { parseCategoryId } from "../lib/finance/categories";
+import { canTagOwnUpload, parseCategoryId } from "../lib/finance/categories";
 import { requireFeature } from "../lib/feature-access";
 import { invoiceQueue, queueInvoice, rejectLineForInvoice, setInvoicePosted, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
@@ -235,6 +235,8 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
     if (incoming.length === 0) { res.status(400).json({ error: "No files uploaded" }); return; }
     const userId = req.session.userId ?? null;
     const summary = { filesFound: 0, filesAdded: 0, duplicates: 0, skipped: [] as string[] };
+    // The new Inbox invoices, so the page can ask what each one is.
+    const added: Array<{ id: number; name: string }> = [];
     // Paths inside the zip, sent alongside each file by the page.
     const paths: string[] = (() => { try { return JSON.parse(String(req.body?.paths ?? "[]")); } catch { return []; } })();
     // "What is this item?" — the category (and any note) on every PDF or
@@ -282,6 +284,7 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
           if (goesToInbox(f.path, fromZip)) {
             if (note || categoryId) await db.update(finInvoicesTable).set({ ...(categoryId ? { categoryId } : {}), ...(note ? { notes: note } : {}), updatedAt: new Date() }).where(eq(finInvoicesTable.id, r.id));
             await queueInvoice(r.id);
+            added.push({ id: r.id, name: f.name });
           }
         }
       }
@@ -294,7 +297,7 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
       ...(Number(req.body?.uploadId) ? {} : { filesFound: summary.filesFound }),
     }).where(eq(finInvoiceUploadsTable.id, batchId));
     if (summary.filesAdded > 0) kickInvoiceReader();
-    res.json({ ...summary, uploadId: batchId });
+    res.json({ ...summary, uploadId: batchId, added });
   } catch (err) {
     console.error("[finance] invoice upload error:", err);
     res.status(500).json({ error: "Upload failed part-way — what arrived before the error is kept. Try again: files already in are skipped." });
@@ -308,8 +311,9 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
 // not have Finance at all — so it only adds, and answers with nothing more
 // than a count.
 
-// "What is this item?" (Graeme, 18 Nov 2026): one of the fixed categories,
-// required, plus an optional typed note — both land on the invoice.
+// "What is this item?" (Graeme, 18 Nov 2026): send first, then say — the
+// answer comes back on PATCH /quick-add/:id. A category or note sent with the
+// photo is still kept.
 const QuickAddBody = z.object({
   categoryId: z.string().max(12).optional(),
   note: z.string().max(QUICK_ADD_NOTE_MAX * 2).optional(),
@@ -328,8 +332,9 @@ router.post("/quick-add", requireFeature("finance.add_receipt"), receiveFiles, v
     const body = req.body as z.infer<typeof QuickAddBody>;
     const note = quickAddNote(body.note);
     const categoryId = parseCategoryId(body.categoryId);
-    if (categoryId == null || !(await categoryExists(categoryId))) { res.status(400).json({ error: "Choose what this item is first." }); return; }
+    if (categoryId != null && !(await categoryExists(categoryId))) { res.status(400).json({ error: "That category isn't in the list" }); return; }
     let added = 0;
+    const ids: number[] = [];
     let already = 0;
     const refused: string[] = [];
     for (const file of incoming) {
@@ -339,16 +344,47 @@ router.post("/quick-add", requireFeature("finance.add_receipt"), receiveFiles, v
       const r = await addInvoiceFile({ bytes: new Uint8Array(file.buffer), mime, name, sourcePath: name, source: "upload", uploadedBy: userId });
       if (r.duplicate) { already++; continue; }
       added++;
-      await db.update(finInvoicesTable).set({ categoryId, ...(note ? { notes: note } : {}), updatedAt: new Date() }).where(eq(finInvoicesTable.id, r.id));
+      ids.push(r.id);
+      if (categoryId || note) await db.update(finInvoicesTable).set({ ...(categoryId ? { categoryId } : {}), ...(note ? { notes: note } : {}), updatedAt: new Date() }).where(eq(finInvoicesTable.id, r.id));
       await logFinEvent("invoice", r.id, "uploaded", userId, { via: "quick_action", categoryId, ...(note ? { note } : {}) });
       await refreshDuplicate(r.id);
       await queueInvoice(r.id);
     }
     if (added > 0) kickInvoiceReader();
-    res.json({ added, already, refused });
+    res.json({ added, already, refused, ids });
   } catch (err) {
     console.error("[finance] quick-add error:", err);
     res.status(500).json({ error: "Couldn't send it — try again." });
+  }
+});
+
+// "What is this item?" after sending, for someone who may not have Finance:
+// only on a receipt they sent themselves, in the last day, not yet posted.
+const QuickTagBody = z.object({
+  categoryId: z.number().int().positive().nullable().optional(),
+  note: z.string().max(QUICK_ADD_NOTE_MAX * 2).nullable().optional(),
+});
+
+router.patch("/quick-add/:id", requireFeature("finance.add_receipt"), validate(QuickTagBody), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const userId = req.session.userId;
+    if (!Number.isInteger(id) || id <= 0 || userId == null) { res.status(400).json({ error: "Invalid receipt" }); return; }
+    const [inv] = await db.select({ uploadedBy: finInvoicesTable.uploadedBy, createdAt: finInvoicesTable.createdAt, postedAt: finInvoicesTable.postedAt })
+      .from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
+    if (!inv || !canTagOwnUpload(inv, userId, new Date())) { res.status(403).json({ error: "You can only say what your own receipts are, on the day you send them." }); return; }
+    const body = req.body as z.infer<typeof QuickTagBody>;
+    if (body.categoryId != null && !(await categoryExists(body.categoryId))) { res.status(400).json({ error: "That category isn't in the list" }); return; }
+    const set: Partial<typeof finInvoicesTable.$inferInsert> = {};
+    if (body.categoryId !== undefined) set.categoryId = body.categoryId;
+    if (body.note !== undefined) set.notes = quickAddNote(body.note);
+    if (Object.keys(set).length === 0) { res.json({ ok: true }); return; }
+    await db.update(finInvoicesTable).set({ ...set, updatedAt: new Date() }).where(eq(finInvoicesTable.id, id));
+    await logFinEvent("invoice", id, "edited", userId, { via: "quick_action", ...set });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[finance] quick-add tag error:", err);
+    res.status(500).json({ error: "Couldn't save that" });
   }
 });
 
