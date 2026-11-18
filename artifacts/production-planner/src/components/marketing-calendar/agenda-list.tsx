@@ -5,12 +5,11 @@
  * one has been approved — on the calendar itself." Objective I.
  *
  * Weeks top to bottom, a row per day that has something on it, a thin
- * "quiet" line for runs of empty days. Phases start and end in the flow and
- * every row they cover carries their coloured stripe and name. Each Klaviyo
+ * "quiet" line (just its dates) for runs of empty days. Phases start and end
+ * in the flow and every row they cover carries their coloured stripe. Each Klaviyo
  * email sits once on its send day with its status and, for approvers, an
- * Approve button right on the row. Today is ONE highlighted row — the
- * Today bar with today's phases and emails directly under it — and the
- * page opens scrolled to it. There is no inner scroll box (Graeme,
+ * Approve button right on the row. Today is a day row like the rest, its
+ * date green under a slim green line, and the page opens scrolled to it. There is no inner scroll box (Graeme,
  * 2026-10-21): the list flows in the page and the page scrolls, with the
  * week headings sticking under the top bar. Drafts with no send date
  * are not here: they have their own collapsible section above the list
@@ -196,48 +195,32 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
   }
 
   if (r.kind === "quiet") {
-    const names = r.phases.map(p => p.phase.title).join(" · ");
+    // No words (Graeme, 18 Nov 2026: "the lack of an email visually should
+    // tell us that") — just the dates, where every day's date sits.
     return (
       <div className={cn("flex items-stretch gap-2 min-h-7 border-b border-border/50", r.isPast && "opacity-60")}>
         <Stripes phases={r.phases} laneCount={laneCount} />
-        <p className="flex-1 py-1 pr-3 text-xs text-muted-foreground/80 flex flex-wrap items-center gap-x-2">
-          <span>Nothing sending · {r.days === 1 ? day(r.from, "EEE d MMM") : `${day(r.from, "EEE d")} – ${day(r.to, "EEE d MMM")}`}</span>
-          {names && <span>{names}</span>}
+        <p className="flex-1 py-1 pr-3 text-xs text-muted-foreground/80 flex items-center">
+          {r.days === 1 ? day(r.from, "EEE d MMM") : `${day(r.from, "EEE d")} – ${day(r.to, "EEE d MMM")}`}
         </p>
       </div>
     );
   }
 
-  // A day with something on it — or today, which is ONE row: the Today bar
-  // with today's phases and emails straight under it.
-  const startingIds = new Set(r.starts.map(p => p.id));
-  const runningOn = r.phases.filter(p => !startingIds.has(p.phase.id));
-  const body = (
-    <div className={cn("flex items-stretch gap-2", !r.isToday && "border-b border-border/70", r.isPast && "opacity-70")}>
+  // A day with something on it. Today is the same row as every other day —
+  // date in the date column (green), emails the same size and indent — under
+  // a slim green line (Graeme, 18 Nov 2026). Running phases aren't named on
+  // each day: the coloured stripe on the left shows them.
+  return (
+    <div className={cn("relative flex items-stretch gap-2 border-b border-border/70", r.isPast && "opacity-70", r.isToday && "border-t-2 border-t-primary/70")}>
       <Stripes phases={r.phases} laneCount={laneCount} />
-      <div className={cn("flex-1 min-w-0 pr-2 sm:pr-3 flex flex-col sm:flex-row gap-1.5 sm:gap-3", r.isToday ? "pt-1 pb-3 pl-1" : "py-3")}>
-        {!r.isToday && (
-          <div className="sm:w-24 flex-shrink-0">
-            <p className="text-sm font-semibold leading-tight">{day(r.date, "EEE")}</p>
-            <p className="text-base font-bold leading-tight">{day(r.date, "d MMM")}</p>
-          </div>
-        )}
+      <div className="flex-1 min-w-0 pr-2 sm:pr-3 py-3 flex flex-col sm:flex-row gap-1.5 sm:gap-3">
+        <div className={cn("sm:w-24 flex-shrink-0", r.isToday && "text-primary")}>
+          <p className="text-sm font-semibold leading-tight">{r.isToday ? "Today" : day(r.date, "EEE")}</p>
+          <p className="text-base font-bold leading-tight">{day(r.date, "d MMM")}</p>
+        </div>
         <div className="flex-1 min-w-0 space-y-2">
           {r.starts.map(p => <PhaseStart key={`s${p.id}`} phase={p} onOpen={() => onOpenPhase(p)} />)}
-          {runningOn.length > 0 && (
-            <div className="flex flex-wrap gap-x-4 gap-y-1">
-              {runningOn.map(({ phase: p }) => (
-                <button key={p.id} type="button" onClick={() => onOpenPhase(p)}
-                  className="inline-flex items-center gap-1.5 min-h-8 text-sm text-muted-foreground hover:text-foreground break-words text-left">
-                  <span style={phaseVars(p.color)} className={cn("w-2 h-2 rounded-full flex-shrink-0", PHASE_CLS.stripe)} />
-                  {p.title}
-                </button>
-              ))}
-            </div>
-          )}
-          {r.isToday && r.emails.length === 0 && r.starts.length === 0 && r.ends.length === 0 && (
-            <p className="text-sm text-muted-foreground py-0.5">Nothing sending today.</p>
-          )}
           {r.emails.map(m => <EmailRow key={m.id} email={m} canApprove={canApprove} onOpen={() => onOpenEmail(m)} />)}
           {r.ends.map(p => (
             <button key={`e${p.id}`} type="button" onClick={() => onOpenPhase(p)}
@@ -248,18 +231,6 @@ function AgendaRowView({ row: r, laneCount, canApprove, onOpenPhase, onOpenEmail
           ))}
         </div>
       </div>
-    </div>
-  );
-  if (!r.isToday) return body;
-  return (
-    <div className="border-b border-border/70">
-      <div className="px-3 pt-3 pb-1.5 flex items-center gap-2 flex-wrap">
-        <span className="w-2.5 h-2.5 rounded-full bg-primary flex-shrink-0" />
-        <span className="text-base font-bold text-primary">Today · {day(r.date, "EEEE d MMMM")}</span>
-        <span className="flex-1 min-w-8 h-0.5 rounded-full bg-primary/60" aria-hidden />
-        <span className="text-xs text-muted-foreground">past above, coming up below</span>
-      </div>
-      {body}
     </div>
   );
 }
