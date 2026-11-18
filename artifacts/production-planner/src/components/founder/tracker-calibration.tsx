@@ -100,20 +100,33 @@ export function PredictedVsActual() {
 
 // ── Prices and grouping ─────────────────────────────────────────────────
 
-const PRICE_FIELDS: Array<{ key: keyof Omit<TrackerSettings, "weightThresholdGrams" | "overhead_average_months">; label: string }> = [
-  { key: "small_box_cost", label: "Small box, insulation & ice" },
-  { key: "large_box_cost", label: "Large box, insulation & ice" },
-  { key: "small_box_courier", label: "Courier, small box" },
-  { key: "large_box_courier", label: "Courier, large box" },
+type FieldKey = keyof Omit<TrackerSettings, "weightThresholdGrams" | "overhead_average_months">;
+type Field = { key: FieldKey; label: string; unit: "£" | "%" };
+
+const PRICE_FIELDS: Field[] = [
+  { key: "small_box_cost", label: "Small box, insulation & ice", unit: "£" },
+  { key: "large_box_cost", label: "Large box, insulation & ice", unit: "£" },
+  { key: "small_box_courier", label: "Courier, small box", unit: "£" },
+  { key: "large_box_courier", label: "Courier, large box", unit: "£" },
 ];
 
-function PriceField({ label, value, onSave }: { label: string; value: number; onSave: (v: number) => Promise<unknown> }) {
-  const [text, setText] = useState(value.toFixed(2));
+// What Planday's wages are grossed up by for production labour.
+const LABOUR_FIELDS: Field[] = [
+  { key: "employer_ni_rate", label: "Employer's NI", unit: "%" },
+  { key: "employer_ni_weekly_threshold", label: "NI weekly threshold", unit: "£" },
+  { key: "employment_allowance_annual", label: "Employment allowance a year", unit: "£" },
+  { key: "employer_pension_rate", label: "Employer pension", unit: "%" },
+];
+
+const show = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
+
+function PriceField({ label, unit, value, onSave }: { label: string; unit: "£" | "%"; value: number; onSave: (v: number) => Promise<unknown> }) {
+  const [text, setText] = useState(show(value));
   const [state, setState] = useState<SaveState>("idle");
-  useEffect(() => { setText(value.toFixed(2)); }, [value]);
+  useEffect(() => { setText(show(value)); }, [value]);
   async function commit() {
     const n = Number(text);
-    if (!Number.isFinite(n) || n < 0 || n === value) { setText(value.toFixed(2)); return; }
+    if (!Number.isFinite(n) || n < 0 || n === value) { setText(show(value)); return; }
     setState("saving");
     try { await onSave(n); setState("saved"); } catch { setState("error"); }
   }
@@ -121,7 +134,7 @@ function PriceField({ label, value, onSave }: { label: string; value: number; on
     <label className="rounded-2xl bg-secondary/40 p-4 block">
       <span className="text-sm text-muted-foreground">{label}</span>
       <div className="mt-1 flex items-center gap-2">
-        <span className="text-lg font-semibold">£</span>
+        {unit === "£" && <span className="text-lg font-semibold">£</span>}
         <input
           inputMode="decimal"
           value={text}
@@ -130,6 +143,7 @@ function PriceField({ label, value, onSave }: { label: string; value: number; on
           onKeyDown={e => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
           className="h-11 w-28 rounded-lg border border-border bg-background px-3 text-lg font-semibold tabular-nums"
         />
+        {unit === "%" && <span className="text-lg font-semibold">%</span>}
         <SaveMark state={state} />
       </div>
     </label>
@@ -166,14 +180,14 @@ export function TrackerSetup() {
   return (
     <section className="glass-panel rounded-2xl p-5 space-y-5">
       <div>
-        <h2 className="text-lg font-display font-bold">Tracker prices and QuickBooks lines</h2>
+        <h2 className="text-lg font-display font-bold">Tracker prices, labour and QuickBooks lines</h2>
         <p className="text-sm text-muted-foreground">Saves as you change it.</p>
       </div>
 
       {s ? (
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           {PRICE_FIELDS.map(f => (
-            <PriceField key={f.key} label={f.label} value={s[f.key]} onSave={v => saveSetting.mutateAsync({ key: f.key, value: v })} />
+            <PriceField key={f.key} label={f.label} unit={f.unit} value={s[f.key]} onSave={v => saveSetting.mutateAsync({ key: f.key, value: v })} />
           ))}
           <div className="rounded-2xl bg-secondary/40 p-4">
             <span className="text-sm text-muted-foreground">Overheads averaged over</span>
@@ -192,6 +206,17 @@ export function TrackerSetup() {
           </div>
         </div>
       ) : <Skeleton className="h-24" />}
+
+      {s && (
+        <div>
+          <h3 className="text-sm font-semibold text-muted-foreground mb-2">Labour on-costs, added to Planday wages</h3>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {LABOUR_FIELDS.map(f => (
+              <PriceField key={f.key} label={f.label} unit={f.unit} value={s[f.key]} onSave={v => saveSetting.mutateAsync({ key: f.key, value: v })} />
+            ))}
+          </div>
+        </div>
+      )}
 
       {toCheck.length > 0 && (
         <p className="p-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 text-sm text-amber-900 dark:text-amber-200">

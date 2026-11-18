@@ -102,7 +102,7 @@ router.get("/settings", async (_req: Request, res: Response) => {
 
 const settingBody = z.object({
   key: z.enum(Object.keys(TRACKER_SETTINGS) as [TrackerSettingKey, ...TrackerSettingKey[]]),
-  value: z.number().min(0).max(1000),
+  value: z.number().min(0).max(100000),
 }).refine(b => b.key !== "overhead_average_months" || b.value === 3 || b.value === 6, "Average over 3 or 6 months");
 
 router.put("/settings", validate(settingBody), async (req: Request, res: Response) => {

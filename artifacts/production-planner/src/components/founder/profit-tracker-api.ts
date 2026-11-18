@@ -87,6 +87,7 @@ export interface Groups {
 export interface TrackerSettings {
   small_box_cost: number; large_box_cost: number; small_box_courier: number; large_box_courier: number;
   overhead_average_months: number; weightThresholdGrams: number;
+  employer_ni_rate: number; employer_ni_weekly_threshold: number; employment_allowance_annual: number; employer_pension_rate: number;
 }
 
 async function getJson<T>(path: string): Promise<T> {

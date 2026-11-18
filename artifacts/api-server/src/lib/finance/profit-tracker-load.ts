@@ -24,6 +24,12 @@ export const TRACKER_SETTINGS = {
   small_box_courier: 4.72,
   large_box_courier: 5.72,
   overhead_average_months: 3,
+  // Employer on-costs Planday's wages are grossed up by (services/planday.ts
+  // reads the same keys) — moved here from the old P&L settings panel.
+  employer_ni_rate: 15,
+  employer_ni_weekly_threshold: 96.15,
+  employment_allowance_annual: 10500,
+  employer_pension_rate: 3,
 } as const;
 export type TrackerSettingKey = keyof typeof TRACKER_SETTINGS;
 
