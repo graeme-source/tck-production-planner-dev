@@ -8,6 +8,7 @@
  * aside as a possible duplicate. Every action is kept with who and when.
  */
 import { useMemo, useRef, useState } from "react";
+import { CategorySelect } from "@/components/finance/category-select";
 import { InvoiceDeliveryChip } from "@/components/invoice-delivery-chip";
 import { ConfirmPostedDialog } from "@/components/finance/confirm-posted";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -134,7 +135,7 @@ async function unpack(file: File, skipped: string[]): Promise<Prepared[]> {
 type Progress = { phase: "unpacking" | "checking" | "sending" | "done" | "stopped"; done: number; total: number; added: number; held: number; skipped: string[]; error?: string };
 
 /** One drop = one upload batch. Zips go one at a time to keep memory down. */
-async function uploadAll(files: File[], onProgress: (p: Progress) => void): Promise<Progress> {
+async function uploadAll(files: File[], onProgress: (p: Progress) => void, categoryId: number | null): Promise<Progress> {
   const p: Progress = { phase: "unpacking", done: 0, total: 0, added: 0, held: 0, skipped: [] };
   onProgress({ ...p });
   const batch = await jsonFetch(`${BASE}/api/finance/invoices/uploads`, {
@@ -172,6 +173,7 @@ async function uploadAll(files: File[], onProgress: (p: Progress) => void): Prom
         }
         const form = new FormData();
         form.append("uploadId", String(batch.id));
+        if (categoryId != null) form.append("categoryId", String(categoryId));
         form.append("paths", JSON.stringify(chunk.map((c) => c.path)));
         chunk.forEach((c) => form.append("files", new Blob([c.bytes as Uint8Array<ArrayBuffer>], { type: c.mime }), c.name));
         let r: any; let lastErr: unknown;
@@ -210,6 +212,10 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
   const [dragOver, setDragOver] = useState(false);
   const [progress, setProgress] = useState<Progress | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  // "What is this item?" (Graeme, 18 Nov 2026): asked before any PDF or photo
+  // goes in, so it can't be forgotten. A zip of old invoices doesn't need it.
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const categoryBox = useRef<HTMLSelectElement>(null);
   const reads = useQuery<ListResponse>({
     queryKey: ["/api/finance/invoices", "years-only"],
     queryFn: () => jsonFetch(`${BASE}/api/finance/invoices?yearsOnly=1`),
@@ -221,11 +227,16 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
     const arr = Array.from(files ?? []);
     if (!arr.length || busy) return;
     const zipsOnly = arr.every((f) => /\.zip$/i.test(f.name));
+    if (!zipsOnly && categoryId == null) {
+      toast({ title: "What is this item?", description: "Choose its category first, then add it.", variant: "destructive" });
+      categoryBox.current?.focus();
+      return;
+    }
     // A phone's photo picker makes it easy to tick several by accident
     // (Graeme, 17 Nov 2026: one receipt went up as five photos). Check first.
     const photos = arr.filter((f) => !/\.zip$/i.test(f.name));
     if (photos.length > 1 && !window.confirm(`You chose ${photos.length} files:\n${photos.map((f) => f.name).join("\n")}\n\nSend all ${photos.length} to the Inbox?`)) return;
-    const result = await uploadAll(arr, setProgress).catch((e: Error) => {
+    const result = await uploadAll(arr, setProgress, zipsOnly ? null : categoryId).catch((e: Error) => {
       toast({ title: "Upload couldn't start", description: e.message, variant: "destructive" });
       return null;
     });
@@ -240,6 +251,7 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
     }
     queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] });
     queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices/uploads"] });
+    if (result?.phase === "done" && !zipsOnly) setCategoryId(null);
   };
   return (
     <Card className={className}>
@@ -251,15 +263,20 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
         onDrop={(e) => { e.preventDefault(); setDragOver(false); sendFiles(e.dataTransfer.files); }}
       >
         <div className="flex items-center gap-3 flex-wrap">
+          <label className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-bold">What is this item?</span>
+            <CategorySelect value={categoryId} onChange={setCategoryId} required selectRef={categoryBox} disabled={busy} className="h-10 min-w-[16rem]" />
+          </label>
           <input ref={fileInput} type="file" multiple accept=".zip,application/zip,.pdf,application/pdf,image/*" className="hidden"
             onChange={(e) => { const f = e.target.files ? Array.from(e.target.files) : []; e.target.value = ""; sendFiles(f); }} />
           {/* Dark, so the green stays for the tab you're on (Graeme, 17 Nov 2026). */}
-          <Button className="bg-foreground text-background hover:bg-foreground/85" onClick={() => fileInput.current?.click()} disabled={busy}>
+          <Button className="bg-foreground text-background hover:bg-foreground/85" disabled={busy}
+            onClick={() => { if (categoryId == null) { toast({ title: "What is this item?", description: "Choose its category first, then add it." }); categoryBox.current?.focus(); return; } fileInput.current?.click(); }}>
             {busy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
             {busy ? "Uploading…" : "Add invoices"}
           </Button>
           <div className="flex-1 min-w-[200px] text-sm text-muted-foreground">
-            Or drop PDFs or photos here. They go to the Inbox until they're posted. (A zip of old invoices goes straight into the library.)
+            Choose what it is, then add or drop PDFs or photos. They go to the Inbox until they're posted. (A zip of old invoices goes straight into the library.)
           </div>
           {pending > 0 && (
             <div className="text-sm flex items-center gap-2 text-sky-800 dark:text-sky-300">

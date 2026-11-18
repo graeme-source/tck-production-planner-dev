@@ -189,6 +189,7 @@ import surveysRouter from "./surveys";
 import financeRouter from "./finance";
 import financeUploadUndoRouter from "./finance-upload-undo";
 import financeInvoicesRouter from "./finance-invoices";
+import financeCategoriesRouter from "./finance-categories";
 import financeDeliveriesRouter from "./finance-deliveries";
 import priceReviewsRouter from "./price-reviews";
 import cashFlowRouter from "./cash-flow";
@@ -460,6 +461,7 @@ router.use("/founder-panels", founderPanelsRouter);
 // isBookkeeper); mailbox settings admin-only at the route layer.
 // Finance → Invoices library (2026-11-03); same access as Finance, checked inside.
 router.use("/finance/invoices", financeInvoicesRouter);
+router.use("/finance/categories", financeCategoriesRouter);
 router.use("/finance/deliveries", financeDeliveriesRouter);
 router.use("/price-reviews", priceReviewsRouter);
 router.use("/finance/upload-undo", financeUploadUndoRouter);

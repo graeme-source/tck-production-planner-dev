@@ -3,14 +3,15 @@ import multer from "multer";
 import { z } from "zod/v4";
 import { and, desc, eq, ilike, inArray, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
-import { db, finEventsTable, finInvoiceUploadsTable, finInvoicesTable, finLinesTable, usersTable } from "@workspace/db";
+import { db, finCategoriesTable, finEventsTable, finInvoiceUploadsTable, finInvoicesTable, finLinesTable, usersTable } from "@workspace/db";
 import { validate } from "../middleware/validate";
 import { resolveFinanceAccess } from "./finance";
 import { extractInvoiceFiles, financialYearOfDate, financialYearRange, invoiceMimeFor, periodRange, sha256Of, supplierHintFromPath } from "../lib/finance/invoice-library";
 import { storedFileHeaders } from "../lib/finance/posted-rules";
 import { addInvoiceFile, kickInvoiceReader, logFinEvent, pendingInvoiceCount, readInvoiceNow, refreshDuplicate } from "../lib/finance/invoice-store";
 import { attachInvoiceToLines, detachInvoiceFromLine, suggestLinesForInvoice } from "../lib/finance/invoice-attach";
-import { goesToInbox } from "../lib/finance/inbox-rules";
+import { goesToInbox, quickAddNote, QUICK_ADD_NOTE_MAX } from "../lib/finance/inbox-rules";
+import { parseCategoryId } from "../lib/finance/categories";
 import { requireFeature } from "../lib/feature-access";
 import { invoiceQueue, queueInvoice, rejectLineForInvoice, setInvoicePosted, takeOutOfQueue } from "../lib/finance/invoice-queue";
 
@@ -112,6 +113,7 @@ router.get("/", requireFinanceAccess, async (req: Request, res: Response) => {
       currency: finInvoicesTable.currency,
       docKind: finInvoicesTable.docKind,
       notes: finInvoicesTable.notes,
+      categoryId: finInvoicesTable.categoryId,
       paymentStatus: finInvoicesTable.paymentStatus,
       readStatus: finInvoicesTable.readStatus,
       readNote: finInvoicesTable.readNote,
@@ -235,6 +237,11 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
     const summary = { filesFound: 0, filesAdded: 0, duplicates: 0, skipped: [] as string[] };
     // Paths inside the zip, sent alongside each file by the page.
     const paths: string[] = (() => { try { return JSON.parse(String(req.body?.paths ?? "[]")); } catch { return []; } })();
+    // "What is this item?" — the category (and any note) on every PDF or
+    // photo going to the Inbox. A zip is history and gets neither.
+    const note = quickAddNote(req.body?.note);
+    const categoryId = parseCategoryId(req.body?.categoryId);
+    if (categoryId != null && !(await categoryExists(categoryId))) { res.status(400).json({ error: "That category isn't in the list" }); return; }
     let batchId = Number(req.body?.uploadId) || null;
     if (batchId) {
       const [b] = await db.select({ id: finInvoiceUploadsTable.id }).from(finInvoiceUploadsTable).where(eq(finInvoiceUploadsTable.id, batchId));
@@ -272,7 +279,10 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
           // One place to add invoices (Graeme, 17 Nov 2026): a PDF or photo
           // waits in the Inbox until it's marked posted, and meets its card
           // transaction if one turns up. A zip is history: library only.
-          if (goesToInbox(f.path, fromZip)) await queueInvoice(r.id);
+          if (goesToInbox(f.path, fromZip)) {
+            if (note || categoryId) await db.update(finInvoicesTable).set({ ...(categoryId ? { categoryId } : {}), ...(note ? { notes: note } : {}), updatedAt: new Date() }).where(eq(finInvoicesTable.id, r.id));
+            await queueInvoice(r.id);
+          }
         }
       }
     }
@@ -298,11 +308,27 @@ router.post("/upload", requireFinanceAccess, receiveFiles, async (req: Request, 
 // not have Finance at all — so it only adds, and answers with nothing more
 // than a count.
 
-router.post("/quick-add", requireFeature("finance.add_receipt"), receiveFiles, validate(z.object({})), async (req: Request, res: Response) => {
+// "What is this item?" (Graeme, 18 Nov 2026): one of the fixed categories,
+// required, plus an optional typed note — both land on the invoice.
+const QuickAddBody = z.object({
+  categoryId: z.string().max(12).optional(),
+  note: z.string().max(QUICK_ADD_NOTE_MAX * 2).optional(),
+});
+
+async function categoryExists(id: number): Promise<boolean> {
+  const [c] = await db.select({ id: finCategoriesTable.id }).from(finCategoriesTable).where(eq(finCategoriesTable.id, id));
+  return !!c;
+}
+
+router.post("/quick-add", requireFeature("finance.add_receipt"), receiveFiles, validate(QuickAddBody), async (req: Request, res: Response) => {
   try {
     const incoming = (req.files as Express.Multer.File[] | undefined) ?? [];
     if (incoming.length === 0) { res.status(400).json({ error: "No photo or file arrived — try again." }); return; }
     const userId = req.session.userId ?? null;
+    const body = req.body as z.infer<typeof QuickAddBody>;
+    const note = quickAddNote(body.note);
+    const categoryId = parseCategoryId(body.categoryId);
+    if (categoryId == null || !(await categoryExists(categoryId))) { res.status(400).json({ error: "Choose what this item is first." }); return; }
     let added = 0;
     let already = 0;
     const refused: string[] = [];
@@ -313,7 +339,8 @@ router.post("/quick-add", requireFeature("finance.add_receipt"), receiveFiles, v
       const r = await addInvoiceFile({ bytes: new Uint8Array(file.buffer), mime, name, sourcePath: name, source: "upload", uploadedBy: userId });
       if (r.duplicate) { already++; continue; }
       added++;
-      await logFinEvent("invoice", r.id, "uploaded", userId, { via: "quick_action" });
+      await db.update(finInvoicesTable).set({ categoryId, ...(note ? { notes: note } : {}), updatedAt: new Date() }).where(eq(finInvoicesTable.id, r.id));
+      await logFinEvent("invoice", r.id, "uploaded", userId, { via: "quick_action", categoryId, ...(note ? { note } : {}) });
       await refreshDuplicate(r.id);
       await queueInvoice(r.id);
     }
@@ -346,7 +373,7 @@ async function invoiceSummary(id: number) {
     invoiceNumber: finInvoicesTable.invoiceNumber, totalAmount: finInvoicesTable.totalAmount,
     vatAmount: finInvoicesTable.vatAmount, docKind: finInvoicesTable.docKind,
     readStatus: finInvoicesTable.readStatus, readNote: finInvoicesTable.readNote, lineId: finInvoicesTable.lineId,
-    notes: finInvoicesTable.notes, paymentStatus: finInvoicesTable.paymentStatus, currency: finInvoicesTable.currency,
+    notes: finInvoicesTable.notes, categoryId: finInvoicesTable.categoryId, paymentStatus: finInvoicesTable.paymentStatus, currency: finInvoicesTable.currency,
   }).from(finInvoicesTable).where(eq(finInvoicesTable.id, id));
   return inv ?? null;
 }
@@ -492,6 +519,7 @@ const editSchema = z.object({
   docKind: z.enum(["invoice", "receipt", "credit_note", "statement", "other"]).optional(),
   notes: z.string().trim().max(2000).nullable().optional(),
   paymentStatus: z.enum(["paid", "unpaid"]).nullable().optional(),
+  categoryId: z.number().int().positive().nullable().optional(),
 });
 
 router.patch("/:id", requireFinanceAccess, validate(editSchema), async (req: Request, res: Response) => {
@@ -517,6 +545,8 @@ router.patch("/:id", requireFinanceAccess, validate(editSchema), async (req: Req
     set("docKind", body.docKind);
     set("notes", body.notes === undefined ? undefined : body.notes || null);
     set("paymentStatus", body.paymentStatus);
+    if (body.categoryId != null && !(await categoryExists(body.categoryId))) { res.status(400).json({ error: "That category isn't in the list" }); return; }
+    set("categoryId", body.categoryId);
     if (Object.keys(updates).length === 0) { res.json({ ok: true, changed: 0 }); return; }
     await db.update(finInvoicesTable).set({ ...updates, updatedAt: new Date() }).where(eq(finInvoicesTable.id, id));
     await logFinEvent("invoice", id, "edited", req.session.userId, { changes });

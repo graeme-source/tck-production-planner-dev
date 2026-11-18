@@ -25,6 +25,16 @@ const bytea = customType<{ data: Buffer; notNull: false; default: false }>({
 
 // Supplier knowledge base — the advisory layer. Every field a human edits is
 // "confirmed"; harvested/guessed values stay estimates (detailsConfirmed).
+/** What an invoice or transaction is — the "What is this item?" dropdown
+ *  (migration 0380, Graeme 18 Nov 2026). Data, not code: edited on Finance. */
+export const finCategoriesTable = pgTable("fin_categories", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  sortOrder: integer("sort_order").notNull().default(0),
+  archivedAt: timestamp("archived_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const finVendorsTable = pgTable("fin_vendors", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
@@ -77,6 +87,7 @@ export const finLinesTable = pgTable("fin_lines", {
   // (e.g. repayment noise, personal, or admin decision — reason in statusNote).
   status: text("status").notNull().default("open"),
   statusNote: text("status_note"),
+  categoryId: integer("category_id").references(() => finCategoriesTable.id, { onDelete: "set null" }),
   doneAt: timestamp("done_at"),
   doneBy: integer("done_by"),
   // Supplier contact + order reference — extracted from an attached order
@@ -216,6 +227,7 @@ export const finInvoicesTable = pgTable("fin_invoices", {
   currency: text("currency").notNull().default("GBP"),
   docKind: text("doc_kind").notNull().default("invoice"),
   notes: text("notes"),
+  categoryId: integer("category_id").references(() => finCategoriesTable.id, { onDelete: "set null" }),
   paymentStatus: text("payment_status"), // 'paid' | 'unpaid'; NULL until someone presses one (migration 0364)
   readStatus: text("read_status").notNull().default("pending"), // pending | done | failed | not_available
   readNote: text("read_note"),

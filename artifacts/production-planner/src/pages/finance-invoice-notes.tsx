@@ -7,6 +7,7 @@ import { SaveChip } from "@/components/save-chip";
 import { useAutosave } from "@/hooks/use-autosave";
 import { useToast } from "@/hooks/use-toast";
 import { jsonFetch } from "@/pages/finance-invoice-drop";
+import { CategorySelect } from "@/components/finance/category-select";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -19,13 +20,14 @@ export type PaymentStatus = "paid" | "unpaid" | null;
 // headline row (the Inbox), `stacked` in their own box (Outstanding's drop).
 
 export function InvoiceNotes({ invoice, layout = "stacked" }: {
-  invoice: { id: number; notes: string | null; paymentStatus: PaymentStatus };
+  invoice: { id: number; notes: string | null; paymentStatus: PaymentStatus; categoryId?: number | null };
   layout?: "stacked" | "inline";
 }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState(invoice.notes ?? "");
   const [status, setStatus] = useState<PaymentStatus>(invoice.paymentStatus ?? null);
+  const [categoryId, setCategoryId] = useState<number | null>(invoice.categoryId ?? null);
   const patch = (body: object) => jsonFetch(`${BASE}/api/finance/invoices/${invoice.id}`, {
     method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
   });
@@ -42,6 +44,19 @@ export function InvoiceNotes({ invoice, layout = "stacked" }: {
       toast({ title: "Couldn't save that", description: e.message, variant: "destructive" });
     },
   });
+  // "What is this item?" (Graeme, 18 Nov 2026) — saves the moment it's chosen.
+  const saveCategory = useMutation({
+    mutationFn: (next: number | null) => patch({ categoryId: next }),
+    onMutate: (next) => { const before = categoryId; setCategoryId(next); return { before }; },
+    onSuccess: refresh,
+    onError: (e: Error, _next, ctx) => {
+      if (ctx) setCategoryId(ctx.before);
+      toast({ title: "Couldn't save the category", description: e.message, variant: "destructive" });
+    },
+  });
+  const category = (
+    <CategorySelect value={categoryId} onChange={(id) => saveCategory.mutate(id)} required disabled={saveCategory.isPending} className="shrink-0 max-w-full" />
+  );
   const choice = (value: "unpaid" | "paid", label: string) => (
     <Button
       type="button"
@@ -66,6 +81,7 @@ export function InvoiceNotes({ invoice, layout = "stacked" }: {
   if (layout === "inline") {
     return (
       <>
+        {category}
         <div className="flex-1 min-w-[10rem] flex items-center gap-2">
           <Input
             aria-label="Notes on this invoice"
@@ -86,6 +102,7 @@ export function InvoiceNotes({ invoice, layout = "stacked" }: {
   return (
     <div className="rounded-xl border p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
+        {category}
         {choices}
         <span className="ml-auto">{chip}</span>
       </div>

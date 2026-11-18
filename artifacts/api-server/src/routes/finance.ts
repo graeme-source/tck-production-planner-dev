@@ -8,6 +8,7 @@ import {
   finEmailIndexTable,
   finEventsTable,
   finLinesTable,
+  finCategoriesTable,
   finMailboxTable,
   finMatchesTable,
   finStatementUploadsTable,
@@ -238,6 +239,30 @@ router.patch("/lines/:id", requireFinanceAccess, validate(lineStatusSchema), asy
   } catch (err) {
     console.error("[finance] line update error:", err);
     res.status(500).json({ error: "Failed to update line" });
+  }
+});
+
+// "What is this item?" on a card transaction (Graeme, 18 Nov 2026): one of
+// the fixed categories (routes/finance-categories.ts), or none.
+const lineCategorySchema = z.object({ categoryId: z.number().int().positive().nullable() });
+router.patch("/lines/:id/category", requireFinanceAccess, validate(lineCategorySchema), async (req: Request, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const { categoryId } = req.body as z.infer<typeof lineCategorySchema>;
+    if (categoryId != null) {
+      const [c] = await db.select({ id: finCategoriesTable.id }).from(finCategoriesTable).where(eq(finCategoriesTable.id, categoryId));
+      if (!c) { res.status(400).json({ error: "That category isn't in the list" }); return; }
+    }
+    const [before] = await db.select({ categoryId: finLinesTable.categoryId }).from(finLinesTable).where(eq(finLinesTable.id, id));
+    if (!before) { res.status(404).json({ error: "Line not found" }); return; }
+    if (before.categoryId !== categoryId) {
+      await db.update(finLinesTable).set({ categoryId, updatedAt: new Date() }).where(eq(finLinesTable.id, id));
+      await logFinEvent("line", id, "category_set", req.session.userId ?? null, { from: before.categoryId, to: categoryId });
+    }
+    res.json({ id, categoryId });
+  } catch (err) {
+    console.error("[finance] line category error:", err);
+    res.status(500).json({ error: "Couldn't save the category" });
   }
 });
 

@@ -6,6 +6,8 @@ import { isFounderEmail } from "@workspace/feature-registry";
 import { CashFlowPanel } from "@/pages/finance-cash-flow";
 import { PayrollPanel } from "@/pages/finance-payroll";
 import { DeliveriesPanel } from "@/pages/finance-deliveries";
+import { CategorySelect, categoryName, useFinanceCategories } from "@/components/finance/category-select";
+import { CategoriesEditor } from "@/components/finance/categories-editor";
 import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
 import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
@@ -71,6 +73,8 @@ type FinLine = {
   vendorId: number | null;
   status: string;
   statusNote: string | null;
+  /** "What is this item?" — fin_categories id (migration 0380). */
+  categoryId: number | null;
   orderReference: string | null;
   supplierEmail: string | null;
   supplierWebsite: string | null;
@@ -777,6 +781,16 @@ function AddLineDialog({ onClose, onAdded }: { onClose: () => void; onAdded: () 
   );
 }
 
+/** The category on a transaction's row, on its own line under the name so
+ *  the name keeps its room: the name, or an amber "No category yet". */
+function LineCategoryLine({ categoryId }: { categoryId: number | null }) {
+  const all = useFinanceCategories(true);
+  const name = categoryName(all.data, categoryId);
+  return name
+    ? <div className="text-xs font-semibold text-foreground/80 break-words">{name}</div>
+    : <div className="text-xs font-medium text-amber-700 dark:text-amber-400">No category yet</div>;
+}
+
 function LineRow({
   line,
   vendor,
@@ -832,6 +846,7 @@ function LineRow({
               {line.originalCurrency && line.originalCurrency !== "GBP" ? ` · ${line.originalAmount} ${line.originalCurrency}` : ""}
               {line.source === "manual" ? " · added by hand" : ""}
             </div>
+            <LineCategoryLine categoryId={line.categoryId} />
             {provenance && <div className="text-xs font-medium text-primary">{provenance}</div>}
           </div>
           <div className="text-right shrink-0">
@@ -855,6 +870,7 @@ function LineRow({
       {expanded && (
         <CardContent className="border-t pt-4 space-y-4">
           {noVat ? <NoVatPanel line={line} info={noVat} /> : line.statusNote && <p className="text-sm text-muted-foreground italic">“{line.statusNote}”</p>}
+          <LineCategory line={line} />
           <PostedToggle line={line} />
           {/* The VAT invoice, big and shown straight away — the thing the
               accounts team check (Graeme, 2026-11-03). */}
@@ -1528,6 +1544,31 @@ function VendorBlock({ vendor }: { vendor: FinVendor }) {
 
 /** Posted in QuickBooks yes/no — saves on tap with visible state. Separate
  *  from done: a posted line can still be waiting for its invoice. */
+/** "What is this item?" on a card transaction (Graeme, 18 Nov 2026): one of
+ *  the fixed categories, saved the moment it's chosen. */
+function LineCategory({ line }: { line: FinLine }) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const save = useMutation({
+    mutationFn: (categoryId: number | null) =>
+      jsonFetch(`${BASE}/api/finance/lines/${line.id}/category`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ categoryId }),
+      }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onError: (e: Error) => toast({ title: "Couldn't save the category", description: e.message, variant: "destructive" }),
+  });
+  const value = save.isPending ? (save.variables ?? null) : line.categoryId;
+  return (
+    <label className="flex items-center gap-3 flex-wrap">
+      <span className="text-sm font-semibold">What is this item?</span>
+      <CategorySelect value={value} onChange={(id) => save.mutate(id)} required disabled={save.isPending} className="min-w-[16rem]" />
+      <span className="text-xs text-muted-foreground">{save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? "Saved" : ""}</span>
+    </label>
+  );
+}
+
 function PostedToggle({ line }: { line: FinLine }) {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -1837,6 +1878,7 @@ function AdminPanel() {
       </CardHeader>
       {open && (
       <CardContent className="space-y-6">
+        <CategoriesEditor />
         <div>
           <div className="text-sm font-medium mb-2 flex items-center gap-2"><Mail className="h-4 w-4" /> Mailbox (one.com IMAP)</div>
           {mailbox.data ? (

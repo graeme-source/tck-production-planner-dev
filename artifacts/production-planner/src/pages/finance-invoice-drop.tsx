@@ -32,6 +32,7 @@ export type ReadInvoice = {
   readStatus: string;
   readNote: string | null;
   notes: string | null;
+  categoryId?: number | null;
   paymentStatus: PaymentStatus;
 };
 

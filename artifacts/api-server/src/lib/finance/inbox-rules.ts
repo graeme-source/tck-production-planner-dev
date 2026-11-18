@@ -46,3 +46,47 @@ export function matchedByFromEvents(
   }
   return out;
 }
+
+/** Longest "What is it?" note Quick actions keeps. */
+export const QUICK_ADD_NOTE_MAX = 500;
+
+/**
+ * Quick actions → Add receipt or invoice asks "What is it?" (Graeme,
+ * 18 Nov 2026: "factory food" or similar, so the accounts team know). The
+ * typed words become the invoice's note in the Inbox: spaces tidied, capped,
+ * nothing typed = no note.
+ */
+export function quickAddNote(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const tidy = raw.replace(/\s+/g, " ").trim();
+  return tidy ? tidy.slice(0, QUICK_ADD_NOTE_MAX) : null;
+}
+
+/**
+ * Where a suggested transaction came from, said on the match box (Graeme,
+ * 18 Nov 2026: "I don't know what I'm attaching it to"). `short` sits in
+ * brackets after "I think it's this transaction"; `detail` names the file,
+ * who uploaded it and when. Day is a London YYYY-MM-DD.
+ */
+export function transactionOrigin(t: {
+  source: string;
+  fileName?: string | null;
+  uploadedByName?: string | null;
+  uploadedDay?: string | null;
+}): { short: string; detail: string | null } | null {
+  const when = t.uploadedDay
+    ? new Date(`${t.uploadedDay}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })
+    : null;
+  const by = t.uploadedByName ? ` by ${t.uploadedByName}` : "";
+  const on = when ? ` on ${when}` : "";
+  if (t.source === "capital_on_tap" || t.source === "allica") {
+    const bank = t.source === "allica" ? "Allica" : "Capital on Tap";
+    const a = bank === "Allica" ? "An" : "A";
+    const file = t.fileName ? `“${t.fileName}”` : `a CSV file`;
+    const what = t.source === "allica" ? "bank transaction" : "card transaction";
+    return { short: "uploaded from CSV file", detail: `${a} ${bank} ${what}, from ${file} uploaded${by}${on}.` };
+  }
+  if (t.source === "manual") return { short: "added by hand", detail: `Added by hand on Finance${by}${on}.` };
+  if (t.source === "backlog_seed") return { short: "from the old backlog list", detail: "From the backlog of unreceipted card spend brought in on 4 Nov." };
+  return null;
+}
