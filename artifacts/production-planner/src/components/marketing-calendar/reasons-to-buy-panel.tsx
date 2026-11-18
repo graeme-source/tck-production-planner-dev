@@ -70,15 +70,17 @@ export function ReasonsToBuyPanel() {
                   <Loader2 className="w-4 h-4 animate-spin" /> Reading {data.unread.toLocaleString("en-GB")} past email{data.unread === 1 ? "" : "s"} to see which reasons they used — this fills in as it goes.
                 </p>
               )}
-              {data.error && <p className="text-sm text-destructive">Reading paused: {data.error}</p>}
+              {data.error && <p className="text-sm text-destructive" title={data.error}>Reading paused — the AI couldn't be reached just now. It tries again on its own.</p>}
 
               {reasons.length === 0 && !adding && (
                 <p className="text-muted-foreground">No reasons yet. Add the reasons you use — "You've got credit", "Free pack", "New recipe" — and every past email is read to see when each was last used.</p>
               )}
 
-              <div className="grid gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-                {reasons.map(r => <ReasonCard key={r.reason.id} r={r} />)}
-              </div>
+              {reasons.length > 0 && (
+                <div className="rounded-2xl border border-border divide-y divide-border overflow-hidden">
+                  {reasons.map(r => <ReasonRow key={r.reason.id} r={r} stillReading={data.unread > 0} />)}
+                </div>
+              )}
 
               {adding ? <AddReason onDone={() => setAdding(false)} /> : (
                 <button type="button" onClick={() => setAdding(true)}
@@ -94,64 +96,74 @@ export function ReasonsToBuyPanel() {
   );
 }
 
-function ReasonCard({ r }: { r: ReasonsReport["reasons"][number] }) {
-  const [showMore, setShowMore] = useState(false);
+/** One reason per full-width row (Graeme, 18 Nov: "one underneath each
+ *  other" so lots show at once); tap to open the detail and its emails. */
+function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; stillReading: boolean }) {
+  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const u = r.lastUse;
   const s = r.lastUseSales;
-  const never = r.daysSince == null;
+  // Emails are read newest first, so a use found so far is right — but "not
+  // used" can't be said until every email has been read.
+  const pending = r.daysSince == null && stillReading;
+  const never = r.daysSince == null && !stillReading;
   return (
-    <div className={cn("rounded-2xl border-2 p-4 space-y-2 min-w-0", never ? "border-primary/50 bg-primary/5" : "border-border bg-background")}>
-      <div className="flex items-start gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-lg font-bold leading-tight break-words">{r.reason.name}</p>
-          {r.reason.description && <p className="text-sm text-muted-foreground break-words">{r.reason.description}</p>}
-        </div>
-        <button type="button" onClick={() => setEditing(e => !e)} className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2 shrink-0">
-          {editing ? "Done" : "Edit"}
-        </button>
-      </div>
+    <div className={cn(never && "bg-primary/5")}>
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
+        className="w-full min-h-[56px] px-4 py-3 text-left hover:bg-secondary/40 flex items-start gap-3">
+        {open ? <ChevronDown className="w-5 h-5 mt-0.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-5 h-5 mt-0.5 text-muted-foreground shrink-0" />}
+        <span className="flex-1 min-w-0 grid gap-x-6 gap-y-0.5 md:grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(0,2.4fr)] md:items-baseline">
+          <span className="font-bold text-base leading-tight break-words">{r.reason.name}</span>
+          <span className={cn("font-display font-extrabold", never ? "text-primary" : pending ? "text-muted-foreground font-semibold" : "text-foreground")}>
+            {pending ? "Still checking emails…" : sinceWords(r.daysSince)}
+          </span>
+          <span className="text-sm text-muted-foreground min-w-0">
+            {u ? <>
+              <span className="font-semibold text-foreground">{range(u.from, u.to)}</span>
+              {" · "}{u.emails.length} email{u.emails.length === 1 ? "" : "s"}
+              {" · "}<span className="font-semibold text-foreground">{gbp(u.revenue)}</span> from {u.orders.toLocaleString("en-GB")} orders
+            </> : pending ? "" : "No email in the last year"}
+          </span>
+        </span>
+      </button>
 
-      <p className={cn("text-2xl font-display font-extrabold", never ? "text-primary" : "text-foreground")}>{sinceWords(r.daysSince)}</p>
-
-      {u && (
-        <div className="text-sm space-y-0.5">
-          <p>
-            <span className="font-semibold">Last used {range(u.from, u.to)}</span>
-            <span className="text-muted-foreground"> · {u.emails.length} email{u.emails.length === 1 ? "" : "s"} · {u.recipients.toLocaleString("en-GB")} sends</span>
-          </p>
-          <p><span className="font-semibold">{gbp(u.revenue)}</span> <span className="text-muted-foreground">from {u.orders.toLocaleString("en-GB")} orders the emails brought in</span></p>
-          {s && (
-            <p className="text-muted-foreground">
-              Shop sales {gbp(s.perDayDuring)} a day while it ran
-              {s.changePct != null && <> — <span className={cn("font-semibold", s.changePct >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400")}>{s.changePct >= 0 ? "+" : ""}{s.changePct}%</span> on the 4 weeks before</>}
-            </p>
+      {open && (
+        <div className="pl-12 pr-4 pb-4 space-y-3">
+          {r.reason.description && <p className="text-sm text-muted-foreground max-w-prose break-words">{r.reason.description}</p>}
+          {u && (
+            <div className="text-sm space-y-0.5">
+              <p>
+                <span className="font-semibold">Last used {range(u.from, u.to)}</span>
+                <span className="text-muted-foreground"> · {u.emails.length} email{u.emails.length === 1 ? "" : "s"} · {u.recipients.toLocaleString("en-GB")} sends</span>
+              </p>
+              <p><span className="font-semibold">{gbp(u.revenue)}</span> <span className="text-muted-foreground">from {u.orders.toLocaleString("en-GB")} orders the emails brought in</span></p>
+              {s && (
+                <p className="text-muted-foreground">
+                  Shop sales {gbp(s.perDayDuring)} a day while it ran
+                  {s.changePct != null && <> — <span className={cn("font-semibold", s.changePct >= 0 ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400")}>{s.changePct >= 0 ? "+" : ""}{s.changePct}%</span> on the 4 weeks before</>}
+                </p>
+              )}
+            </div>
           )}
-        </div>
-      )}
-
-      {r.uses.length > 0 && (
-        <button type="button" onClick={() => setShowMore(m => !m)} className="text-sm font-semibold text-muted-foreground hover:text-foreground inline-flex items-center gap-1">
-          {showMore ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-          The emails{r.uses.length > 1 ? ` and ${r.uses.length - 1} earlier use${r.uses.length === 2 ? "" : "s"}` : ""}
-        </button>
-      )}
-      {showMore && (
-        <div className="space-y-3 pt-1">
           {r.uses.map(use => (
             <div key={use.from} className="space-y-1">
               <p className="text-sm font-semibold">{range(use.from, use.to)} · {gbp(use.revenue)} from {use.orders} orders</p>
-              <ul className="text-sm text-muted-foreground space-y-0.5">
+              <ul className="text-sm text-muted-foreground space-y-1">
                 {use.emails.map(e => (
-                  <li key={e.campaignId} className="break-words">{day(e.date)} · {e.subject ?? e.name} <span className="tabular-nums">· {gbp(e.revenue)}</span></li>
+                  <li key={e.campaignId} className="break-words">
+                    {day(e.date)} · {e.subject ?? e.name} <span className="tabular-nums">· {gbp(e.revenue)}</span>
+                    {e.evidence && <span className="block text-xs italic">“{e.evidence}”</span>}
+                  </li>
                 ))}
               </ul>
             </div>
           ))}
+          <button type="button" onClick={() => setEditing(e => !e)} className="text-sm text-muted-foreground hover:text-foreground underline underline-offset-2">
+            {editing ? "Done editing" : "Edit this reason"}
+          </button>
+          {editing && <EditReason id={r.reason.id} name={r.reason.name} description={r.reason.description} />}
         </div>
       )}
-
-      {editing && <EditReason id={r.reason.id} name={r.reason.name} description={r.reason.description} />}
     </div>
   );
 }
