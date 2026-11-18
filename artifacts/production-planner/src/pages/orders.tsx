@@ -6,6 +6,7 @@ import { orderingPlan, rememberedPlanId, staleOrderingPlan } from "@/lib/newer-p
 import { StandingOrderChip } from "@/components/standing-order-chip";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { OrderTotalPill } from "@/components/order-total-pill";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import {
@@ -1810,6 +1811,12 @@ export default function Orders() {
     },
   });
   const sameDayOrder = confirmDialog && !reopenedPlacedOrders[confirmDialog.supplierId] ? sameDayCheck?.order ?? null : null;
+  // The same lines and prices as the card's green pill.
+  const confirmTotal = confirmDialog
+    ? priceLinesFor(confirmDialog.supplierId, editableLines[confirmDialog.supplierId] || [])
+        .filter(l => l.isKanban || l.isManual || !l.belowRequirement)
+        .reduce((sum, l) => sum + l.editedPacks * l.costPerPack, 0)
+    : 0;
 
   const confirmPlaceOrder = (keepSeparate = false) => {
     if (!confirmDialog) return;
@@ -2428,6 +2435,7 @@ export default function Orders() {
                 <div className="text-left">
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-semibold break-words min-w-0">{so.supplier.name}</h3>
+                    <OrderTotalPill total={cost} />
                     {isReopened && (
                       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-700 dark:text-amber-400 border border-amber-500/30">
                         <RefreshCw className="w-2.5 h-2.5" />
@@ -2447,7 +2455,6 @@ export default function Orders() {
                     {showNonRequired && nonRequiredCount > 0 && (
                       <> &middot; {nonRequiredCount} stocked</>
                     )}
-                    {cost > 0 && <> &middot; &pound;{cost.toFixed(2)} est.</>}
                     {minimumState && (
                       <> &middot; {minimumState.plan.gap > 0
                         ? <span className="text-amber-700 dark:text-amber-400 font-medium">under &pound;{minimumState.minimum.toFixed(2)} min</span>
@@ -3889,6 +3896,13 @@ export default function Orders() {
               <p className="text-sm text-muted-foreground">
                 Are you sure you want to mark the order for <span className="font-semibold text-foreground">{confirmDialog.supplierName}</span> as placed?
               </p>
+              {confirmTotal > 0 && (
+                <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border-2 border-[#7cb342]/50 bg-[#7cb342]/10 px-3 py-2">
+                  <span className="text-sm font-semibold">You're placing an order for</span>
+                  <OrderTotalPill total={confirmTotal} size="lg" />
+                  <span className="basis-full text-xs text-muted-foreground">Does that look right? Check it against the supplier's total.</span>
+                </div>
+              )}
               <div className="flex items-center gap-2 text-sm bg-secondary/30 rounded-lg px-3 py-2">
                 <Truck className="w-4 h-4 text-muted-foreground shrink-0" />
                 <span className="text-muted-foreground">Expected delivery:</span>
