@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailText, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { emailText, evidenceFound, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -40,7 +40,7 @@ describe("Reasons to Buy — order", () => {
     expect(s[0].lastUse).toBeNull();
   });
   it("says how long since in plain words", () => {
-    expect(sinceWords(null)).toBe("Never used");
+    expect(sinceWords(null)).toBe("Not used in the last year");
     expect(sinceWords(0)).toBe("Used today");
     expect(sinceWords(5)).toBe("Not used for 5 days");
     expect(sinceWords(48)).toBe("Not used for 6 weeks");
@@ -65,5 +65,32 @@ describe("Reasons to Buy — reading an email", () => {
   it("caps long emails", () => {
     expect(emailText("a".repeat(30), 10)).toBe("aaaaaaaaaa…");
     expect(emailText(null)).toBe("");
+  });
+});
+
+describe("evidenceFound", () => {
+  const email = "💷 Your credit expires tomorrow! ⚠️\nYou have £6.38 of credit on your account — use it before Sunday.";
+  it("accepts words that are really in the email, ignoring case, punctuation and emoji", () => {
+    expect(evidenceFound("your credit expires tomorrow", email)).toBe(true);
+    expect(evidenceFound("You have £6.38 of credit", email)).toBe(true);
+    expect(evidenceFound("“Your Credit expires TOMORROW!”", email)).toBe(true);
+  });
+  it("rejects words the email doesn't say — a free pack isn't credit", () => {
+    const freePack = "ENDS TODAY - Last day to claim your Free Pack Offer ⏰\nYOU HAVE AN UNCLAIMED FREE PACK EXPIRING TODAY";
+    expect(evidenceFound("free pack credit expiring", freePack)).toBe(false);
+    expect(evidenceFound("your credit expires today", freePack)).toBe(false);
+    expect(evidenceFound("unclaimed free pack expiring today", freePack)).toBe(true);
+  });
+  it("checks quotes joined with … piece by piece", () => {
+    expect(evidenceFound("Your credit expires tomorrow! … use it before Sunday", email)).toBe(true);
+    expect(evidenceFound("Your credit expires tomorrow... use it before Sunday", email)).toBe(true);
+    expect(evidenceFound("Your credit expires tomorrow … loyalty credit which expires today", email)).toBe(false);
+    expect(evidenceFound("credit … tomorrow", email)).toBe(false);
+  });
+  it("needs at least two whole words", () => {
+    expect(evidenceFound("credit", email)).toBe(false);
+    expect(evidenceFound("", email)).toBe(false);
+    expect(evidenceFound(null, email)).toBe(false);
+    expect(evidenceFound("our cred", email)).toBe(false);
   });
 });

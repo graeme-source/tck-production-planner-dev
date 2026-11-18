@@ -280,9 +280,10 @@ export async function klaviyoCampaignResults(): Promise<{
 export async function klaviyoCampaignHtml(campaignId: string): Promise<string | null> {
   const apiKey = await getKlaviyoKey();
   if (!apiKey) return null;
-  const page = await loadCampaigns(apiKey, "2000-01-01");
-  const c = page.campaigns.find(x => x.id === campaignId);
-  const msgId = c?.relationships?.["campaign-messages"]?.data?.[0]?.id;
+  // The campaign on its own (one GET), not the whole campaigns list — reading
+  // a year of emails reloaded the list for every email (18 Nov 2026).
+  const c = await kFetch<{ data?: RawCampaign }>(apiKey, `/api/campaigns/${encodeURIComponent(campaignId)}`);
+  const msgId = c.data?.relationships?.["campaign-messages"]?.data?.[0]?.id;
   if (!msgId) return null;
   const r = await kFetch<{ data?: { attributes?: { html?: string | null; text?: string | null } } }>(apiKey, `/api/campaign-messages/${msgId}/template/`);
   return r.data?.attributes?.html || r.data?.attributes?.text || null;

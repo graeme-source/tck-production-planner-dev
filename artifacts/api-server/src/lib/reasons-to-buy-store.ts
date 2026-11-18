@@ -14,7 +14,7 @@ import {
 } from "@workspace/db";
 import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
 import {
-  addDays, emailText, reasonsSignature, summariseReasons,
+  addDays, emailText, evidenceFound, reasonsSignature, summariseReasons,
   type ReasonDef, type ReasonEmail, type ReasonSummary,
 } from "@workspace/marketing-calendar";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -26,8 +26,11 @@ import { newVsReturningTotals } from "./order-revenue";
 
 /** How far back emails are read: Klaviyo's results cover a year. */
 const LOOKBACK_DAYS = 365;
-/** Emails read per call to Claude. */
+/** Emails read per call to Claude, and calls made at once. */
 const BATCH = 12;
+const PARALLEL = 3;
+/** How much of each email's body is read: the hook is at the top. */
+const BODY_CHARS = 1200;
 /** The days before a use that its sales are compared with. */
 const BEFORE_DAYS = 28;
 
@@ -50,7 +53,7 @@ async function sentCampaigns(today: string): Promise<KlaviyoCalendarEmail[] | nu
 
 const READ_TOOL: Anthropic.Tool = {
   name: "record_reasons",
-  description: "Record which reasons to buy each email used.",
+  description: "Record which reasons to buy each email used, with the email's own words that show it.",
   input_schema: {
     type: "object",
     properties: {
@@ -60,16 +63,38 @@ const READ_TOOL: Anthropic.Tool = {
           type: "object",
           properties: {
             campaignId: { type: "string" },
-            reasonIds: { type: "array", items: { type: "integer" }, description: "Ids of the reasons this email clearly uses as a reason to buy. Empty if none." },
-            why: { type: "string", description: "A few words: what in the email shows it." },
+            matches: {
+              type: "array",
+              description: "The reasons this email is clearly built around. Empty if none — that is the usual answer when unsure.",
+              items: {
+                type: "object",
+                properties: {
+                  reasonId: { type: "integer" },
+                  evidence: { type: "string", description: "One phrase of 3–12 words copied EXACTLY, character for character, from the email's subject, preview or body, that shows this reason. Never paraphrase or join phrases." },
+                },
+                required: ["reasonId", "evidence"],
+              },
+            },
           },
-          required: ["campaignId", "reasonIds"],
+          required: ["campaignId", "matches"],
         },
       },
     },
     required: ["emails"],
   },
 };
+
+const READ_RULES = [
+  "You read marketing emails from The Calzone Kitchen, a UK food business, and record which REASONS TO BUY each email uses.",
+  "Be strict. A wrong match is far worse than a missed one: the team plans emails from this, and a reason wrongly marked as used recently gets skipped.",
+  "- Match a reason only when the email is plainly built around THAT reason as described — its subject, preview or main message says it in so many words.",
+  "- Judge each reason on its own. A related or similar hook is NOT the same reason: a free pack offer is not credit; a discount is not free delivery; a last-chance deadline on its own is not any particular offer. Never stretch the closest reason on the list to fit an email.",
+  "- If the reason's description says what counts, the email must meet it. If the reason's words (e.g. \"credit\") don't appear in the email, it almost certainly isn't that reason.",
+  "- A footer, a side banner or a passing mention doesn't count.",
+  "- For every match, copy the email's exact words that show it into evidence. If you can't quote words that clearly show it, don't match.",
+  "- When unsure, leave it out. Most emails match none or one reason.",
+  "Use the record_reasons tool only, with one entry per email given.",
+].join("\n");
 
 let reading: Promise<void> | null = null;
 let lastReadError: string | null = null;
@@ -90,7 +115,7 @@ export function kickReasonReader(): Promise<void> {
 async function readPending(): Promise<void> {
   if (!isClaudeConfigured()) throw new Error("AI isn't configured on this server");
   const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
-  for (let round = 0; round < 100; round++) {
+  for (let round = 0; round < 60; round++) {
     const reasons = await listReasons();
     if (!reasons.length) return;
     const signature = reasonsSignature(reasons);
@@ -103,68 +128,82 @@ async function readPending(): Promise<void> {
     // Newest first: what's coming up is planned from recent history.
     const todo = sent.filter(c => doneById.get(c.id)?.signature !== signature)
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, BATCH);
+      .slice(0, BATCH * PARALLEL);
     if (!todo.length) return;
-
-    const items: Array<{ c: KlaviyoCalendarEmail; body: string }> = [];
-    for (const c of todo) {
-      let body = doneById.get(c.id)?.bodyText ?? null;
-      if (body == null) {
-        try { body = emailText(await klaviyoCampaignHtml(c.id)); } catch { body = ""; }
-      }
-      items.push({ c, body });
-    }
-
-    const response = await getClaudeClient().messages.create({
-      model: CLAUDE_MODELS.sonnet,
-      max_tokens: 2000,
-      system: [
-        "You read marketing emails from The Calzone Kitchen, a UK food business, and record which REASONS TO BUY each email uses.",
-        "A reason to buy is the hook that gives the customer a reason to order now (an offer, credit, a new product, a deadline…). Only count a reason when the email clearly uses it as a reason to buy — a passing mention in a footer doesn't count. An email may use none, one or several.",
-        "Use the record_reasons tool only, with one entry per email given.",
-      ].join("\n"),
-      messages: [{
-        role: "user",
-        content: [
-          "Reasons to buy:",
-          ...reasons.map(r => `- id ${r.id}: ${r.name}${r.description ? ` — ${r.description}` : ""}`),
-          "",
-          "Emails:",
-          ...items.map(({ c, body }) => [
-            `### campaignId ${c.id} (sent ${c.date})`,
-            `Name: ${c.name}`,
-            `Subject: ${c.subject ?? ""}`,
-            `Preview: ${c.previewText ?? ""}`,
-            `Body: ${body ? body.slice(0, 1800) : "(not available)"}`,
-          ].join("\n")),
-        ].join("\n"),
-      }],
-      tools: [READ_TOOL],
-      tool_choice: { type: "tool", name: "record_reasons" },
-    });
-    const tool = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
-    const answers = ((tool?.input ?? {}) as { emails?: Array<{ campaignId?: string; reasonIds?: number[]; why?: string }> }).emails ?? [];
-    const valid = new Set(reasons.map(r => r.id));
-    const byId = new Map(answers.map(a => [String(a.campaignId), a]));
-
-    await db.transaction(async tx => {
-      for (const { c, body } of items) {
-        const a = byId.get(c.id);
-        // An email Claude skipped is left unread, to try again next round.
-        if (!a) continue;
-        await tx.delete(marketingCampaignReasonMatchesTable).where(eq(marketingCampaignReasonMatchesTable.campaignId, c.id));
-        const ids = [...new Set((a.reasonIds ?? []).filter(id => valid.has(id)))];
-        if (ids.length) {
-          await tx.insert(marketingCampaignReasonMatchesTable)
-            .values(ids.map(reasonId => ({ campaignId: c.id, reasonId, why: a.why?.slice(0, 300) ?? null })));
-        }
-        await tx.insert(marketingCampaignReasonsReadTable)
-          .values({ campaignId: c.id, signature, bodyText: body, readAt: new Date() })
-          .onConflictDoUpdate({ target: marketingCampaignReasonsReadTable.campaignId, set: { signature, bodyText: body, readAt: new Date() } });
-      }
-    });
-    if (!byId.size) return; // Claude answered nothing: stop rather than loop.
+    const batches: KlaviyoCalendarEmail[][] = [];
+    for (let i = 0; i < todo.length; i += BATCH) batches.push(todo.slice(i, i + BATCH));
+    const answered = await Promise.all(batches.map(b => readBatch(b, reasons, signature, doneById)));
+    if (!answered.some(Boolean)) return; // Claude answered nothing: stop rather than loop.
   }
+}
+
+/** Read one batch and store it. True when Claude answered for any email. */
+async function readBatch(
+  todo: KlaviyoCalendarEmail[], reasons: ReasonDef[], signature: string,
+  doneById: Map<string, { bodyText: string | null }>,
+): Promise<boolean> {
+  const items: Array<{ c: KlaviyoCalendarEmail; body: string }> = [];
+  for (const c of todo) {
+    let body = doneById.get(c.id)?.bodyText ?? null;
+    if (body == null) {
+      try { body = emailText(await klaviyoCampaignHtml(c.id)); } catch { body = ""; }
+    }
+    items.push({ c, body });
+  }
+  const shown = (body: string) => body.slice(0, BODY_CHARS);
+
+  const response = await getClaudeClient().messages.create({
+    model: CLAUDE_MODELS.sonnet,
+    max_tokens: 2000,
+    system: READ_RULES,
+    messages: [{
+      role: "user",
+      content: [
+        "Reasons to buy:",
+        ...reasons.map(r => `- id ${r.id}: ${r.name}${r.description ? ` — what counts: ${r.description}` : ""}`),
+        "",
+        "Emails:",
+        ...items.map(({ c, body }) => [
+          `### campaignId ${c.id} (sent ${c.date})`,
+          `Subject: ${c.subject ?? ""}`,
+          `Preview: ${c.previewText ?? ""}`,
+          `Body: ${body ? shown(body) : "(not available)"}`,
+        ].join("\n")),
+      ].join("\n"),
+    }],
+    tools: [READ_TOOL],
+    tool_choice: { type: "tool", name: "record_reasons" },
+  });
+  const tool = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+  type Answer = { campaignId?: string; matches?: Array<{ reasonId?: number; evidence?: string }> };
+  const answers = ((tool?.input ?? {}) as { emails?: Answer[] }).emails ?? [];
+  const valid = new Set(reasons.map(r => r.id));
+  const byId = new Map(answers.map(a => [String(a.campaignId), a]));
+
+  await db.transaction(async tx => {
+    for (const { c, body } of items) {
+      const a = byId.get(c.id);
+      // An email Claude skipped is left unread, to try again next round.
+      if (!a) continue;
+      // Only matches whose quoted words really are in what Claude was shown.
+      const words = [c.subject ?? "", c.previewText ?? "", shown(body)].join("\n");
+      const kept = new Map<number, string>();
+      for (const m of a.matches ?? []) {
+        if (typeof m.reasonId !== "number" || !valid.has(m.reasonId) || kept.has(m.reasonId)) continue;
+        if (!evidenceFound(m.evidence, words)) continue;
+        kept.set(m.reasonId, (m.evidence ?? "").trim().slice(0, 300));
+      }
+      await tx.delete(marketingCampaignReasonMatchesTable).where(eq(marketingCampaignReasonMatchesTable.campaignId, c.id));
+      if (kept.size) {
+        await tx.insert(marketingCampaignReasonMatchesTable)
+          .values([...kept].map(([reasonId, why]) => ({ campaignId: c.id, reasonId, why })));
+      }
+      await tx.insert(marketingCampaignReasonsReadTable)
+        .values({ campaignId: c.id, signature, bodyText: body, readAt: new Date() })
+        .onConflictDoUpdate({ target: marketingCampaignReasonsReadTable.campaignId, set: { signature, bodyText: body, readAt: new Date() } });
+    }
+  });
+  return byId.size > 0;
 }
 
 // ── The report ───────────────────────────────────────────────────────────
@@ -232,6 +271,7 @@ export async function reasonsReport(today: string): Promise<ReasonsReport> {
     list.push({
       campaignId: c.id, date: c.date, subject: c.subject, name: c.name,
       recipients: r?.recipients ?? 0, orders: r?.orders ?? 0, revenue: r?.revenue ?? 0,
+      evidence: m.why,
     });
     emailsByReason.set(m.reasonId, list);
   }

@@ -23,6 +23,9 @@ export interface ReasonEmail {
   recipients: number;
   orders: number;
   revenue: number;
+  /** The email's own words that show the reason (copied by the reader and
+   *  checked to be really in the email). */
+  evidence?: string | null;
 }
 
 /** One use: a run of emails about the same reason with no long gap. */
@@ -51,8 +54,13 @@ const dayNum = (d: string) => Date.parse(`${d}T12:00:00Z`) / 86_400_000;
 const daysBetween = (a: string, b: string) => Math.round(dayNum(b) - dayNum(a));
 const pennies = (n: number) => Math.round(n * 100) / 100;
 
+/** How the emails are read. Bump it when the reading rules change so every
+ *  email is read again under the new rules (v2, 18 Nov: strict — the email's
+ *  own words must show the reason, after "credit" picked up free-pack emails). */
+export const READ_RULES_VERSION = 2;
+
 /** The reasons list as the matcher saw it: a changed name or description
- *  means every email is read again. */
+ *  (or new reading rules) means every email is read again. */
 export function reasonsSignature(reasons: readonly ReasonDef[]): string {
   const text = [...reasons]
     .sort((a, b) => a.id - b.id)
@@ -64,7 +72,7 @@ export function reasonsSignature(reasons: readonly ReasonDef[]): string {
     h ^= text.charCodeAt(i);
     h = Math.imul(h, 0x01000193) >>> 0;
   }
-  return `v1-${reasons.length}-${h.toString(16)}`;
+  return `v${READ_RULES_VERSION}-${reasons.length}-${h.toString(16)}`;
 }
 
 /** A reason's emails as separate uses, newest first. */
@@ -111,9 +119,9 @@ export function summariseReasons(
   return rows.map(r => r.summary);
 }
 
-/** "Not used for 7 weeks", "Used 3 days ago", "Never used". */
+/** "Not used for 7 weeks", "Used 3 days ago", "Not used in the last year" (only a year of emails is read). */
 export function sinceWords(daysSince: number | null): string {
-  if (daysSince == null) return "Never used";
+  if (daysSince == null) return "Not used in the last year";
   if (daysSince === 0) return "Used today";
   if (daysSince === 1) return "Used yesterday";
   if (daysSince < 14) return `Not used for ${daysSince} days`;
@@ -139,4 +147,24 @@ export function emailText(html: string | null | undefined, max = 2500): string {
     .replace(/\n{2,}/g, "\n")
     .trim();
   return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+const plain = (s: string) => s.toLowerCase()
+  .replace(/[\u2018\u2019\u201b`´]/g, "'").replace(/[\u201c\u201d]/g, "\"")
+  .replace(/[^\p{L}\p{N}£%']+/gu, " ")
+  .trim();
+
+/**
+ * Is the quoted evidence really in the email? Wrong info is worse than none
+ * (Graeme, 18 Nov 2026), so a match only counts when the words the reader
+ * quotes are actually there — ignoring case, punctuation, emoji and spacing.
+ * Quotes joined with "…" or "..." are checked piece by piece; every piece
+ * must be there, and at least one must be two words or more, so a lone
+ * "free" or "credit" can't carry it.
+ */
+export function evidenceFound(evidence: string | null | undefined, emailWords: string): boolean {
+  const pieces = (evidence ?? "").split(/…|\.{3,}/).map(plain).filter(Boolean);
+  if (!pieces.some(p => p.split(" ").length >= 2)) return false;
+  const hay = ` ${plain(emailWords)} `;
+  return pieces.every(p => hay.includes(` ${p} `));
 }
