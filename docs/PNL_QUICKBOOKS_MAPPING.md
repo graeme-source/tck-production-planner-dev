@@ -100,17 +100,43 @@ counting advertising.
    are wrong (food first).
 6. Later: the same breakdown per order and per recipe.
 
-## Questions for Graeme
+## Decisions (Graeme, 18 Nov 2026)
 
-1. **Packaging:** is the £2.50 / £3.50 box cost the outer box, insulation
-   and ice packs together, and are the Panibois trays only in the recipe
-   packaging cost? (That decides how the two halves add up to QuickBooks'
-   one line.)
-2. **Courier:** should the prediction use a flat cost per parcel (about
-   £5 by these figures), or the actual APC charge per consignment if we
-   can get it?
-3. **Payroll Expenses → Wages (£5k a month):** is that salaried and
-   management pay, so an overhead and not production labour?
-4. **Advertising:** OK to treat it as a daily cost from Meta and Google
-   rather than an overhead?
-5. **Overhead average:** last 3 or last 6 complete months by default?
+1. **Packaging:** the £2.50 / £3.50 box price is the outer box, insulation
+   and ice packs. The Panibois tray is in the recipe's packaging cost. The
+   tracker adds the two together and compares them with QuickBooks' one
+   packaging line.
+2. **Courier:** a flat price per parcel: £4.72 for a small box, £5.72 for a
+   large one. A few outlying Scottish postcodes cost more, and those aren't
+   picked out yet. Both prices can be changed on the page.
+3. **Wages:** direct wages are production labour. The overheads hold the
+   directors' salaries (Payroll Expenses).
+4. **Advertising:** has its own line after gross profit, because it now
+   moves with the scaling spend. Gross profit still matches QuickBooks.
+5. **Purpose:** show the real QuickBooks P&L, with every line, inside the
+   app, plus a prediction good enough to judge the last two weeks (for
+   example, whether an offer pays) without waiting for the books.
+
+## Built (18 Nov 2026, not deployed)
+
+- **The profit tracker** (`/api/pnl-tracker`,
+  `lib/finance/profit-tracker*.ts`, migration 0379): the predicted P&L for
+  any days, the order analysis (every order costed, plus summaries by size
+  and by product), predicted vs QuickBooks for recent complete months, the
+  box and courier prices, and an editable grouping of every QuickBooks
+  account. Revenue counts on the day the order was placed, as QuickBooks
+  books it.
+- **Checked on September 2026 local data**, with QuickBooks' figures typed
+  in from the spreadsheet (QuickBooks must not run locally):
+
+  | | Predicted | QuickBooks |
+  |---|---:|---:|
+  | Income | £148,034 | £147,076 |
+  | Packaging | £11,684 | £12,160 |
+  | Courier | £12,984 | £13,846 |
+  | Gross profit | £56,988 | £54,768 |
+
+  Food came out at £31,696 against £35,404 bought.
+- **Missing costings:** Chorizo Chilli & Fior Di Latte (589 sold in
+  September) and Calzone Club Special (161) have no recipe mapping. Treats
+  and sauces rely on Shopify's own cost per item.

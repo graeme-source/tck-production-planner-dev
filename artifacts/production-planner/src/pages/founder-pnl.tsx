@@ -8,6 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useRefreshSpin } from "@/hooks/use-refresh-spin";
 import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import { PnlByMonthCard } from "@/components/founder/pnl-by-month-card";
+import { ProfitTrackerCard } from "@/components/founder/profit-tracker-card";
+import { PredictedVsActual, TrackerSetup } from "@/components/founder/tracker-calibration";
 import {
   TrendingUp,
   TrendingDown,
@@ -323,7 +325,12 @@ function PnLDashboard() {
       {/* QuickBooks, the real books — month by month (18 Nov 2026). */}
       <PnlByMonthCard />
 
-      <h2 className="text-lg font-display font-bold pt-2">Estimate from Shopify orders</h2>
+      {/* The profit tracker: predicted P&L, every order, vs QuickBooks. */}
+      <ProfitTrackerCard />
+      <PredictedVsActual />
+      <TrackerSetup />
+
+      <h2 className="text-lg font-display font-bold pt-2">Old estimate from Shopify orders</h2>
 
       {/* ── Date Picker ──────────────────────────────────────────────────── */}
       <PeriodPicker {...picker} />
