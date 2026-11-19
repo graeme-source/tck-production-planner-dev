@@ -10,6 +10,7 @@ import { rowsToDeclarationItems } from "@/lib/declaration-fix";
 import { SubRecipeLabelUsage } from "@/components/sub-recipe-label-usage";
 import { toGrams, kgOrNull, costPerKg, formatCostPerKg } from "@workspace/units";
 import { PageHeader } from "@/components/page-header";
+import { editFormReady } from "@/lib/editor-fresh-data";
 import { Search, Plus, Trash2, BookOpen, X, Edit2, Loader2, AlertTriangle, CheckCircle2, RotateCcw, FlaskConical, Info, Layers, Eye, Target, Minus, QrCode, LayoutGrid, Table2, ArrowUp, ArrowDown, ArrowUpDown, Scale } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useForm } from "react-hook-form";
@@ -667,7 +668,12 @@ function EditSubRecipeDialog({
   ingredients: IngredientOption[];
   subRecipes: SubRecipeOption[];
 }) {
-  const { data: detail, isLoading } = useGetSubRecipe(id, { query: { enabled: open, queryKey: getGetSubRecipeQueryKey(id) } });
+  // Always fetch a fresh copy on open, and draw the form only from it — the
+  // copy in memory can be from before the last save (lib/editor-fresh-data).
+  const { data: detail, isFetchedAfterMount } = useGetSubRecipe(id, {
+    query: { enabled: open, queryKey: getGetSubRecipeQueryKey(id), refetchOnMount: "always" },
+  });
+  const formReady = editFormReady({ hasData: !!detail, fetchedSinceOpen: isFetchedAfterMount });
   const { updateSubRecipe } = useAppMutations();
 
   const [formIsDirty, setFormIsDirty] = useState(false);
@@ -715,7 +721,7 @@ function EditSubRecipeDialog({
       // Named, so a pop-up stacked on a recipe says which one it is.
       title={detail ? `Edit Sub-Recipe · ${detail.name}` : "Edit Sub-Recipe"}
     >
-          {isLoading ? (
+          {!formReady ? (
             <div className="py-12 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
           ) : (
               <SubRecipeForm
