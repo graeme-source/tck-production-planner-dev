@@ -13,7 +13,7 @@ import { CategorySelect } from "@/components/finance/category-select";
 
 export type TagPatch = { categoryId?: number | null; note?: string | null };
 
-function Row({ id, name, save, narrow }: { id: number; name: string; save: (id: number, patch: TagPatch) => Promise<unknown>; narrow: boolean }) {
+function Row({ id, name, save, narrow, allowAdd }: { id: number; name: string; save: (id: number, patch: TagPatch) => Promise<unknown>; narrow: boolean; allowAdd: boolean }) {
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [note, setNote] = useState("");
   const [savedNote, setSavedNote] = useState("");
@@ -28,7 +28,7 @@ function Row({ id, name, save, narrow }: { id: number; name: string; save: (id: 
         <span className={cn("ml-auto text-xs shrink-0", m.isError ? "text-destructive" : "text-muted-foreground")}>{state}</span>
       </div>
       <div className={cn("grid gap-2", !narrow && "sm:grid-cols-2")}>
-        <CategorySelect value={categoryId} required size="lg" className="h-12 text-base"
+        <CategorySelect value={categoryId} required size="lg" className="h-12 text-base" allowAdd={allowAdd}
           onChange={(v) => { setCategoryId(v); m.mutate({ categoryId: v }); }} />
         <input
           value={note}
@@ -45,18 +45,20 @@ function Row({ id, name, save, narrow }: { id: number; name: string; save: (id: 
   );
 }
 
-export function WhatIsEach({ items, save, className, narrow = false }: {
+export function WhatIsEach({ items, save, className, narrow = false, allowAdd = false }: {
   items: Array<{ id: number; name: string }>;
   save: (id: number, patch: TagPatch) => Promise<unknown>;
   className?: string;
   /** In a narrow box (Quick actions): the note goes under the dropdown. */
   narrow?: boolean;
+  /** Finance users can add a category from the dropdown. */
+  allowAdd?: boolean;
 }) {
   if (items.length === 0) return null;
   return (
     <div className={cn("space-y-2", className)}>
       <div className="text-lg font-bold">{items.length === 1 ? "What is this item?" : `What is each one? (${items.length})`}</div>
-      {items.map((it) => <Row key={it.id} id={it.id} name={it.name} save={save} narrow={narrow} />)}
+      {items.map((it) => <Row key={it.id} id={it.id} name={it.name} save={save} narrow={narrow} allowAdd={allowAdd} />)}
     </div>
   );
 }

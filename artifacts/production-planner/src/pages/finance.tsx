@@ -979,7 +979,7 @@ function LineCategoryInline({ line }: { line: FinLine }) {
     onError: (e: Error) => toast({ title: "Couldn't save the category", description: e.message, variant: "destructive" }),
   });
   const value = save.isPending ? (save.variables ?? null) : line.categoryId;
-  return <CategorySelect value={value} onChange={(id) => save.mutate(id)} required disabled={save.isPending} className="shrink-0 max-w-full" />;
+  return <CategorySelect value={value} onChange={(id) => save.mutate(id)} required disabled={save.isPending} className="shrink-0 max-w-full" allowAdd />;
 }
 
 /** The category on a transaction's row, on its own line under the name so
@@ -1759,14 +1759,19 @@ function LineCategory({ line }: { line: FinLine }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ categoryId }),
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] }),
+    onSuccess: (r: { noVatReason?: string | null }) => {
+      // Choosing the DLA category marks it "No VAT invoice" and moves it on.
+      if (r.noVatReason === "dla") toast({ title: "Marked DLA — no VAT invoice", description: "It's in the Inbox to be posted." });
+      else if (r.noVatReason === null) toast({ title: "DLA marking taken off", description: "It needs a VAT invoice again." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
     onError: (e: Error) => toast({ title: "Couldn't save the category", description: e.message, variant: "destructive" }),
   });
   const value = save.isPending ? (save.variables ?? null) : line.categoryId;
   return (
     <label className="flex items-center gap-3 flex-wrap">
       <span className="text-sm font-semibold">What is this item?</span>
-      <CategorySelect value={value} onChange={(id) => save.mutate(id)} required disabled={save.isPending} className="min-w-[16rem]" />
+      <CategorySelect value={value} onChange={(id) => save.mutate(id)} required disabled={save.isPending} className="min-w-[16rem]" allowAdd />
       <span className="text-xs text-muted-foreground">{save.isPending ? "Saving…" : save.isError ? "Not saved" : save.isSuccess ? "Saved" : ""}</span>
     </label>
   );

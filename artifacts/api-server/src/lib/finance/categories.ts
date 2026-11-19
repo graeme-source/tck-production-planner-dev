@@ -41,3 +41,20 @@ export function canTagOwnUpload(
   if (inv.uploadedBy !== userId || inv.postedAt != null) return false;
   return now.getTime() - inv.createdAt.getTime() <= OWN_UPLOAD_TAG_HOURS * 3600_000;
 }
+
+/**
+ * What choosing a category does to a transaction's "No VAT invoice" marking
+ * (Graeme, 19 Nov 2026: picking "G Carter- DLA" should mark it DLA and send
+ * it to the Inbox). A category with a no-VAT reason sets it; moving off such
+ * a category clears the reason it set — but never one somebody chose by hand
+ * for something else.
+ */
+export function noVatChangeForCategory(
+  lineReason: string | null,
+  before: { noVatReason: string | null } | null,
+  after: { noVatReason: string | null } | null,
+): { set: string } | { clear: true } | null {
+  if (after?.noVatReason) return lineReason === after.noVatReason ? null : { set: after.noVatReason };
+  if (before?.noVatReason && lineReason === before.noVatReason) return { clear: true };
+  return null;
+}

@@ -57,7 +57,7 @@ export function InvoiceNotes({ invoice, layout = "stacked", showCategory = true 
     },
   });
   const category = !showCategory ? null : (
-    <CategorySelect value={categoryId} onChange={(id) => saveCategory.mutate(id)} required disabled={saveCategory.isPending} className="shrink-0 max-w-full" />
+    <CategorySelect value={categoryId} onChange={(id) => saveCategory.mutate(id)} required disabled={saveCategory.isPending} className="shrink-0 max-w-full" allowAdd />
   );
   const choice = (value: "unpaid" | "paid", label: string) => (
     <Button

@@ -31,6 +31,9 @@ export const finCategoriesTable = pgTable("fin_categories", {
   id: serial("id").primaryKey(),
   name: text("name").notNull().unique(),
   sortOrder: integer("sort_order").notNull().default(0),
+  /** Set when choosing this category means no VAT invoice will come — e.g.
+   *  'dla' (migration 0381). Choosing it marks the transaction No VAT invoice. */
+  noVatReason: text("no_vat_reason"),
   archivedAt: timestamp("archived_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });

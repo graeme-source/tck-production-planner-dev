@@ -288,7 +288,7 @@ export function InvoiceUploadCard({ className }: { className?: string }) {
         {progress && <UploadProgress p={progress} />}
         {toTag.length > 0 && (
           <div className="space-y-2 pt-1">
-            <WhatIsEach items={toTag} save={tagInvoice} />
+            <WhatIsEach items={toTag} save={tagInvoice} allowAdd />
             <div className="flex justify-end">
               <Button variant="outline" onClick={() => { setToTag([]); queryClient.invalidateQueries({ queryKey: ["/api/finance/invoices"] }); }}>Done</Button>
             </div>

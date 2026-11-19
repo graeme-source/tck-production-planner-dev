@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { canTagOwnUpload, cleanCategoryName, parseCategoryId } from "./categories";
+import { canTagOwnUpload, cleanCategoryName, noVatChangeForCategory, parseCategoryId } from "./categories";
 
 describe("parseCategoryId", () => {
   it("reads a form field or a number", () => {
@@ -37,5 +37,26 @@ describe("canTagOwnUpload — saying what a just-sent receipt is", () => {
     expect(canTagOwnUpload(sent({ postedAt: now }), 6, now)).toBe(false);
     expect(canTagOwnUpload(sent({ createdAt: new Date("2026-11-17T16:00:00Z") }), 6, now)).toBe(false);
     expect(canTagOwnUpload(sent({ uploadedBy: null }), 6, now)).toBe(false);
+  });
+});
+
+describe("noVatChangeForCategory — choosing the DLA category", () => {
+  const dla = { noVatReason: "dla" };
+  const food = { noVatReason: null };
+  it("marks the transaction No VAT invoice (DLA) when the DLA category is chosen", () => {
+    expect(noVatChangeForCategory(null, null, dla)).toEqual({ set: "dla" });
+    expect(noVatChangeForCategory(null, food, dla)).toEqual({ set: "dla" });
+  });
+  it("does nothing if it's already marked DLA", () => {
+    expect(noVatChangeForCategory("dla", null, dla)).toBeNull();
+  });
+  it("takes the DLA marking off when moved from DLA to an ordinary category", () => {
+    expect(noVatChangeForCategory("dla", dla, food)).toEqual({ clear: true });
+    expect(noVatChangeForCategory("dla", dla, null)).toEqual({ clear: true });
+  });
+  it("leaves a hand-chosen 'other' reason alone, and ordinary categories alone", () => {
+    expect(noVatChangeForCategory("other", dla, food)).toBeNull();
+    expect(noVatChangeForCategory(null, food, food)).toBeNull();
+    expect(noVatChangeForCategory("other", null, food)).toBeNull();
   });
 });

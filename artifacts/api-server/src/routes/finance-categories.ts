@@ -34,11 +34,11 @@ router.get("/", async (req: Request, res: Response) => {
     if (!finance && !receipts) { res.status(403).json({ error: "Finance access required" }); return; }
     const all = finance && req.query.all === "1";
     const rows = await db
-      .select({ id: finCategoriesTable.id, name: finCategoriesTable.name, sortOrder: finCategoriesTable.sortOrder, archivedAt: finCategoriesTable.archivedAt })
+      .select({ id: finCategoriesTable.id, name: finCategoriesTable.name, sortOrder: finCategoriesTable.sortOrder, archivedAt: finCategoriesTable.archivedAt, noVatReason: finCategoriesTable.noVatReason })
       .from(finCategoriesTable)
       .where(all ? undefined : isNull(finCategoriesTable.archivedAt))
       .orderBy(asc(finCategoriesTable.sortOrder), asc(finCategoriesTable.name));
-    res.json({ categories: rows.map(r => ({ id: r.id, name: r.name, sortOrder: r.sortOrder, hidden: r.archivedAt != null })) });
+    res.json({ categories: rows.map(r => ({ id: r.id, name: r.name, sortOrder: r.sortOrder, hidden: r.archivedAt != null, noVatReason: r.noVatReason })) });
   } catch (err) {
     console.error("[finance] categories list error:", err);
     res.status(500).json({ error: "Couldn't load the categories" });

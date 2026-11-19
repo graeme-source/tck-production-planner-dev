@@ -34,6 +34,7 @@ import { NO_VAT_REASONS, storedFileHeaders } from "../lib/finance/posted-rules";
 import { isMatchAction, matchedByFromEvents } from "../lib/finance/inbox-rules";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
 import { placeLineByDocuments } from "../lib/finance/line-placement";
+import { noVatChangeForCategory } from "../lib/finance/categories";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -265,17 +266,28 @@ router.patch("/lines/:id/category", requireFinanceAccess, validate(lineCategoryS
   try {
     const id = Number(req.params.id);
     const { categoryId } = req.body as z.infer<typeof lineCategorySchema>;
-    if (categoryId != null) {
-      const [c] = await db.select({ id: finCategoriesTable.id }).from(finCategoriesTable).where(eq(finCategoriesTable.id, categoryId));
-      if (!c) { res.status(400).json({ error: "That category isn't in the list" }); return; }
-    }
-    const [before] = await db.select({ categoryId: finLinesTable.categoryId }).from(finLinesTable).where(eq(finLinesTable.id, id));
+    const categoryRow = async (cid: number | null) => cid == null ? null
+      : (await db.select({ id: finCategoriesTable.id, noVatReason: finCategoriesTable.noVatReason }).from(finCategoriesTable).where(eq(finCategoriesTable.id, cid)))[0] ?? null;
+    const after = await categoryRow(categoryId);
+    if (categoryId != null && !after) { res.status(400).json({ error: "That category isn't in the list" }); return; }
+    const [before] = await db.select({ categoryId: finLinesTable.categoryId, noVatReason: finLinesTable.noVatReason }).from(finLinesTable).where(eq(finLinesTable.id, id));
     if (!before) { res.status(404).json({ error: "Line not found" }); return; }
+    let noVat: string | null | undefined;
     if (before.categoryId !== categoryId) {
       await db.update(finLinesTable).set({ categoryId, updatedAt: new Date() }).where(eq(finLinesTable.id, id));
       await logFinEvent("line", id, "category_set", req.session.userId ?? null, { from: before.categoryId, to: categoryId });
+      // A category that means "no VAT invoice" (DLA) marks it and sends it
+      // to the Inbox; moving off it takes that marking back off.
+      const change = noVatChangeForCategory(before.noVatReason, await categoryRow(before.categoryId), after);
+      if (change && "set" in change && (NO_VAT_REASONS as readonly string[]).includes(change.set)) {
+        await applyNoVat(id, change.set as (typeof NO_VAT_REASONS)[number], null, req.session.userId ?? null, "category");
+        noVat = change.set;
+      } else if (change && "clear" in change) {
+        await applyNoVat(id, null, null, req.session.userId ?? null, "category");
+        noVat = null;
+      }
     }
-    res.json({ id, categoryId });
+    res.json({ id, categoryId, ...(noVat !== undefined ? { noVatReason: noVat } : {}) });
   } catch (err) {
     console.error("[finance] line category error:", err);
     res.status(500).json({ error: "Couldn't save the category" });
@@ -326,6 +338,36 @@ const manualLineSchema = z.object({
 // why. Either way it goes to the bookkeeper's To be processed list with
 // its posting instruction (no VAT reclaim) and closes itself once posted.
 // Undo puts it back to needing an invoice.
+/** Mark (or unmark) a transaction "No VAT invoice" — from the button, or
+ *  from choosing a category that means it (e.g. G Carter- DLA). Marked, it
+ *  goes to the Inbox to be posted; unmarked, back to needing an invoice
+ *  unless it has a document. Returns false when the line doesn't exist. */
+async function applyNoVat(lineId: number, reason: (typeof NO_VAT_REASONS)[number] | null, note: string | null, userId: number | null, via?: string): Promise<boolean> {
+  const [line] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, lineId));
+  if (!line) return false;
+  const now = new Date();
+  if (reason) {
+    await db.update(finLinesTable).set({
+      noVatReason: reason,
+      ...(note ? { statusNote: note } : {}),
+      status: line.status === "open" || line.status === "identified" ? "matched" : line.status,
+      updatedAt: now,
+    }).where(eq(finLinesTable.id, lineId));
+    // Nothing to find in the mailbox for it any more.
+    await db.update(finMatchesTable).set({ state: "cleared", decidedAt: now })
+      .where(and(eq(finMatchesTable.lineId, lineId), eq(finMatchesTable.state, "suggested")));
+  } else {
+    const [doc] = await db.select({ id: finDocumentsTable.id }).from(finDocumentsTable).where(eq(finDocumentsTable.lineId, lineId)).limit(1);
+    await db.update(finLinesTable).set({
+      noVatReason: null,
+      status: line.status === "matched" && !doc ? "open" : line.status,
+      updatedAt: now,
+    }).where(eq(finLinesTable.id, lineId));
+  }
+  await logFinEvent("line", lineId, reason ? `marked_no_vat_${reason}` : "unmarked_no_vat", userId, { was: line.noVatReason, note, ...(via ? { via } : {}) });
+  return true;
+}
+
 const noVatSchema = z.object({
   reason: z.enum(NO_VAT_REASONS).nullable(),
   note: z.string().trim().max(2000).optional().nullable(),
@@ -334,28 +376,8 @@ router.patch("/lines/:id/no-vat", requireFinanceAccess, validate(noVatSchema), a
   try {
     const lineId = Number(req.params.id);
     const { reason, note } = req.body as z.infer<typeof noVatSchema>;
-    const [line] = await db.select().from(finLinesTable).where(eq(finLinesTable.id, lineId));
-    if (!line) { res.status(404).json({ error: "Line not found" }); return; }
-    const now = new Date();
-    if (reason) {
-      await db.update(finLinesTable).set({
-        noVatReason: reason,
-        ...(note ? { statusNote: note } : {}),
-        status: line.status === "open" || line.status === "identified" ? "matched" : line.status,
-        updatedAt: now,
-      }).where(eq(finLinesTable.id, lineId));
-      // Nothing to find in the mailbox for it any more.
-      await db.update(finMatchesTable).set({ state: "cleared", decidedAt: now })
-        .where(and(eq(finMatchesTable.lineId, lineId), eq(finMatchesTable.state, "suggested")));
-    } else {
-      const [doc] = await db.select({ id: finDocumentsTable.id }).from(finDocumentsTable).where(eq(finDocumentsTable.lineId, lineId)).limit(1);
-      await db.update(finLinesTable).set({
-        noVatReason: null,
-        status: line.status === "matched" && !doc ? "open" : line.status,
-        updatedAt: now,
-      }).where(eq(finLinesTable.id, lineId));
-    }
-    await logFinEvent("line", lineId, reason ? `marked_no_vat_${reason}` : "unmarked_no_vat", req.session.userId, { was: line.noVatReason, note: note ?? null });
+    const ok = await applyNoVat(lineId, reason, note ?? null, req.session.userId ?? null);
+    if (!ok) { res.status(404).json({ error: "Line not found" }); return; }
     // Never closed here, even if it's already posted: every line must reach
     // the bookkeeper with its classification (Graeme, 2026-11-03), and one
     // posted BEFORE it was marked may have been posted with VAT. It closes
