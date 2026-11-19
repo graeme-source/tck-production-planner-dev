@@ -10,10 +10,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
-import { Check, ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
 import {
-  AUDIENCES, efficacyOf, guideWords, plannableSoon, rankEfficacy, sinceWords, sortReasons,
-  type AudienceKey, type Efficacy, type EfficacyTier, type ReasonGuide, type ReasonSort, type ReasonSummary, type RestState,
+  AUDIENCES, clickSort, DEFAULT_REASON_SORT, efficacyOf, guideWords, plannableSoon, rankEfficacy, sinceWords, sortReasonRows,
+  type AudienceKey, type Efficacy, type EfficacyTier, type ReasonGuide, type ReasonSortBy, type ReasonSortKey, type ReasonSummary, type RestState,
 } from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { calApi, CAL_KEY } from "./api";
@@ -34,21 +34,25 @@ const range = (a: string, b: string) => (a === b ? day(a) : `${day(a)} – ${day
 const short = (n: number) => (n >= 10_000 ? `£${(n / 1000).toFixed(1)}k` : gbp(n));
 
 // Sort + filter remembered on this device only (a per-viewer convenience).
-const VIEW_KEY = "tck:reasons-view:v1";
-type View = { sort: ReasonSort; dueOnly: boolean };
+// Sorting is by clicking the column headers, Excel-style (Graeme, 19 Nov 2026).
+const VIEW_KEY = "tck:reasons-view:v2";
+type View = { sorts: ReasonSortBy[]; dueOnly: boolean };
+const SORT_KEYS: ReasonSortKey[] = ["name", "available", "revenue", "last"];
 function readView(): View {
   try {
     const v = JSON.parse(window.localStorage.getItem(VIEW_KEY) ?? "null") as Partial<View> | null;
-    return { sort: v?.sort === "revenue" || v?.sort === "due" ? v.sort : "plan", dueOnly: !!v?.dueOnly };
-  } catch { return { sort: "plan", dueOnly: false }; }
+    const sorts = Array.isArray(v?.sorts) ? v!.sorts.filter(x => SORT_KEYS.includes(x.key) && (x.dir === "asc" || x.dir === "desc")) : [];
+    return { sorts: sorts.length ? sorts : DEFAULT_REASON_SORT, dueOnly: !!v?.dueOnly };
+  } catch { return { sorts: DEFAULT_REASON_SORT, dueOnly: false }; }
 }
 function writeView(v: View) { try { window.localStorage.setItem(VIEW_KEY, JSON.stringify(v)); } catch { /* not kept */ } }
 
-const SORTS: Array<{ key: ReasonSort; label: string; blurb: string }> = [
-  { key: "plan", label: "Plan order", blurb: "Ready to use first, least recently used at the top — then the ones still resting." },
-  { key: "revenue", label: "Most revenue", blurb: "Biggest earners first — Klaviyo revenue per use, averaged over the last year." },
-  { key: "due", label: "Due soonest", blurb: "Ready now first, then by the date each is due again." },
+const COLUMNS: Array<{ key: ReasonSortKey; label: string }> = [
+  { key: "name", label: "Reason" }, { key: "available", label: "Available" }, { key: "revenue", label: "Pulls in" }, { key: "last", label: "Last time" },
 ];
+const SORT_WORDS: Record<ReasonSortKey, [asc: string, desc: string]> = {
+  name: ["A–Z", "Z–A"], available: ["available soonest", "available latest"], revenue: ["least revenue", "most revenue"], last: ["used longest ago", "used most recently"],
+};
 
 export function ReasonsToBuyPanel() {
   const q = useQuery({
@@ -69,7 +73,8 @@ export function ReasonsToBuyPanel() {
   // How hard each reason pulls (Graeme, 19 Nov 2026): revenue per use, ranked.
   const eff = new Map(all.map(r => [r.reason.id, efficacyOf(r.uses)]));
   const ranks = rankEfficacy(all.map(r => ({ id: r.reason.id, perUse: eff.get(r.reason.id)?.perUse ?? null })));
-  const sorted = sortReasons(all, view.sort, new Map(all.map(r => [r.reason.id, eff.get(r.reason.id)?.perUse ?? null])));
+  const sorted = sortReasonRows(all, view.sorts, new Map(all.map(r => [r.reason.id, eff.get(r.reason.id)?.perUse ?? null])));
+  const sortWords = view.sorts.map(x => SORT_WORDS[x.key][x.dir === "asc" ? 0 : 1]).join(", then ");
   const reasons = view.dueOnly ? sorted.filter(plannableSoon) : sorted;
 
   return (
@@ -78,7 +83,7 @@ export function ReasonsToBuyPanel() {
         <span className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0"><Sparkles className="w-5 h-5" /></span>
         <span className="flex-1 min-w-0">
           <span className="block text-xl font-display font-extrabold">Reasons to buy</span>
-          <span className="block text-sm text-muted-foreground">{SORTS.find(x => x.key === view.sort)?.blurb}{view.dueOnly ? " Only ones that can be used in the next 2 weeks." : ""}</span>
+          <span className="block text-sm text-muted-foreground">Sorted {sortWords}. Tap a column heading to sort by it.{view.dueOnly ? " Only ones available in the next 2 weeks." : ""}</span>
         </span>
         {open ? <ChevronDown className="w-5 h-5 text-muted-foreground" /> : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
       </button>
@@ -106,27 +111,31 @@ export function ReasonsToBuyPanel() {
 
               {all.length > 1 && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <div role="group" aria-label="Sort reasons" className="inline-flex rounded-xl border border-border bg-background p-1 gap-1">
-                    {SORTS.map(o => (
-                      <button key={o.key} type="button" aria-pressed={view.sort === o.key} onClick={() => setView({ sort: o.key })}
-                        className={cn("min-h-[40px] px-3 rounded-lg text-sm font-semibold transition-colors",
-                          view.sort === o.key ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50")}>
-                        {o.label}
-                      </button>
-                    ))}
-                  </div>
                   <button type="button" aria-pressed={view.dueOnly} onClick={() => setView({ dueOnly: !view.dueOnly })}
                     className={cn("min-h-[48px] px-4 rounded-xl border-2 text-sm font-semibold inline-flex items-center gap-2 transition-colors",
                       view.dueOnly ? "border-emerald-600 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200" : "border-border text-muted-foreground hover:text-foreground")}>
-                    {view.dueOnly && <Check className="w-4 h-4" />} Due in the next 2 weeks
+                    {view.dueOnly && <Check className="w-4 h-4" />} Available in the next 2 weeks
                   </button>
                 </div>
               )}
 
               {reasons.length > 0 && (
                 <div className="rounded-2xl border border-border divide-y divide-border overflow-hidden">
-                  <div className="hidden md:grid pl-12 pr-4 py-2 gap-x-6 grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(8rem,0.8fr)_minmax(0,2fr)] text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-secondary/30">
-                    <span>Reason</span><span>When to use</span><span>Pulls in</span><span>Last time</span>
+                  <div className="hidden md:grid pl-12 pr-4 py-1 gap-x-6 grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(8rem,0.8fr)_minmax(0,2fr)] bg-secondary/30">
+                    {COLUMNS.map(c => {
+                      const at = view.sorts.findIndex(x => x.key === c.key);
+                      const s = at >= 0 ? view.sorts[at] : null;
+                      return (
+                        <button key={c.key} type="button" onClick={() => setView({ sorts: clickSort(view.sorts, c.key) })}
+                          aria-label={`Sort by ${c.label}`} aria-sort={at === 0 ? (s!.dir === "asc" ? "ascending" : "descending") : undefined}
+                          className={cn("min-h-[40px] -ml-2 px-2 rounded-lg text-left text-xs font-semibold uppercase tracking-wide inline-flex items-center gap-1 hover:bg-secondary/60",
+                            at === 0 ? "text-foreground" : "text-muted-foreground")}>
+                          {c.label}
+                          {s && (s.dir === "asc" ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />)}
+                          {s && view.sorts.length > 1 && <span className="text-[10px] rounded-full bg-foreground/10 px-1.5 tabular-nums">{at + 1}</span>}
+                        </button>
+                      );
+                    })}
                   </div>
                   {reasons.map(r => (
                     <ReasonRow key={r.reason.id} r={r} stillReading={data.unread > 0}
@@ -135,7 +144,7 @@ export function ReasonsToBuyPanel() {
                 </div>
               )}
               {all.length > 0 && reasons.length === 0 && (
-                <p className="text-muted-foreground py-2">Nothing can be used in the next 2 weeks — every reason is still resting.</p>
+                <p className="text-muted-foreground py-2">Nothing is available in the next 2 weeks — every reason is still resting.</p>
               )}
 
               {adding ? <AddReason onDone={() => setAdding(false)} /> : (
@@ -280,12 +289,12 @@ function ReasonEmails({ uses }: { uses: ReasonsReport["reasons"][number]["uses"]
 }
 
 /** How hard a reason pulls (Graeme, 19 Nov 2026): its rank and Klaviyo
- *  revenue per use, banded against the best — deep indigo top, light indigo
- *  good, grey low. Indigo so it never reads as the green/yellow "when" pills. */
+ *  revenue per use, by thirds of the ranking — deep, mid and light indigo, no
+ *  grey. Indigo so it never reads as the green/yellow "available" pills. */
 function EfficacyPill({ efficacy, rank }: { efficacy: Efficacy; rank: { rank: number; tier: EfficacyTier } }) {
-  const tone = rank.tier === "top" ? "bg-indigo-600 text-white dark:bg-indigo-500"
-    : rank.tier === "good" ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-900/50 dark:text-indigo-200"
-      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  const tone = rank.tier === "top" ? "bg-indigo-700 text-white dark:bg-indigo-500"
+    : rank.tier === "good" ? "bg-indigo-400 text-white dark:bg-indigo-600"
+      : "bg-indigo-100 text-indigo-900 dark:bg-indigo-900/50 dark:text-indigo-200";
   return (
     <span className={cn("inline-block text-xs font-bold rounded-full px-2.5 py-0.5 whitespace-nowrap tabular-nums", tone)}
       title={`#${rank.rank} by revenue per use: ${gbp(efficacy.perUse)} a use (${efficacy.ordersPerUse.toLocaleString("en-GB")} orders), ${gbp(efficacy.perEmail)} an email — over ${efficacy.uses} use${efficacy.uses === 1 ? "" : "s"} in the last year.`}>
@@ -295,22 +304,22 @@ function EfficacyPill({ efficacy, rank }: { efficacy: Efficacy; rank: { rank: nu
 }
 
 /** Where a reason stands against its shortest gap — guidance, not a rule
- *  (Graeme, 18 Nov 2026): yellow resting, green due soon / today, dark green
- *  overdue. */
+ *  (Graeme, 18 Nov 2026): yellow resting, green available soon / today, dark
+ *  green available since. Worded "available", never "due" (19 Nov). */
 function RestPill({ rest }: { rest: RestState }) {
   const base = "inline-block mt-1 text-xs font-semibold rounded-full px-2.5 py-0.5 whitespace-nowrap";
   const green = "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300";
   switch (rest.kind) {
     case "resting":
       return <span className={cn(base, "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200")}
-        title={`Used recently — by its guide, it's next due ${day(rest.date)}. It can still be used before then.`}>Resting until {day(rest.date)}</span>;
+        title={`Used recently — by its guide, it's available again from ${day(rest.date)}. It can still be used before then.`}>Resting until {day(rest.date)}</span>;
     case "due_soon":
-      return <span className={cn(base, green)} title={`Due to be used again from ${day(rest.date)} — plan it in.`}>Due soon · from {day(rest.date)}</span>;
+      return <span className={cn(base, green)} title={`Available to use again from ${day(rest.date)}.`}>Available soon · from {day(rest.date)}</span>;
     case "due_today":
-      return <span className={cn(base, green)} title="Due to be used again from today.">Due today</span>;
+      return <span className={cn(base, green)} title="Available to use again from today.">Available today</span>;
     case "overdue":
       return <span className={cn(base, "bg-emerald-700 text-white dark:bg-emerald-600")}
-        title={`Could have been used again since ${day(rest.date)} and hasn't been.`}>Overdue · since {day(rest.date)}</span>;
+        title={`Available to use since ${day(rest.date)}.`}>Available since {day(rest.date)}</span>;
   }
 }
 

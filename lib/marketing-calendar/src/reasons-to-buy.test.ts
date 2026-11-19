@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { efficacyOf, plannableSoon, rankEfficacy, sortReasons, emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { clickSort, DEFAULT_REASON_SORT, efficacyOf, plannableSoon, rankEfficacy, sortReasonRows, emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -173,20 +173,23 @@ describe("efficacyOf — revenue per use, so regular reasons aren't over-credite
   });
 });
 
-describe("rankEfficacy — ranked with bands relative to the best", () => {
-  it("ranks by revenue per use and bands top / good / low against the best", () => {
+describe("rankEfficacy — ranked, banded by thirds", () => {
+  it("live 19 Nov: six reasons split two deep, two mid, two light — none left looking the same", () => {
     const m = rankEfficacy([
       { id: 1, perUse: 40731 }, // You've got credit
-      { id: 2, perUse: 2517 },  // Wonkyzone
-      { id: 3, perUse: 21000 },
-      { id: 4, perUse: 9000 },
-      { id: 5, perUse: null },  // never used
+      { id: 2, perUse: 8358 },  // Recipe leaving the menu
+      { id: 3, perUse: 4952 },  // Payday
+      { id: 4, perUse: 3985 },  // Ends in 0 offer
+      { id: 5, perUse: 3133 },  // Wonkyzone
+      { id: 6, perUse: 3106 },  // UPF
+      { id: 7, perUse: null },  // never used
     ]);
-    expect(m.get(1)).toEqual({ rank: 1, tier: "top" });
-    expect(m.get(3)).toEqual({ rank: 2, tier: "top" });
-    expect(m.get(4)).toEqual({ rank: 3, tier: "good" });
-    expect(m.get(2)).toEqual({ rank: 4, tier: "low" });
-    expect(m.has(5)).toBe(false);
+    expect([1, 2, 3, 4, 5, 6].map(id => m.get(id)?.tier)).toEqual(["top", "top", "good", "good", "low", "low"]);
+    expect(m.get(6)?.rank).toBe(6);
+    expect(m.has(7)).toBe(false);
+  });
+  it("a single reason is top", () => {
+    expect(rankEfficacy([{ id: 1, perUse: 100 }]).get(1)).toEqual({ rank: 1, tier: "top" });
   });
 });
 
@@ -199,21 +202,41 @@ describe("plannableSoon — the 'due in the next 2 weeks' filter", () => {
   });
 });
 
-describe("sortReasons", () => {
+describe("sortReasonRows — Excel-style column sorting", () => {
+  const row = (id: number, name: string, ready: boolean, readyFrom: string | null, lastTo: string | null) =>
+    ({ reason: { id, name }, ready, readyFrom, lastUse: lastTo ? { to: lastTo } : null });
   const rows = [
-    { reason: { id: 1 }, ready: false, readyFrom: "2026-12-17" },
-    { reason: { id: 2 }, ready: true, readyFrom: "2026-04-30" },
-    { reason: { id: 3 }, ready: false, readyFrom: "2026-11-29" },
-    { reason: { id: 4 }, ready: true, readyFrom: null },
+    row(1, "Wonkyzone", false, "2026-12-17", "2026-11-17"),
+    row(2, "Payday", true, "2026-04-30", "2026-03-31"),
+    row(3, "Recipe leaving", false, "2026-11-29", "2026-10-30"),
+    row(4, "Credit", false, "2026-11-26", "2026-09-27"),
+    row(5, "UPF", true, "2026-11-08", "2026-11-05"),
+    row(6, "New one", true, null, null),
   ];
-  it("most revenue per use first, never-used last", () => {
-    const per = new Map<number, number | null>([[1, 2517], [2, 3200], [3, 6403], [4, null]]);
-    expect(sortReasons(rows, "revenue", per).map(r => r.reason.id)).toEqual([3, 2, 1, 4]);
+  const per = new Map<number, number | null>([[1, 3133], [2, 4952], [3, 8358], [4, 40731], [5, 3106], [6, null]]);
+  it("opens available soonest, then biggest earner among those available now", () => {
+    expect(sortReasonRows(rows, DEFAULT_REASON_SORT, per).map(r => r.reason.id)).toEqual([2, 5, 6, 4, 3, 1]);
   });
-  it("soonest due: ready ones first, then by date", () => {
-    expect(sortReasons(rows, "due", new Map()).map(r => r.reason.id)).toEqual([2, 4, 3, 1]);
+  it("sorts by what it pulls in, never-used last either way", () => {
+    expect(sortReasonRows(rows, [{ key: "revenue", dir: "desc" }], per).map(r => r.reason.id)).toEqual([4, 3, 2, 1, 5, 6]);
+    expect(sortReasonRows(rows, [{ key: "revenue", dir: "asc" }], per).map(r => r.reason.id)).toEqual([5, 1, 2, 3, 4, 6]);
   });
-  it("plan keeps the order given", () => {
-    expect(sortReasons(rows, "plan", new Map()).map(r => r.reason.id)).toEqual([1, 2, 3, 4]);
+  it("sorts by last used, most recent first, and by name", () => {
+    expect(sortReasonRows(rows, [{ key: "last", dir: "desc" }], per).map(r => r.reason.id)).toEqual([1, 5, 3, 4, 2, 6]);
+    expect(sortReasonRows(rows, [{ key: "name", dir: "asc" }], per).map(r => r.reason.name)).toEqual(["Credit", "New one", "Payday", "Recipe leaving", "UPF", "Wonkyzone"]);
+  });
+});
+
+describe("clickSort — header clicks", () => {
+  it("clicking the main column flips it", () => {
+    expect(clickSort(DEFAULT_REASON_SORT, "available")).toEqual([{ key: "available", dir: "desc" }, { key: "revenue", dir: "desc" }]);
+  });
+  it("clicking another column makes it the main sort, keeping the old one behind it", () => {
+    expect(clickSort(DEFAULT_REASON_SORT, "revenue")).toEqual([{ key: "revenue", dir: "desc" }, { key: "available", dir: "asc" }]);
+    expect(clickSort(DEFAULT_REASON_SORT, "last")).toEqual([{ key: "last", dir: "desc" }, { key: "available", dir: "asc" }, { key: "revenue", dir: "desc" }]);
+  });
+  it("keeps at most three", () => {
+    const three = clickSort(DEFAULT_REASON_SORT, "last");
+    expect(clickSort(three, "name")).toHaveLength(3);
   });
 });

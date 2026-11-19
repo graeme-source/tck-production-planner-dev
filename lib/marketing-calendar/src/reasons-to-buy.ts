@@ -319,17 +319,17 @@ export function efficacyOf(uses: readonly ReasonUse[]): Efficacy | null {
   };
 }
 
-/** Top = at least half the best reason's revenue per use; good = at least a
- *  fifth; low = less. Relative, so the bands move with the list. */
+/** Bands by thirds of the ranking (Graeme, 19 Nov 2026: banding against the
+ *  best left everything but the £40k winner looking the same): top third,
+ *  middle third, bottom third. */
 export type EfficacyTier = "top" | "good" | "low";
 
 export function rankEfficacy(items: ReadonlyArray<{ id: number; perUse: number | null }>): Map<number, { rank: number; tier: EfficacyTier }> {
   const ranked = items.filter(i => i.perUse != null && i.perUse > 0).sort((a, b) => b.perUse! - a.perUse! || a.id - b.id);
   const out = new Map<number, { rank: number; tier: EfficacyTier }>();
-  const best = ranked[0]?.perUse ?? 0;
+  const n = ranked.length;
   ranked.forEach((i, idx) => {
-    const share = i.perUse! / best;
-    out.set(i.id, { rank: idx + 1, tier: share >= 0.5 ? "top" : share >= 0.2 ? "good" : "low" });
+    out.set(i.id, { rank: idx + 1, tier: idx < Math.ceil(n / 3) ? "top" : idx < Math.ceil((2 * n) / 3) ? "good" : "low" });
   });
   return out;
 }
@@ -341,28 +341,47 @@ export function plannableSoon(row: { ready: boolean; rest: RestState | null }): 
   return row.rest != null && row.rest.kind !== "resting";
 }
 
-export type ReasonSort = "plan" | "revenue" | "due";
+/** Columns the reasons table sorts by, Excel-style (Graeme, 19 Nov 2026). */
+export type ReasonSortKey = "name" | "available" | "revenue" | "last";
+export interface ReasonSortBy { key: ReasonSortKey; dir: "asc" | "desc" }
 
-/** The panel's order: plan (ready first, least recently used — as given),
- *  most revenue per use, or soonest due. Ties keep the plan order. */
-export function sortReasons<T extends { reason: { id: number }; ready: boolean; readyFrom: string | null }>(
-  rows: readonly T[],
-  sort: ReasonSort,
-  perUse: ReadonlyMap<number, number | null>,
-): T[] {
-  const indexed = rows.map((r, i) => ({ r, i }));
-  if (sort === "revenue") {
-    indexed.sort((a, b) => {
-      const x = perUse.get(a.r.reason.id) ?? null;
-      const y = perUse.get(b.r.reason.id) ?? null;
-      if (x == null && y == null) return a.i - b.i;
+/** What a column sorts to on its first click: soonest available, biggest
+ *  earner, most recently used, A–Z. */
+export const DEFAULT_SORT_DIR: Record<ReasonSortKey, "asc" | "desc"> = { name: "asc", available: "asc", revenue: "desc", last: "desc" };
+
+/** Opening order: available soonest, then what it pulls in. */
+export const DEFAULT_REASON_SORT: ReasonSortBy[] = [{ key: "available", dir: "asc" }, { key: "revenue", dir: "desc" }];
+
+/** A header click: the main sort flips direction; any other column becomes
+ *  the main sort, the old ones staying behind it as tie-breakers (up to 3). */
+export function clickSort(sorts: readonly ReasonSortBy[], key: ReasonSortKey): ReasonSortBy[] {
+  if (sorts[0]?.key === key) return [{ key, dir: sorts[0].dir === "asc" ? "desc" : "asc" }, ...sorts.slice(1)];
+  return [{ key, dir: DEFAULT_SORT_DIR[key] }, ...sorts.filter(s => s.key !== key)].slice(0, 3);
+}
+
+type SortableRow = { reason: { id: number; name: string }; ready: boolean; readyFrom: string | null; lastUse: { to: string } | null };
+
+/** Sort by each column in turn; blanks (never used, no revenue) always last.
+ *  Ties keep the order given. */
+export function sortReasonRows<T extends SortableRow>(rows: readonly T[], sorts: readonly ReasonSortBy[], perUse: ReadonlyMap<number, number | null>): T[] {
+  const value = (r: T, key: ReasonSortKey): string | number | null => {
+    switch (key) {
+      case "name": return r.reason.name.toLowerCase();
+      case "available": return r.ready || r.readyFrom == null ? "" : r.readyFrom;
+      case "revenue": return perUse.get(r.reason.id) ?? null;
+      case "last": return r.lastUse?.to ?? null;
+    }
+  };
+  return rows.map((r, i) => ({ r, i })).sort((a, b) => {
+    for (const s of sorts) {
+      const x = value(a.r, s.key), y = value(b.r, s.key);
+      if (x === y) continue;
       if (x == null) return 1;
       if (y == null) return -1;
-      return y - x || a.i - b.i;
-    });
-  } else if (sort === "due") {
-    const key = (r: T) => (r.ready || r.readyFrom == null ? "" : r.readyFrom);
-    indexed.sort((a, b) => key(a.r).localeCompare(key(b.r)) || a.i - b.i);
-  }
-  return indexed.map(x => x.r);
+      const c = typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y));
+      if (c !== 0) return s.dir === "asc" ? c : -c;
+    }
+    return a.i - b.i;
+  }).map(x => x.r);
 }
+
