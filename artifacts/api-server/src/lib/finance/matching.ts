@@ -141,6 +141,12 @@ export function scoreLineAgainstEmail(line: LineForMatch, email: EmailForMatch):
   }
   if (nameHit) hasEvidence = true;
 
+  // An email that states its amounts, none of them this charge's, is about a
+  // different charge — unless a shared reference ties them (Graeme, 19 Nov
+  // 2026: a £150.00 Anthropic receipt offered "Medium" for a £15.00 charge
+  // on the same supplier and week). Wrong info is worse than none.
+  if (email.amountsFound.length > 0 && !amountHit && !refHit) return null;
+
   if (email.hasPdf) { points += 10; reasons.push("has a PDF attachment"); }
 
   if (!hasEvidence) return null;

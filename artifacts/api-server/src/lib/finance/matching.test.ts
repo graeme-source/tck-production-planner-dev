@@ -26,6 +26,18 @@ const email = (over: Partial<EmailForMatch> = {}): EmailForMatch => ({
 });
 
 describe("scoreLineAgainstEmail", () => {
+  it("regression 19 Nov 2026: never offers a £150.00 Anthropic receipt for a £15.00 Anthropic charge", () => {
+    const charge = line({ merchant: "Anthropic", descriptor: "Anthropic", amount: "15.00", authDate: "2026-10-24", lineDate: "2026-10-24" });
+    const receipt = email({ fromDomain: "mail.anthropic.com", fromAddress: "invoice+statements@mail.anthropic.com",
+      subject: "Your receipt from Anthropic, PBC #2661-7226-1896", internalDate: new Date("2026-10-28T08:30:00Z"), amountsFound: ["150.00"] });
+    expect(scoreLineAgainstEmail(charge, receipt)).toBeNull();
+  });
+
+  it("still offers a same-supplier email that states no amount at all", () => {
+    const s = scoreLineAgainstEmail(line(), email({ amountsFound: [] }));
+    expect(s).not.toBeNull();
+  });
+
   it("scores highly on amount + merchant + pdf in the tight window", () => {
     const s = scoreLineAgainstEmail(line(), email());
     expect(s).not.toBeNull();
