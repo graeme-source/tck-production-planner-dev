@@ -33,6 +33,8 @@ import {
   INCIDENT_KIND_LABEL, INCIDENT_KIND_OPTIONS, NEW_REPORT_IDLE, newReportFlow, type IncidentKind,
 } from "@/lib/incident-kinds";
 import { IncidentKindChooserModal } from "@/components/incident-kind-chooser";
+import { IncidentSupplierSection } from "@/components/incident-supplier-email";
+import { useAuth } from "@/contexts/auth-context";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -67,6 +69,32 @@ export interface IncidentReport {
   unlockReason: string | null;
   /** Live (not removed) photos/videos on the report. */
   attachmentCount?: number;
+  /** Dictation + supplier email (migration 0382). */
+  dictation: string | null;
+  supplierIssue: boolean;
+  supplierId: number | null;
+  ingredientId: number | null;
+  productBatchCode: string | null;
+  productUseBy: string | null;
+  supplierEmailTo: string | null;
+  supplierEmailSubject: string | null;
+  supplierEmailBody: string | null;
+  supplierEmailSentAt: string | null;
+  supplierEmailSentByName: string | null;
+}
+
+/** One report — the reporter's own, or any for a manager (the quick-action pop-up). */
+export const incidentReportKey = (id: number) => ["incident-report", id] as const;
+export function useIncidentReport(id: number | null) {
+  return useQuery<IncidentReport>({
+    queryKey: incidentReportKey(id ?? 0),
+    enabled: id != null,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/incidents/${id}`, { credentials: "include" });
+      if (!res.ok) throw new Error(await errorText(res, "Failed to load the report"));
+      return res.json();
+    },
+  });
 }
 
 /** Signed and not unlocked → read-only (mirrors isIncidentLocked on the server). */
@@ -260,6 +288,9 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
   onDeleted?: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { state } = useAuth();
+  const user = state.status === "authenticated" ? state.user : null;
+  const isManager = user?.role === "admin" || user?.role === "manager";
   const locked = isReportLocked(report);
   const refreshAll = () => {
     onChanged();
@@ -360,7 +391,7 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
                 <span className="block text-muted-foreground">The wording can't be changed. Photos can still be added — they're marked "added after signing".</span>
               </span>
             </p>
-            {!unlockOpen && (
+            {isManager && !unlockOpen && (
               <button onClick={() => setUnlockOpen(true)} disabled={busyAction !== null}
                 className="min-h-11 px-4 py-2 rounded-lg border-2 border-border bg-card text-sm font-semibold hover:bg-secondary/40 inline-flex items-center gap-1.5">
                 <Unlock className="w-4 h-4" /> Unlock to update
@@ -445,6 +476,9 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
         <IncidentAttachments incidentId={report.id} onChanged={onChanged} />
       </div>
 
+      {/* A supplier's product at fault → tell them (Graeme, 2026-11-19). */}
+      <IncidentSupplierSection report={report} locked={locked} patch={patch} onChanged={onChanged} />
+
       {/* The standard containment steps — big tickable cards. */}
       <div>
         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Containment — the standard steps</p>
@@ -498,6 +532,10 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
           <p className="text-sm text-muted-foreground inline-flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-500" /> Unlocked — sign again once the update is right.
           </p>
+        ) : !isManager ? (
+          <p className="text-sm text-muted-foreground inline-flex items-center gap-2">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600" /> Saved. A manager will check it and sign it.
+          </p>
         ) : (
           <p className="text-sm text-muted-foreground inline-flex items-center gap-2">
             <AlertTriangle className="w-4 h-4 text-amber-500" /> Not signed yet — sign once the details are right. Signing locks it.
@@ -510,14 +548,14 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
               <Trash2 className="w-4 h-4" /> Delete draft
             </button>
           )}
-          {!locked && (
+          {isManager && !locked && (
             <button onClick={sign} disabled={busyAction !== null}
               className="min-h-11 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-bold hover:bg-primary/90 disabled:opacity-60 inline-flex items-center gap-1.5">
               {busyAction === "sign" ? <Loader2 className="w-4 h-4 animate-spin" /> : <PenLine className="w-4 h-4" />}
               {report.unlockedAt ? "Sign again" : "Sign this report"}
             </button>
           )}
-          {report.status === "open" ? (
+          {!isManager ? null : report.status === "open" ? (
             <button onClick={() => closeOrReopen(false)} disabled={busyAction !== null}
               className="min-h-11 px-3 py-2 rounded-lg border border-border text-sm font-medium hover:bg-secondary/40 disabled:opacity-60">
               Close report
@@ -531,7 +569,7 @@ export function IncidentReportDetail({ report, onChanged, onDeleted }: {
         </div>
       </div>
 
-      {(report.signedVersion > 0 || report.unlockedAt) && <IncidentHistory incidentId={report.id} />}
+      {isManager && (report.signedVersion > 0 || report.unlockedAt) && <IncidentHistory incidentId={report.id} />}
     </div>
   );
 }

@@ -1044,7 +1044,8 @@ export function QuickActionsDock({ accountantOnly = false, inLayout = false }: {
   const isFounder = user?.email === "graeme@thecalzonekitchen.co.uk";
   // Accident & incident reports are managers and admins only (the
   // /api/incidents router and the HACCP tab are behind the same guard).
-  const canReportIncident = user?.role === "admin" || user?.role === "manager";
+  // Everyone can report (Graeme, 2026-11-19) — managers sign it in the diary.
+  const canReportIncident = !!user;
 
   if (!user) return null;
 
