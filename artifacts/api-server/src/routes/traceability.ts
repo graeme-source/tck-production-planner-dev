@@ -66,7 +66,7 @@ async function requirePhotograph(req: Request, res: Response, next: NextFunction
 /** The traced ingredients with the batch currently in use for each. */
 async function tracedItems() {
   const items = await db
-    .select({ id: ingredientsTable.id, name: ingredientsTable.name, supplierName: suppliersTable.name })
+    .select({ id: ingredientsTable.id, name: ingredientsTable.name, supplierName: suppliersTable.name, unit: ingredientsTable.unit, packWeight: ingredientsTable.packWeight })
     .from(tracedIngredientsTable)
     .innerJoin(ingredientsTable, eq(ingredientsTable.id, tracedIngredientsTable.ingredientId))
     .leftJoin(suppliersTable, eq(suppliersTable.id, ingredientsTable.supplierId))
@@ -86,7 +86,22 @@ async function tracedItems() {
     .where(inArray(ingredientLotOpensTable.ingredientId, items.map(i => i.id)))
     .orderBy(ingredientLotOpensTable.ingredientId, desc(ingredientLotOpensTable.openedAt), desc(ingredientLotOpensTable.id));
   const byIng = new Map(latest.map(l => [l.ingredientId, l]));
-  return items.map(i => ({ ...i, current: byIng.get(i.id) ?? null }));
+  // Every pack recorded today (London day), so prep can show "2 packs done"
+  // while they photograph each one (Graeme, 2026-11-19).
+  const todays = await db
+    .select({ id: ingredientLotOpensTable.id, ingredientId: ingredientLotOpensTable.ingredientId, batchCode: ingredientLotOpensTable.batchCode, useBy: ingredientLotOpensTable.useBy })
+    .from(ingredientLotOpensTable)
+    .where(and(
+      inArray(ingredientLotOpensTable.ingredientId, items.map(i => i.id)),
+      sql`(${ingredientLotOpensTable.openedAt} AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/London')::date = ${londonDateString()}::date`,
+    ))
+    .orderBy(asc(ingredientLotOpensTable.openedAt), asc(ingredientLotOpensTable.id));
+  return items.map(i => ({
+    ...i,
+    packWeight: Number(i.packWeight) > 0 ? Number(i.packWeight) : null,
+    current: byIng.get(i.id) ?? null,
+    today: todays.filter(t => t.ingredientId === i.id).map(({ ingredientId: _i, ...t }) => t),
+  }));
 }
 
 const openColumns = {

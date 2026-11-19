@@ -767,7 +767,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                       <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} className="flex-shrink-0" />
                     </div>
                     <div className="px-4 pt-3 bg-white dark:bg-background/50 empty:hidden">
-                      <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="prep_meat" />
+                      <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="prep_meat"
+                        // The day's total of this meat across every recipe: the packs come out once.
+                        need={{ qty: recipes.flatMap(r => r.ingredients).filter(x => x.ingredientId === ing.ingredientId && x.isRawMeat).reduce((sum, x) => sum + toKg(x.rawQty, x.unit), 0), unit: "kg" }} />
                     </div>
 
                     {/* Linked ingredient sub-rows. Add-at-cooking items are NOT

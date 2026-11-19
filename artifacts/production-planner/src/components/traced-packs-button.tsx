@@ -18,6 +18,7 @@ import { Camera, CheckCircle2, Copy, Loader2, PackageOpen, X } from "lucide-reac
 import { format } from "date-fns";
 import { toast } from "@/hooks/use-toast";
 import { labelNeededToday } from "@/lib/traced-label";
+import { formatPrepWeight, packsToOpen, toGrams } from "@workspace/units";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -274,6 +275,31 @@ export function LotResult({ row, onDone, onAnother }: { row: LotOpen; onDone?: (
   );
 }
 
+// Ingredients someone has started photographing on this iPad but not yet
+// finished ("That's all the packs"). Their tins stay locked meanwhile, even
+// though today's first label is already saved (Graeme, 2026-11-19).
+const inProgress = new Set<number>();
+const progressListeners = new Set<() => void>();
+function setInProgress(id: number, on: boolean) {
+  if (on) inProgress.add(id); else inProgress.delete(id);
+  progressListeners.forEach(l => l());
+}
+function useInProgressVersion(): number {
+  const [v, setV] = useState(0);
+  useEffect(() => {
+    const l = () => setV(x => x + 1);
+    progressListeners.add(l);
+    return () => { progressListeners.delete(l); };
+  }, []);
+  return v;
+}
+
+interface PrepTracedItem extends TracedItem {
+  unit: string;
+  packWeight: number | null;
+  today: Array<{ id: number; batchCode: string | null; useBy: string | null }>;
+}
+
 /**
  * The traced ingredients and who's asked for labels, for a prep screen
  * (Graeme, 2026-11-19). Off for everyone without "Photograph opened packs":
@@ -281,7 +307,8 @@ export function LotResult({ row, onDone, onAnother }: { row: LotOpen; onDone?: (
  */
 export function useTracedLabels() {
   const can = useCanPhotographPacks();
-  const { data: items } = useQuery<TracedItem[]>({
+  useInProgressVersion();
+  const { data: items } = useQuery<PrepTracedItem[]>({
     queryKey: ITEMS_KEY,
     enabled: can,
     staleTime: 60_000,
@@ -295,29 +322,35 @@ export function useTracedLabels() {
   return {
     can,
     itemFor,
-    /** True while ticking this ingredient's tins should wait for its label. */
-    waitsForLabel: (ingredientId: number) => can && labelNeededToday(itemFor(ingredientId)),
+    /** True while ticking this ingredient's tins should wait for its labels. */
+    waitsForLabel: (ingredientId: number) => {
+      const item = itemFor(ingredientId);
+      return can && !!item && (labelNeededToday(item) || inProgress.has(ingredientId));
+    },
   };
 }
 
 /**
- * Step 1 of prepping a traced ingredient: get the pack out, photo the label.
- * The tins below wait until it's done (once a day); after that it shows the
- * batch in use and lets them record another pack if they open one.
+ * Step 1 of prepping a traced ingredient: "You need 7.5 kg — about 4 packs.
+ * Get them out and photo each label." Each photo saves that pack's batch.
+ * The tins unlock on "That's all the packs" (once a day per ingredient).
  */
-export function TracedLabelStep({ ingredientId, ingredientName, station }: { ingredientId: number; ingredientName: string; station: string }) {
+export function TracedLabelStep({ ingredientId, ingredientName, station, need }: {
+  ingredientId: number; ingredientName: string; station: string;
+  /** Today's amount, in the ingredient's own unit. */
+  need?: { qty: number; unit: string } | null;
+}) {
   const queryClient = useQueryClient();
   const { itemFor, waitsForLabel } = useTracedLabels();
   const item = itemFor(ingredientId);
-  const [result, setResult] = useState<LotOpen | null>(null);
-  const [another, setAnother] = useState(false);
+  const [latest, setLatest] = useState<LotOpen | null>(null);
+  const [adding, setAdding] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  // A different ingredient opened in the same panel starts fresh.
-  useEffect(() => { setResult(null); setAnother(false); }, [ingredientId]);
+  useEffect(() => { setLatest(null); setAdding(false); }, [ingredientId]);
 
-  const done = (row: LotOpen) => {
-    setResult(row);
-    setAnother(false);
+  const saved = (row: LotOpen) => {
+    setLatest(row);
+    setInProgress(ingredientId, true);
     void queryClient.invalidateQueries({ queryKey: ITEMS_KEY });
   };
   const upload = useMutation({
@@ -329,10 +362,10 @@ export function TracedLabelStep({ ingredientId, ingredientName, station }: { ing
       if (!res.ok) throw new Error(await errorText(res, "The photo didn't save"));
       return res.json() as Promise<LotOpen>;
     },
-    onSuccess: done,
-    onError: e => toast({ title: "The photo didn't save", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
+    onSuccess: saved,
+    onError: e => toast({ title: "The photo didn't save", description: `${e instanceof Error ? e.message : String(e)} Try again.`, variant: "destructive" }),
   });
-  const same = useMutation({
+  const openPack = useMutation({
     mutationFn: async () => {
       const res = await fetch(`${BASE}/api/traceability/items/${ingredientId}/same`, {
         method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ station }),
@@ -340,36 +373,36 @@ export function TracedLabelStep({ ingredientId, ingredientName, station }: { ing
       if (!res.ok) throw new Error(await errorText(res, "That didn't save"));
       return res.json() as Promise<LotOpen>;
     },
-    onSuccess: done,
+    onSuccess: saved,
     onError: e => toast({ title: "That didn't save", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
 
   if (!item) return null;
-  const needed = waitsForLabel(ingredientId);
-  const busy = upload.isPending || same.isPending;
-  const cur = item.current;
+  const locked = waitsForLabel(ingredientId);
+  const today = item.today ?? [];
+  const busy = upload.isPending || openPack.isPending;
+  const finish = () => { setInProgress(ingredientId, false); setLatest(null); setAdding(false); };
 
-  if (result) {
-    return (
-      <div className="mb-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 p-4">
-        <LotResult row={result} onDone={() => setResult(null)} />
-      </div>
-    );
-  }
-
-  if (!needed && !another) {
+  // Done for today: a quiet line, and room for a pack opened later.
+  if (!locked && !adding) {
     return (
       <div className="mb-4 rounded-2xl border border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
-        <span className="flex items-center gap-2 text-sm">
+        <span className="flex items-center gap-2 text-sm min-w-0">
           <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
-          <span>Label done · batch <span className="font-semibold">{cur?.batchCode ?? "not read"}</span>{cur?.openedByName ? ` · ${cur.openedByName}` : ""}</span>
+          <span>Labels done · {today.length} pack{today.length === 1 ? "" : "s"}{today.length ? `: ${today.map(t => t.batchCode ?? "not read").join(", ")}` : ""}</span>
         </span>
-        <button type="button" onClick={() => setAnother(true)} className="min-h-11 px-3 rounded-xl border border-border bg-card text-sm font-semibold inline-flex items-center gap-1.5">
+        <button type="button" onClick={() => setAdding(true)} className="min-h-11 px-3 rounded-xl border border-border bg-card text-sm font-semibold inline-flex items-center gap-1.5">
           <PackageOpen className="w-4 h-4" /> Opened another pack?
         </button>
       </div>
     );
   }
+
+  // Both sides in grams, so a kg amount and a g pack size still divide right.
+  const packs = need && item.packWeight ? packsToOpen(toGrams(need.qty, need.unit), toGrams(item.packWeight, item.unit)) : null;
+  // A pack opened before today still has its label on record: using it up
+  // is one tap, it doesn't need photographing again.
+  const earlierPack = item.current && !today.some(t => t.id === item.current!.id) ? item.current : null;
 
   return (
     <div className="mb-4 rounded-2xl border-2 border-primary bg-primary/5 p-4 space-y-3">
@@ -378,31 +411,62 @@ export function TracedLabelStep({ ingredientId, ingredientName, station }: { ing
       <div className="flex items-start gap-3">
         <span className="w-9 h-9 rounded-full bg-primary text-primary-foreground font-bold flex items-center justify-center shrink-0">1</span>
         <div className="min-w-0">
-          <p className="text-lg font-bold leading-tight">Get out the {ingredientName} and photo the label</p>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {needed ? "So we know which batch went in. The tins unlock once it's done." : "Photo the new pack's label."}
-          </p>
+          {need && need.qty > 0 ? (
+            <p className="text-lg font-bold leading-tight">
+              You need {formatPrepWeight(need.qty, need.unit)} of {ingredientName}
+              {packs ? <> — about {packs} pack{packs === 1 ? "" : "s"}{item.packWeight ? ` of ${formatPrepWeight(item.packWeight, item.unit)}` : ""}</> : null}
+            </p>
+          ) : (
+            <p className="text-lg font-bold leading-tight">Get out the {ingredientName}</p>
+          )}
+          <p className="text-base mt-0.5">Get the packs out and photo each label before you start.</p>
         </div>
       </div>
+
+      {today.length > 0 && (
+        <ol className="space-y-1">
+          {today.map((t, n) => (
+            <li key={t.id} className="flex items-center gap-2 text-sm">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+              Pack {n + 1}: <span className="font-semibold">{t.batchCode ?? "code not read"}</span>
+              {t.useBy ? <span className="text-muted-foreground">· use by {format(new Date(`${t.useBy}T00:00:00`), "d MMM")}</span> : null}
+            </li>
+          ))}
+        </ol>
+      )}
+
+      {latest && (
+        <div className="rounded-xl border border-emerald-300 bg-card p-3">
+          <LotResult row={latest} />
+        </div>
+      )}
+
       {busy ? (
         <p className="flex items-center gap-2 text-base text-muted-foreground py-3"><Loader2 className="w-5 h-5 animate-spin" /> {upload.isPending ? "Reading the label…" : "Saving…"}</p>
       ) : (
         <div className="grid sm:grid-cols-2 gap-2">
           <button type="button" onClick={() => fileRef.current?.click()}
             className="min-h-14 rounded-2xl bg-primary text-primary-foreground text-base font-bold inline-flex items-center justify-center gap-2">
-            <Camera className="w-5 h-5" /> Photo the label
+            <Camera className="w-5 h-5" /> {today.length || latest ? "Photo the next pack" : "Photo a pack's label"}
           </button>
-          {cur && (
-            <button type="button" onClick={() => same.mutate()}
+          {earlierPack && (
+            <button type="button" onClick={() => openPack.mutate()}
               className="min-h-14 rounded-2xl border-2 border-border bg-card text-sm font-semibold inline-flex items-center justify-center gap-2 px-3 text-left">
               <Copy className="w-4 h-4 shrink-0" />
-              <span>Same batch as before{cur.batchCode ? ` (${cur.batchCode})` : ""}</span>
+              <span>Also using the open pack{earlierPack.batchCode ? ` (${earlierPack.batchCode})` : ""}</span>
             </button>
           )}
         </div>
       )}
-      {another && !needed && (
-        <button type="button" onClick={() => setAnother(false)} className="text-sm text-muted-foreground underline">Cancel</button>
+
+      {(latest || (locked && today.length > 0)) && !busy && (
+        <button type="button" onClick={finish}
+          className="w-full min-h-14 rounded-2xl border-2 border-emerald-500 bg-emerald-50 dark:bg-emerald-950/30 text-emerald-800 dark:text-emerald-200 text-base font-bold inline-flex items-center justify-center gap-2">
+          <CheckCircle2 className="w-5 h-5" /> That's all the packs
+        </button>
+      )}
+      {adding && !locked && !latest && (
+        <button type="button" onClick={() => setAdding(false)} className="text-sm text-muted-foreground underline">Cancel</button>
       )}
     </div>
   );

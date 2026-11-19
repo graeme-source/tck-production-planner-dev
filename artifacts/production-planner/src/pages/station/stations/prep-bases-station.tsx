@@ -1595,7 +1595,7 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                 </div>
 
                 {!ing.isSubRecipe && (
-                  <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="prep_bases" />
+                  <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="prep_bases" need={{ qty: ing.totalQty, unit: ing.unit }} />
                 )}
 
                 {status.totalTinCount > 1 && (
