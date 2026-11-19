@@ -11,6 +11,7 @@ export { macStockWorking, withLiveStock } from "@/lib/mac-stock-working";
  *
  *   fridge now + still to wrap today − still to go out today
  *   + each working day before the plan: made − dispatched
+ *   − packs going out of date before the plan's dispatch (to freeze)
  *   = stock at the start of the plan day
  */
 
@@ -44,6 +45,17 @@ export function MacStockWorking({ working, planDate, className }: {
       ? { label: `made ${day}`, value: `+${made}`, tone: "plus" }
       : { label: `${day} not planned yet`, value: "+0", tone: "muted" });
     lines.push({ label: `out ${day}`, value: `−${out}`, tone: out > 0 ? "minus" : "muted" });
+  }
+  // Packs that will be out of date before this plan's dispatch — an estimate
+  // from the batch records, already taken off the figure below (#403).
+  const outOfDate = Math.round(working.outOfDatePacks ?? 0);
+  if (outOfDate > 0) {
+    const allToday = Math.round(working.freezeTodayPacks ?? 0) >= outOfDate;
+    lines.push({
+      label: allToday ? "going out of date, freeze today" : "going out of date, to freeze",
+      value: `−≈${outOfDate}`,
+      tone: "minus",
+    });
   }
   const onlyLive = lines.length === 1;
 

@@ -17,6 +17,7 @@ import { countProductsByTag, adjustInventoryLevel, getUnfulfilledOrdersByTag, ge
 import { remainingFulfilmentPacks } from "../lib/remaining-fulfilment";
 import { planStartStock, interveningDispatchDays } from "@workspace/stock-prediction";
 import { loadStillToWrapToday, loadPlannedProductionByDate } from "../lib/plan-start-stock-inputs";
+import { loadFridgeShelfBatches } from "../lib/fridge-expiry";
 import { getFactoryNumberCoreMenuOnly, getShopifyFreezerSyncEnabled } from "../lib/inventory-sync";
 import { logFridgeStockChange, type FridgeChangeSource } from "../lib/fridge-stock-log";
 import { londonDateString, londonStartOfDay } from "../lib/london-time";
@@ -2107,13 +2108,16 @@ router.get("/calculate-mac-cheese", async (req, res) => {
   // any working day in between — the same planStartStock() the calzone
   // Factory Number uses. Loaders + maths live outside this frozen file.
   const macDeliveryTodayStr = getNextCalendarDay(macTodayStr);
-  const [{ byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics }, macStillToWrap, macRollProduction] =
+  const [{ byRecipe: macRemainingToday, diagnostics: macFulfilmentDiagnostics }, macStillToWrap, macRollProduction, macShelfBatches] =
     await Promise.all([
       remainingFulfilmentPacks(macDeliveryTodayStr, { limitToRecipeIds: macRecipeIds }),
       // A same-day plan's "today's production" is the plan itself — never
       // count it as stock it already has.
       planDate > macTodayStr ? loadStillToWrapToday(macTodayStr, macRecipeIds) : Promise.resolve({} as Record<number, number>),
       loadPlannedProductionByDate(rollDates, macRecipeIds),
+      // Packs going out of date before this plan's dispatch come off the
+      // stock (fix queue #403) — loader in lib/fridge-expiry.ts.
+      loadFridgeShelfBatches(macRecipeIds),
     ]);
 
   const recipes = macRecipes.map(r => {
@@ -2134,6 +2138,7 @@ router.get("/calculate-mac-cheese", async (req, res) => {
         plannedProductionPacks: Math.round(macRollProduction[date]?.[r.recipeId] ?? 0),
         dispatchPacks: matchSalesForDate(r.recipeId, r.recipeName ?? "", rollDeliveryDates[i]),
       })),
+      shelfLife: { today: macTodayStr, planDate, batches: macShelfBatches[r.recipeId] ?? [] },
     });
     const leftOverStock = stockWorking.atPlanStart;
 
