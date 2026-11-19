@@ -237,7 +237,7 @@ const SORTS = [
 type SortKey = (typeof SORTS)[number]["key"];
 
 const FINANCE_TABS = [
-  { href: "/finance", label: "Invoices", key: "invoices", icon: FileText },
+  { href: "/finance/invoices", label: "Invoices", key: "invoices", icon: FileText },
   { href: "/finance/inbox", label: "Inbox", key: "inbox", icon: Inbox },
   { href: "/finance/deliveries", label: "Deliveries", key: "deliveries", icon: Truck },
   { href: "/finance/cash-flow", label: "Cash flow", key: "cash-flow", icon: LineChart },
@@ -265,8 +265,10 @@ export default function FinancePage() {
   if (!user) return null;
   const allowed = founder || Boolean((user as { isBookkeeper?: boolean }).isBookkeeper);
   if (!allowed) return <Redirect to="/" />;
+  // Finance opens on the Inbox — where the accounts team work (Graeme,
+  // 19 Nov 2026). Invoices has its own address now: /finance/invoices.
   const tab = location.startsWith("/finance/cash-flow") ? "cash-flow" : location.startsWith("/finance/payroll") ? "payroll"
-    : location.startsWith("/finance/inbox") ? "inbox" : location.startsWith("/finance/deliveries") ? "deliveries" : "invoices";
+    : location.startsWith("/finance/invoices") ? "invoices" : location.startsWith("/finance/deliveries") ? "deliveries" : "inbox";
   return (
     <div className="space-y-5">
       <PageHeader title="Finance" description={tab === "cash-flow"
