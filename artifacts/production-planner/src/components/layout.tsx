@@ -36,6 +36,7 @@ import {
   CalendarDays, 
   PackageSearch,
   Scale,
+  ScanSearch,
   TrendingUp, 
   Truck,
   Building2,
@@ -114,6 +115,8 @@ export const inventorySubItems: NavItem[] = [
   { name: "Stock Control", href: "/stock-control", icon: PackageSearch },
   // Expected vs counted stock (running stock, 15 Oct 2026) — managers.
   { name: "Stock Accuracy", href: "/stock-accuracy", icon: Scale },
+  // Supplier batches in packs (traceability, 19 Nov 2026) — managers.
+  { name: "Traceability", href: "/traceability", icon: ScanSearch },
   { name: "Orders", href: "/orders", icon: ShoppingCart },
   { name: "Deliveries", href: "/deliveries", icon: PackageCheck },
   { name: "Tools", href: "/inventory/tools", icon: Wrench },

@@ -33,6 +33,10 @@ import { StationSopGate } from "@/components/station-sop-gate";
 import { LeanWeeklyStrip } from "@/components/lean-weekly-review";
 import { QuickActionsDock } from "@/components/layout";
 import { CurrentUserBadge } from "@/components/current-user-badge";
+import { TracedPacksButton } from "@/components/traced-packs-button";
+
+/** Stations where traced packs get opened (traceability, 19 Nov 2026). */
+const PACK_OPENING_STATIONS = new Set<string>(["prep", "main_prep", "prep_bases", "prep_meat", "mixing", "building_1", "building_2", "macaroni_cheese", "fried_chicken"]);
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -319,6 +323,9 @@ export function StationLayout({ planId, stationType, plan, children, headerSlot,
           </div>
         ))}
         {(stationType === "packing" || stationType === "wrapping") && <DispatchCutoffBanner />}
+        {/* Opened a new pack of a traced ingredient? Photo its label. Only
+            for people it's switched on for (components/traced-packs-button). */}
+        {PACK_OPENING_STATIONS.has(stationType) && <TracedPacksButton station={stationType} />}
         {children}
       </div>
 

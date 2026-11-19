@@ -28,6 +28,7 @@ const KNOWN_PAGES = [
   { pageKey: "/lean-curriculum", label: "Lean Curriculum planner" },
   { pageKey: "/surveys", label: "Customer Surveys" },
   { pageKey: "/stock-accuracy", label: "Stock accuracy (expected vs counted)" },
+  { pageKey: "/traceability", label: "Traceability (pack and supplier batch lookup)" },
 ];
 
 const DEFAULT_PERMISSIONS: Record<string, string> = {
@@ -46,6 +47,8 @@ const DEFAULT_PERMISSIONS: Record<string, string> = {
   // Expected stock is for managers only — never the stations (blind
   // counts). The API enforces manager+ whatever this is set to.
   "/stock-accuracy": "manager",
+  // Supplier batches and recalls — managers. The API enforces manager+.
+  "/traceability": "manager",
 };
 
 // GET /api/page-permissions
