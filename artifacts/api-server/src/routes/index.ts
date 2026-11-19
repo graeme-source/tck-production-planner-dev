@@ -677,8 +677,10 @@ router.use("/ice-packs", icePacksRouter);
 router.use("/wholesale-bags", requireAdminOrManager, wholesaleBagsRouter);
 router.use("/bundles", requireAdminOrManager, bundlesRouter);
 router.use("/training", requireAdminOrManager, trainingRouter);
-// Accident & incident diary — a manager's HACCP due-diligence tool.
-router.use("/incidents", requireAdminOrManager, incidentsRouter);
+// Accident & incident diary. Anyone signed in can dictate a report and work
+// on their own; the diary, signing and unlocking are manager-only, checked
+// route by route in routes/incidents.ts.
+router.use("/incidents", incidentsRouter);
 // Self-service "I've read and understood" from the document viewer — every
 // colleague confirms their own reading, so no manager guard; the router
 // scopes everything to the session user.

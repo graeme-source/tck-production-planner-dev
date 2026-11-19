@@ -4,8 +4,9 @@
 // "New report", then filled in field by field (the diary UI autosaves on
 // blur). The standard containment steps are explicit booleans so the diary
 // shows due diligence at a glance, and a signature records who stands
-// behind the report. Mounted behind the admin-or-manager guard in
-// routes/index.ts — this is a manager's tool.
+// behind the report. Since 2026-11-19 anyone can dictate a report and
+// work on their own; the diary, signing and unlocking stay with managers
+// (see accessibleReport below).
 //
 // Lock (migration 0190, Graeme 2026-10-13): once signed, the report's
 // fields are read-only (PATCH → 409) until a manager unlocks it with a
@@ -14,8 +15,21 @@
 // lib/incident-lock-rules.ts.
 
 import { Router, type IRouter, type Request, type Response } from "express";
-import { db, incidentReportsTable, incidentAttachmentsTable, incidentReportHistoryTable, usersTable, type IncidentReport } from "@workspace/db";
-import { eq, desc, asc, sql, and } from "drizzle-orm";
+import {
+  db, incidentReportsTable, incidentAttachmentsTable, incidentReportHistoryTable, usersTable, suppliersTable, ingredientsTable,
+  type IncidentReport,
+} from "@workspace/db";
+import { eq, desc, asc, sql, and, isNull } from "drizzle-orm";
+import { requireManagerOrAdmin, resolveRole } from "../middleware/roles";
+import { sendEmail, FROM_EMAIL } from "../lib/email";
+import { shouldSkipSideEffect } from "../lib/app-env";
+import { FOUNDER_EMAIL } from "../lib/founder-email";
+import { ACCOUNTS_MAILBOX } from "../lib/accounts-email";
+import {
+  canAccessIncident, plainTextToHtml, supplierEmailSendRefusal, MAX_DICTATION_CHARS, SUPPLIER_EMAIL_LIMITS,
+  type IngredientOption, type PickOption,
+} from "../lib/incident-dictation";
+import { draftIncidentFromDictation, draftSupplierEmail } from "../services/incident-ai";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
@@ -38,6 +52,52 @@ import {
 
 const router: IRouter = Router();
 
+// Who sees what (Graeme, 2026-11-19: "make it really easy for the team to
+// report"). Anyone signed in can dictate a report, see and fill in the ones
+// THEY reported, add photos and email the supplier. The diary list, signing,
+// unlocking, closing and history stay with managers and admins. The router
+// is mounted without a guard (routes/index.ts); each route checks here.
+
+/** The report if the viewer may open it; otherwise the response is sent and null comes back. */
+async function accessibleReport(req: Request, res: Response, id: number): Promise<IncidentReport | null> {
+  const [row] = await db.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id));
+  if (!row) { res.status(404).json({ error: "Report not found" }); return null; }
+  const role = await resolveRole(req);
+  if (!canAccessIncident({ viewerUserId: req.session.userId ?? null, viewerRole: role, reportedByUserId: row.reportedByUserId })) {
+    res.status(403).json({ error: "Only the person who reported this, or a manager, can open it." });
+    return null;
+  }
+  return row;
+}
+
+async function supplierOptions(): Promise<{ suppliers: Array<PickOption & { emailTo: string | null; recipientName: string | null }>; ingredients: IngredientOption[] }> {
+  const sups = await db
+    .select({
+      id: suppliersTable.id, name: suppliersTable.name,
+      accountManagerEmail: suppliersTable.accountManagerEmail, accountManagerName: suppliersTable.accountManagerName,
+      email: suppliersTable.email, contactName: suppliersTable.contactName,
+    })
+    .from(suppliersTable)
+    .orderBy(asc(suppliersTable.name));
+  const ings = await db
+    .select({ id: ingredientsTable.id, name: ingredientsTable.name, supplierId: ingredientsTable.supplierId, secondarySupplierId: ingredientsTable.secondarySupplierId })
+    .from(ingredientsTable)
+    .orderBy(asc(ingredientsTable.name));
+  return {
+    suppliers: sups.map(s => ({
+      id: s.id,
+      name: s.name,
+      // The account manager first (the goods-in issue email goes there too).
+      emailTo: s.accountManagerEmail?.trim() || s.email?.trim() || null,
+      recipientName: s.accountManagerEmail?.trim() ? s.accountManagerName : s.contactName,
+    })),
+    ingredients: ings.map(i => ({
+      id: i.id, name: i.name,
+      supplierIds: [i.supplierId, i.secondarySupplierId].filter((x): x is number => x != null),
+    })),
+  };
+}
+
 /** What a sign/unlock transaction ends with: the updated row, or a refusal. */
 type TxOutcome = { row: IncidentReport } | { status: number; error: string };
 
@@ -49,7 +109,7 @@ async function sessionUser(req: Request): Promise<{ id: number; name: string } |
 }
 
 // GET / — the diary, newest first.
-router.get("/", async (_req: Request, res: Response) => {
+router.get("/", requireManagerOrAdmin, async (_req: Request, res: Response) => {
   try {
     const rows = await db.select().from(incidentReportsTable).orderBy(desc(incidentReportsTable.occurredAt), desc(incidentReportsTable.id));
     // Live (not removed) photo/video count per report, for the card header.
@@ -87,6 +147,66 @@ router.post("/", validate(z.object({ kind: z.enum(["accident", "incident", "near
   }
 });
 
+// GET /supplier-options — suppliers (with who an email would go to) and
+// their products, for the "Which supplier?" step.
+router.get("/supplier-options", async (_req: Request, res: Response) => {
+  try {
+    res.json(await supplierOptions());
+  } catch (err) {
+    console.error("[incidents] supplier options failed:", err);
+    res.status(500).json({ error: "Failed to load suppliers" });
+  }
+});
+
+// POST /dictate — the new first step. What was said is written up into the
+// diary's fields by AI (only what was said; nothing ticked that wasn't
+// done) and saved as a new report. The words themselves are kept on the
+// report unedited. Without AI, the words become the description.
+router.post(
+  "/dictate",
+  validate(z.object({ text: z.string().trim().min(3).max(MAX_DICTATION_CHARS) })),
+  async (req: Request, res: Response) => {
+    try {
+      const user = await sessionUser(req);
+      if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+      const text = (req.body as { text: string }).text.trim();
+      const opts = await supplierOptions();
+      const { draft, usedAi } = await draftIncidentFromDictation(text, opts.suppliers, opts.ingredients);
+      const [row] = await db
+        .insert(incidentReportsTable)
+        .values({
+          ...draft,
+          dictation: text,
+          reportedByUserId: user.id,
+          reportedByName: user.name,
+        })
+        .returning();
+      res.status(201).json({ ...row, attachmentCount: 0, usedAi });
+    } catch (err) {
+      console.error("[incidents] dictate failed:", err);
+      res.status(500).json({ error: "Couldn't save the report — try again." });
+    }
+  },
+);
+
+// GET /:id — one report (the reporter's own, or any for a manager).
+router.get("/:id", async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const row = await accessibleReport(req, res, id);
+    if (!row) return;
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(incidentAttachmentsTable)
+      .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt)));
+    res.json({ ...row, attachmentCount: Number(n) });
+  } catch (err) {
+    console.error("[incidents] get failed:", err);
+    res.status(500).json({ error: "Failed to load the report" });
+  }
+});
+
 const PatchBody = z.object({
   kind: z.enum(["accident", "incident", "near_miss"]).optional(),
   occurredAt: z.string().datetime({ offset: true }).or(z.string().regex(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/)).optional(),
@@ -102,6 +222,11 @@ const PatchBody = z.object({
   foodDiscarded: z.boolean().optional(),
   riskAssessmentDone: z.boolean().optional(),
   areaCleaned: z.boolean().optional(),
+  supplierIssue: z.boolean().optional(),
+  supplierId: z.number().int().positive().nullable().optional(),
+  ingredientId: z.number().int().positive().nullable().optional(),
+  productBatchCode: z.string().trim().max(80).nullable().optional(),
+  productUseBy: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullable().optional(),
 });
 
 // PATCH /:id — field-level autosave from the diary form.
@@ -110,6 +235,7 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const body = req.body as z.infer<typeof PatchBody>;
+    if (!(await accessibleReport(req, res, id))) return;
     // Signed reports are locked (migration 0190): edits only after a
     // manager unlocks it with a reason.
     const [existing] = await db
@@ -146,7 +272,7 @@ router.patch("/:id", validate(PatchBody), async (req: Request, res: Response) =>
 // Each signature is the next version (v1, v2…); its wording is kept as a
 // snapshot in incident_report_history and the report locks. Signing a
 // locked report is refused — unlock it first.
-router.post("/:id/sign", validate(z.object({})), async (req: Request, res: Response) => {
+router.post("/:id/sign", requireManagerOrAdmin, validate(z.object({})), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
@@ -186,7 +312,7 @@ router.post("/:id/sign", validate(z.object({})), async (req: Request, res: Respo
 // guard) opens a signed report for updating, with a short reason. The
 // signed version stays on record as a snapshot; the report shows "needs
 // signing again" until it is re-signed.
-router.post("/:id/unlock", validate(z.object({ reason: z.string().trim().min(1).max(500) })), async (req: Request, res: Response) => {
+router.post("/:id/unlock", requireManagerOrAdmin, validate(z.object({ reason: z.string().trim().min(1).max(500) })), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
@@ -240,7 +366,7 @@ router.post("/:id/unlock", validate(z.object({ reason: z.string().trim().min(1).
 
 // GET /:id/history — signed versions and unlocks, oldest first, each
 // signed version after the first carrying what changed since the last.
-router.get("/:id/history", async (req: Request, res: Response) => {
+router.get("/:id/history", requireManagerOrAdmin, async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
@@ -257,7 +383,7 @@ router.get("/:id/history", async (req: Request, res: Response) => {
 });
 
 // POST /:id/close — mark resolved (and reopen with { reopen: true }).
-router.post("/:id/close", validate(z.object({ reopen: z.boolean().optional() })), async (req: Request, res: Response) => {
+router.post("/:id/close", requireManagerOrAdmin, validate(z.object({ reopen: z.boolean().optional() })), async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
@@ -282,8 +408,8 @@ router.delete("/:id", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
-    const [existing] = await db.select({ signedAt: incidentReportsTable.signedAt }).from(incidentReportsTable).where(eq(incidentReportsTable.id, id));
-    if (!existing) { res.status(404).json({ error: "Report not found" }); return; }
+    const existing = await accessibleReport(req, res, id);
+    if (!existing) return;
     // Any attachment row — even a removed one — is evidence, so a report
     // holding one can't go (the FK is ON DELETE RESTRICT as a backstop).
     const [{ n }] = await db
@@ -313,6 +439,7 @@ router.get("/:id/attachments", async (req: Request, res: Response) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
+    if (!(await accessibleReport(req, res, id))) return;
     const rows = await db
       .select({
         id: incidentAttachmentsTable.id,
@@ -352,11 +479,8 @@ router.post(
       if (!req.file) { res.status(400).json({ error: "No file uploaded" }); return; }
       const problem = incidentUploadProblem(req.file.mimetype, req.file.size);
       if (problem) { res.status(400).json({ error: problem }); return; }
-      const [report] = await db
-        .select({ signedAt: incidentReportsTable.signedAt })
-        .from(incidentReportsTable)
-        .where(eq(incidentReportsTable.id, id));
-      if (!report) { res.status(404).json({ error: "Report not found" }); return; }
+      const report = await accessibleReport(req, res, id);
+      if (!report) return;
       const [row] = await db
         .insert(incidentAttachmentsTable)
         .values({
@@ -390,10 +514,11 @@ router.get("/attachments/:attId", async (req: Request, res: Response) => {
   if (!Number.isInteger(attId)) { res.status(400).json({ error: "Invalid id" }); return; }
   try {
     const [row] = await db
-      .select({ mime: incidentAttachmentsTable.mime, data: incidentAttachmentsTable.data, kind: incidentAttachmentsTable.kind })
+      .select({ mime: incidentAttachmentsTable.mime, data: incidentAttachmentsTable.data, kind: incidentAttachmentsTable.kind, incidentId: incidentAttachmentsTable.incidentId })
       .from(incidentAttachmentsTable)
       .where(eq(incidentAttachmentsTable.id, attId));
     if (!row || !row.data) { res.status(404).json({ error: "Not found" }); return; }
+    if (!(await accessibleReport(req, res, row.incidentId))) return;
     res.setHeader("Content-Type", row.mime);
     res.setHeader("Cache-Control", "private, max-age=300");
     if (row.kind === "video") res.setHeader("Accept-Ranges", "bytes");
@@ -437,6 +562,134 @@ router.post(
     } catch (err) {
       console.error("[incidents] attachment remove failed:", err);
       res.status(500).json({ error: "Failed to remove" });
+    }
+  },
+);
+
+// ── Email to the supplier (Graeme, 2026-11-19) ────────────────────────────
+// Draft first (AI, or a plain version without it), shown on screen to edit,
+// then one Send. Nothing goes until a person presses Send. The email goes
+// to the supplier's account manager (else their main email), copied to the
+// founder and the accounts mailbox, with the report's photos attached, and
+// is recorded on the report word for word. Off outside production.
+
+const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
+
+router.post("/:id/supplier-email/draft", validate(z.object({})), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const user = await sessionUser(req);
+    if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+    const report = await accessibleReport(req, res, id);
+    if (!report) return;
+    if (report.supplierId == null) { res.status(400).json({ error: "Choose the supplier first." }); return; }
+    const [supplier] = await db.select().from(suppliersTable).where(eq(suppliersTable.id, report.supplierId));
+    if (!supplier) { res.status(400).json({ error: "That supplier no longer exists." }); return; }
+    const [ingredient] = report.ingredientId != null
+      ? await db.select({ name: ingredientsTable.name, code: ingredientsTable.supplierPartNumber }).from(ingredientsTable).where(eq(ingredientsTable.id, report.ingredientId))
+      : [];
+    const [{ n }] = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(incidentAttachmentsTable)
+      .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt), eq(incidentAttachmentsTable.kind, "photo")));
+    const emailTo = supplier.accountManagerEmail?.trim() || supplier.email?.trim() || "";
+    const recipientName = supplier.accountManagerEmail?.trim() ? supplier.accountManagerName : supplier.contactName;
+    const fmt = (d: Date | string) => new Date(d).toLocaleDateString("en-GB", { timeZone: "Europe/London", day: "numeric", month: "short", year: "numeric" });
+    const draft = await draftSupplierEmail({
+      supplierName: supplier.name,
+      recipientName: recipientName ?? null,
+      accountNumber: supplier.accountNumber ?? null,
+      productName: ingredient?.name ?? null,
+      supplierCode: ingredient?.code ?? null,
+      batchCode: report.productBatchCode,
+      useBy: report.productUseBy ? fmt(report.productUseBy) : null,
+      occurredOn: fmt(report.occurredAt),
+      title: report.title || "Problem with a delivered product",
+      description: report.description,
+      foodSafetyImpact: report.foodSafetyImpact,
+      photoCount: Number(n),
+      senderName: user.name,
+    });
+    res.json({ to: emailTo, recipientName: recipientName ?? null, subject: draft.subject, body: draft.body, photoCount: Number(n), usedAi: draft.usedAi });
+  } catch (err) {
+    console.error("[incidents] supplier email draft failed:", err);
+    res.status(500).json({ error: "Couldn't draft the email — try again." });
+  }
+});
+
+router.post(
+  "/:id/supplier-email/send",
+  validate(z.object({
+    to: z.string().trim().min(3).max(200),
+    subject: z.string().trim().min(1).max(SUPPLIER_EMAIL_LIMITS.subject),
+    body: z.string().trim().min(1).max(SUPPLIER_EMAIL_LIMITS.body),
+  })),
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    try {
+      const user = await sessionUser(req);
+      if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+      const report = await accessibleReport(req, res, id);
+      if (!report) return;
+      const { to, subject, body } = req.body as { to: string; subject: string; body: string };
+      const refusal = supplierEmailSendRefusal(report, to);
+      if (refusal) { res.status(409).json({ error: refusal }); return; }
+
+      if (shouldSkipSideEffect()) {
+        console.log(`[incidents] supplier email for report ${id} skipped (side effects off) — would go to ${to}`);
+        res.status(409).json({ error: "Emails are switched off on this test copy of the planner — nothing was sent." });
+        return;
+      }
+
+      const photos = await db
+        .select({ id: incidentAttachmentsTable.id, mime: incidentAttachmentsTable.mime, data: incidentAttachmentsTable.data, sizeBytes: incidentAttachmentsTable.sizeBytes })
+        .from(incidentAttachmentsTable)
+        .where(and(eq(incidentAttachmentsTable.incidentId, id), isNull(incidentAttachmentsTable.deletedAt), eq(incidentAttachmentsTable.kind, "photo")))
+        .orderBy(asc(incidentAttachmentsTable.id));
+      let total = 0;
+      const attach = photos.filter(p => p.data && (total += p.sizeBytes ?? 0) <= MAX_ATTACH_BYTES);
+
+      // Claim the send first so a double tap can't email twice.
+      const [claimed] = await db
+        .update(incidentReportsTable)
+        .set({ supplierEmailSentAt: new Date(), supplierEmailSentByName: user.name, supplierEmailTo: to, supplierEmailSubject: subject, supplierEmailBody: body, updatedAt: new Date() })
+        .where(and(eq(incidentReportsTable.id, id), isNull(incidentReportsTable.supplierEmailSentAt)))
+        .returning({ id: incidentReportsTable.id });
+      if (!claimed) { res.status(409).json({ error: "The supplier has already been emailed about this report." }); return; }
+
+      try {
+        await sendEmail({
+          to,
+          cc: [FOUNDER_EMAIL, ACCOUNTS_MAILBOX].filter(e => e && e.toLowerCase() !== to.toLowerCase()),
+          replyTo: FOUNDER_EMAIL,
+          fromName: "The Calzone Kitchen",
+          fromEmail: FROM_EMAIL,
+          subject,
+          text: body,
+          html: plainTextToHtml(body),
+          attachments: attach.map((p, i) => ({
+            filename: `incident-${id}-photo-${i + 1}.${p.mime === "image/png" ? "png" : "jpg"}`,
+            content: Buffer.from(p.data!).toString("base64"),
+            contentType: p.mime,
+          })),
+        });
+      } catch (sendErr) {
+        // Not sent — release the claim so it can be tried again.
+        await db.update(incidentReportsTable)
+          .set({ supplierEmailSentAt: null, supplierEmailSentByName: null, supplierEmailTo: null, supplierEmailSubject: null, supplierEmailBody: null })
+          .where(eq(incidentReportsTable.id, id));
+        console.error(`[incidents] supplier email for report ${id} failed:`, sendErr);
+        res.status(502).json({ error: "The email didn't send — try again in a minute." });
+        return;
+      }
+      console.log(`[incidents] supplier email for report ${id} sent to ${to} by ${user.name} (${attach.length} photos)`);
+      const [row] = await db.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id));
+      res.json(row);
+    } catch (err) {
+      console.error("[incidents] supplier email send failed:", err);
+      res.status(500).json({ error: "The email didn't send — try again." });
     }
   },
 );
