@@ -16,10 +16,11 @@
  * known to drift, so ghost old rows must not cry wolf (see the same logic
  * inline in /calculate).
  */
-import { sql, and, eq, gt } from "drizzle-orm";
+import { sql, and, eq, gt, inArray } from "drizzle-orm";
+import type { FridgeShelfBatch } from "@workspace/stock-prediction";
 import { db, recipesTable, stockEntriesTable, fridgeStockBatchesTable } from "@workspace/db";
 import { productionDateFromJulianBatch } from "./julian-batch";
-import { loadMinShelfDaysRules, minShelfDaysFor } from "./min-shelf-days";
+import { loadMinShelfDaysRules, minShelfDaysFor, type MinShelfDaysRules } from "./min-shelf-days";
 
 export interface ClosingFridgeBatch {
   batchNumber: number;
@@ -47,6 +48,64 @@ export function addCalendarDays(dateStr: string, days: number): string {
   const d = new Date(`${dateStr}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Recorded fridge batches per recipe with each batch's use-by and last valid
+ * dispatch day, for the plan stock figure (@workspace/stock-prediction
+ * outOfDateStock). Same rules as computeClosingFridgeActions below, so the
+ * plan and the packing closing check agree: use-by from the julian batch
+ * number + the recipe's CURRENT shelf life; last dispatch = use-by − min days
+ * at customer − 1; unknown-batch rows (batch 0) and recipes with no shelf
+ * life set are left out.
+ */
+export async function loadFridgeShelfBatches(recipeIds: number[]): Promise<Record<number, FridgeShelfBatch[]>> {
+  const out: Record<number, FridgeShelfBatch[]> = {};
+  if (recipeIds.length === 0) return out;
+  const minShelfRules = await loadMinShelfDaysRules();
+  const recipeRows = await db
+    .select({ id: recipesTable.id, category: recipesTable.category, shelfLifeDays: recipesTable.shelfLifeDays })
+    .from(recipesTable)
+    .where(inArray(recipesTable.id, recipeIds));
+  const recipeById = new Map(recipeRows.map(r => [r.id, r]));
+  const batchRows = await db
+    .select({
+      recipeId: fridgeStockBatchesTable.recipeId,
+      batchNumber: fridgeStockBatchesTable.batchNumber,
+      quantity: fridgeStockBatchesTable.quantity,
+    })
+    .from(fridgeStockBatchesTable)
+    .where(and(
+      inArray(fridgeStockBatchesTable.recipeId, recipeIds),
+      eq(fridgeStockBatchesTable.packSize, 2),
+      gt(fridgeStockBatchesTable.quantity, 0),
+    ));
+  for (const b of batchRows) {
+    const batch = shelfBatchFor(b, recipeById.get(b.recipeId), minShelfRules);
+    if (batch) (out[b.recipeId] ??= []).push(batch);
+  }
+  return out;
+}
+
+/** One recorded batch row → its use-by and last dispatch day, or null when
+ *  the row can't be dated (see loadFridgeShelfBatches). */
+export function shelfBatchFor(
+  row: { batchNumber: number; quantity: number },
+  recipe: { category: string | null; shelfLifeDays: number | string | null } | undefined,
+  rules: MinShelfDaysRules,
+): FridgeShelfBatch | null {
+  if (row.batchNumber === 0) return null; // unknown-age sentinel
+  if (!recipe || recipe.shelfLifeDays == null || Number(recipe.shelfLifeDays) <= 0) return null;
+  const prodDate = productionDateFromJulianBatch(row.batchNumber);
+  if (!prodDate) return null;
+  const useByDate = addCalendarDays(prodDate, Number(recipe.shelfLifeDays));
+  const minDays = minShelfDaysFor(recipe.category ?? null, rules);
+  return {
+    batchNumber: row.batchNumber,
+    packs: row.quantity,
+    useByDate,
+    lastDispatchDate: addCalendarDays(useByDate, -minDays - 1),
+  };
 }
 
 /**

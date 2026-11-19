@@ -20,6 +20,8 @@
 // gathers the inputs; the Create Plan screens re-run it when an operator
 // corrects the live count so the plan updates with the same maths.
 
+import { outOfDateStock, type ShelfLifeInput, type OutOfDateBatch } from "./out-of-date";
+
 /** One working day between today and the plan date, rolled forward. */
 export interface RollForwardDay {
   /** Dispatch date (YYYY-MM-DD) — for display only. */
@@ -40,6 +42,10 @@ export interface PlanStartStockInput {
   /** Working days strictly between today and the plan date, oldest first.
    *  Empty when the plan date is the next working day (or today). */
   rollForward?: RollForwardDay[];
+  /** Batch use-by information for the fridge stock. When given, packs that
+   *  will be out of date before the plan date's dispatch come off the
+   *  stock figure (see out-of-date.ts). Omitted = nothing comes off. */
+  shelfLife?: ShelfLifeInput;
 }
 
 export interface RollForwardStep extends RollForwardDay {
@@ -57,6 +63,15 @@ export interface PlanStartStock {
   rollForward: RollForwardStep[];
   rolledProductionPacks: number;
   rolledDispatchPacks: number;
+  /** Echo of the input, so a re-run with a corrected fridge count works out
+   *  the out-of-date packs again from the new count. */
+  shelfLife?: ShelfLifeInput;
+  /** Fridge packs that will be out of date before the plan date's dispatch
+   *  (to be frozen) — already taken off atPlanStart. 0 without shelfLife. */
+  outOfDatePacks: number;
+  /** Of outOfDatePacks, those to freeze at close-down today. */
+  freezeTodayPacks: number;
+  outOfDateBatches: OutOfDateBatch[];
   /** The stock figure a plan for the plan date should net its demand against. */
   atPlanStart: number;
 }
@@ -82,6 +97,20 @@ export function planStartStock(input: PlanStartStockInput): PlanStartStock {
     rolledDispatchPacks += day.dispatchPacks;
     rollForward.push({ ...day, stockAfter: stock });
   }
+  // Packs that go out of date before the plan date can't serve it. Fresh
+  // stock (still to wrap, the days in between) is never among them, so they
+  // simply come off the end figure — never more than is there.
+  const outOfDate = input.shelfLife
+    ? outOfDateStock({
+        ...input.shelfLife,
+        liveStock: input.liveStock,
+        dispatches: [
+          { date: input.shelfLife.today, packs: input.stillToDispatchToday },
+          ...rollForward.map(d => ({ date: d.date, packs: d.dispatchPacks })),
+        ],
+      })
+    : null;
+  const outOfDatePacks = Math.min(outOfDate?.packs ?? 0, stock);
   return {
     liveStock: input.liveStock,
     stillToWrapToday: input.stillToWrapToday,
@@ -90,7 +119,11 @@ export function planStartStock(input: PlanStartStockInput): PlanStartStock {
     rollForward,
     rolledProductionPacks,
     rolledDispatchPacks,
-    atPlanStart: stock,
+    ...(input.shelfLife ? { shelfLife: input.shelfLife } : {}),
+    outOfDatePacks,
+    freezeTodayPacks: Math.min(outOfDate?.freezeTodayPacks ?? 0, outOfDatePacks),
+    outOfDateBatches: outOfDatePacks > 0 && outOfDate ? outOfDate.batches : [],
+    atPlanStart: stock - outOfDatePacks,
   };
 }
 
@@ -184,3 +217,5 @@ export * from "./batch-advice";
 // End-of-week factory number for the Dispatch Orders panel (Graeme, 16 Oct 2026).
 export * from "./week-end";
 export * from "./sales-momentum";
+// Packs going out of date before a plan can sell them (fix queue #403).
+export * from "./out-of-date";
