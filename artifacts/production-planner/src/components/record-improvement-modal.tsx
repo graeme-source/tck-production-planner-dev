@@ -25,6 +25,8 @@ import { toast } from "@/hooks/use-toast";
 import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failures";
 import { useAuth } from "@/contexts/auth-context";
 import { CreditPeoplePicker } from "@/components/credit-people-picker";
+import type { JaneTurn } from "@/components/jane-report-check";
+import { JaneTalkThrough, describeWithBrief, nextTalkStep, saveTalkThrough, useTalkThroughAvailable, type TalkStep } from "@/components/jane-talk-through";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -68,6 +70,11 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
   const [credited, setCredited] = useState<number[]>(meId != null ? [meId] : []);
   // A shared iPad changes hands — the default tick follows whoever's signed in.
   useEffect(() => { setCredited(meId != null ? [meId] : []); }, [meId]);
+  // An idea that would change the app: AI Jane asks a few questions first so
+  // it's built right first time (Graeme, 2026-11-19). Other ideas as before.
+  const talkAvailable = useTalkThroughAvailable(open);
+  const [talk, setTalk] = useState<TalkStep | null>(null);
+  const [talkChat, setTalkChat] = useState<JaneTurn[]>([]);
 
   if (!open) return null;
 
@@ -77,7 +84,7 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
     setBeforeTaken(false); setAfterTaken(false);
     setTitleConfirmed(false); setBeforeSkipped(false); setAfterSkipped(false);
     beforeFile.current = null; afterFile.current = null; setBusy(false);
-    setDuplicates([]);
+    setDuplicates([]); setTalk(null); setTalkChat([]);
   };
   const close = () => { reset(); onClose(); };
 
@@ -193,7 +200,39 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
     } catch {
       // A failed check must never block someone reporting something.
     }
-    await submit();
+    await talkOrSubmit();
+  };
+
+  /** Their words as Jane first reads them: the title, then any note. */
+  const ideaText = () => [title.trim(), description.trim()].filter(Boolean).join("\n");
+
+  const talkOrSubmit = async () => {
+    if (!isIdea || !talkAvailable) { await submit(); return; }
+    setBusy(true);
+    const turns: JaneTurn[] = [{ role: "user", text: ideaText() }];
+    // The server only talks ideas through when they'd change the app.
+    const step = await nextTalkStep("idea", turns, { station });
+    if (!step) { await submit(); return; }
+    setTalkChat([...turns, { role: "assistant", text: step.message }]);
+    setTalk(step);
+    setBusy(false);
+  };
+
+  const answerTalk = async (text: string) => {
+    const turns: JaneTurn[] = [...talkChat, { role: "user", text }];
+    setBusy(true);
+    setTalkChat(turns);
+    const step = await nextTalkStep("idea", turns, { station });
+    if (!step) { await submit({ transcript: turns, brief: null }); return; }
+    setTalkChat([...turns, { role: "assistant", text: step.message }]);
+    setTalk(step);
+    setBusy(false);
+  };
+
+  const sendTalkAsIs = async () => {
+    setBusy(true);
+    const done = await nextTalkStep("idea", talkChat, { station, finish: true });
+    await submit({ transcript: talkChat, brief: done?.kind === "brief" ? done.brief : null });
   };
 
   const addVote = async (id: number) => {
@@ -208,7 +247,7 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
     }
   };
 
-  const submit = async () => {
+  const submit = async (talked?: { transcript: JaneTurn[]; brief: string | null }) => {
     if (!title.trim()) return;
     setBusy(true);
     try {
@@ -219,7 +258,7 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: title.trim(),
-          description: description.trim() || title.trim(),
+          description: talked ? describeWithBrief(description.trim() || title.trim(), talked.brief) : description.trim() || title.trim(),
           station: station || "general",
           // An idea is for whoever picks it up; something you've done is yours.
           claim: !isIdea,
@@ -231,6 +270,7 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
       const improvement = await res.json();
       // Saved — tell the opener now, whatever happens to the photos.
       onSaved?.(improvement.id);
+      if (talked) void saveTalkThrough({ kind: "idea", improvementId: improvement.id, original: ideaText(), transcript: talked.transcript, brief: talked.brief });
 
       // Every upload's answer is checked — a failed one used to vanish
       // without a word, silently losing the clip (that's how improvement 33
@@ -302,7 +342,17 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
           </button>
         </div>
 
-        {duplicates.length > 0 ? (
+        {talk ? (
+          <JaneTalkThrough
+            key={talkChat.length}
+            chat={talkChat}
+            step={talk}
+            busy={busy}
+            onAnswer={text => void answerTalk(text)}
+            onSendAsIs={() => void sendTalkAsIs()}
+            onSend={brief => void submit({ transcript: talkChat, brief })}
+          />
+        ) : duplicates.length > 0 ? (
           /* Someone has reported this already. Voting is offered first,
              because a second voice on the existing report is more useful
              than a second copy of it — but logging it anyway stays
@@ -334,7 +384,7 @@ export function RecordImprovementModal({ open, onClose, station, initialMode, on
             </div>
 
             <button
-              onClick={() => { setDuplicates([]); void submit(); }}
+              onClick={() => { setDuplicates([]); void talkOrSubmit(); }}
               disabled={busy}
               className="w-full h-14 rounded-2xl border-2 border-border text-lg font-bold hover:bg-secondary/50 transition-colors disabled:opacity-50"
             >

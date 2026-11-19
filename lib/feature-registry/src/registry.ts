@@ -40,6 +40,11 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // why "tagging" couldn't be found as a real grant — Graeme, 2026-09-09).
   // Tagging and booking are ABILITIES on Order Packing Live now, below.
 
+  // ── AI Jane ──────────────────────────────────────────────────────────────
+  // Starts with managers (Graeme, 19 Nov 2026); hand it to anyone to try it.
+  // The Fix queue has an off switch for everyone.
+  { key: "ai.jane_talk_through", name: "AI Jane talks it through", description: "When they report an app problem or log an idea that would change the app, AI Jane asks a few questions (where, who, must they do it, can they swipe it away) and writes a summary for Graeme to approve.", area: "AI Jane", kind: "ability", minRole: "manager" },
+
   // ── Abilities on Order Packing Live ──────────────────────────────────────
   // Both need the Order Packing Live page as well — grant that too for
   // someone below its access level.

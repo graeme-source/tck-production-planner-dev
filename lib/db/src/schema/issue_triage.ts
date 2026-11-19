@@ -1,7 +1,7 @@
 import { pgTable, serial, text, timestamp, boolean, integer, jsonb, index, primaryKey, uniqueIndex, date } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { usersTable } from "./users";
-import { andonIssuesTable } from "./improvements_and_andon";
+import { andonIssuesTable, improvementSubmissionsTable } from "./improvements_and_andon";
 
 // The issue pipeline (docs/ISSUE_PIPELINE.md; migration 0119). A scheduled
 // Claude Code session triages app issues from the Andon log and writes a
@@ -122,6 +122,21 @@ export const issueReportChecksTable = pgTable("issue_report_checks", {
   matchedIssueId: integer("matched_issue_id").references(() => andonIssuesTable.id, { onDelete: "set null" }),
   result: text("result"), // resolved | followed | reported
   filedIssueId: integer("filed_issue_id").references(() => andonIssuesTable.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+/** AI Jane talking a report or an app idea through before it's filed
+ *  (migration 0384). The summary also goes into the report's own text. */
+export const reportChatsTable = pgTable("report_chats", {
+  id: serial("id").primaryKey(),
+  userId: integer("user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  userName: text("user_name"),
+  kind: text("kind").notNull(), // issue | idea
+  andonIssueId: integer("andon_issue_id").references(() => andonIssuesTable.id, { onDelete: "cascade" }),
+  improvementId: integer("improvement_id").references(() => improvementSubmissionsTable.id, { onDelete: "cascade" }),
+  original: text("original").notNull(),
+  transcript: jsonb("transcript").$type<Array<{ role: "user" | "assistant"; text: string }>>().notNull(),
+  brief: text("brief"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
