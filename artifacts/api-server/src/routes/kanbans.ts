@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { recordKanbanPullCount } from "../lib/kanban-pull-count";
 import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, recipesTable, subRecipesTable } from "@workspace/db";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -493,6 +494,9 @@ router.post("/scan", async (req, res) => {
     });
   }
 
+  // A fresh pull is a stock count: the safety stock is what's left (19 Nov 2026).
+  if (!alreadyQueued) await recordKanbanPullCount(ingredientId, userId);
+
   const orderQty = ing.kanbanOrderAmount != null ? Number(ing.kanbanOrderAmount)
     : ing.kanbanQuantity != null ? Number(ing.kanbanQuantity) : 1;
   const unitLabel =
@@ -579,6 +583,8 @@ router.post("/queue", async (req, res) => {
       orderDayTarget: today,
     });
   }
+  // A fresh pull is a stock count: the safety stock is what's left (19 Nov 2026).
+  if (!alreadyQueued) await recordKanbanPullCount(iid, userId);
   res.json({ ok: true, alreadyQueued });
 });
 
@@ -640,6 +646,8 @@ router.post("/:id/pull", async (req, res) => {
     .select({
       id: kanbanItemsTable.id,
       supplierId: kanbanItemsTable.supplierId,
+      ingredientId: kanbanItemsTable.ingredientId,
+      status: kanbanItemsTable.status,
     })
     .from(kanbanItemsTable)
     .where(eq(kanbanItemsTable.id, id));
@@ -667,6 +675,8 @@ router.post("/:id/pull", async (req, res) => {
     pulledByUserId: userId ?? null,
     orderDayTarget,
   }).where(eq(kanbanItemsTable.id, id)).returning();
+  // A fresh pull is a stock count: the safety stock is what's left (19 Nov 2026).
+  if (existing.status !== "pulled" && existing.ingredientId != null) await recordKanbanPullCount(existing.ingredientId, userId ?? null);
 
   const [full] = await db
     .select({

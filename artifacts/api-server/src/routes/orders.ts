@@ -27,6 +27,8 @@ import { markSplitsPlaced, splitsForCalculate, type SplitView } from "../lib/ord
 import { CombineRefused, combineOrders, findSameDayOrder } from "../lib/order-combine";
 import { validate, validateQuery } from "../middleware/validate";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
+import { ingredientStockLocation } from "../lib/ingredient-stock-location";
+import { dailyUse, daysOfStockLeft, stockLeftLabel } from "../lib/kanban-stock-left";
 import { createStageTimer } from "../lib/stage-timer";
 import { readCacheMiddleware } from "../lib/request-read-cache";
 import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
@@ -453,6 +455,9 @@ router.get("/calculate", async (req, res) => {
       surplusAbsoluteQty?: number | null;
       surplusByDeliveryWeekday?: SurplusByDeliveryWeekday | null;
       extraCoverQty?: number;
+      /** Pulled kanbans: how long the stock should last at the usual rate
+       *  (19 Nov 2026) — "if it's out of stock, can I wait?". */
+      stockLeft?: { days: number; label: string; basis: "usage" | "deliveries" } | null;
       packWeight: number;
       costPerPack: number;
       supplierPartNumber: string | null;
@@ -1252,6 +1257,53 @@ router.get("/calculate", async (req, res) => {
     });
   }
 
+  // How long a pulled kanban's stock lasts (Graeme, 19 Nov 2026): the stock
+  // on the line (a fresh pull counts the safety stock) ÷ the usual use a day
+  // — recorded usage where tracked, otherwise deliveries over 90 days.
+  const kanbanLineIds = [...new Set(Object.values(supplierOrderMap).flatMap(s => s.lines.filter(l => l.isKanban).map(l => l.ingredientId)))];
+  if (kanbanLineIds.length > 0) {
+    const nowMs = Date.now();
+    const history = await loadStockLedgers({ since: new Date(nowMs - 90 * 86_400_000), until: new Date(nowMs), ingredientIds: kanbanLineIds });
+    // Packaging and dry goods barely appear in stock history, but every order
+    // received does: a year of those, in the ingredient's own unit.
+    const received = await db
+      .select({ ingredientId: purchaseOrderLinesTable.ingredientId, qty: purchaseOrderLinesTable.quantityReceived, unit: purchaseOrderLinesTable.unit, on: purchaseOrdersTable.expectedDeliveryDate, packWeight: ingredientsTable.packWeight })
+      .from(purchaseOrderLinesTable)
+      .innerJoin(purchaseOrdersTable, eq(purchaseOrderLinesTable.purchaseOrderId, purchaseOrdersTable.id))
+      .innerJoin(ingredientsTable, eq(purchaseOrderLinesTable.ingredientId, ingredientsTable.id))
+      .where(and(
+        inArray(purchaseOrderLinesTable.ingredientId, kanbanLineIds),
+        inArray(purchaseOrdersTable.status, ["received", "partially_received"]),
+        gte(purchaseOrdersTable.expectedDeliveryDate, toISODate(new Date(nowMs - 365 * 86_400_000))),
+      ));
+    const receivedBy = new Map<number, Array<{ at: number; qty: number }>>();
+    for (const r of received) {
+      if (r.ingredientId == null || !r.on) continue;
+      const q = Number(r.qty);
+      const pw = Number(r.packWeight);
+      const native = /^(packs?|bottles?)$/i.test(r.unit) ? (pw > 0 ? q * pw : NaN) : q;
+      if (!Number.isFinite(native) || native <= 0) continue;
+      const list = receivedBy.get(r.ingredientId) ?? [];
+      list.push({ at: new Date(`${r.on}T12:00:00Z`).getTime(), qty: native });
+      receivedBy.set(r.ingredientId, list);
+    }
+    for (const s of Object.values(supplierOrderMap)) {
+      for (const l of s.lines) {
+        if (!l.isKanban) continue;
+        const h = history.get(l.ingredientId)?.ledger;
+        // Tracked usage first; otherwise orders received over a year.
+        const rate = (h ? dailyUse({ receipts: [], usage: h.usage, coverage: h.coverage, nowMs }) : null)
+          ?? dailyUse({ receipts: receivedBy.get(l.ingredientId) ?? [], usage: [], coverage: "untracked", nowMs, windowDays: 365 });
+        // The running stock itself: a kanban-only line shows 0 (it orders the
+        // card's amount whatever the stock), and a pull has just counted it.
+        const stock = lineStockFor(l.ingredientId, ingredientLookup[l.ingredientId]?.stockCheckEnabled ?? false).stockOnHand;
+        const days = daysOfStockLeft(stock, rate?.perDay);
+        l.stockLeft = rate && days != null ? { days, label: stockLeftLabel(days), basis: rate.basis } : null;
+      }
+    }
+  }
+  timer.mark("stock-left");
+
   // Suppliers configured with orderFrequency=weekly + orderDays only place
   // orders on those weekdays — A.D.Maria (Tuesday) was reappearing on every
   // plan because we filtered ingredients by stockCheckDay but never consulted
@@ -1866,26 +1918,7 @@ router.patch("/stock-check", async (req, res) => {
       .limit(1);
 
     if (ingredient) {
-      // Raw materials never go in production_fridge (finished product only).
-      // Chilled ingredients → prep_fridge, dry goods → dry_store, raw meat → raw_meat_fridge.
-      const locationMap: Record<string, string> = {
-        vegetable: "prep_fridge",
-        herb: "prep_fridge",
-        base: "prep_fridge",
-        dairy: "prep_fridge",
-        cheese: "prep_fridge",
-        cooked_meat: "prep_fridge",
-        raw_meat: "raw_meat_fridge",
-        meat: "raw_meat_fridge",
-        sauce: "dry_store",
-        spice: "dry_store",
-        seasoning: "dry_store",
-        other: "dry_store",
-        dough: "dry_store",
-        frozen: "production_freezer",
-        dry: "dry_store",
-      };
-      const location = locationMap[ingredient.category ?? ""] ?? "prep_fridge";
+      const location = ingredientStockLocation(ingredient.category);
 
       await db.insert(stockEntriesTable).values({
         ingredientId,

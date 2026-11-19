@@ -129,6 +129,8 @@ type OrderLine = SurplusLineFields & {
   orderQty: number;
   packsToOrder: number;
   isKanban: boolean;
+  /** Pulled kanbans: how long the stock should last (19 Nov 2026). */
+  stockLeft?: { days: number; label: string; basis: "usage" | "deliveries" } | null;
   // The kanban floor the backend applied to packsToOrder (null when not a
   // kanban line). The stock-edit recompute must respect it — see updateStock.
   kanbanFloorPacks?: number | null;
@@ -2633,6 +2635,21 @@ export default function Orders() {
                                 <span className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-500/10 text-amber-600">
                                   Kanban
                                 </span>
+                                {/* "If it's out of stock, can I wait?" (Graeme, 2026-11-19) */}
+                                {line.stockLeft && (
+                                  <span
+                                    title={line.stockLeft.basis === "usage"
+                                      ? "From the stock left and what's been used a day over the last 3 months"
+                                      : "From the stock left and how fast deliveries have been used over the last 3 months"}
+                                    className={cn(
+                                      "inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold whitespace-nowrap",
+                                      line.stockLeft.days < 7 ? "bg-red-500/15 text-red-700 dark:text-red-300"
+                                        : line.stockLeft.days < 14 ? "bg-amber-500/15 text-amber-700 dark:text-amber-300"
+                                        : "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
+                                    )}>
+                                    {line.stockLeft.label}
+                                  </span>
+                                )}
                                 <button
                                   type="button"
                                   onClick={() => void snoozeKanbans([line.ingredientId])}
