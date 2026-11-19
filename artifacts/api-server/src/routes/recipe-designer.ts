@@ -161,6 +161,18 @@ For allergen questions, use get_recipe_allergens (one call — it walks the whol
 
 Really — do not narrate ("let me pull up…", "I need to check…"). Call the tool and give the answer.`;
 
+/**
+ * How every answer looks (Graeme, 19 Nov 2026: "we're never going to read
+ * through all that"). Answer in bold first, rough workings in a sentence or
+ * two, nothing else unless they ask. Goes on both prompts, last, so it wins.
+ */
+const ANSWER_SHAPE = `## How every answer looks — this overrides any other style guidance
+1. The answer first, in **bold**, in one line. Example: "**About 29 L of Malbec, so 13 boxes of 2.25 L**, for 20 batches a day over 10 days."
+2. Then the rough workings in ONE short paragraph of one or two sentences. Example: "Each batch takes 1.3 kg of the braised beef, which uses about 0.14 L of wine, so 20 batches × 10 days ≈ 29 L."
+3. Only if something really matters, one short line to flag it.
+
+Never a step-by-step breakdown, a list of every sub-calculation, or a separate paragraph per part. Never think out loud ("wait, let me be precise") and never describe what you're looking up. Keep it under about 80 words. If they ask for the full workings or more detail, then give it. Something they asked you to write out (a recipe, a draft, a list, an email) isn't an answer: write that in full.`;
+
 /** A question across several records takes several lookups. */
 const MOST_LOOKUP_ROUNDS = 12;
 
@@ -409,7 +421,7 @@ router.post("/chat", async (req: Request, res: Response) => {
   const datedPrompt = `Today's date is ${londonDateString()} (Europe/London). When the user gives a date without a year, assume the current or nearest upcoming one.\n\n`;
   // The assistant is "AI Jane" in the app (renamed from Caz, 28 Oct 2026) —
   // named after Jane, who answers everyone's questions on the floor.
-  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT) + `\n\n${JANE_DATA_GUIDE}`;
+  const systemPrompt = datedPrompt + (requester.isFounder ? `Your name is AI Jane.\n\n${STATIC_PROMPT}` : CAZ_PROMPT) + `\n\n${JANE_DATA_GUIDE}\n\n${ANSWER_SHAPE}`;
 
   // Only persist to a thread the requester owns — never write into someone
   // else's conversation via a passed-in id.
@@ -475,6 +487,12 @@ router.post("/chat", async (req: Request, res: Response) => {
       const toolUses = final.content.filter(
         (b): b is Anthropic.ToolUseBlock => b.type === "tool_use",
       );
+      // Words before a lookup are thinking out loud, not the answer: take
+      // them off the screen and out of the saved thread (19 Nov 2026).
+      if (assistantTextAcc) {
+        assistantTextAcc = "";
+        send("reset", {});
+      }
 
       const pageRoles = await getPageMinRoles();
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
