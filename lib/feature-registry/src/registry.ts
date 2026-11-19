@@ -68,6 +68,15 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   { key: "page.lean_curriculum", name: "Lean Curriculum planner", description: "The weekly lesson plan behind the morning meeting.", area: "Pages", kind: "page", page: "/lean-curriculum", minRole: "manager" },
   { key: "page.surveys", name: "Customer Surveys", description: "Building and sending customer surveys.", area: "Pages", kind: "page", page: "/surveys", minRole: "admin" },
 
+  // ── Traceability (19 Nov 2026) ───────────────────────────────────────────
+  // Being tested on a few people first (Graeme: "I want the ability to
+  // switch this on for certain people"). founderOnly so being an admin (the
+  // shared "Admin" login included) doesn't switch it on: Graeme hands
+  // "Photograph opened packs" to the testers, and the Traceability page's
+  // "Everyone" switch turns it on for the whole team without a deploy.
+  { key: "page.traceability", name: "Traceability", description: "Look up a pack code to see the supplier batches in it, or a supplier batch to see the pack codes it went into, and choose which ingredients are traced.", area: "Pages", kind: "page", page: "/traceability", minRole: "manager" },
+  { key: "traceability.photos", name: "Photograph opened packs", description: "The 'Opened a new pack?' button on the prep, mixing, building, mac cheese and fried chicken stations: photograph a traced ingredient's label when its pack is opened.", area: "Traceability", kind: "ability", minRole: "admin", founderOnly: true },
+
   // ── Settings areas ───────────────────────────────────────────────────────
   // "My Profile" isn't here on purpose — it's your own account, everyone has it.
   { key: "settings.team", name: "Team & Access", description: "People, roles, invites, page access and these very grants.", area: "Settings", kind: "settings", section: "team", minRole: "admin" },

@@ -33,6 +33,7 @@ import stockCheckUnitsRouter from "./stock-check-units";
 import stockCheckExpectedRouter from "./stock-check-expected";
 import stockCheckUseByRouter from "./stock-check-use-by";
 import stockAccuracyRouter from "./stock-accuracy";
+import traceabilityRouter from "./traceability";
 import teamEfficiencyRouter from "./team-efficiency";
 import prepTimesRouter from "./prep-times";
 import dptCalculatorRouter from "./dpt-calculator";
@@ -402,6 +403,8 @@ router.use("/stock-check-use-by", stockCheckUseByRouter);
 // Running ("expected") stock vs real counts — managers only, never shown at
 // stations or on count screens (docs/RUNNING_STOCK.md).
 router.use("/stock-accuracy", stockAccuracyRouter);
+// Pack label photos at the stations + the managers' batch lookup (19 Nov 2026).
+router.use("/traceability", traceabilityRouter);
 router.use("/team-efficiency", teamEfficiencyRouter);
 // Prep times and batch profit after line + prep labour — a founder-only
 // read endpoint, no screen (checked inside).
