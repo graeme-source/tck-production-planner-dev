@@ -11,7 +11,10 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, parseISO } from "date-fns";
 import { Check, ChevronDown, ChevronRight, ExternalLink, Loader2, Plus, Sparkles, Trash2 } from "lucide-react";
-import { AUDIENCES, guideWords, sinceWords, type AudienceKey, type ReasonGuide, type ReasonSummary, type RestState } from "@workspace/marketing-calendar";
+import {
+  AUDIENCES, efficacyOf, guideWords, plannableSoon, rankEfficacy, sinceWords, sortReasons,
+  type AudienceKey, type Efficacy, type EfficacyTier, type ReasonGuide, type ReasonSort, type ReasonSummary, type RestState,
+} from "@workspace/marketing-calendar";
 import { cn } from "@/lib/utils";
 import { calApi, CAL_KEY } from "./api";
 
@@ -28,6 +31,24 @@ const REASONS_KEY = [...CAL_KEY, "reasons"] as const;
 const gbp = (n: number) => `£${Math.round(n).toLocaleString("en-GB")}`;
 const day = (d: string) => format(parseISO(d), "d MMM");
 const range = (a: string, b: string) => (a === b ? day(a) : `${day(a)} – ${day(b)}`);
+const short = (n: number) => (n >= 10_000 ? `£${(n / 1000).toFixed(1)}k` : gbp(n));
+
+// Sort + filter remembered on this device only (a per-viewer convenience).
+const VIEW_KEY = "tck:reasons-view:v1";
+type View = { sort: ReasonSort; dueOnly: boolean };
+function readView(): View {
+  try {
+    const v = JSON.parse(window.localStorage.getItem(VIEW_KEY) ?? "null") as Partial<View> | null;
+    return { sort: v?.sort === "revenue" || v?.sort === "due" ? v.sort : "plan", dueOnly: !!v?.dueOnly };
+  } catch { return { sort: "plan", dueOnly: false }; }
+}
+function writeView(v: View) { try { window.localStorage.setItem(VIEW_KEY, JSON.stringify(v)); } catch { /* not kept */ } }
+
+const SORTS: Array<{ key: ReasonSort; label: string; blurb: string }> = [
+  { key: "plan", label: "Plan order", blurb: "Ready to use first, least recently used at the top — then the ones still resting." },
+  { key: "revenue", label: "Most revenue", blurb: "Biggest earners first — Klaviyo revenue per use, averaged over the last year." },
+  { key: "due", label: "Due soonest", blurb: "Ready now first, then by the date each is due again." },
+];
 
 export function ReasonsToBuyPanel() {
   const q = useQuery({
@@ -41,8 +62,15 @@ export function ReasonsToBuyPanel() {
   });
   const [open, setOpen] = useState(true);
   const [adding, setAdding] = useState(false);
+  const [view, setViewState] = useState<View>(readView);
+  const setView = (v: Partial<View>) => setViewState(prev => { const next = { ...prev, ...v }; writeView(next); return next; });
   const data = q.data;
-  const reasons = data?.reasons ?? [];
+  const all = data?.reasons ?? [];
+  // How hard each reason pulls (Graeme, 19 Nov 2026): revenue per use, ranked.
+  const eff = new Map(all.map(r => [r.reason.id, efficacyOf(r.uses)]));
+  const ranks = rankEfficacy(all.map(r => ({ id: r.reason.id, perUse: eff.get(r.reason.id)?.perUse ?? null })));
+  const sorted = sortReasons(all, view.sort, new Map(all.map(r => [r.reason.id, eff.get(r.reason.id)?.perUse ?? null])));
+  const reasons = view.dueOnly ? sorted.filter(plannableSoon) : sorted;
 
   return (
     <section className="rounded-3xl border border-border bg-card shadow-sm">
@@ -50,7 +78,7 @@ export function ReasonsToBuyPanel() {
         <span className="w-10 h-10 rounded-2xl bg-primary/10 text-primary flex items-center justify-center shrink-0"><Sparkles className="w-5 h-5" /></span>
         <span className="flex-1 min-w-0">
           <span className="block text-xl font-display font-extrabold">Reasons to buy</span>
-          <span className="block text-sm text-muted-foreground">Ready to use first, least recently used at the top — then the ones still resting.</span>
+          <span className="block text-sm text-muted-foreground">{SORTS.find(x => x.key === view.sort)?.blurb}{view.dueOnly ? " Only ones that can be used in the next 2 weeks." : ""}</span>
         </span>
         {open ? <ChevronDown className="w-5 h-5 text-muted-foreground" /> : <ChevronRight className="w-5 h-5 text-muted-foreground" />}
       </button>
@@ -76,10 +104,38 @@ export function ReasonsToBuyPanel() {
                 <p className="text-muted-foreground">No reasons yet. Add the reasons you use — "You've got credit", "Free pack", "New recipe" — and every past email is read to see when each was last used.</p>
               )}
 
+              {all.length > 1 && (
+                <div className="flex flex-wrap items-center gap-2">
+                  <div role="group" aria-label="Sort reasons" className="inline-flex rounded-xl border border-border bg-background p-1 gap-1">
+                    {SORTS.map(o => (
+                      <button key={o.key} type="button" aria-pressed={view.sort === o.key} onClick={() => setView({ sort: o.key })}
+                        className={cn("min-h-[40px] px-3 rounded-lg text-sm font-semibold transition-colors",
+                          view.sort === o.key ? "bg-foreground text-background" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50")}>
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button type="button" aria-pressed={view.dueOnly} onClick={() => setView({ dueOnly: !view.dueOnly })}
+                    className={cn("min-h-[48px] px-4 rounded-xl border-2 text-sm font-semibold inline-flex items-center gap-2 transition-colors",
+                      view.dueOnly ? "border-emerald-600 bg-emerald-50 text-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-200" : "border-border text-muted-foreground hover:text-foreground")}>
+                    {view.dueOnly && <Check className="w-4 h-4" />} Due in the next 2 weeks
+                  </button>
+                </div>
+              )}
+
               {reasons.length > 0 && (
                 <div className="rounded-2xl border border-border divide-y divide-border overflow-hidden">
-                  {reasons.map(r => <ReasonRow key={r.reason.id} r={r} stillReading={data.unread > 0} />)}
+                  <div className="hidden md:grid pl-12 pr-4 py-2 gap-x-6 grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(8rem,0.8fr)_minmax(0,2fr)] text-xs font-semibold uppercase tracking-wide text-muted-foreground bg-secondary/30">
+                    <span>Reason</span><span>When to use</span><span>Pulls in</span><span>Last time</span>
+                  </div>
+                  {reasons.map(r => (
+                    <ReasonRow key={r.reason.id} r={r} stillReading={data.unread > 0}
+                      efficacy={eff.get(r.reason.id) ?? null} rank={ranks.get(r.reason.id) ?? null} />
+                  ))}
                 </div>
+              )}
+              {all.length > 0 && reasons.length === 0 && (
+                <p className="text-muted-foreground py-2">Nothing can be used in the next 2 weeks — every reason is still resting.</p>
               )}
 
               {adding ? <AddReason onDone={() => setAdding(false)} /> : (
@@ -98,7 +154,12 @@ export function ReasonsToBuyPanel() {
 
 /** One reason per full-width row (Graeme, 18 Nov: "one underneath each
  *  other" so lots show at once); tap to open the detail and its emails. */
-function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; stillReading: boolean }) {
+function ReasonRow({ r, stillReading, efficacy, rank }: {
+  r: ReasonsReport["reasons"][number];
+  stillReading: boolean;
+  efficacy: Efficacy | null;
+  rank: { rank: number; tier: EfficacyTier } | null;
+}) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const u = r.lastUse;
@@ -113,7 +174,7 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
       <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open}
         className="w-full min-h-[56px] px-4 py-3 text-left hover:bg-secondary/40 flex items-start gap-3">
         {open ? <ChevronDown className="w-5 h-5 mt-0.5 text-muted-foreground shrink-0" /> : <ChevronRight className="w-5 h-5 mt-0.5 text-muted-foreground shrink-0" />}
-        <span className="flex-1 min-w-0 grid gap-x-6 gap-y-0.5 md:grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(0,2.4fr)] md:items-baseline">
+        <span className="flex-1 min-w-0 grid gap-x-6 gap-y-0.5 md:grid-cols-[minmax(10rem,1.2fr)_minmax(9rem,1fr)_minmax(8rem,0.8fr)_minmax(0,2fr)] md:items-baseline">
           <span className="min-w-0">
             <span className="block font-bold text-base leading-tight break-words">{r.reason.name}</span>
             {guide && <span className="block text-xs text-muted-foreground break-words mt-0.5">{guide}</span>}
@@ -123,6 +184,9 @@ function ReasonRow({ r, stillReading }: { r: ReasonsReport["reasons"][number]; s
               {pending ? "Still checking emails…" : sinceWords(r.daysSince)}
             </span>
             {!pending && r.rest && <RestPill rest={r.rest} />}
+          </span>
+          <span className="min-w-0">
+            {efficacy && rank ? <EfficacyPill efficacy={efficacy} rank={rank} /> : <span className="text-xs text-muted-foreground">{pending ? "" : "No results yet"}</span>}
           </span>
           <span className="text-sm text-muted-foreground min-w-0">
             {u ? <>
@@ -212,6 +276,21 @@ function ReasonEmails({ uses }: { uses: ReasonsReport["reasons"][number]["uses"]
         </button>
       )}
     </div>
+  );
+}
+
+/** How hard a reason pulls (Graeme, 19 Nov 2026): its rank and Klaviyo
+ *  revenue per use, banded against the best — deep indigo top, light indigo
+ *  good, grey low. Indigo so it never reads as the green/yellow "when" pills. */
+function EfficacyPill({ efficacy, rank }: { efficacy: Efficacy; rank: { rank: number; tier: EfficacyTier } }) {
+  const tone = rank.tier === "top" ? "bg-indigo-600 text-white dark:bg-indigo-500"
+    : rank.tier === "good" ? "bg-indigo-100 text-indigo-900 dark:bg-indigo-900/50 dark:text-indigo-200"
+      : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300";
+  return (
+    <span className={cn("inline-block text-xs font-bold rounded-full px-2.5 py-0.5 whitespace-nowrap tabular-nums", tone)}
+      title={`#${rank.rank} by revenue per use: ${gbp(efficacy.perUse)} a use (${efficacy.ordersPerUse.toLocaleString("en-GB")} orders), ${gbp(efficacy.perEmail)} an email — over ${efficacy.uses} use${efficacy.uses === 1 ? "" : "s"} in the last year.`}>
+      #{rank.rank} · {short(efficacy.perUse)} a use
+    </span>
   );
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
+import { efficacyOf, plannableSoon, rankEfficacy, sortReasons, emailText, evidenceFound, restState, sentSyncFrom, gapWords, guideWords, isReady, planningOrder, readyFrom, groupUses, reasonsSignature, sinceWords, summariseReasons, type ReasonEmail } from "./reasons-to-buy";
 
 const email = (date: string, revenue = 100, extra: Partial<ReasonEmail> = {}): ReasonEmail => ({
   campaignId: `c-${date}`, date, subject: "You've got credit", name: "Credit", recipients: 1000, orders: 5, revenue, ...extra,
@@ -156,5 +156,64 @@ describe("sentSyncFrom", () => {
   });
   it("never further back than the year", () => {
     expect(sentSyncFrom("2025-11-19", "2026-11-18", 365)).toBe("2025-11-18");
+  });
+});
+
+describe("efficacyOf — revenue per use, so regular reasons aren't over-credited", () => {
+  it("averages over each use and each email", () => {
+    // Two uses: 4 emails earning £1,000 in Sep, 1 email earning £200 in Jun.
+    const uses = groupUses([
+      email("2026-09-20", 250), email("2026-09-23", 250), email("2026-09-26", 250), email("2026-09-27", 250),
+      email("2026-06-01", 200),
+    ]);
+    expect(efficacyOf(uses)).toMatchObject({ perUse: 600, perEmail: 240, uses: 2 });
+  });
+  it("is nothing for a reason never used", () => {
+    expect(efficacyOf([])).toBeNull();
+  });
+});
+
+describe("rankEfficacy — ranked with bands relative to the best", () => {
+  it("ranks by revenue per use and bands top / good / low against the best", () => {
+    const m = rankEfficacy([
+      { id: 1, perUse: 40731 }, // You've got credit
+      { id: 2, perUse: 2517 },  // Wonkyzone
+      { id: 3, perUse: 21000 },
+      { id: 4, perUse: 9000 },
+      { id: 5, perUse: null },  // never used
+    ]);
+    expect(m.get(1)).toEqual({ rank: 1, tier: "top" });
+    expect(m.get(3)).toEqual({ rank: 2, tier: "top" });
+    expect(m.get(4)).toEqual({ rank: 3, tier: "good" });
+    expect(m.get(2)).toEqual({ rank: 4, tier: "low" });
+    expect(m.has(5)).toBe(false);
+  });
+});
+
+describe("plannableSoon — the 'due in the next 2 weeks' filter", () => {
+  it("keeps ready, due soon, due today and overdue; drops still resting", () => {
+    expect(plannableSoon({ ready: true, rest: null })).toBe(true);
+    expect(plannableSoon({ ready: false, rest: { kind: "due_soon", date: "2026-11-26" } })).toBe(true);
+    expect(plannableSoon({ ready: true, rest: { kind: "overdue", date: "2026-04-30" } })).toBe(true);
+    expect(plannableSoon({ ready: false, rest: { kind: "resting", date: "2026-12-17" } })).toBe(false);
+  });
+});
+
+describe("sortReasons", () => {
+  const rows = [
+    { reason: { id: 1 }, ready: false, readyFrom: "2026-12-17" },
+    { reason: { id: 2 }, ready: true, readyFrom: "2026-04-30" },
+    { reason: { id: 3 }, ready: false, readyFrom: "2026-11-29" },
+    { reason: { id: 4 }, ready: true, readyFrom: null },
+  ];
+  it("most revenue per use first, never-used last", () => {
+    const per = new Map<number, number | null>([[1, 2517], [2, 3200], [3, 6403], [4, null]]);
+    expect(sortReasons(rows, "revenue", per).map(r => r.reason.id)).toEqual([3, 2, 1, 4]);
+  });
+  it("soonest due: ready ones first, then by date", () => {
+    expect(sortReasons(rows, "due", new Map()).map(r => r.reason.id)).toEqual([2, 4, 3, 1]);
+  });
+  it("plan keeps the order given", () => {
+    expect(sortReasons(rows, "plan", new Map()).map(r => r.reason.id)).toEqual([1, 2, 3, 4]);
   });
 });

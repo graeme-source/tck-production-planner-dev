@@ -292,3 +292,77 @@ export function sentSyncFrom(newestSaved: string | null, today: string, lookback
   const from = addDays(newestSaved, -SENT_RECHECK_DAYS);
   return from < floor ? floor : from;
 }
+
+// ── Efficacy: which reasons pull the most weight (Graeme, 19 Nov 2026) ──
+
+/** What a reason brings in, averaged over each time it was used in the last
+ *  year — so one used often isn't credited with everything across a long run. */
+export interface Efficacy {
+  /** Klaviyo-credited revenue per use. */
+  perUse: number;
+  /** …and per email sent for it. */
+  perEmail: number;
+  ordersPerUse: number;
+  uses: number;
+}
+
+export function efficacyOf(uses: readonly ReasonUse[]): Efficacy | null {
+  if (uses.length === 0) return null;
+  const revenue = uses.reduce((s, u) => s + u.revenue, 0);
+  const emails = uses.reduce((s, u) => s + u.emails.length, 0);
+  const orders = uses.reduce((s, u) => s + u.orders, 0);
+  return {
+    perUse: pennies(revenue / uses.length),
+    perEmail: emails > 0 ? pennies(revenue / emails) : 0,
+    ordersPerUse: Math.round(orders / uses.length),
+    uses: uses.length,
+  };
+}
+
+/** Top = at least half the best reason's revenue per use; good = at least a
+ *  fifth; low = less. Relative, so the bands move with the list. */
+export type EfficacyTier = "top" | "good" | "low";
+
+export function rankEfficacy(items: ReadonlyArray<{ id: number; perUse: number | null }>): Map<number, { rank: number; tier: EfficacyTier }> {
+  const ranked = items.filter(i => i.perUse != null && i.perUse > 0).sort((a, b) => b.perUse! - a.perUse! || a.id - b.id);
+  const out = new Map<number, { rank: number; tier: EfficacyTier }>();
+  const best = ranked[0]?.perUse ?? 0;
+  ranked.forEach((i, idx) => {
+    const share = i.perUse! / best;
+    out.set(i.id, { rank: idx + 1, tier: share >= 0.5 ? "top" : share >= 0.2 ? "good" : "low" });
+  });
+  return out;
+}
+
+/** Can it be planned in the next couple of weeks? Ready now (including no gap
+ *  set or never used), due soon, due today or overdue — not still resting. */
+export function plannableSoon(row: { ready: boolean; rest: RestState | null }): boolean {
+  if (row.ready) return true;
+  return row.rest != null && row.rest.kind !== "resting";
+}
+
+export type ReasonSort = "plan" | "revenue" | "due";
+
+/** The panel's order: plan (ready first, least recently used — as given),
+ *  most revenue per use, or soonest due. Ties keep the plan order. */
+export function sortReasons<T extends { reason: { id: number }; ready: boolean; readyFrom: string | null }>(
+  rows: readonly T[],
+  sort: ReasonSort,
+  perUse: ReadonlyMap<number, number | null>,
+): T[] {
+  const indexed = rows.map((r, i) => ({ r, i }));
+  if (sort === "revenue") {
+    indexed.sort((a, b) => {
+      const x = perUse.get(a.r.reason.id) ?? null;
+      const y = perUse.get(b.r.reason.id) ?? null;
+      if (x == null && y == null) return a.i - b.i;
+      if (x == null) return 1;
+      if (y == null) return -1;
+      return y - x || a.i - b.i;
+    });
+  } else if (sort === "due") {
+    const key = (r: T) => (r.ready || r.readyFrom == null ? "" : r.readyFrom);
+    indexed.sort((a, b) => key(a.r).localeCompare(key(b.r)) || a.i - b.i);
+  }
+  return indexed.map(x => x.r);
+}
