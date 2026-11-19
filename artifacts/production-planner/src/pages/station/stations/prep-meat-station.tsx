@@ -21,6 +21,8 @@ import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../
 import type { PrepRecipeDetail, PrepIngredientDetail } from "./prep-hub";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { TracedLabelStep, useTracedLabels } from "@/components/traced-packs-button";
+import { tickWaitsForLabel } from "@/lib/traced-label";
 import { StationStockChecks } from "../shared/station-stock-checks";
 import { StockCheckButton } from "../shared/stock-check-entry";
 import { ForceStockCheckModal } from "../shared/force-stock-check-modal";
@@ -284,6 +286,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [trayPending, setTrayPending] = useState<string | null>(null);
   // Trays or bags, and whether a meat is split at all (Fix queue #396).
   const portioning = useMeatPortioning();
+  // A traced meat's label comes first, for people it's switched on for
+  // (Graeme, 2026-11-19). Everyone else ticks as before.
+  const traced = useTracedLabels();
 
   /** The single tick for a meat that isn't split: ticks every portion still
    *  to do, or unticks them all, so stock and "still to prep" are unchanged. */
@@ -295,6 +300,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   const toggleTray = async (ingredientId: number, recipeId: number, trayNum: number) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
+    if (tickWaitsForLabel({ canPhotograph: traced.can, needed: traced.waitsForLabel(ingredientId), tickingOn: !getCompletion(ingredientId, recipeId, trayNum) })) {
+      toast({ title: "Photo the label first", description: "Get the pack out and photo its label, then tick the trays." });
+      return;
+    }
     const pendingKey = `${ingredientId}-${recipeId}-${trayNum}`;
     if (trayPending === pendingKey) return;
     setTrayPending(pendingKey);
@@ -756,6 +765,9 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         queryKeysToInvalidate={[sopIngredientsKey]}
                       />
                       <PrintIngredientLabelButton ingredientId={ing.ingredientId} itemName={ing.ingredientName} className="flex-shrink-0" />
+                    </div>
+                    <div className="px-4 pt-3 bg-white dark:bg-background/50 empty:hidden">
+                      <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="prep_meat" />
                     </div>
 
                     {/* Linked ingredient sub-rows. Add-at-cooking items are NOT

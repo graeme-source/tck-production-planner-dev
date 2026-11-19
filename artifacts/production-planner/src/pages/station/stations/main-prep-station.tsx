@@ -31,6 +31,8 @@ import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep
 import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { TracedLabelStep, useTracedLabels } from "@/components/traced-packs-button";
+import { tickWaitsForLabel } from "@/lib/traced-label";
 import { mainPrepProgress, progressPct, tasksLine, linkedRowsAllTicked } from "@/lib/prep-progress";
 import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-session-capture";
 
@@ -621,12 +623,19 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
   const [runTinAction, tinPending] = useGuardedAction({
     onSuccess: () => refetch(),
   });
+  // Traceability in the flow of prep (Graeme, 2026-11-19): for people with
+  // "Photograph opened packs", a traced ingredient's label comes first.
+  const traced = useTracedLabels();
 
   const toggleTin = async (ingredientId: number, recipeId: number, tinNumber: number, isSubRecipe?: boolean, subRecipeOriginId?: number | null) => {
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
-    setViewing(ingredientId);
     const existing = getCompletion(ingredientId, recipeId, tinNumber, isSubRecipe, subRecipeOriginId);
+    if (!isSubRecipe && tickWaitsForLabel({ canPhotograph: traced.can, needed: traced.waitsForLabel(ingredientId), tickingOn: !existing })) {
+      toast({ title: "Photo the label first", description: "Get the pack out and photo its label at the top, then tick the tins." });
+      return;
+    }
+    setViewing(ingredientId);
     const item = isSubRecipe ? { subRecipeId: ingredientId } : { ingredientId };
     await runTinAction(async (signal) => {
       if (existing) {
@@ -1159,6 +1168,10 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </div>
                         ) : null}
                       </div>
+
+                      {!ing.isSubRecipe && (
+                        <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="main_prep" />
+                      )}
 
                       {status.totalTinCount > 1 && (
                         <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden mb-3">

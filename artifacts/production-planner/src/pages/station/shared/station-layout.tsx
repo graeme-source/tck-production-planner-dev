@@ -36,7 +36,9 @@ import { CurrentUserBadge } from "@/components/current-user-badge";
 import { TracedPacksButton } from "@/components/traced-packs-button";
 
 /** Stations where traced packs get opened (traceability, 19 Nov 2026). */
-const PACK_OPENING_STATIONS = new Set<string>(["prep", "main_prep", "prep_bases", "prep_meat", "mixing", "building_1", "building_2", "macaroni_cheese", "fried_chicken"]);
+// The prep screens ask for the label inside each traced ingredient instead
+// (TracedLabelStep, 2026-11-19), so the optional button isn't shown there.
+const PACK_OPENING_STATIONS = new Set<string>(["mixing", "building_1", "building_2", "macaroni_cheese", "fried_chicken"]);
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 

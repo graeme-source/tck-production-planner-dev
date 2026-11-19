@@ -75,7 +75,9 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // "Photograph opened packs" to the testers, and the Traceability page's
   // "Everyone" switch turns it on for the whole team without a deploy.
   { key: "page.traceability", name: "Traceability", description: "Look up a pack code to see the supplier batches in it, or a supplier batch to see the pack codes it went into, and choose which ingredients are traced.", area: "Pages", kind: "page", page: "/traceability", minRole: "manager" },
-  { key: "traceability.photos", name: "Photograph opened packs", description: "The 'Opened a new pack?' button on the prep, mixing, building, mac cheese and fried chicken stations: photograph a traced ingredient's label when its pack is opened.", area: "Traceability", kind: "ability", minRole: "admin", founderOnly: true },
+  // Managers first, then whoever it's handed to (Graeme, 19 Nov 2026); the
+  // Traceability page's Everyone switch opens it to all.
+  { key: "traceability.photos", name: "Photograph opened packs", description: "On Main Prep, Bases & Sauces and Raw Meat, a traced ingredient asks for a photo of its pack's label (or 'same batch') before its tins can be ticked, once a day. Mixing, building, mac cheese and fried chicken have the 'Opened a new pack?' button.", area: "Traceability", kind: "ability", minRole: "manager" },
 
   // ── Settings areas ───────────────────────────────────────────────────────
   // "My Profile" isn't here on purpose — it's your own account, everyone has it.

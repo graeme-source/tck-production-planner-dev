@@ -28,6 +28,8 @@ import { usePrepPresence, alsoViewingNames, othersViewing } from "../shared/prep
 import { PrepSectionTabs, PrepStockCheckTabBody, usePrepStockTabOpen } from "../shared/prep-section-tabs";
 import { SubRecipeReplenishModal, type ReplenishTarget } from "./sub-recipe-replenish-modal";
 import { PrintIngredientLabelButton } from "@/components/print-ingredient-label-button";
+import { TracedLabelStep, useTracedLabels } from "@/components/traced-packs-button";
+import { tickWaitsForLabel } from "@/lib/traced-label";
 import { SubRecipePotLabels, useSubRecipesWithLabels } from "@/components/sub-recipe-pot-labels";
 import { StationStockChecks } from "../shared/station-stock-checks";
 import { useMainPrepData, prepRowSopAmounts } from "./main-prep-station";
@@ -1127,6 +1129,10 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     return [...map.values()];
   }, [ingredients]);
 
+  // A traced ingredient's label comes first, for people it's switched on for
+  // (Graeme, 2026-11-19). Everyone else ticks as before.
+  const traced = useTracedLabels();
+
   const selectedIngredient = typeof selectedItem === "number"
     ? ingredients.find(i => i.ingredientId === selectedItem) ?? null
     : null;
@@ -1144,6 +1150,11 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
     if (isOnBreak) return;
     if (isDraft) { toastDraftBlocked(); return; }
     const existing = getCompletion(ingredientId, recipeId, tinNumber);
+    const isSub = !!ingredients.find(i => i.ingredientId === ingredientId)?.isSubRecipe;
+    if (!isSub && tickWaitsForLabel({ canPhotograph: traced.can, needed: traced.waitsForLabel(ingredientId), tickingOn: !existing })) {
+      toast({ title: "Photo the label first", description: "Get the pack out and photo its label at the top, then tick the tins." });
+      return;
+    }
     if (existing) {
       const res = await fetch(`/api/production-plans/${targetPlanId}/prep-completions/by-tin`, {
         method: "DELETE", credentials: "include",
@@ -1582,6 +1593,10 @@ export function PrepBasesStation({ plan, isOnBreak = false }: { plan: Production
                     </div>
                   )}
                 </div>
+
+                {!ing.isSubRecipe && (
+                  <TracedLabelStep ingredientId={ing.ingredientId} ingredientName={ing.ingredientName} station="prep_bases" />
+                )}
 
                 {status.totalTinCount > 1 && (
                   <div className="w-full h-1.5 bg-secondary rounded-full overflow-hidden mb-3">

@@ -17,6 +17,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, CheckCircle2, Copy, Loader2, PackageOpen, X } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { labelNeededToday } from "@/lib/traced-label";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -201,6 +202,7 @@ function TracedPacksModal({ station, onClose }: { station: string; onClose: () =
 
 /** What was read off the label, to check and fix. Saves as you go. */
 export function LotResult({ row, onDone, onAnother }: { row: LotOpen; onDone?: () => void; onAnother?: () => void }) {
+  const queryClient = useQueryClient();
   const [current, setCurrent] = useState(row);
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
 
@@ -213,6 +215,8 @@ export function LotResult({ row, onDone, onAnother }: { row: LotOpen; onDone?: (
       if (!res.ok) throw new Error(await errorText(res, "That didn't save"));
       setCurrent(await res.json());
       setState("saved");
+      // The batch shown as "in use" on the prep screens follows the fix.
+      void queryClient.invalidateQueries({ queryKey: ITEMS_KEY });
     } catch (e) {
       setState("error");
       toast({ title: "That didn't save", description: e instanceof Error ? e.message : String(e), variant: "destructive" });
@@ -265,6 +269,140 @@ export function LotResult({ row, onDone, onAnother }: { row: LotOpen; onDone?: (
             </button>
           )}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The traced ingredients and who's asked for labels, for a prep screen
+ * (Graeme, 2026-11-19). Off for everyone without "Photograph opened packs":
+ * they prep exactly as before.
+ */
+export function useTracedLabels() {
+  const can = useCanPhotographPacks();
+  const { data: items } = useQuery<TracedItem[]>({
+    queryKey: ITEMS_KEY,
+    enabled: can,
+    staleTime: 60_000,
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/traceability/items`, { credentials: "include" });
+      if (!res.ok) throw new Error(await errorText(res, "Couldn't load the items"));
+      return res.json();
+    },
+  });
+  const itemFor = (ingredientId: number) => (can ? items?.find(i => i.id === ingredientId) : undefined);
+  return {
+    can,
+    itemFor,
+    /** True while ticking this ingredient's tins should wait for its label. */
+    waitsForLabel: (ingredientId: number) => can && labelNeededToday(itemFor(ingredientId)),
+  };
+}
+
+/**
+ * Step 1 of prepping a traced ingredient: get the pack out, photo the label.
+ * The tins below wait until it's done (once a day); after that it shows the
+ * batch in use and lets them record another pack if they open one.
+ */
+export function TracedLabelStep({ ingredientId, ingredientName, station }: { ingredientId: number; ingredientName: string; station: string }) {
+  const queryClient = useQueryClient();
+  const { itemFor, waitsForLabel } = useTracedLabels();
+  const item = itemFor(ingredientId);
+  const [result, setResult] = useState<LotOpen | null>(null);
+  const [another, setAnother] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  // A different ingredient opened in the same panel starts fresh.
+  useEffect(() => { setResult(null); setAnother(false); }, [ingredientId]);
+
+  const done = (row: LotOpen) => {
+    setResult(row);
+    setAnother(false);
+    void queryClient.invalidateQueries({ queryKey: ITEMS_KEY });
+  };
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const form = new FormData();
+      form.append("photo", file);
+      form.append("station", station);
+      const res = await fetch(`${BASE}/api/traceability/items/${ingredientId}/photo`, { method: "POST", credentials: "include", body: form });
+      if (!res.ok) throw new Error(await errorText(res, "The photo didn't save"));
+      return res.json() as Promise<LotOpen>;
+    },
+    onSuccess: done,
+    onError: e => toast({ title: "The photo didn't save", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
+  });
+  const same = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/traceability/items/${ingredientId}/same`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ station }),
+      });
+      if (!res.ok) throw new Error(await errorText(res, "That didn't save"));
+      return res.json() as Promise<LotOpen>;
+    },
+    onSuccess: done,
+    onError: e => toast({ title: "That didn't save", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
+  });
+
+  if (!item) return null;
+  const needed = waitsForLabel(ingredientId);
+  const busy = upload.isPending || same.isPending;
+  const cur = item.current;
+
+  if (result) {
+    return (
+      <div className="mb-4 rounded-2xl border-2 border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 p-4">
+        <LotResult row={result} onDone={() => setResult(null)} />
+      </div>
+    );
+  }
+
+  if (!needed && !another) {
+    return (
+      <div className="mb-4 rounded-2xl border border-emerald-300 bg-emerald-50/50 dark:bg-emerald-950/20 px-4 py-2.5 flex items-center justify-between gap-3 flex-wrap">
+        <span className="flex items-center gap-2 text-sm">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+          <span>Label done · batch <span className="font-semibold">{cur?.batchCode ?? "not read"}</span>{cur?.openedByName ? ` · ${cur.openedByName}` : ""}</span>
+        </span>
+        <button type="button" onClick={() => setAnother(true)} className="min-h-11 px-3 rounded-xl border border-border bg-card text-sm font-semibold inline-flex items-center gap-1.5">
+          <PackageOpen className="w-4 h-4" /> Opened another pack?
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mb-4 rounded-2xl border-2 border-primary bg-primary/5 p-4 space-y-3">
+      <input ref={fileRef} type="file" accept="image/*" capture="environment" className="hidden"
+        onChange={e => { const file = e.target.files?.[0]; e.target.value = ""; if (file) upload.mutate(file); }} />
+      <div className="flex items-start gap-3">
+        <span className="w-9 h-9 rounded-full bg-primary text-primary-foreground font-bold flex items-center justify-center shrink-0">1</span>
+        <div className="min-w-0">
+          <p className="text-lg font-bold leading-tight">Get out the {ingredientName} and photo the label</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {needed ? "So we know which batch went in. The tins unlock once it's done." : "Photo the new pack's label."}
+          </p>
+        </div>
+      </div>
+      {busy ? (
+        <p className="flex items-center gap-2 text-base text-muted-foreground py-3"><Loader2 className="w-5 h-5 animate-spin" /> {upload.isPending ? "Reading the label…" : "Saving…"}</p>
+      ) : (
+        <div className="grid sm:grid-cols-2 gap-2">
+          <button type="button" onClick={() => fileRef.current?.click()}
+            className="min-h-14 rounded-2xl bg-primary text-primary-foreground text-base font-bold inline-flex items-center justify-center gap-2">
+            <Camera className="w-5 h-5" /> Photo the label
+          </button>
+          {cur && (
+            <button type="button" onClick={() => same.mutate()}
+              className="min-h-14 rounded-2xl border-2 border-border bg-card text-sm font-semibold inline-flex items-center justify-center gap-2 px-3 text-left">
+              <Copy className="w-4 h-4 shrink-0" />
+              <span>Same batch as before{cur.batchCode ? ` (${cur.batchCode})` : ""}</span>
+            </button>
+          )}
+        </div>
+      )}
+      {another && !needed && (
+        <button type="button" onClick={() => setAnother(false)} className="text-sm text-muted-foreground underline">Cancel</button>
       )}
     </div>
   );
