@@ -114,8 +114,10 @@ export function invalidateShopifyFreezerSyncFlagCache() {
 interface VariantMapping {
   recipeId: number;
   isCoreMenu: boolean;
-  /** Recipe category — fried chicken despatches off the freezer. */
+  /** Recipe category and push-on-wrap flag — products whose stock Shopify
+   *  holds (fried chicken, cinnamon buns) despatch off the freezer. */
   category: string | null;
+  shopifyPushOnWrap: boolean;
 }
 
 let mappingCache: Map<string, VariantMapping> | null = null;
@@ -142,8 +144,9 @@ async function loadVariantMap(): Promise<Map<string, VariantMapping>> {
     wonky_variant_id: string | null;
     is_core_menu: boolean;
     category: string | null;
+    shopify_push_on_wrap: boolean | null;
   }>(sql`
-    SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu, r.category
+    SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu, r.category, r.shopify_push_on_wrap
     FROM recipe_shopify_mappings m
     INNER JOIN recipes r ON r.id = m.recipe_id
   `);
@@ -153,7 +156,7 @@ async function loadVariantMap(): Promise<Map<string, VariantMapping>> {
   // time an operator clicked Process Fulfilled Today on the live server.
   const map = new Map<string, VariantMapping>();
   for (const row of result.rows) {
-    const entry: VariantMapping = { recipeId: row.recipe_id, isCoreMenu: row.is_core_menu, category: row.category ?? null };
+    const entry: VariantMapping = { recipeId: row.recipe_id, isCoreMenu: row.is_core_menu, category: row.category ?? null, shopifyPushOnWrap: row.shopify_push_on_wrap === true };
     if (row.shopify_variant_id) map.set(String(row.shopify_variant_id), entry);
     if (row.wonky_variant_id) map.set(String(row.wonky_variant_id), entry);
   }
@@ -191,7 +194,7 @@ export interface DecrementResult {
   unmappedBags: string[];
   unmapped: string[]; // variant IDs we couldn't resolve to a recipe (only logged in non-core-only mode)
   skippedNonCore: number; // count of line items skipped because the recipe isn't core menu
-  /** Fried chicken bags taken out of the production freezer (19 Nov 2026). */
+  /** Fried chicken bags and buns packs taken out of the production freezer (19 Nov 2026). */
   freezerDecremented?: Array<{ recipeId: number; packs: number; shortfall: number }>;
 }
 

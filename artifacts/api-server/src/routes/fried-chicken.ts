@@ -29,7 +29,7 @@ import {
   db, recipesTable, productionPlansTable, productionPlanItemsTable,
   appSettingsTable, allocateFriedChickenPacks, dptSharesFromSales, recipePackSizeOrOne
 } from "@workspace/db";
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import * as z from "zod";
 import { validate } from "../middleware/validate";
 import { requireManagerOrAdmin } from "../middleware/roles";
@@ -1090,8 +1090,9 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
 router.post("/freezer-stock/from-shopify", requireManagerOrAdmin, validate(z.object({ confirm: z.boolean().optional() })), async (req: Request, res: Response) => {
   try {
     const confirm = (req.body as { confirm?: boolean }).confirm === true;
+    // Fried chicken and anything wrapped straight to Shopify (cinnamon buns).
     const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable)
-      .where(eq(recipesTable.category, FRIED_CHICKEN_CATEGORY));
+      .where(or(eq(recipesTable.category, FRIED_CHICKEN_CATEGORY), eq(recipesTable.shopifyPushOnWrap, true)));
     const mapRows = await db.execute<{ recipe_id: number; shopify_variant_id: string | null }>(sql`SELECT recipe_id, shopify_variant_id FROM recipe_shopify_mappings`);
     const variantOf = new Map<number, string>();
     for (const m of mapRows.rows ?? []) if (m.shopify_variant_id) variantOf.set(Number(m.recipe_id), String(m.shopify_variant_id));

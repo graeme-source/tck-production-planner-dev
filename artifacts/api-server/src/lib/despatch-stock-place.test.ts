@@ -6,6 +6,9 @@ describe("despatchStockPlace — what an order takes off the planner's stock", (
     expect(despatchStockPlace({ isCoreMenu: false, category: "Fried Chicken" }, true)).toBe("freezer");
     expect(despatchStockPlace({ isCoreMenu: false, category: "Fried Chicken" }, false)).toBe("freezer");
   });
+  it("cinnamon buns (wrapped straight to Shopify) come off the freezer too", () => {
+    expect(despatchStockPlace({ isCoreMenu: false, category: "Sweet Treats", shopifyPushOnWrap: true }, true)).toBe("freezer");
+  });
   it("core-menu calzones come off the fridge as before", () => {
     expect(despatchStockPlace({ isCoreMenu: true, category: "Calzone" }, true)).toBe("fridge");
   });
