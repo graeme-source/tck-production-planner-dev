@@ -50,6 +50,7 @@ import { orderLines } from "@/lib/recipe-editor-tabs";
 import { cn } from "@/lib/utils";
 import { QuantityInput } from "./quantity-input";
 import type { EditorIngredientOption, EditorSubRecipeOption } from "./types";
+import { findTwinSubRecipe, swapRowToSubRecipe, sameUnit } from "@/lib/twin-sub-recipe";
 
 // The sub-recipe editor lives on the Sub-recipes page, which itself uses
 // this table — loaded on demand so the two don't import each other.
@@ -247,6 +248,12 @@ export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, prod
             const targets = cfg.link ? cfg.link.targets(row) : [];
             const ratio = ing?.processingRatio;
             const subUpf = sub ? subCfg.upfById?.get(sub.id) : undefined;
+            // An ingredient named like one of our sub-recipes — offer the sub-recipe.
+            const twin = ing && !subCfg.addDisabled ? findTwinSubRecipe(ing.name, subCfg.options) : null;
+            const swapToTwin = twin && sameUnit(ing?.unit, twin.yieldUnit) ? () => {
+              subArray.append(swapRowToSubRecipe(row ?? {}, subCfg.newRow(), subCfg.idField, twin.id, ingCfg.idField));
+              ingArray.remove(line.index);
+            } : null;
             const record = ing ? recordById.get(ing.id) : undefined;
             const gaps = record ? ingredientGapChips(record) : [];
             const pickError = errorAt(errors, `${path}.${cfg.idField}`);
@@ -293,6 +300,19 @@ export function LinesTable({ form, ingredients: ingCfg, subRecipes: subCfg, prod
                           />
                         )}
                       </div>
+                      {twin && (
+                        <div className="mx-3 mt-2 rounded-xl border-2 border-amber-500/60 bg-amber-500/10 px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
+                          <span className="flex-1 min-w-0">
+                            <span className="font-semibold">{twin.name}</span> is also one of our sub-recipes. Use the sub-recipe so its UPF class, cost and allergens come from what's in it.
+                          </span>
+                          {swapToTwin && (
+                            <button type="button" onClick={swapToTwin}
+                              className="min-h-11 px-4 rounded-xl bg-amber-600 text-white font-semibold whitespace-nowrap">
+                              Use the sub-recipe
+                            </button>
+                          )}
+                        </div>
+                      )}
                       {pickError && <span className="px-3 text-destructive text-sm font-medium block">{pickError}</span>}
                     </div>
                     {(ing || sub) && (
