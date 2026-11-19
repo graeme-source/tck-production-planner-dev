@@ -39,6 +39,9 @@ import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/cl
 import { leanCorpusPrompt, LMS_BACKLOG_SUBJECTS } from "../lib/lean-corpus";
 import { planMatrixSync, matrixLabelFor, isNoopPlan, type MatrixItemRow } from "../lib/lean-matrix-sync";
 import type Anthropic from "@anthropic-ai/sdk";
+import { getWeekFocusPrinciple, mondayOf } from "./morning-meetings";
+import { londonDateString } from "../lib/london-time";
+import { mondaysFrom, planRunsOut, suggestNextSubject } from "../lib/lean-week-follow-on";
 
 const router: IRouter = Router();
 
@@ -348,10 +351,10 @@ const addWeeksSchema = z.object({
   position: z.number().int().min(1).optional(),
 });
 
-router.post("/weeks", validate(addWeeksSchema), async (req: Request, res: Response) => {
-  const body = req.body as z.infer<typeof addWeeksSchema>;
-  try {
-    const result = await db.transaction(async (tx) => {
+/** Put a backlog subject into the plan as draft week(s) — the backlog's
+ *  "Add" button, and the automatic fill when the plan is about to run out. */
+async function addSubjectWeeks(body: z.infer<typeof addWeeksSchema>) {
+    return db.transaction(async (tx) => {
       const [subject] = await tx.select().from(leanSubjectsTable).where(eq(leanSubjectsTable.id, body.subjectId));
       if (!subject) return { error: "Subject not found" as const };
 
@@ -392,6 +395,12 @@ router.post("/weeks", validate(addWeeksSchema), async (req: Request, res: Respon
       const { keptAsHistory } = await syncMatrix(tx);
       return { createdIds, keptAsHistory };
     });
+}
+
+router.post("/weeks", validate(addWeeksSchema), async (req: Request, res: Response) => {
+  const body = req.body as z.infer<typeof addWeeksSchema>;
+  try {
+    const result = await addSubjectWeeks(body);
 
     if ("error" in result) { res.status(404).json({ error: result.error }); return; }
     res.status(201).json(result);
@@ -602,21 +611,21 @@ const generateSchema = z.object({
   force: z.boolean().optional(),
 });
 
-router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request, res: Response) => {
-  const id = Number(req.params.id);
-  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  if (!isClaudeConfigured()) {
-    res.status(503).json({ error: "AI is not configured (missing ANTHROPIC_API_KEY)." });
-    return;
-  }
+/** Write (or rewrite) a week's five lessons and quiz with Claude; the week
+ *  goes back to draft for review. The "Write the five lessons" button, and the
+ *  automatic fill when the plan is about to run out (19 Nov 2026). */
+type WriteResult =
+  | { ok: true; videoWanted: Array<{ day: number; title: string; wantsVideo: boolean; rationale: string | null }>; lessonCount: number; quizCount: number }
+  | { ok: false; status: number; error: string };
+
+export async function writeWeekLessons(id: number, notes?: string, force?: boolean): Promise<WriteResult> {
+  if (!isClaudeConfigured()) return { ok: false, status: 503, error: "AI is not configured (missing ANTHROPIC_API_KEY)." };
 
   try {
     const [week] = await db.select().from(leanPrinciplesTable).where(eq(leanPrinciplesTable.id, id));
-    if (!week) { res.status(404).json({ error: "Week not found" }); return; }
-    const { notes, force } = req.body as z.infer<typeof generateSchema>;
+    if (!week) return { ok: false, status: 404, error: "Week not found" };
     if (week.status === "locked" && force !== true) {
-      res.status(409).json({ error: "This week is locked. Unlock it first if you want to rewrite it." });
-      return;
+      return { ok: false, status: 409, error: "This week is locked. Unlock it first if you want to rewrite it." };
     }
 
     const subject = week.subjectId
@@ -654,8 +663,7 @@ router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request
     );
     if (!toolUse) {
       console.error("[lean-curriculum] generation returned no tool call:", response.stop_reason);
-      res.status(502).json({ error: "The lesson writer didn't return a usable week. Try again." });
-      return;
+      return { ok: false, status: 502, error: "The lesson writer didn't return a usable week. Try again." };
     }
 
     const generated = toolUse.input as {
@@ -664,8 +672,7 @@ router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request
       quiz: Array<{ question: string; options: string[]; answer: number }>;
     };
     if (!Array.isArray(generated.lessons) || generated.lessons.length === 0) {
-      res.status(502).json({ error: "The lesson writer returned no lessons. Try again." });
-      return;
+      return { ok: false, status: 502, error: "The lesson writer returned no lessons. Try again." };
     }
 
     await db.transaction(async (tx) => {
@@ -701,7 +708,7 @@ router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request
       await syncMatrix(tx);
     });
 
-    res.json({
+    return {
       ok: true,
       // Which days asked for a clip, so the editor can prompt for those and
       // leave the rest alone rather than demanding five URLs.
@@ -710,12 +717,22 @@ router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request
         .filter(d => d.wantsVideo),
       lessonCount: generated.lessons.length,
       quizCount: (generated.quiz ?? []).length,
-    });
+    };
   } catch (err) {
     console.error("[lean-curriculum] generate failed:", err);
-    res.status(500).json({ error: "Failed to write this week's lessons" });
+    return { ok: false, status: 500, error: "Failed to write this week's lessons" };
   }
+}
+
+router.post("/weeks/:id/generate", validate(generateSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const { notes, force } = req.body as z.infer<typeof generateSchema>;
+  const r = await writeWeekLessons(id, notes, force);
+  if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
+  res.json(r);
 });
+
 
 // GET /weeks/:id — the week with its lessons, for review before locking.
 router.get("/weeks/:id", async (req: Request, res: Response) => {
@@ -736,6 +753,161 @@ router.get("/weeks/:id", async (req: Request, res: Response) => {
   } catch (err) {
     console.error("[lean-curriculum] load week failed:", err);
     res.status(500).json({ error: "Failed to load the week" });
+  }
+});
+
+// ─── The schedule: one place to say what's taught when (19 Nov 2026) ─────────
+//
+// Graeme set the week's lesson on the Meeting page (a pin per week) while the
+// plan and its draft/ready states lived here, and the two disagreed: 3S weeks
+// he thought were going out were drafts, so the follow-on wrapped back to
+// Seeing Waste. Now this page is the single place: "start <week> on <Monday>"
+// pins that Monday, clears later pins, and the plan follows on from there,
+// teaching only READY weeks. Each week is fixed on its Monday so a week can't
+// change mid-week when lessons get written. When the plan would run out within
+// two weeks, the next backlog subject is added and written, for him to approve.
+
+const SCHEDULE_WEEKS = 8;
+
+async function lessonCounts(): Promise<Map<number, number>> {
+  const rows = await db.select({ principleId: leanExamplesTable.principleId, n: sql<number>`COUNT(*)::int` })
+    .from(leanExamplesTable).where(eq(leanExamplesTable.isActive, true)).groupBy(leanExamplesTable.principleId);
+  return new Map(rows.map(r => [r.principleId, Number(r.n)]));
+}
+
+export async function leanSchedule() {
+  const thisMonday = mondayOf(londonDateString());
+  const mondays = mondaysFrom(thisMonday, SCHEDULE_WEEKS);
+  const weeks = await Promise.all(mondays.map(async weekStart => {
+    const w = await getWeekFocusPrinciple(weekStart);
+    return {
+      weekStart,
+      principle: w.principle ? { id: w.principle.id, title: w.principle.title, partLabel: w.principle.partLabel, ready: w.principle.status === "locked" } : null,
+      /** set = fixed for that week; follows = carries on through the plan. */
+      source: w.source === "override" ? "set" as const : "follows" as const,
+      wrapped: w.wrapped,
+    };
+  }));
+  const plan = await scheduledWeeks();
+  const counts = await lessonCounts();
+  const subjects = await db.select().from(leanSubjectsTable);
+  const runsOutOn = planRunsOut(weeks);
+  // A week already added but not yet approved, after the last ready one.
+  const lastReady = plan.reduce((at, w, i) => (w.status === "locked" && (counts.get(w.id) ?? 0) > 0 ? i : at), -1);
+  const waiting = plan.slice(lastReady + 1).find(w => w.status !== "locked") ?? null;
+  const suggestion = suggestNextSubject(subjects, plan.map(w => ({ subjectId: w.subjectId, title: w.title })));
+  return {
+    thisMonday,
+    weeks,
+    runsOutOn,
+    waiting: waiting ? { id: waiting.id, title: waiting.title, partLabel: waiting.partLabel, lessons: counts.get(waiting.id) ?? 0 } : null,
+    suggestion: suggestion ? { id: suggestion.id, title: suggestion.title } : null,
+    readyWeeks: plan.filter(w => w.status === "locked" && (counts.get(w.id) ?? 0) > 0)
+      .map(w => ({ id: w.id, title: w.title, partLabel: w.partLabel, weekPosition: w.weekPosition })),
+  };
+}
+
+router.get("/schedule", async (_req: Request, res: Response) => {
+  try {
+    res.json(await leanSchedule());
+  } catch (err) {
+    console.error("[lean-curriculum] schedule failed:", err);
+    res.status(500).json({ error: "Couldn't work out the schedule" });
+  }
+});
+
+/** Fix a week to the lesson it has now, so writing lessons mid-week can't
+ *  switch it (the hourly sweep does this each Monday). */
+export async function fixWeek(weekStart: string): Promise<void> {
+  const [row] = await db.execute<{ principle_id: number }>(sql`SELECT principle_id FROM lean_week_focus WHERE week_start = ${weekStart}`).then(r => r.rows);
+  if (row) return;
+  const { principle } = await getWeekFocusPrinciple(weekStart);
+  if (!principle) return;
+  await db.execute(sql`INSERT INTO lean_week_focus (week_start, principle_id) VALUES (${weekStart}, ${principle.id}) ON CONFLICT (week_start) DO NOTHING`);
+}
+
+const startSchema = z.object({
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  principleId: z.number().int().positive(),
+});
+
+router.put("/schedule/start", validate(startSchema), async (req: Request, res: Response) => {
+  try {
+    const body = req.body as z.infer<typeof startSchema>;
+    const weekStart = mondayOf(body.weekStart);
+    const thisMonday = mondayOf(londonDateString());
+    if (weekStart < thisMonday) { res.status(400).json({ error: "Choose this week or a week ahead" }); return; }
+    const [p] = await db.select().from(leanPrinciplesTable).where(eq(leanPrinciplesTable.id, body.principleId));
+    const counts = await lessonCounts();
+    if (!p || p.status !== "locked" || !(counts.get(p.id) ?? 0)) {
+      res.status(400).json({ error: "Only a ready week — locked in, with its lessons — can be taught" });
+      return;
+    }
+    // Weeks before the new start keep what they have now.
+    for (const m of mondaysFrom(thisMonday, 52)) { if (m >= weekStart) break; await fixWeek(m); }
+    await db.execute(sql`
+      INSERT INTO lean_week_focus (week_start, principle_id) VALUES (${weekStart}, ${p.id})
+      ON CONFLICT (week_start) DO UPDATE SET principle_id = ${p.id}
+    `);
+    // Everything after follows on from here.
+    await db.execute(sql`DELETE FROM lean_week_focus WHERE week_start > ${weekStart}`);
+    await import("./lean-reviews").then(m => m.ensureWeeklyLeanTodosForAll())
+      .catch(err => console.warn("[lean-curriculum] to-do refresh after a schedule change failed (hourly sweep will catch up):", err));
+    res.json(await leanSchedule());
+  } catch (err) {
+    console.error("[lean-curriculum] schedule start failed:", err);
+    res.status(500).json({ error: "Couldn't save the schedule" });
+  }
+});
+
+let filling = false;
+
+/**
+ * When the plan would run out within two weeks and nothing is waiting, add
+ * the next backlog subject as a draft week and write its lessons, then ask
+ * the founder to approve it (Graeme, 19 Nov 2026). Never teaches it: a draft
+ * only goes out once he locks it in. Returns what it did.
+ */
+export async function fillLeanPlanIfRunningOut(): Promise<{ added: string | null; reason: string }> {
+  if (filling) return { added: null, reason: "already running" };
+  filling = true;
+  try {
+    const sched = await leanSchedule();
+    if (!sched.runsOutOn) return { added: null, reason: "plan ready for two weeks" };
+    if (sched.waiting) return { added: null, reason: `waiting for approval: ${sched.waiting.title}` };
+    if (!sched.suggestion) return { added: null, reason: "nothing left in the backlog" };
+    const added = await addSubjectWeeks({ subjectId: sched.suggestion.id, weeks: 1 });
+    if ("error" in added) return { added: null, reason: String(added.error) };
+    const weekId = added.createdIds[0]!;
+    const wrote = await writeWeekLessons(weekId);
+    const title = wrote.ok
+      ? `Approve the next lean week: ${sched.suggestion.title}`
+      : `Write the next lean week: ${sched.suggestion.title}`;
+    await import("./lean-reviews").then(async ({ FOUNDER_EMAILS }) => {
+      const founders = Array.from(FOUNDER_EMAILS);
+      await db.execute(sql`
+        INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status)
+        SELECT u.id, NULL, 'Lean learning', ${title},
+               ${`The plan runs out on ${sched.runsOutOn}. ${sched.suggestion!.title} has been added as the next week${wrote.ok ? " and its five lessons written" : ""} — read it, fix anything, then lock it in on the Lean curriculum page.`},
+               '/lean-curriculum', 'high', ${sched.runsOutOn}::date - 3, 'open'
+        FROM app_users u
+        WHERE u.is_active = TRUE AND u.email IN (${sql.join(founders.map(e => sql`${e}`), sql`, `)})
+          AND NOT EXISTS (SELECT 1 FROM todo_tasks t WHERE t.assignee_id = u.id AND t.title = ${title} AND t.status = 'open')
+      `);
+    });
+    return { added: sched.suggestion.title, reason: wrote.ok ? "added and written" : `added, writing failed: ${wrote.error}` };
+  } finally {
+    filling = false;
+  }
+}
+
+router.post("/schedule/fill", async (_req: Request, res: Response) => {
+  try {
+    const r = await fillLeanPlanIfRunningOut();
+    res.json({ ...r, schedule: await leanSchedule() });
+  } catch (err) {
+    console.error("[lean-curriculum] fill failed:", err);
+    res.status(500).json({ error: "Couldn't add the next week" });
   }
 });
 

@@ -4318,8 +4318,9 @@ function weekLabel(week: { title: string; partLabel?: string | null; partIndex?:
 
 type FocusWeek = { id: number; title: string; partLabel: string | null; partIndex: number | null };
 
+/** This week's and next week's lesson, read-only (Graeme, 19 Nov 2026): the
+ *  Lean curriculum page is now the ONE place to set what's taught when. */
 function WeeklyFocusCard() {
-  const queryClient = useQueryClient();
   const { data } = useQuery<{
     thisWeek: { weekStart: string; principle: (FocusWeek & { draft: boolean }) | null; source: "override" | "curriculum" };
     nextWeek: { weekStart: string; principle: (FocusWeek & { draft: boolean }) | null; source: "override" | "curriculum" };
@@ -4333,22 +4334,6 @@ function WeeklyFocusCard() {
     },
   });
 
-  const setFocus = useMutation({
-    mutationFn: async ({ weekStart, principleId }: { weekStart: string; principleId: number | null }) => {
-      const res = await fetch(`${BASE}/api/morning-meetings/lessons/week-focus`, {
-        method: "PUT", credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ weekStart, principleId }),
-      });
-      if (!res.ok) throw new Error("Failed to save focus");
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["lean-week-plan"] });
-      queryClient.invalidateQueries({ queryKey: ["morning-meeting-dashboard"] });
-      toast({ title: "Weekly focus updated" });
-    },
-  });
-
   if (!data) return null;
 
   const row = (label: string, wk: typeof data.thisWeek) => (
@@ -4357,24 +4342,7 @@ function WeeklyFocusCard() {
         <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{label}</p>
         <p className="text-[11px] text-muted-foreground">{format(new Date(`${wk.weekStart}T00:00:00`), "d MMM")}</p>
       </div>
-      <select
-        value={wk.source === "override" && wk.principle ? String(wk.principle.id) : ""}
-        onChange={e => setFocus.mutate({ weekStart: wk.weekStart, principleId: e.target.value ? Number(e.target.value) : null })}
-        className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm"
-      >
-        <option value="">
-          Follow curriculum{wk.source === "curriculum" && wk.principle ? ` — ${weekLabel(wk.principle)}` : ""}
-        </option>
-        {data.principles.map(p => (
-          <option key={p.id} value={p.id}>{weekLabel(p)}</option>
-        ))}
-      </select>
-      {wk.principle?.draft && (
-        <span className="text-[11px] px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-400 flex-shrink-0">draft</span>
-      )}
-      {wk.source === "override" && (
-        <span className="text-[11px] px-2 py-0.5 rounded-full bg-purple-500/10 text-purple-600 dark:text-purple-400 flex-shrink-0">pinned</span>
-      )}
+      <p className="flex-1 text-sm font-semibold">{wk.principle ? weekLabel(wk.principle) : "Nothing to teach"}</p>
     </div>
   );
 
@@ -4385,6 +4353,9 @@ function WeeklyFocusCard() {
       </p>
       {row("This week", data.thisWeek)}
       {row("Next week", data.nextWeek)}
+      <a href={`${BASE}/lean-curriculum`} className="mt-2 inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-foreground text-background px-4 text-sm font-bold">
+        Set what's taught when on the Lean curriculum page
+      </a>
     </div>
   );
 }
@@ -4433,7 +4404,7 @@ function CurriculumEditor({ onClose }: { onClose: () => void }) {
           Lean Curriculum
         </h1>
         <p className="text-sm text-muted-foreground mb-6">
-          One theme per week — the Morning Meeting sticks with it Mon–Fri, rotating that theme's examples so the team gets a different angle on the same principle each day. Pick a week's focus below, or let it follow the curriculum order.
+          One theme per week — the Morning Meeting sticks with it Mon–Fri, rotating that theme's examples so the team gets a different angle on the same principle each day. What's taught each week is set on the Lean curriculum page.
         </p>
 
         <WeeklyFocusCard />

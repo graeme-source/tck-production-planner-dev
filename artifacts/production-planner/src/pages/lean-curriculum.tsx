@@ -35,6 +35,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { describeVideoCoverage } from "@/lib/video-coverage";
+import { LeanScheduleCard, LEAN_SCHEDULE_KEY } from "@/components/lean/lean-schedule-card";
 import { useEffect, useRef } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -120,6 +121,8 @@ export default function LeanCurriculumPage() {
     // showing it is stale the moment the plan moves.
     queryClient.invalidateQueries({ queryKey: ["training-matrices"] });
     queryClient.invalidateQueries({ queryKey: ["lean-principles"] });
+    // Re-ordering, locking or adding a week changes what's taught when.
+    queryClient.invalidateQueries({ queryKey: LEAN_SCHEDULE_KEY });
   };
 
   const reorder = useMutation({
@@ -164,11 +167,13 @@ export default function LeanCurriculumPage() {
   const liveWeeks = weeks.filter(w => w.status === "locked").length;
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="space-y-6">
       <PageHeader
         title="Lean Curriculum"
         description="What the team learns, in what order. Drag to re-order; only locked weeks reach the morning meeting."
       />
+
+      <LeanScheduleCard onReview={setReviewWeekId} />
 
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary/50" /></div>

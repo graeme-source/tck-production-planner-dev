@@ -45,7 +45,7 @@ import { validate } from "../middleware/validate";
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
-import { followOnWeek, plannedWeek } from "../lib/lean-week-follow-on";
+import { followOnDetail, plannedWeek } from "../lib/lean-week-follow-on";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadLastProductionKpis } from "../services/last-production-kpis";
 import { separateKitchenPositions } from "@workspace/production-schedule";
@@ -83,7 +83,7 @@ export async function getWeekFocusPrinciple(weekStart: string) {
   `).then(r => r.rows);
   if (override) {
     const [p] = await db.select().from(leanPrinciplesTable).where(eq(leanPrinciplesTable.id, override.principle_id));
-    if (p) return { principle: p, planned: p, source: "override" as const };
+    if (p) return { principle: p, planned: p, source: "override" as const, wrapped: false };
   }
 
   const actives = await db
@@ -106,11 +106,13 @@ export async function getWeekFocusPrinciple(weekStart: string) {
       .filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE)
       .map(p => ({ ...p, lessonCount: lessonCount.get(p.id) ?? 0 }));
     const weeksAfter = Math.round((new Date(`${weekStart}T00:00:00Z`).getTime() - new Date(`${lastPin.week_start}T00:00:00Z`).getTime()) / (7 * 86_400_000));
-    const next = followOnWeek(plan, lastPin.principle_id, weeksAfter);
+    const step = followOnDetail(plan, lastPin.principle_id, weeksAfter);
+    const next = step?.week ?? null;
     // What the plan says comes next, even if it isn't written yet: the
     // founder's to-do asks for that one to be written.
     const planned = plannedWeek(plan, lastPin.principle_id, weeksAfter);
-    if (next) return { principle: next, planned: planned ?? next, source: "curriculum" as const };
+    // wrapped = it only got here by running off the end of the plan.
+    if (next) return { principle: next, planned: planned ?? next, source: "curriculum" as const, wrapped: step!.wrapped };
   }
 
   // With no pin to follow, only LOCKED weeks are taught (migration 0057). A
@@ -119,7 +121,7 @@ export async function getWeekFocusPrinciple(weekStart: string) {
   // the weeks that are ready, which is why it's filtered out here rather than
   // at the edges.
   const rotation = actives.filter(p => p.title !== ON_DEMAND_PRINCIPLE_TITLE && p.status === "locked");
-  if (rotation.length === 0) return { principle: null, planned: null, source: "curriculum" as const };
+  if (rotation.length === 0) return { principle: null, planned: null, source: "curriculum" as const, wrapped: false };
 
   const [anchorRow] = await db
     .select({ value: appSettingsTable.value })
@@ -131,7 +133,7 @@ export async function getWeekFocusPrinciple(weekStart: string) {
     (new Date(`${weekStart}T00:00:00Z`).getTime() - new Date(`${anchorMonday}T00:00:00Z`).getTime()) / (7 * 86_400_000),
   ));
   const principle = rotation[weeks % rotation.length];
-  return { principle, planned: principle, source: "curriculum" as const };
+  return { principle, planned: principle, source: "curriculum" as const, wrapped: weeks >= rotation.length };
 }
 
 /** Picks today's default lesson — WEEKLY focus, daily variety.
