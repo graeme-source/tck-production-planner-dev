@@ -32,6 +32,10 @@ export type SurplusLineFields = {
   surplusBasePercent?: number;
   surplusAbsoluteQty?: number | null;
   surplusByDeliveryWeekday?: SurplusByDeliveryWeekday | null;
+  /** The supplier's extra cover already inside surplusTarget (a delivery
+   *  covering two production days, 19 Nov 2026) — kept when the surplus is
+   *  re-worked for another delivery date. */
+  extraCoverQty?: number;
   /** "Split with another supplier" (#248 + #328): packs moved to another
    *  supplier's order (taken off) and fixed packs moved in (added on). */
   splitAwayPacks?: number;
@@ -78,7 +82,7 @@ export function withDeliverySurplus<T extends SurplusLineFields>(line: T, delive
   );
   return {
     ...line,
-    surplusTarget: Math.round(r.qty * 100) / 100,
+    surplusTarget: Math.round((r.qty + (line.extraCoverQty ?? 0)) * 100) / 100,
     surplusPercentApplied: r.percent,
     surplusFromDeliveryDay: r.fromDeliveryDay,
     surplusDeliveryDate: toISODate(deliveryDate),

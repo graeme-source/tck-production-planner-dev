@@ -205,3 +205,31 @@ export function unreachableDeliveryWeekdays(leadTimeDays = 1): IsoWeekday[] {
   const reached = new Set(orderToDeliveryWeekdays(leadTimeDays).map(r => r.deliveryWeekday));
   return ISO_WEEKDAYS.filter(d => !reached.has(d));
 }
+
+/**
+ * A delivery that covers more than one production day (Graeme, 19 Nov 2026:
+ * AB Fruits delivers Mon/Wed/Fri, so Monday's and Wednesday's each cover two
+ * days). The supplier's setting gives, per delivery weekday, the extra % of
+ * the plan's OWN requirement to order — 100 = one more day like this one.
+ * It's the plan's requirement, not the daily target the normal surplus uses,
+ * because the target can be far off for fresh veg. No setting, no extra.
+ */
+export function extraCoverFor(
+  supplierSetting: unknown,
+  deliveryDate: Date | string | null | undefined,
+  planRequirement: number,
+): { qty: number; percent: number | null } {
+  const byDay = parseSurplusByDeliveryWeekday(supplierSetting);
+  const weekday = deliveryDate ? isoWeekdayOf(deliveryDate) : null;
+  const percent = byDay && weekday ? byDay[weekday] ?? null : null;
+  if (!percent) return { qty: 0, percent: null };
+  const req = Number.isFinite(planRequirement) && planRequirement > 0 ? planRequirement : 0;
+  return { qty: req * (percent / 100), percent };
+}
+
+/** "Surplus 10% + 100% (covers 2 days)". */
+export function withExtraCoverLabel(label: string, extraPercent: number | null): string {
+  if (!extraPercent) return label;
+  const days = extraPercent % 100 === 0 ? ` (covers ${1 + extraPercent / 100} days)` : "";
+  return `${label} + ${extraPercent}%${days}`;
+}

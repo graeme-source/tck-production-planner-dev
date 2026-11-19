@@ -4,7 +4,7 @@ import { loadQueuedOrderItems, markQueuedOrdered } from "../lib/queued-productio
 import { loadDueStandingOrders, markStandingOrdered } from "../lib/standing-orders";
 import { loadConnectedItems } from "../lib/connected-inventory";
 import { cardIsOrdering, connectedTopUpPacks, inboundPacks } from "../lib/connected-inventory-rules";
-import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, packsWithStandingFloor, type SurplusByDeliveryWeekday } from "@workspace/business-days";
+import { calcExpectedDeliveryDate, toISODate, surplusFor, surplusLabel, extraCoverFor, withExtraCoverLabel, parseSurplusByDeliveryWeekday, packsAfterSplits, packsWithStandingFloor, type SurplusByDeliveryWeekday } from "@workspace/business-days";
 import {
   db,
   productionPlansTable,
@@ -452,6 +452,7 @@ router.get("/calculate", async (req, res) => {
       surplusBasePercent?: number;
       surplusAbsoluteQty?: number | null;
       surplusByDeliveryWeekday?: SurplusByDeliveryWeekday | null;
+      extraCoverQty?: number;
       packWeight: number;
       costPerPack: number;
       supplierPartNumber: string | null;
@@ -580,7 +581,11 @@ router.get("/calculate", async (req, res) => {
     // formula exactly (surplusFor's regression tests).
     const deliveryDate = calcExpectedDeliveryDate(supplier?.leadTimeDays ?? 1, supplier?.cutoffTime ?? "17:00");
     const surplus = surplusFor(detail, deliveryDate, dailyRequirement);
-    const surplusTarget = surplus.qty;
+    // A delivery that covers two production days (AB Fruits Mon/Wed, 19 Nov
+    // 2026) adds the supplier's extra % of THIS plan's requirement on top of
+    // the normal surplus, so the team just orders what the page says.
+    const extraCover = extraCoverFor(supplier?.extraCoverByDeliveryWeekday, deliveryDate, ing.totalRequired);
+    const surplusTarget = surplus.qty + extraCover.qty;
 
     // Undelivered stock on open POs counts as already ordered (Graeme,
     // 2026-08-06): once today's order is placed, coming back to the page must
@@ -664,7 +669,8 @@ router.get("/calculate", async (req, res) => {
       surplusPercentApplied: surplus.percent,
       surplusFromDeliveryDay: surplus.fromDeliveryDay,
       surplusDeliveryDate: toISODate(deliveryDate),
-      surplusExplanation: surplusLabel(surplus),
+      surplusExplanation: withExtraCoverLabel(surplusLabel(surplus), extraCover.percent),
+      extraCoverQty: Math.round(extraCover.qty * 100) / 100,
       surplusDailyRequirement: Math.round(dailyRequirement * 10000) / 10000,
       surplusMode: surplus.mode,
       surplusBasePercent: surplus.basePercent,

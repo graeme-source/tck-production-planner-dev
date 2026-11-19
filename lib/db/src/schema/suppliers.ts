@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, integer, boolean, numeric } from "drizzle-orm/pg-core";
+import { jsonb, pgTable, serial, text, timestamp, integer, boolean, numeric } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -17,6 +17,10 @@ export const suppliersTable = pgTable("suppliers", {
   notes: text("notes"),
   orderFrequency: text("order_frequency").notNull().default("daily"),
   orderDays: text("order_days"),
+  // Extra % of the plan's requirement an order adds, by delivery weekday
+  // ("1"–"7" → %), for deliveries that cover more than one production day
+  // (AB Fruits Mon/Wed, 19 Nov 2026; migration 0386). NULL = one day.
+  extraCoverByDeliveryWeekday: jsonb("extra_cover_by_delivery_weekday"),
   leadTimeDays: integer("lead_time_days").notNull().default(1),
   // True for suppliers that never provide invoices/delivery notes (Amazon
   // etc.) — goods-in skips the "Invoice filed" check for their deliveries.

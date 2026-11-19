@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { calcExpectedDeliveryDate } from "./index";
 import {
+  extraCoverFor,
+  withExtraCoverLabel,
   DEFAULT_SURPLUS_PERCENT,
   normalSurplusPercent,
   surplusFor,
@@ -193,5 +195,24 @@ describe("suggestion quantity uses the delivery day's %", () => {
     // 9.5 needed, 4 kg on the shelf, 2.5 kg packs.
     expect(packs(9.5, fri.qty, 4, 2.5)).toBe(Math.ceil((9.5 + 12.35 - 4) / 2.5)); // 8
     expect(packs(9.5, wed.qty, 4, 2.5)).toBe(Math.ceil((9.5 + 2.85 - 4) / 2.5)); // 4
+  });
+});
+
+describe("extraCoverFor (deliveries covering two production days)", () => {
+  const ab = { "1": 100, "3": 100 };
+  it("adds a whole extra day of the plan's requirement on Monday and Wednesday deliveries", () => {
+    expect(extraCoverFor(ab, "2026-11-23", 5.4)).toEqual({ qty: 5.4, percent: 100 });   // Mon
+    expect(extraCoverFor(ab, "2026-11-25", 2)).toEqual({ qty: 2, percent: 100 });       // Wed
+  });
+  it("adds nothing on Friday's delivery, so nothing extra sits over the weekend", () => {
+    expect(extraCoverFor(ab, "2026-11-27", 5.4)).toEqual({ qty: 0, percent: null });    // Fri
+  });
+  it("adds nothing without the setting or without a requirement", () => {
+    expect(extraCoverFor(null, "2026-11-23", 5.4)).toEqual({ qty: 0, percent: null });
+    expect(extraCoverFor(ab, "2026-11-23", 0)).toEqual({ qty: 0, percent: 100 });
+  });
+  it("says so in the surplus wording", () => {
+    expect(withExtraCoverLabel("Surplus 10%", 100)).toBe("Surplus 10% + 100% (covers 2 days)");
+    expect(withExtraCoverLabel("Surplus 10%", null)).toBe("Surplus 10%");
   });
 });

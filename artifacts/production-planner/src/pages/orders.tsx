@@ -2859,7 +2859,7 @@ export default function Orders() {
                           <td
                             className="p-3 text-right tabular-nums"
                             title={!line.isMisc && line.surplusExplanation
-                              ? line.surplusFromDeliveryDay
+                              ? line.surplusFromDeliveryDay && !(line.extraCoverQty ?? 0)
                                 ? `${line.surplusExplanation} — set per delivery day on this ingredient (normally ${line.surplusBasePercent ?? 10}%)`
                                 : line.surplusExplanation
                               : undefined}
@@ -2870,7 +2870,7 @@ export default function Orders() {
                               : `${line.surplusTarget.toLocaleString()} ${line.unit}`}
                             {/* Which surplus applied and why — always shown
                                 when the delivery day chose it. */}
-                            {!line.isMisc && line.surplusFromDeliveryDay && line.surplusExplanation && (
+                            {!line.isMisc && (line.surplusFromDeliveryDay || (line.extraCoverQty ?? 0) > 0) && line.surplusExplanation && (
                               <span className="block text-[11px] font-medium text-primary mt-0.5 whitespace-nowrap">
                                 {line.surplusExplanation}
                               </span>
