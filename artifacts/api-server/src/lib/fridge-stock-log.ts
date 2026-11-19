@@ -11,7 +11,10 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 
-export type FridgeChangeSource = "manual" | "wrapping" | "fulfilment" | "reset" | "freeze";
+/** production = a fried chicken run added to the freezer when it's sent to
+ *  Shopify (19 Nov 2026) — kept apart from wrapping so the wrapping pace
+ *  doesn't count it. */
+export type FridgeChangeSource = "manual" | "wrapping" | "fulfilment" | "reset" | "freeze" | "production";
 
 export interface FridgeStockChange {
   recipeId: number;

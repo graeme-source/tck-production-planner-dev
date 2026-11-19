@@ -19,7 +19,8 @@ import { db, appSettingsTable, fridgeStockBatchesTable, recipesTable } from "@wo
 import { eq, and, gt, asc, sql } from "drizzle-orm";
 import { syncRecipeFridgeStock } from "../routes/production-plans";
 import type { ShopifyLineItem } from "../services/shopify";
-import { adjustFridgeStock } from "./fridge-stock";
+import { adjustFridgeStock, adjustRecipeFreezerStock } from "./fridge-stock";
+import { despatchStockPlace } from "./despatch-stock-place";
 import { EIGHT_PACK_SIZE, isBagLine, resolveBagLines, type BagLineContext } from "./eight-pack-bags";
 import { loadEightPackVariantToRecipe, loadProductTitleToRecipe } from "./eight-pack-recipe-map";
 import { CLUB_SPECIAL_TITLE_LC } from "@workspace/barcodes";
@@ -113,6 +114,8 @@ export function invalidateShopifyFreezerSyncFlagCache() {
 interface VariantMapping {
   recipeId: number;
   isCoreMenu: boolean;
+  /** Recipe category — fried chicken despatches off the freezer. */
+  category: string | null;
 }
 
 let mappingCache: Map<string, VariantMapping> | null = null;
@@ -138,8 +141,9 @@ async function loadVariantMap(): Promise<Map<string, VariantMapping>> {
     shopify_variant_id: string;
     wonky_variant_id: string | null;
     is_core_menu: boolean;
+    category: string | null;
   }>(sql`
-    SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu
+    SELECT m.recipe_id, m.shopify_variant_id, m.wonky_variant_id, r.is_core_menu, r.category
     FROM recipe_shopify_mappings m
     INNER JOIN recipes r ON r.id = m.recipe_id
   `);
@@ -149,7 +153,7 @@ async function loadVariantMap(): Promise<Map<string, VariantMapping>> {
   // time an operator clicked Process Fulfilled Today on the live server.
   const map = new Map<string, VariantMapping>();
   for (const row of result.rows) {
-    const entry: VariantMapping = { recipeId: row.recipe_id, isCoreMenu: row.is_core_menu };
+    const entry: VariantMapping = { recipeId: row.recipe_id, isCoreMenu: row.is_core_menu, category: row.category ?? null };
     if (row.shopify_variant_id) map.set(String(row.shopify_variant_id), entry);
     if (row.wonky_variant_id) map.set(String(row.wonky_variant_id), entry);
   }
@@ -187,6 +191,8 @@ export interface DecrementResult {
   unmappedBags: string[];
   unmapped: string[]; // variant IDs we couldn't resolve to a recipe (only logged in non-core-only mode)
   skippedNonCore: number; // count of line items skipped because the recipe isn't core menu
+  /** Fried chicken bags taken out of the production freezer (19 Nov 2026). */
+  freezerDecremented?: Array<{ recipeId: number; packs: number; shortfall: number }>;
 }
 
 /**
@@ -228,6 +234,8 @@ export async function decrementFridgeForShopifyOrder(
   // Aggregate per recipe so orders with multiple variants of the same
   // recipe only do one update.
   const perRecipe = new Map<number, number>();
+  // Fried chicken comes off the production freezer instead (19 Nov 2026).
+  const perFreezer = new Map<number, number>();
 
   for (const line of lineItems) {
     // 8-pack bag lines are their own stock (pack size 8) — handled below,
@@ -263,11 +271,29 @@ export async function decrementFridgeForShopifyOrder(
       if (!coreMenuOnly) result.unmapped.push(variantKey);
       continue;
     }
-    if (coreMenuOnly && !mapping.isCoreMenu) {
+    const place = despatchStockPlace(mapping, coreMenuOnly);
+    if (place === "skip") {
       result.skippedNonCore += 1;
       continue;
     }
-    perRecipe.set(mapping.recipeId, (perRecipe.get(mapping.recipeId) ?? 0) + (line.quantity || 0));
+    const into = place === "freezer" ? perFreezer : perRecipe;
+    into.set(mapping.recipeId, (into.get(mapping.recipeId) ?? 0) + (line.quantity || 0));
+  }
+
+  // Fried chicken out of the production freezer. Same once-per-order guard as
+  // the fridge (every caller reaches here once per order); never below zero.
+  if (perFreezer.size > 0) {
+    result.freezerDecremented = [];
+    const fRef = orderRef?.trim() || `order ${orderId}`;
+    for (const [recipeId, packs] of perFreezer) {
+      if (packs <= 0) continue;
+      try {
+        const r = await adjustRecipeFreezerStock({ recipeId, delta: -packs, note: `Despatch ${fRef}`, source: "fulfilment" });
+        result.freezerDecremented.push({ recipeId, packs, shortfall: r.shortfall });
+      } catch (err) {
+        console.error(`[inventory-sync] freezer decrement failed for recipe ${recipeId}:`, err);
+      }
+    }
   }
 
   for (const [recipeId, packs] of perRecipe) {

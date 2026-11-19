@@ -22,6 +22,9 @@
  * routes/production-plans.ts.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
+import { getVariantOnHandQuantities } from "../services/shopify";
+import { freezerSetFromShopify } from "../lib/despatch-stock-place";
+import { adjustRecipeFreezerStock } from "../lib/fridge-stock";
 import {
   db, recipesTable, productionPlansTable, productionPlanItemsTable,
   appSettingsTable, allocateFriedChickenPacks, dptSharesFromSales, recipePackSizeOrOne
@@ -1020,8 +1023,9 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
       if (m.shopify_variant_id) variantOf.set(Number(m.recipe_id), String(m.shopify_variant_id));
     }
 
-    const plan: Array<{ recipeName: string; variantId: string | null; made: number; target: number; result?: string; newQuantity?: number }> =
+    const plan: Array<{ recipeId: number | null; recipeName: string; variantId: string | null; made: number; target: number; result?: string; newQuantity?: number }> =
       items.map(i => ({
+        recipeId: i.recipeId ?? null,
         recipeName: i.recipeName ?? `Recipe ${i.recipeId}`,
         variantId: i.recipeId ? (variantOf.get(i.recipeId) ?? null) : null,
         made: Number(i.made) || 0,
@@ -1050,6 +1054,15 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
         row.newQuantity = out.newQuantity;
         row.result = "added";
         console.log(`[fried-chicken] Shopify +${row.made} for ${row.recipeName} -> ${out.newQuantity}`);
+        // The same bags go onto the planner's production-freezer stock, so it
+        // knows how much fried chicken there is (Graeme, 19 Nov 2026). Shopify
+        // has already taken them, so a failure here is logged, not undone.
+        if (row.recipeId) {
+          await adjustRecipeFreezerStock({
+            recipeId: row.recipeId, delta: row.made, userId,
+            note: `Fried chicken run, plan #${planId} — sent to Shopify`, source: "production",
+          }).catch(err => console.error(`[fried-chicken] planner freezer stock +${row.made} failed for ${row.recipeName}:`, err));
+        }
       } catch (err) {
         row.result = `failed: ${err instanceof Error ? err.message : String(err)}`;
         console.error(`[fried-chicken] Shopify adjust failed for ${row.recipeName}:`, err);
@@ -1067,6 +1080,43 @@ router.post("/plans/:planId/submit-stock", requireManagerOrAdmin, validate(Submi
   } catch (err) {
     console.error("[fried-chicken] submit stock failed:", err);
     res.status(500).json({ error: "Couldn't submit stock" });
+  }
+});
+
+// Fried chicken's freezer stock, set from Shopify's on-hand count (Graeme,
+// 19 Nov 2026). After that the planner keeps it: each run sent to Shopify
+// adds its bags, each order despatched takes them off. This can be run again
+// if the two ever drift. Dry run unless confirm: true. Manager/admin only.
+router.post("/freezer-stock/from-shopify", requireManagerOrAdmin, validate(z.object({ confirm: z.boolean().optional() })), async (req: Request, res: Response) => {
+  try {
+    const confirm = (req.body as { confirm?: boolean }).confirm === true;
+    const recipes = await db.select({ id: recipesTable.id, name: recipesTable.name }).from(recipesTable)
+      .where(eq(recipesTable.category, FRIED_CHICKEN_CATEGORY));
+    const mapRows = await db.execute<{ recipe_id: number; shopify_variant_id: string | null }>(sql`SELECT recipe_id, shopify_variant_id FROM recipe_shopify_mappings`);
+    const variantOf = new Map<number, string>();
+    for (const m of mapRows.rows ?? []) if (m.shopify_variant_id) variantOf.set(Number(m.recipe_id), String(m.shopify_variant_id));
+    const variantIds = recipes.map(r => variantOf.get(r.id)).filter((v): v is string => !!v);
+    const onHand = await getVariantOnHandQuantities(variantIds);
+    const current = await db.execute<{ recipe_id: number; quantity: string }>(sql`
+      SELECT DISTINCT ON (recipe_id) recipe_id, quantity FROM stock_entries
+      WHERE item_type = 'recipe' AND location = 'production_freezer' AND pack_size = 2
+      ORDER BY recipe_id, checked_at DESC
+    `);
+    const plannerQty = new Map((current.rows ?? []).map(r => [Number(r.recipe_id), Number(r.quantity) || 0]));
+    const rows = freezerSetFromShopify(recipes.map(r => {
+      const v = variantOf.get(r.id);
+      return { recipeId: r.id, name: r.name, planner: plannerQty.get(r.id) ?? 0, shopify: v != null && onHand[v] != null ? onHand[v] : null };
+    }));
+    if (confirm) {
+      for (const r of rows) {
+        if (r.change === 0) continue;
+        await adjustRecipeFreezerStock({ recipeId: r.recipeId, delta: r.change, userId: req.session.userId ?? null, note: "Set from Shopify's on-hand count", source: "manual" });
+      }
+    }
+    res.json({ dryRun: !confirm, rows });
+  } catch (err) {
+    console.error("[fried-chicken] freezer stock from Shopify failed:", err);
+    res.status(500).json({ error: "Couldn't read Shopify's stock" });
   }
 });
 
