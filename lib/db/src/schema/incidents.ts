@@ -1,5 +1,7 @@
-import { pgTable, serial, text, timestamp, boolean, integer, customType, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, boolean, integer, customType, jsonb, date } from "drizzle-orm/pg-core";
 import { usersTable } from "./users";
+import { suppliersTable } from "./suppliers";
+import { ingredientsTable } from "./ingredients";
 
 // Accident & incident diary for HACCP due diligence (Graeme, 2026-09-11:
 // the broken oven-door glass — document the incident, the containment, the
@@ -39,6 +41,21 @@ export const incidentReportsTable = pgTable("incident_reports", {
   unlockedByName: text("unlocked_by_name"),
   unlockReason: text("unlock_reason"),
   closedAt: timestamp("closed_at"),
+  // Dictation + supplier email (migration 0382, Graeme 2026-11-19). The
+  // spoken words are kept unedited beside the AI's write-up; a supplier
+  // issue names the supplier and product, and the one email sent to them
+  // is recorded word for word.
+  dictation: text("dictation"),
+  supplierIssue: boolean("supplier_issue").notNull().default(false),
+  supplierId: integer("supplier_id").references(() => suppliersTable.id, { onDelete: "set null" }),
+  ingredientId: integer("ingredient_id").references(() => ingredientsTable.id, { onDelete: "set null" }),
+  productBatchCode: text("product_batch_code"),
+  productUseBy: date("product_use_by"),
+  supplierEmailTo: text("supplier_email_to"),
+  supplierEmailSubject: text("supplier_email_subject"),
+  supplierEmailBody: text("supplier_email_body"),
+  supplierEmailSentAt: timestamp("supplier_email_sent_at"),
+  supplierEmailSentByName: text("supplier_email_sent_by_name"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
