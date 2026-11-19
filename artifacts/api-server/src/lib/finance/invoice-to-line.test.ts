@@ -122,6 +122,12 @@ describe("pickCertainMatches", () => {
     docKind: "invoice", readStatus: "done", rejectedLineIds: [], ...over,
   });
 
+  it("regression 19 Nov 2026: a Vonage Business Limited invoice is certain of its £21 Vonage charge the same day", () => {
+    const vonageInvoice = invoice({ id: 3744, supplierName: "Vonage Business Limited", invoiceDate: "2026-09-13", invoiceNumber: "1161857669", totalAmount: "21.00" });
+    const vonageCharge = line({ id: 51, lineDate: "2026-09-13", amount: "21.00", merchant: "Vonage", descriptor: "Vonage" });
+    expect(pickCertainMatches([vonageInvoice], [vonageCharge])).toMatchObject([{ invoiceId: 3744, lineId: 51 }]);
+  });
+
   it("matches the invoice dropped before its transaction arrived", () => {
     expect(pickCertainMatches([invoice()], [line({ id: 11 })])).toMatchObject([{ invoiceId: 1, lineId: 11 }]);
   });

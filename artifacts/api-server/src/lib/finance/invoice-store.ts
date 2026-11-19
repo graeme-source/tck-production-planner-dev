@@ -233,18 +233,32 @@ export function kickInvoiceReader(): void {
   if (readerRunning) return;
   readerRunning = true;
   readPendingInvoices()
+    // Match what was just read straight away (Graeme, 19 Nov 2026: a Vonage
+    // invoice sure of its £21 transaction sat in the Inbox waiting for the
+    // hourly run). Same "beyond doubt" rule as the hourly match; imported
+    // lazily because invoice-queue imports this file.
+    .then(async (read) => {
+      if (read === 0) return;
+      const { matchQueuedInvoices } = await import("./invoice-queue");
+      const m = await matchQueuedInvoices();
+      if (m.matched > 0) console.log(`[finance] matched ${m.matched} invoices just read`);
+    })
     .catch((err) => console.error("[finance] invoice reader crashed:", err))
     .finally(() => { readerRunning = false; });
 }
 
-async function readPendingInvoices(): Promise<void> {
+/** Reads every pending invoice; returns how many it read. */
+async function readPendingInvoices(): Promise<number> {
+  let read = 0;
   for (let n = 0; n < 2000; n++) {
     const [inv] = await db.select({ id: finInvoicesTable.id, mime: finInvoicesTable.fileMime, size: finInvoicesTable.fileSizeBytes })
       .from(finInvoicesTable).where(eq(finInvoicesTable.readStatus, "pending"))
       .orderBy(asc(finInvoicesTable.id)).limit(1);
-    if (!inv) return;
+    if (!inv) return read;
     await readOneInvoice(inv.id, inv.mime, inv.size);
+    read++;
   }
+  return read;
 }
 
 /** Read one invoice straight away (someone is waiting on the answer)
