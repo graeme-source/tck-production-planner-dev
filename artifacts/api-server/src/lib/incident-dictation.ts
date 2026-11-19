@@ -317,3 +317,20 @@ export function supplierEmailSendRefusal(r: {
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to.trim())) return "That email address doesn't look right.";
   return null;
 }
+
+/**
+ * What the supplier-email card offers this person (Graeme, 19 Nov 2026: only
+ * a manager's consent sends it). sent = done; send = a manager or admin can
+ * send it; request = anyone else asks a manager to approve; requested = they
+ * already have, and it's waiting.
+ */
+export type SupplierEmailStep = "sent" | "send" | "request" | "requested";
+
+export function supplierEmailStep(
+  role: string | null | undefined,
+  r: { supplierEmailSentAt: Date | string | null; supplierEmailRequestedAt: Date | string | null },
+): SupplierEmailStep {
+  if (r.supplierEmailSentAt) return "sent";
+  if (role === "admin" || role === "manager") return "send";
+  return r.supplierEmailRequestedAt ? "requested" : "request";
+}

@@ -9,12 +9,18 @@
  * then "Draft the email" shows the email to read and edit, and one Send
  * sends it with the report's photos. Once sent, it shows what went and to
  * whom. Server: routes/incidents.ts (supplier-email/draft, /send).
+ *
+ * Only a manager's consent sends it (Graeme, 19 Nov 2026). Anyone else gets
+ * "Ask a manager to approve": the draft is kept on the report and every
+ * manager gets a to-do. A manager then sees who asked, with the draft ready
+ * to edit, and sends it or decides not to (/request, /decline).
  */
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Loader2, Mail, Truck, CheckCircle2, PackageSearch, Send } from "lucide-react";
 import { format } from "date-fns";
 import { toast } from "@/hooks/use-toast";
+import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -31,6 +37,8 @@ export interface SupplierFields {
   supplierEmailBody: string | null;
   supplierEmailSentAt: string | null;
   supplierEmailSentByName: string | null;
+  supplierEmailRequestedAt?: string | null;
+  supplierEmailRequestedByName?: string | null;
 }
 
 interface SupplierOptions {
@@ -51,6 +59,10 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
   onChanged: () => void;
 }) {
   const sent = !!report.supplierEmailSentAt;
+  const { state } = useAuth();
+  const role = state.status === "authenticated" ? state.user.role : null;
+  const isManager = role === "manager" || role === "admin";
+  const requested = !!report.supplierEmailRequestedAt;
   const { data: opts } = useQuery<SupplierOptions>({
     queryKey: ["incident-supplier-options"],
     enabled: report.supplierIssue && !sent,
@@ -61,7 +73,11 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
       return res.json();
     },
   });
-  const [draft, setDraft] = useState<Draft | null>(null);
+  // A manager opening a report someone asked about gets the saved draft.
+  const savedDraft: Draft | null = isManager && requested && report.supplierEmailBody
+    ? { to: report.supplierEmailTo ?? "", recipientName: null, subject: report.supplierEmailSubject ?? "", body: report.supplierEmailBody, photoCount: 0, usedAi: false }
+    : null;
+  const [draft, setDraft] = useState<Draft | null>(savedDraft);
   const [busy, setBusy] = useState<string | null>(null);
 
   const save = async (name: string, body: Record<string, unknown>) => {
@@ -100,6 +116,35 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
     onError: e => toast({ title: "Not sent", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
   });
 
+  const ask = useMutation({
+    mutationFn: async (d: Draft) => {
+      const res = await fetch(`${BASE}/api/incidents/${report.id}/supplier-email/request`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ to: d.to, subject: d.subject, body: d.body }),
+      });
+      if (!res.ok) throw new Error(await errorText(res, "Couldn't ask a manager"));
+      return res.json();
+    },
+    onSuccess: () => {
+      setDraft(null);
+      onChanged();
+      toast({ title: "Sent to the managers to approve", description: "Nothing goes to the supplier until a manager sends it." });
+    },
+    onError: e => toast({ title: "Couldn't ask a manager", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
+  });
+
+  const decline = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`${BASE}/api/incidents/${report.id}/supplier-email/decline`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: "{}",
+      });
+      if (!res.ok) throw new Error(await errorText(res, "Couldn't save that"));
+      return res.json();
+    },
+    onSuccess: () => { setDraft(null); onChanged(); toast({ title: "Not sent", description: "The supplier won't be emailed about this report." }); },
+    onError: e => toast({ title: "Couldn't save that", description: e instanceof Error ? e.message : String(e), variant: "destructive" }),
+  });
+
   // Not flagged as a supplier issue: one quiet question.
   if (!report.supplierIssue && !sent) {
     return (
@@ -128,6 +173,17 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
     );
   }
 
+  if (requested && !isManager) {
+    return (
+      <div className="rounded-xl border-2 border-amber-500/60 bg-amber-500/10 p-4 space-y-1">
+        <p className="text-sm font-semibold flex items-center gap-2"><Mail className="w-5 h-5 text-amber-600" /> Waiting for a manager to approve the email to the supplier</p>
+        <p className="text-sm text-muted-foreground">
+          Asked by {report.supplierEmailRequestedByName ?? "the team"} on {format(new Date(report.supplierEmailRequestedAt!), "d MMM 'at' HH:mm")}. Nothing has been sent yet.
+        </p>
+      </div>
+    );
+  }
+
   const supplier = opts?.suppliers.find(s => s.id === report.supplierId) ?? null;
   const products = (opts?.ingredients ?? []).filter(i => report.supplierId == null || i.supplierIds.includes(report.supplierId));
   const inputCls = "mt-1 block w-full min-h-12 px-3 py-2.5 bg-background border border-border rounded-xl text-base font-normal normal-case";
@@ -136,6 +192,11 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
   return (
     <div className="rounded-xl border-2 border-amber-500/60 bg-amber-500/5 p-4 space-y-4">
       <p className="text-base font-bold flex items-center gap-2"><Truck className="w-5 h-5 text-amber-600" /> Tell the supplier</p>
+      {isManager && requested && (
+        <p className="rounded-lg bg-amber-500/15 px-3 py-2 text-sm font-semibold">
+          {report.supplierEmailRequestedByName ?? "Someone"} asked for this to go to the supplier on {format(new Date(report.supplierEmailRequestedAt!), "d MMM 'at' HH:mm")} — read it, then send it or don't.
+        </p>
+      )}
 
       {/* Step 1 — which supplier */}
       <label className={labelCls}>
@@ -203,17 +264,31 @@ export function IncidentSupplierSection({ report, locked, patch, onChanged }: {
           </label>
           <p className="text-sm text-muted-foreground flex items-center gap-2">
             <PackageSearch className="w-4 h-4" />
-            {draft.photoCount ? `${draft.photoCount} photo${draft.photoCount === 1 ? "" : "s"} attached.` : "No photos yet — add them above first if you can."} Copied to Graeme and accounts.
+            {isManager && requested ? "The report's photos are attached." : draft.photoCount ? `${draft.photoCount} photo${draft.photoCount === 1 ? "" : "s"} attached.` : "No photos yet — add them above first if you can."} Copied to Graeme and accounts.
           </p>
           <div className="flex flex-col sm:flex-row gap-2">
-            <button type="button" onClick={() => setDraft(null)} disabled={send.isPending}
-              className="min-h-14 px-5 rounded-2xl border-2 border-border text-base font-semibold">
-              Not now
-            </button>
-            <button type="button" onClick={() => send.mutate(draft)} disabled={send.isPending || !draft.to.trim() || !draft.subject.trim() || !draft.body.trim()}
-              className="flex-1 min-h-14 rounded-2xl bg-emerald-600 text-white text-base font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60">
-              {send.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />} Send to {supplier?.name ?? "the supplier"}
-            </button>
+            {isManager && requested ? (
+              <button type="button" onClick={() => decline.mutate()} disabled={send.isPending || decline.isPending}
+                className="min-h-14 px-5 rounded-2xl border-2 border-border text-base font-semibold">
+                {decline.isPending ? "Saving…" : "Don't send"}
+              </button>
+            ) : (
+              <button type="button" onClick={() => setDraft(null)} disabled={send.isPending || ask.isPending}
+                className="min-h-14 px-5 rounded-2xl border-2 border-border text-base font-semibold">
+                Not now
+              </button>
+            )}
+            {isManager ? (
+              <button type="button" onClick={() => send.mutate(draft)} disabled={send.isPending || !draft.to.trim() || !draft.subject.trim() || !draft.body.trim()}
+                className="flex-1 min-h-14 rounded-2xl bg-emerald-600 text-white text-base font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60">
+                {send.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />} Send to {supplier?.name ?? "the supplier"}
+              </button>
+            ) : (
+              <button type="button" onClick={() => ask.mutate(draft)} disabled={ask.isPending || !draft.to.trim() || !draft.subject.trim() || !draft.body.trim()}
+                className="flex-1 min-h-14 rounded-2xl bg-primary text-primary-foreground text-base font-bold inline-flex items-center justify-center gap-2 disabled:opacity-60">
+                {ask.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />} Ask a manager to approve
+              </button>
+            )}
           </div>
         </div>
       )}

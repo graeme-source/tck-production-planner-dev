@@ -30,6 +30,8 @@ import {
   type IngredientOption, type PickOption,
 } from "../lib/incident-dictation";
 import { draftIncidentFromDictation, draftSupplierEmail } from "../services/incident-ai";
+import { supplierEmailStep } from "../lib/incident-dictation";
+import { londonDateString } from "../lib/london-time";
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
@@ -636,6 +638,12 @@ router.post(
       const { to, subject, body } = req.body as { to: string; subject: string; body: string };
       const refusal = supplierEmailSendRefusal(report, to);
       if (refusal) { res.status(409).json({ error: refusal }); return; }
+      // Only a manager's consent sends it (Graeme, 19 Nov 2026); anyone else
+      // asks through /supplier-email/request.
+      if (supplierEmailStep(await resolveRole(req), report) !== "send") {
+        res.status(403).json({ error: "Only a manager can send this to the supplier — ask a manager to approve it." });
+        return;
+      }
 
       if (shouldSkipSideEffect()) {
         console.log(`[incidents] supplier email for report ${id} skipped (side effects off) — would go to ${to}`);
@@ -685,6 +693,7 @@ router.post(
         return;
       }
       console.log(`[incidents] supplier email for report ${id} sent to ${to} by ${user.name} (${attach.length} photos)`);
+      await closeApprovalTodos(id);
       const [row] = await db.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id));
       res.json(row);
     } catch (err) {
@@ -693,5 +702,83 @@ router.post(
     }
   },
 );
+
+// ─── Asking a manager to approve the supplier email (19 Nov 2026) ─────────
+// Anyone who can see the report can draft the email; only a manager sends
+// it. Asking keeps the draft on the report and gives every manager a to-do
+// pointing at it. A manager then sends it (editing first if they like) or
+// decides not to.
+
+const approvalTitle = (id: number, title: string | null) => `Approve supplier email: ${title?.trim() || "incident report"} (report #${id})`;
+const approvalTag = (id: number) => `%(report #${id})`;
+
+async function closeApprovalTodos(id: number): Promise<void> {
+  await db.execute(sql`
+    UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW()
+    WHERE status = 'open' AND created_by_name = 'Incident reports' AND title LIKE ${approvalTag(id)}
+  `);
+}
+
+router.post(
+  "/:id/supplier-email/request",
+  validate(z.object({
+    to: z.string().trim().min(3).max(200),
+    subject: z.string().trim().min(1).max(SUPPLIER_EMAIL_LIMITS.subject),
+    body: z.string().trim().min(1).max(SUPPLIER_EMAIL_LIMITS.body),
+  })),
+  async (req: Request, res: Response) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+    try {
+      const user = await sessionUser(req);
+      if (!user) { res.status(401).json({ error: "Not authenticated" }); return; }
+      const report = await accessibleReport(req, res, id);
+      if (!report) return;
+      const { to, subject, body } = req.body as { to: string; subject: string; body: string };
+      const refusal = supplierEmailSendRefusal(report, to);
+      if (refusal) { res.status(409).json({ error: refusal }); return; }
+      const [supplier] = report.supplierId != null
+        ? await db.select({ name: suppliersTable.name }).from(suppliersTable).where(eq(suppliersTable.id, report.supplierId))
+        : [];
+      await db.update(incidentReportsTable)
+        .set({ supplierEmailTo: to, supplierEmailSubject: subject, supplierEmailBody: body, supplierEmailRequestedAt: new Date(), supplierEmailRequestedByName: user.name, updatedAt: new Date() })
+        .where(and(eq(incidentReportsTable.id, id), isNull(incidentReportsTable.supplierEmailSentAt)));
+      const title = approvalTitle(id, report.title);
+      await db.execute(sql`
+        INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status)
+        SELECT u.id, ${user.id}, 'Incident reports', ${title},
+               ${`${user.name} has drafted an email to ${supplier?.name ?? "the supplier"} about this report and needs a manager's approval before it's sent. Read the report and the email, then send it (edit it first if you like) or decide not to.`},
+               ${`/reports?tab=haccp&haccp=incidents&incident=${id}`}, 'high', ${londonDateString()}::date, 'open'
+        FROM app_users u
+        WHERE u.is_active = TRUE AND u.role IN ('manager', 'admin')
+          AND NOT EXISTS (SELECT 1 FROM todo_tasks t WHERE t.assignee_id = u.id AND t.status = 'open' AND t.title = ${title})
+      `);
+      console.log(`[incidents] supplier email for report ${id} drafted by ${user.name} — waiting for a manager`);
+      const [row] = await db.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id));
+      res.json(row);
+    } catch (err) {
+      console.error("[incidents] supplier email request failed:", err);
+      res.status(500).json({ error: "Couldn't ask a manager — try again." });
+    }
+  },
+);
+
+router.post("/:id/supplier-email/decline", requireManagerOrAdmin, validate(z.object({})), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const user = await sessionUser(req);
+    await db.update(incidentReportsTable)
+      .set({ supplierEmailRequestedAt: null, supplierEmailRequestedByName: null, updatedAt: new Date() })
+      .where(and(eq(incidentReportsTable.id, id), isNull(incidentReportsTable.supplierEmailSentAt)));
+    await closeApprovalTodos(id);
+    console.log(`[incidents] supplier email for report ${id} not sent — decided by ${user?.name ?? "a manager"}`);
+    const [row] = await db.select().from(incidentReportsTable).where(eq(incidentReportsTable.id, id));
+    res.json(row);
+  } catch (err) {
+    console.error("[incidents] supplier email decline failed:", err);
+    res.status(500).json({ error: "Couldn't save that — try again." });
+  }
+});
 
 export default router;

@@ -56,6 +56,10 @@ export const incidentReportsTable = pgTable("incident_reports", {
   supplierEmailBody: text("supplier_email_body"),
   supplierEmailSentAt: timestamp("supplier_email_sent_at"),
   supplierEmailSentByName: text("supplier_email_sent_by_name"),
+  /** A non-manager asked for the email to go — waiting for a manager's
+   *  approval (migration 0383). The draft sits in supplierEmailTo/Subject/Body. */
+  supplierEmailRequestedAt: timestamp("supplier_email_requested_at"),
+  supplierEmailRequestedByName: text("supplier_email_requested_by_name"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

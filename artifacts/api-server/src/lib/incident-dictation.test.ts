@@ -2,8 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseIncidentDraft, fallbackIncidentDraft, canAccessIncident, fallbackSupplierEmail,
   parseSupplierEmail, plainTextToHtml, supplierEmailSendRefusal, incidentDraftUserMessage,
-  type SupplierEmailFacts,
-} from "./incident-dictation";
+  type SupplierEmailFacts, supplierEmailStep } from "./incident-dictation";
 
 const suppliers = [{ id: 1, name: "Brakes" }, { id: 2, name: "Best Butcher" }];
 const ingredients = [
@@ -105,5 +104,24 @@ describe("supplier email", () => {
     expect(supplierEmailSendRefusal({ supplierEmailSentAt: null, supplierId: null }, "a@b.co")).toMatch(/supplier/);
     expect(supplierEmailSendRefusal({ supplierEmailSentAt: null, supplierId: 1 }, "nope")).toMatch(/address/);
     expect(supplierEmailSendRefusal({ supplierEmailSentAt: null, supplierId: 1 }, "a@b.co")).toBeNull();
+  });
+});
+
+describe("supplierEmailStep — only a manager sends to a supplier (19 Nov 2026)", () => {
+  const fresh = { supplierEmailSentAt: null, supplierEmailRequestedAt: null };
+  it("a manager or admin can send it", () => {
+    expect(supplierEmailStep("manager", fresh)).toBe("send");
+    expect(supplierEmailStep("admin", fresh)).toBe("send");
+  });
+  it("anyone else asks a manager to approve, then waits", () => {
+    expect(supplierEmailStep("viewer", fresh)).toBe("request");
+    expect(supplierEmailStep(undefined, fresh)).toBe("request");
+    expect(supplierEmailStep("viewer", { ...fresh, supplierEmailRequestedAt: new Date() })).toBe("requested");
+  });
+  it("a manager can still send one that was asked for", () => {
+    expect(supplierEmailStep("manager", { ...fresh, supplierEmailRequestedAt: new Date() })).toBe("send");
+  });
+  it("once sent, nobody can send it again", () => {
+    expect(supplierEmailStep("admin", { supplierEmailSentAt: new Date(), supplierEmailRequestedAt: null })).toBe("sent");
   });
 });

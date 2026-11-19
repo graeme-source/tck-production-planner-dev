@@ -158,7 +158,12 @@ const STEPS: Array<{ key: "productionStopped" | "foodDiscarded" | "riskAssessmen
 
 export function IncidentDiaryTab() {
   const queryClient = useQueryClient();
-  const [openId, setOpenId] = useState<number | null>(null);
+  // ?incident=<id> opens that report — the manager's "approve supplier email"
+  // to-do links straight to it (19 Nov 2026).
+  const [openId, setOpenId] = useState<number | null>(() => {
+    const n = Number(new URLSearchParams(window.location.search).get("incident"));
+    return Number.isInteger(n) && n > 0 ? n : null;
+  });
 
   const { data: reports = [], isLoading } = useIncidentReports();
 
