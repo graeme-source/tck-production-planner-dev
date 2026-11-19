@@ -304,6 +304,18 @@ message or once a fix was live. Now:
   `checkedAnswer` only accepts a report or page her search returned, otherwise
   it's filed as new. Any failure files the report. "Report it anyway" is
   always there.
+- **AI Jane talks it through** (19 Nov 2026; `POST /api/report-chat/turn`,
+  `lib/report-chat.ts`, rules in `lib/report-chat-rules.ts`). After the check
+  says "new" (or "that's not it"), and for improvement ideas that
+  `looksLikeAppRequest` flags, she asks up to 4 tap-to-answer questions
+  (where, who, when it shows, must they do it or can they swipe it away),
+  then writes a summary the person can edit before sending. The summary is
+  added to the report's own text under "Talked through with AI Jane:", so
+  the reviewer reads it with the report; the whole chat is kept in
+  `report_chats` (migration 0384) and shown on the Fix queue. Who gets it:
+  the `ai.jane_talk_through` grant (managers by default) while the Fix queue
+  switch (app_settings `jane_talk_through`) is on. "Just send it as it is"
+  is always there; any failure files it with their answers so far.
 - **Followers** (`andon_issue_followers`): "Keep me posted" adds someone to the
   bell notes and the "fixed, please test" pop-up. A follower's typed reply to
   that pop-up reaches the card through the same path as the reporter's.

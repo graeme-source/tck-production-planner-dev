@@ -25,6 +25,7 @@ import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failur
 import { DictateButton } from "@/components/dictate-button";
 import { releaseDictation } from "@/hooks/use-voice-input";
 import { JaneCheckPanel, runJaneCheck, reportCheckResult, type JaneAnswer, type JaneTurn } from "@/components/jane-report-check";
+import { JaneTalkThrough, describeWithBrief, nextTalkStep, saveTalkThrough, useTalkThroughAvailable, type TalkStep } from "@/components/jane-talk-through";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -46,12 +47,18 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   const [checkId, setCheckId] = useState<number | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const deviceRef = useRef<HTMLInputElement>(null);
+  // …then, when it's new, a few questions so it's built right first time
+  // (Graeme, 2026-11-19). Off for anyone without the grant or the switch.
+  const talkAvailable = useTalkThroughAvailable(open);
+  const [talk, setTalk] = useState<TalkStep | null>(null);
+  const [talkChat, setTalkChat] = useState<JaneTurn[]>([]);
 
   if (!open) return null;
 
   const reset = () => {
     setArea(null); setDescription(""); setIsSafety(false); setAlsoImprovement(false);
     setFiles([]); setBusy(false); setChat([]); setAnswer(null); setCheckId(null);
+    setTalk(null); setTalkChat([]);
   };
   const close = () => { reset(); onClose(); };
 
@@ -60,11 +67,42 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
     setBusy(true);
     setChat(turns);
     const { answer: reply, checkId: id } = await runJaneCheck(turns);
-    if (!reply || reply.outcome === "new") { await submit(id); return; }
+    if (!reply || reply.outcome === "new") { await talkOrFile(id, turns); return; }
     setChat([...turns, { role: "assistant", text: reply.message }]);
     setAnswer(reply);
     setCheckId(id);
     setBusy(false);
+  };
+
+  /** A new app report: Jane's questions if this person has them, else file it. */
+  const talkOrFile = async (fromCheck: number | null, turns: JaneTurn[]) => {
+    if (!talkAvailable) { await submit(fromCheck); return; }
+    setBusy(true);
+    setAnswer(null);
+    setCheckId(fromCheck);
+    const step = await nextTalkStep("issue", turns);
+    if (!step) { await submit(fromCheck); return; }
+    setTalkChat([...turns, { role: "assistant", text: step.message }]);
+    setTalk(step);
+    setBusy(false);
+  };
+
+  const answerTalk = async (text: string) => {
+    const turns: JaneTurn[] = [...talkChat, { role: "user", text }];
+    setBusy(true);
+    setTalkChat(turns);
+    const step = await nextTalkStep("issue", turns);
+    if (!step) { await submit(checkId, { transcript: turns, brief: null }); return; }
+    setTalkChat([...turns, { role: "assistant", text: step.message }]);
+    setTalk(step);
+    setBusy(false);
+  };
+
+  /** "Just send it": no more questions; anything they answered still goes. */
+  const sendTalkAsIs = async () => {
+    setBusy(true);
+    const done = await nextTalkStep("issue", talkChat, { finish: true });
+    await submit(checkId, { transcript: talkChat, brief: done?.kind === "brief" ? done.brief : null });
   };
 
   const report = () => {
@@ -73,7 +111,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
     else void submit(null);
   };
 
-  const submit = async (fromCheck: number | null) => {
+  const submit = async (fromCheck: number | null, talked?: { transcript: JaneTurn[]; brief: string | null }) => {
     if (!description.trim() || !area) return;
     setBusy(true);
     try {
@@ -87,7 +125,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
           category: isSafety ? "safety" : area === "factory" ? "equipment" : "other",
           // Safety issues shout; everything else is a normal report.
           severity: isSafety ? "red" : "yellow",
-          description: description.trim(),
+          description: talked ? describeWithBrief(description, talked.brief) : description.trim(),
           station: area === "system" ? "App / iPad" : "general",
           area,
         }),
@@ -95,6 +133,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't report it");
       const issue = await res.json();
       if (fromCheck != null) void reportCheckResult(fromCheck, "reported", issue.id);
+      if (talked) void saveTalkThrough({ kind: "issue", andonIssueId: issue.id, original: description.trim(), transcript: talked.transcript, brief: talked.brief });
 
       let improvementId: number | null = null;
       if (alsoImprovement) {
@@ -174,13 +213,24 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
           </button>
         </div>
 
-        {answer ? (
+        {talk ? (
+          <JaneTalkThrough
+            key={talkChat.length}
+            chat={talkChat}
+            step={talk}
+            busy={busy}
+            onAnswer={text => void answerTalk(text)}
+            onSendAsIs={() => void sendTalkAsIs()}
+            onSend={brief => void submit(checkId, { transcript: talkChat, brief })}
+          />
+        ) : answer ? (
           <JaneCheckPanel
             chat={chat}
             answer={answer}
             busy={busy}
             onReply={text => { setAnswer(null); void askJane([...chat, { role: "user", text }]); }}
-            onReportAnyway={() => void submit(checkId)}
+            // "Just report it" skips the questions; "that's not it" is still new.
+            onReportAnyway={() => void (answer.outcome === "ask" ? submit(checkId) : talkOrFile(checkId, [{ role: "user", text: description.trim() }]))}
             onShowMe={() => { if (checkId != null) void reportCheckResult(checkId, "resolved"); const path = answer.path; close(); if (path) navigate(path); }}
             onKeepPosted={() => {
               if (checkId != null) void reportCheckResult(checkId, "followed");

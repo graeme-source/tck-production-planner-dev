@@ -210,3 +210,80 @@ export function JaneChecks() {
   );
 }
 
+
+type TalkChat = {
+  id: number; userName: string | null; kind: "issue" | "idea"; andonIssueId: number | null; improvementId: number | null;
+  original: string; transcript: Array<{ role: "user" | "assistant"; text: string }>; brief: string | null; createdAt: string;
+};
+
+/** AI Jane's questions before a report is filed (2026-11-19): the off
+ *  switch, and the recent chats so how a report was worked out can be read. */
+export function JaneTalkThroughPanel() {
+  const qc = useQueryClient();
+  const status = useQuery<{ available: boolean; switchOn: boolean }>({
+    queryKey: ["report-chat", "status"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/report-chat/status`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      return res.json();
+    },
+  });
+  const chats = useQuery<{ items: TalkChat[] }>({
+    queryKey: ["report-chat", "recent"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/report-chat/recent`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      return res.json();
+    },
+    staleTime: 60_000,
+  });
+  const flip = useMutation({
+    mutationFn: async (on: boolean) => {
+      const res = await fetch(`${BASE}/api/report-chat/switch`, {
+        method: "PUT", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ on }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || "Couldn't change it");
+      return res.json();
+    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["report-chat", "status"] }),
+    onError: (e: Error) => toast({ title: "Couldn't change it", description: e.message, variant: "destructive" }),
+  });
+  const on = status.data?.switchOn ?? true;
+  const items = chats.data?.items ?? [];
+  return (
+    <details className="rounded-2xl border-2 border-border bg-card px-4 py-3">
+      <summary className="cursor-pointer font-bold flex items-center justify-between gap-3 flex-wrap">
+        <span>AI Jane talks reports through · {on ? "On" : "Off"}{items.length ? ` · ${items.length} lately` : ""}</span>
+        <span className="flex items-center gap-2 text-sm font-medium" onClick={e => e.preventDefault()}>
+          {flip.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : flip.isSuccess ? <span className="text-emerald-600">Saved</span> : null}
+          <button
+            role="switch" aria-checked={on} disabled={status.isLoading || flip.isPending}
+            onClick={() => flip.mutate(!on)}
+            className={`h-9 px-4 rounded-xl border-2 font-bold ${on ? "border-primary bg-primary text-primary-foreground" : "border-border bg-secondary"}`}>
+            {on ? "On" : "Off"}
+          </button>
+        </span>
+      </summary>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Managers have it, and anyone you give "AI Jane talks it through" in Team &amp; Access. Off means everyone reports as before.
+      </p>
+      <div className="mt-3 space-y-2">
+        {items.length === 0 && <p className="text-sm text-muted-foreground">No chats yet.</p>}
+        {items.map(c => (
+          <div key={c.id} className="rounded-xl bg-secondary/40 p-3 text-sm space-y-1.5">
+            <p className="text-xs text-muted-foreground">
+              {c.userName ?? "Someone"} · {feedTimestamp(c.createdAt)} · {c.kind === "issue" ? `App report #${c.andonIssueId}` : `Idea #${c.improvementId}`}
+            </p>
+            <p className="font-semibold whitespace-pre-wrap break-words">{c.original}</p>
+            {c.transcript.slice(1).map((t, i) => (
+              <p key={i} className={`whitespace-pre-wrap break-words ${t.role === "assistant" ? "text-primary font-medium" : "pl-4"}`}>
+                {t.role === "assistant" ? "Jane: " : "→ "}{t.text}
+              </p>
+            ))}
+            {c.brief && <p className="rounded-lg bg-card p-2 whitespace-pre-wrap break-words">{c.brief}</p>}
+          </div>
+        ))}
+      </div>
+    </details>
+  );
+}

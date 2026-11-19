@@ -83,6 +83,7 @@ import improvementCreditWeightRouter from "./improvement-credit-weight";
 import dailyCheckinRouter from "./daily-checkin";
 import andonRouter from "./andon";
 import issueCheckRouter from "./issue-check";
+import reportChatRouter from "./report-chat";
 import qrRouter from "./qr";
 import pnlRouter from "./pnl";
 import pnlQboRouter from "./pnl-qbo";
@@ -549,6 +550,8 @@ router.use("/daily-checkin", dailyCheckinRouter);
 router.use("/andon", andonRouter);
 // AI Jane checks an app report before it's filed (2026-11-04).
 router.use("/issue-check", issueCheckRouter);
+// AI Jane talks an app report or idea through before it's filed (19 Nov 2026).
+router.use("/report-chat", reportChatRouter);
 // Issue pipeline people side: Graeme's Fix queue (founder-gated per route)
 // and each reporter's own "your report has been fixed" notices.
 router.use("/issue-pipeline", issuePipelineRouter);
