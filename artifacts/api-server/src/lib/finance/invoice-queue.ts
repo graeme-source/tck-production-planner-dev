@@ -67,7 +67,9 @@ export async function matchQueuedInvoices(userId: number | null = null): Promise
     if (invoices.length === 0) return { matched: 0, autoDone: 0 };
     let matched = 0;
     let autoDone = 0;
-    for (const pick of pickCertainMatches(await Promise.all(invoices.map(withGbpRate)), await waitingLines())) {
+    // A statement is checked against, never attached to a charge (19 Nov 2026).
+    const matchable = invoices.filter((i) => i.docKind !== "statement");
+    for (const pick of pickCertainMatches(await Promise.all(matchable.map(withGbpRate)), await waitingLines())) {
       const r = await attachInvoiceToLine(pick.invoiceId, pick.lineId, userId, { auto: true, reasons: pick.reasons });
       if (!r.ok) continue;
       matched++;

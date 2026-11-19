@@ -558,7 +558,9 @@ export function InvoiceList({ invoices, onOpen }: { invoices: Invoice[]; onOpen:
               {inv.duplicateOfId && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400"><Copy className="h-3 w-3 mr-1" /> Same as another</Badge>}
               {inv.readStatus === "pending" && <Badge variant="outline" className="shrink-0"><Loader2 className="h-3 w-3 mr-1 animate-spin" /> Reading</Badge>}
               {(inv.readStatus === "failed" || inv.readStatus === "not_available") && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">Check details</Badge>}
-              {inv.docKind !== "invoice" && <Badge variant="outline" className="shrink-0">{KINDS[inv.docKind] ?? inv.docKind}</Badge>}
+              {inv.docKind === "statement"
+                ? <span className="shrink-0 rounded-full bg-indigo-600 text-white px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide">Statement</span>
+                : inv.docKind !== "invoice" && <Badge variant="outline" className="shrink-0">{KINDS[inv.docKind] ?? inv.docKind}</Badge>}
               <InvoiceDeliveryChip invoiceId={inv.id} />
               {inv.paymentStatus === "unpaid" && <Badge variant="outline" className="shrink-0 text-amber-700 border-amber-400">Unpaid</Badge>}
               <Badge variant="outline" className={cn("shrink-0", inv.source === "transaction" ? "text-indigo-700 border-indigo-300" : "")}>

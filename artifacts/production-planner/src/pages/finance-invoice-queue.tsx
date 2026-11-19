@@ -97,21 +97,36 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
     onSuccess: () => { toast({ title: "Marked as posted", description: "It's in Invoices. If that was a mistake, open it there to put it back." }); refresh(); },
     onError: fail("Couldn't save that"),
   });
-  const busy = attach.isPending || reject.isPending || leave.isPending || markPosted.isPending;
+  // Invoice or statement (Graeme, 19 Nov 2026): a statement is what the
+  // invoices are checked against, so it's labelled loud and clear, isn't
+  // offered transactions, and isn't "posted" — it would look like a duplicate.
+  const setKind = useMutation({
+    mutationFn: (docKind: "invoice" | "statement") => jsonFetch(`${BASE}/api/finance/invoices/${inv.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind }),
+    }),
+    onSuccess: (_r, docKind) => { toast({ title: docKind === "statement" ? "Marked as a statement" : "Marked as an invoice" }); refresh(); },
+    onError: fail("Couldn't save that"),
+  });
+  const isStatement = inv.docKind === "statement";
+  const busy = attach.isPending || reject.isPending || leave.isPending || markPosted.isPending || setKind.isPending;
   const unread = inv.readStatus === "failed" || inv.readStatus === "not_available";
 
   return (
-    <Card><CardContent className="p-4 space-y-3">
+    <Card className={cn(isStatement && "border-indigo-300 dark:border-indigo-700")}><CardContent className="p-4 space-y-3">
       {/* One headline row (Graeme, 10 Nov 2026): who and what on the left,
           then the note, Paid / Unpaid, and the amount — wraps on a phone. */}
       <div className="flex flex-col sm:flex-row sm:items-start gap-x-4 gap-y-2">
         <div className="sm:w-56 lg:w-64 shrink-0 min-w-0">
+          {isStatement && (
+            <span className="inline-block mb-1 rounded-full bg-indigo-600 text-white px-2.5 py-0.5 text-xs font-bold uppercase tracking-wide">Statement</span>
+          )}
           <div className="font-semibold break-words">{inv.supplierName ?? inv.fileName}</div>
           <div className="text-sm text-muted-foreground break-words">
             {inv.invoiceDate ? ukDate(inv.invoiceDate) : "date not read"}
             {inv.invoiceNumber ? ` · No. ${inv.invoiceNumber}` : ""}
           </div>
           {inv.sourceText && <div className="text-xs text-muted-foreground break-words">{inv.sourceText}</div>}
+          {isStatement && <div className="text-xs text-indigo-700 dark:text-indigo-300 mt-1">For checking the invoices against. Not a VAT invoice, so it isn't matched to transactions.</div>}
           {unread && !inv.totalAmount && <div className="text-sm text-destructive">Couldn't be read: correct the details so it can be matched.</div>}
         </div>
         <div className="flex-1 min-w-0 flex flex-wrap items-center gap-2">
@@ -122,17 +137,28 @@ function InboxRow({ entry }: { entry: QueueEntry }) {
         <div className="shrink-0 sm:text-right font-bold tabular-nums text-lg leading-9">{inv.totalAmount ? invoiceMoney(inv.totalAmount, inv.currency) : "total not read"}</div>
       </div>
 
-      <MatchOptions quiet invoice={inv} matches={entry} busy={busy} onAttach={(lines) => attach.mutate(lines.map((l) => l.lineId))} onReject={(id) => reject.mutate(id)} />
+      {!isStatement && <MatchOptions quiet invoice={inv} matches={entry} busy={busy} onAttach={(lines) => attach.mutate(lines.map((l) => l.lineId))} onReject={(id) => reject.mutate(id)} />}
 
       <div className="flex flex-wrap items-center gap-2">
-        <Button disabled={busy} onClick={() => setConfirmPost(true)}>
-          {markPosted.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Mark as posted
-        </Button>
+        {isStatement ? (
+          <Button disabled={busy} onClick={() => leave.mutate()}>
+            {leave.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Done with it
+          </Button>
+        ) : (
+          <Button disabled={busy} onClick={() => setConfirmPost(true)}>
+            {markPosted.isPending ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1" />} Mark as posted
+          </Button>
+        )}
         {/* Same size as Mark as posted, with a border: the bookkeeper opens the
             invoice on nearly every row to read the VAT split (Graeme, 10 Nov 2026). */}
-        <Button variant="outline" aria-expanded={showFile} onClick={() => setShowFile((v) => !v)}><Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide invoice" : "View invoice"}</Button>
+        <Button variant="outline" aria-expanded={showFile} onClick={() => setShowFile((v) => !v)}><Eye className="h-4 w-4 mr-1" /> {showFile ? "Hide" : "View"} {isStatement ? "statement" : "invoice"}</Button>
+        {(inv.docKind === "invoice" || isStatement) && (
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => setKind.mutate(isStatement ? "invoice" : "statement")}>
+            {isStatement ? "It's an invoice, not a statement" : "This is a statement"}
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={() => setEditing((v) => !v)}>Correct details</Button>
-        <Button variant="ghost" size="sm" className="sm:ml-auto" disabled={busy} onClick={() => leave.mutate()}>Remove from Inbox</Button>
+        {!isStatement && <Button variant="ghost" size="sm" className="sm:ml-auto" disabled={busy} onClick={() => leave.mutate()}>Remove from Inbox</Button>}
       </div>
 
       <ConfirmPostedDialog open={confirmPost} onOpenChange={setConfirmPost}
