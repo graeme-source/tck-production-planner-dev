@@ -9,7 +9,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { OrderTotalPill } from "@/components/order-total-pill";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
-import {
+import { AlertTriangle,
   ShoppingCart,
   Package,
   Building2,
@@ -130,7 +130,11 @@ type OrderLine = SurplusLineFields & {
   packsToOrder: number;
   isKanban: boolean;
   /** Pulled kanbans: how long the stock should last (19 Nov 2026). */
-  stockLeft?: { days: number; label: string; basis: "usage" | "deliveries" } | null;
+  stockLeft?: {
+    days: number; label: string; basis: "usage" | "deliveries";
+    /** Last order day that still arrives in time (supplier lead time + order days). */
+    orderBy: string | null; urgency: "now" | "today" | "last_chance" | "plenty"; nextOrderDay: string | null;
+  } | null;
   // The kanban floor the backend applied to packsToOrder (null when not a
   // kanban line). The stock-edit recompute must respect it — see updateStock.
   kanbanFloorPacks?: number | null;
@@ -1212,8 +1216,22 @@ export default function Orders() {
   // "Not today" (Graeme, 2026-11-10): the kanban stays pulled but leaves
   // today's orders and comes back tomorrow, every day until it's ordered —
   // so tape can wait for the next box order instead of going on its own.
-  const snoozeKanbans = async (ingredientIds: number[]): Promise<boolean> => {
-    if (ingredientIds.length === 0) return true;
+  const snoozeKanbans = async (requested: number[]): Promise<boolean> => {
+    // Too close to put off (Graeme, 2026-11-19): a kanban whose last order
+    // day is today stays on the order, with a warning saying why.
+    const kanbanLine = (id: number) => Object.values(editableLines).flat().find(l => l.ingredientId === id && l.isKanban);
+    const mustOrder = requested.filter(id => { const u = kanbanLine(id)?.stockLeft?.urgency; return u === "today" || u === "now"; });
+    const ingredientIds = requested.filter(id => !mustOrder.includes(id));
+    if (mustOrder.length > 0) {
+      const names = mustOrder.map(id => kanbanLine(id)?.ingredientName).filter(Boolean).join(", ");
+      toast({
+        variant: "destructive",
+        title: "Too close to put off — order it today",
+        description: `${names}: if it's not ordered today, it won't arrive before it runs out.`,
+      });
+    }
+    const lastChance = ingredientIds.map(kanbanLine).filter(l => l?.stockLeft?.urgency === "last_chance");
+    if (ingredientIds.length === 0) return mustOrder.length === 0;
     try {
       const res = await fetch(`${BASE}/api/kanbans/snooze`, {
         method: "POST",
@@ -1228,7 +1246,13 @@ export default function Orders() {
     }
     dropKanbanLines(ingredientIds);
     queryClient.invalidateQueries({ queryKey: ["kanbans-ingredients-for-orders"] });
-    return true;
+    if (lastChance.length > 0) {
+      toast({
+        title: "Put off — that was the last time",
+        description: lastChance.map(l => `${l!.ingredientName}: order by ${l!.stockLeft?.orderBy ? format(parseISO(l!.stockLeft.orderBy), "EEE d MMM") : "the next order day"}`).join(" · ") + ". It can't be put off again.",
+      });
+    }
+    return mustOrder.length === 0;
   };
 
   const dropKanbanLines = (ingredientIds: number[]) => {
@@ -1873,6 +1897,17 @@ export default function Orders() {
     // came back every day for a week (AA Labels, Graeme 28 Oct 2026).
     // "Not today" instead keeps them pulled and brings them back tomorrow.
     const cardKanbans = kanbansToPutBack(editableLines[supplierId] ?? []);
+    // A kanban that must be ordered today keeps the whole card on screen:
+    // hiding the card would quietly leave it unordered (2026-11-19).
+    const urgent = (editableLines[supplierId] ?? []).filter(l => l.isKanban && (l.stockLeft?.urgency === "today" || l.stockLeft?.urgency === "now"));
+    if (kanbans === "not-today" && urgent.length > 0) {
+      toast({
+        variant: "destructive",
+        title: "Too close to put off — order it today",
+        description: `${urgent.map(l => l.ingredientName).join(", ")}: if it's not ordered today, it won't arrive before it runs out. The order stays here.`,
+      });
+      return;
+    }
     if (kanbans === "not-today") void snoozeKanbans(cardKanbans);
     else for (const ingredientId of cardKanbans) {
       fetch(`${BASE}/api/kanbans/unqueue`, {
@@ -2650,14 +2685,30 @@ export default function Orders() {
                                     {line.stockLeft.label}
                                   </span>
                                 )}
-                                <button
-                                  type="button"
-                                  onClick={() => void snoozeKanbans([line.ingredientId])}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border bg-background text-xs font-semibold text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
-                                  title="Keep it pulled — it comes back tomorrow, every day until it's ordered"
-                                >
-                                  <Clock className="w-3.5 h-3.5" /> Not today
-                                </button>
+                                {line.stockLeft?.orderBy && line.stockLeft.urgency !== "today" && (
+                                  <span className={cn(
+                                    "text-xs font-semibold whitespace-nowrap",
+                                    line.stockLeft.urgency === "last_chance" ? "text-amber-700 dark:text-amber-300" : "text-muted-foreground",
+                                  )}>
+                                    Order by {format(parseISO(line.stockLeft.orderBy), "EEE d MMM")}
+                                    {line.stockLeft.urgency === "last_chance" ? " — last chance to put it off" : ""}
+                                  </span>
+                                )}
+                                {line.stockLeft && (line.stockLeft.urgency === "today" || line.stockLeft.urgency === "now") ? (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/15 text-red-700 dark:text-red-300 text-xs font-bold whitespace-nowrap">
+                                    <AlertTriangle className="w-3.5 h-3.5" />
+                                    {line.stockLeft.urgency === "today" ? "Order today — too close to put off" : "Order today — it may run out first"}
+                                  </span>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={() => void snoozeKanbans([line.ingredientId])}
+                                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border bg-background text-xs font-semibold text-foreground hover:bg-secondary transition-colors whitespace-nowrap"
+                                    title="Keep it pulled — it comes back tomorrow, every day until it's ordered"
+                                  >
+                                    <Clock className="w-3.5 h-3.5" /> Not today
+                                  </button>
+                                )}
                               </span>
                             )}
                             {(line.splitsIn ?? []).map(sp => (

@@ -28,11 +28,11 @@ import { CombineRefused, combineOrders, findSameDayOrder } from "../lib/order-co
 import { validate, validateQuery } from "../middleware/validate";
 import { loadStockLedgers } from "../lib/stock-ledger-data";
 import { ingredientStockLocation } from "../lib/ingredient-stock-location";
-import { dailyUse, daysOfStockLeft, stockLeftLabel } from "../lib/kanban-stock-left";
+import { dailyUse, daysOfStockLeft, orderByDate, stockLeftLabel, supplierOrderWeekdays } from "../lib/kanban-stock-left";
 import { createStageTimer } from "../lib/stage-timer";
 import { readCacheMiddleware } from "../lib/request-read-cache";
 import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
-import { londonDateString, londonEndOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
+import { londonDateString, londonEndOfDay, londonMinuteOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
 import { PLACED_ORDER_STATUSES, suppliersOrderedToday, type OrderedTodaySupplier } from "../lib/ordered-today";
 
@@ -457,7 +457,12 @@ router.get("/calculate", async (req, res) => {
       extraCoverQty?: number;
       /** Pulled kanbans: how long the stock should last at the usual rate
        *  (19 Nov 2026) — "if it's out of stock, can I wait?". */
-      stockLeft?: { days: number; label: string; basis: "usage" | "deliveries" } | null;
+      stockLeft?: {
+        days: number; label: string; basis: "usage" | "deliveries";
+        /** The last order day that still arrives in time, from the supplier's
+         *  lead time and order days, and how close that is. */
+        orderBy: string | null; urgency: "now" | "today" | "last_chance" | "plenty"; nextOrderDay: string | null;
+      } | null;
       packWeight: number;
       costPerPack: number;
       supplierPartNumber: string | null;
@@ -1287,7 +1292,10 @@ router.get("/calculate", async (req, res) => {
       list.push({ at: new Date(`${r.on}T12:00:00Z`).getTime(), qty: native });
       receivedBy.set(r.ingredientId, list);
     }
+    const nowMinute = londonMinuteOfDay();
     for (const s of Object.values(supplierOrderMap)) {
+      const sup = supplierLookup[s.supplier.id]
+        ?? (supplierLookup[s.supplier.id] = (await db.select().from(suppliersTable).where(eq(suppliersTable.id, s.supplier.id)).limit(1))[0]);
       for (const l of s.lines) {
         if (!l.isKanban) continue;
         const h = history.get(l.ingredientId)?.ledger;
@@ -1298,7 +1306,12 @@ router.get("/calculate", async (req, res) => {
         // card's amount whatever the stock), and a pull has just counted it.
         const stock = lineStockFor(l.ingredientId, ingredientLookup[l.ingredientId]?.stockCheckEnabled ?? false).stockOnHand;
         const days = daysOfStockLeft(stock, rate?.perDay);
-        l.stockLeft = rate && days != null ? { days, label: stockLeftLabel(days), basis: rate.basis } : null;
+        if (!rate || days == null) { l.stockLeft = null; continue; }
+        const by = orderByDate({
+          today, nowMinute, cutoff: sup?.cutoffTime, leadTimeDays: sup?.leadTimeDays ?? 1,
+          orderWeekdays: supplierOrderWeekdays(sup?.orderFrequency, sup?.orderDays), daysLeft: days,
+        });
+        l.stockLeft = { days, label: stockLeftLabel(days), basis: rate.basis, orderBy: by.orderBy, urgency: by.urgency, nextOrderDay: by.nextOrderDay };
       }
     }
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { dailyUse, daysOfStockLeft, kanbanLeftQty, stockLeftLabel } from "./kanban-stock-left";
+import { dailyUse, daysOfStockLeft, kanbanLeftQty, orderByDate, stockLeftLabel, supplierOrderWeekdays } from "./kanban-stock-left";
 
 describe("kanbanLeftQty", () => {
   it("takes the safety stock, less the pack they've started", () => {
@@ -45,5 +45,44 @@ describe("daysOfStockLeft and stockLeftLabel", () => {
     expect(stockLeftLabel(9)).toBe("About 9 days left");
     expect(stockLeftLabel(21)).toBe("About 3 weeks left");
     expect(stockLeftLabel(95)).toBe("About 3 months left");
+  });
+});
+
+describe("orderByDate", () => {
+  // Thursday 19 Nov 2026, 10:00.
+  const base = { today: "2026-11-19", nowMinute: 600, cutoff: "16:00" };
+  it("works back from the run-out day through a weekly supplier's order day", () => {
+    // A Tuesday-only supplier, 2-day lead time, 3 weeks left (runs out Thu 10 Dec).
+    const r = orderByDate({ ...base, leadTimeDays: 2, orderWeekdays: new Set([2]), daysLeft: 21 });
+    expect(r.runsOutOn).toBe("2026-12-10");
+    expect(r.orderBy).toBe("2026-12-08");        // Tue 8 Dec → delivered Thu 10 Dec
+    expect(r.nextOrderDay).toBe("2026-11-24");
+    expect(r.urgency).toBe("plenty");
+  });
+  it("says it's the last chance when the next order day is the last one", () => {
+    const r = orderByDate({ ...base, leadTimeDays: 2, orderWeekdays: new Set([2]), daysLeft: 8 });   // runs out Fri 27 Nov
+    expect(r.orderBy).toBe("2026-11-24");
+    expect(r.urgency).toBe("last_chance");
+  });
+  it("can't be put off when today is the last day that arrives in time", () => {
+    const r = orderByDate({ ...base, leadTimeDays: 1, orderWeekdays: null, daysLeft: 1 });   // runs out Fri, delivered Fri
+    expect(r.orderBy).toBe("2026-11-19");
+    expect(r.urgency).toBe("today");
+  });
+  it("is too late after the cutoff, or when nothing would arrive in time", () => {
+    expect(orderByDate({ ...base, nowMinute: 17 * 60, leadTimeDays: 1, orderWeekdays: null, daysLeft: 1 }).urgency).toBe("now");
+    expect(orderByDate({ ...base, leadTimeDays: 5, orderWeekdays: null, daysLeft: 2 }).orderBy).toBeNull();
+  });
+  it("lead times skip the weekend", () => {
+    // Order Fri 20 Nov with a 1-day lead → Mon 23 Nov; runs out Mon 23 Nov.
+    expect(orderByDate({ ...base, leadTimeDays: 1, orderWeekdays: null, daysLeft: 4 }).orderBy).toBe("2026-11-20");
+  });
+});
+
+describe("supplierOrderWeekdays", () => {
+  it("limits only weekly suppliers with days set", () => {
+    expect([...supplierOrderWeekdays("weekly", "Monday,Thursday")!]).toEqual([1, 4]);
+    expect(supplierOrderWeekdays("daily", "Monday")).toBeNull();
+    expect(supplierOrderWeekdays("weekly", "")).toBeNull();
   });
 });

@@ -80,3 +80,85 @@ export function stockLeftLabel(days: number): string {
   if (days < 60) return `About ${Math.floor(days / 7)} weeks left`;
   return `About ${Math.floor(days / 30)} months left`;
 }
+
+// ── Order by when? ─────────────────────────────────────────────────────────
+// (Graeme, 19 Nov 2026: "order by… order no later than… work back from the
+// delivery date" using the supplier's lead time and order days — and warn
+// when "Not today" would leave it too late.)
+
+const isoDay = (iso: string) => new Date(`${iso}T12:00:00Z`);
+const toIso = (d: Date) => d.toISOString().slice(0, 10);
+const plusDays = (iso: string, n: number) => { const d = isoDay(iso); d.setUTCDate(d.getUTCDate() + n); return toIso(d); };
+/** ISO weekday 1 (Mon) … 7 (Sun). */
+const weekdayOf = (iso: string) => ((isoDay(iso).getUTCDay() + 6) % 7) + 1;
+/** Lead time counts working days, like the Orders page's delivery date. */
+function deliveredOn(orderIso: string, leadTimeDays: number): string {
+  let d = orderIso;
+  let left = Math.max(0, leadTimeDays);
+  while (left > 0) { d = plusDays(d, 1); if (weekdayOf(d) <= 5) left--; }
+  return d;
+}
+
+export type OrderUrgency = "now" | "today" | "last_chance" | "plenty";
+
+export interface OrderByResult {
+  /** The last order day whose delivery still arrives before it runs out
+   *  (null = none: order now, it may already be late). */
+  orderBy: string | null;
+  urgency: OrderUrgency;
+  /** The supplier's next order day after today. */
+  nextOrderDay: string | null;
+  runsOutOn: string;
+}
+
+/**
+ * Works back from the day it runs out: the latest of the supplier's order
+ * days (Mon–Fri when it takes orders daily) whose delivery, lead time later,
+ * lands on or before that day. Today only counts before the cutoff.
+ *  - "today": today is the last chance — it can't be put off.
+ *  - "last_chance": putting it off today is fine, but the next order day is
+ *    the last one.
+ */
+export function orderByDate(args: {
+  today: string;
+  /** London minutes past midnight now, and the supplier's "HH:MM" cutoff. */
+  nowMinute: number;
+  cutoff: string | null | undefined;
+  leadTimeDays: number;
+  /** ISO weekdays the supplier takes orders; null = every working day. */
+  orderWeekdays: ReadonlySet<number> | null;
+  daysLeft: number;
+}): OrderByResult {
+  const runsOutOn = plusDays(args.today, Math.max(0, args.daysLeft));
+  const [h, m] = String(args.cutoff ?? "17:00").split(":").map(Number);
+  const cutoffMinute = (Number.isFinite(h) ? h : 17) * 60 + (Number.isFinite(m) ? m : 0);
+  const canOrderOn = (iso: string) => {
+    const wd = weekdayOf(iso);
+    const ok = args.orderWeekdays ? args.orderWeekdays.has(wd) : wd <= 5;
+    return ok && (iso !== args.today || args.nowMinute < cutoffMinute);
+  };
+  let orderBy: string | null = null;
+  let nextOrderDay: string | null = null;
+  // Look a little past the run-out so "next order day" is always found.
+  for (let i = 0; i <= Math.max(args.daysLeft, 0) + 14; i++) {
+    const d = plusDays(args.today, i);
+    if (!canOrderOn(d)) continue;
+    if (i > 0 && nextOrderDay == null) nextOrderDay = d;
+    if (d <= runsOutOn && deliveredOn(d, args.leadTimeDays) <= runsOutOn) orderBy = d;
+  }
+  const urgency: OrderUrgency = orderBy == null ? "now"
+    : orderBy <= args.today ? "today"
+    : orderBy === nextOrderDay ? "last_chance"
+    : "plenty";
+  return { orderBy, urgency, nextOrderDay, runsOutOn };
+}
+
+const WEEKDAY_NUMBER: Record<string, number> = { Monday: 1, Tuesday: 2, Wednesday: 3, Thursday: 4, Friday: 5, Saturday: 6, Sunday: 7 };
+
+/** A supplier's order days as ISO weekdays: only "weekly" suppliers with
+ *  days set are limited; everyone else takes orders every working day. */
+export function supplierOrderWeekdays(orderFrequency: string | null | undefined, orderDays: string | null | undefined): Set<number> | null {
+  if (orderFrequency !== "weekly" || !orderDays) return null;
+  const set = new Set(orderDays.split(",").map(d => WEEKDAY_NUMBER[d.trim()]).filter((n): n is number => !!n));
+  return set.size > 0 ? set : null;
+}
