@@ -1,9 +1,10 @@
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Send, Loader2, User as UserIcon, Plus, BookOpen, X, Save, MessagesSquare, Trash2, ChefHat, Wrench, Paperclip, ImageIcon, ArrowLeft } from "lucide-react";
+import { Send, Loader2, User as UserIcon, Plus, BookOpen, X, Save, MessagesSquare, Trash2, ChefHat, Paperclip, ImageIcon, ArrowLeft } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTeamListDock, useViewportWidth } from "@/hooks/use-team-list-dock";
 import { janeDockWidth } from "@/lib/jane-dock";
 import { dockLayout } from "@/lib/team-list-dock";
+import { BoldText } from "@/components/bold-text";
 import { JaneAvatar } from "@/components/jane-avatar";
 
 // Named after Jane, who answers everyone's questions on the floor, while she's
@@ -368,6 +369,10 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
               const current = typeof m.content === "string" ? m.content : "";
               return { ...m, content: current + text };
             }));
+          } else if (event === "reset") {
+            // Jane's words before a lookup were thinking out loud: drop them
+            // and wait for the answer (Graeme, 2026-11-19).
+            setMessages(prev => prev.map(m => m.id === assistantId ? { ...m, content: "" } : m));
           } else if (event === "tool_call") {
             const t = parsed as ToolEvent;
             setToolEvents(prev => [...prev, t]);
@@ -702,10 +707,8 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
                     ))}
                   </div>
                 )}
-                {text && <div className="whitespace-pre-wrap">{text}</div>}
-                {empty && streaming && msg.role === "assistant" && (
-                  <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                )}
+                {text && <div className="whitespace-pre-wrap"><BoldText text={text} /></div>}
+                {empty && streaming && msg.role === "assistant" && <JaneThinking />}
               </div>
               {msg.role === "user" && (
                 <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center flex-shrink-0">
@@ -715,24 +718,6 @@ export function FoundersAssistant({ open, onClose, isFounder, canDock = false }:
             </div>
           );
         })}
-        {streaming && toolEvents.length > 0 && (
-          <div className="flex gap-2 justify-start text-xs text-muted-foreground">
-            <Wrench className="w-3.5 h-3.5 mt-0.5" />
-            <div className="flex flex-wrap gap-1">
-              {toolEvents.map((t, i) => (
-                <span key={i} className={cn(
-                  "px-1.5 py-0.5 rounded",
-                  t.status === "running" ? "bg-blue-500/10 text-blue-700" :
-                  t.status === "ok" ? "bg-emerald-500/10 text-emerald-700" :
-                  t.status === "proposal_sent" ? "bg-orange-500/10 text-orange-700" :
-                  "bg-destructive/10 text-destructive",
-                )}>
-                  {t.name}{t.status === "running" ? "…" : ""}
-                </span>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {error && (
@@ -1035,5 +1020,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <span className="block text-[11px] font-medium text-muted-foreground mb-0.5">{label}</span>
       {children}
     </label>
+  );
+}
+
+/** While Jane looks things up: three bouncing dots, no tool names
+ *  (Graeme, 2026-11-19: "we don't need to see that"). */
+function JaneThinking() {
+  return (
+    <span className="flex items-center gap-1 py-1.5" role="status" aria-label="Jane is working it out">
+      {[0, 150, 300].map(d => (
+        <span key={d} className="w-2 h-2 rounded-full bg-primary/70 animate-bounce" style={{ animationDelay: `${d}ms` }} />
+      ))}
+    </span>
   );
 }
