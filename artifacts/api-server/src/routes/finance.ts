@@ -33,6 +33,7 @@ import { buildChaseEmail } from "../lib/finance/chase-email";
 import { NO_VAT_REASONS, storedFileHeaders } from "../lib/finance/posted-rules";
 import { isMatchAction, matchedByFromEvents } from "../lib/finance/inbox-rules";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, ingestLineDocuments, logFinEvent } from "../lib/finance/invoice-store";
+import { placeLineByDocuments } from "../lib/finance/line-placement";
 
 // Finance / VAT invoice reconciliation (docs/vat-reconciliation/PLAN.md).
 // Replaces the "Outstanding Transactions" Google Sheet. Access: admin, or a
@@ -509,11 +510,9 @@ router.post("/lines/:id/documents", requireFinanceAccess, upload.single("file"),
       })
       .returning({ id: finDocumentsTable.id, fileName: finDocumentsTable.fileName });
 
-    // A document in hand moves an open line forward automatically.
-    await db
-      .update(finLinesTable)
-      .set({ status: "matched", updatedAt: new Date() })
-      .where(and(eq(finLinesTable.id, lineId), inArray(finLinesTable.status, ["open", "identified"])));
+    // Only a VAT invoice moves it to the Inbox; an order confirmation or
+    // receipt keeps it in Outstanding, still chasing the invoice (19 Nov 2026).
+    await placeLineByDocuments(lineId);
 
     await logFinEvent("line", lineId, "document_added", req.session.userId, { fileName: name, documentId: doc.id });
     await clearSuggestionsIfInvoiced(lineId);
@@ -536,6 +535,8 @@ router.patch("/documents/:id", requireFinanceAccess, validate(docKindSchema), as
     .returning({ id: finDocumentsTable.id, docKind: finDocumentsTable.docKind, lineId: finDocumentsTable.lineId });
   if (!row) { res.status(404).json({ error: "Document not found" }); return; }
   await logFinEvent("line", row.lineId, "document_relabelled", req.session.userId, { documentId: id, docKind });
+  // An "invoice" relabelled an order confirmation goes back to Outstanding.
+  await placeLineByDocuments(row.lineId);
   if (docKind === "invoice") await clearSuggestionsIfInvoiced(row.lineId);
   const autoDone = docKind === "invoice" ? await autoCompleteIfReady(row.lineId, req.session.userId ?? null, "relabelled_vat_invoice") : false;
   res.json({ ...row, autoDone });

@@ -8,6 +8,7 @@ import { PayrollPanel } from "@/pages/finance-payroll";
 import { DeliveriesPanel } from "@/pages/finance-deliveries";
 import { CategorySelect, categoryName, useFinanceCategories } from "@/components/finance/category-select";
 import { CategoriesEditor } from "@/components/finance/categories-editor";
+import { AttachConfirmDialog } from "@/components/finance/attach-confirm-dialog";
 import { InvoicesLibraryPanel, InvoiceUploadCard, PostedInvoicesList, HistoryList, FilePreview } from "@/pages/finance-invoices";
 import { UndoUploadLink } from "@/pages/finance-upload-undo";
 import { InboxPanel, useInvoiceQueue } from "@/pages/finance-invoice-queue";
@@ -876,6 +877,20 @@ function MatchedLineCard({ line, vendor, doc, invoice, provenance, details, onDe
     onSuccess: () => { toast({ title: "Invoice taken off this transaction", description: "It's back in the Inbox to match again." }); refresh(); },
     onError: (e: Error) => toast({ title: "Couldn't take it off", description: e.message, variant: "destructive" }),
   });
+  // "It's actually an order confirmation" (Graeme, 19 Nov 2026): relabel the
+  // document here; anything but a VAT invoice sends it back to Outstanding.
+  const relabel = useMutation({
+    mutationFn: (docKind: string) => jsonFetch(`${BASE}/api/finance/documents/${doc!.id}`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ docKind }),
+    }),
+    onSuccess: (_r, docKind) => {
+      toast(docKind === "invoice"
+        ? { title: "Marked as the VAT invoice" }
+        : { title: `Marked as ${DOC_KINDS.find((k) => k.value === docKind)?.label.toLowerCase() ?? "something else"}`, description: "Back in Outstanding until the VAT invoice comes." });
+      refresh();
+    },
+    onError: (e: Error) => toast({ title: "Couldn't change it", description: e.message, variant: "destructive" }),
+  });
   const supplier = invoice?.supplierName ?? vendor?.name ?? line.merchant ?? line.descriptor;
   const amount = invoice?.totalAmount ? invoiceMoney(invoice.totalAmount, invoice.currency) : `£${Number(line.amount).toFixed(2)}`;
   const onCard = [
@@ -885,7 +900,7 @@ function MatchedLineCard({ line, vendor, doc, invoice, provenance, details, onDe
     line.cardholder,
   ].filter(Boolean).join(" · ");
   const source = TRANSACTION_SOURCE[line.source] ?? null;
-  const busy = markPosted.isPending || detach.isPending;
+  const busy = markPosted.isPending || detach.isPending || relabel.isPending;
   return (
     <Card><CardContent className="p-4 space-y-3">
       <div className="flex flex-col sm:flex-row sm:items-start gap-x-4 gap-y-2">
@@ -910,6 +925,15 @@ function MatchedLineCard({ line, vendor, doc, invoice, provenance, details, onDe
         <Paperclip className="h-5 w-5 text-emerald-700 dark:text-emerald-400 shrink-0 mt-0.5" />
         <div className="min-w-0">
           <div className="font-semibold">Invoice attached to this transaction — not posted yet</div>
+          {doc && (
+            <label className="flex items-center gap-2 flex-wrap text-sm my-1">
+              <span className="font-medium">This document is a</span>
+              <select value={doc.docKind} disabled={busy} onChange={(e) => relabel.mutate(e.target.value)}
+                className="h-9 rounded-lg border-2 border-emerald-300 bg-background px-2 font-semibold">
+                {DOC_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
+              </select>
+            </label>
+          )}
           <div className="text-sm break-words">{onCard}</div>
           <div className="text-xs text-muted-foreground break-words">
             {source ? `${source[0].toUpperCase()}${source.slice(1)}` : null}
@@ -1004,7 +1028,7 @@ function LineRow({
     : (line.status === "matched" || line.status === "identified") && hasInvoiceDoc
     ? { label: "Invoice attached", tone: "bg-emerald-100 text-emerald-900" }
     : (line.status === "matched" || line.status === "identified") && hasConfirmationDoc
-      ? { label: "Order confirmation attached", tone: "bg-sky-100 text-sky-900" }
+      ? { label: "Order confirmation — needs VAT invoice", tone: "bg-sky-100 text-sky-900" }
       : baseStatus;
   return (
     <Card className={noVat ? "border-2 border-violet-300 bg-violet-50/70 dark:bg-violet-950/20" : undefined}>
@@ -1156,53 +1180,68 @@ function SupplierFieldsBlock({ line }: { line: FinLine }) {
   );
 }
 
+/** The transaction in one line, for the attach pop-up. */
+function lineSummary(line: FinLine): string {
+  return [line.merchant ?? line.descriptor, `£${Number(line.amount).toFixed(2)} on ${line.lineDate}`, line.cardLast4 ? `card ${line.cardLast4}` : null, line.cardholder]
+    .filter(Boolean).join(" · ");
+}
+
+/** Attach files to a line AFTER the "What are you attaching?" pop-up
+ *  (Graeme, 19 Nov 2026) — nothing is saved until the kind is confirmed. */
+function useAttachWithConfirm(line: FinLine) {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState<File[] | null>(null);
+  const upload = useMutation({
+    mutationFn: async ({ files, kind }: { files: File[]; kind: string }) => {
+      let autoDone = false;
+      for (const file of files) {
+        const form = new FormData();
+        form.append("file", file);
+        form.append("docKind", kind);
+        const r = await jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form }) as { autoDone?: boolean };
+        autoDone = autoDone || !!r.autoDone;
+      }
+      return { autoDone, kind };
+    },
+    onSuccess: (r) => {
+      setPending(null);
+      toast(r.autoDone ? AUTO_DONE_TOAST : r.kind === "invoice"
+        ? { title: "VAT invoice attached", description: "The transaction is in the Inbox, ready to post." }
+        : { title: `${DOC_KINDS.find((k) => k.value === r.kind)?.label ?? "Document"} attached`, description: "It stays in Outstanding until the VAT invoice comes." });
+      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
+    },
+    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
+  });
+  const dialog = (
+    <AttachConfirmDialog files={pending} kinds={DOC_KINDS} what={lineSummary(line)} busy={upload.isPending}
+      onCancel={() => setPending(null)} onConfirm={(kind) => pending && upload.mutate({ files: pending, kind })} />
+  );
+  return { ask: (files: File[]) => { if (files.length) setPending(files); }, dialog, busy: upload.isPending };
+}
+
 /** "Add file" with an up-front kind choice — sits with the other ways of
  *  getting evidence onto the line (just above the mailbox suggestions),
  *  away from the stored-documents list so the two kind dropdowns can't be
  *  confused (Graeme, 2026-09-10). */
 function AddFileControl({ line }: { line: FinLine }) {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
   const input = useRef<HTMLInputElement>(null);
-  const [uploadKind, setUploadKind] = useState("invoice");
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("docKind", uploadKind);
-      return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
-    },
-    onSuccess: (r: { autoDone?: boolean }) => {
-      toast(r.autoDone ? AUTO_DONE_TOAST : { title: `${DOC_KINDS.find(k => k.value === uploadKind)?.label ?? "Document"} stored` });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
-    },
-    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
-  });
+  const attach = useAttachWithConfirm(line);
   return (
     <div className="flex items-center gap-2 flex-wrap">
       <span className="text-sm font-medium">Attach from this device:</span>
-      <select
-        value={uploadKind}
-        onChange={(e) => setUploadKind(e.target.value)}
-        className="h-9 rounded-md border bg-background text-sm px-2"
-        title="What the file you're about to add is"
-      >
-        {DOC_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
-      </select>
       <input
         ref={input}
         type="file"
         accept=".pdf,image/*"
         multiple
         className="hidden"
-        onChange={(e) => {
-          for (const f of Array.from(e.target.files ?? [])) upload.mutate(f);
-          e.target.value = "";
-        }}
+        onChange={(e) => { attach.ask(Array.from(e.target.files ?? [])); e.target.value = ""; }}
       />
-      <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={upload.isPending}>
-        {upload.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
+      <Button size="sm" variant="outline" onClick={() => input.current?.click()} disabled={attach.busy}>
+        {attach.busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-1" />} Add file
       </Button>
+      {attach.dialog}
     </div>
   );
 }
@@ -1304,22 +1343,8 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
   const queryClient = useQueryClient();
   const [dragOver, setDragOver] = useState(false);
   const [preview, setPreview] = useState<FinDocMeta | null>(null);
-  // Drag-drop assumes the dropped file is the invoice (the overwhelmingly
-  // common case) — the per-document selector re-tags in one tap. Choosing a
-  // kind up front lives on the Add file control further down the card.
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      form.append("docKind", "invoice");
-      return jsonFetch(`${BASE}/api/finance/lines/${line.id}/documents`, { method: "POST", body: form });
-    },
-    onSuccess: (r: { autoDone?: boolean }) => {
-      toast(r.autoDone ? AUTO_DONE_TOAST : { title: "Document stored" });
-      queryClient.invalidateQueries({ queryKey: ["/api/finance/lines"] });
-    },
-    onError: (e: Error) => toast({ title: "Upload failed", description: e.message, variant: "destructive" }),
-  });
+  // A dropped file asks what it is before it's saved (19 Nov 2026).
+  const attach = useAttachWithConfirm(line);
   const retag = useMutation({
     mutationFn: ({ id, docKind }: { id: number; docKind: string }) =>
       jsonFetch(`${BASE}/api/finance/documents/${id}`, {
@@ -1353,9 +1378,10 @@ function DocumentsBlock({ line, docs }: { line: FinLine; docs: FinDocMeta[] }) {
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        for (const f of Array.from(e.dataTransfer.files)) upload.mutate(f);
+        attach.ask(Array.from(e.dataTransfer.files));
       }}
     >
+      {attach.dialog}
       <div className="text-sm font-medium mb-2">Documents</div>
       {docs.length === 0 && (
         <p className="text-sm text-muted-foreground mb-2">None yet — drop a PDF or photo here, or use Add file below.</p>

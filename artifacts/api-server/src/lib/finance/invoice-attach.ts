@@ -1,6 +1,7 @@
 import { and, eq, inArray, isNull, notExists, sql } from "drizzle-orm";
 import { db, finDocumentsTable, finInvoicesTable, finLinesTable, finStatementUploadsTable, finVendorsTable, usersTable } from "@workspace/db";
 import { transactionOrigin } from "./inbox-rules";
+import { placeLineByDocuments } from "./line-placement";
 import { autoCompleteIfReady, clearSuggestionsIfInvoiced, logFinEvent } from "./invoice-store";
 import { withGbpRate } from "./fx-rates";
 import { chargesThatAddUp, isConfidentPick, rankLinesForInvoice, withoutRejected, type InvoiceForMatch, type LineCandidate, type LineSuggestion } from "./invoice-to-line";
@@ -126,8 +127,9 @@ export async function attachInvoiceToLine(invoiceId: number, lineId: number, use
     uploadedBy: userId,
   }).returning({ id: finDocumentsTable.id });
 
-  await db.update(finLinesTable).set({ status: "matched", updatedAt: new Date() })
-    .where(and(eq(finLinesTable.id, lineId), inArray(finLinesTable.status, ["open", "identified"])));
+  // A VAT invoice moves it to the Inbox; a receipt or other kind keeps it
+  // in Outstanding (19 Nov 2026).
+  await placeLineByDocuments(lineId);
   // "What is this item?" chosen at upload carries onto the transaction,
   // unless it already has one (Graeme, 18 Nov 2026).
   if (inv.categoryId) {
