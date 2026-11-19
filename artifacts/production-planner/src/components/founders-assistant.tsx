@@ -121,12 +121,10 @@ interface ThreadDetail extends ThreadSummary {
   messages: Array<{ id: number; role: Role; content: MessageContent; createdAt: string }>;
 }
 
-// Founder gets the recipe-design pitch; everyone else gets the read-only
-// look-up assistant (which is all the server will let them do anyway).
-const FOUNDER_WELCOME =
-  `Hey, I'm ${ASSISTANT_NAME}. Ask me anything — design a recipe, look up costs, sanity-check a margin, or just talk through an idea. I'll remember important things across sessions and can propose recipe drafts for you to Save.`;
-const STAFF_WELCOME =
-  `Hi, I'm ${ASSISTANT_NAME}. Ask me anything about the app — recipes, ingredients, allergens, today's production plan, how much of something goes per tray, what's in stock. I can look things up but I can't change anything.`;
+// One opening line for everyone (Graeme, 19 Nov 2026). The founder's extra
+// abilities (recipe drafts, memory) are still there; they just aren't listed.
+const FOUNDER_WELCOME = `Hi, I'm ${ASSISTANT_NAME}. Ask me anything, just like you would real Jane.`;
+const STAFF_WELCOME = FOUNDER_WELCOME;
 
 function welcomeMessage(isFounder: boolean): Message {
   return { id: 0, role: "assistant", content: isFounder ? FOUNDER_WELCOME : STAFF_WELCOME };

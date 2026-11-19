@@ -36,7 +36,7 @@ export const JANE_DATASETS: JaneDataset[] = [
   // ── Production ─────────────────────────────────────────────────────────
   {
     name: "production_plans",
-    about: "One row per production plan: its dates and status.",
+    about: "One row per production plan, past and future: its dates and status. What's planned for a day — sometimes called queued, scheduled or booked in — including fried chicken and every other category. The first place to look for 'is X on for next week?'",
     pageKey: "/plans",
     sql: `SELECT pp.plan_date, pp.prep_date, pp.dough_date, pp.name AS plan_name, pp.status, pp.batch_number::float8 AS batch_number
           FROM production_plans pp`,
@@ -132,7 +132,7 @@ export const JANE_DATASETS: JaneDataset[] = [
   },
   {
     name: "finished_stock_moves",
-    about: "Every change to finished packs in the fridge and freezer. source: wrapping = packs wrapped, fulfilment = packs sent, freeze, manual.",
+    about: "Every change to finished packs in the fridge and freezer. source: wrapping = packs wrapped, production = a fried chicken run added to the freezer when it was sent to Shopify, fulfilment = packs sent, freeze, manual. How much there is now = the latest packs_after for each recipe and location — fried chicken is in the production_freezer (in bags).",
     pageKey: "/plans",
     sql: `SELECT ${londonDay("f.created_at")} AS day, r.name AS recipe, f.source, f.location, f.delta::float8 AS packs_change,
                  f.resulting_qty::float8 AS packs_after, f.pack_size::float8 AS pack_size
@@ -149,7 +149,7 @@ export const JANE_DATASETS: JaneDataset[] = [
   },
   {
     name: "queued_production",
-    about: "Production queued for future days, not yet on a plan.",
+    about: "Test batches waiting to be put onto a plan (the Orders reminder list) — NOT what's planned. A day's planned production, including future days and fried chicken, is in production_plans and production_by_recipe; check those first when asked what's queued or on for a day.",
     pageKey: "/plans",
     sql: `SELECT q.production_date, r.name AS recipe, q.batches::float8 AS batches, q.status
           FROM queued_production q JOIN recipes r ON r.id = q.recipe_id`,
