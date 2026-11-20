@@ -25,7 +25,8 @@ import { summariseUploadFailures, type UploadAttempt } from "@/lib/upload-failur
 import { DictateButton } from "@/components/dictate-button";
 import { releaseDictation } from "@/hooks/use-voice-input";
 import { JaneCheckPanel, runJaneCheck, reportCheckResult, type JaneAnswer, type JaneTurn } from "@/components/jane-report-check";
-import { JaneTalkThrough, describeWithBrief, nextTalkStep, saveTalkThrough, useTalkThroughAvailable, type TalkStep } from "@/components/jane-talk-through";
+import { JaneTalkThrough, describeWithBrief, nextTalkStep, saveTalkThrough, useJaneLiveAvailable, useTalkThroughAvailable, type TalkStep } from "@/components/jane-talk-through";
+import { JaneLiveReportChat } from "@/components/jane-live-report-chat";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -52,13 +53,19 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   const talkAvailable = useTalkThroughAvailable(open);
   const [talk, setTalk] = useState<TalkStep | null>(null);
   const [talkChat, setTalkChat] = useState<JaneTurn[]>([]);
+  // Every report starts as a chat with Jane (Graeme, 20 Nov 2026): she tries
+  // to sort it first, and writes the report from the chat when she can't.
+  // Safety skips her. Off with the talk-through switch → the form as before.
+  const liveAvailable = useJaneLiveAvailable(open);
+  const [liveChat, setLiveChat] = useState<JaneTurn[] | null>(null);
+  const [skipJane, setSkipJane] = useState(false);
 
   if (!open) return null;
 
   const reset = () => {
     setArea(null); setDescription(""); setIsSafety(false); setAlsoImprovement(false);
     setFiles([]); setBusy(false); setChat([]); setAnswer(null); setCheckId(null);
-    setTalk(null); setTalkChat([]);
+    setTalk(null); setTalkChat([]); setLiveChat(null); setSkipJane(false);
   };
   const close = () => { reset(); onClose(); };
 
@@ -106,10 +113,13 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   };
 
   const report = () => {
+    // Already talked through with Jane: her write-up is the report.
+    if (liveChat) { void submit(null, { transcript: liveChat, brief: null }); return; }
     // Safety never waits, and factory problems go straight to the team.
     if (area === "system" && !isSafety) void askJane([{ role: "user", text: description.trim() }]);
     else void submit(null);
   };
+  const inJaneChat = area !== null && liveAvailable && !liveChat && !skipJane;
 
   const submit = async (fromCheck: number | null, talked?: { transcript: JaneTurn[]; brief: string | null }) => {
     if (!description.trim() || !area) return;
@@ -203,7 +213,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
   return (
     <div className="fixed inset-0 z-[150] bg-black/60 flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={close}>
       <div
-        className="bg-background w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[92vh] overflow-y-auto"
+        className={cn("bg-background w-full rounded-t-3xl sm:rounded-3xl p-5 space-y-4 max-h-[92dvh] overflow-y-auto", inJaneChat ? "sm:max-w-2xl" : "sm:max-w-lg")}
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
@@ -213,7 +223,15 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
           </button>
         </div>
 
-        {talk ? (
+        {inJaneChat ? (
+          <JaneLiveReportChat
+            area={area!}
+            onSorted={() => { toast({ title: "Glad that's sorted", description: "Nothing's been reported." }); close(); }}
+            onWriteReport={(draft, transcript) => { setDescription(draft); setLiveChat(transcript); }}
+            onSafety={() => { setIsSafety(true); setSkipJane(true); }}
+            onOpenPath={path => { close(); navigate(path); }}
+          />
+        ) : talk ? (
           <JaneTalkThrough
             key={talkChat.length}
             chat={talkChat}
@@ -269,11 +287,11 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
         ) : (
           <>
             <div>
-              <label className="text-lg font-bold mb-2 block">What's wrong?</label>
+              <label className="text-lg font-bold mb-2 block">{liveChat ? "Jane's write-up — change anything that's wrong" : "What's wrong?"}</label>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
-                rows={3}
+                rows={liveChat ? 7 : 3}
                 autoFocus
                 placeholder={area === "system" ? "What were you doing, and what happened?" : "What's the problem, and where?"}
                 className="w-full px-4 py-3 rounded-2xl border-2 border-border bg-card text-lg focus:outline-none focus:ring-2 focus:ring-primary/40 resize-y"
@@ -377,7 +395,7 @@ export function RecordIssueModal({ open, onClose }: { open: boolean; onClose: ()
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <button
-                onClick={() => setArea(null)}
+                onClick={() => { setArea(null); setLiveChat(null); setSkipJane(false); setIsSafety(false); }}
                 className="h-14 rounded-2xl border-2 border-border text-lg font-bold hover:bg-secondary/50 transition-colors sm:order-1"
               >
                 Back

@@ -174,7 +174,7 @@ type JaneCheck = {
   matchedIssueId: number | null; result: string | null; filedIssueId: number | null; createdAt: string;
 };
 
-const CHECK_OUTCOME: Record<string, string> = { already_possible: "Already possible", already_reported: "Already reported", new: "New" };
+const CHECK_OUTCOME: Record<string, string> = { already_possible: "Already possible", already_reported: "Already reported", new: "New", sorted_in_chat: "Sorted with Jane, no report" };
 const CHECK_RESULT: Record<string, string> = { resolved: "went to the page", followed: "keeping posted", reported: "reported it anyway" };
 
 /** What AI Jane told people before their reports reached this queue, so an
@@ -201,7 +201,7 @@ export function JaneChecks() {
             <p className="whitespace-pre-wrap break-words">{c.reply}</p>
             <p className="text-xs text-muted-foreground">
               {c.userName ?? "Someone"} · {feedTimestamp(c.createdAt)} · {CHECK_OUTCOME[c.outcome] ?? c.outcome}
-              {c.matchedIssueId ? ` #${c.matchedIssueId}` : ""}{c.path ? ` ${c.path}` : ""}{c.result ? ` · ${CHECK_RESULT[c.result] ?? c.result}` : " · no answer yet"}
+              {c.matchedIssueId ? ` #${c.matchedIssueId}` : ""}{c.path ? ` ${c.path}` : ""}{c.outcome === "sorted_in_chat" ? "" : c.result ? ` · ${CHECK_RESULT[c.result] ?? c.result}` : " · no answer yet"}
             </p>
           </div>
         ))}

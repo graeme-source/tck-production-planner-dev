@@ -7,7 +7,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { desc, eq } from "drizzle-orm";
-import { db, andonIssuesTable, appSettingsTable, improvementSubmissionsTable, reportChatsTable, usersTable } from "@workspace/db";
+import { db, andonIssuesTable, appSettingsTable, improvementSubmissionsTable, issueReportChecksTable, reportChatsTable, usersTable } from "@workspace/db";
 import { validate } from "../middleware/validate";
 import { requireFounder } from "../middleware/founder-access";
 import { isClaudeConfigured } from "../lib/ai/claude";
@@ -15,6 +15,8 @@ import { userCan } from "../lib/feature-access";
 import { looksLikeAppRequest } from "../lib/improvement-app-request";
 import { nextStep } from "../lib/report-chat";
 import { TALK_THROUGH_FEATURE, TALK_THROUGH_SETTING_KEY, talkThroughOn } from "../lib/report-chat-rules";
+import { buildReport, liveTurn } from "../lib/report-live-chat";
+import { loadJaneAccess } from "../lib/ai/jane-data-tools";
 
 const router: IRouter = Router();
 
@@ -29,7 +31,10 @@ async function availableTo(req: Request): Promise<boolean> {
 }
 
 router.get("/status", async (req: Request, res: Response) => {
-  res.json({ available: await availableTo(req), switchOn: await switchOn() });
+  const on = await switchOn();
+  // live: everyone talks to Jane before reporting (Graeme, 20 Nov 2026);
+  // the same off switch turns it off.
+  res.json({ available: await availableTo(req), switchOn: on, live: on && isClaudeConfigured() });
 });
 
 const switchBody = z.object({ on: z.boolean() });
@@ -44,6 +49,8 @@ router.put("/switch", requireFounder, validate(switchBody), async (req: Request,
 });
 
 const turnsSchema = z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().trim().min(1).max(4000) })).min(1).max(12);
+// A live chat can run longer than the talk-through's questions.
+const liveTurnsSchema = z.array(z.object({ role: z.enum(["user", "assistant"]), text: z.string().trim().min(1).max(4000) })).min(1).max(60);
 
 const turnBody = z.object({
   kind: z.enum(["issue", "idea"]),
@@ -73,12 +80,51 @@ router.post("/turn", validate(turnBody), async (req: Request, res: Response) => 
   }
 });
 
+// ── Talk to Jane first (Graeme, 20 Nov 2026) ─────────────────────────────
+// Every report starts as a chat: Jane tries to sort it; if she can't, the
+// chat becomes the report. Safety never waits — the form skips this.
+
+const liveBody = z.object({ area: z.enum(["factory", "system"]), history: liveTurnsSchema });
+
+router.post("/live", validate(liveBody), async (req: Request, res: Response) => {
+  const { area, history } = req.body as z.infer<typeof liveBody>;
+  if (!isClaudeConfigured() || !(await switchOn())) { res.status(503).json({ error: "Jane isn't available — write the report as normal." }); return; }
+  if (history[history.length - 1].role !== "user") { res.status(400).json({ error: "Say something first" }); return; }
+  try {
+    const access = await loadJaneAccess(req.session.userId!, (req.session.userRole ?? "viewer") as "admin" | "manager" | "viewer");
+    res.json({ reply: await liveTurn(area, history, access) });
+  } catch (err) {
+    console.error("[report-chat] live turn failed:", err instanceof Error ? err.message : String(err));
+    res.status(502).json({ error: "Jane didn't answer. Try again, or write your report." });
+  }
+});
+
+// The report, written from the chat (their own words if the AI fails).
+router.post("/live/report", validate(liveBody), async (req: Request, res: Response) => {
+  const { area, history } = req.body as z.infer<typeof liveBody>;
+  res.json({ draft: await buildReport(area, history) });
+});
+
+// Sorted in the chat: kept with Jane's other checks, so the Fix queue sees
+// what she handled without anyone reporting it.
+router.post("/live/resolved", validate(liveBody), async (req: Request, res: Response) => {
+  const { area, history } = req.body as z.infer<typeof liveBody>;
+  const [user] = await db.select({ name: usersTable.name }).from(usersTable).where(eq(usersTable.id, req.session.userId!));
+  const lastJane = [...history].reverse().find(t => t.role === "assistant")?.text ?? "";
+  await db.insert(issueReportChecksTable).values({
+    userId: req.session.userId!, userName: user?.name ?? null,
+    description: `[${area === "system" ? "App" : "Factory"}] ${history.filter(t => t.role === "user").map(t => t.text).join("\n")}`.slice(0, 8000),
+    outcome: "sorted_in_chat", reply: lastJane.slice(0, 4000), result: "resolved",
+  });
+  res.json({ ok: true });
+});
+
 const saveBody = z.object({
   kind: z.enum(["issue", "idea"]),
   andonIssueId: z.number().int().positive().nullable().optional(),
   improvementId: z.number().int().positive().nullable().optional(),
   original: z.string().trim().min(1).max(4000),
-  transcript: turnsSchema,
+  transcript: liveTurnsSchema,
   brief: z.string().trim().max(4000).nullable().optional(),
 });
 

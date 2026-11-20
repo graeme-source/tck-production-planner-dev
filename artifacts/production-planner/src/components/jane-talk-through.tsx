@@ -34,6 +34,22 @@ export function useTalkThroughAvailable(enabled: boolean): boolean {
   return q.data?.available === true;
 }
 
+/** Does every report start as a chat with Jane (Graeme, 20 Nov 2026)? Off
+ *  with the same switch, or when Claude isn't connected. */
+export function useJaneLiveAvailable(enabled: boolean): boolean {
+  const q = useQuery<{ available: boolean; switchOn: boolean; live?: boolean }>({
+    queryKey: ["report-chat", "status"],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/report-chat/status`, { credentials: "include" });
+      if (!res.ok) throw new Error(`Request failed (${res.status})`);
+      return res.json();
+    },
+    enabled,
+    staleTime: 5 * 60_000,
+  });
+  return q.data?.live === true;
+}
+
 /** Jane's next move, or null: file it as it is. */
 export async function nextTalkStep(kind: TalkKind, history: JaneTurn[], opts: { station?: string | null; finish?: boolean } = {}): Promise<TalkStep | null> {
   try {
