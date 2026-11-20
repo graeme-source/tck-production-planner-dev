@@ -6,7 +6,7 @@ import { orderingPlan, rememberedPlanId, staleOrderingPlan } from "@/lib/newer-p
 import { StandingOrderChip } from "@/components/standing-order-chip";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { OrderTotalPill } from "@/components/order-total-pill";
+import { OrderTotalPill, OrderTotalBar } from "@/components/order-total-pill";
 import { cn } from "@/lib/utils";
 import { logWarning } from "@/lib/warning-log";
 import { useAuth } from "@/contexts/auth-context";
@@ -3021,6 +3021,10 @@ export default function Orders() {
                     </tbody>
                   </table>
                 </div>
+
+                {/* The order's total, big, under its lines — checked while
+                    ordering, before Mark as Placed (Graeme, 20 Nov 2026). */}
+                <OrderTotalBar lines={orderableLines} />
 
                 <div className="px-4 py-3 border-t border-border bg-secondary/5 flex items-center gap-3 flex-wrap">
                   <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
