@@ -24,7 +24,8 @@ import { FriedChickenStation } from "./stations/fried-chicken-station";
 import { STATION_VIEW_ROW_SLOT_ID, type StationType } from "./shared/constants";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { checklistSwitchTargets } from "./shared/checklist/switch-targets";
-import { useStationPlanIds } from "./shared/checklist/use-station-plan-ids";
+import { useStationPlanIds, useTodayChecklistPlan } from "./shared/checklist/use-station-plan-ids";
+import { STATIONS } from "./shared/constants";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -136,7 +137,14 @@ export default function StationPage() {
   );
 
   // Switch checklist opens each station on its own day (#406).
-  const stationPlanIds = useStationPlanIds(activeView === "checklist");
+  const { plans: stationPlanIds } = useStationPlanIds(activeView === "checklist");
+  // The checklist is always TODAY's for this station, whichever path opened
+  // it (Graeme, 20 Nov 2026) — the server says which plan holds it. The
+  // address's plan only when the station has no plan today or the server
+  // can't be asked (ticks on the wrong day are refused there anyway).
+  const todayChecklist = useTodayChecklistPlan(stationType, activeView === "checklist");
+  const checklistPlan = todayChecklist.data ? (todayChecklist.data.planId ?? planId)
+    : todayChecklist.isError ? planId : null;
 
   // If feature gets toggled off while on checklist view, switch back
   if (!checklistsEnabled && activeView === "checklist") {
@@ -325,11 +333,23 @@ export default function StationPage() {
       ) : (
         <StationErrorBoundary key={`${stationType}-${activeView}`}>
           {activeView === "checklist" && checklistsEnabled ? (
-            <StationChecklist
-              stationType={stationType}
-              planId={planId}
-              defaultCategory={defaults.category}
-            />
+            checklistPlan == null ? (
+              <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+            ) : (
+              <>
+                {checklistPlan !== planId && (
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Showing today&rsquo;s {STATIONS.find(st => st.key === stationType)?.label ?? (stationType.startsWith("prep") || stationType === "main_prep" ? "Prep" : "station")} checklist — the one being worked on today, the same from every page.
+                  </p>
+                )}
+                <StationChecklist
+                  key={checklistPlan}
+                  stationType={stationType}
+                  planId={checklistPlan}
+                  defaultCategory={defaults.category}
+                />
+              </>
+            )
           ) : activeView === "prep" && hasOwnPrepSheet ? (
             plan ? <FriedChickenPrepDay planId={planId} planDate={plan.planDate} /> : null
           ) : (

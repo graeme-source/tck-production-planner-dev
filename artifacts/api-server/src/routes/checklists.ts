@@ -1,3 +1,4 @@
+import { todaysChecklistPlanId } from "../services/checklist-day";
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { cookedToRaw } from "@workspace/units";
 import {
@@ -258,6 +259,12 @@ router.patch("/templates/reorder", async (req: Request, res: Response) => {
 });
 
 // ─── Station Checklist (merged templates + completions) ──────────────
+
+// Which plan holds this station's checklist today — the ONE rule every path
+// uses (lib/checklist-day.ts; Graeme, 20 Nov 2026). null = no plan for it today.
+router.get("/station/:stationType/today-plan", async (req: Request<{ stationType: string }>, res: Response) => {
+  res.json({ planId: await todaysChecklistPlanId(req.params.stationType) });
+});
 
 router.get("/station/:stationType/plan/:planId", async (req: Request<{ stationType: string; planId: string }>, res: Response) => {
   const { stationType, planId: planIdStr } = req.params;
@@ -520,6 +527,15 @@ router.post("/completions", async (req: Request, res: Response) => {
   }
 
   const canonicalStation = resolveChecklistStation(parsed.data.stationType);
+
+  // Checks are only ever done for TODAY (Graeme, 20 Nov 2026): a tick sent
+  // against another day's list — an old screen, a stale link — is refused,
+  // never filed on the wrong day. No plan today for the station: allowed.
+  const todays = await todaysChecklistPlanId(parsed.data.stationType);
+  if (todays != null && todays !== parsed.data.planId) {
+    res.status(409).json({ error: "This is a different day's checklist. Close it and open the station again to tick today's." });
+    return;
+  }
 
   // An item that takes a reading can't be ticked done without every one of
   // its readings (issue #87) — "Mark incomplete" with a reason still can.
