@@ -437,6 +437,37 @@ router.put("/weeks/order", validate(reorderSchema), async (req: Request, res: Re
   }
 });
 
+// Move the lessons around within a week (Graeme, 20 Nov 2026: "drag and
+// drop these lessons around through the week"). Position decides the day —
+// first is Monday — so the client sends the week's whole active list back
+// in its new order.
+router.put("/weeks/:id/lessons/order", validate(reorderSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const { orderedIds } = req.body as z.infer<typeof reorderSchema>;
+  try {
+    const result = await db.transaction(async (tx) => {
+      const current = await tx.select({ id: leanExamplesTable.id }).from(leanExamplesTable)
+        .where(and(eq(leanExamplesTable.principleId, id), eq(leanExamplesTable.isActive, true)));
+      const currentIds = new Set(current.map(l => l.id));
+      if (orderedIds.length !== currentIds.size || new Set(orderedIds).size !== orderedIds.length
+        || orderedIds.some(l => !currentIds.has(l))) {
+        return { error: "The order sent doesn't match this week's lessons — reload and try again" };
+      }
+      for (const [i, lessonId] of orderedIds.entries()) {
+        await tx.update(leanExamplesTable).set({ orderPosition: i + 1, updatedAt: new Date() })
+          .where(and(eq(leanExamplesTable.id, lessonId), eq(leanExamplesTable.principleId, id)));
+      }
+      return { ok: true as const };
+    });
+    if ("error" in result) { res.status(409).json({ error: result.error }); return; }
+    res.json(result);
+  } catch (err) {
+    console.error("[lean-curriculum] lesson reorder failed:", err);
+    res.status(500).json({ error: "Failed to save the new order" });
+  }
+});
+
 const weekPatchSchema = z.object({
   title: z.string().trim().min(1).max(160).optional(),
   summary: z.string().trim().min(1).max(1000).optional(),

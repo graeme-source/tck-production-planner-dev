@@ -22,7 +22,7 @@ import {
   DndContext, closestCenter, type DragEndEvent, PointerSensor, useSensor, useSensors,
 } from "@dnd-kit/core";
 import {
-  SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
+  SortableContext, verticalListSortingStrategy, rectSortingStrategy, useSortable, arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
@@ -593,9 +593,34 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
   // Full-screen preview, exactly as the morning meeting shows it.
   const [previewAt, setPreviewAt] = useState<number | null>(null);
 
+  // Drag a lesson to another day (Graeme, 20 Nov 2026). Position is the day:
+  // first is Monday. The list moves at once and the order saves straight away.
+  const lessonSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+  const saveLessonOrder = useMutation({
+    mutationFn: (orderedIds: number[]) =>
+      api(`/lean-curriculum/weeks/${weekId}/lessons/order`, { method: "PUT", body: JSON.stringify({ orderedIds }) }),
+    onSuccess: () => { toast({ title: "Days saved" }); refresh(); },
+    onError: (e: Error) => {
+      toast({ title: "Couldn't move the lesson", description: e.message, variant: "destructive" });
+      queryClient.invalidateQueries({ queryKey: ["lean-curriculum-week", weekId] });
+    },
+  });
+  const onLessonDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const from = lessons.findIndex(l => l.id === active.id);
+    const to = lessons.findIndex(l => l.id === over.id);
+    if (from === -1 || to === -1) return;
+    const moved = arrayMove(lessons, from, to);
+    queryClient.setQueryData<{ week: Week; lessons: Lesson[]; quiz: unknown[] }>(["lean-curriculum-week", weekId],
+      old => old ? { ...old, lessons: moved.map((l, i) => ({ ...l, orderPosition: i + 1 })) } : old);
+    saveLessonOrder.mutate(moved.map(l => l.id));
+  };
+
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="max-w-3xl max-h-[88vh] overflow-y-auto">
+      {/* Full screen (Graeme, 20 Nov 2026), scrolling inside, X top right. */}
+      <DialogContent className="max-w-none w-screen h-[100dvh] max-h-[100dvh] left-0 top-0 translate-x-0 translate-y-0 sm:rounded-none rounded-none overflow-y-auto p-4 sm:p-6 data-[state=open]:slide-in-from-left-0 data-[state=open]:slide-in-from-top-0 data-[state=closed]:slide-out-to-left-0 data-[state=closed]:slide-out-to-top-0">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 flex-wrap">
             {week ? (week.partLabel ? `${week.title} — ${week.partLabel}` : week.title) : "Week"}
@@ -624,6 +649,21 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
                   className="h-11 px-4 rounded-xl border-2 border-primary text-primary bg-card font-bold flex items-center gap-2">
                   <Play className="w-4 h-4" /> Preview the week as the meeting shows it
                 </button>
+                {/* The week at a glance: drag a tile to change its day. */}
+                <div className="rounded-xl border border-border p-3 space-y-2">
+                  <p className="text-sm font-semibold">The week <span className="font-normal text-muted-foreground">— drag a lesson to another day</span>
+                    {saveLessonOrder.isPending && <span className="ml-2 text-xs text-muted-foreground">Saving…</span>}
+                  </p>
+                  <DndContext sensors={lessonSensors} collisionDetection={closestCenter} onDragEnd={onLessonDragEnd}>
+                    <SortableContext items={lessons.map(l => l.id)} strategy={rectSortingStrategy}>
+                      <div className="grid gap-2 grid-cols-1 sm:grid-cols-3 lg:grid-cols-5">
+                        {lessons.map((lesson, i) => (
+                          <LessonDayTile key={lesson.id} lesson={lesson} day={DAY_NAMES[i] ?? `Day ${i + 1}`} />
+                        ))}
+                      </div>
+                    </SortableContext>
+                  </DndContext>
+                </div>
                 {lessons.map((lesson, i) => (
                   <LessonReviewCard key={lesson.id} lesson={lesson} day={DAY_NAMES[i] ?? `Day ${i + 1}`} onPreview={() => setPreviewAt(i)} />
                 ))}
@@ -723,6 +763,25 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
   );
 }
 
+/** A lesson in "The week" strip — drag it to give it another day. */
+function LessonDayTile({ lesson, day }: { lesson: Lesson; day: string }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: lesson.id });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners}
+      aria-label={`${day}: ${lesson.title} — drag to move it to another day`}
+      className={cn("rounded-xl border-2 border-border bg-card px-3 py-2.5 min-h-[4.5rem] flex gap-2 cursor-grab active:cursor-grabbing touch-none select-none",
+        isDragging && "opacity-80 shadow-xl z-10 relative border-primary")}>
+      <GripVertical className="w-4 h-4 mt-0.5 text-muted-foreground flex-shrink-0" />
+      <div className="min-w-0">
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{day}</p>
+        <p className="text-sm font-semibold leading-snug">{lesson.title}</p>
+        {lesson.videoUrl && <p className="text-[11px] text-primary flex items-center gap-1 mt-0.5"><Video className="w-3 h-3" /> Video</p>}
+      </div>
+    </div>
+  );
+}
+
 /** One day of the week. The slide text is edited here and autosaves
  *  (Graeme, 20 Nov 2026: building a lesson by hand); the two host fields
  *  never reach the slide, kept visibly separate. Video is per-day and
@@ -731,7 +790,7 @@ function LessonReviewCard({ lesson, day, onPreview }: { lesson: Lesson; day: str
   const [showNotes, setShowNotes] = useState(false);
 
   return (
-    <div className="border border-border rounded-xl overflow-hidden">
+    <div className="border border-border rounded-xl overflow-hidden bg-card">
       <div className="bg-secondary/40 px-3 py-2 flex items-center justify-between gap-2">
         <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{day}</p>
         <div className="flex items-center gap-3 flex-shrink-0">
