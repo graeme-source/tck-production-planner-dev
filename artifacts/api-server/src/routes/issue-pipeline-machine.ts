@@ -472,6 +472,73 @@ router.post("/triage/:id/resolve-issue", validate(resolveBody), async (req, res)
   }
 });
 
+// ── POST /issues/:andonIssueId/fixed-here — fixed in a Claude Code session ─
+// (Graeme, 20 Nov 2026: "if I start solving a problem with you directly in
+// Claude Code and we build a fix for it… I don't want it left in the Fix
+// queue, with me not knowing whether I fixed it".) For a report Graeme and
+// the main session fixed directly, ONLY AFTER the fix is deployed and live:
+// whatever the card's state (or with no card yet), it becomes fixed with
+// the commit as its reference, the report is resolved, the reporter gets
+// the usual "Your report changed this" note and pop-up, and the reporter is
+// credited if the fix qualifies (isImprovementDue). Safety and factory
+// reports are refused, as everywhere in the pipeline.
+const fixedHereBody = z.object({
+  fixRef: z.string().trim().min(4).max(200),
+  whatChanged: z.string().trim().min(1).max(1000),
+  testPath: z.string().max(300).nullable().optional()
+    .refine(p => p == null || p.trim() === "" || validateTestPath(p) !== null, {
+      message: "testPath must be an in-app path starting with a single '/' (no external URLs, no /api)",
+    }),
+  /** Used only when the report has no card yet. */
+  lane: z.enum(["defect", "data_fix", "improvement"]).default("defect"),
+  actor: z.string().trim().min(1).max(60).default("claude-code (main session)"),
+});
+
+router.post("/issues/:andonIssueId/fixed-here", validate(fixedHereBody), async (req, res) => {
+  const andonIssueId = parseId(req.params.andonIssueId);
+  if (!andonIssueId) { res.status(400).json({ error: "Invalid issue number" }); return; }
+  const b = req.body as z.infer<typeof fixedHereBody>;
+  const testPath = validateTestPath(b.testPath);
+  try {
+    const out = await db.transaction(async (tx) => {
+      const [issue] = await tx.select().from(andonIssuesTable).where(eq(andonIssuesTable.id, andonIssueId));
+      if (!issue) return { status: 404 as const, error: "Issue not found" };
+      const eligible = pipelineMayHandle(issue);
+      if (!eligible.ok) return { status: 422 as const, error: eligible.error };
+      let [current] = await tx.select().from(issueTriageTable).where(eq(issueTriageTable.andonIssueId, andonIssueId)).for("update");
+      if (current?.issueResolvedAt && current.status === "fixed") return { status: 409 as const, error: "Already fixed and closed", triage: current };
+      const now = new Date();
+      const decided = { decidedBy: current?.decidedBy ?? "Graeme", decidedAt: current?.decidedAt ?? now };
+      if (!current) {
+        [current] = await tx.insert(issueTriageTable).values({
+          andonIssueId, lane: b.lane, verdictSummary: b.whatChanged.slice(0, 300), explanation: "Fixed directly with Graeme in a Claude Code session.",
+          proposedFix: b.whatChanged, status: "fixed", fixRef: b.fixRef, fixedAt: now, triagedBy: b.actor, ...decided,
+        }).returning() as [IssueTriage];
+      } else {
+        [current] = await tx.update(issueTriageTable).set({
+          status: "fixed", fixRef: b.fixRef, fixedAt: now, awaitingRetriage: false, noActionAt: null, noActionBy: null, noActionByUserId: null,
+          snoozedUntil: null, ...decided, updatedAt: now,
+        }).where(eq(issueTriageTable.id, current.id)).returning() as [IssueTriage];
+      }
+      await recordEvent(tx, current, "fixed_in_session", b.actor, `${b.fixRef}: ${b.whatChanged}`);
+      const outcome = await resolveIssueWithNotice(tx, issue, {
+        triageId: current.id, resolverUserId: current.decidedByUserId, resolverName: `${current.decidedBy ?? "Graeme"} (Fix queue)`,
+        whatChanged: b.whatChanged, testPath,
+      });
+      const [row] = await tx.update(issueTriageTable).set({ issueResolvedAt: now, updatedAt: now })
+        .where(eq(issueTriageTable.id, current.id)).returning() as [IssueTriage];
+      await recordEvent(tx, row, "issue_resolved", b.actor, b.whatChanged);
+      const improvementId = await creditImprovementIfDue(tx, row, row.decidedBy ?? "Graeme");
+      return { status: 200 as const, triage: row, outcome, improvementId };
+    });
+    if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
+    res.json({ ok: true, triage: out.triage, resolved: out.outcome, improvementId: out.improvementId, testPath });
+  } catch (err) {
+    console.error("[issue-pipeline] fixed-here failed:", err instanceof Error ? err.message : String(err));
+    res.status(500).json({ error: "Failed to close the report" });
+  }
+});
+
 // ── POST /triage/:id/completed-on {completedOn} ────────────────────────────
 // Record the day a fix/feature went live, at any status — so an improvement
 // credited for an old report is dated when it was really built.
@@ -492,7 +559,7 @@ router.post("/triage/:id/completed-on", validate(completedOnBody), async (req, r
 router.post("/credit-improvements", async (_req, res) => {
   try {
     const rows = await db.select().from(issueTriageTable)
-      .where(sql`${issueTriageTable.lane} = 'improvement' AND ${issueTriageTable.improvementId} IS NULL
+      .where(sql`${issueTriageTable.lane} IN ('improvement', 'defect', 'data_fix') AND ${issueTriageTable.improvementId} IS NULL
         AND ${issueTriageTable.status} IN ('fixed', 'answered', 'dismissed') AND ${issueTriageTable.noActionAt} IS NULL`);
     const credited: Array<{ andonIssueId: number; improvementId: number }> = [];
     for (const r of rows) {

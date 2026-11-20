@@ -53,6 +53,14 @@ Read this first, every session.
   telling users to report to a manager. (Graeme, 2026-09-11.)
 - Destructive/outward-facing actions (deletes, Shopify writes, emails, deploys)
   need explicit approval from Graeme.
+- Close the loop on the Fix queue (Graeme, 2026-11-20). When something you fix
+  in a session matches a team report — the report it came from, or any open
+  Fix queue card about the same problem — check the queue once the fix is
+  DEPLOYED and live (`~/TCK-Backups/bin/fix-queue-fixed-here.sh --show <n>`),
+  then close it: `fix-queue-fixed-here.sh <n> <commit> <in-app test path or -> "<what changed, in plain words for the reporter>"`.
+  That marks it fixed, resolves the report, tells the reporter and credits
+  them if it's a genuine fix. Never before it's live; say in your summary
+  which cards you closed. Nothing should sit in the queue that's already done.
 
 ## You may not be the only session in this folder
 
