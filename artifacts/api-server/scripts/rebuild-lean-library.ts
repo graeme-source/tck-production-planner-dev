@@ -43,13 +43,16 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { pool } from "@workspace/db";
 import { leanCorpusPrompt, LMS_EIGHT_WASTES, LMS_TWELVE_STEPS } from "../src/lib/lean-corpus";
+import { CLAUDE_MODELS } from "../src/lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor } from "../src/lib/ai/claude-calls";
 
 const APPLY = process.argv.includes("--apply");
 // --copy-from=<conn string>: skip generation and copy the already-generated
 // (and reviewed) library from another database — used to ship the exact
 // content verified on local to live, byte for byte.
 const COPY_FROM = process.argv.find(a => a.startsWith("--copy-from="))?.slice("--copy-from=".length);
-const MODEL = "claude-sonnet-4-6";
+// The shared model list (was a hard-coded "claude-sonnet-4-6" until 20 Nov 2026).
+const MODEL = CLAUDE_MODELS.sonnet;
 const ON_DEMAND_TITLE = "On-demand lessons";
 
 interface PrincipleSpec {
@@ -170,17 +173,20 @@ async function generateDayOnce(
     : "";
   const res = await client.messages.create({
     model: MODEL,
-    max_tokens: 2500,
+    max_tokens: aiMaxTokens(2500, "medium"),
+    output_config: { effort: "medium" },
     system: SYSTEM_PROMPT,
     messages: [{
       role: "user",
       content: `This week's principle: "${spec.title}" — ${spec.summary}\n\nWeek brief:\n${spec.brief}\n\n${prior}Write ONLY the ${DAY_NAMES[dayIdx]} lesson using the save_lesson tool.`,
     }],
-    tools: [LESSON_TOOL],
-    tool_choice: { type: "tool", name: "save_lesson" },
+    tools: [strictTool(LESSON_TOOL)],
+    // Sonnet 5.5 can't be forced; the prompt already says "using the save_lesson tool".
+    tool_choice: toolChoiceFor(MODEL, LESSON_TOOL.name),
   });
   if (res.stop_reason === "max_tokens") throw new Error(`"${spec.title}" ${DAY_NAMES[dayIdx]}: truncated at max_tokens`);
-  const toolUse = res.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+  // No call (or a refusal) fails the check below and is retried by withRetries.
+  const toolUse = pickToolUse(res, LESSON_TOOL.name);
   const ex = toolUse?.input as GeneratedExample | undefined;
   if (!ex?.title || !ex.summary || !ex.explanation_md || !ex.what_to_show_md || !ex.delivery_notes_md) {
     throw new Error(`"${spec.title}" ${DAY_NAMES[dayIdx]}: incomplete lesson fields`);
