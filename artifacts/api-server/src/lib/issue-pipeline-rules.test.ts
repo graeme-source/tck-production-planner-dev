@@ -361,10 +361,18 @@ describe("isImprovementDue — credit only a genuine, live fix", () => {
   it("never when it was closed as nothing to do (already built, a duplicate)", () => {
     expect(isImprovementDue({ ...t, status: "fixed", issueResolvedAt: "2026-09-24T10:00:00Z", noActionAt: "2026-09-24T10:00:00Z" })).toBe(false);
   });
-  it("never for defects, open items, or twice", () => {
-    expect(isImprovementDue({ ...t, lane: "defect" })).toBe(false);
+  it("never for open items, twice, or reports that needed no fix", () => {
     expect(isImprovementDue({ ...t, status: "approved" })).toBe(false);
     expect(isImprovementDue({ ...t, improvementId: 12 })).toBe(false);
+    expect(isImprovementDue({ ...t, lane: "understanding", status: "fixed", issueResolvedAt: "2026-11-21T10:00:00Z" })).toBe(false);
+    expect(isImprovementDue({ ...t, lane: "not_app", status: "fixed", issueResolvedAt: "2026-11-21T10:00:00Z" })).toBe(false);
+  });
+  it("credits a reported bug or data fix that's genuinely fixed and live — from 20 Nov 2026 only (Graeme)", () => {
+    expect(isImprovementDue({ ...t, lane: "defect", status: "fixed", issueResolvedAt: "2026-11-20T09:00:00Z" })).toBe(true);
+    expect(isImprovementDue({ ...t, lane: "data_fix", status: "fixed", issueResolvedAt: "2026-11-25T09:00:00Z" })).toBe(true);
+    // Older fixed bugs aren't credited after the fact.
+    expect(isImprovementDue({ ...t, lane: "defect", status: "fixed", issueResolvedAt: "2026-11-19T09:00:00Z" })).toBe(false);
+    expect(isImprovementDue({ ...t, lane: "defect", status: "fixed", issueResolvedAt: "2026-11-21T09:00:00Z", noActionAt: "2026-11-21T09:00:00Z" })).toBe(false);
   });
 });
 

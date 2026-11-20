@@ -445,12 +445,22 @@ export function canSnooze(t: { status: TriageStatus; awaitingRetriage: boolean }
 // the report closed as live, not already credited, and never one closed as
 // "nothing to do" (already built, a duplicate, not a problem). Dismissed or
 // answered reports — the idea alone — earn nothing.
+/** Lanes whose genuine fix credits the reporter. Improvements always have;
+ *  a reported bug or wrong data that got fixed counts too from this date
+ *  (Graeme, 20 Nov 2026: "if they've noticed a problem and then they've done
+ *  something about it, then it is by definition an improvement") — from
+ *  this date only, so the 100+ older fixes aren't suddenly all credited. */
+export const CREDITED_FIX_LANES = new Set(["improvement", "defect", "data_fix"]);
+export const CREDIT_FIXES_FROM = "2026-11-20";
+
 export function isImprovementDue(t: {
   lane: string; status: TriageStatus; issueResolvedAt: Date | string | null; improvementId: number | null;
   noActionAt?: Date | string | null;
 }): boolean {
-  if (t.lane !== "improvement" || t.improvementId != null || t.noActionAt != null) return false;
-  return t.status === "fixed" && t.issueResolvedAt != null;
+  if (!CREDITED_FIX_LANES.has(t.lane) || t.improvementId != null || t.noActionAt != null) return false;
+  if (t.status !== "fixed" || t.issueResolvedAt == null) return false;
+  if (t.lane === "improvement") return true;
+  return new Date(t.issueResolvedAt).toISOString().slice(0, 10) >= CREDIT_FIXES_FROM;
 }
 
 /** A repeat of an earlier request (Graeme, 27 Oct 2026): when a related,
