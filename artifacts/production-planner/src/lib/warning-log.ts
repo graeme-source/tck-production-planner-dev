@@ -14,6 +14,7 @@ export const WARNING_LABELS: Record<string, string> = {
   completion_failure: "Order didn't finish completing (Packing)",
   stock_check_popup: "2:55 stock check pop-up",
   forced_stock_check: "Stock check skipped",
+  ingredient_warning: "Ingredient warning pop-up",
 };
 
 export const ACTION_LABELS: Record<string, string> = {
@@ -22,6 +23,8 @@ export const ACTION_LABELS: Record<string, string> = {
   put_off: "Put off",
   carry_on: "Carried on",
   skip: "Skipped",
+  got_it: "Got it",
+  report_incident: "Opened incident report",
 };
 
 export function logWarning(warning: keyof typeof WARNING_LABELS, action: keyof typeof ACTION_LABELS, detail?: string | null): void {

@@ -37,6 +37,7 @@ import { DeliverySurplusField } from "@/components/delivery-surplus-field";
 import { StockCheckUnitField } from "@/components/stock-check-unit-field";
 import { StandingOrderField } from "@/components/standing-order-field";
 import { PackNameField } from "@/components/pack-name-field";
+import { StationWarningField } from "@/components/station-warning-field";
 import { StorageLocationField } from "@/components/storage-location-field";
 import type { Ingredient } from "@workspace/api-client-react";
 import { getGetUpfSummaryQueryKey, useListIngredients } from "@workspace/api-client-react";
@@ -1190,6 +1191,11 @@ export function IngredientFormDialog({
           {editingItem?.id
             ? <PackNameField ingredientId={editingItem.id} />
             : <p className="text-xs text-muted-foreground">Save the ingredient first to name its pack (box, roll, bag…).</p>}
+
+          {/* A safety warning that pops up on Mixing and Building for every
+              recipe using this ingredient (#404). Autosaves on its own
+              endpoint, so it needs a saved ingredient. */}
+          {editingItem?.id && <StationWarningField ingredientId={editingItem.id} />}
 
           {liveCostPerUnit !== null && (
             <div className="rounded-lg bg-secondary/30 border border-border px-3.5 py-2.5 text-sm flex items-center justify-between">

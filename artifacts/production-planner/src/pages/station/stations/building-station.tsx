@@ -19,6 +19,7 @@ import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-cl
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { SopChips, useSopViewer, type SopLink } from "@/components/sop-link-chips";
 import { useAuth } from "@/contexts/auth-context";
+import { IngredientWarningPopup } from "@/components/ingredient-warning-popup";
 import {
   Plus, Minus, CheckCircle2, Loader2, ChevronRight, RotateCcw,
   BarChart2, BookOpen, Target, Scale, GripVertical, Check, ExternalLink,
@@ -1086,6 +1087,9 @@ export function BuildingStation({ plan, lineNumber, isOnBreak: isOnBreakProp = f
   return (
     <div className="space-y-4">
       {sopViewer.dialog}
+      {/* Ingredient warning ("watch for bones", #404) for the recipe this
+          builder is on. */}
+      <IngredientWarningPopup recipeId={currentItem?.recipeId} recipeName={currentItem?.recipeName} station="Building" />
       {/* Daily progress — a slim strip portalled into the slot beside the
           Checklist/Production toggle so they share one line; batches, bar,
           % and the team pace all in view without costing a band of height

@@ -10,6 +10,7 @@ import {
 import type { ProductionPlanDetail, ProductionPlanItem } from "@workspace/api-client-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/auth-context";
+import { IngredientWarningPopup } from "@/components/ingredient-warning-popup";
 import {
   ChevronUp, Plus, Minus, Check, CheckCircle2, PlayCircle, Loader2,
   GripVertical, Lock, RotateCcw, Package, ChevronRight, AlertTriangle,
@@ -1080,6 +1081,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
 
   return (
     <>
+    {/* Ingredient warning ("watch for bones", #404) for the recipe pinned on
+        the tins tab; the cooking tab shows its own for the open cook. */}
+    {mixingTab === "tins" && (
+      <IngredientWarningPopup recipeId={activeItem?.recipeId} recipeName={activeItem?.recipeName} station="Mixing" />
+    )}
     {/* Edit row dialog — correct oven times and temperature after the fact */}
     {editRow && (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
@@ -1380,6 +1386,11 @@ export function MixingStation({ plan, isOnBreak = false }: MixingStationProps & 
         const openCookingId = cookingRecipeId ?? visibleCooking[0]?.recipeId ?? null;
         return (
         <div className="space-y-3">
+          <IngredientWarningPopup
+            recipeId={openCookingId}
+            recipeName={visibleCooking.find(r => r.recipeId === openCookingId)?.recipeName}
+            station="Mixing"
+          />
           {/* Done count + show-completed — they were in the queue sheet, which
               this station no longer has (Graeme, 2026-09-17). */}
           {allCooking.length > 0 && (
