@@ -22,9 +22,10 @@ import { BAG_TITLE_MARKER } from "@workspace/barcodes";
 export function trackedVariantMap(products: ShopifyProduct[]): Record<string, number> {
   const map: Record<string, number> = {};
   for (const p of products) {
-    // Archived/draft products can't be ordered, so their variants have no
-    // bearing on the pick list either way.
-    if (p.status !== "active") continue;
+    // Draft and archived listings count too: an order already placed on one
+    // was stock-checked when it was taken, and the listing is often put
+    // back to draft once the last pack sells (#139897, 20 Nov 2026). A
+    // variant nobody ordered never reaches the pick list either way.
     for (const v of p.variants) {
       if (v.inventory_management === "shopify") {
         map[String(v.id)] = v.inventory_quantity;

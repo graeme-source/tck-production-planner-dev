@@ -166,7 +166,7 @@ export function computeFridgeAllocation<T extends GateOrder>(
           ? fridgeAvailability.outOfScopeVariants?.[String(li.variant_id)]
           : undefined;
         uncheckedTitles.add(outOfScopeName
-          ? `${li.title} — ${outOfScopeName} isn't flagged core menu / fridge product, and Shopify isn't tracking its stock`
+          ? `${li.title} — the planner doesn't count ${outOfScopeName} in the fridge (not core menu, or not a fridge product), and Shopify isn't tracking its stock`
           : `${li.title} — no recipe mapping, and Shopify isn't tracking its stock`);
         uncheckedOrderIds.add(o.id);
         continue;

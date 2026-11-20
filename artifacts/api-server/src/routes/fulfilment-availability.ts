@@ -4,6 +4,8 @@ import { sql } from "drizzle-orm";
 import { bagPoolFromEntries, type BagEntryRow } from "../lib/eight-pack-bags";
 import { getProducts } from "../services/shopify";
 import { trackedVariantMap, bagRecipeByTitle } from "../lib/shopify-stock-check";
+import { fridgeGateChecks } from "../lib/fridge-gate-scope";
+import { getFactoryNumberCoreMenuOnly } from "../lib/inventory-sync";
 
 // Fridge availability data for the fulfilment pick list (Objective B: what
 // the bench can pack is driven by what is actually wrapped and in the
@@ -74,14 +76,27 @@ router.get("/fridge-availability", async (_req, res) => {
       wonky_variant_id: string | null;
       eight_pack_variant_id: string | null;
       shopify_product_title: string | null;
-      in_scope: boolean;
+      is_core_menu: boolean;
+      is_fridge_product: boolean;
+      category: string | null;
+      shopify_push_on_wrap: boolean | null;
+      in_scope?: boolean;
     }>(sql`
       SELECT m.recipe_id, r.name AS recipe_name, m.shopify_variant_id, m.wonky_variant_id, m.eight_pack_variant_id,
-             m.shopify_product_title,
-             (r.is_core_menu = TRUE OR r.is_fridge_product = TRUE) AS in_scope
+             m.shopify_product_title, r.is_core_menu, r.is_fridge_product, r.category, r.shopify_push_on_wrap
       FROM recipe_shopify_mappings m
       JOIN recipes r ON r.id = m.recipe_id
     `);
+    // In scope = what a despatch takes off the production fridge (one rule
+    // with inventory-sync, lib/fridge-gate-scope.ts). The rest is checked by
+    // Shopify's own stock, like F2F and fried chicken (#139897, 20 Nov 2026).
+    const coreMenuOnly = await getFactoryNumberCoreMenuOnly();
+    for (const row of variantRes.rows) {
+      row.in_scope = fridgeGateChecks({
+        isCoreMenu: row.is_core_menu === true, isFridgeProduct: row.is_fridge_product === true,
+        category: row.category, shopifyPushOnWrap: row.shopify_push_on_wrap,
+      }, coreMenuOnly);
+    }
 
     const specialRes = await db.execute<{ id: number }>(sql`
       SELECT id FROM recipes WHERE is_current_special = TRUE LIMIT 1
@@ -104,6 +119,8 @@ router.get("/fridge-availability", async (_req, res) => {
         AND se.pack_size = 8
         AND (r.is_core_menu = TRUE OR r.is_fridge_product = TRUE)
     `);
+    // (Bag levels for out-of-scope recipes are never read: their variants
+    // aren't in `variants` or `bagRecipeByTitle`.)
 
     // variantId -> { recipeId, packsPerUnit, pool }
     //
@@ -136,7 +153,7 @@ router.get("/fridge-availability", async (_req, res) => {
     // eight_pack_variant_id was never populated, and the bag is a variant of
     // the same Shopify product as the mapped 2-pack. Same convention as
     // wholesale-bags.ts — mapped by title, never guessed.
-    const bagTitles = bagRecipeByTitle(variantRes.rows);
+    const bagTitles = bagRecipeByTitle(variantRes.rows.map(r => ({ ...r, in_scope: r.in_scope === true })));
 
     res.json({
       stock: stockRes.rows.map(r => ({

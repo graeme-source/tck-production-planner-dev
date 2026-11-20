@@ -18,12 +18,14 @@ describe("trackedVariantMap", () => {
     expect(map).toEqual({ "101": 29 });
   });
 
-  it("skips archived and draft products — they can't be ordered", () => {
+  it("REGRESSION #139897: keeps draft and archived listings — an order already placed on one was stock-checked when it was taken", () => {
+    // Open Fire BBQ Chicken was sold on 17 Nov, then the listing went back
+    // to draft; leaving it out made its line read "nothing checked this".
     const map = trackedVariantMap([
       product({ status: "archived", variants: [variant(201, "shopify", 5)] }),
-      product({ status: "draft", variants: [variant(202, "shopify", 5)] }),
+      product({ status: "draft", variants: [variant(202, "shopify", 5), variant(203, null, 5)] }),
     ]);
-    expect(map).toEqual({});
+    expect(map).toEqual({ "201": 5, "202": 5 });
   });
 
   it("keeps a tracked variant even at zero or negative quantity — tracked is the signal, not the level", () => {
