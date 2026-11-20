@@ -100,3 +100,4 @@ export * from "./stock-check-unit";
 export * from "./recipe-pack-size";
 export * from "./cost-per-kg";
 export * from "./batch-multiplier";
+export * from "./bag-boxes";

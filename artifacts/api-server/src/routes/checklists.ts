@@ -1,5 +1,5 @@
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { cookedToRaw } from "@workspace/units";
+import { cookedToRaw, bagsAsBoxes } from "@workspace/units";
 import {
   db,
   checklistTemplatesTable,
@@ -1011,7 +1011,7 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       .where(eq(productionPlanItemsTable.planId, targetPlanId));
 
     let totalQty = 0;
-    let mozzMeta: { name: string; unit: string } | null = null;
+    let mozzMeta: { name: string; unit: string; packWeight: string | null; packName: string | null } | null = null;
 
     for (const pi of planItems) {
       const bt = Number(pi.batchesTarget) || 0;
@@ -1022,6 +1022,8 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
           quantity: recipeIngredientsTable.quantity,
           ingredientName: ingredientsTable.name,
           unit: ingredientsTable.unit,
+          packWeight: ingredientsTable.packWeight,
+          packName: ingredientsTable.packName,
         })
         .from(recipeIngredientsTable)
         .leftJoin(ingredientsTable, eq(recipeIngredientsTable.ingredientId, ingredientsTable.id))
@@ -1032,14 +1034,17 @@ router.get("/dynamic-data/:planId/:type", async (req: Request, res: Response) =>
       for (const r of rows) {
         if (!(r.ingredientName ?? "").toLowerCase().includes("mozzarella")) continue;
         totalQty += (Number(r.quantity) || 0) * ppb * bt;
-        if (!mozzMeta) mozzMeta = { name: r.ingredientName ?? "Mozzarella", unit: r.unit ?? "g" };
+        if (!mozzMeta) mozzMeta = { name: r.ingredientName ?? "Mozzarella", unit: r.unit ?? "g", packWeight: r.packWeight ?? null, packName: r.packName ?? null };
       }
     }
 
     if (totalQty === 0 || !mozzMeta) { res.json([]); return; }
     const bagWeight = mozzMeta.unit === "kg" ? 2 : 2000;
     const bags = Math.ceil(totalQty / bagWeight);
-    res.json([{ name: mozzMeta.name, unit: mozzMeta.unit, totalQty, bagWeight, bags, planDate: targetPlanDate }]);
+    // #407: the same load in boxes ("4 boxes + 3 bags"), from the ingredient's
+    // own pack weight + pack name. Null when no usable box size is set.
+    const boxLabel = bagsAsBoxes(bags, bagWeight, mozzMeta.packWeight, mozzMeta.unit, mozzMeta.packName)?.label ?? null;
+    res.json([{ name: mozzMeta.name, unit: mozzMeta.unit, totalQty, bagWeight, bags, boxLabel, planDate: targetPlanDate }]);
     return;
   }
 
