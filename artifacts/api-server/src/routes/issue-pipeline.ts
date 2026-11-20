@@ -315,6 +315,13 @@ async function decide(req: Request, res: Response, action: "approve" | "reject" 
       return { status: 200 as const, triage: row };
     });
     if (out.status !== 200) { const { status, ...body } = out; res.status(status).json(body); return; }
+    // "Send and fix it this way" is a go-ahead to build NOW (Graeme, 20 Nov
+    // 2026: "I don't want it to wait for the hour"): it presses Build now too,
+    // so the reviewer's next 10-minute check builds it instead of the hourly run.
+    if (action === "reply" && (req.body as { fixNow?: boolean }).fixNow === true) {
+      const { next, changed } = pressBuildNow(await readBuildRequest(), new Date().toISOString(), await sessionUserName(req.session.userId!));
+      if (changed) await writeBuildRequest(next);
+    }
     res.json({ triage: out.triage });
   } catch (err) {
     console.error(`[issue-pipeline] ${action} failed:`, err instanceof Error ? err.message : String(err));
