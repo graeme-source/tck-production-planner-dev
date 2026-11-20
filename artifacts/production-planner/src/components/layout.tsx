@@ -107,8 +107,6 @@ export const navItems: NavItem[] = [
   { name: WISH_LIST_NAME, href: WISH_LIST_PATH, icon: Gift },
   { name: "Training", href: "/training", icon: GraduationCap },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
-  // Who dismissed a warning, and when (20 Nov 2026) — managers.
-  { name: "Dismissed warnings", href: "/warning-log", icon: BellOff },
 ];
 
 export const inventorySubItems: NavItem[] = [
@@ -158,11 +156,15 @@ export const bottomNavItems: NavItem[] = [
 // page (Graeme, 17 Nov 2026 — it replaced the separate Team efficiency,
 // Production KPIs and Defects & waste entries, whose addresses redirect
 // there). Anyone may still report a defect or waste from quick actions.
-const ANALYTICS_PATHS = ["/analytics/kpis", "/reports", "/analytics/efficiency", "/analytics/production-kpis", "/analytics/defects", "/test-requests"];
+const ANALYTICS_PATHS = ["/analytics/kpis", "/reports", "/analytics/efficiency", "/analytics/production-kpis", "/analytics/defects", "/test-requests", "/warning-log"];
 export const analyticsSubItems: NavItem[] = [
   { name: "KPIs", href: "/analytics/kpis", icon: Target },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
   { name: "Test requests", href: "/test-requests", icon: ClipboardCheck },
+  // Who dismissed a warning, and when (20 Nov 2026) — managers. Wanted but
+  // rarely looked at, so it sits at the end of Analytics, not top level
+  // (Graeme, 20 Nov 2026).
+  { name: "Dismissed warnings", href: "/warning-log", icon: BellOff },
 ];
 
 const PRODUCT_PATHS = ["/recipes", "/sub-recipes", "/inventory", "/labels", "/surveys"];
