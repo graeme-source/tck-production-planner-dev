@@ -74,7 +74,7 @@ export function FixQueueLiveChat({ issueId, firstName, reopens, saving, onCancel
   return (
     <div className="rounded-2xl border-2 border-primary/40 bg-secondary/30 p-3 space-y-3">
       <div className="flex items-center gap-2">
-        <p className="font-bold flex-1 flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" /> Ask Claude</p>
+        <p className="font-bold flex-1 flex items-center gap-2"><Sparkles className="w-4 h-4 text-primary" /> Chat with Claude</p>
         <button onClick={onCancel} aria-label="Close" className="p-2 rounded-lg hover:bg-secondary"><X className="w-5 h-5" /></button>
       </div>
 

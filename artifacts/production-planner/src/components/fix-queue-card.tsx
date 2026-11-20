@@ -120,7 +120,7 @@ function ComposerPanel({ mode, firstName, startText, canClose, reopens, saving, 
       </div>
     );
   }
-  const title = mode === "reporter" ? (startText ? `Proposed reply to ${firstName}` : `Reply to ${firstName}`) : mode === "claude" ? "Ask Claude" : "Reject this recommendation";
+  const title = mode === "reporter" ? (startText ? `Proposed reply to ${firstName}` : `Reply to ${firstName}`) : mode === "claude" ? "Chat with Claude" : "Reject this recommendation";
   const hint = mode === "reporter"
     ? `It pops up for ${firstName} with this conversation, and they can reply.`
     : mode === "claude"
@@ -211,7 +211,7 @@ export function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAc
   if (actions.canDismiss) buttons.push({ step: "dismiss_done", label: "Dismiss — already done", icon: <CheckCircle2 className="w-4 h-4" />, onClick: onDismiss });
   if (actions.canApprove) buttons.push({ step: "approve", label: status === "rejected" ? "Approve after all" : "Approve this fix", icon: <Check className="w-4 h-4" />, onClick: () => onDecide("approve") });
   if (hasReporter) buttons.push({ step: "reply_reporter", label: claudeDraft ? "Read proposed reply" : `Reply to ${firstName}`, icon: <MessageSquareText className="w-4 h-4" />, onClick: () => open("reporter") });
-  buttons.push({ step: "reply_claude", label: "Ask Claude", icon: <MessageCircleQuestion className="w-4 h-4" />, onClick: () => open("claude") });
+  buttons.push({ step: "reply_claude", label: "Chat with Claude", icon: <MessageCircleQuestion className="w-4 h-4" />, onClick: () => open("claude") });
   // The recommended one goes first and is the only one in colour.
   const ordered = [...buttons].sort((a, b) => Number(b.step === step) - Number(a.step === step));
 
