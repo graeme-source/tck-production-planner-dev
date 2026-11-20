@@ -187,6 +187,7 @@ import numbersBenchmarksRouter from "./numbers-benchmarks";
 import productionKpisRouter from "./production-kpis";
 import dispatchCutoffRouter from "./dispatch-cutoff";
 import warningLogRouter from "./warning-log";
+import fixQueueChatRouter from "./fix-queue-chat";
 import googleAdsIngestRouter from "./google-ads-ingest";
 import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
@@ -540,6 +541,8 @@ router.use("/production-kpis", productionKpisRouter);
 router.use("/dispatch-cutoff", dispatchCutoffRouter);
 // Who dismissed an operational warning, and when (20 Nov 2026).
 router.use("/warning-log", warningLogRouter);
+// Live chat with Claude on a Fix queue card — founder only (20 Nov 2026).
+router.use("/fix-queue-chat", fixQueueChatRouter);
 // The Google Ads script link — make / turn off its key, see what it last
 // sent. Founder only (requireFounder inside).
 router.use("/google-ads-link", googleAdsLinkRouter);

@@ -14,6 +14,7 @@ import {
 import { MarkdownBlock } from "@/components/lesson-media";
 import { FixQueueThread, useMarkSeen } from "@/components/fix-queue-conversation";
 import { DictateButton } from "@/components/dictate-button";
+import { FixQueueLiveChat } from "@/components/fix-queue-live-chat";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuSub, DropdownMenuSubContent, DropdownMenuSubTrigger, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -335,7 +336,18 @@ export function FixCard({ item, onDecide, onMessage, onDismiss, onSnooze, onNoAc
       </div>
 
       {composer && (
-        <ComposerPanel
+        composer === "claude" && t.andonIssueId ? (
+          // Ask Claude is a live chat now (Graeme, 2026-11-20); its agreed
+          // instruction goes out exactly as the old box sent it.
+          <FixQueueLiveChat
+            issueId={t.andonIssueId}
+            firstName={firstName}
+            reopens={actions.replyReopens || !!t.noActionAt}
+            saving={saving}
+            onCancel={() => setComposer(null)}
+            onSend={(text, fixNow) => { setComposer(null); onDecide("reply", text, fixNow); }}
+          />
+        ) : <ComposerPanel
           key={composer}
           mode={composer}
           firstName={firstName}
