@@ -89,6 +89,16 @@ export interface CutoffAlert {
   /** Dealt with, by Check again or by dismissing it, for the rest of the day. */
   closed: boolean;
   checkedAt: string;
+  /** Who pressed Dismiss, and when (20 Nov 2026 — #140013). */
+  dismissedBy?: string | null;
+  dismissedAt?: string | null;
+}
+
+/** After someone dismissed today's alert: who, when, and which orders it
+ *  still named — shown as a quiet line so it isn't silently gone. */
+export function dismissedToday(alert: CutoffAlert | null, today: string): { by: string | null; at: string; orders: MissingOrder[] } | null {
+  if (!alert || alert.date !== today || !alert.closed || !alert.dismissedAt) return null;
+  return { by: alert.dismissedBy ?? null, at: alert.dismissedAt, orders: alert.orders };
 }
 
 /** What the packing and wrapping screens should show today. */

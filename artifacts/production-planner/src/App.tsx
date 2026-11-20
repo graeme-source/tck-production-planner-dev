@@ -84,6 +84,7 @@ import DocumentViewer from "@/pages/document-viewer";
 import StockControl from "@/pages/stock-control";
 import StockAccuracy from "@/pages/stock-accuracy";
 import Traceability from "@/pages/traceability";
+import WarningLog from "@/pages/warning-log";
 import Surveys from "@/pages/surveys";
 import TrainingMatrix from "@/pages/training-matrix";
 import { stationTrainingPath } from "@/lib/training-sections";
@@ -288,6 +289,7 @@ function Router() {
               {/* Expected vs counted stock — managers only (API enforces it too). */}
               <Route path="/stock-accuracy">{() => <ProtectedRoute component={StockAccuracy} pageKey="/stock-accuracy" />}</Route>
               <Route path="/traceability">{() => <ProtectedRoute component={Traceability} pageKey="/traceability" />}</Route>
+              <Route path="/warning-log">{() => <ProtectedRoute component={WarningLog} pageKey="/warning-log" />}</Route>
               {/* Product Hub retired 12 Oct 2026 — its decks, nutrition and
                   data health now live in Product Labels (?tab=health kept). */}
               <Route path="/product-hub">{() => <RedirectKeepingQuery to="/labels" />}</Route>

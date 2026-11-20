@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alertToShow, hasGivenUp, isCheckDay, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
+import { alertToShow, dismissedToday, hasGivenUp, isCheckDay, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
 
 const today = "2026-11-05";
 const order = (id: number, tags: string, at = "2026-11-05T13:54:00Z") => ({ id, name: `#${id}`, tags, created_at: at, customer: { first_name: "Dennis", last_name: "Hunter" } });
@@ -101,5 +101,19 @@ describe("zapietDeliveryDate", () => {
     expect(zapietDeliveryDate([{ name: "Delivery-Date", value: "2026/11/20" }])).toBe("2026-11-20");
     expect(zapietDeliveryDate([{ name: "Delivery-Date", value: "soon" }])).toBeNull();
     expect(zapietDeliveryDate(null)).toBeNull();
+  });
+});
+
+describe("dismissedToday (who dismissed the 2:16 alert, 20 Nov 2026)", () => {
+  const order = { id: 1, name: "#140013", customer: "P G", placedAt: "2026-11-18T13:58:53Z", reason: "Not tagged for dispatch" };
+  const base = { date: "2026-11-18", orders: [order], failed: false, checkedAt: "2026-11-18T14:16:00Z" };
+  it("names who dismissed it, when, and what it still named", () => {
+    expect(dismissedToday({ ...base, closed: true, dismissedBy: "Kerri", dismissedAt: "2026-11-18T14:22:00Z" }, "2026-11-18"))
+      .toEqual({ by: "Kerri", at: "2026-11-18T14:22:00Z", orders: [order] });
+  });
+  it("says nothing while it's open, when Check again cleared it, or on another day", () => {
+    expect(dismissedToday({ ...base, closed: false }, "2026-11-18")).toBeNull();
+    expect(dismissedToday({ ...base, closed: true }, "2026-11-18")).toBeNull();
+    expect(dismissedToday({ ...base, closed: true, dismissedBy: "Kerri", dismissedAt: "2026-11-18T14:22:00Z" }, "2026-11-19")).toBeNull();
   });
 });

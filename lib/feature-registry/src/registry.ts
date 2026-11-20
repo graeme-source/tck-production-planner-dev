@@ -74,6 +74,7 @@ export const FEATURE_REGISTRY: FeatureDef[] = [
   // shared "Admin" login included) doesn't switch it on: Graeme hands
   // "Photograph opened packs" to the testers, and the Traceability page's
   // "Everyone" switch turns it on for the whole team without a deploy.
+  { key: "page.warning_log", name: "Dismissed warnings", description: "Who dismissed, put off or carried on past a warning (the 2:16 order check, kanban Not today, supplier orders, completion failures, stock-check pop-ups), and when.", area: "Pages", kind: "page", page: "/warning-log", minRole: "manager" },
   { key: "page.traceability", name: "Traceability", description: "Look up a pack code to see the supplier batches in it, or a supplier batch to see the pack codes it went into, and choose which ingredients are traced.", area: "Pages", kind: "page", page: "/traceability", minRole: "manager" },
   // Managers first, then whoever it's handed to (Graeme, 19 Nov 2026); the
   // Traceability page's Everyone switch opens it to all.

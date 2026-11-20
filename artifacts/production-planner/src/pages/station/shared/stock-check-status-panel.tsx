@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { AlarmClock, CheckCircle2, Package, X as XIcon } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
+import { logWarning } from "@/lib/warning-log";
 import { usePrefersReducedMotion } from "@/hooks/use-prefers-reduced-motion";
 import { StockCheckDialog, StockCheckTrigger, useRecordedStockLabel } from "./stock-check-entry";
 import { useTimedReminders } from "./timed-reminders";
@@ -334,6 +335,9 @@ export function StockCheckDuePopupHost({ checkDate, checks, suppressed = false }
   const [dismissedToday, setDismissedToday] = useState(() => readDismissed(dismissKey));
   useEffect(() => { setDismissedToday(readDismissed(dismissKey)); }, [dismissKey]);
   const dismissPopup = () => {
+    // Who carried on past it, and what was still uncounted (20 Nov 2026).
+    const left = checks.outstanding.map(o => (o as { name?: string }).name).filter(Boolean);
+    logWarning("stock_check_popup", "carry_on", `${checks.outstanding.length} still to count${left.length ? `: ${left.join(", ")}` : ""}`);
     setDismissedToday(true);
     try { localStorage.setItem(dismissKey, "1"); } catch { /* storage unavailable: dismissed for this session only */ }
   };

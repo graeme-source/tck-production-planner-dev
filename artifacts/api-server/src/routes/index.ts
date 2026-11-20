@@ -186,6 +186,7 @@ import adEfficiencyRouter from "./ad-efficiency";
 import numbersBenchmarksRouter from "./numbers-benchmarks";
 import productionKpisRouter from "./production-kpis";
 import dispatchCutoffRouter from "./dispatch-cutoff";
+import warningLogRouter from "./warning-log";
 import googleAdsIngestRouter from "./google-ads-ingest";
 import googleAdsLinkRouter from "./google-ads-link";
 import surveysRouter from "./surveys";
@@ -537,6 +538,8 @@ router.use("/numbers-benchmarks", numbersBenchmarksRouter);
 router.use("/production-kpis", productionKpisRouter);
 // The 2:16 order check alert, on the packing and wrapping screens.
 router.use("/dispatch-cutoff", dispatchCutoffRouter);
+// Who dismissed an operational warning, and when (20 Nov 2026).
+router.use("/warning-log", warningLogRouter);
 // The Google Ads script link — make / turn off its key, see what it last
 // sent. Founder only (requireFounder inside).
 router.use("/google-ads-link", googleAdsLinkRouter);

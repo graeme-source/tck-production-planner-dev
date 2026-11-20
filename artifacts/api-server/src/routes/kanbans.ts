@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { recordKanbanPullCount } from "../lib/kanban-pull-count";
+import { recordWarningAction } from "../lib/warning-log";
 import { db, kanbanItemsTable, ingredientsTable, suppliersTable, usersTable, recipesTable, subRecipesTable } from "@workspace/db";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { z } from "zod";
@@ -634,6 +635,10 @@ router.post("/snooze", validate(SnoozeBody), async (req, res) => {
   const ids = [...latest.values()].filter(r => canSnoozeKanban(r, today)).map(r => r.id);
   if (ids.length > 0) {
     await db.update(kanbanItemsTable).set({ orderDayTarget: until }).where(inArray(kanbanItemsTable.id, ids));
+    // Who put it off, and when (20 Nov 2026).
+    const snoozedIngredients = [...latest.values()].filter(r => ids.includes(r.id)).map(r => r.ingredientId!).filter(Boolean);
+    const names = await db.select({ name: ingredientsTable.name }).from(ingredientsTable).where(inArray(ingredientsTable.id, snoozedIngredients));
+    await recordWarningAction({ warning: "kanban_not_today", action: "put_off", userId: req.session.userId, detail: `${names.map(n => n.name).join(", ")} — back ${until}` });
   }
   res.json({ snoozed: ids.length, until });
 });

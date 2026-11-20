@@ -27,7 +27,7 @@ import { useFeatureAccess } from "@/hooks/use-feature-access";
 import { useFounderArea } from "@/hooks/use-founder-area";
 import { FEATURE_REGISTRY, isFounderEmail } from "@workspace/feature-registry";
 import { usePageHeaderValue } from "@/contexts/page-header-context";
-import { 
+import { BellOff, 
   LayoutDashboard,
   Briefcase,
   ChefHat,
@@ -107,6 +107,8 @@ export const navItems: NavItem[] = [
   { name: WISH_LIST_NAME, href: WISH_LIST_PATH, icon: Gift },
   { name: "Training", href: "/training", icon: GraduationCap },
   { name: "Analytics", href: "/reports", icon: BarChart2 },
+  // Who dismissed a warning, and when (20 Nov 2026) — managers.
+  { name: "Dismissed warnings", href: "/warning-log", icon: BellOff },
 ];
 
 export const inventorySubItems: NavItem[] = [

@@ -14,6 +14,8 @@ const KEY = ["dispatch-cutoff"] as const;
 
 interface MissingOrder { id: number; name: string; customer: string | null; placedAt: string; reason: string }
 interface CutoffAlert { orders: MissingOrder[]; failed: boolean }
+/** Today's alert after someone dismissed it (20 Nov 2026): who and when. */
+interface Dismissed { by: string | null; at: string; orders: MissingOrder[] }
 
 const placedTime = (iso: string) => new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/London" });
 
@@ -26,7 +28,7 @@ async function post(path: string): Promise<{ alert?: CutoffAlert | null }> {
 
 export function DispatchCutoffBanner() {
   const qc = useQueryClient();
-  const { data } = useQuery<{ alert: CutoffAlert | null }>({
+  const { data } = useQuery<{ alert: CutoffAlert | null; dismissed?: Dismissed | null }>({
     queryKey: KEY,
     queryFn: async () => {
       const res = await fetch(`${BASE}/api/dispatch-cutoff`, { credentials: "include" });
@@ -39,7 +41,7 @@ export function DispatchCutoffBanner() {
   const checkAgain = useMutation({
     mutationFn: () => post("check-again"),
     onSuccess: ({ alert }) => {
-      qc.setQueryData(KEY, { alert: alert ?? null });
+      qc.setQueryData(KEY, { alert: alert ?? null, dismissed: null });
       toast(alert
         ? { title: `Still ${alert.orders.length} to sort`, description: "The list has been updated." }
         : { title: "All clear", description: "Every order is on tomorrow's run." });
@@ -48,11 +50,22 @@ export function DispatchCutoffBanner() {
   });
   const dismiss = useMutation({
     mutationFn: () => post("dismiss"),
-    onSuccess: () => qc.setQueryData(KEY, { alert: null }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
     onError: fail,
   });
 
   const alert = data?.alert;
+  // Dismissed today: a quiet line instead of nothing, so it's never silently
+  // gone — who dismissed it, when, and what it still named.
+  if (!alert && data?.dismissed) {
+    const d = data.dismissed;
+    return (
+      <p className="mb-3 rounded-xl bg-secondary/60 px-4 py-2 text-sm text-muted-foreground">
+        2:16 order check dismissed by <b className="text-foreground">{d.by ?? "someone"}</b> at {placedTime(d.at)}
+        {d.orders.length > 0 ? <> · it named {d.orders.map(o => o.name).join(", ")}</> : null}
+      </p>
+    );
+  }
   if (!alert) return null;
   const count = alert.orders.length;
   const busy = checkAgain.isPending || dismiss.isPending;

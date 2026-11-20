@@ -8,6 +8,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { OrderTotalPill } from "@/components/order-total-pill";
 import { cn } from "@/lib/utils";
+import { logWarning } from "@/lib/warning-log";
 import { useAuth } from "@/contexts/auth-context";
 import { AlertTriangle,
   ShoppingCart,
@@ -1908,6 +1909,12 @@ export default function Orders() {
       });
       return;
     }
+    // Who dismissed a supplier's order, and when (20 Nov 2026).
+    {
+      const sup = suppliers.find(x => x.supplier.id === supplierId)?.supplier.name ?? `Supplier ${supplierId}`;
+      const n = (editableLines[supplierId] ?? []).length;
+      logWarning("supplier_order_dismissed", "dismiss", `${sup}: ${n} line${n === 1 ? "" : "s"}${cardKanbans.length ? ` · kanbans ${kanbans === "not-today" ? "put off until tomorrow" : "put back"}` : ""}`);
+    }
     if (kanbans === "not-today") void snoozeKanbans(cardKanbans);
     else for (const ingredientId of cardKanbans) {
       fetch(`${BASE}/api/kanbans/unqueue`, {
@@ -1931,7 +1938,7 @@ export default function Orders() {
       next.delete(supplierId);
       return next;
     });
-  }, [persistDismissed, updateSeparateOrderSuppliers, editableLines]);
+  }, [persistDismissed, updateSeparateOrderSuppliers, editableLines, suppliers]);
   const restoreSupplier = useCallback((supplierId: number) => {
     setDismissedSupplierIds(prev => {
       if (!prev.has(supplierId)) return prev;

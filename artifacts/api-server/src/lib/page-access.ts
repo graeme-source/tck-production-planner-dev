@@ -24,6 +24,7 @@ const DEFAULT_MIN_ROLE: Record<string, Role> = {
   "/suppliers": "manager",
   "/stock-accuracy": "manager",
   "/traceability": "manager",
+  "/warning-log": "manager",
 };
 
 export interface PageMinRoles {

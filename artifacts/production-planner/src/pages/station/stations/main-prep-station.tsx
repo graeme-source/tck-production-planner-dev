@@ -14,6 +14,7 @@ import { prepRowSopAttachTargets } from "@/lib/prep-row-sop-attach";
 import { format, parseISO } from "date-fns";
 import { useSearch } from "wouter";
 import { cn } from "@/lib/utils";
+import { logWarning } from "@/lib/warning-log";
 import { toast } from "@/hooks/use-toast";
 import { useGuardedAction, guardedFetch } from "@/hooks/use-guarded-action";
 import { useAuth } from "@/contexts/auth-context";
@@ -840,6 +841,7 @@ export function MainPrepStation({ plan, isOnBreak = false }: { plan: ProductionP
           onSaved={native => onStockSaved(activeStockCheckModalIng.ingredientId, native)}
           onSkip={() => {
             const id = activeStockCheckModalIng.ingredientId;
+            logWarning("forced_stock_check", "skip", activeStockCheckModalIng.ingredientName);
             setDismissedStockCheckIds(prev => {
               const next = new Set(prev);
               next.add(id);

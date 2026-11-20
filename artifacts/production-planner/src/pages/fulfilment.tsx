@@ -4,6 +4,7 @@ import { DispatchCutoffBanner } from "@/components/dispatch-cutoff-banner";
 import { CancelledOrderLabelsBanner } from "@/components/cancelled-order-labels-banner";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
+import { logWarning } from "@/lib/warning-log";
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { IcePackBadge, IcePackBanner } from "@/components/ice-pack-callout";
@@ -4579,7 +4580,12 @@ export default function Fulfilment() {
         <FailuresModal
           adminBase={configStatus?.shopifyAdminOrderBase}
           failures={completionFailures}
-          onDismiss={(orderId) => setCompletionFailures(prev => prev.filter(f => f.orderId !== orderId))}
+          onDismiss={(orderId) => {
+            // Who cleared it, and when (20 Nov 2026).
+            const f = completionFailures.find(x => x.orderId === orderId);
+            if (f) logWarning("completion_failure", "dismiss", `${f.orderName} (${f.customerName}): ${f.kind === "decrement" ? "stock not taken off" : "not fulfilled in Shopify"} — ${f.error}`);
+            setCompletionFailures(prev => prev.filter(f => f.orderId !== orderId));
+          }}
           onClose={() => setShowFailuresModal(false)}
         />
       )}

@@ -9,7 +9,10 @@
  * any input.
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
-import { currentCutoffAlert, dismissCutoff, recheckCutoff } from "../lib/dispatch-cutoff";
+import { currentCutoffAlert, cutoffDismissedToday, dismissCutoff, recheckCutoff } from "../lib/dispatch-cutoff";
+import { recordWarningAction, userNameOf } from "../lib/warning-log";
+
+const named = (orders: Array<{ name: string; reason: string }>) => orders.map(o => `${o.name} (${o.reason})`).join(", ");
 
 const router: IRouter = Router();
 
@@ -20,25 +23,35 @@ router.use((req: Request, res: Response, next: NextFunction) => {
 
 router.get("/", async (_req: Request, res: Response) => {
   try {
-    res.json({ alert: await currentCutoffAlert() });
+    res.json({ alert: await currentCutoffAlert(), dismissed: await cutoffDismissedToday() });
   } catch (err) {
     console.error("[dispatch-cutoff] read failed:", err);
     res.status(500).json({ error: "Couldn't load the order check" });
   }
 });
 
-router.post("/check-again", async (_req: Request, res: Response) => {
+router.post("/check-again", async (req: Request, res: Response) => {
   try {
-    res.json({ alert: await recheckCutoff() });
+    const alert = await recheckCutoff();
+    await recordWarningAction({
+      warning: "dispatch_cutoff", action: "check_again", page: req.get("referer") ?? null, userId: req.session.userId,
+      detail: alert && alert.orders.length > 0 ? `Still named: ${named(alert.orders)}` : "All clear",
+    });
+    res.json({ alert });
   } catch (err) {
     console.error("[dispatch-cutoff] check again failed:", err);
     res.status(502).json({ error: "Couldn't reach Shopify. Try again in a moment." });
   }
 });
 
-router.post("/dismiss", async (_req: Request, res: Response) => {
+router.post("/dismiss", async (req: Request, res: Response) => {
   try {
-    await dismissCutoff();
+    // Who pressed it, kept on the alert and in the log (20 Nov 2026, #140013).
+    const closed = await dismissCutoff(await userNameOf(req.session.userId));
+    await recordWarningAction({
+      warning: "dispatch_cutoff", action: "dismiss", page: req.get("referer") ?? null, userId: req.session.userId,
+      detail: closed && closed.orders.length > 0 ? `It named: ${named(closed.orders)}` : closed?.failed ? "Shopify couldn't be read — check by hand" : null,
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error("[dispatch-cutoff] dismiss failed:", err);

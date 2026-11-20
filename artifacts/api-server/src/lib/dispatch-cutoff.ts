@@ -8,7 +8,7 @@ import { getRecentUnfulfilledOrders } from "../services/shopify";
 import { ensureFreshDisputes, loadOpenDisputes } from "./order-disputes-store";
 import { DISPUTE_ON_DEMAND_MIN_AGE_MS, isHeldForChargeback } from "./order-disputes";
 import { londonDateString, londonMinuteOfDay } from "./london-time";
-import { alertToShow, hasGivenUp, isCheckDay, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
+import { alertToShow, dismissedToday, hasGivenUp, isCheckDay, isCheckDue, ordersMissingCutoff, type CutoffAlert } from "./dispatch-cutoff-rules";
 
 const KEY = "dispatch_cutoff_alert";
 const TICK_MS = 60_000;
@@ -49,10 +49,19 @@ export async function recheckCutoff(): Promise<CutoffAlert | null> {
   return alertToShow(alert, today);
 }
 
-/** Someone has dealt with it: gone for the day, on every screen. */
-export async function dismissCutoff(): Promise<void> {
+/** Someone has dealt with it: gone for the day, on every screen — with who
+ *  and when kept on it (20 Nov 2026). Returns what it named, for the log. */
+export async function dismissCutoff(by: string | null): Promise<CutoffAlert | null> {
   const alert = await readAlert();
-  if (alert) await writeAlert({ ...alert, closed: true });
+  if (!alert) return null;
+  const closed = { ...alert, closed: true, dismissedBy: by, dismissedAt: new Date().toISOString() };
+  await writeAlert(closed);
+  return closed;
+}
+
+/** Today's dismissed alert, for the quiet "dismissed by" line. */
+export async function cutoffDismissedToday() {
+  return dismissedToday(await readAlert(), londonDateString());
 }
 
 async function tick(): Promise<void> {
