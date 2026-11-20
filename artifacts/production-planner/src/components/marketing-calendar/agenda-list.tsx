@@ -87,7 +87,6 @@ export function AgendaList({
   // below moves the app's main scroll area, not a box of our own.
   const box = useRef<HTMLDivElement>(null);
   const todayRef = useRef<HTMLDivElement>(null);
-  const scrolledOnce = useRef(false);
   // "Show earlier" adds rows above: keep what was on screen where it was.
   const anchor = useRef<{ key: string; offset: number } | null>(null);
 
@@ -98,12 +97,8 @@ export function AgendaList({
     pageScroller().scrollBy({ top: topInScroller(t) - 56, behavior: smooth ? "smooth" : "auto" });
   };
 
-  useLayoutEffect(() => {
-    if (!scrolledOnce.current && settled && !loading) {
-      scrolledOnce.current = true;
-      scrollToToday(false);
-    }
-  });
+  // No jump to today on load (Graeme, 20 Nov 2026: "I'd rather just see the
+  // stuff at the top"). The Today button still scrolls here.
   useEffect(() => { if (scrollToTodaySignal > 0) scrollToToday(true); }, [scrollToTodaySignal]);
 
   useLayoutEffect(() => {

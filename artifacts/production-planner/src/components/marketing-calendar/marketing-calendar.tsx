@@ -10,8 +10,8 @@
  *
  *   - LIST (default, remembered per device): weeks top to bottom, phases
  *     starting and ending in the flow with a coloured stripe on every day
- *     they cover, and ONE highlighted Today row the page opens scrolled
- *     to. No inner scroll box — the page scrolls (2026-10-21). See
+ *     they cover, and ONE highlighted Today row (the Today button scrolls
+ *     to it; the page opens at the top, 20 Nov 2026). No inner scroll box — the page scrolls (2026-10-21). See
  *     agenda-list.tsx.
  *   - MONTH: the month grid — phases as bars (drag to move / stretch), email
  *     chips with a status dot.
