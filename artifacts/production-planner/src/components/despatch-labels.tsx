@@ -50,7 +50,9 @@ export function useDespatchLabels(tag: string) {
 }
 
 export const PRIMARY_BTN = "h-12 px-5 rounded-xl bg-primary text-primary-foreground font-bold inline-flex items-center gap-2 hover:bg-primary/90 active:scale-[0.98] disabled:opacity-60";
-export const DONE_BTN = "h-12 px-5 rounded-xl bg-secondary text-muted-foreground font-bold inline-flex items-center gap-2 cursor-default";
+// Done: a green outline, not a solid button — solid green is kept for the
+// next thing to do (Graeme, 20 Nov 2026).
+export const DONE_BTN = "h-12 px-5 rounded-xl border-2 border-primary text-primary bg-card font-bold inline-flex items-center gap-2 cursor-default";
 export const SOME_BTN = "h-12 px-4 rounded-xl border-2 border-border text-sm font-semibold hover:bg-secondary inline-flex items-center gap-1";
 
 /** The print button (or what's stopping it) for one dessert report line. */

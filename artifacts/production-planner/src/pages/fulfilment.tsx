@@ -4667,13 +4667,15 @@ export default function Fulfilment() {
                 aria-pressed={wave === w.key}
                 className={cn(
                   "px-4 py-2.5 rounded-xl text-base font-bold transition-colors flex items-center gap-2 border-2",
+                  // Chosen = green outline; solid green is kept for the next
+                  // thing to do (Graeme, 20 Nov 2026).
                   wave === w.key
-                    ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                    ? "bg-primary/5 border-primary text-primary"
                     : "bg-card border-border text-foreground hover:border-primary/50",
                 )}
               >
                 {w.label}
-                <span className={cn("text-sm font-bold px-2 py-0.5 rounded-full tabular-nums", wave === w.key ? "bg-primary-foreground/20" : "bg-secondary")}>
+                <span className={cn("text-sm font-bold px-2 py-0.5 rounded-full tabular-nums", wave === w.key ? "bg-primary/15" : "bg-secondary")}>
                   {waveCounts[w.key]}
                 </span>
               </button>
@@ -4757,7 +4759,7 @@ export default function Fulfilment() {
                   className={cn(
                     "px-5 py-3 rounded-xl text-base font-bold transition-colors border-2",
                     boxFilter.size === 0
-                      ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                      ? "bg-primary/5 border-primary text-primary"
                       : "bg-card border-border text-foreground hover:border-primary/50"
                   )}
                 >
@@ -4782,7 +4784,7 @@ export default function Fulfilment() {
                       className={cn(
                         "px-5 py-3 rounded-xl text-base font-bold transition-colors flex items-center gap-2 border-2",
                         active
-                          ? "bg-primary border-primary text-primary-foreground shadow-sm"
+                          ? "bg-primary/5 border-primary text-primary"
                           : "bg-card border-border text-foreground hover:border-primary/50"
                       )}
                       title={`${tagged} of ${count} tagged for dispatch`}
@@ -4790,7 +4792,7 @@ export default function Fulfilment() {
                       {tab.label}
                       <span className={cn(
                         "text-sm font-bold px-2 py-0.5 rounded-full tabular-nums",
-                        active ? "bg-primary-foreground/20" : "bg-secondary"
+                        active ? "bg-primary/15" : "bg-secondary"
                       )}>{tagged}/{count}</span>
                     </button>
                   );
@@ -5184,7 +5186,12 @@ export default function Fulfilment() {
                         "flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-colors",
                         collectionOrder
                           ? "bg-amber-600 text-white hover:bg-amber-700"
-                          : "bg-primary text-primary-foreground hover:bg-primary/90"
+                          // Solid green only once picking is the next thing to
+                          // do — until the labels are printed it's an outline
+                          // (Graeme, 20 Nov 2026).
+                          : sequenceStep === "ready"
+                            ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                            : "border-2 border-primary text-primary bg-card hover:bg-primary/5"
                       )}
                     >
                       <Scan className="w-4 h-4" /> Start Picking
