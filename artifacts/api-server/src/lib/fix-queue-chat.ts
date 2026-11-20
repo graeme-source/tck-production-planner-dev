@@ -9,6 +9,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { asc, eq } from "drizzle-orm";
 import { db, andonCommentsTable, andonIssuesTable, issueTriageEventsTable, issueTriageTable, reportChatsTable } from "@workspace/db";
 import { getClaudeClient, CLAUDE_MODELS } from "./ai/claude";
+import { aiMaxTokens, responseText, toolUses, wasRefused } from "./ai/claude-calls";
 import { searchAppGuide } from "./ai/app-guide";
 import { JANE_DATA_GUIDE, JANE_DATA_TOOL_NAMES, type JaneAccess } from "./ai/jane-data-access";
 import { executeJaneDataTool, janeDataTools } from "./ai/jane-data-tools";
@@ -69,14 +70,17 @@ export async function fixQueueChat(issueId: number, history: ChatTurn[], access:
   const tools = summarise ? [] : [...janeDataTools(access), GUIDE_TOOL];
   for (let round = 0; round < 10; round++) {
     const response = await getClaudeClient().messages.create({
-      model: CLAUDE_MODELS.opus, max_tokens: 4000, system,
+      // Thinking counts against max_tokens on the 5.5 models: room for it on
+      // top of a 4,000-token answer.
+      model: CLAUDE_MODELS.opus, max_tokens: aiMaxTokens(4000, "medium"), system,
+      output_config: { effort: "medium" },
       ...(tools.length ? { tools, tool_choice: { type: "auto" as const } } : {}),
       messages,
     });
-    const uses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    if (wasRefused(response)) return { text: "I can't help with that one." };
+    const uses = toolUses(response);
     if (response.stop_reason !== "tool_use" || uses.length === 0) {
-      const text = response.content.filter((b): b is Anthropic.TextBlock => b.type === "text").map(b => b.text).join("\n").trim();
-      return { text: text || (String(response.stop_reason) === "refusal" ? "I can't help with that one." : "I couldn't find an answer to that — try asking it another way.") };
+      return { text: responseText(response) || "I couldn't find an answer to that — try asking it another way." };
     }
     messages.push({ role: "assistant", content: response.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
