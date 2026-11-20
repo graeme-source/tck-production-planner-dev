@@ -21,6 +21,9 @@ const LOOKS_AHEAD: Record<string, PlanTarget> = {
   dough_prep: "next-dough",
   prep: "next-prep",
   main_prep: "next-prep",
+  // Prep sub-stations work ahead exactly like prep (lib/station-training.ts).
+  prep_bases: "next-prep",
+  prep_meat: "next-prep",
 };
 
 export function planTargetForStation(stationKey: string): PlanTarget {

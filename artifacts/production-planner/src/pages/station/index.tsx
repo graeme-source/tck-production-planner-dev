@@ -24,6 +24,7 @@ import { FriedChickenStation } from "./stations/fried-chicken-station";
 import { STATION_VIEW_ROW_SLOT_ID, type StationType } from "./shared/constants";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { checklistSwitchTargets } from "./shared/checklist/switch-targets";
+import { useStationPlanIds } from "./shared/checklist/use-station-plan-ids";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -133,6 +134,9 @@ export default function StationPage() {
       ? (urlView as StationView)
       : checklistsEnabled ? defaults.view : "production",
   );
+
+  // Switch checklist opens each station on its own day (#406).
+  const stationPlanIds = useStationPlanIds(activeView === "checklist");
 
   // If feature gets toggled off while on checklist view, switch back
   if (!checklistsEnabled && activeView === "checklist") {
@@ -283,9 +287,11 @@ export default function StationPage() {
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="max-h-[70dvh] overflow-y-auto">
               <DropdownMenuLabel>Open another station's checklist</DropdownMenuLabel>
-              {checklistSwitchTargets(planId, stationType).map(t => (
-                <DropdownMenuItem key={t.key} className="py-3 text-base" onSelect={() => navigate(t.href)}>
+              {checklistSwitchTargets(planId, stationType, stationPlanIds).map(t => (
+                <DropdownMenuItem key={t.key} className="py-3 text-base" disabled={!t.href}
+                  onSelect={() => { if (t.href) navigate(t.href); }}>
                   {t.label}
+                  {!t.href && <span className="ml-auto pl-3 text-sm text-muted-foreground">{stationPlanIds ? "No plan" : "…"}</span>}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
