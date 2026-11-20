@@ -1445,6 +1445,7 @@ export async function calculatePlanData(planDate: string) {
     deficitBatches: r.deficitBatches,
     floorBatches: orderFloorBatches(r, planMargin),
     extraBatchesCap: r.recipeId != null ? dptCaps.get(r.recipeId)?.extraBatches ?? null : null,
+    holdPacks: r.recipeId != null ? dptCaps.get(r.recipeId)?.holdPacks ?? null : null,
   })), totalDailyBatches);
   const { totalDeficitBatches, remainingCapacity } = allocation;
   const suggestedByIdx = allocation.suggestedBatches;

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PLAN_MARGIN, batchesToCover, buildMarginWarnings, checkPlanMargin, describeMarginCheck,
-  marginPacksFor, marginWarningsSignature, minBatchesForOrders, parsePlanMarginSettings, solveTargetAllocation,
+  marginPacksFor, marginWarningsSignature, minBatchesForOrders, parsePlanMarginSettings, solveTargetAllocation, holdPacksBatches,
   type AllocationPoolRow,
 } from "./index";
 
@@ -207,5 +207,25 @@ describe("scheduled cap: orders + N extra batches (2026-10-26)", () => {
   });
   it("cap 0 = orders only", () => {
     expect(solveTargetAllocation(rows(0), 100).batches[0]).toBe(3);
+  });
+});
+
+describe("hold packs (Graeme, 20 Nov 2026: Philly — orders + exactly 5 packs)", () => {
+  it("makes the orders and leaves the packs held, in whole batches, and nothing more", () => {
+    // 5 packs a batch. 3 packs left after orders with no production: 2 more to
+    // reach 5 → 1 batch. Plenty of capacity and a big DPT weight change nothing.
+    const solved = solveTargetAllocation([
+      { weight: 40, ppb: 5, proj: 3, floorBatches: 0, holdPacks: 5 },
+      { weight: 60, ppb: 10, proj: 0, floorBatches: 0 },
+    ], 50);
+    expect(solved.batches[0]).toBe(1);
+    expect(solved.batches[0] + solved.batches[1]).toBe(50);
+  });
+  it("covers a shortfall first: 12 short of orders, holding 5 → 17 packs → 4 batches", () => {
+    expect(holdPacksBatches(-12, 5, 5)).toBe(4);
+  });
+  it("makes none when the fridge already holds enough after orders", () => {
+    expect(holdPacksBatches(9, 5, 5)).toBe(0);
+    expect(holdPacksBatches(5, 5, 5)).toBe(0);
   });
 });

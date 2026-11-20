@@ -16,7 +16,14 @@ const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 interface Schedule {
   id: number; recipeId: number; recipeName: string; startsOn: string; endsOn: string | null;
-  extraBatches: number; reason: string | null; createdBy: string | null; endedAt: string | null; endedBy: string | null;
+  extraBatches: number; holdPacks?: number | null; reason: string | null; createdBy: string | null; endedAt: string | null; endedBy: string | null;
+}
+
+/** "Orders + up to 2 batches a day" or "Orders + hold 5 packs". */
+function ruleText(s: { extraBatches: number; holdPacks?: number | null }): string {
+  return s.holdPacks != null
+    ? `Orders + hold ${s.holdPacks} pack${s.holdPacks === 1 ? "" : "s"}`
+    : `Orders + ${s.extraBatches} batch${s.extraBatches === 1 ? "" : "es"} a day`;
 }
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
@@ -37,6 +44,10 @@ export function DptSchedulesSection({ open }: { open: boolean }) {
   const [startsOn, setStartsOn] = useState("");
   const [endsOn, setEndsOn] = useState("");
   const [extra, setExtra] = useState(2);
+  // Packs (Graeme, 20 Nov 2026): make the orders and hold exactly this many
+  // packs — for a recipe off the one-time menu but still the Club Special.
+  const [kind, setKind] = useState<"batches" | "packs">("batches");
+  const [hold, setHold] = useState(5);
   const [reason, setReason] = useState("Leaving the one-time menu");
 
   const refresh = () => {
@@ -45,7 +56,7 @@ export function DptSchedulesSection({ open }: { open: boolean }) {
     void qc.invalidateQueries({ predicate: q => String(q.queryKey[0] ?? "").includes("calculate") });
   };
   const add = useMutation({
-    mutationFn: () => call("", { method: "POST", body: JSON.stringify({ recipeId, startsOn, endsOn: endsOn || null, extraBatches: extra, reason: reason.trim() || null }) }),
+    mutationFn: () => call("", { method: "POST", body: JSON.stringify({ recipeId, startsOn, endsOn: endsOn || null, extraBatches: kind === "batches" ? extra : 0, holdPacks: kind === "packs" ? hold : null, reason: reason.trim() || null }) }),
     onSuccess: () => { refresh(); setAdding(false); setRecipeId(""); setStartsOn(""); setEndsOn(""); toast({ title: "Scheduled — Create Plan follows it for plans from that date" }); },
     onError: (e: Error) => toast({ title: "Didn't save", description: e.message, variant: "destructive" }),
   });
@@ -78,7 +89,7 @@ export function DptSchedulesSection({ open }: { open: boolean }) {
         )}
       </div>
       <p className="text-sm text-muted-foreground">
-        From the start date, plans make the recipe's real orders (e.g. subscription renewals) plus at most the extra batches a day — the rest of the day goes to the other recipes.
+        From the start date, plans make the recipe's real orders (e.g. subscription renewals) plus either at most the extra batches a day, or exactly enough to hold a number of packs in the fridge — the rest of the day goes to the other recipes.
       </p>
 
       {adding && (
@@ -98,10 +109,30 @@ export function DptSchedulesSection({ open }: { open: boolean }) {
             <span>Until (optional)</span>
             <input type="date" value={endsOn} min={startsOn || undefined} onChange={e => setEndsOn(e.target.value)} className="w-full h-11 px-3 rounded-xl border-2 border-border bg-card" />
           </label>
-          <label className="text-sm font-semibold space-y-1">
-            <span>Extra batches a day on top of orders</span>
-            <input type="number" min={0} max={50} value={extra} onChange={e => setExtra(Math.max(0, Math.min(50, Number(e.target.value) || 0)))} className="w-full h-11 px-3 rounded-xl border-2 border-border bg-card" />
-          </label>
+          <div className="text-sm font-semibold space-y-1 sm:col-span-2">
+            <span>On top of orders</span>
+            <div className="flex flex-wrap gap-2">
+              <button type="button" onClick={() => setKind("batches")}
+                className={cn("h-11 px-4 rounded-xl border-2 font-semibold", kind === "batches" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card")}>
+                Extra batches a day
+              </button>
+              <button type="button" onClick={() => setKind("packs")}
+                className={cn("h-11 px-4 rounded-xl border-2 font-semibold", kind === "packs" ? "border-primary bg-primary text-primary-foreground" : "border-border bg-card")}>
+                Packs to hold
+              </button>
+            </div>
+          </div>
+          {kind === "batches" ? (
+            <label className="text-sm font-semibold space-y-1">
+              <span>Extra batches a day on top of orders</span>
+              <input type="number" min={0} max={50} value={extra} onChange={e => setExtra(Math.max(0, Math.min(50, Number(e.target.value) || 0)))} className="w-full h-11 px-3 rounded-xl border-2 border-border bg-card" />
+            </label>
+          ) : (
+            <label className="text-sm font-semibold space-y-1">
+              <span>Packs to hold after orders (e.g. 5 = one batch spare)</span>
+              <input type="number" min={0} max={500} value={hold} onChange={e => setHold(Math.max(0, Math.min(500, Math.round(Number(e.target.value) || 0))))} className="w-full h-11 px-3 rounded-xl border-2 border-border bg-card" />
+            </label>
+          )}
           <label className="text-sm font-semibold space-y-1">
             <span>Why</span>
             <input value={reason} onChange={e => setReason(e.target.value)} maxLength={300} className="w-full h-11 px-3 rounded-xl border-2 border-border bg-card" />
@@ -124,7 +155,7 @@ export function DptSchedulesSection({ open }: { open: boolean }) {
           <div key={s.id} className={cn("rounded-2xl border-2 p-3 flex flex-wrap items-center gap-x-3 gap-y-1", started ? "border-amber-400 bg-amber-50/60 dark:bg-amber-950/20" : "border-border bg-card")}>
             <div className="flex-1 min-w-[14rem]">
               <p className="font-bold">{s.recipeName}</p>
-              <p className="text-sm">Orders + {s.extraBatches} batch{s.extraBatches === 1 ? "" : "es"} a day · {started ? "since" : "from"} {fmt(s.startsOn)}{s.endsOn ? ` until ${fmt(s.endsOn)}` : " until ended"}</p>
+              <p className="text-sm">{ruleText(s)} · {started ? "since" : "from"} {fmt(s.startsOn)}{s.endsOn ? ` until ${fmt(s.endsOn)}` : " until ended"}</p>
               {(s.reason || s.createdBy) && <p className="text-xs text-muted-foreground">{s.reason}{s.createdBy ? ` · set by ${s.createdBy}` : ""}</p>}
             </div>
             {started ? (

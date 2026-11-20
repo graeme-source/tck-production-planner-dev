@@ -25,7 +25,7 @@
  * Packs throughout (a calzone 2-pack is one pack; 10 portions ÷ pack size 2
  * = 5 packs a batch). Pure — no database — so every rule is unit-tested.
  */
-export { solveTargetAllocation, largestRemainderRound, type AllocationPoolRow, type TargetAllocation } from "./allocation";
+export { solveTargetAllocation, largestRemainderRound, holdPacksBatches, type AllocationPoolRow, type TargetAllocation } from "./allocation";
 
 export const PLAN_MARGIN_SETTING_KEYS = {
   smallMarginPacks: "plan_margin_packs",

@@ -40,6 +40,18 @@ export interface AllocationPoolRow {
    *  batches a day" (Graeme, 2026-10-26). Real orders are always made; the
    *  capacity it doesn't take goes to the other recipes. null = no cap. */
   extraBatchesCap?: number | null;
+  /** Make the orders and leave exactly this many packs in the fridge, no
+   *  more (Graeme, 20 Nov 2026: Philly off the one-time menu, still the Club
+   *  Special — "exactly the right amount plus 5 packs"). Replaces the floor
+   *  and allows nothing above it; null = the usual rules. */
+  holdPacks?: number | null;
+}
+
+/** The whole batches that cover the orders and leave `hold` packs: proj is
+ *  the stock left after every known order with no production. */
+export function holdPacksBatches(proj: number, ppb: number, hold: number): number {
+  const p = ppb > 0 ? ppb : 1;
+  return Math.max(0, Math.ceil((Math.max(0, hold) - (proj || 0)) / p - 1e-9));
 }
 
 export interface TargetAllocation {
@@ -92,10 +104,13 @@ export function solveTargetAllocation(rows: readonly AllocationPoolRow[], capaci
 
   const eligible = rows.map(r => r.eligible !== false);
   const pool = rows.map((r, i) => eligible[i]
-    ? {
-      weight: Math.max(0, r.weight || 0), ppb: r.ppb > 0 ? r.ppb : 1, proj: r.proj || 0, floor: Math.max(0, Math.floor(r.floorBatches || 0)),
-      cap: r.extraBatchesCap == null || !Number.isFinite(r.extraBatchesCap) ? Infinity : Math.max(0, Math.floor(r.extraBatchesCap)),
-    }
+    ? r.holdPacks != null && Number.isFinite(r.holdPacks)
+      // Orders + a fixed number of packs held: that floor exactly, nothing above it.
+      ? { weight: 0, ppb: r.ppb > 0 ? r.ppb : 1, proj: r.proj || 0, floor: holdPacksBatches(r.proj, r.ppb, r.holdPacks), cap: 0 }
+      : {
+        weight: Math.max(0, r.weight || 0), ppb: r.ppb > 0 ? r.ppb : 1, proj: r.proj || 0, floor: Math.max(0, Math.floor(r.floorBatches || 0)),
+        cap: r.extraBatchesCap == null || !Number.isFinite(r.extraBatchesCap) ? Infinity : Math.max(0, Math.floor(r.extraBatchesCap)),
+      }
     : { weight: 0, ppb: 1, proj: 0, floor: 0, cap: 0 });
   const idx = pool.map((_, i) => i).filter(i => eligible[i]);
   // Rounding only ever hands units to eligible rows.

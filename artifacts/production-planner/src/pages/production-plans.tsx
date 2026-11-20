@@ -184,6 +184,8 @@ interface PlanItem {
   // A scheduled DPT rule's "orders + N batches" for this plan date (from
   // /calculate's dptSchedule) — kept on the row so a typed total honours it.
   extraBatchesCap?: number | null;
+  /** A scheduled DPT rule's "orders + hold N packs" (Graeme, 20 Nov 2026). */
+  holdPacks?: number | null;
   tinCount: number | null;
   maxBatchesPerTin: number | null;
   tinSize: string | null;
@@ -240,10 +242,14 @@ interface PlanItem {
 
 /** The scheduled DPT rule /calculate attached to a row (2026-10-26). A plan
  *  row carries it as `extraBatchesCap` so a typed total still honours it. */
-interface DptScheduleCap { scheduleId: number; extraBatches: number; reason: string | null; startsOn: string; endsOn: string | null }
+interface DptScheduleCap { scheduleId: number; extraBatches: number; holdPacks?: number | null; reason: string | null; startsOn: string; endsOn: string | null }
 const capOf = (row: unknown): number | null =>
   (row as { extraBatchesCap?: number | null }).extraBatchesCap
   ?? (row as { dptSchedule?: DptScheduleCap | null }).dptSchedule?.extraBatches ?? null;
+/** "Orders + hold N packs" (Graeme, 20 Nov 2026) — carried like the cap. */
+const holdOf = (row: unknown): number | null =>
+  (row as { holdPacks?: number | null }).holdPacks
+  ?? (row as { dptSchedule?: DptScheduleCap | null }).dptSchedule?.holdPacks ?? null;
 
 /** Packs this item leaves in the fridge: what it makes, less what goes out as
  *  wholesale bags, less the dispatches still to leave. */
@@ -895,6 +901,7 @@ function chilledToPlanItem(s: ChilledSuggestion, prev?: PlanItem): PlanItem {
     surplusBatches: 0,
     targetStockPacks: null,
     extraBatchesCap: capOf(s),
+    holdPacks: holdOf(s),
     stockWarning: stockAfter < 0 ? "short" : stockAfter <= 10 ? "low" : "ok",
     special1Count: 0,
     special2Count: 0,
@@ -2095,6 +2102,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
       stockAfterPacks: r.estimatedFactoryNumber - (r.bagPackEquivalents ?? 0) - r.dispatch2Qty - r.dispatch3Qty,
       demandPacks: r.dispatch2Qty + r.dispatch3Qty,
       extraBatchesCap: capOf(r),
+      holdPacks: holdOf(r),
     })), capacity);
     // Capture any manual batch edits the user has already made so we can preserve them
     const prevItems = itemsRef.current;
@@ -2144,6 +2152,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
         surplusBatches: alloc[idx].surplusBatches,
         targetStockPacks: alloc[idx].targetStockPacks,
         extraBatchesCap: capOf(r),
+        holdPacks: holdOf(r),
         stockWarning: r.stockWarning,
         special1Count: r.special1Count ?? 0,
         special2Count: r.special2Count ?? 0,
@@ -2837,7 +2846,7 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                     const sch = (r as unknown as { dptSchedule: DptScheduleCap }).dptSchedule;
                     return (
                       <p key={r.recipeId}>
-                        <span className="font-semibold">{r.recipeName}</span>: orders + up to {sch.extraBatches} batch{sch.extraBatches === 1 ? "" : "es"}
+                        <span className="font-semibold">{r.recipeName}</span>: {sch.holdPacks != null ? `orders + hold ${sch.holdPacks} pack${sch.holdPacks === 1 ? "" : "s"}` : `orders + up to ${sch.extraBatches} batch${sch.extraBatches === 1 ? "" : "es"}`}
                         {sch.reason ? <span className="text-muted-foreground"> — {sch.reason}</span> : null}
                       </p>
                     );
@@ -3531,6 +3540,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
         sopUrl: calc.sopUrl ?? it.sopUrl,
         isFromDpt: true,
         extraBatchesCap: capOf(calc),
+        holdPacks: holdOf(calc),
         fridgeStock: calc.predictedFridgeStock ?? calc.fridgeStock,
         expiringPacks: calc.expiringPacks ?? 0,
         stockCheckedAt: calc.stockCheckedAt,
@@ -3579,6 +3589,7 @@ function EditDraftDialog({ plan, open, onClose, onSaved }: EditDraftDialogProps)
       stockAfterPacks: it.estimatedFactoryNumber - bagPackEquivalents(it) - it.dispatch2Qty - it.dispatch3Qty,
       demandPacks: it.dispatch2Qty + it.dispatch3Qty,
       extraBatchesCap: capOf(it),
+      holdPacks: holdOf(it),
     }));
     const alloc = editAllocateBatches(recipesForAlloc, editEffectiveTotalBatches);
     isDirty.current = true;

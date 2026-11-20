@@ -42,6 +42,8 @@ export interface AllocRecipe {
   demandPacks: number;
   /** A scheduled DPT rule's "orders + N batches" for this plan date. */
   extraBatchesCap?: number | null;
+  /** A scheduled DPT rule's "orders + hold N packs" (Graeme, 20 Nov 2026). */
+  holdPacks?: number | null;
 }
 
 export interface AllocResult {
@@ -66,6 +68,7 @@ export function allocateBatchesToTargets(recipes: AllocRecipe[], capacity: numbe
       packsPerBatch: r.packsPerBatch,
     }, margin).batches,
     extraBatchesCap: r.extraBatchesCap ?? null,
+    holdPacks: r.holdPacks ?? null,
   })), capacity);
   return recipes.map((r, idx) => ({
     suggestedBatches: solved.batches[idx],
@@ -93,6 +96,8 @@ export interface TotalPlanRow {
   dispatch3Qty: number;
   /** A scheduled DPT rule's "orders + N batches" for this plan date. */
   extraBatchesCap?: number | null;
+  /** A scheduled DPT rule's "orders + hold N packs" (Graeme, 20 Nov 2026). */
+  holdPacks?: number | null;
 }
 
 /** Queued test production: fixed batches the operator didn't choose here. */
@@ -145,6 +150,7 @@ export function allocRecipesFor(rows: readonly TotalPlanRow[]): AllocRecipe[] {
     stockAfterPacks: r.estimatedFactoryNumber - bagPackEquivalents(r) - r.dispatch2Qty - r.dispatch3Qty,
     demandPacks: r.dispatch2Qty + r.dispatch3Qty,
     extraBatchesCap: r.extraBatchesCap ?? null,
+    holdPacks: r.holdPacks ?? null,
   }));
 }
 

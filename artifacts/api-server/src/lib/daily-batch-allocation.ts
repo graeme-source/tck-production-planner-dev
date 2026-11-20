@@ -49,6 +49,8 @@ export interface AllocationRecipe {
   floorBatches?: number;
   /** A scheduled DPT rule's "orders + N batches" (lib/dpt-schedules.ts). */
   extraBatchesCap?: number | null;
+  /** A scheduled DPT rule's "orders + hold N packs" (migration 0390). */
+  holdPacks?: number | null;
 }
 
 export interface DailyAllocation {
@@ -89,6 +91,7 @@ export function allocateDailyBatches(recipes: readonly AllocationRecipe[], total
     floorBatches: r.floorBatches ?? r.deficitBatches,
     eligible: inKitchen[i],
     extraBatchesCap: r.extraBatchesCap ?? null,
+    holdPacks: r.holdPacks ?? null,
   })), totalDailyBatches);
   return {
     suggestedBatches: solved.batches,

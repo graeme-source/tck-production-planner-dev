@@ -3,7 +3,8 @@
  * 0264). Same access as DPT itself (managers and admins).
  *
  *   GET    /           every rule with its recipe name, newest start first
- *   POST   /           { recipeId, startsOn, endsOn?, extraBatches, reason? }
+ *   POST   /           { recipeId, startsOn, endsOn?, extraBatches, holdPacks?, reason? }
+ *                       holdPacks set = "orders + hold N packs" (migration 0390)
  *   POST   /:id/end    end it now (plans from today on stop following it)
  *   DELETE /:id        remove a rule that hasn't started yet
  */
@@ -27,7 +28,7 @@ router.get("/", async (_req: Request, res: Response) => {
   const rows = await db.execute(sql`
     SELECT s.id, s.recipe_id AS "recipeId", r.name AS "recipeName",
            to_char(s.starts_on, 'YYYY-MM-DD') AS "startsOn", to_char(s.ends_on, 'YYYY-MM-DD') AS "endsOn",
-           s.extra_batches AS "extraBatches", s.reason, s.created_by_name AS "createdBy", s.created_at AS "createdAt",
+           s.extra_batches AS "extraBatches", s.hold_packs AS "holdPacks", s.reason, s.created_by_name AS "createdBy", s.created_at AS "createdAt",
            s.ended_at AS "endedAt", s.ended_by_name AS "endedBy"
       FROM dpt_schedules s JOIN recipes r ON r.id = s.recipe_id
      ORDER BY s.starts_on DESC, s.id DESC
@@ -40,6 +41,7 @@ const createBody = z.object({
   startsOn: DATE,
   endsOn: DATE.nullish(),
   extraBatches: z.number().int().min(0).max(50),
+  holdPacks: z.number().int().min(0).max(500).nullish(),
   reason: z.string().trim().max(300).nullish(),
 }).refine(b => !b.endsOn || b.endsOn >= b.startsOn, { message: "The end date is before the start date" });
 
@@ -49,8 +51,8 @@ router.post("/", validate(createBody), async (req: Request, res: Response) => {
   if (!recipe.rows[0]) { res.status(400).json({ error: "That recipe doesn't exist" }); return; }
   const by = await nameOf(req.session.userId);
   const rows = await db.execute<{ id: number }>(sql`
-    INSERT INTO dpt_schedules (recipe_id, starts_on, ends_on, extra_batches, reason, created_by, created_by_name)
-    VALUES (${b.recipeId}, ${b.startsOn}, ${b.endsOn ?? null}, ${b.extraBatches}, ${b.reason || null}, ${req.session.userId ?? null}, ${by})
+    INSERT INTO dpt_schedules (recipe_id, starts_on, ends_on, extra_batches, hold_packs, reason, created_by, created_by_name)
+    VALUES (${b.recipeId}, ${b.startsOn}, ${b.endsOn ?? null}, ${b.extraBatches}, ${b.holdPacks ?? null}, ${b.reason || null}, ${req.session.userId ?? null}, ${by})
     RETURNING id
   `);
   res.status(201).json({ id: rows.rows[0].id });

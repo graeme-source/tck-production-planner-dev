@@ -14,14 +14,14 @@ import { capsForDate, type DptCap, type DptScheduleRow } from "./dpt-schedule-ru
 export { capsForDate, type DptCap, type DptScheduleRow };
 
 export async function loadDptSchedules(): Promise<DptScheduleRow[]> {
-  const rows = await db.execute<{ id: number; recipe_id: number; starts_on: string; ends_on: string | null; extra_batches: number; reason: string | null; ended_at: Date | string | null }>(sql`
+  const rows = await db.execute<{ id: number; recipe_id: number; starts_on: string; ends_on: string | null; extra_batches: number; hold_packs: number | null; reason: string | null; ended_at: Date | string | null }>(sql`
     SELECT id, recipe_id, to_char(starts_on, 'YYYY-MM-DD') AS starts_on, to_char(ends_on, 'YYYY-MM-DD') AS ends_on,
-           extra_batches, reason, ended_at
+           extra_batches, hold_packs, reason, ended_at
       FROM dpt_schedules ORDER BY starts_on, id
   `);
   return rows.rows.map(r => ({
     id: Number(r.id), recipeId: Number(r.recipe_id), startsOn: r.starts_on, endsOn: r.ends_on,
-    extraBatches: Number(r.extra_batches), reason: r.reason,
+    extraBatches: Number(r.extra_batches), holdPacks: r.hold_packs == null ? null : Number(r.hold_packs), reason: r.reason,
     endedAt: r.ended_at == null ? null : new Date(r.ended_at).toISOString(),
   }));
 }
