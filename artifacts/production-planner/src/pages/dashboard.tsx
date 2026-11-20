@@ -22,7 +22,7 @@ import { usePrepProgress } from "@/hooks/use-prep-progress";
 import { FreshnessBadge } from "@/components/govee-freshness";
 import { useStationAssignment } from "@/hooks/use-station-assignment";
 import { addDayItems, dayKind, EMPTY_DAY_TOTALS, isItemBuilt, MAC_CHEESE_CATEGORY } from "@/lib/dashboard-day-totals";
-import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
+import { coreTileStatuses, CORE_TILE_ORDER, BAND_HEADER_CLASS, BAND_TEXT_CLASS, BAND_BAR_CLASS, BAND_ICON_CLASS, BAND_WORDS, type CoreTileKey, type TileKpiStatus } from "@/lib/station-kpi-bands";
 import { useRecipeColourLookup } from "@/components/recipe-swatch";
 
 interface AndonIssueSummary {
@@ -373,6 +373,11 @@ export default function Dashboard() {
     wrapping: wrappingSpeed ? { rate: wrappingSpeed.packsPerHour, activeMinutes: wrappingSpeed.activeMinutes } : null,
     packing: packingSpeed ? { rate: packingSpeed.ordersPerHour, activeMinutes: packingSpeed.activeMinutes ?? null } : null
   }, productionKpis);
+  // The Packing tile's colour follows the packing & wrapping room's score,
+  // not boxes/hr alone (Graeme, 20 Nov 2026); boxes/hr until it's known.
+  const packingTileStatus: TileKpiStatus = roomToday?.score != null
+    ? { band: roomToday.band, label: `${BAND_WORDS[roomToday.band]} — packing & wrapping room ${roomToday.score}% of standard${roomToday.estimate ? " (estimate until Planday approves the shifts)" : ""}` }
+    : coreStatus.packing;
 
   // The "Packing" card is pinned to the REAL current week, not the
   // weekly panel's selection — getDefaultWeekOffset rolls the panel to next
@@ -649,7 +654,7 @@ export default function Dashboard() {
     ),
     packing: (
       <StatCard
-        kpi={coreStatus.packing}
+        kpi={packingTileStatus}
         title="Packing"
         value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
         subtitle={roomToday ? `Room ${roomToday.score != null ? `${roomToday.score}%` : "—"} · ${roomSpeedsLine(roomToday)}` : (packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined)}
