@@ -164,8 +164,12 @@ export function JaneLiveReportChat({ area, onSorted, onWriteReport, onSafety, on
         </div>
       )}
 
+      {/* Above the report window (z-150): the SOP dialog's own layers are
+          40–50, so it's lifted in a stacking context of its own. */}
       {sopId != null && createPortal(
-        <StandardsSopsDialog open onClose={() => setSopId(null)} initialSopId={sopId} />,
+        <div className="relative z-[200]">
+          <StandardsSopsDialog open onClose={() => setSopId(null)} initialSopId={sopId} />
+        </div>,
         document.body,
       )}
     </div>
