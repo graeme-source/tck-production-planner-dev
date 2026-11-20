@@ -21,11 +21,20 @@ export async function storedEfficiency(from: string, to: string): Promise<Map<st
   return new Map(r.rows.map(x => [x.date, x.efficiency_pct == null ? null : Math.round(Number(x.efficiency_pct))]));
 }
 
-/** One day: stored if approved, else the estimate. null when neither can be had. */
-export async function efficiencyForDay(day: string, stored?: Map<string, number | null>): Promise<MeetingEfficiency | null> {
+/** How long a meeting page waits for an estimate. Working one out reads
+ *  Planday and the orders mirror and can take a while; past this the page
+ *  carries on without it, and the estimate keeps going and is cached, so the
+ *  next refresh has it. */
+export const ESTIMATE_WAIT_MS = 8_000;
+
+/** One day: stored if approved, else the estimate. null when neither can be
+ *  had in time. */
+export async function efficiencyForDay(day: string, stored?: Map<string, number | null>, waitMs = ESTIMATE_WAIT_MS): Promise<MeetingEfficiency | null> {
   const s = stored ?? await storedEfficiency(day, day);
   if (s.has(day)) return { pct: s.get(day) ?? null, estimate: false };
-  const r = await estimateForDay(day);
-  if ("unavailable" in r) return null;
+  const working = estimateForDay(day);
+  working.catch(err => console.warn("[team-efficiency] estimate failed:", err instanceof Error ? err.message : err));
+  const r = await Promise.race([working, new Promise<null>(resolve => setTimeout(() => resolve(null), waitMs).unref())]);
+  if (!r || "unavailable" in r) return null;
   return { pct: r.estimate.status === "estimate" && r.estimate.estimatePct != null ? Math.round(r.estimate.estimatePct) : null, estimate: true };
 }
