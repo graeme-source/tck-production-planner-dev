@@ -14,7 +14,7 @@
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { getPlandayPayrollRows, getPlandayShifts, getPlandayPositions, getPlandayShiftTypes, isPlandayConfigured } from "./planday";
-import { londonDateString, londonHour } from "../lib/london-time";
+import { londonDateString, londonHour, londonLocalTimestamp } from "../lib/london-time";
 import { computePackingOrdersPerHourForDay } from "../lib/yesterday-kpis";
 import { addDaysIso } from "../lib/team-efficiency-labour";
 import { roomHoursByDay, calibrateStandardRatio, DEFAULT_ROOM_SETTINGS, type RoomDay, type RoomWeights } from "../lib/room-kpi";
@@ -132,11 +132,11 @@ type CountedDay = RoomDay & { pending: boolean };
  *  Approved Planday shifts only unless `approvedOnly` is false — today's live
  *  estimate, priced from the rota (as Team efficiency's "today" does). A day
  *  whose Shopify fulfilments couldn't be read is left out, not stored low. */
-async function roomDaysFor(from: string, to: string, opts: { approvedOnly?: boolean } = {}): Promise<CountedDay[]> {
+async function roomDaysFor(from: string, to: string, opts: { approvedOnly?: boolean; now?: string } = {}): Promise<CountedDay[]> {
   if (from > to) return [];
   const config = await loadRoomConfig();
   const [payroll, rota, positions, shiftTypes, counts] = await Promise.all([
-    getPlandayPayrollRows(from, to, opts),
+    getPlandayPayrollRows(from, to, { approvedOnly: opts.approvedOnly }),
     getPlandayShifts(from, to),
     getPlandayPositions(),
     getPlandayShiftTypes(),
@@ -146,7 +146,7 @@ async function roomDaysFor(from: string, to: string, opts: { approvedOnly?: bool
   const hours = roomHoursByDay({
     payroll: payroll.map(r => ({ ...r, breaks: r.breaks ?? [] })),
     rota: rota.map(s => ({ id: s.id, date: s.date, status: s.status ?? null, shiftTypeId: s.shiftTypeId ?? null, positionId: s.positionId ?? null })),
-    positions, shiftTypes, positionNames: config.positions,
+    positions, shiftTypes, positionNames: config.positions, now: opts.now,
   });
   const days = [...new Set([...hours.keys(), ...counts.keys()])].filter(d => d >= from && d <= to).sort();
   const out: CountedDay[] = [];
@@ -190,7 +190,11 @@ async function computeRoomWindow(from: string, to: string): Promise<number> {
  *  shifts not yet approved, so they're the rota's until Planday approves.
  *  null when the room didn't work that day. */
 export async function liveRoomDay(day: string): Promise<CountedDay | null> {
-  return (await roomDaysFor(day, day, { approvedOnly: false }))[0] ?? null;
+  // Today: the scheduled shifts only up to now (Graeme, 20 Nov 2026 — "if
+  // we're halfway through the day, we should only take the time up until the
+  // current time"). Another day: its whole shifts.
+  const now = day === londonDateString() ? londonLocalTimestamp() : undefined;
+  return (await roomDaysFor(day, day, { approvedOnly: false, now }))[0] ?? null;
 }
 
 export async function loadRoomDays(from: string, to: string): Promise<Array<RoomDay & { status: string }>> {

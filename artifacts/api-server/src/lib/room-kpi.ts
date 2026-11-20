@@ -20,6 +20,7 @@
  * history, because only raw counts are stored.
  */
 import { isProductiveShift, shiftPaidHours, type PlandayPayrollShift } from "./team-efficiency";
+import { elapsedPaidHours } from "./team-efficiency-today";
 
 export interface RoomDay {
   date: string;
@@ -102,6 +103,11 @@ export interface RoomShiftInputs {
   rota: ReadonlyArray<{ id: number; date: string; status: string | null; shiftTypeId: number | null; positionId: number | null }>;
   positions: ReadonlyArray<{ id: number; name: string }>;
   shiftTypes: ReadonlyArray<{ id: number; name: string }>;
+  /** Today's live figure only (Graeme, 20 Nov 2026): London local
+   *  "YYYY-MM-DDTHH:mm:ss" now — each scheduled shift counts only up to now,
+   *  less breaks already due, so mid-afternoon the room isn't charged for
+   *  hours nobody has worked yet. Omitted = whole shifts (stored days). */
+  now?: string;
   /** Position names that are the room (case-insensitive). */
   positionNames: readonly string[];
 }
@@ -122,7 +128,7 @@ export function roomHoursByDay(i: RoomShiftInputs): Map<string, { paidHours: num
     // Training, meetings, holiday, sickness: not room work.
     if (!isProductiveShift(0, 0, type)) continue;
     const day = out.get(row.date) ?? { paidHours: 0, people: new Set<number>(), pending: false };
-    day.paidHours += shiftPaidHours(row);
+    day.paidHours += i.now ? elapsedPaidHours(row, i.now) : shiftPaidHours(row);
     day.people.add(row.employeeId);
     out.set(row.date, day);
   }

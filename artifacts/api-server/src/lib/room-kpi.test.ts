@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { earnedHours, roomRatio, roomScore, calibrateStandardRatio, roomBand, roomHoursByDay, type RoomDay } from "./room-kpi";
+import { elapsedPaidHours } from "./team-efficiency-today";
 
 const W = { packingPerHour: 55, wrappingPerHour: 115, deliveryMinutes: 10, lineMinutes: 2 };
 const typical: RoomDay = { date: "2026-11-12", boxes: 98, packs: 495, deliveries: 5, deliveryLines: 19, paidHours: 16.4, people: 2 };
@@ -71,5 +72,24 @@ describe("room hours from Planday", () => {
       positionNames: ["Packer"],
     });
     expect(m.get("2026-11-12")).toEqual({ paidHours: 8.25, people: 1, pending: true });
+  });
+  it("today's live figure counts each scheduled shift only up to now (Graeme, 20 Nov 2026)", () => {
+    const inputs = {
+      payroll: [shift(1, 10, 1, "2026-11-12T07:00:00", "2026-11-12T16:00:00"), shift(2, 11, 2, "2026-11-12T07:00:00", "2026-11-12T16:00:00")],
+      rota: [1, 2].map(id => ({ id, date: "2026-11-12", status: "PunchclockStarted", shiftTypeId: null, positionId: id })),
+      positions: [{ id: 1, name: "Packer" }, { id: 2, name: "Wrapper" }],
+      shiftTypes: [],
+      positionNames: ["Packer", "Wrapper"],
+    };
+    const whole = roomHoursByDay(inputs).get("2026-11-12")!.paidHours;
+    const at11 = roomHoursByDay({ ...inputs, now: "2026-11-12T11:00:00" }).get("2026-11-12")!.paidHours;
+    expect(whole).toBe(16.5);
+    // Four hours in for two people, less the share of breaks already due.
+    expect(at11).toBeCloseTo(2 * elapsedPaidHours(inputs.payroll[0], "2026-11-12T11:00:00"), 2);
+    expect(at11).toBeGreaterThan(7);
+    expect(at11).toBeLessThanOrEqual(8);
+    // Before anyone's started, nothing is charged; after the shifts end, all of it.
+    expect(roomHoursByDay({ ...inputs, now: "2026-11-12T06:00:00" }).get("2026-11-12")!.paidHours).toBe(0);
+    expect(roomHoursByDay({ ...inputs, now: "2026-11-12T18:00:00" }).get("2026-11-12")!.paidHours).toBe(16.5);
   });
 });
