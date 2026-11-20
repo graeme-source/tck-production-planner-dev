@@ -1911,7 +1911,7 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
   }
 
   if (type === "mozzarella_load") {
-    const mozzData = data[0] as { name?: string; unit?: string; totalQty?: number; bags?: number; planDate?: string | null } | undefined;
+    const mozzData = data[0] as { name?: string; unit?: string; totalQty?: number; bags?: number; boxLabel?: string | null; planDate?: string | null } | undefined;
     if (!mozzData) return null;
     const nextDayLabel = mozzData.planDate
       ? new Date(`${mozzData.planDate}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" })
@@ -1927,6 +1927,11 @@ function DynamicDataDisplay({ type, data, loading, planId }: { type: string; dat
         <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">
           x 2kg bags
         </p>
+        {mozzData.boxLabel && (
+          <p className="text-lg font-bold text-amber-700 dark:text-amber-300" data-testid="mozzarella-load-boxes">
+            ({mozzData.boxLabel})
+          </p>
+        )}
         <p className="text-xs text-muted-foreground mt-1">
           {fmtTotal} {mozzData.name ?? "Mozzarella"} total for next production{nextDayLabel ? ` · ${nextDayLabel}` : ""}
         </p>
