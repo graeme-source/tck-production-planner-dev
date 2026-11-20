@@ -27,7 +27,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import {
   GripVertical, Plus, Trash2, Loader2, Sparkles, Lock, Unlock, BookOpen,
-  Video, HelpCircle, FileText, RotateCcw, X, Check,
+  Video, HelpCircle, FileText, RotateCcw, X, Check, Play, Upload,
 } from "lucide-react";
 import { PageHeader } from "@/components/page-header";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -36,6 +36,8 @@ import { toast } from "@/hooks/use-toast";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { describeVideoCoverage } from "@/lib/video-coverage";
 import { LeanScheduleCard, LEAN_SCHEDULE_KEY } from "@/components/lean/lean-schedule-card";
+import { LessonPreview } from "@/components/lean/lesson-preview";
+import { YouTubeEmbed, isUploadedLessonVideo } from "@/components/lesson-media";
 import { useEffect, useRef } from "react";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -588,6 +590,8 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
 
   const week = data?.week;
   const lessons = data?.lessons ?? [];
+  // Full-screen preview, exactly as the morning meeting shows it.
+  const [previewAt, setPreviewAt] = useState<number | null>(null);
 
   return (
     <Dialog open onOpenChange={o => !o && onClose()}>
@@ -616,9 +620,22 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
               </p>
             ) : (
               <div className="space-y-3">
+                <button onClick={() => setPreviewAt(0)}
+                  className="h-11 px-4 rounded-xl border-2 border-primary text-primary bg-card font-bold flex items-center gap-2">
+                  <Play className="w-4 h-4" /> Preview the week as the meeting shows it
+                </button>
                 {lessons.map((lesson, i) => (
-                  <LessonReviewCard key={lesson.id} lesson={lesson} day={DAY_NAMES[i] ?? `Day ${i + 1}`} />
+                  <LessonReviewCard key={lesson.id} lesson={lesson} day={DAY_NAMES[i] ?? `Day ${i + 1}`} onPreview={() => setPreviewAt(i)} />
                 ))}
+                {previewAt !== null && (
+                  <LessonPreview
+                    lessons={lessons}
+                    dayNames={DAY_NAMES}
+                    startIndex={previewAt}
+                    kicker={week ? `This week's lean focus · ${week.title}` : null}
+                    onClose={() => setPreviewAt(null)}
+                  />
+                )}
                 {(data?.quiz?.length ?? 0) > 0 && (
                   <div className="border border-border rounded-xl p-3">
                     <p className="text-sm font-medium flex items-center gap-1.5 mb-2">
@@ -706,34 +723,33 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
   );
 }
 
-/** One day of the week, as the room will see it — plus the two fields that
- *  must never reach the slide, kept visibly separate so it stays obvious
- *  which is which. Video is per-day and optional by design. */
-function LessonReviewCard({ lesson, day }: { lesson: Lesson; day: string }) {
+/** One day of the week. The slide text is edited here and autosaves
+ *  (Graeme, 20 Nov 2026: building a lesson by hand); the two host fields
+ *  never reach the slide, kept visibly separate. Video is per-day and
+ *  optional by design. */
+function LessonReviewCard({ lesson, day, onPreview }: { lesson: Lesson; day: string; onPreview: () => void }) {
   const [showNotes, setShowNotes] = useState(false);
 
   return (
     <div className="border border-border rounded-xl overflow-hidden">
       <div className="bg-secondary/40 px-3 py-2 flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{day}</p>
-          <p className="text-sm font-medium truncate">{lesson.title}</p>
+        <p className="text-[11px] uppercase tracking-wide text-muted-foreground">{day}</p>
+        <div className="flex items-center gap-3 flex-shrink-0">
+          <button onClick={onPreview} className="text-xs font-semibold text-primary flex items-center gap-1 hover:underline">
+            <Play className="w-3.5 h-3.5" /> Preview
+          </button>
+          <button
+            onClick={() => setShowNotes(s => !s)}
+            className="text-[11px] text-muted-foreground hover:text-foreground"
+          >
+            {showNotes ? "Hide host notes" : "Host notes"}
+          </button>
         </div>
-        <button
-          onClick={() => setShowNotes(s => !s)}
-          className="text-[11px] text-muted-foreground hover:text-foreground flex-shrink-0"
-        >
-          {showNotes ? "Hide host notes" : "Host notes"}
-        </button>
       </div>
 
       <div className="p-3 space-y-3">
-        <div>
-          <p className="text-[11px] font-medium text-muted-foreground mb-1">On the slide</p>
-          <div className="text-xs whitespace-pre-wrap leading-relaxed bg-background border border-border rounded-lg p-2.5">
-            {lesson.whatToShowMd}
-          </div>
-        </div>
+        <LessonTextField lesson={lesson} field="title" label="Title" rows={1} />
+        <LessonTextField lesson={lesson} field="whatToShowMd" label="On the slide — a few short bullets (- ) and one **Today:** line" rows={7} />
 
         <VideoField lesson={lesson} />
 
@@ -754,17 +770,79 @@ function LessonReviewCard({ lesson, day }: { lesson: Lesson; day: string }) {
   );
 }
 
-/** Autosaving video URL for one day. A video is optional and cherry-picked —
- *  clearing the box removes it, which is how a day goes back to no clip. */
+/** Refresh everything that shows lessons after a save (the week editor, the
+ *  page's week cards, the preview). */
+function invalidateLessons(queryClient: ReturnType<typeof useQueryClient>) {
+  queryClient.invalidateQueries({ queryKey: ["lean-curriculum"] });
+  queryClient.invalidateQueries({ queryKey: ["lean-curriculum-week"] });
+}
+
+/** Autosaving title or slide text for one day, with its save state shown. */
+function LessonTextField({ lesson, field, label, rows }: {
+  lesson: Lesson; field: "title" | "whatToShowMd"; label: string; rows: number;
+}) {
+  const queryClient = useQueryClient();
+  const [value, setValue] = useState(lesson[field]);
+  const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const debounced = useDebouncedValue(value, 800);
+  const lastSaved = useRef(lesson[field]);
+
+  useEffect(() => {
+    const next = debounced.trim();
+    if (next === lastSaved.current.trim()) return;
+    if (field === "title" && !next) return;
+    let cancelled = false;
+    setState("saving");
+    api(`/morning-meetings/examples/${lesson.id}`, { method: "PUT", body: JSON.stringify({ [field]: next }) })
+      .then(() => {
+        if (cancelled) return;
+        lastSaved.current = next;
+        setState("saved");
+        invalidateLessons(queryClient);
+      })
+      .catch((e: Error) => {
+        if (cancelled) return;
+        setState("error");
+        toast({ title: "Couldn't save the lesson", description: e.message, variant: "destructive" });
+      });
+    return () => { cancelled = true; };
+  }, [debounced, field, lesson.id, queryClient]);
+
+  const status = value.trim() !== lastSaved.current.trim() && state !== "error" ? "Saving…"
+    : state === "saving" ? "Saving…" : state === "saved" ? "Saved" : state === "error" ? "Not saved" : "";
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-2 mb-1">
+        <p className="text-[11px] font-medium text-muted-foreground">{label}</p>
+        <span className={cn("text-[10px] h-3", state === "error" ? "text-destructive font-semibold" : "text-muted-foreground")}>{status}</span>
+      </div>
+      {rows === 1 ? (
+        <input value={value} onChange={e => setValue(e.target.value)} maxLength={200}
+          className="w-full px-2.5 py-2 bg-background border border-border rounded-lg text-sm font-medium focus:outline-none focus:ring-2 focus:ring-primary/30" />
+      ) : (
+        <textarea value={value} onChange={e => setValue(e.target.value)} rows={rows} maxLength={4000}
+          className="w-full px-2.5 py-2 bg-background border border-border rounded-lg text-sm leading-relaxed font-mono focus:outline-none focus:ring-2 focus:ring-primary/30" />
+      )}
+    </div>
+  );
+}
+
+/** One day's video: upload your own (a screen recording, a phone clip) or
+ *  paste a YouTube link (Graeme, 20 Nov 2026). The link autosaves; clearing
+ *  it removes the video, which is how a day goes back to no clip. An
+ *  uploaded video lives on the lesson (routes/lean-videos.ts). */
 function VideoField({ lesson }: { lesson: Lesson }) {
   const queryClient = useQueryClient();
   const [value, setValue] = useState(lesson.videoUrl ?? "");
   const [state, setState] = useState<"idle" | "saving" | "saved">("idle");
+  const [progress, setProgress] = useState<number | null>(null);
   const debounced = useDebouncedValue(value, 700);
   const lastSaved = useRef(lesson.videoUrl ?? "");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploaded = isUploadedLessonVideo(value);
 
   useEffect(() => {
-    if (debounced === lastSaved.current) return;
+    if (debounced === lastSaved.current || isUploadedLessonVideo(debounced)) return;
     let cancelled = false;
     setState("saving");
     api(`/morning-meetings/examples/${lesson.id}`, {
@@ -775,7 +853,7 @@ function VideoField({ lesson }: { lesson: Lesson }) {
         if (cancelled) return;
         lastSaved.current = debounced;
         setState("saved");
-        queryClient.invalidateQueries({ queryKey: ["lean-curriculum"] });
+        invalidateLessons(queryClient);
       })
       .catch((e: Error) => {
         if (cancelled) return;
@@ -785,10 +863,51 @@ function VideoField({ lesson }: { lesson: Lesson }) {
     return () => { cancelled = true; };
   }, [debounced, lesson.id, queryClient]);
 
+  // XHR rather than fetch, for an upload progress bar on a big recording.
+  const upload = (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/api/lean-videos/${lesson.id}`);
+    xhr.withCredentials = true;
+    xhr.upload.onprogress = e => { if (e.lengthComputable) setProgress(Math.round((e.loaded / e.total) * 100)); };
+    xhr.onload = () => {
+      setProgress(null);
+      let body: { videoUrl?: string; error?: string } = {};
+      try { body = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300 && body.videoUrl) {
+        lastSaved.current = body.videoUrl;
+        setValue(body.videoUrl);
+        setState("saved");
+        invalidateLessons(queryClient);
+      } else {
+        toast({ title: "Couldn't upload the video", description: body.error ?? `Upload failed (${xhr.status})`, variant: "destructive" });
+      }
+    };
+    xhr.onerror = () => {
+      setProgress(null);
+      toast({ title: "Couldn't upload the video", description: "The connection dropped. Try again.", variant: "destructive" });
+    };
+    setProgress(0);
+    xhr.send(form);
+  };
+
+  const removeUploaded = useMutation({
+    mutationFn: () => api(`/lean-videos/${lesson.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      lastSaved.current = "";
+      setValue("");
+      setState("saved");
+      invalidateLessons(queryClient);
+    },
+    onError: (e: Error) => toast({ title: "Couldn't remove the video", description: e.message, variant: "destructive" }),
+  });
+
   // Three states worth telling apart: this day was picked for a clip and has
   // one; it was picked and is still empty (the thing the Friday review is
   // looking for); or it was never meant to have one.
   const missing = lesson.videoWanted && !value.trim();
+  const uploading = progress !== null;
 
   return (
     <div>
@@ -799,37 +918,66 @@ function VideoField({ lesson }: { lesson: Lesson }) {
         )}>
           <Video className="w-3 h-3" />
           {lesson.videoWanted ? "Video — this day was picked for one" : "Video"}
-          {!lesson.videoWanted && <span className="font-normal">(not needed this day)</span>}
+          {!lesson.videoWanted && <span className="font-normal">(optional this day)</span>}
         </p>
         <span className="text-[10px] text-muted-foreground h-3">
-          {state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
+          {uploading ? `Uploading ${progress}%…` : state === "saving" ? "Saving…" : state === "saved" ? "Saved" : ""}
         </span>
       </div>
-      {lesson.videoWanted && lesson.videoRationale && (
+      {lesson.videoWanted && lesson.videoRationale && !value.trim() && (
         <p className="text-[11px] text-muted-foreground mb-1.5 italic">
           Looking for: {lesson.videoRationale}
         </p>
       )}
-      <div className="flex items-center gap-1.5">
-        <input
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          placeholder={lesson.videoWanted ? "Paste the YouTube URL" : "Leave empty — this day doesn't need one"}
-          className={cn(
-            "flex-1 px-2.5 py-1.5 bg-background border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30",
-            missing ? "border-amber-500/50" : "border-border",
-          )}
-        />
-        {value && (
-          <button
-            onClick={() => setValue("")}
-            className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
-            aria-label="Remove the video from this day"
-          >
-            <X className="w-3.5 h-3.5" />
+
+      {uploaded ? (
+        <div className="space-y-2">
+          <div className="max-w-md"><YouTubeEmbed url={value} /></div>
+          <button onClick={() => removeUploaded.mutate()} disabled={removeUploaded.isPending}
+            className="h-10 px-3 rounded-lg border-2 border-border text-sm font-semibold flex items-center gap-2 hover:border-destructive hover:text-destructive disabled:opacity-50">
+            {removeUploaded.isPending ? <Loader2 className="w-4 h-4 animate-spin" /> : <X className="w-4 h-4" />} Remove this video
           </button>
-        )}
-      </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <button onClick={() => fileRef.current?.click()} disabled={uploading}
+              className={cn("h-10 px-3 rounded-lg font-semibold text-sm flex items-center gap-2 disabled:opacity-60",
+                missing ? "bg-primary text-primary-foreground" : "border-2 border-primary text-primary bg-card")}>
+              {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
+              {uploading ? `Uploading ${progress}%` : "Upload a video"}
+            </button>
+            <span className="text-[11px] text-muted-foreground">or paste a YouTube link</span>
+            <input ref={fileRef} type="file" accept="video/mp4,video/quicktime,video/webm,video/x-m4v,.mov,.mp4,.m4v,.webm" className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ""; if (f) upload(f); }} />
+          </div>
+          {uploading && (
+            <div className="h-2 rounded-full bg-secondary overflow-hidden">
+              <div className="h-full bg-primary transition-all" style={{ width: `${progress}%` }} />
+            </div>
+          )}
+          <div className="flex items-center gap-1.5">
+            <input
+              value={value}
+              onChange={e => setValue(e.target.value)}
+              placeholder="https://www.youtube.com/watch?v=…"
+              className={cn(
+                "flex-1 px-2.5 py-1.5 bg-background border rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-primary/30",
+                missing ? "border-amber-500/50" : "border-border",
+              )}
+            />
+            {value && (
+              <button
+                onClick={() => setValue("")}
+                className="p-1.5 rounded-lg text-muted-foreground hover:text-destructive transition-colors"
+                aria-label="Remove the video from this day"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

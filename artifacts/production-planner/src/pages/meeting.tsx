@@ -43,6 +43,7 @@ import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
+import { LeanLessonSlide } from "@/components/lean-lesson-slide";
 import ImprovementsPage from "@/pages/improvements";
 import { creditLabel } from "@/lib/improvement-credits";
 import { premiumStyle } from "@/lib/improvement-premium";
@@ -662,7 +663,7 @@ function MeetingShell({
         ) : (
           // The learning slide uses the full width so its video is as big as
           // the screen allows (Graeme, 2026-10-27: no tiny videos, no scrolling).
-          <div className={cn(slide.kind === "learning" ? "w-full" : "max-w-6xl", "mx-auto w-full my-auto")}>
+          <div className={cn(slide.kind === "learning" || slide.kind === "lesson" ? "w-full h-full" : "max-w-6xl my-auto", "mx-auto w-full")}>
             <SlideBody slide={slide} data={data} onRefresh={onRefresh} isPreviewing={isPreviewing} subIndex={subIndex} reportSubCount={reportSubCount} />
           </div>
         )}
@@ -3294,37 +3295,17 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
   // meaningless as a headline, so they fall back to the example title.
   const principleTitle = data.lesson.principleTitle;
   const hasWeeklyTheme = !!principleTitle && principleTitle !== "On-demand lessons";
-  const media = data.lesson.diagram || data.lesson.videoUrl || data.lesson.imageUrl;
+  // The slide fills the stage at 16:9 — title, a few big bullets, the
+  // main message and a big video (Graeme, 20 Nov 2026). The host tools sit
+  // below it, a scroll away. Same component as the curriculum's Preview.
   return (
-    <div>
-      <p className="text-xs font-semibold uppercase tracking-wide text-purple-500 mb-2">
-        {hasWeeklyTheme ? "This week's lean focus" : "Lean lesson"}
-      </p>
-      <h2 className="text-4xl font-display font-bold mb-2">
-        {hasWeeklyTheme ? principleTitle : data.lesson.title}
-      </h2>
-      {hasWeeklyTheme && (
-        <p className="text-xl font-semibold text-purple-600 dark:text-purple-300 mb-1">{data.lesson.title}</p>
-      )}
-      <p className="text-lg text-muted-foreground mb-6">{data.lesson.summary}</p>
-      {media ? (
-        <div className="grid gap-4 md:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-start">
-          <div className="glass-panel rounded-2xl p-6">
-            <MarkdownBlock content={data.lesson.whatToShowMd} />
-          </div>
-          <div className="space-y-4 min-w-0">
-            {data.lesson.videoUrl && <YouTubeEmbed url={data.lesson.videoUrl} fitHeight={330} />}
-            {data.lesson.diagram && <LessonDiagram id={data.lesson.diagram} />}
-            {data.lesson.imageUrl && (
-              <img src={data.lesson.imageUrl} alt="" className="w-full max-h-80 object-contain rounded-2xl bg-black/5" />
-            )}
-          </div>
-        </div>
-      ) : (
-        <div className="glass-panel rounded-2xl p-6">
-          <MarkdownBlock content={data.lesson.whatToShowMd} />
-        </div>
-      )}
+    <div className="md:h-full">
+      <div className="md:h-full">
+        <LeanLessonSlide
+          lesson={data.lesson}
+          kicker={hasWeeklyTheme ? `This week's lean focus · ${principleTitle}` : "Lean lesson"}
+        />
+      </div>
       {meetingId && (
         <div className="mt-6 space-y-4">
           {/* Ask the AI for a lesson on any topic */}

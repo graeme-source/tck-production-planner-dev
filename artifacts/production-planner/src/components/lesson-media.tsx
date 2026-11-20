@@ -49,6 +49,14 @@ export function MarkdownBlock({ content }: { content: string }) {
  *  pixels (headers, pager) — a lesson or meeting slide shows the whole video
  *  without scrolling (Graeme, 2026-10-27: "minimise scrolling at all costs"). */
 export function YouTubeEmbed({ url, fitHeight }: { url: string; fitHeight?: number }) {
+  if (isUploadedLessonVideo(url)) {
+    return (
+      <div className="w-full mx-auto rounded-2xl overflow-hidden bg-black"
+        style={{ aspectRatio: "16 / 9", ...(fitHeight != null ? { maxWidth: `calc((100dvh - ${fitHeight}px) * 16 / 9)` } : {}) }}>
+        <UploadedVideo url={url} />
+      </div>
+    );
+  }
   const id = youtubeIdFromUrl(url);
   if (!id) {
     return (
@@ -67,6 +75,36 @@ export function YouTubeEmbed({ url, fitHeight }: { url: string; fitHeight?: numb
         allowFullScreen
         className="w-full h-full border-0"
       />
+    </div>
+  );
+}
+
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
+
+/** A video uploaded to the lesson itself (routes/lean-videos.ts), not YouTube. */
+export function isUploadedLessonVideo(url: string): boolean {
+  return url.startsWith("/api/lean-videos/");
+}
+
+function UploadedVideo({ url }: { url: string }) {
+  return <video src={`${BASE}${url}`} controls playsInline preload="metadata" className="w-full h-full bg-black object-contain" />;
+}
+
+/** A lesson video that fills its box as big as 16:9 allows (Graeme, 20 Nov
+ *  2026: "maximise that for a 16:9 screen"). From md up the parent must give
+ *  it a height; on a phone it's a normal 16:9 strip. */
+export function LessonVideoFill({ url }: { url: string }) {
+  const id = isUploadedLessonVideo(url) ? null : youtubeIdFromUrl(url);
+  if (!isUploadedLessonVideo(url) && !id) return <YouTubeEmbed url={url} />;
+  return (
+    <div className="w-full h-full flex items-center justify-center md:[container-type:size]">
+      <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black md:w-[min(100cqw,calc(100cqh*16/9))]">
+        {id
+          ? <iframe src={youtubeEmbedSrc(id, currentOrigin())} title="Video"
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen className="w-full h-full border-0" />
+          : <UploadedVideo url={url} />}
+      </div>
     </div>
   );
 }

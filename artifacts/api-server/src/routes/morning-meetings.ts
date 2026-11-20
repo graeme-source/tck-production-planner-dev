@@ -1299,7 +1299,7 @@ const LESSON_TOOL: Anthropic.Tool = {
       title: { type: "string", description: "Short lesson title, e.g. 'Total Ownership'. No week number." },
       summary: { type: "string", description: "One punchy sentence capturing the core idea." },
       explanationMd: { type: "string", description: "Markdown for 'what it means' — host prep. 2-4 short paragraphs, **bold** the key term. No headings." },
-      whatToShowMd: { type: "string", description: "Markdown for the slide the team sees: a short **bold heading**, 3-5 tight bullets or a small table, then a line starting '**Today's question:**' or '**Today:**'. No headings (#)." },
+      whatToShowMd: { type: "string", description: "THE SLIDE THE TEAM SEES, in big type — the host talks around it, so it must be read in seconds. Speak TO them ('we', 'you'). A short **bold heading**, then at most 3 bullets of 8 words or fewer each, then ONE line starting '**Today:**' or '**Today's question:**' of 12 words or fewer. No tables, no paragraphs. Never instructions to the host. No headings (#)." },
       deliveryNotesMd: { type: "string", description: "Markdown: a '**Talking points:**' list of 2-3 bullets, then a final line starting '**Prompt:**' with a question to ask the room." },
     },
     required: ["title", "summary", "explanationMd", "whatToShowMd", "deliveryNotesMd"],

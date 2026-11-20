@@ -539,7 +539,7 @@ const WEEK_TOOL: Anthropic.Tool = {
             title: { type: "string", description: "Short lesson title. No week or day number." },
             summary: { type: "string", description: "One punchy sentence capturing this day's angle." },
             explanationMd: { type: "string", description: "Markdown for the host's own prep — what this means, 2-4 short paragraphs. Never shown to the team. No headings (#)." },
-            whatToShowMd: { type: "string", description: "THE SLIDE THE TEAM SEES. Speak TO them ('we', 'you'). A short **bold heading**, then 3-5 tight bullets, then a line starting '**Today:**' or '**Today's question:**'. Never instructions to the host. No headings (#)." },
+            whatToShowMd: { type: "string", description: "THE SLIDE THE TEAM SEES, in big type — the host talks around it, so it must be read in seconds. Speak TO them ('we', 'you'). A short **bold heading**, then at most 3 bullets of 8 words or fewer each, then ONE line starting '**Today:**' or '**Today's question:**' of 12 words or fewer. No tables, no paragraphs. Never instructions to the host. No headings (#)." },
             deliveryNotesMd: { type: "string", description: "Host directions — a '**Talking points:**' list of 2-3 bullets then a '**Prompt:**' line. Never shown to the team. No headings (#)." },
             wantsVideo: { type: "boolean", description: "True only for the two or three days in the week where watching something teaches it better than talking about it. Never all five." },
             videoRationale: { type: "string", description: "If wantsVideo is true, one line on what the clip needs to show — this is the brief for finding it." },
@@ -582,7 +582,7 @@ THE SHAPE OF A WEEK — one subject, five angles, never five different topics:
 - Friday: go and find one, live. Something they DO before they clock off.
 
 THE THREE FIELDS — this contract is not negotiable:
-- whatToShowMd is the slide the ROOM sees. Short. Speaks to them. Big idea, few words.
+- whatToShowMd is the slide the ROOM sees, in big type. At most 3 bullets of 8 words or fewer, and one Today line. The host talks around it — the detail goes in the host fields, never on the slide.
 - explanationMd and deliveryNotesMd are for the HOST only and never render on the slide. Never write "point at this" or "ask the room" inside whatToShowMd.
 
 VIDEO: pick the two or three days in the week that most benefit from one, and set wantsVideo false on the rest. A video is for when watching something teaches it better than talking about it — Monday, introducing the concept, is almost always one of them; the others are usually a day where the thing is easier to recognise once you've seen someone point at it. Never mark all five: a clip every morning stops being a treat and starts being a queue. If a subject genuinely doesn't suit video at all, one is fine.
