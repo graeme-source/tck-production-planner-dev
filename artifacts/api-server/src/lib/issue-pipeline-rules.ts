@@ -451,6 +451,18 @@ export function canSnooze(t: { status: TriageStatus; awaitingRetriage: boolean }
  *  something about it, then it is by definition an improvement") — from
  *  this date only, so the 100+ older fixes aren't suddenly all credited. */
 export const CREDITED_FIX_LANES = new Set(["improvement", "defect", "data_fix"]);
+
+/** The lane a card ends in when it's closed as fixed in a Claude Code
+ *  session (POST /issues/:n/fixed-here). Something was genuinely fixed, so
+ *  it always lands in a lane that earns the reporter credit: the lane asked
+ *  for, else the card's own lane if it already earns credit, else "defect".
+ *  #406 (20 Nov 2026) stayed "understanding" — the reviewer had called it
+ *  "not an app fault" — so Dave got no credit for a real bug. */
+export function fixedHereLane(currentLane: string | null | undefined, requested?: "defect" | "data_fix" | "improvement"): string {
+  if (requested) return requested;
+  if (currentLane && CREDITED_FIX_LANES.has(currentLane)) return currentLane;
+  return "defect";
+}
 export const CREDIT_FIXES_FROM = "2026-11-20";
 
 export function isImprovementDue(t: {

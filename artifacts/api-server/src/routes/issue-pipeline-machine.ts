@@ -42,6 +42,7 @@ import {
   isSetAside,
   SET_ASIDE_ERROR,
   validateTestPath,
+  fixedHereLane,
   type TriageStatus,
 } from "../lib/issue-pipeline-rules";
 import {
@@ -489,8 +490,8 @@ const fixedHereBody = z.object({
     .refine(p => p == null || p.trim() === "" || validateTestPath(p) !== null, {
       message: "testPath must be an in-app path starting with a single '/' (no external URLs, no /api)",
     }),
-  /** Used only when the report has no card yet. */
-  lane: z.enum(["defect", "data_fix", "improvement"]).default("defect"),
+  /** Optional: see fixedHereLane (lib/issue-pipeline-rules.ts). */
+  lane: z.enum(["defect", "data_fix", "improvement"]).optional(),
   actor: z.string().trim().min(1).max(60).default("claude-code (main session)"),
 });
 
@@ -511,12 +512,12 @@ router.post("/issues/:andonIssueId/fixed-here", validate(fixedHereBody), async (
       const decided = { decidedBy: current?.decidedBy ?? "Graeme", decidedAt: current?.decidedAt ?? now };
       if (!current) {
         [current] = await tx.insert(issueTriageTable).values({
-          andonIssueId, lane: b.lane, verdictSummary: b.whatChanged.slice(0, 300), explanation: "Fixed directly with Graeme in a Claude Code session.",
+          andonIssueId, lane: fixedHereLane(null, b.lane), verdictSummary: b.whatChanged.slice(0, 300), explanation: "Fixed directly with Graeme in a Claude Code session.",
           proposedFix: b.whatChanged, status: "fixed", fixRef: b.fixRef, fixedAt: now, triagedBy: b.actor, ...decided,
         }).returning() as [IssueTriage];
       } else {
         [current] = await tx.update(issueTriageTable).set({
-          status: "fixed", fixRef: b.fixRef, fixedAt: now, awaitingRetriage: false, noActionAt: null, noActionBy: null, noActionByUserId: null,
+          status: "fixed", lane: fixedHereLane(current.lane, b.lane), fixRef: b.fixRef, fixedAt: now, awaitingRetriage: false, noActionAt: null, noActionBy: null, noActionByUserId: null,
           snoozedUntil: null, ...decided, updatedAt: now,
         }).where(eq(issueTriageTable.id, current.id)).returning() as [IssueTriage];
       }

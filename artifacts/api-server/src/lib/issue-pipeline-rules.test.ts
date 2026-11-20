@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  fixedHereLane,
   machineIssueWanted,
   parseBearer,
   checkMachineToken,
@@ -508,5 +509,17 @@ describe("isRepeatOfEarlierRequest — one build, one credit", () => {
   it("a related defect or a rejected request doesn't count as the same build", () => {
     expect(isRepeatOfEarlierRequest(328, [{ andonIssueId: 194, lane: "defect", status: "fixed" }])).toBe(false);
     expect(isRepeatOfEarlierRequest(328, [{ andonIssueId: 248, lane: "improvement", status: "rejected" }])).toBe(false);
+  });
+});
+
+describe("fixedHereLane", () => {
+  it("REGRESSION #406: a card the reviewer filed as 'understanding' becomes a defect when it's fixed here", () => {
+    expect(fixedHereLane("understanding", undefined)).toBe("defect");
+  });
+  it("keeps a lane that already earns credit, and uses the lane asked for", () => {
+    expect(fixedHereLane("improvement", undefined)).toBe("improvement");
+    expect(fixedHereLane("data_fix", undefined)).toBe("data_fix");
+    expect(fixedHereLane("understanding", "data_fix")).toBe("data_fix");
+    expect(fixedHereLane(null, undefined)).toBe("defect");
   });
 });
