@@ -3302,6 +3302,7 @@ function LearningSlide({ data, slide }: { data: DashboardData; slide: MeetingSli
     <div className="md:h-full">
       <div className="md:h-full">
         <LeanLessonSlide
+          key={data.lesson.id}
           lesson={data.lesson}
           kicker={hasWeeklyTheme ? `This week's lean focus · ${principleTitle}` : "Lean lesson"}
         />

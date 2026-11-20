@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { youtubeIdFromUrl, youtubeEmbedSrc } from "./youtube-embed";
+import { youtubeIdFromUrl, youtubeEmbedSrc, youtubeEndedFromMessage } from "./youtube-embed";
 
 const ID = "VOkBhGgaO6Q";
 
@@ -64,5 +64,20 @@ describe("youtubeEmbedSrc", () => {
   it("omits origin when handed an empty string", () => {
     const src = youtubeEmbedSrc(ID, "");
     expect(new URL(src).searchParams.has("origin")).toBe(false);
+  });
+});
+
+describe("youtube player messages", () => {
+  it("asks for the player's state only when told to", () => {
+    expect(youtubeEmbedSrc("dQw4w9WgXcQ", "https://x.test", { jsApi: true })).toContain("enablejsapi=1");
+    expect(youtubeEmbedSrc("dQw4w9WgXcQ", "https://x.test")).not.toContain("enablejsapi");
+  });
+  it("hears the clip ending, and nothing else", () => {
+    expect(youtubeEndedFromMessage(JSON.stringify({ event: "onStateChange", info: 0 }))).toBe(true);
+    expect(youtubeEndedFromMessage(JSON.stringify({ event: "infoDelivery", info: { playerState: 0 } }))).toBe(true);
+    expect(youtubeEndedFromMessage(JSON.stringify({ event: "onStateChange", info: 1 }))).toBe(false);
+    expect(youtubeEndedFromMessage(JSON.stringify({ event: "infoDelivery", info: { currentTime: 3 } }))).toBe(false);
+    expect(youtubeEndedFromMessage("not json")).toBe(false);
+    expect(youtubeEndedFromMessage({ event: "onStateChange", info: 0 })).toBe(false);
   });
 });

@@ -4,8 +4,9 @@
  * they live here rather than inside the (large) meeting page module.
  */
 import type React from "react";
+import { useEffect, useRef } from "react";
 import { Play } from "lucide-react";
-import { youtubeIdFromUrl, youtubeEmbedSrc, currentOrigin } from "@/lib/youtube-embed";
+import { youtubeIdFromUrl, youtubeEmbedSrc, currentOrigin, YOUTUBE_LISTEN_MESSAGE, youtubeEndedFromMessage } from "@/lib/youtube-embed";
 
 function renderInlineMd(text: string): React.ReactNode {
   const parts = text.split(/(\*\*[^*]+\*\*)/g);
@@ -86,24 +87,42 @@ export function isUploadedLessonVideo(url: string): boolean {
   return url.startsWith("/api/lean-videos/");
 }
 
-function UploadedVideo({ url }: { url: string }) {
-  return <video src={`${BASE}${url}`} controls playsInline preload="metadata" className="w-full h-full bg-black object-contain" />;
+function UploadedVideo({ url, onEnded }: { url: string; onEnded?: () => void }) {
+  return <video src={`${BASE}${url}`} controls playsInline preload="metadata" onEnded={onEnded} className="w-full h-full bg-black object-contain" />;
+}
+
+/** A YouTube player that tells us when the clip finishes (enablejsapi). */
+function YouTubePlayer({ id, onEnded }: { id: string; onEnded?: () => void }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const ended = useRef(onEnded);
+  ended.current = onEnded;
+  useEffect(() => {
+    if (!onEnded) return;
+    const onMessage = (e: MessageEvent) => {
+      if (e.source !== frame.current?.contentWindow) return;
+      if (youtubeEndedFromMessage(e.data)) ended.current?.();
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [onEnded != null]); // eslint-disable-line react-hooks/exhaustive-deps
+  return (
+    <iframe ref={frame} src={youtubeEmbedSrc(id, currentOrigin(), { jsApi: onEnded != null })} title="Video"
+      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+      allowFullScreen className="w-full h-full border-0"
+      onLoad={() => { if (onEnded) frame.current?.contentWindow?.postMessage(YOUTUBE_LISTEN_MESSAGE, "https://www.youtube.com"); }} />
+  );
 }
 
 /** A lesson video that fills its box as big as 16:9 allows (Graeme, 20 Nov
  *  2026: "maximise that for a 16:9 screen"). From md up the parent must give
  *  it a height; on a phone it's a normal 16:9 strip. */
-export function LessonVideoFill({ url }: { url: string }) {
+export function LessonVideoFill({ url, onEnded }: { url: string; onEnded?: () => void }) {
   const id = isUploadedLessonVideo(url) ? null : youtubeIdFromUrl(url);
   if (!isUploadedLessonVideo(url) && !id) return <YouTubeEmbed url={url} />;
   return (
     <div className="w-full h-full flex items-center justify-center md:[container-type:size]">
       <div className="w-full aspect-video rounded-2xl overflow-hidden bg-black md:w-[min(100cqw,calc(100cqh*16/9))]">
-        {id
-          ? <iframe src={youtubeEmbedSrc(id, currentOrigin())} title="Video"
-              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-              allowFullScreen className="w-full h-full border-0" />
-          : <UploadedVideo url={url} />}
+        {id ? <YouTubePlayer id={id} onEnded={onEnded} /> : <UploadedVideo url={url} onEnded={onEnded} />}
       </div>
     </div>
   );

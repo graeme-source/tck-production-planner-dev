@@ -45,9 +45,11 @@ export function youtubeIdFromUrl(url: string): string | null {
  * the parameter is left off rather than sent empty — an empty origin is
  * worse than none, because the player treats it as a mismatch.
  */
-export function youtubeEmbedSrc(id: string, origin?: string): string {
+export function youtubeEmbedSrc(id: string, origin?: string, opts?: { jsApi?: boolean }): string {
   const params = new URLSearchParams({ rel: "0" });
   if (origin) params.set("origin", origin);
+  // Lets the page hear the player's state (youtubeEndedFromMessage).
+  if (opts?.jsApi) params.set("enablejsapi", "1");
   return `https://www.youtube.com/embed/${id}?${params.toString()}`;
 }
 
@@ -56,4 +58,24 @@ export function currentOrigin(): string | undefined {
   return typeof window !== "undefined" && window.location?.origin
     ? window.location.origin
     : undefined;
+}
+
+/** The message that asks an embedded player (enablejsapi=1) to start
+ *  reporting its state to this page. */
+export const YOUTUBE_LISTEN_MESSAGE = JSON.stringify({ event: "listening", id: 1, channel: "widget" });
+
+/** Did this postMessage from a YouTube player say the video has ended?
+ *  The player sends JSON strings: "onStateChange" with info 0, or an
+ *  "infoDelivery" whose playerState is 0 (Graeme, 20 Nov 2026: the lesson
+ *  slide moves on to the points when the clip finishes). */
+export function youtubeEndedFromMessage(data: unknown): boolean {
+  if (typeof data !== "string") return false;
+  try {
+    const m = JSON.parse(data) as { event?: string; info?: unknown };
+    if (m.event === "onStateChange") return m.info === 0;
+    if (m.event === "infoDelivery" && m.info && typeof m.info === "object") {
+      return (m.info as { playerState?: unknown }).playerState === 0;
+    }
+  } catch { /* not the player's JSON */ }
+  return false;
 }

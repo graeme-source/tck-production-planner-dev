@@ -4,9 +4,14 @@
  * as big as a 16:9 screen allows. One component for the meeting deck and the
  * curriculum's Preview, so the preview is exactly what the room sees.
  *
+ * With a video it plays first (Graeme, 20 Nov 2026): just the title and the
+ * video nearly full screen, with a Skip button; when the clip ends (or on
+ * Skip) it shrinks into the usual layout with the points to talk through.
+ *
  * Fills its parent's height from md up — the parent must give it one.
  */
 import { useState } from "react";
+import { SkipForward } from "lucide-react";
 import { LessonDiagram } from "@/components/lesson-diagrams";
 import { LessonVideoFill, MarkdownBlock } from "@/components/lesson-media";
 import { lessonSlideParts } from "@/lib/lesson-slide-parts";
@@ -42,13 +47,35 @@ export function LeanLessonSlide({ lesson, kicker }: { lesson: LeanSlideLesson; k
   const hasMedia = media.length > 0;
   const [picked, setPicked] = useState<"video" | "diagram" | "image" | null>(null);
   const showing = media.find(m => m.key === picked)?.key ?? media[0]?.key ?? null;
+  // Step one when there's a video: watch it. Step two: the points.
+  const [watching, setWatching] = useState(!!lesson.videoUrl);
+  const toPoints = () => { setWatching(false); setPicked("video"); };
+
+  const header = (
+    <header className="flex-shrink-0">
+      {kicker && <p className="text-sm md:text-base font-semibold uppercase tracking-wide text-purple-500 mb-1">{kicker}</p>}
+      <h2 className="font-display font-bold leading-[1.05] text-4xl md:text-[clamp(2.25rem,4vw,4.5rem)]">{lesson.title}</h2>
+    </header>
+  );
+
+  if (watching && lesson.videoUrl) {
+    return (
+      <div className="md:h-full flex flex-col gap-4 md:min-h-[24rem]">
+        <div className="flex items-end gap-4 flex-shrink-0">
+          <div className="flex-1 min-w-0">{header}</div>
+          <button onClick={toPoints}
+            className="h-12 px-5 rounded-xl border-2 border-purple-500/50 text-purple-700 dark:text-purple-300 bg-card font-semibold flex items-center gap-2 flex-shrink-0 hover:bg-purple-500/10">
+            Skip video <SkipForward className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 md:min-h-0"><LessonVideoFill url={lesson.videoUrl} onEnded={toPoints} /></div>
+      </div>
+    );
+  }
 
   return (
     <div className="md:h-full flex flex-col gap-5 md:min-h-[24rem]">
-      <header className="flex-shrink-0">
-        {kicker && <p className="text-sm md:text-base font-semibold uppercase tracking-wide text-purple-500 mb-1">{kicker}</p>}
-        <h2 className="font-display font-bold leading-[1.05] text-4xl md:text-[clamp(2.25rem,4vw,4.5rem)]">{lesson.title}</h2>
-      </header>
+      {header}
 
       <div className={cn("flex-1 md:min-h-0 grid gap-6 md:gap-10",
         hasMedia ? "md:grid-cols-[minmax(0,4fr)_minmax(0,8fr)]" : "grid-cols-1")}>
