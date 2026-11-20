@@ -4,6 +4,7 @@ import {
   db, finDocumentsTable, finEventsTable, finInvoicesTable, finLinesTable, finMatchesTable, finVendorsTable, usersTable,
 } from "@workspace/db";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../ai/claude-calls";
 import { claudeCanRead } from "../uploaded-contract-access";
 import { INVOICE_READ_PROMPT, INVOICE_READ_TOOL, invoiceDuplicateKey, normaliseInvoiceReading, sha256Of } from "./invoice-library";
 import { isReadyToClose } from "./posted-rules";
@@ -292,13 +293,16 @@ async function readOneInvoice(id: number, mime: string, size: number): Promise<v
   try {
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 800,
-      tool_choice: { type: "tool", name: INVOICE_READ_TOOL.name },
-      tools: [INVOICE_READ_TOOL as unknown as Anthropic.Tool],
+      max_tokens: aiMaxTokens(800, "low"),
+      output_config: { effort: "low" },
+      system: callToolInstruction(INVOICE_READ_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, INVOICE_READ_TOOL.name),
+      tools: [strictTool(INVOICE_READ_TOOL as unknown as Anthropic.Tool)],
       messages: [{ role: "user", content: [block, { type: "text", text: INVOICE_READ_PROMPT }] }],
     });
-    const toolUse = response.content.find((b) => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") throw new Error("no fields returned");
+    // No call (text reply or refusal) marks the read failed, as before.
+    const toolUse = pickToolUse(response, INVOICE_READ_TOOL.name);
+    if (!toolUse) throw new Error("no fields returned");
     const r = normaliseInvoiceReading(toolUse.input);
     // Only what it could read replaces what's there (folder/transaction hints).
     const fields: Record<string, unknown> = { currency: r.currency, docKind: r.docKind };

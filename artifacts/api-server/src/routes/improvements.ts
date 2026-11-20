@@ -8,10 +8,10 @@ import {
 import { eq, desc, sql, inArray } from "drizzle-orm";
 import { z } from "zod";
 import type { ImprovementSubmission } from "@workspace/db";
-import type Anthropic from "@anthropic-ai/sdk";
 import { validate } from "../middleware/validate";
 import { requireAdmin } from "../middleware/roles";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool } from "../lib/ai/claude-calls";
 import { shortlistDuplicates } from "../lib/improvement-similarity";
 import { intArrayLiteral } from "../lib/int-array-literal";
 import { stitchBeforeAfter } from "../lib/improvement-media";
@@ -711,13 +711,14 @@ router.post("/check-duplicate", validate(duplicateCheckSchema), async (req: Requ
 
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 1024,
+      max_tokens: aiMaxTokens(1024, "low"),
+      output_config: { effort: "low" },
       system: `You decide whether a newly reported workplace problem is THE SAME problem as one already reported at a UK food production kitchen.
 
 Same problem means the same thing, in the same place, needing the same fix — even if worded completely differently. Two different things that happen to share words (two separate broken items, two different benches) are NOT the same.
 
 Be strict. A wrong match makes someone's report vanish into someone else's, which is worse than a duplicate.`,
-      tools: [{
+      tools: [strictTool({
         name: "emit_matches",
         description: "Return which of the existing reports describe the same problem.",
         input_schema: {
@@ -731,7 +732,7 @@ Be strict. A wrong match makes someone's report vanish into someone else's, whic
           },
           required: ["matchIds"],
         },
-      }],
+      })],
       messages: [{
         role: "user",
         content: `NEW REPORT:\n${title}\n${description ?? ""}\n\nEXISTING REPORTS:\n${
@@ -740,9 +741,8 @@ Be strict. A wrong match makes someone's report vanish into someone else's, whic
       }],
     });
 
-    const toolUse = response.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_matches",
-    );
+    // No call or a refusal → no matches, so the report goes in as new.
+    const toolUse = pickToolUse(response, "emit_matches");
     const matchIds: number[] = Array.isArray((toolUse?.input as { matchIds?: unknown })?.matchIds)
       ? ((toolUse!.input as { matchIds: unknown[] }).matchIds).map(Number).filter(Number.isInteger)
       : [];
@@ -817,11 +817,12 @@ export async function suggestLeanSubject(improvementId: number): Promise<void> {
 
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 512,
+      max_tokens: aiMaxTokens(512, "low"),
+      output_config: { effort: "low" },
       system: `You tag workplace improvements at a UK food production kitchen with the lean subject they best illustrate, so the team can see which ideas they're putting into practice.
 
 Pick the single closest subject. If nothing fits well, return null rather than forcing one — a wrong tag is worse than no tag.`,
-      tools: [{
+      tools: [strictTool({
         name: "emit_subject",
         description: "Return the lean subject this improvement best illustrates.",
         input_schema: {
@@ -831,7 +832,7 @@ Pick the single closest subject. If nothing fits well, return null rather than f
           },
           required: ["subjectId"],
         },
-      }],
+      })],
       messages: [{
         role: "user",
         content: `IMPROVEMENT:\n${improvement.title}\n${improvement.description}\n\nSUBJECTS:\n${
@@ -840,9 +841,8 @@ Pick the single closest subject. If nothing fits well, return null rather than f
       }],
     });
 
-    const toolUse = response.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_subject",
-    );
+    // No call or a refusal → no tag, as before.
+    const toolUse = pickToolUse(response, "emit_subject");
     const subjectId = Number((toolUse?.input as { subjectId?: unknown })?.subjectId);
     if (!Number.isInteger(subjectId)) return;
     if (!options.some(s => Number(s.id) === subjectId)) return;

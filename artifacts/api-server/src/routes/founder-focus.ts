@@ -16,6 +16,7 @@ import { isDueOn, type RecurrenceRule, type Weekday } from "@workspace/recurrenc
 import { requireFounder } from "../middleware/founder-access";
 import { verifyCaldav, getDayEvents, resetCaldavCache, type CalendarEvent } from "../lib/caldav";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor, withToolInstruction } from "../lib/ai/claude-calls";
 
 const router: IRouter = Router();
 
@@ -544,20 +545,22 @@ router.post("/tasks/classify", async (req: Request, res: Response) => {
     const client = getClaudeClient();
     const response = await client.messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 300,
-      system: [
+      max_tokens: aiMaxTokens(300, "low"),
+      output_config: { effort: "low" },
+      system: withToolInstruction([
         "You route a new to-do into The Calzone Kitchen founder's day planner.",
         "Pick the pillar whose remit the task falls under, and the block on that pillar it best fits.",
         "Prefer a block belonging to the chosen pillar; if the pillar has no block today, return blockId null.",
         "If the task matches no pillar, return null rather than forcing a fit.",
         "Set recurring true ONLY when the wording itself says it repeats.",
-      ].join(" "),
+      ].join(" "), CLASSIFY_TOOL.name),
       messages: [{ role: "user", content: `${context}\n\nNew task: ${title}` }],
-      tools: [CLASSIFY_TOOL],
-      tool_choice: { type: "tool", name: "route_task" },
+      tools: [strictTool(CLASSIFY_TOOL)],
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, CLASSIFY_TOOL.name),
     });
-    const toolUse = response.content.find(c => c.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") { res.json({ pillarId: null, blockId: null, recurring: false, reason: null, available: true }); return; }
+    // No call (text reply or refusal): no pre-fill, exactly as before.
+    const toolUse = pickToolUse(response, CLASSIFY_TOOL.name);
+    if (!toolUse) { res.json({ pillarId: null, blockId: null, recurring: false, reason: null, available: true }); return; }
     const out = toolUse.input as { pillarId?: number | null; blockId?: number | null; recurring?: boolean; reason?: string };
 
     // Never trust the ids back — a hallucinated pillar would silently file the
@@ -995,10 +998,12 @@ router.post("/replan", async (req: Request, res: Response) => {
     ].filter(Boolean).join("\n");
 
     const client = getClaudeClient();
+    // Medium effort: fitting blocks around diary events and locked blocks is real planning.
     const response = await client.messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 1500,
-      system: [
+      max_tokens: aiMaxTokens(1500, "medium"),
+      output_config: { effort: "medium" },
+      system: withToolInstruction([
         "You are the scheduling assistant inside The Calzone Kitchen founder's day planner.",
         "Produce a realistic time-blocked plan for the REMAINDER of the day via the set_day_plan tool only.",
         "Rules: never overlap diary events or locked blocks; blocks must not overlap each other;",
@@ -1006,17 +1011,18 @@ router.post("/replan", async (req: Request, res: Response) => {
         "otherwise follow the weekday template's shape and the pillars' intent;",
         "if a daily ritual's pillar can be fitted, keep at least one block for that pillar;",
         "don't fill every minute — leave small gaps between long stretches.",
-      ].join(" "),
+      ].join(" "), REPLAN_TOOL.name),
       messages: [{
         role: "user",
         content: `${context}\n\nFounder's instruction: ${prompt}`,
       }],
-      tools: [REPLAN_TOOL],
-      tool_choice: { type: "tool", name: "set_day_plan" },
+      tools: [strictTool(REPLAN_TOOL)],
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, REPLAN_TOOL.name),
     });
 
-    const toolUse = response.content.find(c => c.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") {
+    // No call (text reply or refusal): "try again", nothing changed, as before.
+    const toolUse = pickToolUse(response, REPLAN_TOOL.name);
+    if (!toolUse) {
       res.status(502).json({ error: "AI did not return a plan — try again." });
       return;
     }

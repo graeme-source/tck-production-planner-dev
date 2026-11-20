@@ -2,6 +2,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import { db, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, wasRefused } from "../lib/ai/claude-calls";
 import { TOOL_DEFINITIONS, executeTool, type ToolContext } from "../lib/ai/tools";
 import type Anthropic from "@anthropic-ai/sdk";
 
@@ -123,12 +124,21 @@ router.post("/chat", async (req: Request, res: Response) => {
     for (let iteration = 0; iteration < 6; iteration++) {
       const response = await client.messages.create({
         model: CLAUDE_MODELS.haiku,
-        max_tokens: 1024,
+        max_tokens: aiMaxTokens(1024, "low"),
+        output_config: { effort: "low" },
         system: systemBlocks,
         tools: TOOL_DEFINITIONS,
         messages: conversation,
       });
 
+      // A safety classifier declined: the content is empty or cut off, so
+      // don't show it or run any half-made tool call.
+      if (wasRefused(response)) {
+        res.json({ reply: "Sorry, I can't help with that one. Try asking it a different way.", toolResults });
+        return;
+      }
+
+      // Appended unchanged: thinking blocks must go back with tool calls.
       conversation.push({ role: "assistant", content: response.content });
 
       if (response.stop_reason !== "tool_use") {

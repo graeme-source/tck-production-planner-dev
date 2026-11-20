@@ -34,6 +34,7 @@ import { calendarEmails } from "../lib/marketing-klaviyo-emails";
 import { canApproveEmails } from "./marketing-approvals";
 import { addOffersToLibrary } from "./marketing-offers";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor, withToolInstruction } from "../lib/ai/claude-calls";
 import type Anthropic from "@anthropic-ai/sdk";
 
 const router: IRouter = Router();
@@ -458,24 +459,27 @@ router.post("/suggest-events", validate(z.object({}).passthrough()), async (_req
       .orderBy(asc(marketingEventsTable.startDate));
 
     const client = getClaudeClient();
+    // Medium effort: fitting dated windows around the existing phases is planning.
     const response = await client.messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 1500,
-      system: [
+      max_tokens: aiMaxTokens(1500, "medium"),
+      output_config: { effort: "medium" },
+      system: withToolInstruction([
         "You plan the marketing calendar for The Calzone Kitchen — a UK artisan business delivering treat-night calzones and mac & cheese nationwide (D2C via Shopify, email via Klaviyo, Meta ads).",
         "Their rule: there is ALWAYS a named offer or phase running. Past examples: a football World Cup box, Black Friday, a summer-holiday free pack offer.",
         "Suggest 3-5 phases covering the UNCOVERED weeks in the next ~8 weeks. UK calendar awareness (bank holidays, back to school, Halloween, Bonfire Night, payday weekends). Phases should feel like TCK: warm, family, treat-night — not corporate.",
         "Dates must be realistic windows (5-14 days each), not overlapping existing phases. Use the suggest_events tool only.",
-      ].join("\n"),
+      ].join("\n"), SUGGEST_TOOL.name),
       messages: [{
         role: "user",
         content: `Today: ${today}\nExisting phases (do not overlap these):\n${events.map(e => `- ${e.name}: ${e.startDate} → ${e.endDate}${e.offers.length ? ` [offers: ${e.offers.join("; ")}]` : ""}`).join("\n") || "(none)"}`,
       }],
-      tools: [SUGGEST_TOOL],
-      tool_choice: { type: "tool", name: "suggest_events" },
+      tools: [strictTool(SUGGEST_TOOL)],
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, SUGGEST_TOOL.name),
     });
 
-    const toolUse = response.content.find((blk): blk is Anthropic.ToolUseBlock => blk.type === "tool_use");
+    // No call (text reply or refusal) → no suggestions, as before.
+    const toolUse = pickToolUse(response, SUGGEST_TOOL.name);
     const input = (toolUse?.input ?? { suggestions: [] }) as { suggestions: Array<{ name: string; startDate: string; endDate: string; angle: string; offerIdea: string }> };
     const clean = input.suggestions.filter(s => DATE_RE.test(s.startDate) && DATE_RE.test(s.endDate) && s.endDate >= s.startDate);
     res.json({ suggestions: clean });

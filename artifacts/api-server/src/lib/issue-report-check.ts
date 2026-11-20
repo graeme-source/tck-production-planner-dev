@@ -8,6 +8,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { and, desc, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import { db, andonIssuesTable, issueFixNoticesTable, issueTriageTable } from "@workspace/db";
 import { getClaudeClient, CLAUDE_MODELS } from "./ai/claude";
+import { aiMaxTokens, strictTools, toolUses } from "./ai/claude-calls";
 import { searchAppGuide } from "./ai/app-guide";
 import { matchesAreaFilter, type TriageStatus } from "./issue-pipeline-rules";
 import { checkedAnswer, isStillOpen, plainReportStatus, rankBySharedWords, type CheckAnswer } from "./issue-report-check-rules";
@@ -30,7 +31,7 @@ Rules:
 
 Finish by calling the answer tool.`;
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: Anthropic.Tool[] = strictTools([
   {
     name: "search_reports",
     description: "Search app reports from the last 90 days: where each is up to, and any answer the team already gave.",
@@ -55,7 +56,10 @@ const TOOLS: Anthropic.Tool[] = [
       required: ["outcome", "message"],
     },
   },
-];
+]);
+
+/** Claude 5.5 can't be forced to call a tool, so the last turn asks for the answer instead. */
+const LAST_TURN_NOTE = `This is your last turn: don't search again. Call the answer tool now with what you've found (if you're unsure, it's "new").`;
 
 async function searchReports(query: string) {
   const since = new Date(Date.now() - 90 * 86_400_000);
@@ -91,14 +95,21 @@ export async function checkReport(history: Array<{ role: "user" | "assistant"; t
   const messages: Anthropic.MessageParam[] = history.map(m => ({ role: m.role, content: m.text }));
   const seen = { issueIds: new Set<number>(), paths: new Set<string>() };
   for (let turn = 0; turn < 5; turn++) {
+    // Last turn: a system note asks for the answer (this used to be a forced
+    // tool_choice, which Claude 5.5 rejects). It's appended, never edited in,
+    // so the history stays as sent. If she still doesn't answer, the loop
+    // ends and the report is filed as it is.
+    if (turn === 4) messages.push({ role: "system", content: LAST_TURN_NOTE });
     const response = await getClaudeClient().messages.create({
-      model: CLAUDE_MODELS.sonnet, max_tokens: 900, system: PROMPT, tools: TOOLS, messages,
-      ...(turn >= 4 ? { tool_choice: { type: "tool" as const, name: "answer" } } : {}),
+      model: CLAUDE_MODELS.sonnet, max_tokens: aiMaxTokens(900, "medium"), system: PROMPT, tools: TOOLS, messages,
+      output_config: { effort: "medium" },
     });
-    const uses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+    // A refusal gives no tool calls, so it ends the loop like a text reply.
+    const uses = toolUses(response);
     const done = uses.find(u => u.name === "answer");
     if (done) return checkedAnswer(done.input, seen);
     if (uses.length === 0) break;
+    // Appended unchanged: the thinking blocks must go back with the tool calls.
     messages.push({ role: "assistant", content: response.content });
     const results: Anthropic.ToolResultBlockParam[] = [];
     for (const use of uses) {

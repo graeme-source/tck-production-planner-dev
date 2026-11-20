@@ -22,6 +22,7 @@ import { validate, validateQuery } from "../middleware/validate";
 import { singleFileUpload } from "../middleware/upload";
 import { userCan } from "../lib/feature-access";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import { londonDateString, addDaysToDateString } from "../lib/london-time";
 import {
   inUseIntervals, productionWindow, lotsInWindow, plansTouchedBy, normaliseBatchCode, looksLikeOurPackCode,
@@ -122,9 +123,11 @@ async function readLabel(photo: Buffer, mime: string): Promise<{ batchCode: stri
   try {
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 300,
-      tool_choice: { type: "tool", name: LOT_LABEL_TOOL.name },
-      tools: [LOT_LABEL_TOOL as unknown as Anthropic.Tool],
+      max_tokens: aiMaxTokens(300, "low"),
+      output_config: { effort: "low" },
+      system: callToolInstruction(LOT_LABEL_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, LOT_LABEL_TOOL.name),
+      tools: [strictTool(LOT_LABEL_TOOL as unknown as Anthropic.Tool)],
       messages: [{
         role: "user",
         content: [
@@ -133,8 +136,9 @@ async function readLabel(photo: Buffer, mime: string): Promise<{ batchCode: stri
         ],
       }],
     }, { timeout: 30_000 });
-    const tool = response.content.find(b => b.type === "tool_use");
-    return tool && tool.type === "tool_use" ? parseLotLabel(tool.input) : null;
+    // No call (or a refusal) → null: they type the code in, as before.
+    const tool = pickToolUse(response, LOT_LABEL_TOOL.name);
+    return tool ? parseLotLabel(tool.input) : null;
   } catch (err) {
     console.error("[traceability] label read failed:", err instanceof Error ? err.message : err);
     return null;

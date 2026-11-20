@@ -44,6 +44,7 @@ import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { getPreviousDispatchDayAsync, getNextDispatchDayAsync } from "./production-plans";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import { leanCorpusPrompt } from "../lib/lean-corpus";
 import { followOnDetail, plannedWeek } from "../lib/lean-week-follow-on";
 import { meetingDayTotals } from "../lib/meeting-day-totals";
@@ -1328,18 +1329,19 @@ router.post("/lessons/generate", async (req: Request, res: Response) => {
 
   try {
     const client = getClaudeClient();
+    // The system prompt already asks for emit_lesson (it can't be forced on Sonnet 5.5).
     const response = await client.messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 2048,
+      max_tokens: aiMaxTokens(2048, "medium"),
+      output_config: { effort: "medium" },
       system: LESSON_SYSTEM,
-      tools: [LESSON_TOOL],
-      tool_choice: { type: "tool", name: "emit_lesson" },
+      tools: [strictTool(LESSON_TOOL)],
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, LESSON_TOOL.name),
       messages: [{ role: "user", content: `Topic: ${topic.trim()}` }],
     });
 
-    const toolUse = response.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_lesson",
-    );
+    // No call (text reply or refusal) gets the same "try rephrasing", as before.
+    const toolUse = pickToolUse(response, LESSON_TOOL.name);
     if (!toolUse) {
       res.status(502).json({ error: "The AI didn't return a lesson. Try rephrasing the topic." });
       return;

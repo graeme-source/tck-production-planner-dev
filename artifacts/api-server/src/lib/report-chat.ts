@@ -8,6 +8,7 @@
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClaudeClient, CLAUDE_MODELS } from "./ai/claude";
+import { aiMaxTokens, strictTools, toolUses } from "./ai/claude-calls";
 import { searchAppGuide } from "./ai/app-guide";
 import { answersAsBrief, checkedStep, MAX_QUESTIONS, questionsAsked, type ChatKind, type ChatTurn, type JaneStep } from "./report-chat-rules";
 
@@ -46,7 +47,7 @@ const WHAT: Record<ChatKind, string> = {
   idea: "an improvement idea that would change the app",
 };
 
-const TOOLS: Anthropic.Tool[] = [
+const TOOLS: Anthropic.Tool[] = strictTools([
   {
     name: "search_app_guide",
     description: "Search the guide to what the app can already do and where.",
@@ -76,7 +77,14 @@ const TOOLS: Anthropic.Tool[] = [
       required: ["brief"],
     },
   },
-];
+]);
+
+/**
+ * Claude 5.5 can't be forced to call a tool (tool_choice "any" / "tool" is a
+ * 400), so the prompt's "Every reply is a call to ask or brief" does that
+ * job, and when it's time to finish a system note asks for the brief.
+ */
+const FINISH_NOTE = "You've asked enough questions. Don't ask another: call brief now with what they've told you.";
 
 /** Their answers as the summary, when Jane can't write one. */
 function fallback(history: readonly ChatTurn[]): JaneStep | null {
@@ -90,14 +98,22 @@ export async function nextStep(kind: ChatKind, history: ChatTurn[], finish: bool
   const asked = questionsAsked(history);
   const messages: Anthropic.MessageParam[] = history.map(m => ({ role: m.role, content: m.text }));
   const system = PROMPT.replace("{{WHAT}}", WHAT[kind]);
+  let finishNoted = false;
   try {
     for (let turn = 0; turn < 4; turn++) {
       const mustFinish = asked >= MAX_QUESTIONS || turn === 3;
+      // Appended once, after the latest user turn, and left in place.
+      if (mustFinish && !finishNoted) {
+        messages.push({ role: "system", content: FINISH_NOTE });
+        finishNoted = true;
+      }
       const response = await getClaudeClient().messages.create({
-        model: CLAUDE_MODELS.sonnet, max_tokens: 900, system, tools: TOOLS, messages,
-        tool_choice: mustFinish ? { type: "tool", name: "brief" } : { type: "any" },
+        model: CLAUDE_MODELS.sonnet, max_tokens: aiMaxTokens(900, "medium"), system, tools: TOOLS, messages,
+        output_config: { effort: "medium" },
       });
-      const uses = response.content.filter((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+      // A text reply or a refusal gives no calls: the loop ends and their
+      // answers are used as the summary, exactly as before.
+      const uses = toolUses(response);
       const said = uses.find(u => u.name === "ask" || u.name === "brief");
       if (said) return checkedStep({ name: said.name, input: said.input }, asked) ?? fallback(history);
       const searches = uses.filter(u => u.name === "search_app_guide");

@@ -5,6 +5,7 @@ import { db, appSettingsTable, usersTable } from "@workspace/db";
 import { eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, wasRefused } from "../lib/ai/claude-calls";
 import {
   RECIPE_TOOL_DEFINITIONS,
   PROPOSAL_TOOL_DEFINITIONS,
@@ -455,9 +456,14 @@ router.post("/chat", async (req: Request, res: Response) => {
 
   try {
     for (let iteration = 0; iteration < MOST_LOOKUP_ROUNDS; iteration++) {
+      // Sonnet 5.5 thinks before replying; medium effort suits look-it-up-then-
+      // answer, and the room keeps thinking from eating the 4,096 answer.
+      // Thinking streams as thinking deltas, which the "text" handler below
+      // never sees — so a round can now bring no text at all, which is fine.
       const stream = client.messages.stream({
         model: CLAUDE_MODELS.sonnet,
-        max_tokens: 4096,
+        max_tokens: aiMaxTokens(4096, "medium", { streaming: true }),
+        output_config: { effort: "medium" },
         system: [
           { type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } },
           ...(memoryBlock ? [{ type: "text" as const, text: memoryBlock }] : []),
@@ -472,6 +478,18 @@ router.post("/chat", async (req: Request, res: Response) => {
       });
 
       const final = await stream.finalMessage();
+
+      // A safety classifier declined, possibly part-way through: take any
+      // streamed words off the screen, don't save them, and say so plainly.
+      if (wasRefused(final)) {
+        if (assistantTextAcc) send("reset", {});
+        send("delta", { text: "Sorry, I can't help with that one. Try asking it a different way." });
+        send("done", { stopReason: final.stop_reason, usage: final.usage });
+        res.end();
+        return;
+      }
+
+      // Appended unchanged: thinking blocks must go back with the tool calls.
       conversation.push({ role: "assistant", content: final.content });
 
       if (final.stop_reason !== "tool_use") {

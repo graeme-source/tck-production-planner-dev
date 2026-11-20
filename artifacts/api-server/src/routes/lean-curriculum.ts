@@ -36,6 +36,7 @@ import {
 } from "@workspace/db";
 import { validate } from "../middleware/validate";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool } from "../lib/ai/claude-calls";
 import { leanCorpusPrompt, LMS_BACKLOG_SUBJECTS } from "../lib/lean-corpus";
 import { planMatrixSync, matrixLabelFor, isNoopPlan, type MatrixItemRow } from "../lib/lean-matrix-sync";
 import type Anthropic from "@anthropic-ai/sdk";
@@ -646,21 +647,22 @@ export async function writeWeekLessons(id: number, notes?: string, force?: boole
     const client = getClaudeClient();
     // Streaming: five lessons plus a quiz is a long generation and a
     // non-streaming call of this size risks an HTTP timeout.
-    // `thinking` is deliberately not passed: this model thinks adaptively by
-    // default when the parameter is omitted, and the SDK version pinned here
-    // predates the adaptive type.
+    // `thinking` isn't passed: Opus 5.5 always thinks adaptively. Effort is
+    // set to high explicitly — Opus 5.5 defaults to medium, and Opus 5 ran
+    // this at high — with room for the thinking on top of the 16,000 the
+    // lessons themselves were given.
     const stream = client.messages.stream({
       model: CLAUDE_MODELS.opus,
-      max_tokens: 16000,
+      max_tokens: aiMaxTokens(16000, "high", { streaming: true }),
+      output_config: { effort: "high" },
       system: weekSystemPrompt(),
-      tools: [WEEK_TOOL],
+      tools: [strictTool(WEEK_TOOL)],
       messages: [{ role: "user", content: brief }],
     });
     const response = await stream.finalMessage();
 
-    const toolUse = response.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_week",
-    );
+    // No call (or a refusal) gets the same "try again", as before.
+    const toolUse = pickToolUse(response, WEEK_TOOL.name);
     if (!toolUse) {
       console.error("[lean-curriculum] generation returned no tool call:", response.stop_reason);
       return { ok: false, status: 502, error: "The lesson writer didn't return a usable week. Try again." };

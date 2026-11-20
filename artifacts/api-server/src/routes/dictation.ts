@@ -21,6 +21,7 @@ import { Router, type IRouter, type Request, type Response, type NextFunction } 
 import { z } from "zod";
 import { validate } from "../middleware/validate";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, responseText } from "../lib/ai/claude-calls";
 
 const router: IRouter = Router();
 
@@ -69,7 +70,11 @@ router.post("/polish", requireAuth, validate(PolishBody), async (req, res) => {
     const message = await getClaudeClient().messages.create(
       {
         model: CLAUDE_MODELS.haiku,
-        max_tokens: 500,
+        // Haiku 5.5 thinks by default; low effort keeps it quick (it usually
+        // skips thinking on a tidy-up like this), and the room stops any
+        // thinking from eating the answer.
+        max_tokens: aiMaxTokens(500, "low"),
+        output_config: { effort: "low" },
         system: SYSTEM,
         messages: [{ role: "user", content: `${CONTEXT_HINT[context]}\n\nDictated text:\n${text}` }],
       },
@@ -78,10 +83,8 @@ router.post("/polish", requireAuth, validate(PolishBody), async (req, res) => {
       { timeout: 8000 },
     );
 
-    const out = message.content
-      .map(b => (b.type === "text" ? b.text : ""))
-      .join("")
-      .trim();
+    // Text blocks only (thinking skipped); a refusal gives "" → raw text back.
+    const out = responseText(message).trim();
 
     if (!out) { res.json({ polished: text, changed: false }); return; }
     res.json({ polished: out, changed: out !== text });

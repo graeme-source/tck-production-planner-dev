@@ -37,6 +37,7 @@ import {
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import { fetchPage, isUrlSafe } from "./ingredient-scrape";
 import {
   WISH_LIST_STATUSES,
@@ -214,16 +215,19 @@ async function aiFill(html: string, url: string, reading: ProductPageReading): P
   try {
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 400,
-      tool_choice: { type: "tool", name: AI_TOOL.name },
-      tools: [AI_TOOL],
+      max_tokens: aiMaxTokens(400, "low"),
+      output_config: { effort: "low" },
+      system: callToolInstruction(AI_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, AI_TOOL.name),
+      tools: [strictTool(AI_TOOL)],
       messages: [{
         role: "user",
         content: `What product is this shop page selling, and for how much? URL: ${url}\n<title>${decodeEntities(titleTag)}</title>\n<page>\n${decodeEntities(text)}\n</page>`,
       }],
     });
-    const block = response.content.find(b => b.type === "tool_use");
-    if (!block || block.type !== "tool_use") return reading;
+    // No call (or a refusal) leaves the gaps for the person, as before.
+    const block = pickToolUse(response, AI_TOOL.name);
+    if (!block) return reading;
     const out = block.input as Record<string, unknown>;
     const aiTitle = typeof out["title"] === "string" ? out["title"].trim().slice(0, 300) : "";
     const aiPrice = parsePriceToPence(out["price"]);

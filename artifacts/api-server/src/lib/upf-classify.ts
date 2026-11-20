@@ -16,6 +16,7 @@
  * from a longer declaration allowance (long decks put the markers last).
  */
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "./ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "./ai/claude-calls";
 
 export interface Classification {
   ingredientId: number;
@@ -108,13 +109,16 @@ export async function classifyBatch(rows: IngredientRow[]): Promise<Classificati
   const client = getClaudeClient();
   const response = await client.messages.create({
     model: CLAUDE_MODELS.sonnet,
-    max_tokens: 8192,
-    tool_choice: { type: "tool", name: "classify_ingredients" },
-    tools: [CLASSIFY_TOOL],
+    max_tokens: aiMaxTokens(8192, "low"),
+    output_config: { effort: "low" },
+    system: callToolInstruction(CLASSIFY_TOOL.name),
+    tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, CLASSIFY_TOOL.name),
+    tools: [strictTool(CLASSIFY_TOOL)],
     messages: [{ role: "user", content: buildBatchPrompt(rows) }],
   });
-  const toolUse = response.content.find(b => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a tool_use block");
+  // No call (text reply or refusal) fails the batch, as before.
+  const toolUse = pickToolUse(response, CLASSIFY_TOOL.name);
+  if (!toolUse) throw new Error("Claude did not return a tool_use block");
   const raw = (toolUse.input as { classifications?: unknown[] }).classifications ?? [];
   const validIds = new Set(rows.map(r => r.id));
   const out: Classification[] = [];

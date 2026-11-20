@@ -18,7 +18,7 @@ import { fileURLToPath } from "node:url";
 import { db, usersTable } from "@workspace/db";
 import { sql, eq } from "drizzle-orm";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
-import type Anthropic from "@anthropic-ai/sdk";
+import { aiMaxTokens, pickToolUse, strictTool } from "../lib/ai/claude-calls";
 import { requireFeature } from "../lib/feature-access";
 import { guessAreas, sortAreaKeys, type ChangeArea } from "@workspace/station-changes";
 import { loadChangeAreas } from "../lib/change-areas";
@@ -415,8 +415,9 @@ ${bullets}`;
     const client = getClaudeClient();
     const resp = await client.messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 1500,
-      tools: [{
+      max_tokens: aiMaxTokens(1500, "low"),
+      output_config: { effort: "low" },
+      tools: [strictTool({
         name: "emit_updates",
         description: "Return the week's changes, each with a short scannable title.",
         input_schema: {
@@ -439,13 +440,12 @@ ${bullets}`;
           },
           required: ["updates"],
         },
-      }],
+      })],
       messages: [{ role: "user", content: prompt }],
     });
 
-    const toolUse = resp.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "emit_updates",
-    );
+    // No call (or a refusal) → null, as before.
+    const toolUse = pickToolUse(resp, "emit_updates");
     const raw = (toolUse?.input as { updates?: unknown })?.updates;
     if (!Array.isArray(raw)) return null;
 

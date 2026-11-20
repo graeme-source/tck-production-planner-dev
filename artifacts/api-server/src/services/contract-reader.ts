@@ -3,7 +3,8 @@
  *
  * Same pattern as the ingredient label-photo reader (routes/ingredient-
  * scrape.ts): the shared client and model constants from lib/ai/claude.ts,
- * a forced tool call so the answer comes back as typed JSON, and the pure
+ * a tool call so the answer comes back as typed JSON (asked for in the
+ * prompt and strict, since Sonnet 5.5 can't be forced to call it), and the pure
  * half (lib/contract-extraction.ts) validating and normalising what comes
  * back. PDFs go in as a document block, photos as an image block.
  *
@@ -14,6 +15,7 @@
  */
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import {
   CONTRACT_EXTRACTION_PROMPT, CONTRACT_EXTRACTION_TOOL, normaliseContractExtraction, type ContractExtraction,
 } from "../lib/contract-extraction";
@@ -36,15 +38,19 @@ export async function readContractDocument(file: { mime: string; data: Buffer },
     : { type: "image", source: { type: "base64", media_type: file.mime as "image/jpeg" | "image/png" | "image/webp", data: b64 } };
 
   try {
+    // Medium effort: a misread rate of pay is expensive (see above).
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 1500,
-      tool_choice: { type: "tool", name: CONTRACT_EXTRACTION_TOOL.name },
-      tools: [CONTRACT_EXTRACTION_TOOL as unknown as Anthropic.Tool],
+      max_tokens: aiMaxTokens(1500, "medium"),
+      output_config: { effort: "medium" },
+      system: callToolInstruction(CONTRACT_EXTRACTION_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, CONTRACT_EXTRACTION_TOOL.name),
+      tools: [strictTool(CONTRACT_EXTRACTION_TOOL as unknown as Anthropic.Tool)],
       messages: [{ role: "user", content: [docBlock, { type: "text", text: CONTRACT_EXTRACTION_PROMPT }] }],
     });
-    const toolUse = response.content.find(b => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return the contract fields");
+    // No call (text reply or refusal) → "type the details in", as before.
+    const toolUse = pickToolUse(response, CONTRACT_EXTRACTION_TOOL.name);
+    if (!toolUse) throw new Error("Claude did not return the contract fields");
     return { ok: true, extraction: normaliseContractExtraction(toolUse.input, personName), model: CLAUDE_MODELS.sonnet };
   } catch (err) {
     console.error("[contract-reader] extraction failed:", err instanceof Error ? err.message : err);

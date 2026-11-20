@@ -16,6 +16,7 @@ import { sql } from "drizzle-orm";
 import { validate } from "../middleware/validate";
 import { buildSopFromVideo, buildSopFromMedia, ffmpegAvailable, type SuppliedPhoto } from "../lib/sop-video";
 import { isClaudeConfigured } from "../lib/ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import { markSopContentChanged, sopIdForStep } from "../lib/sop-content-version";
 import { sopLinkProblem } from "../lib/sop-link-targets";
 
@@ -618,11 +619,15 @@ router.post("/:id/polish", requireAuth, async (req, res) => {
     const { getClaudeClient, CLAUDE_MODELS } = await import("../lib/ai/claude");
     const { SOP_AI_MAX_TOKENS, SOP_TOO_LONG_MESSAGE, aiRanOutOfRoom } = await import("../lib/sop-ai-limits");
     const client = getClaudeClient();
-    const response = await client.messages.create({
+    // Streamed (collected with finalMessage): the 30-step allowance plus room
+    // to think is more than a non-streaming call should ask for.
+    const response = await client.messages.stream({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: SOP_AI_MAX_TOKENS,
-      tool_choice: { type: "tool", name: "polish_sop_steps" },
-      tools: [POLISH_TOOL as never],
+      max_tokens: aiMaxTokens(SOP_AI_MAX_TOKENS, "low", { streaming: true }),
+      output_config: { effort: "low" },
+      system: callToolInstruction(POLISH_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, POLISH_TOOL.name),
+      tools: [strictTool(POLISH_TOOL)],
       messages: [{
         role: "user",
         content: `You are editing the steps of a Standard Operating Procedure ("${sop.title}") for The Calzone Kitchen, a UK food production kitchen. The authors may not be confident writers, and many readers have English as a second language. Rewrite each step so it is as clear, short and easy to follow as possible.
@@ -640,10 +645,11 @@ The steps:
 
 ${steps.map(st => `[id ${st.id}]\n${st.description}`).join("\n\n")}`,
       }],
-    });
+    }).finalMessage();
     if (aiRanOutOfRoom(response.stop_reason)) throw new Error(SOP_TOO_LONG_MESSAGE);
-    const toolUse = response.content.find(b => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") throw new Error("The AI did not return rewritten steps — try again");
+    // No call (text reply or refusal) gets the same "try again", as before.
+    const toolUse = pickToolUse(response, POLISH_TOOL.name);
+    if (!toolUse) throw new Error("The AI did not return rewritten steps — try again");
     const input = toolUse.input as { steps?: { id: number; description: string }[] };
     const byId = new Map(steps.map(st => [st.id, st]));
     let updated = 0;

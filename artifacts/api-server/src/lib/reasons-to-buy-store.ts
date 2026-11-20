@@ -19,6 +19,7 @@ import {
 } from "@workspace/marketing-calendar";
 import type Anthropic from "@anthropic-ai/sdk";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "./ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor, withToolInstruction } from "./ai/claude-calls";
 import { klaviyoCampaignHtml, klaviyoCampaignResults } from "./klaviyo-campaign-calendar";
 import { savedSentCampaigns, type SentCampaign } from "./klaviyo-sent-mirror";
 import { getCachedOrdersLondonDays } from "./orders-cache";
@@ -196,18 +197,20 @@ const reasonLine = (r: ReasonDef) => `- id ${r.id}: ${r.name}${r.description ? `
  * Judge a batch of emails against the reasons — no saving. First pass:
  * which reasons each email uses, quoting its own words (a quote that isn't
  * really in the email is dropped). Second pass: each proposed match is
- * checked again on its own and kept only on a clear yes. Both at
- * temperature 0, so a re-read gives the same answer. Returns a map for
- * every email Claude answered (an empty map = no reasons); emails missing
- * from it weren't answered and stay unread.
+ * checked again on its own and kept only on a clear yes. (Both ran at
+ * temperature 0 until 20 Nov 2026; Claude Sonnet 5.5 rejects any non-default
+ * temperature, so consistency now rests on the strict rules, the quote check
+ * and the second pass, at medium effort.) Returns a map for every email
+ * Claude answered (an empty map = no reasons); emails missing from it
+ * weren't answered — or Claude declined — and stay unread.
  */
 export async function judgeBatch(items: BatchItem[], reasons: ReasonDef[]): Promise<Map<string, Map<number, string>>> {
   const client = getClaudeClient();
   const response = await client.messages.create({
     model: CLAUDE_MODELS.sonnet,
-    max_tokens: 2000,
-    temperature: 0,
-    system: READ_RULES,
+    max_tokens: aiMaxTokens(2000, "medium"),
+    output_config: { effort: "medium" },
+    system: withToolInstruction(READ_RULES, READ_TOOL.name),
     messages: [{
       role: "user",
       content: [
@@ -215,10 +218,10 @@ export async function judgeBatch(items: BatchItem[], reasons: ReasonDef[]): Prom
         "Emails:", ...items.map(({ c, body }) => emailForAi(c, body).join("\n")),
       ].join("\n"),
     }],
-    tools: [READ_TOOL],
-    tool_choice: { type: "tool", name: "record_reasons" },
+    tools: [strictTool(READ_TOOL)],
+    tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, READ_TOOL.name),
   });
-  const tool = response.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+  const tool = pickToolUse(response, READ_TOOL.name);
   type Answer = { campaignId?: string; matches?: Array<{ reasonId?: number; evidence?: string }> };
   const answers = ((tool?.input ?? {}) as { emails?: Answer[] }).emails ?? [];
   const reasonById = new Map(reasons.map(r => [r.id, r]));
@@ -244,9 +247,9 @@ export async function judgeBatch(items: BatchItem[], reasons: ReasonDef[]): Prom
 
   const check = await client.messages.create({
     model: CLAUDE_MODELS.sonnet,
-    max_tokens: 1500,
-    temperature: 0,
-    system: CHECK_RULES,
+    max_tokens: aiMaxTokens(1500, "medium"),
+    output_config: { effort: "medium" },
+    system: withToolInstruction(CHECK_RULES, CHECK_TOOL.name),
     messages: [{
       role: "user",
       content: proposed.map((p, i) => {
@@ -259,10 +262,14 @@ export async function judgeBatch(items: BatchItem[], reasons: ReasonDef[]): Prom
         ].join("\n");
       }).join("\n\n"),
     }],
-    tools: [CHECK_TOOL],
-    tool_choice: { type: "tool", name: "check_matches" },
+    tools: [strictTool(CHECK_TOOL)],
+    tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, CHECK_TOOL.name),
   });
-  const checkTool = check.content.find((b): b is Anthropic.ToolUseBlock => b.type === "tool_use");
+  const checkTool = pickToolUse(check, CHECK_TOOL.name);
+  // The check can no longer be forced: if it gave no verdicts at all (a text
+  // reply or a refusal), count the whole batch as unanswered so it's read
+  // again later, rather than saving these emails as using no reasons.
+  if (!checkTool) return new Map();
   const verdicts = ((checkTool?.input ?? {}) as { verdicts?: Array<{ campaignId?: string; reasonId?: number; yes?: boolean }> }).verdicts ?? [];
   const yes = new Set(verdicts.filter(v => v.yes === true).map(v => `${v.campaignId}|${v.reasonId}`));
   // No verdict = not confirmed = not kept.

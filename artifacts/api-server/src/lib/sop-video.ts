@@ -22,6 +22,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { getClaudeClient, CLAUDE_MODELS } from "./ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "./ai/claude-calls";
 import { SOP_AI_MAX_TOKENS, SOP_MAX_STEPS, SOP_TOO_LONG_MESSAGE, aiRanOutOfRoom } from "./sop-ai-limits";
 
 const execFileAsync = promisify(execFile);
@@ -205,16 +206,21 @@ Think the process through logically from start to finish, then break it into cle
     });
 
     const client = getClaudeClient();
-    const response = await client.messages.create({
+    // Streamed (collected with finalMessage) because the answer allowance plus
+    // room to think is more than a non-streaming call should ask for.
+    const response = await client.messages.stream({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: SOP_AI_MAX_TOKENS,
-      tool_choice: { type: "tool", name: "draft_sop_steps" },
-      tools: [DRAFT_TOOL],
+      max_tokens: aiMaxTokens(SOP_AI_MAX_TOKENS, "medium", { streaming: true }),
+      output_config: { effort: "medium" },
+      system: callToolInstruction(DRAFT_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, DRAFT_TOOL.name),
+      tools: [strictTool(DRAFT_TOOL)],
       messages: [{ role: "user", content: content as never }],
-    });
+    }).finalMessage();
     if (aiRanOutOfRoom(response.stop_reason)) throw new Error(SOP_TOO_LONG_MESSAGE);
-    const toolUse = response.content.find(b => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") throw new Error("The AI did not return drafted steps — try again");
+    // No call (text reply or refusal) gets the same "try again" as before.
+    const toolUse = pickToolUse(response, DRAFT_TOOL.name);
+    if (!toolUse) throw new Error("The AI did not return drafted steps — try again");
     const input = toolUse.input as { suggestedTitle?: string | null; steps?: RawDraftStep[] };
     const rawSteps = (input.steps ?? []).filter(s =>
       typeof s.description === "string" && s.description.trim().length > 0 &&

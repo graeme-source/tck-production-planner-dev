@@ -24,6 +24,7 @@ import { londonDateString, londonWeekdayName } from "../lib/london-time";
 import { canEditList } from "../lib/team-lists-day";
 import { resolveChecklistStation } from "../lib/checklist-stations";
 import { CLAUDE_MODELS, getClaudeClient, isClaudeConfigured } from "../lib/ai/claude";
+import { aiMaxTokens, pickToolUse, strictTool, toolChoiceFor, withToolInstruction } from "../lib/ai/claude-calls";
 import {
   CHECKLIST_CATEGORIES, placeTask,
   type AiPlacement, type ChecklistCategory, type Choices, type Destination,
@@ -109,20 +110,22 @@ async function askAi(text: string, context: Destination, choices: Choices, calle
   try {
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 400,
-      system: [
+      max_tokens: aiMaxTokens(400, "low"),
+      output_config: { effort: "low" },
+      system: withToolInstruction([
         "You file one new task for The Calzone Kitchen, a food factory, into the right list.",
         "Station checklists are for routine factory jobs at a station (e.g. 'cleaning check' or 'closing check' at packing); team lists are shared routines; personal to-do lists belong to one person.",
         "Words like 'cleaning check', 'closing check', 'opening check', or a list's name say where it goes — leave them out of the title.",
         "Only choose destinations from the lists given. When unsure, keep the box's own list.",
         "'Today only' or 'just today' means date = today with no repeat.",
-      ].join(" "),
+      ].join(" "), PLACE_TOOL.name),
       messages: [{ role: "user", content: `${lines.join("\n")}\n\nNew task: ${text}` }],
-      tools: [PLACE_TOOL],
-      tool_choice: { type: "tool", name: "place_task" },
+      tools: [strictTool(PLACE_TOOL)],
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, PLACE_TOOL.name),
     });
-    const use = response.content.find(c => c.type === "tool_use");
-    if (!use || use.type !== "tool_use") return null;
+    // No call (or a refusal) → null: the box files it by its own rules, as before.
+    const use = pickToolUse(response, PLACE_TOOL.name);
+    if (!use) return null;
     const o = use.input as Record<string, unknown>;
     let destination: Destination | null = null;
     if (o.destination_kind === "todo" && typeof o.assignee_id === "number") destination = { kind: "todo", assigneeId: o.assignee_id };

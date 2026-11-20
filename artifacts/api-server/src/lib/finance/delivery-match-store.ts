@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { asc, eq, sql } from "drizzle-orm";
 import { db, finInvoiceLinesTable, finInvoicesTable, ingredientPriceReviewsTable, ingredientsTable, suppliersTable } from "@workspace/db";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../ai/claude-calls";
 import { claudeCanRead } from "../uploaded-contract-access";
 import { londonDateString } from "../london-time";
 import { matchSupplierForInvoice } from "../supplier-invoice-match";
@@ -227,15 +228,20 @@ async function readInvoiceLines(id: number): Promise<void> {
     ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: b64 } }
     : { type: "image", source: { type: "base64", media_type: inv.mime as "image/jpeg" | "image/png" | "image/webp", data: b64 } };
   try {
+    // Medium effort: matching lines to our ingredients and converting units
+    // is worth a little thought.
     const response = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.sonnet,
-      max_tokens: 4000,
-      tool_choice: { type: "tool", name: INVOICE_LINES_TOOL.name },
-      tools: [INVOICE_LINES_TOOL as unknown as Anthropic.Tool],
+      max_tokens: aiMaxTokens(4000, "medium"),
+      output_config: { effort: "medium" },
+      system: callToolInstruction(INVOICE_LINES_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.sonnet, INVOICE_LINES_TOOL.name),
+      tools: [strictTool(INVOICE_LINES_TOOL as unknown as Anthropic.Tool)],
       messages: [{ role: "user", content: [block, { type: "text", text: invoiceLinesPrompt(supplier.supplierName, ingredients) }] }],
     });
-    const toolUse = response.content.find((b) => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") throw new Error("no lines returned");
+    // No call (text reply or refusal) marks the read failed, as before.
+    const toolUse = pickToolUse(response, INVOICE_LINES_TOOL.name);
+    if (!toolUse) throw new Error("no lines returned");
     const lines = normaliseInvoiceLines(toolUse.input, new Map(ingredients.map((i) => [i.id, i.unit])));
     await db.transaction(async (tx) => {
       await tx.delete(finInvoiceLinesTable).where(eq(finInvoiceLinesTable.invoiceId, id));

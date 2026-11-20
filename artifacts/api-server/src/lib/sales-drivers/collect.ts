@@ -22,6 +22,7 @@ import { getCachedOrdersLondonDays } from "../orders-cache";
 import { londonDateString, londonMinuteOfDay, addDaysToDateString } from "../london-time";
 import { klaviyoEmailsForRange } from "../klaviyo-campaign-calendar";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../ai/claude-calls";
 import { earliestFromZapietCalendar, estimateLeadFromOrders, type OrderForLead } from "./analysis";
 import { parseCommitMessage, isThemeEditorSave, isMergeCommit, categoriseThemeChange, countsForLeadHistory } from "./changes";
 
@@ -145,8 +146,10 @@ async function describeEditorSave(detail: GithubCommitDetail): Promise<string> {
   try {
     const resp = await getClaudeClient().messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 300,
-      tools: [{
+      max_tokens: aiMaxTokens(300, "low"),
+      output_config: { effort: "low" },
+      system: callToolInstruction("emit_change"),
+      tools: [strictTool({
         name: "emit_change",
         description: "One plain-English line describing what changed on the website.",
         input_schema: {
@@ -154,15 +157,16 @@ async function describeEditorSave(detail: GithubCommitDetail): Promise<string> {
           properties: { title: { type: "string", description: "Under 120 characters, e.g. 'Free pack threshold £39.95 → £34.95; announcement now says ends Friday'." } },
           required: ["title"],
         },
-      }],
-      tool_choice: { type: "tool", name: "emit_change" },
+      })],
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, "emit_change"),
       messages: [{
         role: "user",
         content: `This is a Shopify theme-editor save on a food delivery website. Describe what a customer would see differently, in one line, naming old → new values where the diff shows them (offer wording, thresholds, prices, sections shown or hidden). Ignore whitespace, reordering and IDs. Never invent anything not in the diff.\n\n${diff}`,
       }],
     });
-    const block = resp.content.find(b => b.type === "tool_use");
-    const title = block && block.type === "tool_use" ? String((block.input as { title?: string }).title ?? "").trim() : "";
+    // No call (or a refusal) falls back to the file list, as before.
+    const block = pickToolUse(resp, "emit_change");
+    const title = block ? String((block.input as { title?: string }).title ?? "").trim() : "";
     return title ? `Theme editor: ${title}`.slice(0, 200) : fallback;
   } catch (err) {
     console.warn("[sales-drivers] editor-save summary failed:", err instanceof Error ? err.message : err);

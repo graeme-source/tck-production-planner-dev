@@ -20,6 +20,7 @@ import { Router, type IRouter, type Request, type Response } from "express";
 import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod/v4";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
+import { aiMaxTokens, callToolInstruction, pickToolUse, strictTool, toolChoiceFor } from "../lib/ai/claude-calls";
 import { validate } from "../middleware/validate";
 import { detectAllergens, UK14_CODES, type AllergenCode } from "@workspace/allergens";
 import {
@@ -422,9 +423,11 @@ async function aiExtractFromHtml(url: URL, html: string): Promise<ScrapedFields>
   const client = getClaudeClient();
   const response = await client.messages.create({
     model: CLAUDE_MODELS.haiku,
-    max_tokens: 2048,
-    tool_choice: { type: "tool", name: "extract_ingredient_fields" },
-    tools: [EXTRACT_INGREDIENT_FIELDS_TOOL],
+    max_tokens: aiMaxTokens(2048, "low"),
+    output_config: { effort: "low" },
+    system: callToolInstruction(EXTRACT_INGREDIENT_FIELDS_TOOL.name),
+    tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, EXTRACT_INGREDIENT_FIELDS_TOOL.name),
+    tools: [strictTool(EXTRACT_INGREDIENT_FIELDS_TOOL)],
     messages: [{
       role: "user",
       content: `Extract the ingredient fields for the form. Source URL: ${url.toString()}
@@ -438,8 +441,9 @@ Allergens: only what the product CONTAINS — never "may contain" / cross-contac
 ${distillHtml(html)}`,
     }],
   });
-  const toolUse = response.content.find(b => b.type === "tool_use");
-  if (!toolUse || toolUse.type !== "tool_use") throw new Error("Claude did not return a tool_use block");
+  // No call (or a refusal) fails the extraction, as before.
+  const toolUse = pickToolUse(response, EXTRACT_INGREDIENT_FIELDS_TOOL.name);
+  if (!toolUse) throw new Error("Claude did not return a tool_use block");
   return normaliseScrapedFields(toolUse.input);
 }
 
@@ -600,9 +604,11 @@ router.post("/scrape-photo", async (req: Request, res: Response) => {
   try {
     const response = await client.messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 1536,
-      tool_choice: { type: "tool", name: "extract_ingredient_fields" },
-      tools: [EXTRACT_INGREDIENT_FIELDS_TOOL],
+      max_tokens: aiMaxTokens(1536, "low"),
+      output_config: { effort: "low" },
+      system: callToolInstruction(EXTRACT_INGREDIENT_FIELDS_TOOL.name),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, EXTRACT_INGREDIENT_FIELDS_TOOL.name),
+      tools: [strictTool(EXTRACT_INGREDIENT_FIELDS_TOOL)],
       messages: [{
         role: "user",
         content: [
@@ -626,8 +632,9 @@ If the photos are unreadable/blurry, or aren't a food label at all, return null 
       }],
     });
 
-    const toolUse = response.content.find(b => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") {
+    // No call (or a refusal) fails the extraction with a 502, as before.
+    const toolUse = pickToolUse(response, EXTRACT_INGREDIENT_FIELDS_TOOL.name);
+    if (!toolUse) {
       throw new Error("Claude did not return a tool_use block");
     }
     extracted = normaliseScrapedFields(toolUse.input);
@@ -686,9 +693,11 @@ router.post("/ai-nutrition", async (req: Request, res: Response) => {
   try {
     const response = await client.messages.create({
       model: CLAUDE_MODELS.haiku,
-      max_tokens: 1024,
-      tool_choice: { type: "tool", name: "estimate_nutrition" },
-      tools: [{
+      max_tokens: aiMaxTokens(1024, "low"),
+      output_config: { effort: "low" },
+      system: callToolInstruction("estimate_nutrition"),
+      tool_choice: toolChoiceFor(CLAUDE_MODELS.haiku, "estimate_nutrition"),
+      tools: [strictTool({
         name: "estimate_nutrition",
         description: "Estimate per-100g nutritional values and UK14 allergens for a generic ingredient from its name alone, with a confidence rating.",
         input_schema: {
@@ -725,7 +734,7 @@ router.post("/ai-nutrition", async (req: Request, res: Response) => {
             "confidence", "notes",
           ],
         },
-      }],
+      })],
       messages: [{
         role: "user",
         content: `You are estimating per-100g nutritional values for an ingredient on a food production database. The operator has not supplied a product URL — they want a reasonable estimate from the name alone, which they'll review before saving.
@@ -740,8 +749,9 @@ Salt is in grams. If you're thinking in sodium, multiply by 2.5 to get salt.`,
       }],
     });
 
-    const toolUse = response.content.find(b => b.type === "tool_use");
-    if (!toolUse || toolUse.type !== "tool_use") {
+    // No call (or a refusal) fails the estimate with a 502, as before.
+    const toolUse = pickToolUse(response, "estimate_nutrition");
+    if (!toolUse) {
       throw new Error("Claude did not return a tool_use block");
     }
     estimate = toolUse.input as EstimatedNutrition;
