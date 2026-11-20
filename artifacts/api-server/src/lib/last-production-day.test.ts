@@ -95,6 +95,11 @@ describe("kpiSeries", () => {
     expect(s.improvements).toEqual([2, null, null]);
   });
 
+  it("trends the packing tile on the room's score (Graeme, 20 Nov 2026)", () => {
+    const s = kpiSeries(["a", "b"], new Map([["a", day({ room: { score: 96, estimate: false } })], ["b", day({})]]));
+    expect(s.packing_rate).toEqual([96, null]);
+  });
+
   it("trends defects on the rate, not the count", () => {
     const s = kpiSeries(["a"], new Map([["a", day({})]]));
     expect(s.defects).toEqual([1.2]);

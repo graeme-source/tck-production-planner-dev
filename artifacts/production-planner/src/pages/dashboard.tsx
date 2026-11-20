@@ -14,6 +14,8 @@ import { compareItemsForDisplay } from "@/pages/station/shared/constants";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
 import { planTargetForStation, pinsPlan } from "@/lib/station-plan-target";
+import { useRoomDay } from "@/components/room-score-badge";
+import { roomSpeedsLine } from "@/lib/room-speeds-line";
 import { doughTileSummary } from "@/lib/dough-mix-status";
 import { doughMixProgressKey, fetchDoughMixProgress } from "@/hooks/use-dough-mix-progress";
 import { usePrepProgress } from "@/hooks/use-prep-progress";
@@ -342,6 +344,8 @@ export default function Dashboard() {
     refetchInterval: 60000,
   });
   const packingOph = packingSpeed?.ordersPerHour ?? 0;
+  // The room's score leads wherever boxes/hr shows (Graeme, 20 Nov 2026).
+  const { data: roomToday } = useRoomDay();
 
   // Wrapping pace — the same packs/hr the wrapping station's traffic-light
   // strip shows (idle gaps excluded server-side), so the Wrapping island
@@ -648,7 +652,7 @@ export default function Dashboard() {
         kpi={coreStatus.packing}
         title="Packing"
         value={currentWeekLoading ? "…" : (todayShopifyOrderCount ?? todayDispatches.length).toString()}
-        subtitle={packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined}
+        subtitle={roomToday ? `Room ${roomToday.score != null ? `${roomToday.score}%` : "—"} · ${roomSpeedsLine(roomToday)}` : (packingOph > 0 ? `${packingOph.toFixed(1)} orders/hr packed` : undefined)}
         icon={Truck}
         color="text-blue-500"
         bg="bg-blue-500/10"

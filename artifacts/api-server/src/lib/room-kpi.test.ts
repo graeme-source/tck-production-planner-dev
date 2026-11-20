@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { earnedHours, roomRatio, roomScore, calibrateStandardRatio, roomBand, roomHoursByDay, type RoomDay } from "./room-kpi";
+import { earnedHours, roomRatio, roomScore, calibrateStandardRatio, roomBand, roomHoursByDay, punchedTimes, type RoomDay } from "./room-kpi";
 import { elapsedPaidHours } from "./team-efficiency-today";
 
 const W = { packingPerHour: 55, wrappingPerHour: 115, deliveryMinutes: 10, lineMinutes: 2 };
@@ -57,7 +57,7 @@ describe("room hours from Planday", () => {
       shiftTypes: [],
       positionNames: ["Packer", "Wrapper"],
     });
-    expect(m.get("2026-11-12")).toEqual({ paidHours: 16.5, people: 2, pending: false });
+    expect(m.get("2026-11-12")).toEqual({ paidHours: 16.5, people: 2, pending: false, punched: 0 });
   });
   it("leaves out training and flags a room shift still waiting for approval", () => {
     const m = roomHoursByDay({
@@ -71,7 +71,7 @@ describe("room hours from Planday", () => {
       shiftTypes: [{ id: 9, name: "Training" }],
       positionNames: ["Packer"],
     });
-    expect(m.get("2026-11-12")).toEqual({ paidHours: 8.25, people: 1, pending: true });
+    expect(m.get("2026-11-12")).toEqual({ paidHours: 8.25, people: 1, pending: true, punched: 0 });
   });
   it("today's live figure counts each scheduled shift only up to now (Graeme, 20 Nov 2026)", () => {
     const inputs = {
@@ -91,5 +91,39 @@ describe("room hours from Planday", () => {
     // Before anyone's started, nothing is charged; after the shifts end, all of it.
     expect(roomHoursByDay({ ...inputs, now: "2026-11-12T06:00:00" }).get("2026-11-12")!.paidHours).toBe(0);
     expect(roomHoursByDay({ ...inputs, now: "2026-11-12T18:00:00" }).get("2026-11-12")!.paidHours).toBe(16.5);
+  });
+  it("an unapproved shift counts its punch clock times; an approved one keeps Planday's (Graeme, 20 Nov 2026)", () => {
+    const inputs = {
+      // Thursday 19 Nov: Packer scheduled 06:00–17:00, clocked out 16:47, not approved yet.
+      payroll: [shift(1, 10, 1, "2026-11-12T06:00", "2026-11-12T17:00"), shift(2, 11, 2, "2026-11-12T08:00", "2026-11-12T17:00")],
+      rota: [
+        { id: 1, date: "2026-11-12", status: "PunchclockFinished", shiftTypeId: null, positionId: 1 },
+        { id: 2, date: "2026-11-12", status: "Approved", shiftTypeId: null, positionId: 2 },
+      ],
+      positions: [{ id: 1, name: "Packer" }, { id: 2, name: "Wrapper" }],
+      shiftTypes: [],
+      positionNames: ["Packer", "Wrapper"],
+      punches: [
+        { shiftId: 1, startDateTime: "2026-11-12T05:26", endDateTime: "2026-11-12T16:47" },
+        { shiftId: 2, startDateTime: "2026-11-12T07:50", endDateTime: "2026-11-12T15:00" }, // approved: ignored
+      ],
+    };
+    const day = roomHoursByDay(inputs).get("2026-11-12")!;
+    // Packer 06:00 (not the early 05:26) → 16:47 = 10.78 h less 0.75 break; Wrapper 9 h less 0.75.
+    expect(day.paidHours).toBeCloseTo(10.03 + 8.25, 1);
+    expect(day.punched).toBe(1);
+    expect(day.pending).toBe(true);
+  });
+});
+
+describe("punchedTimes", () => {
+  const s = { start: "2026-11-19T06:00", end: "2026-11-19T17:00" };
+  it("starts at the later of clock-in and the scheduled start, ends at clock-out", () => {
+    expect(punchedTimes(s, { startDateTime: "2026-11-19T05:26", endDateTime: "2026-11-19T16:47" })).toEqual({ start: "2026-11-19T06:00", end: "2026-11-19T16:47", punched: true });
+    expect(punchedTimes(s, { startDateTime: "2026-11-19T06:30", endDateTime: "2026-11-19T17:30" })).toEqual({ start: "2026-11-19T06:30", end: "2026-11-19T17:30", punched: true });
+  });
+  it("keeps the scheduled end while still clocked in, and the schedule with no punch", () => {
+    expect(punchedTimes(s, { startDateTime: "2026-11-19T06:00", endDateTime: null })).toEqual({ start: "2026-11-19T06:00", end: "2026-11-19T17:00", punched: true });
+    expect(punchedTimes(s, undefined)).toEqual({ ...s, punched: false });
   });
 });

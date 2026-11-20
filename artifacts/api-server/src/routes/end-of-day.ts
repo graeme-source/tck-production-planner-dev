@@ -32,6 +32,7 @@ import {
 import { meetingDayTotals } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "../services/defects-summary";
 import { liveRoomDay, loadRoomConfig } from "../services/room-kpi-job";
+import { efficiencyForDay } from "../services/team-efficiency-meeting";
 import { earnedHours, roomBand, roomRatio, roomScore } from "../lib/room-kpi";
 
 const router: IRouter = Router();
@@ -86,7 +87,7 @@ router.get("/", async (req: Request, res: Response) => {
     // Improvements completed is different: zero really means "the team
     // completed nothing today" and must show as 0. Only a failed lookup
     // comes back null (rendered as "—"), never as a fake zero.
-    const [builder, packing, improvementsCompleted, defects, room] = await Promise.all([
+    const [builder, packing, improvementsCompleted, defects, room, teamEfficiency] = await Promise.all([
       computeBuilderBatchesPerHourForDay(day).catch(err => {
         console.warn("[end-of-day] builder BPH failed:", err);
         return { totalBatches: 0, activeMinutes: 0, batchesPerHour: null };
@@ -126,11 +127,18 @@ router.get("/", async (req: Request, res: Response) => {
         console.warn("[end-of-day] room KPI failed:", err);
         return null;
       }),
+      // Team efficiency so far today (Graeme, 20 Nov 2026) — the live
+      // estimate, each shift counted up to now. % only.
+      efficiencyForDay(day).catch(err => {
+        console.warn("[end-of-day] team efficiency failed:", err);
+        return null;
+      }),
     ]);
 
     res.json({
       date: day,
       hasPlan: !!plan,
+      teamEfficiency,
       builder: {
         batchesPerHour: builder.batchesPerHour,
         totalBatches: builder.totalBatches,

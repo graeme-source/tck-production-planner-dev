@@ -24,6 +24,10 @@ import {
 } from "../lib/yesterday-kpis";
 import { meetingDayTotals, type MeetingDayItem } from "../lib/meeting-day-totals";
 import { loadDefectSummary } from "./defects-summary";
+import { loadRoomConfig, loadRoomDays } from "./room-kpi-job";
+import { wrappingPacksPerHourForDay } from "./room-live";
+import { roomRatio, roomScore } from "../lib/room-kpi";
+import { efficiencyForDay, storedEfficiency } from "./team-efficiency-meeting";
 import {
   productionDates,
   lastProductionDays,
@@ -71,7 +75,7 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
   const byDay = new Map<string, ProductionDayKpis>();
   if (!lastProductionDay) return { days, lastProductionDay, byDay, series: kpiSeries(days, byDay) };
 
-  const [items, builder, packing, improvements, defects] = await Promise.all([
+  const [items, builder, packing, improvements, defects, roomConfig, roomDays, wrapping, efficiency] = await Promise.all([
     db
       .select({
         planDate: productionPlansTable.planDate,
@@ -101,7 +105,17 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
       console.warn("[last-production] defects failed:", err);
       return null;
     }),
+    loadRoomConfig().catch(() => null),
+    loadRoomDays(days[0]!, lastProductionDay).catch(err => {
+      console.warn("[last-production] room days failed:", err);
+      return [];
+    }),
+    Promise.all(days.map(d => wrappingPacksPerHourForDay(d).catch(() => null))),
+    storedEfficiency(days[0]!, lastProductionDay).catch(() => new Map<string, number | null>()),
   ]);
+  // The last day isn't approved yet more often than not: estimate it.
+  const lastEfficiency = await efficiencyForDay(lastProductionDay, efficiency).catch(() => null);
+  const roomByDay = new Map(roomDays.map(r => [r.date, r]));
 
   const itemsByDay = new Map<string, MeetingDayItem[]>();
   for (const it of items) {
@@ -125,6 +139,14 @@ export async function loadLastProductionKpis(today: string, count = 7): Promise<
       // 0 is a real zero; null only when the lookup failed.
       improvementsCompleted: improvements ? (improvements.get(date) ?? 0) : null,
       defects: defects ? (def ? { count: def.defects, pct: def.pct, packsMade: def.packsMade } : { count: 0, pct: null, packsMade: 0 }) : null,
+      room: (() => {
+        const r = roomByDay.get(date);
+        if (!r || !roomConfig) return null;
+        return { score: roomScore(roomRatio(r, roomConfig.weights), roomConfig.standardRatio), estimate: r.status === "pending" };
+      })(),
+      wrappingPacksPerHour: wrapping[days.indexOf(date)] ?? null,
+      teamEfficiency: date === lastProductionDay ? lastEfficiency
+        : efficiency.has(date) ? { pct: efficiency.get(date) ?? null, estimate: false } : null,
     });
   }
   return { days, lastProductionDay, byDay, series: kpiSeries(days, byDay) };

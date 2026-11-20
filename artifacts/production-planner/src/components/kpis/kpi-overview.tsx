@@ -19,6 +19,7 @@ import { BAND_ICON_CLASS, BAND_WORDS, RUN_RATE_STANDARD, kpiBand, type KpiBand }
 import { capRange, PACKING_OVERVIEW_DAYS, rangeTrend, runRateSeries, trendWords, type KpiViewId } from "@/lib/kpis-page";
 import { band as effBand, BAND_LABEL as EFF_LABEL, pctLabel, type EffHeadline } from "@/lib/team-efficiency-view";
 import { latestRoomDay, useRoomKpi } from "@/components/room-kpi-card";
+import { roomSpeedsLine } from "@/lib/room-speeds-line";
 import { overallWrappingRate, useWrappingSpeedHistory } from "@/components/wrapping-speed-report";
 import { usePackingSpeed } from "./packing-speed-report";
 import { TrendChip } from "@/components/sales-trend-panel";
@@ -152,13 +153,17 @@ function WrappingTile({ from, to, onOpen, trendToggle }: { from: string; to: str
 
 function RoomTile({ onOpen, trendToggle }: { onOpen: () => void; trendToggle?: TileProps["trend"] }) {
   const { data, isLoading } = useRoomKpi();
+  // Today so far leads once the room has started (Graeme, 20 Nov 2026), with
+  // boxes/hr and packs wrapped/hr under it; else the latest day.
+  const today = data?.today?.score != null ? data.today : null;
   const latest = latestRoomDay(data);
+  const shown = today ?? latest;
   return (
     <Tile
       name="Packing & wrapping room" unit="% of a typical day"
-      loading={isLoading} value={latest?.score != null ? `${latest.score}%` : "—"}
-      chip={latest && latest.band !== "neutral" ? { text: BAND_WORDS[latest.band], band: latest.band } : undefined}
-      sub={latest ? day(latest.date) : undefined}
+      loading={isLoading} value={shown?.score != null ? `${shown.score}%` : "—"}
+      chip={shown && shown.band !== "neutral" ? { text: BAND_WORDS[shown.band], band: shown.band } : undefined}
+      sub={today ? `Today so far · ${roomSpeedsLine(today)}${today.estimate ? " · estimate" : ""}` : latest ? `${day(latest.date)}${latest.status === "pending" ? " · estimate" : ""}` : undefined}
       onOpen={onOpen}
       trend={trendToggle}
     />

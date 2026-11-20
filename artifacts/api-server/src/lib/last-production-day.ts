@@ -84,12 +84,19 @@ export interface ProductionDayKpis {
   batchesTarget: number;
   improvementsCompleted: number | null;
   defects: { count: number; pct: number | null; packsMade: number } | null;
+  /** The packing & wrapping room's score that day (Graeme, 20 Nov 2026 —
+   *  it leads the packing tile, boxes/hr and packs/hr under it). estimate =
+   *  some shift wasn't approved yet (punch clock or rota hours). */
+  room?: { score: number | null; estimate: boolean } | null;
+  wrappingPacksPerHour?: number | null;
+  /** Team efficiency % (Graeme, 20 Nov 2026); estimate until Planday approves. */
+  teamEfficiency?: { pct: number | null; estimate: boolean } | null;
 }
 
 /** One line per KPI tile key (same keys as the slide's KPI catalogue). */
 export type KpiSeriesKey =
   | "builder_rate" | "packing_rate" | "wonkies" | "dog_bins" | "defects"
-  | "improvements" | "batches" | "shorts" | "leftover";
+  | "improvements" | "batches" | "shorts" | "leftover" | "team_efficiency";
 
 export type KpiSeries = Record<KpiSeriesKey, Array<number | null>>;
 
@@ -104,7 +111,8 @@ export function kpiSeries(days: readonly string[], byDay: ReadonlyMap<string, Pr
     days.map(d => { const k = byDay.get(d); return k ? f(k) : null; });
   return {
     builder_rate: pick(k => k.builderBatchesPerHour),
-    packing_rate: pick(k => k.packingBatchesPerHour),
+    // The packing tile leads with the room's score, so its trend is the score.
+    packing_rate: pick(k => k.room?.score ?? null),
     wonkies: pick(k => k.wonkyCount),
     dog_bins: pick(k => k.dogBinCount),
     defects: pick(k => k.defects?.pct ?? null),
@@ -112,6 +120,7 @@ export function kpiSeries(days: readonly string[], byDay: ReadonlyMap<string, Pr
     batches: pick(k => k.batchesTarget),
     shorts: pick(k => k.shortCount),
     leftover: pick(k => k.leftoverFillingGrams),
+    team_efficiency: pick(k => k.teamEfficiency?.pct ?? null),
   };
 }
 

@@ -20,6 +20,7 @@ import { londonDateString } from "../lib/london-time";
 import { addDaysIso } from "../lib/team-efficiency-labour";
 import { earnedHours, roomRatio, roomScore, roomBand } from "../lib/room-kpi";
 import { loadRoomConfig, loadRoomDays, recalibrateRoomStandard, setRoomSetting, ROOM_SETTING_KEYS } from "../services/room-kpi-job";
+import { roomForDay } from "../services/room-live";
 
 const router: IRouter = Router();
 
@@ -60,10 +61,11 @@ router.get("/room", async (req: Request, res: Response) => {
   if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
   try {
     const today = londonDateString();
-    const [config, days, me] = await Promise.all([
+    const [config, days, me, todayRoom] = await Promise.all([
       loadRoomConfig(),
       loadRoomDays(addDaysIso(today, -42), addDaysIso(today, -1)),
       db.execute<{ email: string | null }>(sql`SELECT email FROM app_users WHERE id = ${req.session.userId} LIMIT 1`),
+      roomForDay(today).catch(err => { console.warn("[production-kpis] today's room score failed:", err); return null; }),
     ]);
     res.json({
       days: days.map(d => {
@@ -85,11 +87,27 @@ router.get("/room", async (req: Request, res: Response) => {
       standardRatio: config.standardRatio,
       standardSetOn: config.standardSetOn,
       canEdit: isFounderEmail(me.rows[0]?.email),
+      // Today so far (each shift up to now), for the tiles that lead with it.
+      today: todayRoom,
     });
   } catch (err) {
     // Before the migration runs the table isn't there — say so plainly.
     console.error("[production-kpis] room read failed:", err);
     res.status(500).json({ error: "Couldn't load the room run rate" });
+  }
+});
+
+// One day's room score with boxes/hr and packs wrapped/hr under it — today
+// worked out up to now (services/room-live.ts). Used by the packing screen,
+// packing station, dashboard and floor (Graeme, 20 Nov 2026).
+router.get("/room/day", async (req: Request, res: Response) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const date = typeof req.query.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(req.query.date) ? req.query.date : londonDateString();
+  try {
+    res.json({ room: await roomForDay(date) });
+  } catch (err) {
+    console.error("[production-kpis] room day failed:", err);
+    res.status(500).json({ error: "Couldn't work out the room's score" });
   }
 });
 

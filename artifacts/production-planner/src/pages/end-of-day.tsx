@@ -14,7 +14,7 @@
  */
 import type { ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, Hammer, PackageCheck, AlertTriangle, Trophy } from "lucide-react";
+import { Loader2, Hammer, PackageCheck, AlertTriangle, Trophy, Users } from "lucide-react";
 import { formatQualityRejects } from "@/lib/quality-rejects";
 import { defectHeadline } from "@/lib/defects-view";
 import { format, parseISO } from "date-fns";
@@ -41,6 +41,9 @@ interface EndOfDay {
   /** The packing & wrapping room's run rate today (lib/room-kpi), worked out
    *  live. estimate = today's shifts not approved yet, so the rota's hours.
    *  null = couldn't be worked out / the room didn't work; optional for older payloads. */
+  /** Team efficiency so far today, % only (Graeme, 20 Nov 2026); each
+   *  shift counted up to now. null = couldn't be worked out. */
+  teamEfficiency?: { pct: number | null; estimate: boolean } | null;
   room?: {
     score: number | null;
     estimate: boolean;
@@ -178,7 +181,7 @@ export default function EndOfDayMeeting() {
             tone="blue"
             value={data.room.score == null ? "—" : `${data.room.score}%`}
             unit={data.room.score == null ? undefined : "of standard"}
-            sub={`${data.room.earnedHours.toFixed(1)} hours of work in ${data.room.paidHours.toFixed(1)} paid hours, ${data.room.people} ${data.room.people === 1 ? "person" : "people"}${data.room.estimate ? " — from today's rota until Planday approves the shifts" : ""}.`}
+            sub={`${data.room.earnedHours.toFixed(1)} hours of work in ${data.room.paidHours.toFixed(1)} paid hours, ${data.room.people} ${data.room.people === 1 ? "person" : "people"}${data.room.estimate ? " — from the punch clock and rota until Planday approves the shifts" : ""}.`}
           >
             <RoomBreakdown room={data.room} packing={data.packing} />
           </KpiCard>
@@ -219,10 +222,22 @@ export default function EndOfDayMeeting() {
               ? "Finished improvements only — ideas don't count until they're done."
               : `Finished and in the feed — ideas don't count until they're done.`}
         />
+        <KpiCard
+          label="Team efficiency"
+          icon={Users}
+          tone="green"
+          value={data.teamEfficiency?.pct == null ? "—" : `${data.teamEfficiency.pct}%`}
+          unit={data.teamEfficiency?.pct == null ? undefined : "so far today"}
+          sub={data.teamEfficiency == null
+            ? "Couldn't work it out just now."
+            : data.teamEfficiency.pct == null
+              ? "Not enough counted yet today to work it out."
+              : "Value made against labour so far today, each shift counted up to now — an estimate until Planday approves the shifts."}
+        />
       </div>
 
       <p className="text-sm text-muted-foreground">
-        The same four numbers the morning meeting reviews — these are today's, while everyone who can explain them is still here.
+        The same numbers the morning meeting reviews — these are today's, while everyone who can explain them is still here.
       </p>
     </div>
   );

@@ -48,6 +48,7 @@ import {
 import { shouldPromptShrinkWrap, printDialogLikelyShown } from "@/lib/packing-alerts";
 import { comparePickWalk, FALLBACK_ZONE_ORDER } from "@/lib/pick-order";
 import { fetchFridgeAvailability, computeFridgeAllocation } from "@/lib/fridge-gate";
+import { RoomScoreLive } from "@/components/room-score-badge";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { StationMessagesBanner } from "@/components/station-messages";
 import { ApcTrackingSlowBanner } from "@/components/apc-tracking-slow-banner";
@@ -57,8 +58,6 @@ import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/compone
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
 import { recipeColourStyle } from "@/lib/recipe-colour-style";
 import { settlingMessage, nextReleaseAt, type SettlingOrder } from "@/lib/settling-orders";
-import { useProductionKpis } from "@/hooks/use-production-kpis";
-import { paceLevel, type ProductionKpi } from "@/lib/production-kpis";
 import {
   usablePreload, shouldRefreshPreload, nextOrderToPrepare, labelPreloadUrl,
   LABEL_PRELOAD_REFRESH_MS, type PreloadedLabel,
@@ -1073,20 +1072,6 @@ function ProgressBar({ label, fulfilled, total, color, weight }: { label: string
   );
 }
 
-/** Encouraging pace bands. The bottom band used to bark "Speed up!" at the
- *  packer; it now points at the lean habit instead — find the five seconds,
- *  don't just run faster (Graeme, 2026-08-28). */
-function paceBand(oph: number, kpi: ProductionKpi): { tile: string; label: string } {
-  // The figures are set on Analytics → Production KPIs (13 Nov 2026) — the
-  // same ones the dashboard's Packing tile uses. Were fixed at 50/55/60.
-  switch (paceLevel(oph, kpi)) {
-    case "stretch": return { tile: "bg-purple-600 text-white", label: "Smashing it! 🔥" };
-    case "standard": return { tile: "bg-green-600 text-white", label: "On target — nice work" };
-    case "close": return { tile: "bg-amber-500 text-white", label: "Close — what would save 5s?" };
-    default: return { tile: "bg-sky-600 text-white", label: "Spot a 5s saving?" };
-  }
-}
-
 /** Always-on pace strip for the mid-pick screens (picking, label booking,
  *  order complete). The old conditional chip vanished whenever the pace was
  *  still null, so the packer lost the KPI exactly while packing — this strip
@@ -1097,25 +1082,14 @@ function PickingPaceStrip({ packed, total, oph }: {
   total: number | null;
   oph: number | null;
 }) {
-  const { kpis: productionKpis } = useProductionKpis();
-  const band = oph != null ? paceBand(oph, productionKpis.packing) : null;
+  void oph; // boxes/hr now comes with the room score (RoomScoreLive)
   return (
     <div className="flex items-center gap-3 flex-wrap">
       <span className="text-2xl font-extrabold tabular-nums leading-none">
         {packed ?? "—"}<span className="text-muted-foreground font-bold text-lg">/{total ?? "—"}</span>
         <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide ml-1.5">packed</span>
       </span>
-      <span
-        className={cn(
-          "px-4 py-2 rounded-xl font-bold flex items-baseline gap-2",
-          band ? band.tile : "bg-secondary text-muted-foreground",
-        )}
-        aria-label={oph != null ? `Packing pace ${oph.toFixed(1)} orders per hour` : "Packing pace not available yet"}
-      >
-        <span className="text-xl tabular-nums leading-none">{oph != null ? oph.toFixed(1) : "—"}</span>
-        <span className="text-xs uppercase tracking-wider opacity-90">orders/hr</span>
-        <span className="text-sm leading-tight">{band ? band.label : "warming up…"}</span>
-      </span>
+      <RoomScoreLive />
     </div>
   );
 }
@@ -1203,8 +1177,7 @@ function DispatchSummary({
   uncheckedOpen: boolean;
 }) {
   const pct = packed != null && total ? Math.min(100, Math.round((packed / total) * 100)) : 0;
-  const { kpis: productionKpis } = useProductionKpis();
-  const band = oph != null ? paceBand(oph, productionKpis.packing) : null;
+  void oph; // boxes/hr now comes with the room score (RoomScoreLive)
   const cats = progress?.categories;
   const remaining = (total ?? 0) - (packed ?? 0);
   // New orders held back for their first 15 minutes, with a live countdown
@@ -1271,14 +1244,9 @@ function DispatchSummary({
             </p>
           )}
         </div>
-        <div
-          className={cn("rounded-2xl px-6 py-4 flex flex-col items-center justify-center flex-shrink-0 min-w-[11rem] transition-colors", band ? band.tile : "bg-secondary text-muted-foreground")}
-          aria-label={oph != null ? `Packing pace ${oph.toFixed(1)} orders per hour` : "Packing pace not available yet"}
-        >
-          <span className="text-5xl font-extrabold tabular-nums leading-none">{oph != null ? oph.toFixed(1) : "—"}</span>
-          <span className="text-xs font-bold uppercase tracking-wider mt-1 opacity-90">orders/hr</span>
-          <span className="text-sm font-bold mt-1 text-center leading-tight">{band ? band.label : "warming up…"}</span>
-        </div>
+        {/* The room's score leads; boxes/hr and packs wrapped/hr sit under
+            it in small writing (Graeme, 20 Nov 2026). */}
+        <RoomScoreLive size="lg" className="flex-shrink-0 justify-center max-w-sm" />
       </div>
 
       {uncheckedCount > 0 && (

@@ -13,7 +13,7 @@
  */
 import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
-import { getPlandayPayrollRows, getPlandayShifts, getPlandayPositions, getPlandayShiftTypes, isPlandayConfigured } from "./planday";
+import { getPlandayPayrollRows, getPlandayShifts, getPlandayPositions, getPlandayShiftTypes, getPlandayPunchClockShifts, isPlandayConfigured } from "./planday";
 import { londonDateString, londonHour, londonLocalTimestamp } from "../lib/london-time";
 import { computePackingOrdersPerHourForDay } from "../lib/yesterday-kpis";
 import { addDaysIso } from "../lib/team-efficiency-labour";
@@ -129,24 +129,31 @@ export async function computeRoomRange(from: string, to: string): Promise<number
 type CountedDay = RoomDay & { pending: boolean };
 
 /** The room's raw counts and paid hours for each day in [from, to] it worked.
- *  Approved Planday shifts only unless `approvedOnly` is false — today's live
- *  estimate, priced from the rota (as Team efficiency's "today" does). A day
- *  whose Shopify fulfilments couldn't be read is left out, not stored low. */
-async function roomDaysFor(from: string, to: string, opts: { approvedOnly?: boolean; now?: string } = {}): Promise<CountedDay[]> {
+ *  Every shift counts (Graeme, 20 Nov 2026: "we should have the estimated
+ *  numbers, and then it should update … once we get them"): approved shifts
+ *  at Planday's approved times, the rest at their punch clock times, else
+ *  the rota's (lib/room-kpi.ts). A day with any unapproved room shift is
+ *  stored "pending" and re-read hourly until it's approved. A day whose
+ *  Shopify fulfilments couldn't be read is left out, not stored low. */
+async function roomDaysFor(from: string, to: string, opts: { now?: string } = {}): Promise<CountedDay[]> {
   if (from > to) return [];
   const config = await loadRoomConfig();
-  const [payroll, rota, positions, shiftTypes, counts] = await Promise.all([
-    getPlandayPayrollRows(from, to, { approvedOnly: opts.approvedOnly }),
+  const [payroll, rota, positions, shiftTypes, counts, punches] = await Promise.all([
+    getPlandayPayrollRows(from, to, { approvedOnly: false }),
     getPlandayShifts(from, to),
     getPlandayPositions(),
     getPlandayShiftTypes(),
     workCounts(from, to),
+    getPlandayPunchClockShifts(from, to).catch(err => {
+      console.warn("[room-kpi] punch clock unreadable, using the rota:", err instanceof Error ? err.message : err);
+      return [];
+    }),
   ]);
   if (!payroll) throw new Error(`Planday payroll unavailable for ${from} → ${to}`);
   const hours = roomHoursByDay({
     payroll: payroll.map(r => ({ ...r, breaks: r.breaks ?? [] })),
     rota: rota.map(s => ({ id: s.id, date: s.date, status: s.status ?? null, shiftTypeId: s.shiftTypeId ?? null, positionId: s.positionId ?? null })),
-    positions, shiftTypes, positionNames: config.positions, now: opts.now,
+    positions, shiftTypes, positionNames: config.positions, now: opts.now, punches,
   });
   const days = [...new Set([...hours.keys(), ...counts.keys()])].filter(d => d >= from && d <= to).sort();
   const out: CountedDay[] = [];
@@ -194,7 +201,7 @@ export async function liveRoomDay(day: string): Promise<CountedDay | null> {
   // we're halfway through the day, we should only take the time up until the
   // current time"). Another day: its whole shifts.
   const now = day === londonDateString() ? londonLocalTimestamp() : undefined;
-  return (await roomDaysFor(day, day, { approvedOnly: false, now }))[0] ?? null;
+  return (await roomDaysFor(day, day, { now }))[0] ?? null;
 }
 
 export async function loadRoomDays(from: string, to: string): Promise<Array<RoomDay & { status: string }>> {
@@ -235,6 +242,13 @@ async function tick(): Promise<void> {
     await computeRoomRange(addDaysIso(today, -RECENT_DAYS), addDaysIso(today, -1));
     await setRoomSetting(ROOM_SETTING_KEYS.lastNightly, today);
   }
+  // Estimated days (shifts not approved yet) are re-read every hour, so a
+  // day moves from punch clock/rota hours to approved hours as soon as
+  // Planday approves it, without waiting for the nightly run.
+  const pending = await db.execute<{ d: string }>(sql`
+    SELECT date::text AS d FROM room_kpi_days WHERE status = 'pending' AND date >= ${addDaysIso(today, -RECENT_DAYS)} ORDER BY date
+  `);
+  for (const r of pending.rows) await computeRoomRange(r.d, r.d);
   // The 100% line is set once, from the first weeks of history, and then
   // kept fixed (the founder can reset it on the page).
   if (!(await loadRoomConfig()).standardRatio) await recalibrateRoomStandard();

@@ -108,18 +108,39 @@ export interface RoomShiftInputs {
    *  less breaks already due, so mid-afternoon the room isn't charged for
    *  hours nobody has worked yet. Omitted = whole shifts (stored days). */
   now?: string;
+  /** Planday punch clock records (Graeme, 20 Nov 2026): an unapproved shift
+   *  that has been clocked counts from the later of its clock-in and its
+   *  scheduled start (Planday pays from the scheduled start when someone
+   *  clocks in early) to its clock-out — so staying late or leaving early
+   *  shows before approval. Approved shifts use Planday's approved times. */
+  punches?: ReadonlyArray<{ shiftId: number | null; startDateTime: string; endDateTime: string | null }>;
   /** Position names that are the room (case-insensitive). */
   positionNames: readonly string[];
 }
 
+/** A not-yet-approved shift's times from its punch clock record: the later
+ *  of clock-in and the scheduled start, to the clock-out (or the scheduled
+ *  end while still clocked in). Same "YYYY-MM-DDTHH:mm" local format. */
+export function punchedTimes(
+  s: { start: string; end: string },
+  punch: { startDateTime: string; endDateTime: string | null } | undefined,
+): { start: string; end: string; punched: boolean } {
+  if (!punch) return { start: s.start, end: s.end, punched: false };
+  const minute = (t: string) => t.slice(0, 16);
+  const start = minute(punch.startDateTime) > minute(s.start) ? punch.startDateTime : s.start;
+  const end = punch.endDateTime ?? s.end;
+  return minute(end) > minute(start) ? { start, end, punched: true } : { start: s.start, end: s.end, punched: false };
+}
+
 /** Paid hours and headcount per day for the room's positions, and whether
  *  any of those shifts is still waiting for approval. */
-export function roomHoursByDay(i: RoomShiftInputs): Map<string, { paidHours: number; people: number; pending: boolean }> {
+export function roomHoursByDay(i: RoomShiftInputs): Map<string, { paidHours: number; people: number; pending: boolean; punched: number }> {
   const wanted = new Set(i.positionNames.map(n => n.trim().toLowerCase()));
   const positionName = new Map(i.positions.map(p => [p.id, p.name.trim().toLowerCase()]));
   const typeName = new Map(i.shiftTypes.map(t => [t.id, t.name]));
   const rotaById = new Map(i.rota.map(s => [s.id, s]));
-  const out = new Map<string, { paidHours: number; people: Set<number>; pending: boolean }>();
+  const punchByShift = new Map((i.punches ?? []).filter(p => p.shiftId != null).map(p => [p.shiftId!, p]));
+  const out = new Map<string, { paidHours: number; people: Set<number>; pending: boolean; punched: number }>();
   for (const row of i.payroll) {
     const pos = row.positionId != null ? positionName.get(row.positionId) : undefined;
     if (!pos || !wanted.has(pos)) continue;
@@ -127,8 +148,12 @@ export function roomHoursByDay(i: RoomShiftInputs): Map<string, { paidHours: num
     const type = rota?.shiftTypeId != null ? typeName.get(rota.shiftTypeId) : null;
     // Training, meetings, holiday, sickness: not room work.
     if (!isProductiveShift(0, 0, type)) continue;
-    const day = out.get(row.date) ?? { paidHours: 0, people: new Set<number>(), pending: false };
-    day.paidHours += i.now ? elapsedPaidHours(row, i.now) : shiftPaidHours(row);
+    const day = out.get(row.date) ?? { paidHours: 0, people: new Set<number>(), pending: false, punched: 0 };
+    const approved = (rota?.status ?? "").toLowerCase() === "approved";
+    const t = approved ? { start: row.start, end: row.end, punched: false } : punchedTimes(row, punchByShift.get(row.id));
+    const shift = { ...row, start: t.start, end: t.end };
+    if (t.punched) day.punched += 1;
+    day.paidHours += i.now ? elapsedPaidHours(shift, i.now) : shiftPaidHours(shift);
     day.people.add(row.employeeId);
     out.set(row.date, day);
   }
@@ -137,9 +162,9 @@ export function roomHoursByDay(i: RoomShiftInputs): Map<string, { paidHours: num
     if (!pos || !wanted.has(pos)) continue;
     if (!isProductiveShift(0, 0, r.shiftTypeId != null ? typeName.get(r.shiftTypeId) : null)) continue;
     if ((r.status ?? "").toLowerCase() === "approved") continue;
-    const day = out.get(r.date) ?? { paidHours: 0, people: new Set<number>(), pending: false };
+    const day = out.get(r.date) ?? { paidHours: 0, people: new Set<number>(), pending: false, punched: 0 };
     day.pending = true;
     out.set(r.date, day);
   }
-  return new Map([...out].map(([d, v]) => [d, { paidHours: Math.round(v.paidHours * 100) / 100, people: v.people.size, pending: v.pending }]));
+  return new Map([...out].map(([d, v]) => [d, { paidHours: Math.round(v.paidHours * 100) / 100, people: v.people.size, pending: v.pending, punched: v.punched }]));
 }

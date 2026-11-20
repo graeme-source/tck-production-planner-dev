@@ -9,6 +9,8 @@
  * Read-only: every figure comes from an existing endpoint; nothing here is
  * worked out a second way. Layout and matching: lib/floor-map.ts.
  */
+import { useRoomDay } from "@/components/room-score-badge";
+import { roomSpeedsLine } from "@/lib/room-speeds-line";
 import { useEffect, useMemo, useState } from "react";
 import { useProductionKpis } from "@/hooks/use-production-kpis";
 import { Redirect } from "wouter";
@@ -143,6 +145,7 @@ export default function FounderFloor() {
   const lineStatus = kpis.building;
   const onShift = [...peopleByArea.m.values()].flat().concat(peopleByArea.elsewhere);
   const inNow = onShift.filter(p => p.punch === "in").length;
+  const room = useRoomDay();
 
   // Short enough for a small room; the full sentence is in "Live figures".
   const paceText = (rate: number | null | undefined, minutes: number | null | undefined, unit: string, target: string, dp: number) =>
@@ -152,7 +155,10 @@ export default function FounderFloor() {
     // ovens just take its colour.
     if (a.kpi === "run_rate") return { text: a.id === "building" ? paceText(build.data?.batchesPerHour, build.data?.activeMinutes, "/hr", "20/hr", 1) : null, band: lineStatus.band };
     if (a.kpi === "wrapping") return { text: paceText(wrapping.data?.packsPerHour, wrapping.data?.activeMinutes, " packs/hr", "180", 0), band: kpis.wrapping.band };
-    if (a.kpi === "packing") return { text: paceText(packing.data?.ordersPerHour, packing.data?.activeMinutes, " orders/hr", "50", 1), band: kpis.packing.band };
+    // The room's score leads, boxes/hr and packs wrapped/hr after it (Graeme, 20 Nov 2026).
+    if (a.kpi === "packing") return room.data
+      ? { text: `Room ${room.data.score != null ? `${room.data.score}%` : "—"} · ${roomSpeedsLine(room.data)}`, band: room.data.band as KpiBand }
+      : { text: paceText(packing.data?.ordersPerHour, packing.data?.activeMinutes, " orders/hr", "50", 1), band: kpis.packing.band };
     if (a.kpi === "factory_number" && stock.data) return { text: `${stock.data.productionFridgeTotal.toLocaleString("en-GB")} packs`, band: "neutral" };
     return null;
   };

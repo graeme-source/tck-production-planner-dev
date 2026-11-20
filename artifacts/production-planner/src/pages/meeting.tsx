@@ -44,6 +44,7 @@ import { useAuth } from "@/contexts/auth-context";
 import { StandardsSopsDialog } from "@/components/standards-sops-dialog";
 import { LessonDiagram, DIAGRAM_OPTIONS } from "@/components/lesson-diagrams";
 import { LeanLessonSlide } from "@/components/lean-lesson-slide";
+import { roomSpeedsLine } from "@/lib/room-speeds-line";
 import ImprovementsPage from "@/pages/improvements";
 import { creditLabel } from "@/lib/improvement-credits";
 import { premiumStyle } from "@/lib/improvement-premium";
@@ -135,6 +136,11 @@ export interface DashboardData {
     leftoverFillingGrams: number;
     builderBatchesPerHour: number | null;
     packingBatchesPerHour: number | null;
+    /** The packing & wrapping room's score that day; estimate = shifts not approved yet. */
+    room?: { score: number | null; estimate: boolean } | null;
+    wrappingPacksPerHour?: number | null;
+    /** Team efficiency %; estimate until Planday approves the shifts (Graeme, 20 Nov 2026). */
+    teamEfficiency?: { pct: number | null; estimate: boolean } | null;
     /** Improvements COMPLETED on the last production day — done work only,
      *  never ideas (Graeme, 2026-09-18). 0 is a real zero; null means the
      *  lookup failed. Optional so a cached older server payload still renders. */
@@ -2086,7 +2092,10 @@ const fmtGrams = (n: number) => `${Math.round(n)} g`;
  *  kitchen actually tracks day-to-day. */
 const KPI_CATALOG = {
   builder_rate: { label: "TCK run rate (batches/hr)", get: (k: DashboardData["yesterdayKpis"]) => k.builderBatchesPerHour != null ? k.builderBatchesPerHour.toFixed(1) : "—", warn: () => false , better: "higher" as Better, fmt: fmt1 },
-  packing_rate: { label: "Packing boxes/hr",   get: (k: DashboardData["yesterdayKpis"]) => k.packingBatchesPerHour != null ? k.packingBatchesPerHour.toFixed(1) : "—", warn: () => false , better: "higher" as Better, fmt: fmt1 },
+  // Leads with the packing & wrapping room's score; boxes/hr and packs
+  // wrapped/hr in small writing under it (Graeme, 20 Nov 2026). Same key so
+  // slides already set up keep their tile.
+  packing_rate: { label: "Packing & wrapping room", get: (k: DashboardData["yesterdayKpis"]) => k.room?.score != null ? `${k.room.score}%` : "—", sub: (k: DashboardData["yesterdayKpis"]) => `${roomSpeedsLine({ boxesPerHour: k.packingBatchesPerHour, packsPerHour: k.wrappingPacksPerHour ?? null })}${k.room?.estimate ? " · estimate" : ""}`, warn: () => false , better: "higher" as Better, fmt: (n: number) => `${Math.round(n)}%` },
   // Quality rejects: the Wonkies tile carries dog bins as a separate figure
   // underneath, so a slide configured before dog bins existed still shows
   // both. "Dog bins" is also its own tile for slides that want it.
@@ -2102,10 +2111,11 @@ const KPI_CATALOG = {
   improvements: { label: "Improvements done",  get: (k: DashboardData["yesterdayKpis"]) => k.improvementsCompleted == null ? "—" : k.improvementsCompleted.toString(), warn: () => false , better: "higher" as Better, fmt: fmt0 },
   batches:      { label: "Batches",            get: (k: DashboardData["yesterdayKpis"]) => k.batchesTarget.toString(), warn: () => false , better: "neutral" as Better, fmt: fmt0 },
   shorts:       { label: "Short on pack",      get: (k: DashboardData["yesterdayKpis"]) => k.shortCount.toString(), warn: (k: DashboardData["yesterdayKpis"]) => k.shortCount > 0 , better: "lower" as Better, fmt: fmt0 },
+  team_efficiency: { label: "Team efficiency", get: (k: DashboardData["yesterdayKpis"]) => k.teamEfficiency?.pct != null ? `${k.teamEfficiency.pct}%` : "—", sub: (k: DashboardData["yesterdayKpis"]) => k.teamEfficiency == null ? "Couldn't work it out" : k.teamEfficiency.estimate ? "Estimate until Planday approves the shifts" : "Value made against labour", warn: () => false , better: "higher" as Better, fmt: (n: number) => `${Math.round(n)}%` },
   leftover:     { label: "Leftover filling (g)", get: (k: DashboardData["yesterdayKpis"]) => k.leftoverFillingGrams.toString(), warn: () => false , better: "lower" as Better, fmt: fmtGrams },
 } as const;
 type KpiKey = keyof typeof KPI_CATALOG;
-const DEFAULT_KPIS: KpiKey[] = ["builder_rate", "packing_rate", "wonkies", "improvements"];
+const DEFAULT_KPIS: KpiKey[] = ["builder_rate", "packing_rate", "team_efficiency", "wonkies", "improvements"];
 
 function YesterdayKpisSlide({ data, slide }: { data: DashboardData; slide: MeetingSlide }) {
   const k = data.yesterdayKpis;

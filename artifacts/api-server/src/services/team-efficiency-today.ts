@@ -13,8 +13,9 @@
  */
 import {
   getPlandayPayrollRows, getPlandayShifts, getPlandayPositions, getPlandaySections,
-  getPlandayShiftTypes, getEmployerCostSettings, isPlandayConfigured,
+  getPlandayShiftTypes, getEmployerCostSettings, isPlandayConfigured, getPlandayPunchClockShifts,
 } from "./planday";
+import { punchedTimes } from "../lib/room-kpi";
 import { londonDateString, londonLocalTimestamp } from "../lib/london-time";
 import { ensureOrdersFresh } from "../lib/orders-cache";
 import { madeByLine, type DayComponents } from "../lib/team-efficiency-day";
@@ -52,10 +53,12 @@ async function lastWeekMultiplier(today: string, onCost: Parameters<typeof weekl
   return value;
 }
 
-async function compute(): Promise<TodayResult> {
+/** The estimate for `today` — the real today (each shift up to now), or a
+ *  recent day not yet approved in Planday, worked out whole (Graeme, 20 Nov
+ *  2026: yesterday's figure at the morning meeting). Unapproved shifts use
+ *  their punch clock times where there are some, like the room score. */
+async function compute(today: string = londonDateString(), now: string = londonLocalTimestamp()): Promise<TodayResult> {
   if (!isPlandayConfigured()) return { unavailable: "Planday isn't connected" };
-  const today = londonDateString();
-  const now = londonLocalTimestamp();
   const from = addDaysIso(today, -LOOKBACK_DAYS);
 
   const settings = await loadSettings();
@@ -68,18 +71,25 @@ async function compute(): Promise<TodayResult> {
   const section = sections.find(s => s.name.trim().toLowerCase() === settings.productionSection.toLowerCase());
   if (!section) return { unavailable: `Planday section "${settings.productionSection}" not found` };
 
-  const [payroll, rota] = await Promise.all([
+  const [payroll, rota, punches] = await Promise.all([
     getPlandayPayrollRows(from, today, { approvedOnly: false }),
     getPlandayShifts(from, today),
+    getPlandayPunchClockShifts(from, today).catch((): Awaited<ReturnType<typeof getPlandayPunchClockShifts>> => []),
   ]);
   if (!payroll) return { unavailable: "Couldn't reach Planday for today's shifts" };
+  const rotaStatus = new Map(rota.map(s => [s.id, (s.status ?? "").toLowerCase()]));
+  const punchByShift = new Map(punches.filter(p => p.shiftId != null).map(p => [p.shiftId!, p]));
 
   const onCost = { ...employer, holidayAccrual: settings.holidayAccrual };
   const mult = await lastWeekMultiplier(today, onCost);
-  const shifts: LiveShift[] = payroll.map(r => ({
-    id: r.id, employeeId: r.employeeId, date: r.date, positionId: r.positionId ?? null,
-    salary: r.salary, start: r.start, end: r.end, breaks: r.breaks ?? [],
-  }));
+  const shifts: LiveShift[] = payroll.map(r => {
+    // Not approved yet: the punch clock's times, where there are some.
+    const t = rotaStatus.get(r.id) === "approved" ? r : punchedTimes(r, punchByShift.get(r.id));
+    return {
+      id: r.id, employeeId: r.employeeId, date: r.date, positionId: r.positionId ?? null,
+      salary: r.salary, start: t.start, end: t.end, breaks: r.breaks ?? [],
+    };
+  });
   const labour = liveLabour({
     today, now, shifts,
     rota: new Map(rota.map(s => [s.id, { status: s.status ?? null, shiftTypeId: s.shiftTypeId ?? null }])),
@@ -145,4 +155,19 @@ export async function todayEstimate(): Promise<TodayResult> {
     })
     .finally(() => { inflight = null; });
   return inflight;
+}
+
+const dayCache = new Map<string, { at: number; value: TodayResult }>();
+const DAY_CACHE_MS = 10 * 60_000;
+
+/** A recent past day's estimate, whole shifts, while it isn't approved in
+ *  Planday yet (the stored figure is the real one once it is). Cached ten
+ *  minutes per day. */
+export async function estimateForDay(day: string): Promise<TodayResult> {
+  if (day >= londonDateString()) return todayEstimate();
+  const hit = dayCache.get(day);
+  if (hit && Date.now() - hit.at < DAY_CACHE_MS) return hit.value;
+  const value = await compute(day, `${day}T23:59:59`);
+  dayCache.set(day, { at: Date.now(), value });
+  return value;
 }

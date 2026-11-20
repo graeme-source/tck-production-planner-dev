@@ -540,6 +540,29 @@ export async function plandayReadAll<T>(path: string): Promise<T[]> {
   return fetchAllPages<T>(path, token);
 }
 
+/** One punch clock record: when someone actually clocked in and out. */
+export interface PlandayPunch {
+  id: number;
+  shiftId: number | null;
+  employeeId: number;
+  startDateTime: string;
+  endDateTime: string | null;
+  shiftStartDateTime?: string | null;
+  shiftEndDateTime?: string | null;
+  isApproved?: boolean;
+}
+
+/** Punch clock records for London days [from, to] (Graeme, 20 Nov 2026: the
+ *  room score reads real clock-out times before a shift is approved). The
+ *  endpoint wants full date-times; a bare date returns nothing. [] when
+ *  Planday can't be reached — callers fall back to the rota. */
+export async function getPlandayPunchClockShifts(from: string, to: string): Promise<PlandayPunch[]> {
+  const next = new Date(`${to}T12:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 1);
+  const toExclusive = next.toISOString().slice(0, 10);
+  return plandayReadAll<PlandayPunch>(`/punchclock/v1.0/punchclockshifts?from=${from}T00:00:00&to=${toExclusive}T00:00:00`);
+}
+
 export interface PlandayNamedItem { id: number; name: string; description?: string | null }
 
 let cachedEmployeeTypes: CachedLookup<PlandayNamedItem> | null = null;

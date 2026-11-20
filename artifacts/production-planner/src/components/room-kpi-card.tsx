@@ -18,7 +18,7 @@ import { toast } from "@/hooks/use-toast";
 const BASE = import.meta.env.BASE_URL?.replace(/\/$/, "") ?? "";
 const KEY = ["production-kpis", "room"] as const;
 
-type Band = "platinum" | "green" | "amber" | "red" | "neutral";
+export type Band = "platinum" | "green" | "amber" | "red" | "neutral";
 export interface RoomDayRow {
   date: string; boxes: number; packs: number; deliveries: number; deliveryLines: number;
   paidHours: number; people: number; status: string;
@@ -32,9 +32,11 @@ export interface RoomResponse {
   standardRatio: number | null;
   standardSetOn: string | null;
   canEdit: boolean;
+  /** Today so far (services/room-live.ts); null before the room starts. */
+  today?: import("@/components/room-score-badge").RoomDayScore | null;
 }
 
-const BAND_BG: Record<Band, string> = {
+export const BAND_BG: Record<Band, string> = {
   platinum: "bg-gradient-to-r from-emerald-600 via-teal-600 to-cyan-600 text-white",
   green: "bg-[#7cb342] text-white",
   amber: "bg-yellow-400 text-stone-900",
@@ -117,7 +119,9 @@ export function useRoomKpi() {
 
 /** The most recent day with a score. */
 export function latestRoomDay(data: RoomResponse | undefined): RoomDayRow | null {
-  return data?.days.find(d => d.status === "ok" && d.score != null) ?? data?.days[0] ?? null;
+  // Newest scored day — estimated days count too (shifts not yet approved
+  // are read from the punch clock or the rota; Graeme, 20 Nov 2026).
+  return data?.days.find(d => d.score != null) ?? data?.days[0] ?? null;
 }
 
 export function RoomKpiCard() {
@@ -178,7 +182,7 @@ export function RoomKpiCard() {
                   {d.score != null ? `${d.score}%` : "—"}
                 </span>
                 <div className="min-w-0">
-                  <p className="font-semibold">{day(d.date)}{d.status === "pending" ? " · waiting for Planday approval" : ""}</p>
+                  <p className="font-semibold">{day(d.date)}{d.status === "pending" ? " · estimate (punch clock or rota) until Planday approves the shifts" : ""}</p>
                   <p className="text-sm text-muted-foreground">{d.boxes} boxes · {d.packs} packs · {d.deliveries} del. · {h(d.paidHours)}</p>
                 </div>
               </div>

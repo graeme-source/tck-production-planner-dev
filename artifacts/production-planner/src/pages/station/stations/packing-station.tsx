@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/auth-context";
 import { usePagePermissions } from "@/hooks/use-page-permissions";
 import { BreakTracker } from "../shared/break-tracker";
-import { PaceKpiStrip } from "../shared/pace-kpi-strip";
+import { RoomScoreLive } from "@/components/room-score-badge";
 import { IcePackBanner } from "@/components/ice-pack-callout";
 import { ChargebackHoldsBanner } from "@/components/chargeback-holds-banner";
 import { CancelledOrderLabelsBanner } from "@/components/cancelled-order-labels-banner";
@@ -213,9 +213,7 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
   // refreshes every 30s with the rest of the packing station data. Idle gaps
   // over 10 minutes are excluded from "active" time (matches reports page).
   const today = speed?.dailyRows?.[0] ?? null;
-  const kpiOrdersPerHour = today?.ordersPerHour ?? null;
   const kpiCount = today?.count ?? 0;
-  const kpiActiveMinutes = today?.activeMinutes ?? null;
 
   const cats = progress?.categories;
 
@@ -300,15 +298,14 @@ export function PackingStation({ plan }: { plan: ProductionPlanDetail }) {
         {/* Shared pace strip (2026-08-19) — same indicator as wrapping, with
             the lean nudge. No bands yet: the packing standard isn't agreed;
             add a PaceBands here when it is. */}
-        <PaceKpiStrip
-          className="pt-3 border-t border-border"
-          rate={kpiOrdersPerHour}
-          rateUnit="Orders / hour"
-          count={kpiCount}
-          countLabel="Packed today"
-          activeMinutes={kpiActiveMinutes}
-          unitNoun="order"
-        />
+        {/* The room's score leads; boxes/hr and packs wrapped/hr under it
+            in small writing (Graeme, 20 Nov 2026). */}
+        <div className="pt-3 border-t border-border flex items-center gap-3 flex-wrap">
+          <RoomScoreLive size="lg" />
+          <span className="text-sm text-muted-foreground tabular-nums">
+            {kpiCount} packed today
+          </span>
+        </div>
       </div>
 
       {loading && !progress && (

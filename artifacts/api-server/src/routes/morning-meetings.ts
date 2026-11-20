@@ -757,6 +757,11 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
         leftoverFillingGrams,
         builderBatchesPerHour,
         packingBatchesPerHour,
+        // The room's score leads the packing tile; packs wrapped/hr sits
+        // under it with boxes/hr (Graeme, 20 Nov 2026).
+        room: lastDay?.room ?? null,
+        wrappingPacksPerHour: lastDay?.wrappingPacksPerHour ?? null,
+        teamEfficiency: lastDay?.teamEfficiency ?? null,
         improvementsCompleted,
         batchesTarget: yesterdayBatchesTotal,
         // Wonkies + dog bins + recorded defects, as a % of packs made.
