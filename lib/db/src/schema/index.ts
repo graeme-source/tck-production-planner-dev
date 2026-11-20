@@ -81,3 +81,4 @@ export * from "./recipe_shopify_listing";
 export * from "./standing_orders";
 export * from "./traceability";
 export * from "./warning_dismissals";
+export * from "./lean_example_videos";

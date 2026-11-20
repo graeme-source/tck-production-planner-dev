@@ -135,6 +135,7 @@ import factoryForecastRouter from "./factory-forecast";
 import weekEndStockRouter from "./week-end-stock";
 import leanReviewsRouter from "./lean-reviews";
 import leanCurriculumRouter from "./lean-curriculum";
+import leanVideosRouter from "./lean-videos";
 import ingredientScrapeRouter from "./ingredient-scrape";
 import upfRouter from "./upf";
 import liveOffersRouter from "./live-offers";
@@ -667,6 +668,7 @@ router.use("/lean-reviews", leanReviewsRouter);
 // (backlog, plan order, lesson writing, locking a week in) sits behind the
 // same guard as the training matrix it keeps in step with.
 router.use("/lean-curriculum", requireAdminOrManager, leanCurriculumRouter);
+router.use("/lean-videos", leanVideosRouter);
 router.use("/forms", formsRouter);
 router.use("/system-updates", systemUpdatesRouter);
 // "What's changed in this station?" — System Updates tagged by area, with
