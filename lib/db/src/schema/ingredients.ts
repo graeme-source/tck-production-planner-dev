@@ -77,7 +77,7 @@ export const ingredientsTable = pgTable("ingredients", {
   // Safety warning shown as a pop-up on the Mixing and Building screens for
   // every recipe that uses this ingredient ("watch for bones"). NULL = none.
   // Read through api-server lib/ingredient-station-warnings.ts. Migration
-  // 0388, fix-queue #404.
+  // 0391, fix-queue #404.
   stationWarning: text("station_warning"),
   surplusPercent: numeric("surplus_percent", { precision: 8, scale: 2 }).notNull().default("10"),
   surplusMode: text("surplus_mode").notNull().default("percent"),
