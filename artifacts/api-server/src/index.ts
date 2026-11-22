@@ -3422,6 +3422,10 @@ async function startup() {
     const { startDispatchCutoffScheduler } = await import("./lib/dispatch-cutoff");
     startDispatchCutoffScheduler();
 
+    // Queued 8-pack orders go onto their plan the moment it exists (every minute).
+    const { startQueuedBagsScheduler } = await import("./services/queued-bags");
+    startQueuedBagsScheduler();
+
     // Return-to-work chase: detects completed sick spells from the Planday
     // mirror and raises to-dos for the colleague + RTW managers until the
     // form is signed (Graeme, 2026-09-14).

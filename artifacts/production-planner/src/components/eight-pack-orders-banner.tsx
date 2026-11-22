@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store, MessageSquareText } from "lucide-react";
+import { PackageCheck, Loader2, AlertTriangle, CheckCircle2, ArrowRight, Store, MessageSquareText, Clock } from "lucide-react";
+import { QueuedBagOrdersStrip } from "@/components/queued-bag-orders";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
@@ -99,17 +101,19 @@ const NO_COLLECTION = "";
 
 type OrderStatus =
   | { ok: true; planId: number; despatchDate: string; productionDate: string; tagOnly?: boolean }
-  | { ok: false; reason: string };
+  | { ok: false; reason: string; canQueue?: boolean };
 
 // Bags don't have to be made on the despatch day — any plan from 1 to 3 days
 // before delivery can carry them (Graeme, 2026-08). This checks ONE candidate
 // production date for an order.
 function evaluateProduction(order: QueueOrder, productionDate: string, plans: Record<string, PlanInfo>): OrderStatus {
   const plan = plans[productionDate];
-  if (!plan) return { ok: false, reason: `No production plan for ${fmtNice(productionDate)}` };
-  const planRecipes = new Set(plan.recipeIds);
   const unmapped = order.lines.filter(l => l.recipeId == null);
   if (unmapped.length) return { ok: false, reason: `Unrecognised product: ${unmapped.map(l => l.productTitle ?? "?").join(", ")}` };
+  // No plan for that day yet: it can be QUEUED — tagged now like Process, the
+  // bags go on the plan the moment it's made (Graeme, 22 Nov 2026).
+  if (!plan) return { ok: false, reason: `No production plan for ${fmtNice(productionDate)} yet — queue it and the bags go on that plan when it's made`, canQueue: true };
+  const planRecipes = new Set(plan.recipeIds);
   const missing = order.lines.filter(l => l.recipeId != null && !planRecipes.has(l.recipeId));
   if (missing.length) return { ok: false, reason: `Not on the ${fmtNice(plan.planDate)} plan: ${[...new Set(missing.map(l => l.recipeName))].join(", ")}` };
   return { ok: true, planId: plan.planId, despatchDate: "", productionDate };
@@ -177,7 +181,10 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
     return () => clearInterval(interval);
   }, [allowed]);
 
-  if (!allowed || !data || data.orders.length === 0) return null;
+  if (!allowed) return null;
+  // Orders queued for a plan that doesn't exist yet (Graeme, 22 Nov 2026) —
+  // shown even when there's nothing left to process, red once overdue.
+  if (!data || data.orders.length === 0) return <QueuedBagOrdersStrip />;
 
   const count = data.orders.length;
   const eightCount = data.orders.filter(o => o.kind === "eight_pack").length;
@@ -203,6 +210,7 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
           </span>
         </button>
       </div>
+      <QueuedBagOrdersStrip className="mt-2" />
 
       {open && (
         <ReviewDialog
@@ -216,6 +224,7 @@ export function EightPackOrdersBanner({ userRole }: { userRole?: string }) {
 }
 
 function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onClose: () => void; onProcessed: () => void }) {
+  const queryClient = useQueryClient();
   const earliestProduction = data.earliestProductionDate ?? data.today;
   // per-order selected delivery date
   const [selected, setSelected] = useState<Record<number, string>>(() => {
@@ -247,7 +256,7 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
   /** The plan/tag status, plus: a collection needs someone to collect it. */
   const statusOf = (order: QueueOrder): OrderStatus => {
     const s = evaluate(order, selected[order.orderId], selectedProduction[order.orderId], data.plansByDespatchDate);
-    if (s.ok && order.localDelivery && selectedCollection[order.orderId] && collectors.length === 0) {
+    if ((s.ok || s.canQueue) && order.localDelivery && selectedCollection[order.orderId] && collectors.length === 0) {
       return { ok: false, reason: "No supplier collects local deliveries — tick it on the supplier (Suppliers → Ordering), or choose No collection" };
     }
     return s;
@@ -314,6 +323,38 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
       }
     } catch (err) {
       toast({ title: "Process failed", description: err instanceof Error ? err.message : "Network error", variant: "destructive" });
+    } finally {
+      setProcessing(null);
+    }
+  }
+
+  /** Queue it for a make-day with no plan yet (POST /wholesale-bags/queue-order). */
+  async function queueOrder(order: QueueOrder) {
+    const deliveryDate = selected[order.orderId];
+    const productionDate = selectedProduction[order.orderId];
+    const collectionDate = order.localDelivery ? (selectedCollection[order.orderId] ?? NO_COLLECTION) : NO_COLLECTION;
+    const collector = collectionDate ? collectorFor(order) : null;
+    setProcessing(order.orderId);
+    try {
+      const res = await fetch(`${BASE}/api/wholesale-bags/queue-order`, {
+        method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId: order.orderId, deliveryDate, productionDate, collectionDate, collectorSupplierId: collector?.id ?? null }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast({
+          title: `Queued ${order.name}`,
+          description: `Tagged for delivery ${fmtNice(deliveryDate)}. The bags go on the ${fmtNice(productionDate)} plan automatically when it's made.`
+            + (body.emailed === false ? " ⚠ Customer NOT emailed (no address or send failed)." : body.emailed === true ? " Customer emailed their scheduled date." : ""),
+        });
+        setDone(prev => new Set(prev).add(order.orderId));
+        void queryClient.invalidateQueries({ queryKey: ["queued-bag-orders"] });
+        onProcessed();
+      } else {
+        toast({ title: `Couldn't queue ${order.name}`, description: body.unmappedProducts?.length ? `Unrecognised: ${body.unmappedProducts.join(", ")}` : body.error ?? "Could not queue.", variant: "destructive" });
+      }
+    } catch (err) {
+      toast({ title: "Queue failed", description: err instanceof Error ? err.message : "Network error", variant: "destructive" });
     } finally {
       setProcessing(null);
     }
@@ -514,14 +555,25 @@ function ReviewDialog({ data, onClose, onProcessed }: { data: QueuePayload; onCl
                 </span>
               )}
 
-              <button
-                onClick={() => processOrder(order)}
-                disabled={!status.ok || processing === order.orderId}
-                className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
-              >
-                {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
-                Process
-              </button>
+              {!status.ok && status.canQueue ? (
+                <button
+                  onClick={() => queueOrder(order)}
+                  disabled={processing === order.orderId}
+                  className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-amber-500 text-white rounded-lg font-semibold hover:bg-amber-600 disabled:opacity-50"
+                >
+                  {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Clock className="w-3.5 h-3.5" />}
+                  Queue for {fmtNice(production)}
+                </button>
+              ) : (
+                <button
+                  onClick={() => processOrder(order)}
+                  disabled={!status.ok || processing === order.orderId}
+                  className="ml-auto flex items-center gap-1.5 text-sm px-3 py-1.5 bg-primary text-primary-foreground rounded-lg font-medium hover:bg-primary/90 disabled:opacity-50"
+                >
+                  {processing === order.orderId ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PackageCheck className="w-3.5 h-3.5" />}
+                  Process
+                </button>
+              )}
             </div>
           </div>
         )}

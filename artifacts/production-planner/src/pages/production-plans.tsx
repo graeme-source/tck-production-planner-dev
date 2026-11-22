@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
+import { useQueuedBagOrders, bagsText } from "@/components/queued-bag-orders";
 import { DptSchedulesSection } from "@/components/dpt-schedules-section";
 import {
   useListProductionPlans,
@@ -1725,6 +1726,9 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<PlanItem[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // 8-pack orders queued for this make-day (Graeme, 22 Nov 2026): counted in
+  // the suggestion and put on the plan the moment it's saved.
+  const { data: queuedBags } = useQueuedBagOrders(planDate, open);
   // Set the instant a save starts, before React re-renders the disabled
   // button — a double tap made two identical Friday plans 0.7 s apart
   // (Graeme, 2026-10-15). The server refuses a duplicate too (lib/plan-duplicate).
@@ -2837,6 +2841,24 @@ function CreatePlanDialog({ open, onClose, onCreated, onOpenExisting, initialDat
                   placeholder="Optional notes for this plan..."
                 />
               </div>
+
+              {/* 8-pack orders queued for THIS make-day (22 Nov 2026). */}
+              {(queuedBags ?? []).length > 0 && (() => {
+                // Only included rows are saved onto the plan.
+                const onPlan = new Set(items.filter(i => i.included).map(i => i.recipeId));
+                const missing = [...new Set((queuedBags ?? []).flatMap(q => q.lines).filter(l => !onPlan.has(l.recipeId)).map(l => l.recipeName))];
+                return (
+                  <div className={cn("rounded-xl border-2 px-3 py-2 text-sm space-y-0.5", missing.length ? "border-destructive bg-destructive/5" : "border-indigo-400 bg-indigo-50/70 dark:bg-indigo-950/20")}>
+                    <p className="font-bold">Queued 8-pack orders for this day — counted above, and their bags go on this plan when you save</p>
+                    {(queuedBags ?? []).map(q => (
+                      <p key={q.id}><span className="font-semibold">{q.orderName}</span>{q.customerName ? ` · ${q.customerName}` : ""}: {bagsText(q.lines)}</p>
+                    ))}
+                    {missing.length > 0 && (
+                      <p className="font-semibold text-destructive">Add {missing.join(", ")} to this plan — the bags can only go on a recipe that's on it.</p>
+                    )}
+                  </div>
+                );
+              })()}
 
               {/* Scheduled DPT rules shaping THIS plan date (2026-10-26). */}
               {(calcData?.recipes ?? []).some((r: CalcRecipe) => capOf(r) != null) && (

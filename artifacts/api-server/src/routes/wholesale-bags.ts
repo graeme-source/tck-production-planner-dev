@@ -36,7 +36,10 @@ import {
   SAME_DAY_PRODUCTION_CUTOFF,
   DESPATCH_CUTOFF,
 } from "../lib/production-cutoff";
-import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder } from "../services/shopify";
+import { getRecentUnfulfilledOrders, getOrderById, addTagsToOrder, removeTagFromOrder } from "../services/shopify";
+import { z } from "zod";
+import { validate } from "../middleware/validate";
+import { applyQueuedBags, listQueuedBagOrders } from "../services/queued-bags";
 import { suggestDeliveryDateFromNote } from "../lib/note-delivery-date";
 import { isEightPackLine } from "../lib/eight-pack-bags";
 import { loadProductTitleToRecipe } from "../lib/eight-pack-recipe-map";
@@ -512,6 +515,155 @@ router.post("/process", async (req, res) => {
   } catch (err) {
     console.error("[wholesale-bags] process failed:", err);
     res.status(502).json({ error: err instanceof Error ? err.message : "Failed to process order" });
+  }
+});
+
+// ── Queue an 8-pack order for a make-day with no plan yet (Graeme, 22 Nov
+// 2026) ─────────────────────────────────────────────────────────────────────
+// Same checks and the same tags as Process; the bags wait in
+// queued_bag_orders and go on that day's plan the moment it exists
+// (services/queued-bags.ts). The queue row is written BEFORE the order is
+// tagged, and removed if tagging fails — so an order can never be tagged
+// (and drop off this list) without its bags waiting for the plan.
+
+const queueBody = z.object({
+  orderId: z.number().int().positive(),
+  deliveryDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  productionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish(),
+  collectionDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).nullish().or(z.literal("")),
+  collectorSupplierId: z.number().int().positive().nullish(),
+});
+
+router.post("/queue-order", validate(queueBody), async (req, res) => {
+  const b = req.body as z.infer<typeof queueBody>;
+  const deliveryDate = b.deliveryDate;
+  if (!isDeliveryDay(deliveryDate)) { res.status(400).json({ error: "Delivery date must be a Tue–Sat" }); return; }
+  const despatchDate = despatchDateFor(deliveryDate);
+  const productionDate = b.productionDate || despatchDate;
+  if (productionDate > despatchDate) {
+    res.status(400).json({ error: `Production day must be on or before the dispatch day (${despatchDate} for delivery ${deliveryDate}).` });
+    return;
+  }
+  if (productionDate < addDays(deliveryDate, -3)) {
+    res.status(400).json({ error: `Production day can be at most 3 days before delivery (${addDays(deliveryDate, -3)} at the earliest).` });
+    return;
+  }
+  const earliestAllowed = earliestProductionDay();
+  if (productionDate < earliestAllowed) {
+    res.status(409).json({ error: `Too late to make on ${productionDate} — the earliest production day is ${earliestAllowed}.` });
+    return;
+  }
+  const collectionDate = b.collectionDate ? b.collectionDate : null;
+  if (collectionDate) {
+    const problem = collectionDateProblem(collectionDate, deliveryDate, londonDateString());
+    if (problem) { res.status(400).json({ error: problem }); return; }
+  }
+
+  try {
+    const order = await getOrderById(b.orderId);
+    if (!order) { res.status(404).json({ error: "Order not found" }); return; }
+    if (isProcessedOrder(order.tags)) { res.status(409).json({ error: "Order is already processed (it has a delivery date and 'production')." }); return; }
+    const lines = (order.line_items ?? []).filter(is8PackLine);
+    if (lines.length === 0) { res.status(409).json({ error: "This order has no 8-pack bags — process it instead (it doesn't need a plan)." }); return; }
+    if ((await loadPlansByDate(productionDate, productionDate)).get(productionDate)) {
+      res.status(409).json({ error: `There's already a plan for ${productionDate} — use Process.` });
+      return;
+    }
+    const titleToRecipe = await loadTitleToRecipe();
+    const queued: Array<{ recipeId: number; recipeName: string; bags: number }> = [];
+    const unmappedProducts: string[] = [];
+    for (const li of lines) {
+      const m = titleToRecipe.get((li.title ?? "").trim().toLowerCase());
+      if (!m) { unmappedProducts.push(li.title ?? "(untitled)"); continue; }
+      queued.push({ recipeId: m.recipeId, recipeName: m.recipeName, bags: li.quantity || 0 });
+    }
+    if (unmappedProducts.length) { res.status(409).json({ error: "Cannot queue this order.", unmappedProducts }); return; }
+
+    let collector: { id: number; name: string } | null = null;
+    if (collectionDate && isLocalDeliveryOrder(order.tags)) {
+      const collectors = await loadCollectors();
+      collector = (b.collectorSupplierId != null ? collectors.find(c => c.id === b.collectorSupplierId) : collectors[0]) ?? null;
+      if (!collector) {
+        res.status(409).json({ error: "No supplier collects local deliveries — tick \"Their driver collects our local-delivery orders\" on the supplier, or choose No collection." });
+        return;
+      }
+    }
+
+    // 1) The bags wait first…
+    const me = req.session.userId ?? null;
+    const who = me ? (await db.execute<{ name: string }>(sql`SELECT name FROM app_users WHERE id = ${me}`)).rows[0]?.name ?? null : null;
+    let queueId: number;
+    try {
+      const ins = await db.execute<{ id: number }>(sql`
+        INSERT INTO queued_bag_orders (shopify_order_id, order_name, customer_name, delivery_date, production_date, lines, queued_by, queued_by_name, problem)
+        VALUES (${b.orderId}, ${order.name}, ${customerNameOf(order) || null}, ${deliveryDate}, ${productionDate}, ${JSON.stringify(queued)}::jsonb, ${me}, ${who},
+                ${`No production plan for ${productionDate} yet`})
+        RETURNING id
+      `);
+      queueId = ins.rows[0].id;
+    } catch (err) {
+      const dup = err && typeof err === "object" && "code" in err && (err as { code: string }).code === "23505";
+      res.status(dup ? 409 : 502).json({ error: dup ? "This order is already queued." : "Couldn't queue it — nothing was changed, safe to retry." });
+      return;
+    }
+    // 2) …then the order is tagged exactly as Process tags it. If that fails
+    //    the queue row goes, so nothing is half-done.
+    let updatedTags: string;
+    try {
+      updatedTags = await addTagsToOrder(b.orderId, order.tags, [deliveryDate, PRODUCTION_TAG]);
+    } catch (err) {
+      await db.execute(sql`DELETE FROM queued_bag_orders WHERE id = ${queueId}`);
+      res.status(502).json({ error: `Failed to tag Shopify order — no changes made, safe to retry. (${err instanceof Error ? err.message : String(err)})` });
+      return;
+    }
+    queueCache = null;
+    const booked = collector && collectionDate
+      ? await bookLocalDeliveryCollection(collector, collectionDate, { name: order.name, customerName: customerNameOf(order) })
+      : { collection: null };
+    const emailed = await emailDeliverySchedule(order, deliveryDate);
+    // A plan might have been made in the meantime.
+    await applyQueuedBags(productionDate);
+    res.json({ ok: true, queued: true, queueId, orderId: b.orderId, deliveryDate, productionDate, tags: updatedTags, lines: queued, emailed, ...booked });
+  } catch (err) {
+    console.error("[wholesale-bags] queue failed:", err);
+    res.status(502).json({ error: err instanceof Error ? err.message : "Failed to queue order" });
+  }
+});
+
+/** Queued orders still waiting for their plan (and, with ?all=1, those already on one). */
+router.get("/queued", async (req, res) => {
+  try {
+    res.json({ queued: await listQueuedBagOrders({ includeApplied: req.query.all === "1", productionDate: typeof req.query.date === "string" ? req.query.date : undefined }) });
+  } catch (err) {
+    console.error("[wholesale-bags] queued list failed:", err);
+    res.status(500).json({ error: "Couldn't load the queued orders" });
+  }
+});
+
+/** Take a queued order back out: its delivery-date and production tags come
+ *  off so it's back on the list to process. Only while its bags aren't on a plan. */
+router.post("/queued/:id/cancel", validate(z.object({}).passthrough()), async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(404).json({ error: "Not found" }); return; }
+  try {
+    const rows = await db.execute<{ shopify_order_id: string; delivery_date: string }>(sql`
+      SELECT shopify_order_id, to_char(delivery_date, 'YYYY-MM-DD') AS delivery_date FROM queued_bag_orders
+       WHERE id = ${id} AND status = 'queued'
+    `);
+    const row = rows.rows[0];
+    if (!row) { res.status(409).json({ error: "It's already on a plan — change the bags on the plan instead." }); return; }
+    const order = await getOrderById(Number(row.shopify_order_id));
+    if (order) {
+      let tags = order.tags;
+      tags = (await removeTagFromOrder(order.id, tags, row.delivery_date)) ?? tags;
+      await removeTagFromOrder(order.id, tags, PRODUCTION_TAG);
+    }
+    await db.execute(sql`UPDATE queued_bag_orders SET status = 'cancelled', cancelled_at = NOW() WHERE id = ${id} AND status = 'queued'`);
+    queueCache = null;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error("[wholesale-bags] cancel queued failed:", err);
+    res.status(502).json({ error: "Couldn't take it out of the queue — try again." });
   }
 });
 

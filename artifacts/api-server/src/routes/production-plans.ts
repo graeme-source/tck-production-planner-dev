@@ -34,6 +34,7 @@ import { buildPlanSchedule } from "../lib/day-schedule";
 import { recomputeItemFromProgress } from "../lib/building-progress";
 import { findRecentDuplicatePlan } from "../lib/plan-duplicate";
 import { loadBatchCeilings } from "../lib/batch-ceiling-settings";
+import { applyQueuedBags, waitingBagsForDate } from "../services/queued-bags";
 // Type-only import — purely compile-time, no runtime cost. The actual
 // PDF renderer (and the heavy @react-pdf/renderer dep tree it pulls in)
 // is loaded lazily inside the /lock-pdf endpoint via dynamic import,
@@ -631,6 +632,8 @@ router.post("/", validate(CreatePlanBody), async (req, res) => {
         eq(queuedProductionTable.status, "queued"),
         inArray(queuedProductionTable.recipeId, recipeIds),
       ));
+    // Queued 8-pack bag orders for this day go on now (services/queued-bags.ts).
+    await applyQueuedBags(planDate);
   }
   res.status(201).json(mapPlan(plan));
 });
@@ -892,6 +895,8 @@ export async function calculatePlanData(planDate: string) {
     if (row.recipeId == null) continue;
     plannedBagsByRecipe[row.recipeId] = (plannedBagsByRecipe[row.recipeId] ?? 0) + (row.eightPackBagCount ?? 0);
   }
+  // Queued 8-pack orders waiting for this day's plan count too (services/queued-bags.ts).
+  for (const [recipeId, bags] of await waitingBagsForDate(planDate)) plannedBagsByRecipe[recipeId] = (plannedBagsByRecipe[recipeId] ?? 0) + bags;
 
 
   // Packs still to leave the fridge today, netted off live stock below to
