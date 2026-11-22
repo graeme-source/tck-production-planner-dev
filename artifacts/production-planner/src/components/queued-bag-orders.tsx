@@ -10,6 +10,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Clock, Loader2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
+import { showQueuedOrder } from "@/lib/queued-bags-show";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -62,7 +63,9 @@ export function QueuedBagOrdersStrip({ className }: { className?: string }) {
     },
     onError: (e: Error) => toast({ title: "Couldn't take it out", description: e.message, variant: "destructive" }),
   });
-  const rows = data ?? [];
+  // Out of the way until the morning its plan is normally made (and gone
+  // once its bags are on a plan — the server stops returning it).
+  const rows = (data ?? []).filter(r => showQueuedOrder(r));
   if (rows.length === 0) return null;
   const overdue = rows.filter(r => r.overdue).length;
 
@@ -72,7 +75,7 @@ export function QueuedBagOrdersStrip({ className }: { className?: string }) {
         {overdue ? <AlertTriangle className="w-4 h-4" /> : <Clock className="w-4 h-4" />}
         {overdue
           ? `${overdue} queued 8-pack order${overdue === 1 ? "" : "s"} NOT on a plan for ${overdue === 1 ? "its" : "their"} make-day — sort it now or they won't be made`
-          : `${rows.length} 8-pack order${rows.length === 1 ? "" : "s"} queued — the bags go on the plan as soon as it's made`}
+          : `Queued 8-pack bag order${rows.length === 1 ? "" : "s"} due to go on today's production plan — ${rows.length === 1 ? "it goes" : "they go"} on when the plan is saved, and this disappears once ${rows.length === 1 ? "it has" : "they have"}`}
       </div>
       <ul className="divide-y divide-border">
         {rows.map(r => (
