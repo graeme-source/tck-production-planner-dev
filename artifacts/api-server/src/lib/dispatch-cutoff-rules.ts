@@ -41,7 +41,7 @@ interface CheckOrder {
 
 /** Held on purpose until nearer its date (subscription renewals sit as
  *  "waiting"), so never a missed order. */
-const isWaiting = (tags: string | null | undefined) =>
+export const isWaiting = (tags: string | null | undefined) =>
   (tags ?? "").split(",").some(t => t.trim().toLowerCase() === "waiting");
 
 /** Zapiet's chosen delivery day (`Delivery-Date`, YYYY/MM/DD) as YYYY-MM-DD, or null. */

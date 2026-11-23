@@ -187,6 +187,7 @@ import adEfficiencyRouter from "./ad-efficiency";
 import numbersBenchmarksRouter from "./numbers-benchmarks";
 import productionKpisRouter from "./production-kpis";
 import dispatchCutoffRouter from "./dispatch-cutoff";
+import undatedOrdersRouter from "./undated-orders";
 import warningLogRouter from "./warning-log";
 import ingredientStationWarningsRouter from "./ingredient-station-warnings";
 import fixQueueChatRouter from "./fix-queue-chat";
@@ -541,6 +542,8 @@ router.use("/numbers-benchmarks", numbersBenchmarksRouter);
 router.use("/production-kpis", productionKpisRouter);
 // The 2:16 order check alert, on the packing and wrapping screens.
 router.use("/dispatch-cutoff", dispatchCutoffRouter);
+// Orders with no delivery date — the managers' dashboard warning (23 Nov 2026).
+router.use("/undated-orders", requireAdminOrManager, undatedOrdersRouter);
 // Who dismissed an operational warning, and when (20 Nov 2026).
 router.use("/warning-log", warningLogRouter);
 router.use("/ingredient-station-warnings", ingredientStationWarningsRouter);
