@@ -32,8 +32,8 @@ describe("ordersMissingCutoff", () => {
     expect(ordersMissingCutoff([order(1, "2026-11-06, dispatch")], today)).toEqual([]);
   });
 
-  it("finds an order placed today with no delivery date", () => {
-    expect(ordersMissingCutoff([order(1, "Small Box")], today)[0]?.reason).toBe("No delivery date");
+  it("leaves an order placed today with no delivery date at all", () => {
+    expect(ordersMissingCutoff([order(1, "Small Box")], today)).toEqual([]);
   });
 
   it("ignores old undated orders, which aren't today's job", () => {
@@ -91,7 +91,36 @@ describe("orders held or booked for later (regression: #139661, 13 Nov 2026)", (
     expect(ordersMissingCutoff([renewal("Small Box", "2026/11/12")], today)).toEqual([]);
   });
   it("still flags one booked for tomorrow with no date tag", () => {
-    expect(ordersMissingCutoff([renewal("Small Box", "2026/11/06")], today)).toHaveLength(1);
+    expect(ordersMissingCutoff([renewal("Small Box", "2026/11/06")], today).map(o => o.reason)).toEqual(["Booked for tomorrow, no delivery date tag"]);
+  });
+  it("flags one booked for tomorrow with no date tag whenever it was placed", () => {
+    const placedEarlier = { ...renewal("Small Box", "2026/11/06"), created_at: "2026-11-03T18:30:00Z" };
+    expect(ordersMissingCutoff([placedEarlier], today)).toHaveLength(1);
+  });
+});
+
+describe("no delivery date, so not today's to pack (regression: #140315, 23 Nov 2026)", () => {
+  // A Wholesale Gorilla order placed at 11:52 that customer service hadn't
+  // processed yet: no date tag and nothing booked at checkout. The packing
+  // screen told the team it should be on tomorrow's run.
+  const monday = "2026-11-23";
+  const wholesale = (tags: string) => ({
+    id: 140315, name: "#140315", tags, created_at: "2026-11-23T11:52:00Z",
+    customer: { first_name: "Vanessa", last_name: "Riley" }, note_attributes: [],
+  });
+  const tags = "B2B, Large Box, Login with Shop, Shop, wg_wholesale, wholesale, wholesale-g";
+
+  it("doesn't flag it while it has no delivery date", () => {
+    expect(ordersMissingCutoff([wholesale(tags)], monday)).toEqual([]);
+  });
+  it("flags it once customer service gives it tomorrow's date but not the dispatch tag", () => {
+    expect(ordersMissingCutoff([wholesale(`${tags}, 2026-11-24`)], monday).map(o => o.reason)).toEqual(["Not tagged for dispatch"]);
+  });
+  it("is fine once it has tomorrow's date and the dispatch tag", () => {
+    expect(ordersMissingCutoff([wholesale(`${tags}, 2026-11-24, dispatch`)], monday)).toEqual([]);
+  });
+  it("leaves it alone when it's processed for a later day", () => {
+    expect(ordersMissingCutoff([wholesale(`${tags}, 2026-11-25`)], monday)).toEqual([]);
   });
 });
 
