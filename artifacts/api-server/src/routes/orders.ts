@@ -35,6 +35,8 @@ import { orderLineStock, type OrderLineStock } from "../lib/order-line-stock";
 import { londonDateString, londonEndOfDay, londonMinuteOfDay, londonStartOfDay, londonWeekdayName } from "../lib/london-time";
 import { kanbanOrderPacks, packsToBaseQty, positivePalletSize } from "@workspace/units";
 import { PLACED_ORDER_STATUSES, suppliersOrderedToday, type OrderedTodaySupplier } from "../lib/ordered-today";
+import { uncoveredIngredients } from "../lib/uncovered-ingredients-rules";
+import { readNotOrderedIngredients } from "../lib/uncovered-ingredients";
 
 async function requireManagerOrAdmin(req: Request, res: Response, next: NextFunction) {
   let role = (req.session as any).userRole;
@@ -207,6 +209,7 @@ router.get("/calculate", async (req, res) => {
       supplierId: ingredientsTable.supplierId,
       supplierPartNumber: ingredientsTable.supplierPartNumber,
       stockCheckEnabled: ingredientsTable.stockCheckEnabled,
+      kanbanEnabled: ingredientsTable.kanbanEnabled,
       stockCheckFrequency: ingredientsTable.stockCheckFrequency,
       stockCheckDay: ingredientsTable.stockCheckDay,
       surplusPercent: ingredientsTable.surplusPercent,
@@ -546,6 +549,26 @@ router.get("/calculate", async (req, res) => {
       kanbanSupplierOverrides[k.ingredientId] = k.supplierId;
     }
   }
+
+  // Ingredients this plan needs that the loop below leaves out without a
+  // word: no kanban and stock check off, or no supplier. The page names
+  // them with how much the plan needs (the chestnut mushrooms, 23 Nov 2026
+  // — lib/uncovered-ingredients-rules.ts).
+  const notOrderedList = await readNotOrderedIngredients();
+  const uncoveredResult = uncoveredIngredients(
+    Object.values(ingredientMap).flatMap(ing => {
+      const detail = ingredientLookup[ing.ingredientId];
+      if (!detail) return [];
+      const hasPulledKanban = kanbanIngredientIds.has(ing.ingredientId);
+      const supplierId = (hasPulledKanban && kanbanSupplierOverrides[ing.ingredientId]) || detail.supplierId || null;
+      return [{
+        ingredientId: ing.ingredientId, name: ing.ingredientName, unit: ing.unit, totalRequired: ing.totalRequired,
+        stockCheckEnabled: detail.stockCheckEnabled ?? false, kanbanEnabled: detail.kanbanEnabled ?? false, hasPulledKanban,
+        supplierId, supplierName: supplierId != null ? supplierLookup[supplierId]?.name ?? null : null,
+      }];
+    }),
+    new Set(notOrderedList.map(i => i.id)),
+  );
 
   for (const [idStr, ing] of Object.entries(ingredientMap)) {
     const iid = Number(idStr);
@@ -1356,6 +1379,8 @@ router.get("/calculate", async (req, res) => {
     planDate: plan[0].planDate,
     suppliers,
     orderedToday,
+    uncoveredIngredients: uncoveredResult.uncovered,
+    notOrderedIngredients: uncoveredResult.notOrdered,
   });
 
   } catch (err) {

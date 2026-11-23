@@ -187,6 +187,7 @@ import adEfficiencyRouter from "./ad-efficiency";
 import numbersBenchmarksRouter from "./numbers-benchmarks";
 import productionKpisRouter from "./production-kpis";
 import dispatchCutoffRouter from "./dispatch-cutoff";
+import uncoveredIngredientsRouter from "./uncovered-ingredients";
 import warningLogRouter from "./warning-log";
 import ingredientStationWarningsRouter from "./ingredient-station-warnings";
 import fixQueueChatRouter from "./fix-queue-chat";
@@ -541,6 +542,8 @@ router.use("/numbers-benchmarks", numbersBenchmarksRouter);
 router.use("/production-kpis", productionKpisRouter);
 // The 2:16 order check alert, on the packing and wrapping screens.
 router.use("/dispatch-cutoff", dispatchCutoffRouter);
+// The orders page's "no kanban, no stock check" warning: its actions (23 Nov 2026).
+router.use("/uncovered-ingredients", requireAdminOrManager, uncoveredIngredientsRouter);
 // Who dismissed an operational warning, and when (20 Nov 2026).
 router.use("/warning-log", warningLogRouter);
 router.use("/ingredient-station-warnings", ingredientStationWarningsRouter);

@@ -10,6 +10,7 @@ import { OrderTotalPill, OrderTotalBar } from "@/components/order-total-pill";
 import { cn } from "@/lib/utils";
 import { logWarning } from "@/lib/warning-log";
 import { useAuth } from "@/contexts/auth-context";
+import { UncoveredIngredientsBanner, type UncoveredIngredient } from "@/components/uncovered-ingredients-banner";
 import { AlertTriangle,
   ShoppingCart,
   Package,
@@ -231,6 +232,11 @@ type CalculateResponse = {
   /** Suppliers ordered today — the calc gives them no card today, so the
    *  page lists them and a tap adds one back by hand (#351/#384). */
   orderedToday?: Array<{ supplierId: number; supplierName: string; orderIds: number[] }>;
+  /** Ingredients the plan needs that nothing would order: no kanban and
+   *  stock check off, or no supplier (23 Nov 2026). */
+  uncoveredIngredients?: UncoveredIngredient[];
+  /** The same, for ones a manager marked as never ordered. */
+  notOrderedIngredients?: UncoveredIngredient[];
 };
 
 type PurchaseOrder = {
@@ -2223,6 +2229,15 @@ export default function Orders() {
 
       {selectedPlan && newerPlan && (
         <NewerPlanBanner key={`${selectedPlan.id}-${newerPlan.id}`} selected={selectedPlan} newer={newerPlan} onSwitch={setSelectedPlanId} />
+      )}
+
+      {calculated && (
+        <UncoveredIngredientsBanner
+          uncovered={calculated.uncoveredIngredients ?? []}
+          notOrdered={calculated.notOrderedIngredients ?? []}
+          canManage={canManageOrders}
+          onChanged={() => queryClient.invalidateQueries({ queryKey: ["order-calculate", selectedPlanId] })}
+        />
       )}
 
       <QueuedOrdersReminder />
