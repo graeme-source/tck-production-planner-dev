@@ -124,6 +124,25 @@ describe("no delivery date, so not today's to pack (regression: #140315, 23 Nov 
   });
 });
 
+describe("nothing due out today is left off the packing screen, whatever kind of order it is (23 Nov 2026)", () => {
+  const monday = "2026-11-23";
+  const due = (id: number, tags: string, lines: Array<{ variant_title: string }> = []) => ({
+    id, name: `#${id}`, tags, created_at: "2026-11-23T09:30:00Z", customer: { first_name: "A", last_name: "B" },
+    note_attributes: [], line_items: lines,
+  });
+  it("flags wholesale, 8-pack and retail orders alike when they have tomorrow's date but no dispatch tag", () => {
+    const orders = [
+      due(1, "wholesale, B2B, production, 2026-11-24"),
+      due(2, "Large Box, production, 2026-11-24", [{ variant_title: "8 Pack Bag" }]),
+      due(3, "Small Box, Tuesday, 2026-11-24"),
+    ];
+    expect(ordersMissingCutoff(orders, monday).map(o => o.name)).toEqual(["#1", "#2", "#3"]);
+  });
+  it("only a collection is left out, because it is handed over on its own day", () => {
+    expect(ordersMissingCutoff([due(4, "Collection, 2026-11-24")], monday)).toEqual([]);
+  });
+});
+
 describe("zapietDeliveryDate", () => {
   it("reads Zapiet's slashes, and nothing else", async () => {
     const { zapietDeliveryDate } = await import("./dispatch-cutoff-rules");
