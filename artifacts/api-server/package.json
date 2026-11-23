@@ -33,6 +33,7 @@
     "@workspace/plan-margin": "workspace:*",
     "@workspace/slow-meat": "workspace:*",
     "@workspace/station-changes": "workspace:*",
+    "@workspace/lean-quiz": "workspace:*",
     "@workspace/people-reviews": "workspace:*",
     "@workspace/stock-prediction": "workspace:*",
     "@workspace/uk-date": "workspace:*",

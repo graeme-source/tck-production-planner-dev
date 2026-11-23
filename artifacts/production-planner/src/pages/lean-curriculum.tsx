@@ -36,6 +36,8 @@ import { toast } from "@/hooks/use-toast";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { describeVideoCoverage } from "@/lib/video-coverage";
 import { LeanScheduleCard, LEAN_SCHEDULE_KEY } from "@/components/lean/lean-schedule-card";
+import { LeanSwitches } from "@/components/lean/lean-switches";
+import { QuizEditor } from "@/components/lean/quiz-editor";
 import { LessonPreview } from "@/components/lean/lesson-preview";
 import { YouTubeEmbed, isUploadedLessonVideo } from "@/components/lesson-media";
 import { useEffect, useRef } from "react";
@@ -176,6 +178,8 @@ export default function LeanCurriculumPage() {
       />
 
       <LeanScheduleCard onReview={setReviewWeekId} />
+
+      <LeanSwitches />
 
       {isLoading ? (
         <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-primary/50" /></div>
@@ -543,6 +547,9 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
 }) {
   const queryClient = useQueryClient();
   const [notes, setNotes] = useState("");
+  // Bumped once a rewrite's new quiz has loaded, so the question editor
+  // starts again from it (it otherwise keeps what you're typing).
+  const [quizRev, setQuizRev] = useState(0);
 
   const { data, isLoading } = useQuery<{ week: Week; lessons: Lesson[]; quiz: Array<{ question: string; options: string[]; answer: number }> }>({
     queryKey: ["lean-curriculum-week", weekId],
@@ -560,7 +567,8 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
       { method: "POST", body: JSON.stringify({ notes: notes.trim() || undefined, force: true }) },
     ),
     onSuccess: (res) => {
-      refresh();
+      void queryClient.invalidateQueries({ queryKey: ["lean-curriculum-week", weekId] }).then(() => setQuizRev(r => r + 1));
+      onChanged();
       setNotes("");
       const wanted = res?.videoWanted ?? [];
       toast({
@@ -676,28 +684,7 @@ function WeekReviewDialog({ weekId, onClose, onChanged }: {
                     onClose={() => setPreviewAt(null)}
                   />
                 )}
-                {(data?.quiz?.length ?? 0) > 0 && (
-                  <div className="border border-border rounded-xl p-3">
-                    <p className="text-sm font-medium flex items-center gap-1.5 mb-2">
-                      <HelpCircle className="w-4 h-4 text-primary" /> End-of-week questions
-                    </p>
-                    <ol className="space-y-2 list-decimal list-inside">
-                      {data!.quiz.map((q, qi) => (
-                        <li key={qi} className="text-xs">
-                          <span className="font-medium">{q.question}</span>
-                          <ul className="mt-1 ml-4 space-y-0.5">
-                            {q.options.map((opt, oi) => (
-                              <li key={oi} className={cn("flex items-center gap-1.5", oi === q.answer ? "text-emerald-600 font-medium" : "text-muted-foreground")}>
-                                {oi === q.answer ? <Check className="w-3 h-3 flex-shrink-0" /> : <span className="w-3" />}
-                                {opt}
-                              </li>
-                            ))}
-                          </ul>
-                        </li>
-                      ))}
-                    </ol>
-                  </div>
-                )}
+                {data && <QuizEditor key={`${weekId}-${quizRev}`} weekId={weekId} quiz={data.quiz ?? []} />}
               </div>
             )}
 

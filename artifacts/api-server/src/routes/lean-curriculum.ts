@@ -35,6 +35,7 @@ import {
   trainingRecordsTable,
 } from "@workspace/db";
 import { validate } from "../middleware/validate";
+import { checkQuiz, MAX_OPTIONS, MAX_QUESTIONS } from "@workspace/lean-quiz";
 import { getClaudeClient, isClaudeConfigured, CLAUDE_MODELS } from "../lib/ai/claude";
 import { aiMaxTokens, pickToolUse, strictTool } from "../lib/ai/claude-calls";
 import { leanCorpusPrompt, LMS_BACKLOG_SUBJECTS } from "../lib/lean-corpus";
@@ -514,6 +515,35 @@ router.patch("/weeks/:id", validate(weekPatchSchema), async (req: Request, res: 
   } catch (err) {
     console.error("[lean-curriculum] update week failed:", err);
     res.status(500).json({ error: "Failed to update the week" });
+  }
+});
+
+// PUT /weeks/:id/quiz — the end-of-week questions, edited by hand on the
+// week screen (Graeme, 23 Nov 2026). Replaces the whole quiz; the review
+// flow reads it from the same column, so the next review uses the edit.
+const quizSchema = z.object({
+  quiz: z.array(z.object({
+    question: z.string().max(500),
+    options: z.array(z.string().max(300)).max(MAX_OPTIONS),
+    answer: z.number().int().min(0),
+  })).max(MAX_QUESTIONS),
+});
+
+router.put("/weeks/:id/quiz", validate(quizSchema), async (req: Request, res: Response) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+  const checked = checkQuiz((req.body as z.infer<typeof quizSchema>).quiz);
+  if (!checked.ok) { res.status(400).json({ error: checked.problem }); return; }
+  try {
+    const [updated] = await db.update(leanPrinciplesTable)
+      .set({ quizJson: JSON.stringify(checked.quiz), updatedAt: new Date() })
+      .where(eq(leanPrinciplesTable.id, id))
+      .returning({ id: leanPrinciplesTable.id });
+    if (!updated) { res.status(404).json({ error: "Week not found" }); return; }
+    res.json({ quiz: checked.quiz });
+  } catch (err) {
+    console.error("[lean-curriculum] save quiz failed:", err);
+    res.status(500).json({ error: "Failed to save the questions" });
   }
 });
 

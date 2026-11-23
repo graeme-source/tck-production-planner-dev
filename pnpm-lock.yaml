@@ -132,6 +132,9 @@ importers:
       '@workspace/goods-in':
         specifier: workspace:*
         version: link:../../lib/goods-in
+      '@workspace/lean-quiz':
+        specifier: workspace:*
+        version: link:../../lib/lean-quiz
       '@workspace/marketing-calendar':
         specifier: workspace:*
         version: link:../../lib/marketing-calendar
@@ -496,6 +499,9 @@ importers:
       '@tiptap/starter-kit':
         specifier: ^3.32.0
         version: 3.32.0
+      '@workspace/lean-quiz':
+        specifier: workspace:*
+        version: link:../../lib/lean-quiz
       '@workspace/product-labels':
         specifier: workspace:*
         version: link:../../lib/product-labels
@@ -817,6 +823,8 @@ importers:
       '@workspace/units':
         specifier: workspace:*
         version: link:../units
+
+  lib/lean-quiz: {}
 
   lib/marketing-calendar: {}
 
