@@ -74,6 +74,11 @@ export const ingredientsTable = pgTable("ingredients", {
   // @workspace/units). NULL = "pack" / "bottle". Display only. Migration
   // 0242, fix-queue #327.
   packName: text("pack_name"),
+  // Safety warning shown as a pop-up on the Mixing and Building screens for
+  // every recipe that uses this ingredient ("watch for bones"). NULL = none.
+  // Read through api-server lib/ingredient-station-warnings.ts. Migration
+  // 0392, fix-queue #404.
+  stationWarning: text("station_warning"),
   surplusPercent: numeric("surplus_percent", { precision: 8, scale: 2 }).notNull().default("10"),
   surplusMode: text("surplus_mode").notNull().default("percent"),
   surplusAbsoluteQty: numeric("surplus_absolute_qty", { precision: 12, scale: 4 }),
