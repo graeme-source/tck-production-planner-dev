@@ -4,6 +4,7 @@ import { useListProductionPlans, useListDispatchOrders, useGetProductionPlan } f
 import { toast } from "@/hooks/use-toast";
 import { PageHeader } from "@/components/page-header";
 import { EightPackOrdersBanner } from "@/components/eight-pack-orders-banner";
+import { UndatedOrdersBanner } from "@/components/undated-orders-banner";
 import { DispatchOrdersPanel, fetchWeeklyOrders, getMonday } from "@/components/dispatch-orders-panel";
 import { StockGateBanner } from "@/components/stock-gate-banner";
 import { format, isToday, addDays } from "date-fns";
@@ -692,6 +693,7 @@ export default function Dashboard() {
       {showIssueBanner && <AndonBanner userRole={userRole} />}
 
       <EightPackOrdersBanner userRole={userRole} />
+      <UndatedOrdersBanner userRole={userRole} />
       <StockGateBanner userRole={userRole} />
 
       {/* Not-a-station row — the day's admin, above the stations and in its
