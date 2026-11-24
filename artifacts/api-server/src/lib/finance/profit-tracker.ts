@@ -231,13 +231,18 @@ export interface OrderEconomics {
   usesCourier: boolean;
   packs: number;
   items: number;
-  products: Array<{ name: string; quantity: number }>;
+  /** What's in it; `costed` false = no recipe and no Shopify cost, so its cost is missing. */
+  products: Array<{ name: string; quantity: number; costed: boolean }>;
   revenue: number;          // ex VAT, after discounts and refunds, incl. shipping charged
   shippingCharged: number;
   discounts: number;
   refunded: number;
   food: number;
   packaging: number;        // recipe packaging + box
+  /** Food + the recipe's own packaging (tray, film, label) — what the products cost as costed in the app. */
+  productCost: number;
+  /** The outer box, insulation and ice. packaging = productCost's packaging + this. */
+  boxCost: number;
   courier: number;
   paymentFees: number;
   /** Before labour: revenue − food − packaging − courier − fees. */
@@ -250,7 +255,11 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
   const revenue = o.totalPrice - o.totalTax - o.refunded;
   const shippingCharged = Math.max(0, o.totalPrice - o.subtotalPrice);
   let food = 0, recipePackaging = 0, packs = 0, items = 0, uncosted = 0;
-  const products = new Map<string, number>();
+  const products = new Map<string, { quantity: number; costed: boolean }>();
+  const addProduct = (name: string, q: number, costed: boolean) => {
+    const was = products.get(name);
+    products.set(name, { quantity: (was?.quantity ?? 0) + q, costed: (was?.costed ?? true) && costed });
+  };
   for (const li of o.lines) {
     const q = Number(li.quantity) || 0;
     if (q <= 0) continue;
@@ -259,13 +268,13 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
     if (!c) {
       uncosted += q;
       const name = li.title || "Unknown item";
-      products.set(name, (products.get(name) ?? 0) + q);
+      addProduct(name, q, false);
       continue;
     }
     food += c.food * q;
     recipePackaging += c.packaging * q;
     if (c.isPack) packs += q;
-    products.set(c.name, (products.get(c.name) ?? 0) + q);
+    addProduct(c.name, q, true);
   }
   const box = boxSizeFor(o.tags, o.totalWeight, rates.weightThresholdGrams);
   const collected = isCollectionOrder(o.tags);
@@ -284,13 +293,15 @@ export function costOrder(o: TrackerOrder, costing: ReadonlyMap<string, VariantC
     usesCourier,
     packs,
     items,
-    products: [...products].map(([name, quantity]) => ({ name, quantity })).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name)),
+    products: [...products].map(([name, v]) => ({ name, ...v })).sort((a, b) => b.quantity - a.quantity || a.name.localeCompare(b.name)),
     revenue: round2(revenue),
     shippingCharged: round2(shippingCharged),
     discounts: round2(o.totalDiscounts),
     refunded: round2(o.refunded),
     food: round2(food),
     packaging: round2(packaging),
+    productCost: round2(food + recipePackaging),
+    boxCost: round2(boxCost),
     courier: round2(courier),
     paymentFees: round2(paymentFees),
     orderProfit: round2(revenue - food - packaging - courier - paymentFees),

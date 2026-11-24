@@ -6,14 +6,23 @@
 // contribution" before the shared ads and overheads, which were the same on
 // every order and only blurred it. Newest orders first; the order number
 // opens it in Shopify; the item count opens what's in it.
+//
+// Later the same day: "Product cost" is food plus the recipe's own packaging
+// (as costed in the app), "Box" is the outer box, insulation and ice; an
+// order with an item we have no cost for says so; and the Margin cell is
+// shaded against a target margin on the Numbers/Ads colour scale.
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { AlertTriangle, ArrowDown, ArrowUp } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { marginShade } from "@/lib/order-margin-shade";
+import { PriceField } from "./tracker-calibration";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ShopifyOrderNumber } from "@/components/shopify-order-link";
-import { gbp, gbp0, pct, dayLabel, type OrderRow, type Prediction } from "./profit-tracker-api";
+import { fetchTrackerSettings, gbp, gbp0, pct, dayLabel, saveTrackerSetting, type OrderRow, type Prediction, type TrackerSettings } from "./profit-tracker-api";
 
 type SortKey =
-  | "name" | "day" | "items" | "revenue" | "shippingCharged" | "discounts" | "food" | "packaging" | "courier"
+  | "name" | "day" | "items" | "revenue" | "shippingCharged" | "discounts" | "productCost" | "boxCost" | "courier"
   | "paymentFees" | "labour" | "grossProfit" | "grossMargin";
 
 const COLUMNS: Array<{ key: SortKey; label: string }> = [
@@ -21,10 +30,10 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "day", label: "Placed" },
   { key: "items", label: "Items" },
   { key: "revenue", label: "Revenue" },
-  { key: "shippingCharged", label: "Shipping charged" },
+  { key: "shippingCharged", label: "Shipping" },
   { key: "discounts", label: "Discount" },
-  { key: "food", label: "Food" },
-  { key: "packaging", label: "Packaging" },
+  { key: "productCost", label: "Product cost" },
+  { key: "boxCost", label: "Box" },
   { key: "courier", label: "Courier" },
   { key: "paymentFees", label: "Fees" },
   { key: "labour", label: "Labour" },
@@ -32,7 +41,7 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "grossMargin", label: "Margin" },
 ];
 
-const MONEY = ["revenue", "shippingCharged", "discounts", "food", "packaging", "courier", "paymentFees", "labour", "grossProfit"] as const;
+const MONEY = ["revenue", "shippingCharged", "discounts", "productCost", "boxCost", "courier", "paymentFees", "labour", "grossProfit"] as const;
 
 /** Sort value: "Placed" sorts by the exact time, so the same day's orders stay in order. */
 function sortValue(o: OrderRow, key: SortKey): string | number {
@@ -47,6 +56,13 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
   // Newest first by default, going back in time.
   const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: "day", asc: false });
   const [open, setOpen] = useState<OrderRow | null>(null);
+  const qc = useQueryClient();
+  const settings = useQuery({ queryKey: ["pnl-tracker-settings"], queryFn: fetchTrackerSettings });
+  const target = settings.data?.target_order_margin;
+  const saveTarget = useMutation({
+    mutationFn: (v: number) => saveTrackerSetting("target_order_margin", v),
+    onSuccess: (s: TrackerSettings) => qc.setQueryData(["pnl-tracker-settings"], s),
+  });
   const [box, setBox] = useState<"all" | "small" | "large">("all");
   const [search, setSearch] = useState("");
   const [shown, setShown] = useState(PAGE);
@@ -146,7 +162,12 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
               {rows.length.toLocaleString("en-GB")} orders, newest first · labour {gbp.format(data.pnl.labourPerPack)} a pack · gross profit is before ads and overheads
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-end gap-2">
+            {target != null && (
+              <div className="w-56">
+                <PriceField label="Target margin" unit="%" value={target} onSave={v => saveTarget.mutateAsync(v)} />
+              </div>
+            )}
             <input
               value={search}
               onChange={e => { setSearch(e.target.value); setShown(PAGE); }}
@@ -183,7 +204,15 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                 <tr key={o.id} className="border-t border-border">
                   <td className="px-3 py-2 font-medium whitespace-nowrap">
                     <ShopifyOrderNumber orderId={o.id} name={o.name} />
-                    {o.uncostedItems > 0 && <span className="ml-1 text-xs text-amber-700" title="Some items have no cost">•</span>}
+                    {o.uncostedItems > 0 && (
+                      <button
+                        onClick={() => setOpen(o)}
+                        title={`${o.uncostedItems} item${o.uncostedItems === 1 ? "" : "s"} with no cost — tap to see which`}
+                        className="ml-1.5 inline-flex items-center gap-0.5 rounded-full bg-amber-100 dark:bg-amber-900/40 px-1.5 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300 align-middle"
+                      >
+                        <AlertTriangle className="w-3 h-3" /> {o.uncostedItems}
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">{dayLabel(o.day)}</td>
                   <td className="px-3 py-1 text-right whitespace-nowrap">
@@ -200,7 +229,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                       {gbp.format(o[k])}
                     </td>
                   ))}
-                  <td className={`px-3 py-2 text-right whitespace-nowrap font-semibold ${(o.grossMargin ?? 0) < 0 ? "text-red-600" : ""}`}>{pct(o.grossMargin)}</td>
+                  <MarginCell margin={o.grossMargin} target={target} />
                 </tr>
               ))}
             </tbody>
@@ -215,6 +244,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
         )}
         <p className="px-5 pb-4 text-xs text-muted-foreground">
           Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.pnl.grossProfit)} gross profit.
+          {" "}Product cost is each item's recipe ingredients plus its own packaging (tray, film, label), or Shopify's cost for bought-in items; Box is the outer box, insulation and ice.
         </p>
       </div>
 
@@ -245,7 +275,12 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
               {order.products.map(p => (
                 <li key={p.name} className="flex items-center gap-3 px-3 py-2.5 text-sm">
                   <span className="w-8 shrink-0 text-right font-semibold tabular-nums">{p.quantity}×</span>
-                  <span className="min-w-0">{p.name}</span>
+                  <span className="min-w-0 flex-1">{p.name}</span>
+                  {!p.costed && (
+                    <span className="shrink-0 inline-flex items-center gap-1 rounded-full bg-amber-100 dark:bg-amber-900/40 px-2 py-0.5 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                      <AlertTriangle className="w-3 h-3" /> No cost
+                    </span>
+                  )}
                 </li>
               ))}
             </ul>
@@ -264,11 +299,30 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
               </div>
             </dl>
             {order.uncostedItems > 0 && (
-              <p className="text-xs text-amber-700">Some items in this order have no cost, so its profit is overstated.</p>
+              <p className="text-sm text-amber-800 dark:text-amber-300">
+                {order.uncostedItems} item{order.uncostedItems === 1 ? " has" : "s have"} no recipe or Shopify cost, so this order's profit is overstated.
+              </p>
             )}
           </>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function MarginCell({ margin, target }: { margin: number | null; target: number | undefined }) {
+  const shade = marginShade(margin, target);
+  return (
+    <td className="px-2 py-1 text-right whitespace-nowrap">
+      <span
+        className={cn("inline-block min-w-[4.5rem] rounded-md px-2 py-1.5 font-bold tabular-nums",
+          !shade && "text-muted-foreground",
+          shade && (shade.darkBackground ? "text-white" : "text-stone-900"))}
+        style={shade ? { backgroundColor: shade.hex } : undefined}
+        title={target ? `Target ${target}%` : undefined}
+      >
+        {pct(margin)}
+      </span>
+    </td>
   );
 }

@@ -100,7 +100,7 @@ export function PredictedVsActual() {
 
 // ── Prices and grouping ─────────────────────────────────────────────────
 
-type FieldKey = keyof Omit<TrackerSettings, "weightThresholdGrams" | "overhead_average_months">;
+type FieldKey = keyof Omit<TrackerSettings, "weightThresholdGrams" | "overhead_average_months" | "target_order_margin">;
 type Field = { key: FieldKey; label: string; unit: "£" | "%" };
 
 const PRICE_FIELDS: Field[] = [
@@ -120,7 +120,7 @@ const LABOUR_FIELDS: Field[] = [
 
 const show = (v: number) => (Number.isInteger(v) ? String(v) : v.toFixed(2));
 
-function PriceField({ label, unit, value, onSave }: { label: string; unit: "£" | "%"; value: number; onSave: (v: number) => Promise<unknown> }) {
+export function PriceField({ label, unit, value, onSave }: { label: string; unit: "£" | "%"; value: number; onSave: (v: number) => Promise<unknown> }) {
   const [text, setText] = useState(show(value));
   const [state, setState] = useState<SaveState>("idle");
   useEffect(() => { setText(show(value)); }, [value]);

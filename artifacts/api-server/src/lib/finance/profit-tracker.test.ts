@@ -120,11 +120,25 @@ describe("costOrder", () => {
       revenue: 60, shippingCharged: 6.95, discounts: 10,
       food: 13,                 // 3×3 + 4
       packaging: 4.1,           // 4×0.40 trays + 2.50 box
+      productCost: 14.6,        // food 13 + 4×0.40 trays
+      boxCost: 2.5,
       courier: 4.72,
       paymentFees: 1.2,
       orderProfit: 36.98,       // 60 − 13 − 4.10 − 4.72 − 1.20
       uncostedItems: 0,
     });
+  });
+
+  it("marks which products have no cost", () => {
+    const e = costOrder(order({ lines: [
+      { variantId: "v1", title: "Pepperoni", variantTitle: null, quantity: 2, price: 15, discount: 0 },
+      { variantId: "nope", title: "Mystery Sauce", variantTitle: null, quantity: 1, price: 2, discount: 0 },
+    ] }), costing, rates, londonDay);
+    expect(e.uncostedItems).toBe(1);
+    expect(e.products).toEqual([
+      { name: "Pepperoni", quantity: 2, costed: true },
+      { name: "Mystery Sauce", quantity: 1, costed: false },
+    ]);
   });
 
   it("takes VAT and refunds off revenue", () => {
