@@ -214,6 +214,15 @@ export function LeanReviewPage() {
   if (isLoading) {
     return <div className="flex justify-center py-20"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   }
+  if (pastWeek && missed.isError) {
+    return (
+      <div className="max-w-2xl mx-auto py-16 text-center text-muted-foreground space-y-3">
+        <GraduationCap className="w-10 h-10 mx-auto opacity-40" />
+        <p className="font-medium">That week's lesson couldn't be opened — it isn't one of your weeks.</p>
+        <Link href="/lean-review" className="inline-flex h-11 items-center px-4 rounded-xl border border-border font-medium">This week's lesson</Link>
+      </div>
+    );
+  }
   if (!data?.principle) {
     return (
       <div className="max-w-2xl mx-auto py-16 text-center text-muted-foreground">
