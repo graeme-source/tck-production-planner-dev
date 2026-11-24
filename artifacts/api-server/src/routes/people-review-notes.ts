@@ -44,7 +44,7 @@ import { employmentRecordWrite, fromParam, fromRow, ownerOf, loadRecordSubject }
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { resyncAttentionSoon } from "../lib/hr-attention";
 import { recordReaders } from "../lib/record-readers";
-import { shareMyWriteUp, notifyShared as notifyEmployee } from "../services/share-write-up";
+import { shareMyWriteUp, shareMeetingReports, withdrawFromTimeline, notifyShared as notifyEmployee } from "../services/share-write-up";
 
 const router: IRouter = Router();
 
@@ -304,6 +304,38 @@ router.post("/entries/:id/share-write-up", onEntry, validate(ShareWriteUpBody), 
     res.json({ shared });
   } catch (err) {
     fail(res, "share write-up", err, "Couldn't share the write-up");
+  }
+});
+
+/**
+ * On their timeline, or not (Graeme, 24 Nov 2026): one switch per meeting.
+ *   { shown: true }  — share MY private write-up of it and any performance
+ *                      report saved to it; they're told.
+ *   { shown: false } — take MY shared parts back to private and stop sharing
+ *                      its reports. Someone else's shared parts stay (only
+ *                      their author can change them) and the reply says so.
+ * The screen asks twice before either.
+ */
+const TimelineBody = z.object({ shown: z.boolean() });
+
+router.post("/entries/:id/timeline", onEntry, validate(TimelineBody), async (req: Request, res: Response) => {
+  const viewer = viewerOf(res);
+  const { shown } = req.body as z.infer<typeof TimelineBody>;
+  try {
+    const entry = await loadEntry(viewer, req.params["id"]);
+    if (!entry) { res.status(404).json({ error: "No such review" }); return; }
+    const me = { id: viewer.actor.id, name: viewer.name };
+    if (shown) {
+      const notes = await shareMyWriteUp(me, entry);
+      const reports = await shareMeetingReports(me, entry);
+      if (notes === 0 && reports > 0) await notifyShared(entry.userId, viewer, "a performance report");
+      res.json({ shown: true, notes, reports });
+    } else {
+      const out = await withdrawFromTimeline(me, entry);
+      res.json({ shown: out.othersStillShared > 0, ...out });
+    }
+  } catch (err) {
+    fail(res, "timeline", err, "Couldn't change what they can see");
   }
 });
 

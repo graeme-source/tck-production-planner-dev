@@ -101,6 +101,8 @@ export interface RecordEntry {
   letters: RecordLetter[];
   /** Its write-up, already filtered by the server to what this viewer may read. */
   writeUp: ReviewNote[];
+  /** Performance reports saved to this meeting (people-performance). */
+  reports?: Array<{ id: number; sharedAt: string | null }>;
   /** The meeting notes AI drafts were made from (migration 0182). */
   sources?: EntrySource[];
 }

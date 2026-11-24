@@ -449,3 +449,41 @@ export function ownRecordView<N extends OwnNoteLike>(reviews: readonly OwnReview
     agreement: latestAgreements(out.flatMap(r => r.notes), out.map(r => ({ id: r.entryId, day: r.date }))),
   };
 }
+
+// ── On their timeline, or not (Graeme, 24 Nov 2026) ─────────────────────────
+// "I want the option to publish or not on their employee timeline." A meeting
+// is on the person's own record once any part of its write-up is shared with
+// them, or a performance report saved to it is.
+
+export interface TimelinePart { visibility: string; sharedAt: string | null; authorId: number | null }
+export interface TimelineReport { sharedAt: string | null }
+
+export interface TimelineState {
+  /** They can see it on their own record now. */
+  shown: boolean;
+  /** When it first went on (earliest share still in place). */
+  since: string | null;
+  /** What "Publish" would add: my private parts, and unshared reports. */
+  toPublish: { parts: number; reports: number };
+  /** What "Take it off" would withdraw: my shared parts, and shared reports. */
+  toWithdraw: { parts: number; reports: number };
+  /** Shared parts written by someone else — only they can take those down. */
+  othersShared: number;
+  /** Nothing written and no report — nothing to publish yet. */
+  empty: boolean;
+}
+
+export function timelineState(parts: readonly TimelinePart[], reports: readonly TimelineReport[], viewerId: number | null): TimelineState {
+  const shared = parts.filter(p => p.visibility === "shared");
+  const mine = (p: TimelinePart) => viewerId != null && p.authorId === viewerId;
+  const sharedReports = reports.filter(r => r.sharedAt != null);
+  const dates = [...shared.map(p => p.sharedAt), ...sharedReports.map(r => r.sharedAt)].filter((d): d is string => d != null).sort();
+  return {
+    shown: shared.length > 0 || sharedReports.length > 0,
+    since: dates[0] ?? null,
+    toPublish: { parts: parts.filter(p => p.visibility !== "shared" && mine(p)).length, reports: reports.length - sharedReports.length },
+    toWithdraw: { parts: shared.filter(mine).length, reports: sharedReports.length },
+    othersShared: shared.filter(p => !mine(p)).length,
+    empty: parts.length === 0 && reports.length === 0,
+  };
+}

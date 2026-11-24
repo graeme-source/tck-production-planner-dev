@@ -21,11 +21,11 @@
  */
 import { useState } from "react";
 import {
-  CalendarDays, CheckCircle2, ChevronRight, Handshake, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check,
+  CalendarDays, CheckCircle2, ChevronRight, Handshake, Loader2, Lock, MessageSquare, Pencil, Plus, Sparkles, Target, Trash2, X, Check, Eye, EyeOff,
 } from "lucide-react";
 import {
   NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened, entryClassLabels, agreementBullets,
-  noteLevel, levelLabel, patchForLevel,
+  noteLevel, levelLabel, patchForLevel, timelineState,
   type Classification, type Stage, type ShareLevel,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
@@ -547,7 +547,102 @@ export function ReviewTimelineCard({ entry, classifications, stages, viewerId, c
         </div>
       )}
 
+      {/* Up top, so whether they can see it is never below the fold. */}
+      {canWrite && status !== "cancelled" && (
+        <TimelineSwitch entry={entry} viewerId={viewerId} personName={personName} onChanged={onChanged} />
+      )}
+
       <WriteUpSection entry={entry} viewerId={viewerId} canWrite={canWrite} personName={personName} onChanged={onChanged} onAdd={onOpen} />
+    </div>
+  );
+}
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * Whether this meeting is on their own timeline, and one switch to publish
+ * it or take it off (Graeme, 24 Nov 2026: "I want the option to publish or
+ * not on their employee timeline"). Publishing shares MY write-up of it and
+ * any performance report saved to it; taking it off undoes both. Asks twice.
+ */
+function TimelineSwitch({ entry, viewerId, personName, onChanged }: {
+  entry: Pick<RecordEntry, "id" | "writeUp" | "reports">;
+  viewerId: number | null;
+  personName: string;
+  onChanged: () => void;
+}) {
+  const first = personName.split(" ")[0] ?? personName;
+  const st = timelineState(entry.writeUp, entry.reports ?? [], viewerId);
+  const [confirm, setConfirm] = useState<"publish" | "withdraw" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const canPublish = st.toPublish.parts + st.toPublish.reports > 0;
+  const canWithdraw = st.toWithdraw.parts + st.toWithdraw.reports > 0;
+  const what = (x: { parts: number; reports: number }) => [
+    x.parts ? `your write-up (${plural(x.parts, "part")})` : null,
+    x.reports ? (x.reports === 1 ? "the performance report" : `${x.reports} performance reports`) : null,
+  ].filter(Boolean).join(" and ");
+
+  const go = async () => {
+    if (!confirm) return;
+    setBusy(true);
+    try {
+      const r = await recordSend<{ shown: boolean; othersStillShared?: number }>("POST", `/entries/${entry.id}/timeline`, { shown: confirm === "publish" });
+      toast({
+        title: confirm === "publish" ? `On ${first}'s timeline` : r.shown ? "Your parts taken off" : `Off ${first}'s timeline`,
+        description: confirm === "publish" ? `${first} has been told.` : r.othersStillShared ? `${plural(r.othersStillShared, "part")} shared by someone else ${r.othersStillShared === 1 ? "stays" : "stay"} — only they can take ${r.othersStillShared === 1 ? "it" : "them"} down.` : undefined,
+      });
+      setConfirm(null);
+      onChanged();
+    } catch (e) {
+      toast({ title: "Couldn't change that", description: e instanceof Error ? e.message : "Try again", variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className={cn("rounded-2xl px-4 py-3 space-y-2", st.shown ? "bg-emerald-50 dark:bg-emerald-950/30" : "bg-secondary/50")}>
+      <div className="flex flex-wrap items-center gap-3">
+        <p className="flex-1 min-w-[14rem] flex items-start gap-2 text-base">
+          {st.shown ? <Eye className="w-5 h-5 mt-0.5 shrink-0 text-emerald-700 dark:text-emerald-400" /> : <EyeOff className="w-5 h-5 mt-0.5 shrink-0 text-muted-foreground" />}
+          <span>
+            <span className="font-bold">{st.shown ? `On ${first}'s timeline` : `Not on ${first}'s timeline`}</span>
+            <span className="text-muted-foreground">
+              {st.shown
+                ? `${st.since ? ` since ${fmtDayIso(st.since.slice(0, 10))}` : ""}${canPublish ? ` · ${what(st.toPublish)} not published yet` : ""}`
+                : st.empty ? " — nothing to publish yet. Add the meeting notes first." : canPublish ? ` — ${first} can't see this.` : " — only someone else's private notes are on it."}
+            </span>
+          </span>
+        </p>
+        {canPublish && !confirm && (
+          <button type="button" onClick={() => setConfirm("publish")}
+            className="h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-1.5">
+            <Eye className="w-4 h-4" /> {st.shown ? "Publish the rest…" : `Publish to ${first}'s timeline…`}
+          </button>
+        )}
+        {canWithdraw && !confirm && (
+          <button type="button" onClick={() => setConfirm("withdraw")}
+            className="h-11 px-4 rounded-xl border-2 border-border text-sm font-bold flex items-center gap-1.5 hover:bg-secondary/60">
+            <EyeOff className="w-4 h-4" /> Take it off
+          </button>
+        )}
+      </div>
+      {confirm && (
+        <div className="rounded-xl border-2 border-border bg-card px-3 py-2.5 space-y-2">
+          <p className="text-sm">
+            {confirm === "publish"
+              ? <>{first} will see {what(st.toPublish)} of this meeting on their own record, and gets a notification. You can take it off again.</>
+              : <>{first} will no longer see {what(st.toWithdraw)} of this meeting.{st.othersShared ? ` ${plural(st.othersShared, "part")} shared by someone else ${st.othersShared === 1 ? "stays" : "stay"} — only they can take ${st.othersShared === 1 ? "it" : "them"} down.` : ""}</>}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={() => void go()} disabled={busy}
+              className="h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
+              {busy && <Loader2 className="w-4 h-4 animate-spin" />}
+              {confirm === "publish" ? `Yes, publish to ${first}'s timeline` : `Yes, take it off`}
+            </button>
+            <button type="button" onClick={() => setConfirm(null)} disabled={busy}
+              className="h-11 px-4 rounded-xl border-2 border-border text-sm font-bold">Keep as it is</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -46,7 +46,7 @@ import { sql } from "drizzle-orm";
 import {
   db, usersTable, peopleRecordClassificationsTable, peopleReviewStagesTable, peopleRecordEntriesTable, peopleRecordAuditTable,
   peopleLetterTemplatesTable, peopleLettersTable, personDocumentsTable, peopleHrSettingsTable, peopleReviewNotesTable,
-  peopleRecordEntrySourcesTable, visibleNotes, visibleSources,
+  peopleRecordEntrySourcesTable, peoplePerformanceReportsTable, visibleNotes, visibleSources,
 } from "@workspace/db";
 import { recordReaders, namesById } from "../lib/record-readers";
 import {
@@ -371,7 +371,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
       .orderBy(desc(peopleRecordEntriesTable.entryDate), desc(peopleRecordEntriesTable.id));
     const ids = entries.map(e => e.id);
     const classIds = await loadEntryClassIds(db, ids);
-    const [classifications, stages, history, { attendance, triggerReview }, letters] = await Promise.all([
+    const [classifications, stages, history, { attendance, triggerReview }, letters, perfReports] = await Promise.all([
       loadClassifications(),
       loadStages(),
       ids.length
@@ -384,6 +384,12 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
       ids.length
         ? db.select().from(peopleLettersTable).where(inArray(peopleLettersTable.entryId, ids)).orderBy(asc(peopleLettersTable.createdAt))
         : Promise.resolve([] as Array<typeof peopleLettersTable.$inferSelect>),
+      // Performance reports saved to a meeting (people-performance.ts) — so
+      // the card can say whether the meeting is on their timeline.
+      ids.length
+        ? db.select({ id: peoplePerformanceReportsTable.id, entryId: peoplePerformanceReportsTable.entryId, sharedAt: peoplePerformanceReportsTable.sharedAt })
+          .from(peoplePerformanceReportsTable).where(inArray(peoplePerformanceReportsTable.entryId, ids))
+        : Promise.resolve([] as Array<{ id: number; entryId: number | null; sharedAt: Date | null }>),
     ]);
     // The write-ups. Private notes are their author's alone — filtered HERE,
     // before anything leaves the server (employee-review-visibility.ts).
@@ -432,6 +438,7 @@ router.get("/person/:userId", async (req: Request, res: Response) => {
         meetingOnTodoList: e.meetingTodoId != null, reviewOnTodoList: e.reviewTodoId != null,
         createdByName: e.createdByName, createdAt: e.createdAt, updatedAt: e.updatedAt,
         writeUp: notes.filter(n => n.entryId === e.id),
+        reports: perfReports.filter(r => r.entryId === e.id).map(r => ({ id: r.id, sharedAt: r.sharedAt })),
         sources: sources.filter(x => x.entryId === e.id).map(x => ({
           id: x.id, kind: x.kind, url: x.sourceUrl, text: x.rawText, createdByName: x.createdByName, createdAt: x.createdAt,
         })),
