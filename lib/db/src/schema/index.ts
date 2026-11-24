@@ -82,3 +82,4 @@ export * from "./standing_orders";
 export * from "./traceability";
 export * from "./warning_dismissals";
 export * from "./lean_example_videos";
+export * from "./ingredient_artwork";

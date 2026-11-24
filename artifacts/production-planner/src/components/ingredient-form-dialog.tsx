@@ -21,6 +21,7 @@ import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Carrot, Box, Camera, Images, Sparkles, ShoppingBag, X, Loader2, BookOpenText, Truck, Boxes, CalendarClock, ChefHat, Tag, ExternalLink } from "lucide-react";
 import { NewSupplierDialog } from "@/components/suppliers/supplier-form";
+import { IngredientArtworkPanel } from "@/components/ingredient-artwork-panel";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { formIsDirty } from "@/lib/editor-dirty";
 import { useBackToClose } from "@/hooks/use-back-to-close";
@@ -1318,6 +1319,15 @@ export function IngredientFormDialog({
             </div>
           )}
               </EditorSection>
+              {/* Artwork sent with the order (Graeme, 24 Nov 2026) — supplies
+                  only; saves itself, so it needs a saved item. */}
+              {!isIngredient && (
+                <EditorSection title="Artwork">
+                  {editingItem?.id
+                    ? <IngredientArtworkPanel ingredientId={editingItem.id} />
+                    : <p className="text-xs text-muted-foreground">Save the supply first to attach its artwork.</p>}
+                </EditorSection>
+              )}
             </div>
             <div role="tabpanel" id="ingredient-panel-stock" aria-labelledby="ingredient-tab-stock" hidden={activeTab !== "stock"} className="grid gap-5 lg:grid-cols-2 items-start">
               <EditorSection title="Stock checks">
@@ -1990,7 +2000,7 @@ interface ShopifyVariantOption {
  *  "packs") — so nobody has to guess whether 500 means grams or packs. */
 function AmountWithUnit({ word, className, children }: { word: string | null; className?: string; children: ReactNode }) {
   return (
-    <div className={cn("relative", className)}>
+    <div className={cn("relative", word && "[&>input]:pr-20", className)}>
       {children}
       {word && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">{word}</span>}
     </div>
