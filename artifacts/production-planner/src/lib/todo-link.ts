@@ -32,3 +32,13 @@ export function resolveTodoLink(url: string): ResolvedTodoLink {
   }
   return { href, label, external: true };
 }
+
+/** Where a to-do's link goes. A weekly lean lesson opens ITS OWN week's
+ *  lesson, so a missed week can still be done late (Graeme, 24 Nov 2026) —
+ *  older rows were saved with a bare /lean-review, which always opened the
+ *  current week and could never close a missed one. */
+export function taskLink(task: { url: string | null; lean_week_start?: string | null }): string | null {
+  if (!task.url) return null;
+  if (task.lean_week_start && task.url === "/lean-review") return `/lean-review?week=${String(task.lean_week_start).slice(0, 10)}`;
+  return task.url;
+}

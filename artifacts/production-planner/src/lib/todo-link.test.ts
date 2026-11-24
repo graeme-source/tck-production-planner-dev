@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveTodoLink } from "./todo-link";
+import { resolveTodoLink, taskLink } from "./todo-link";
 
 describe("resolveTodoLink", () => {
   // Regression: the lean review-ahead task stores "/lean-review?week=next".
@@ -40,5 +40,17 @@ describe("resolveTodoLink", () => {
 
   it("a test request's to-do opens the test, and says so", () => {
     expect(resolveTodoLink("/?testRequest=12")).toEqual({ href: "/?testRequest=12", label: "the test", external: false });
+  });
+});
+
+describe("taskLink", () => {
+  it("sends a weekly lean to-do to its own week, so a missed week can be done late", () => {
+    expect(taskLink({ url: "/lean-review", lean_week_start: "2026-11-10" })).toBe("/lean-review?week=2026-11-10");
+    expect(taskLink({ url: "/lean-review?week=2026-11-17", lean_week_start: "2026-11-17" })).toBe("/lean-review?week=2026-11-17");
+    expect(taskLink({ url: "/lean-review?week=next", lean_week_start: "2026-12-01" })).toBe("/lean-review?week=next");
+  });
+  it("leaves other links alone", () => {
+    expect(taskLink({ url: "/orders", lean_week_start: null })).toBe("/orders");
+    expect(taskLink({ url: null })).toBeNull();
   });
 });

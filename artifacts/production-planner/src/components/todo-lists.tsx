@@ -25,7 +25,7 @@ import { useVisibleTeamLists } from "@/components/team-lists/team-lists-dashboar
 import { toast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { cn } from "@/lib/utils";
-import { resolveTodoLink } from "@/lib/todo-link";
+import { taskLink, resolveTodoLink } from "@/lib/todo-link";
 import {
   EMPTY_TODO_FORM, insertOpenTodo, todoCreateBody, todoEditPatch, todoFormFrom, todoFormValid,
   type TodoEditable, type TodoForm, type TodoPatch,
@@ -930,7 +930,7 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
             </div>
           )}
 
-          {task.url && <LinkButton url={task.url} big />}
+          {taskLink(task) && <LinkButton url={taskLink(task)!} big />}
 
           {/* Photos & videos — evidence of the job or the problem. */}
           <div className="space-y-3">
@@ -1509,10 +1509,10 @@ export function TodoInterstitial() {
   // "Review now": acknowledge FIRST (that's what dismisses this modal on
   // every page), then follow the task's link with a full navigation.
   const reviewNow = async () => {
-    if (!task.url) return;
+    if (!taskLink(task)) return;
     try {
       await ackMut.mutateAsync();
-      const { href } = resolveTodoLink(task.url);
+      const { href } = resolveTodoLink(taskLink(task)!);
       window.location.assign(href);
     } catch { /* the mutation's own onError toast covers it */ }
   };

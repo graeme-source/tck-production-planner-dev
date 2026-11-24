@@ -18,7 +18,7 @@
 import { useState } from "react";
 import { Link, useSearch } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { BookOpen, ChevronLeft, ChevronRight, CheckCircle2, Loader2, GraduationCap, Eye, Save } from "lucide-react";
+import { AlertTriangle, BookOpen, ChevronLeft, ChevronRight, CheckCircle2, Loader2, GraduationCap, Eye, Save } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { useAuth } from "@/contexts/auth-context";
@@ -44,6 +44,9 @@ interface ReviewData {
   quiz: Array<{ question: string; options: string[]; answer?: number }>;
   completed: boolean;
   completedAt: string | null;
+  /** A missed week opened from its overdue to-do (?week=YYYY-MM-DD). */
+  dueDate?: string;
+  overdue?: boolean;
   /** Preview only: the founder can count reviewing-ahead as their own
    *  completion for next week. */
   canSelfComplete?: boolean;
@@ -148,7 +151,12 @@ function VideoSwapBox({ lesson }: { lesson: ReviewLesson }) {
 export function LeanReviewPage() {
   const queryClient = useQueryClient();
   const search = useSearch();
-  const isPreview = new URLSearchParams(search).get("week") === "next";
+  const weekParam = new URLSearchParams(search).get("week");
+  const isPreview = weekParam === "next";
+  // A missed week, opened from its overdue to-do (Graeme, 24 Nov 2026): that
+  // week's own lesson and quiz, done late — passing closes THAT week's to-do.
+  const thisMonday = (() => { const d = new Date(); const dow = (d.getDay() + 6) % 7; d.setDate(d.getDate() - dow); return d.toLocaleDateString("en-CA"); })();
+  const pastWeek = weekParam && /^\d{4}-\d{2}-\d{2}$/.test(weekParam) && weekParam < thisMonday ? weekParam : null;
   const { state } = useAuth();
   const canPreview = state.status === "authenticated" && (state.user.role === "admin" || state.user.role === "manager");
 
@@ -163,7 +171,16 @@ export function LeanReviewPage() {
     },
     enabled: isPreview && canPreview,
   });
-  const { data, isLoading } = isPreview ? preview : thisWeek;
+  const missed = useQuery<ReviewData>({
+    queryKey: ["lean-weekly-review", "week", pastWeek],
+    queryFn: async () => {
+      const res = await fetch(`${BASE}/api/lean-reviews/current?week=${pastWeek}`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load that week's lesson");
+      return res.json();
+    },
+    enabled: !!pastWeek,
+  });
+  const { data, isLoading } = isPreview ? preview : pastWeek ? missed : thisWeek;
   const [pageIdx, setPageIdx] = useState(0);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [lastResult, setLastResult] = useState<{ passed: boolean; correct: number; total: number } | null>(null);
@@ -179,7 +196,7 @@ export function LeanReviewPage() {
       const res = await fetch(`${BASE}/api/lean-reviews/${path}`, {
         method: "POST", credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ answers: ordered }),
+        body: JSON.stringify(pastWeek && !isPreview ? { answers: ordered, weekStart: pastWeek } : { answers: ordered }),
       });
       if (!res.ok) throw new Error("Failed to submit");
       return res.json() as Promise<{ passed: boolean; correct: number; total: number }>;
@@ -187,7 +204,7 @@ export function LeanReviewPage() {
     onSuccess: result => {
       setLastResult(result);
       if (result.passed) {
-        queryClient.invalidateQueries({ queryKey: isPreview ? ["lean-week-preview"] : QUERY_KEY });
+        queryClient.invalidateQueries({ queryKey: isPreview ? ["lean-week-preview"] : pastWeek ? ["lean-weekly-review", "week", pastWeek] : QUERY_KEY });
         queryClient.invalidateQueries({ queryKey: ["todos"] });
         if (recordsPreview) toast({ title: "Next week counted as done for you", description: "Matrix ticked, to-do closed." });
       }
@@ -220,11 +237,11 @@ export function LeanReviewPage() {
   return (
     // Full width, text beside the video on wide screens, so a lesson page fits
     // without scrolling (Graeme, 2026-10-27).
-    <div key={isPreview ? "preview" : "this-week"} className="w-full space-y-4 pb-10">
+    <div key={isPreview ? "preview" : pastWeek ?? "this-week"} className="w-full space-y-4 pb-10">
       {/* Header */}
       <div>
         <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isPreview ? "text-amber-600" : "text-purple-500")}>
-          {isPreview ? "Preview — next week's lesson" : "This week's lean lesson"}
+          {isPreview ? "Preview — next week's lesson" : pastWeek ? `Lean lesson — week of ${fmtWeek(pastWeek)}` : "This week's lean lesson"}
         </p>
         <h1 className="font-display text-3xl font-bold leading-tight">{data.principle.title}</h1>
         <p className="text-muted-foreground mt-1">{data.principle.summary}</p>
@@ -234,9 +251,17 @@ export function LeanReviewPage() {
             quiz like everyone else will.{data.canSelfComplete && !data.selfCompleted && " Full marks counts as your own review for next week."}
           </p>
         )}
+        {pastWeek && !data.completed && !lastResult?.passed && (
+          <p className="mt-3 rounded-xl border-2 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-red-800 dark:text-red-200 font-semibold flex items-start gap-2">
+            <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
+            <span>
+              Overdue — this was due {data.dueDate ? fmtDue(data.dueDate) : "that Friday"}. Go through it now: it stays on your to-do list until it's done.
+            </span>
+          </p>
+        )}
         {!isPreview && data.completed && (
           <p className="mt-2 inline-flex items-center gap-1.5 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
-            <CheckCircle2 className="w-4 h-4" /> Completed this week — nice one. The pages stay open for another look.
+            <CheckCircle2 className="w-4 h-4" /> {pastWeek ? "Done — that week's to-do is closed. The pages stay open for another look." : "Completed this week — nice one. The pages stay open for another look."}
           </p>
         )}
         {canPreview && (
@@ -406,4 +431,13 @@ export function LeanReviewPage() {
       </p>
     </div>
   );
+}
+
+/** "10 Nov" for a week's Monday. */
+function fmtWeek(iso: string): string {
+  return new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+}
+/** "Friday 14 Nov" for a due date. */
+function fmtDue(iso: string): string {
+  return new Date(`${iso.slice(0, 10)}T12:00:00Z`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
 }

@@ -78,12 +78,12 @@ type LeanReviewRow = typeof leanLessonReviewsTable.$inferSelect;
 /** This week's principle + the caller's completion state. Explicitly typed:
  *  the route-module import graph is cyclic enough that TS collapses the
  *  inferred getWeekFocusPrinciple result to null without the annotation. */
-async function currentWeekContext(userId: number): Promise<{
+async function currentWeekContext(userId: number, week?: string): Promise<{
   weekStart: string;
   principle: LeanPrincipleRow | null;
   review: LeanReviewRow | null;
 }> {
-  const weekStart = mondayOf(londonDateString());
+  const weekStart = week ?? mondayOf(londonDateString());
   const { principle } = (await getWeekFocusPrinciple(weekStart)) as { principle: LeanPrincipleRow | null };
   if (!principle) return { weekStart, principle: null, review: null };
   const [review] = await db
@@ -155,7 +155,7 @@ export async function ensureWeeklyLeanTodosForAll(): Promise<void> {
       INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, due_date, status, lean_week_start)
       SELECT u.id, NULL, 'Lean learning',
              ${`Lean lesson of the week: ${leanWeekLabel(principle)}`}, ${WEEKLY_TODO_NOTES},
-             '/lean-review', 'normal', ${dueDate}::date, 'open', ${weekStart}
+             ${`/lean-review?week=${weekStart}`}, 'normal', ${dueDate}::date, 'open', ${weekStart}
       FROM app_users u
       WHERE u.is_active = TRUE
         AND u.email NOT IN (${sql.join(founderEmails.map(e => sql`${e}`), sql`, `)})
@@ -287,6 +287,25 @@ async function tickLeanMatrix(userId: number, principleId: number) {
   `);
 }
 
+/**
+ * A missed week (Graeme, 24 Nov 2026: a missed week's lesson "remains on
+ * their personal to-do list until they have done it … says overdue and turns
+ * red"). `?week=YYYY-MM-DD` opens THAT week's module so it can be done late,
+ * and passing it closes that week's to-do. Allowed for a past Monday the
+ * person has a weekly lean to-do (or a review) for — the weeks they were
+ * set. Returns null when the week isn't one of theirs.
+ */
+async function pastWeekFor(userId: number, raw: unknown): Promise<string | null> {
+  if (typeof raw !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(raw)) return null;
+  const thisMonday = mondayOf(londonDateString());
+  if (mondayOf(raw) !== raw || raw >= thisMonday) return null;
+  const r = await db.execute<{ ok: boolean }>(sql`
+    SELECT (EXISTS (SELECT 1 FROM todo_tasks WHERE assignee_id = ${userId} AND lean_week_start = ${raw})
+         OR EXISTS (SELECT 1 FROM lean_lesson_reviews WHERE user_id = ${userId} AND week_start = ${raw})) AS ok
+  `);
+  return r.rows?.[0]?.ok ? raw : null;
+}
+
 // GET /api/lean-reviews/current — the week's module for the signed-in user:
 // principle, five lesson pages, quiz questions (without answers), and the
 // caller's completion state.
@@ -296,7 +315,10 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
     res.json({ weekStart: mondayOf(londonDateString()), principle: null, lessons: [], quiz: [], completed: false, disabled: true });
     return;
   }
-  const { weekStart, principle, review } = await currentWeekContext(userId);
+  // A missed week, opened from its overdue to-do.
+  const past = req.query.week != null ? await pastWeekFor(userId, req.query.week) : null;
+  if (req.query.week != null && !past) { res.status(404).json({ error: "That week's lesson isn't one of yours" }); return; }
+  const { weekStart, principle, review } = await currentWeekContext(userId, past ?? undefined);
   if (!principle) {
     res.json({ weekStart, principle: null, lessons: [], quiz: [], completed: false });
     return;
@@ -304,6 +326,20 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
   const lessons = await loadLessons(principle.id);
 
   const quiz = parseQuiz(principle.quizJson ?? null);
+
+  if (past) {
+    res.json({
+      weekStart,
+      dueDate: fridayOf(weekStart),
+      overdue: !review,
+      principle: { id: principle.id, title: principle.title, summary: principle.summary },
+      lessons,
+      quiz: quiz.map(q => ({ question: q.question, options: q.options })),
+      completed: !!review,
+      completedAt: review?.completedAt ?? null,
+    });
+    return;
+  }
 
   if (await isFounder(userId)) {
     // The founder's standing task is NEXT week's module, due by the end of
@@ -334,7 +370,7 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
       weekStart,
       title: `Lean lesson of the week: ${leanWeekLabel(principle)}`,
       notes: WEEKLY_TODO_NOTES,
-      url: "/lean-review",
+      url: `/lean-review?week=${weekStart}`,
       dueDate: fridayOf(weekStart),
     });
   }
@@ -353,6 +389,8 @@ router.get("/current", requireAuth, async (req: Request, res: Response) => {
 
 const completeSchema = z.object({
   answers: z.array(z.number().int().min(0)).max(20),
+  /** A missed week being done late (its Monday); this week when absent. */
+  weekStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
 
 // POST /api/lean-reviews/complete — check the quiz, and on a full-marks
@@ -360,8 +398,10 @@ const completeSchema = z.object({
 router.post("/complete", requireAuth, validate(completeSchema), async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   if (!(await reviewsEnabled())) { res.status(409).json({ error: "Weekly reviews are switched off" }); return; }
-  const { answers } = req.body as { answers: number[] };
-  const { weekStart, principle, review } = await currentWeekContext(userId);
+  const { answers, weekStart: asked } = req.body as { answers: number[]; weekStart?: string };
+  const past = asked != null && asked !== mondayOf(londonDateString()) ? await pastWeekFor(userId, asked) : null;
+  if (asked != null && asked !== mondayOf(londonDateString()) && !past) { res.status(404).json({ error: "That week's lesson isn't one of yours" }); return; }
+  const { weekStart, principle, review } = await currentWeekContext(userId, past ?? undefined);
   if (!principle) { res.status(409).json({ error: "No lean focus is set for this week" }); return; }
   if (review) { res.json({ passed: true, alreadyCompleted: true }); return; }
 
