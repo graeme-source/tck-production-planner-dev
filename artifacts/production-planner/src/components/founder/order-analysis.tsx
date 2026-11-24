@@ -200,8 +200,12 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
               </tr>
             </thead>
             <tbody>
-              {rows.slice(0, shown).map(o => (
-                <tr key={o.id} className="border-t border-border">
+              {rows.slice(0, shown).map(o => {
+                // A £0 order is a resend: kept in the list but greyed right
+                // down, with no reds or margin colour (Graeme, 24 Nov 2026).
+                const resend = o.revenue === 0;
+                return (
+                <tr key={o.id} className={cn("border-t border-border", resend && "text-muted-foreground/50 [&_a]:text-muted-foreground/50 [&_button]:text-muted-foreground/50")} title={resend ? "£0 order — a resend, left out of the colours" : undefined}>
                   <td className="px-3 py-2 font-medium whitespace-nowrap">
                     <ShopifyOrderNumber orderId={o.id} name={o.name} />
                     {o.uncostedItems > 0 && (
@@ -225,13 +229,14 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                     </button>
                   </td>
                   {MONEY.map(k => (
-                    <td key={k} className={`px-3 py-2 text-right whitespace-nowrap ${k === "grossProfit" ? "font-semibold" : ""} ${k === "grossProfit" && o[k] < 0 ? "text-red-600" : ""}`}>
+                    <td key={k} className={`px-3 py-2 text-right whitespace-nowrap ${k === "grossProfit" ? "font-semibold" : ""} ${k === "grossProfit" && o[k] < 0 && !resend ? "text-red-600" : ""}`}>
                       {gbp.format(o[k])}
                     </td>
                   ))}
-                  <MarginCell margin={o.grossMargin} target={target} />
+                  <MarginCell margin={resend ? null : o.grossMargin} target={target} />
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
