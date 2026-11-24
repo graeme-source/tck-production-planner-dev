@@ -14,7 +14,7 @@
 import { sql } from "drizzle-orm";
 import { db, visibleNotes, type ReviewViewer } from "@workspace/db";
 import {
-  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, minutesLate, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
+  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, minutesLate, minutesLateAgainst, rosteredStartFromHistory, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
 } from "@workspace/performance-review";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { improvementScorePct } from "../lib/improvement-score";
@@ -430,7 +430,7 @@ function attendanceFrom(shifts: Array<{ date: string; typeName: string | null }>
  *  read from Planday's punch clock one day at a time (only the late days).
  *  Minutes are null when Planday can't be reached or has no rostered start. */
 async function lateDetails(plandayId: number, dates: string[]): Promise<NonNullable<PerformanceReport["attendance"]["lateDetails"]>> {
-  const { getPlandayPunchClockShifts, isPlandayConfigured } = await import("./planday");
+  const { getPlandayPunchClockShifts, getPlandayShiftHistory, isPlandayConfigured } = await import("./planday");
   if (!isPlandayConfigured()) return dates.map(date => ({ date, minutesLate: null, clockedIn: null, rostered: null }));
   return Promise.all(dates.slice(0, 60).map(async date => {
     try {
@@ -439,7 +439,12 @@ async function lateDetails(plandayId: number, dates: string[]): Promise<NonNulla
       const first = punches[0];
       if (!first) return { date, minutesLate: null, clockedIn: null, rostered: null };
       const m = minutesLate(first);
-      return { date, minutesLate: m.minutes, clockedIn: m.clockedIn, rostered: m.rostered };
+      // Approving a late shift moves its start to the punch-in (that's what's
+      // paid), so the shift's own start says "on time". The rostered start
+      // is in the shift's history (Graeme, 24 Nov 2026).
+      const history = first.shiftId ? await getPlandayShiftHistory(Number(first.shiftId)).catch(() => []) : [];
+      const rostered = rosteredStartFromHistory(history, String(first.startDateTime), m.rostered);
+      return { date, minutesLate: minutesLateAgainst(m.clockedIn, rostered), clockedIn: m.clockedIn, rostered };
     } catch {
       return { date, minutesLate: null, clockedIn: null, rostered: null };
     }

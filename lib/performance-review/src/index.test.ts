@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyExclusions, forSavedCopy, noteAsText, itemKey, type ReportNote, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
+import { applyExclusions, forSavedCopy, rosteredStartFromHistory, minutesLateAgainst, noteAsText, itemKey, type ReportNote, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
 
 function base(): PerformanceReport {
   return {
@@ -218,5 +218,55 @@ describe("notes on the record", () => {
 
   it("reads as plain text for prep notes", () => {
     expect(noteAsText(note(7, { kind: "objective", title: "Faster wrapping", body: "Reach 120/hr " }))).toBe("Objective (1 Nov 2026 — 1:1): Faster wrapping\nReach 120/hr");
+  });
+});
+
+describe("lateness against the rostered start", () => {
+  // Planday's real wording (shifts checked on live, 24 Nov 2026).
+  it("finds the rostered start that approval overwrote", () => {
+    const h = [
+      { modifiedAt: "2026-11-12T07:08:48Z", changes: ["Shift was approved.", "Start time changed from 07:00 to 07:05.", "End time changed from 15:00 to 15:05."] },
+      { modifiedAt: "2026-09-24T14:54:13Z", changes: ["Created."] },
+    ];
+    expect(rosteredStartFromHistory(h, "2026-11-11T07:05", "07:05")).toBe("07:00");
+    expect(minutesLateAgainst("07:05", "07:00")).toBe(5);
+  });
+
+  it("a start moved that morning BEFORE they clocked in is what they were due (19 Nov: 07:00 → 08:00 → 09:00, in at 08:49)", () => {
+    const h = [
+      { modifiedAt: "2026-11-23T08:26:00Z", changes: ["Shift was approved.", "End time changed from 16:00 to 16:17."] },
+      { modifiedAt: "2026-11-19T07:29:16Z", changes: ["Start time changed from 08:00 to 09:00."] },
+      { modifiedAt: "2026-11-19T06:30:51Z", changes: ["Start time changed from 07:00 to 08:00."] },
+    ];
+    const rostered = rosteredStartFromHistory(h, "2026-11-19T08:49", "09:00");
+    expect(rostered).toBe("09:00");
+    expect(minutesLateAgainst("08:49", rostered)).toBe(0);
+  });
+
+  it("takes the first change after punch-in when there are several", () => {
+    const h = [
+      { modifiedAt: "2026-11-11T16:00:00Z", changes: ["Start time changed from 07:10 to 07:20."] },
+      { modifiedAt: "2026-11-11T08:00:00Z", changes: ["Start time changed from 07:00 to 07:10."] },
+    ];
+    expect(rosteredStartFromHistory(h, "2026-11-11T07:20", "07:20")).toBe("07:00");
+  });
+
+  it("works in summer time (punch-in is London time, history is UTC)", () => {
+    // 07:05 BST = 06:05 UTC; approved at 06:30 UTC the same morning.
+    const h = [{ modifiedAt: "2026-07-01T06:30:00Z", changes: ["Start time changed from 07:00 to 07:05."] }];
+    expect(rosteredStartFromHistory(h, "2026-07-01T07:05", "07:05")).toBe("07:00");
+    // A change at 05:50 UTC (06:50 BST) was before they clocked in — rota, not approval.
+    const before = [{ modifiedAt: "2026-07-01T05:50:00Z", changes: ["Start time changed from 06:00 to 07:00."] }];
+    expect(rosteredStartFromHistory(before, "2026-07-01T07:05", "07:00")).toBe("07:00");
+  });
+
+  it("no start change → the current start stands; early is never late", () => {
+    expect(rosteredStartFromHistory([], "2026-11-11T07:00", "07:00")).toBe("07:00");
+    expect(minutesLateAgainst("06:55", "07:00")).toBe(0);
+    expect(minutesLateAgainst(null, "07:00")).toBeNull();
+  });
+
+  it("pads a one-digit hour", () => {
+    expect(rosteredStartFromHistory([{ modifiedAt: "2026-11-11T09:00:00Z", changes: ["Start time changed from 7:00 to 7:12."] }], "2026-11-11T07:12", "07:12")).toBe("07:00");
   });
 });

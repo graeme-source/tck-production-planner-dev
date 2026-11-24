@@ -493,6 +493,56 @@ export function minutesLate(punch: { startDateTime?: string | null; shiftStartDa
   return { minutes: Math.max(0, Math.round(dayGap + inAt.minutes - due.minutes)), clockedIn: inAt.hhmm, rostered: due.hhmm };
 }
 
+/** A Planday local time ("2026-11-19T08:49", London) as epoch ms. */
+export function londonLocalToMs(local: string): number {
+  const guess = Date.parse(`${local.slice(0, 16)}:00Z`);
+  if (Number.isNaN(guess)) return NaN;
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" })
+    .formatToParts(new Date(guess));
+  const v = (t: string) => Number(parts.find(p => p.type === t)?.value);
+  const asUtc = Date.UTC(v("year"), v("month") - 1, v("day"), v("hour"), v("minute"));
+  return guess - (asUtc - guess);
+}
+
+/**
+ * The start time the shift was ROSTERED for when they clocked in (Graeme,
+ * 24 Nov 2026): approving a late shift moves its start to the punch-in (7:05,
+ * because that's what's paid), so the shift's current start says they were
+ * on time. Planday's shift history keeps every edit as text — "Start time
+ * changed from 07:00 to 07:05." — so the start as it stood at punch-in is the
+ * "from" of the first start-time change made AFTER they clocked in. Changes
+ * made before (an agreed later start that morning, a rota change last week)
+ * are what they were due to work. No change after → the current start.
+ * Checked against live shifts 24 Nov 2026. Returns "HH:MM" or null.
+ */
+export function rosteredStartFromHistory(
+  history: ReadonlyArray<{ modifiedAt: string; changes?: readonly string[] | null }>,
+  /** Their punch-in, Planday local time ("2026-11-19T08:49"). */
+  punchInLocal: string,
+  currentStart: string | null,
+): string | null {
+  const re = /Start time changed from (\d{1,2}:\d{2}) to (\d{1,2}:\d{2})/i;
+  const punchedAt = londonLocalToMs(punchInLocal);
+  if (Number.isNaN(punchedAt)) return currentStart;
+  const after = [...history]
+    .filter(h => Date.parse(h.modifiedAt) > punchedAt)
+    .sort((a, b) => a.modifiedAt.localeCompare(b.modifiedAt));
+  for (const h of after) {
+    for (const c of h.changes ?? []) {
+      const m = re.exec(c);
+      if (m) return m[1]!.padStart(5, "0");
+    }
+  }
+  return currentStart;
+}
+
+/** Minutes between a punch-in "HH:MM" and the rostered "HH:MM" (0 when on time or early). */
+export function minutesLateAgainst(clockedIn: string | null, rostered: string | null): number | null {
+  const mins = (t: string | null) => (t && /^\d{1,2}:\d{2}$/.test(t) ? Number(t.split(":")[0]) * 60 + Number(t.split(":")[1]) : null);
+  const a = mins(clockedIn), b = mins(rostered);
+  return a == null || b == null ? null : Math.max(0, a - b);
+}
+
 // ── Leaving things out (Graeme, 24 Nov 2026) ────────────────────────────
 // "The option to not include certain items that I feel were inaccurate …
 // untick them from inclusion whilst I'm going through it with them."

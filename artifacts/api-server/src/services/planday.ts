@@ -563,6 +563,16 @@ export async function getPlandayPunchClockShifts(from: string, to: string): Prom
   return plandayReadAll<PlandayPunch>(`/punchclock/v1.0/punchclockshifts?from=${from}T00:00:00&to=${toExclusive}T00:00:00`);
 }
 
+/** One change to a shift, as Planday's history lists it (checked on live
+ *  24 Nov 2026): changes are sentences, e.g. "Start time changed from 08:00
+ *  to 07:33." — approval rewrites the start to the punch-in. */
+export interface PlandayShiftChange { modifiedAt: string; changes?: string[] | null }
+
+/** A shift's change history (GET /scheduling/v1.0/shifts/{id}/history). [] if unreachable. */
+export async function getPlandayShiftHistory(shiftId: number): Promise<PlandayShiftChange[]> {
+  return plandayReadAll<PlandayShiftChange>(`/scheduling/v1.0/shifts/${shiftId}/history`);
+}
+
 export interface PlandayNamedItem { id: number; name: string; description?: string | null }
 
 let cachedEmployeeTypes: CachedLookup<PlandayNamedItem> | null = null;
