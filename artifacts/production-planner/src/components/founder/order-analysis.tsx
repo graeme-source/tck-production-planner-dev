@@ -1,37 +1,52 @@
 // Order analysis (Graeme, 18 Nov 2026; Objective I): every order in the
 // period costed under the profit tracker's rules, one row each, so he can
 // see which orders make money — small or large, and which products help.
+//
+// 24 Nov 2026 (Graeme): the order table stops at gross profit — "profit
+// contribution" before the shared ads and overheads, which were the same on
+// every order and only blurred it. Newest orders first; the order number
+// opens it in Shopify; the item count opens what's in it.
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ShopifyOrderNumber } from "@/components/shopify-order-link";
 import { gbp, gbp0, pct, dayLabel, type OrderRow, type Prediction } from "./profit-tracker-api";
 
 type SortKey =
-  | "name" | "day" | "packs" | "revenue" | "shippingCharged" | "discounts" | "food" | "packaging" | "courier"
-  | "paymentFees" | "labour" | "grossProfit" | "advertising" | "overhead" | "netProfit" | "margin";
+  | "name" | "day" | "items" | "revenue" | "shippingCharged" | "discounts" | "food" | "packaging" | "courier"
+  | "paymentFees" | "labour" | "grossProfit" | "grossMargin";
 
-const COLUMNS: Array<{ key: SortKey; label: string; money?: boolean }> = [
+const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "name", label: "Order" },
   { key: "day", label: "Placed" },
-  { key: "packs", label: "Packs" },
-  { key: "revenue", label: "Revenue", money: true },
-  { key: "shippingCharged", label: "Shipping charged", money: true },
-  { key: "discounts", label: "Discount", money: true },
-  { key: "food", label: "Food", money: true },
-  { key: "packaging", label: "Packaging", money: true },
-  { key: "courier", label: "Courier", money: true },
-  { key: "paymentFees", label: "Fees", money: true },
-  { key: "labour", label: "Labour", money: true },
-  { key: "grossProfit", label: "Gross profit", money: true },
-  { key: "advertising", label: "Ads", money: true },
-  { key: "overhead", label: "Overheads", money: true },
-  { key: "netProfit", label: "Net profit", money: true },
-  { key: "margin", label: "Margin" },
+  { key: "items", label: "Items" },
+  { key: "revenue", label: "Revenue" },
+  { key: "shippingCharged", label: "Shipping charged" },
+  { key: "discounts", label: "Discount" },
+  { key: "food", label: "Food" },
+  { key: "packaging", label: "Packaging" },
+  { key: "courier", label: "Courier" },
+  { key: "paymentFees", label: "Fees" },
+  { key: "labour", label: "Labour" },
+  { key: "grossProfit", label: "Gross profit" },
+  { key: "grossMargin", label: "Margin" },
 ];
+
+const MONEY = ["revenue", "shippingCharged", "discounts", "food", "packaging", "courier", "paymentFees", "labour", "grossProfit"] as const;
+
+/** Sort value: "Placed" sorts by the exact time, so the same day's orders stay in order. */
+function sortValue(o: OrderRow, key: SortKey): string | number {
+  if (key === "day") return o.createdAt;
+  if (key === "grossMargin") return o.grossMargin ?? -Infinity;
+  return o[key];
+}
 
 const PAGE = 200;
 
 export function OrderAnalysis({ data }: { data: Prediction }) {
-  const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: "netProfit", asc: true });
+  // Newest first by default, going back in time.
+  const [sort, setSort] = useState<{ key: SortKey; asc: boolean }>({ key: "day", asc: false });
+  const [open, setOpen] = useState<OrderRow | null>(null);
   const [box, setBox] = useState<"all" | "small" | "large">("all");
   const [search, setSearch] = useState("");
   const [shown, setShown] = useState(PAGE);
@@ -42,15 +57,14 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
       (box === "all" || o.box === box)
       && (!q || o.name.toLowerCase().includes(q) || o.products.some(p => p.name.toLowerCase().includes(q))),
     );
-    const v = (o: OrderRow) => (sort.key === "margin" ? (o.margin ?? -Infinity) : o[sort.key]);
     return [...filtered].sort((a, b) => {
-      const x = v(a), y = v(b);
+      const x = sortValue(a, sort.key), y = sortValue(b, sort.key);
       const c = typeof x === "string" && typeof y === "string" ? x.localeCompare(y) : Number(x) - Number(y);
       return sort.asc ? c : -c;
     });
   }, [data.orders, box, search, sort]);
 
-  const toggle = (key: SortKey) => setSort(s => (s.key === key ? { key, asc: !s.asc } : { key, asc: key === "name" || key === "day" }));
+  const toggle = (key: SortKey) => setSort(s => (s.key === key ? { key, asc: !s.asc } : { key, asc: key === "name" }));
 
   return (
     <div className="space-y-4">
@@ -129,7 +143,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
           <div>
             <h3 className="text-base font-display font-bold">Every order</h3>
             <p className="text-sm text-muted-foreground">
-              {rows.length.toLocaleString("en-GB")} orders · labour {gbp.format(data.pnl.labourPerPack)} a pack, ads {gbp.format(data.pnl.adsPerOrder)} and overheads {gbp.format(data.pnl.overheadPerOrder)} an order
+              {rows.length.toLocaleString("en-GB")} orders, newest first · labour {gbp.format(data.pnl.labourPerPack)} a pack · gross profit is before ads and overheads
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -162,27 +176,31 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                     </button>
                   </th>
                 ))}
-                <th className="px-3 py-2 font-semibold text-left">Products</th>
               </tr>
             </thead>
             <tbody>
               {rows.slice(0, shown).map(o => (
-                <tr key={o.id} className="border-t border-border align-top">
+                <tr key={o.id} className="border-t border-border">
                   <td className="px-3 py-2 font-medium whitespace-nowrap">
-                    {o.name}
+                    <ShopifyOrderNumber orderId={o.id} name={o.name} />
                     {o.uncostedItems > 0 && <span className="ml-1 text-xs text-amber-700" title="Some items have no cost">•</span>}
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap">{dayLabel(o.day)}</td>
-                  <td className="px-3 py-2 text-right">{o.packs}{o.box === "large" ? " L" : ""}</td>
-                  {(["revenue", "shippingCharged", "discounts", "food", "packaging", "courier", "paymentFees", "labour", "grossProfit", "advertising", "overhead", "netProfit"] as const).map(k => (
-                    <td key={k} className={`px-3 py-2 text-right whitespace-nowrap ${k === "netProfit" || k === "grossProfit" ? "font-semibold" : ""} ${(k === "netProfit" || k === "grossProfit") && o[k] < 0 ? "text-red-600" : ""}`}>
+                  <td className="px-3 py-1 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => setOpen(o)}
+                      title="See what's in this order"
+                      className="h-9 min-w-[2.75rem] px-2 rounded-lg font-semibold text-primary underline decoration-dotted underline-offset-2 hover:bg-secondary"
+                    >
+                      {o.items}{o.box === "large" ? <span className="ml-1 text-xs font-normal text-muted-foreground no-underline">L</span> : null}
+                    </button>
+                  </td>
+                  {MONEY.map(k => (
+                    <td key={k} className={`px-3 py-2 text-right whitespace-nowrap ${k === "grossProfit" ? "font-semibold" : ""} ${k === "grossProfit" && o[k] < 0 ? "text-red-600" : ""}`}>
                       {gbp.format(o[k])}
                     </td>
                   ))}
-                  <td className={`px-3 py-2 text-right whitespace-nowrap ${(o.margin ?? 0) < 0 ? "text-red-600" : ""}`}>{pct(o.margin)}</td>
-                  <td className="px-3 py-2 text-muted-foreground min-w-[16rem]">
-                    {o.products.map(p => `${p.quantity}× ${p.name}`).join(", ")}
-                  </td>
+                  <td className={`px-3 py-2 text-right whitespace-nowrap font-semibold ${(o.grossMargin ?? 0) < 0 ? "text-red-600" : ""}`}>{pct(o.grossMargin)}</td>
                 </tr>
               ))}
             </tbody>
@@ -196,9 +214,61 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
           </div>
         )}
         <p className="px-5 pb-4 text-xs text-muted-foreground">
-          Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.pnl.netProfit)} net profit.
+          Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.pnl.grossProfit)} gross profit.
         </p>
       </div>
+
+      <OrderContents order={open} onClose={() => setOpen(null)} />
     </div>
+  );
+}
+
+/** What's in one order — opened from its item count, closed by clicking away. */
+function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: () => void }) {
+  return (
+    <Dialog open={!!order} onOpenChange={o => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md max-h-[92dvh] overflow-y-auto">
+        {order && (
+          <>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <ShopifyOrderNumber orderId={order.id} name={order.name} />
+                <span className="text-sm font-normal text-muted-foreground">
+                  {dayLabel(order.day)}{order.box !== "none" ? ` · ${order.box} box` : ""}
+                </span>
+              </DialogTitle>
+              <DialogDescription>
+                {order.items} item{order.items === 1 ? "" : "s"}
+              </DialogDescription>
+            </DialogHeader>
+            <ul className="divide-y divide-border rounded-xl border border-border">
+              {order.products.map(p => (
+                <li key={p.name} className="flex items-center gap-3 px-3 py-2.5 text-sm">
+                  <span className="w-8 shrink-0 text-right font-semibold tabular-nums">{p.quantity}×</span>
+                  <span className="min-w-0">{p.name}</span>
+                </li>
+              ))}
+            </ul>
+            <dl className="grid grid-cols-3 gap-2 text-center tabular-nums">
+              <div className="rounded-xl bg-secondary/40 p-2">
+                <dt className="text-xs text-muted-foreground">Revenue</dt>
+                <dd className="font-semibold">{gbp.format(order.revenue)}</dd>
+              </div>
+              <div className="rounded-xl bg-secondary/40 p-2">
+                <dt className="text-xs text-muted-foreground">Gross profit</dt>
+                <dd className={`font-semibold ${order.grossProfit < 0 ? "text-red-600" : ""}`}>{gbp.format(order.grossProfit)}</dd>
+              </div>
+              <div className="rounded-xl bg-secondary/40 p-2">
+                <dt className="text-xs text-muted-foreground">Margin</dt>
+                <dd className={`font-semibold ${(order.grossMargin ?? 0) < 0 ? "text-red-600" : ""}`}>{pct(order.grossMargin)}</dd>
+              </div>
+            </dl>
+            {order.uncostedItems > 0 && (
+              <p className="text-xs text-amber-700">Some items in this order have no cost, so its profit is overstated.</p>
+            )}
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

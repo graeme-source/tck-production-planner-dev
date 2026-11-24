@@ -36,6 +36,7 @@ export interface OrderRow {
   overhead: number;
   netProfit: number;
   margin: number | null;
+  grossMargin: number | null;
 }
 
 export interface GroupSummary {

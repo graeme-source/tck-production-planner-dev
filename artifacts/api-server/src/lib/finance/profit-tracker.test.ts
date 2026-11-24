@@ -191,6 +191,8 @@ describe("periodPnl", () => {
     expect(rows[1]).toMatchObject({ labour: 80 });                  // 8 packs × £10
     const net = rows.reduce((t, r) => t + r.netProfit, 0);
     expect(net).toBeCloseTo(p.netProfit, 1);
+    // Gross margin leaves out the shared ads and overheads
+    for (const r of rows) expect(r.grossMargin).toBe(round((r.grossProfit / r.revenue) * 100));
   });
 
   it("summarises by order size and by product", () => {

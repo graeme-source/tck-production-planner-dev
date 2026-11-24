@@ -391,6 +391,9 @@ export interface OrderRow extends OrderEconomics {
   overhead: number;
   netProfit: number;
   margin: number | null; // net profit ÷ revenue
+  /** Gross profit ÷ revenue — the order's contribution before the shared ads
+   *  and overheads (Graeme, 24 Nov 2026: what the order table shows). */
+  grossMargin: number | null;
 }
 
 export function orderRows(orders: readonly OrderEconomics[], p: Pick<PeriodPnl, "labourPerPack" | "adsPerOrder" | "overheadPerOrder">): OrderRow[] {
@@ -406,6 +409,7 @@ export function orderRows(orders: readonly OrderEconomics[], p: Pick<PeriodPnl, 
       overhead: p.overheadPerOrder,
       netProfit,
       margin: o.revenue > 0 ? round2((netProfit / o.revenue) * 100) : null,
+      grossMargin: o.revenue > 0 ? round2((grossProfit / o.revenue) * 100) : null,
     };
   });
 }
