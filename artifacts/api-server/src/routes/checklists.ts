@@ -710,13 +710,21 @@ router.get("/missing", async (req: Request, res: Response) => {
     res.status(400).json({ error: "from and to are required (YYYY-MM-DD)" });
     return;
   }
-  const rangeStart = new Date(`${from}T12:00:00Z`);
-  const rangeEnd = new Date(`${to}T12:00:00Z`);
-  if (Number.isNaN(rangeStart.getTime()) || Number.isNaN(rangeEnd.getTime())) {
+  if (Number.isNaN(new Date(`${from}T12:00:00Z`).getTime()) || Number.isNaN(new Date(`${to}T12:00:00Z`).getTime())) {
     res.status(400).json({ error: "Invalid date format" });
     return;
   }
   const stationFilter = typeof req.query.stationType === "string" ? req.query.stationType : null;
+  res.json(await findMissingChecklistItems(from, to, stationFilter));
+});
+
+/** Checklist items that should have been done on a working day in [from, to]
+ *  but have no completion — not ticked, and not marked "can't do" with a
+ *  reason (that writes a completion row with skipped_reason). Shared by GET
+ *  /missing and the performance review report (services/performance-review-data.ts). */
+export async function findMissingChecklistItems(from: string, to: string, stationFilter: string | null): Promise<MissingChecklistRow[]> {
+  const rangeStart = new Date(`${from}T12:00:00Z`);
+  const rangeEnd = new Date(`${to}T12:00:00Z`);
 
   // Plans in the range plus one day past it — the extra day is needed to
   // recognise the last requested day as a prep day (e.g. range ending on a
@@ -731,10 +739,7 @@ router.get("/missing", async (req: Request, res: Response) => {
       lte(productionPlansTable.planDate, dayAfterEnd.toISOString().slice(0, 10)),
     ));
 
-  if (plans.length === 0) {
-    res.json([]);
-    return;
-  }
+  if (plans.length === 0) return [];
 
   const plansByDate = new Map<string, number[]>();
   for (const p of plans) {
@@ -806,19 +811,7 @@ router.get("/missing", async (req: Request, res: Response) => {
     set.add(c.planId);
   }
 
-  type MissingRow = {
-    id: string; // synthesised "tpl-{templateId}-plan-{planId}" key for React
-    kind: "template-missing" | "oneoff-missing";
-    templateId: number | null;
-    planId: number;
-    stationType: string;
-    category: "opening" | "cleaning" | "closing";
-    title: string;
-    description: string | null;
-    planDate: string;
-    missing: true;
-  };
-  const missing: MissingRow[] = [];
+  const missing: MissingChecklistRow[] = [];
 
   // Iterate every (working day × template) combination and emit a row for
   // each template that SHOULD apply on that calendar day but has no
@@ -885,8 +878,21 @@ router.get("/missing", async (req: Request, res: Response) => {
   // the top.
   missing.sort((a, b) => (a.planDate < b.planDate ? 1 : a.planDate > b.planDate ? -1 : 0));
 
-  res.json(missing);
-});
+  return missing;
+}
+
+export type MissingChecklistRow = {
+  id: string; // synthesised "tpl-{templateId}-plan-{planId}" key for React
+  kind: "template-missing" | "oneoff-missing";
+  templateId: number | null;
+  planId: number;
+  stationType: string;
+  category: "opening" | "cleaning" | "closing";
+  title: string;
+  description: string | null;
+  planDate: string;
+  missing: true;
+};
 
 // ─── One-off Items ───────────────────────────────────────────────────
 
