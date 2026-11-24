@@ -627,6 +627,19 @@ router.post("/pin/lock", (req, res) => {
   });
 });
 
+// Lock People only (Graeme, 24 Nov 2026): the People pages lock after 20
+// seconds without a touch, click or key, and the server window closes with
+// the screen — so the private PIN is needed again for People, while the
+// station stays signed in. No body; answers ok even if already locked.
+router.post("/people-pin/lock", (req, res) => {
+  if (!req.session.userId) { res.status(401).json({ error: "Not authenticated" }); return; }
+  delete req.session.peopleUnlockedAt;
+  req.session.save((err) => {
+    if (err) { res.status(500).json({ error: "Failed to lock People" }); return; }
+    res.json({ ok: true });
+  });
+});
+
 router.get("/devices/users", async (req, res) => {
   const idsParam = req.query["ids[]"];
   if (!idsParam) {

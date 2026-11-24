@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled, nextPinGatePhase } from "./sensitive-pin";
+import { shouldPromptForSensitivePin, shouldDemandPinOnEntry, peopleGateMode, financePinGateEnabled, nextPinGatePhase, peopleEntryNeedsPin, peopleIdleExpired } from "./sensitive-pin";
 
 const TTL = 5 * 60 * 1000;
 
@@ -123,5 +123,28 @@ describe("nextPinGatePhase — the hub stays shut until this entry's PIN is in",
   it("leaves idle and open alone", () => {
     expect(nextPinGatePhase("idle", true)).toBe("idle");
     expect(nextPinGatePhase("open", true)).toBe("open");
+  });
+});
+
+describe("People PIN: on the way in, then 20 s idle lock", () => {
+  const now = 1_000_000;
+  it("coming into People from anywhere else always asks", () => {
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: null, lastActiveAt: now - 1_000 })).toBe(true);
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: now - 60_000, lastActiveAt: now - 1_000 })).toBe(true);
+  });
+  it("moving person to person while active doesn't ask", () => {
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: now - 50, lastActiveAt: now - 5_000 })).toBe(false);
+  });
+  it("the old People page still open while the new one builds counts as moving inside", () => {
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: null, lastActiveAt: now - 3_000, stillInside: true })).toBe(false);
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: null, lastActiveAt: now - 25_000, stillInside: true })).toBe(true);
+  });
+  it("moving inside People after sitting idle 20 s asks", () => {
+    expect(peopleEntryNeedsPin({ now, leftPeopleAt: now - 50, lastActiveAt: now - 20_000 })).toBe(true);
+  });
+  it("locks at 20 seconds idle, not before", () => {
+    expect(peopleIdleExpired(now - 19_999, now)).toBe(false);
+    expect(peopleIdleExpired(now - 20_000, now)).toBe(true);
+    expect(peopleIdleExpired(null, now)).toBe(false);
   });
 });

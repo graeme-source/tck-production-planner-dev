@@ -31,6 +31,7 @@ import { useIsRtwManager } from "@/hooks/use-rtw-manager";
 import { useSensitivePinGate } from "@/hooks/use-sensitive-pin-gate";
 import { usePeopleReady, peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { usePeopleKeepAlive } from "@/hooks/use-people-keep-alive";
+import { peopleEntryNeedsPinNow, usePeopleIdleLock } from "@/hooks/use-people-idle-lock";
 import { useRecordBadges, type BadgeRow } from "@/components/people/reviews-api";
 import { needsPolicyReview } from "@workspace/people-reviews";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
@@ -58,8 +59,12 @@ export default function PeopleSection() {
   // The private HR queue — where the generic "Your attention is required in
   // HR" to-do lands, behind the same PIN gate as everything else here.
   const [onAttention] = useRoute("/people/attention");
-  useSensitivePinGate({ enabled: isPeople, includeAdmins: true, fresh: true, entryKey: "people", scope: "people" });
+  // The PIN on the way into People; moving between people while active
+  // doesn't ask again, and 20 s without a touch locks it (Graeme, 24 Nov 2026).
+  const [needsPin] = useState(() => peopleEntryNeedsPinNow());
+  useSensitivePinGate({ enabled: isPeople && needsPin, includeAdmins: true, fresh: true, entryKey: "people", scope: "people" });
   const ready = usePeopleReady(isPeople);
+  usePeopleIdleLock(ready);
   // Typing keeps the PIN lock open; a write refused by the lock asks for the
   // PIN at once instead of a dead red message (Graeme, 2026-10-12).
   usePeopleKeepAlive(ready);

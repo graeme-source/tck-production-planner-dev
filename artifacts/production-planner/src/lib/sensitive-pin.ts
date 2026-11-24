@@ -117,3 +117,41 @@ export function financePinGateEnabled(user: { isFounder: boolean; hasPeopleAcces
   if (!user) return false;
   return user.isFounder || Boolean(user.hasPeopleAccess);
 }
+
+// ── People: PIN on the way in, then lock after 20 s idle (Graeme, 24 Nov 2026) ──
+// "I always want a pin every time I enter the people page to start with. If
+// I'm continuously active … I don't want the pin check to ask me again …
+// a 20-second inactivity lockout." Moving from person to person rebuilds the
+// People page (each route is its own mount), which used to count as a new
+// entry and asked every time.
+
+/** No touch, click, key or scroll for this long on a People page → locked. */
+export const PEOPLE_IDLE_LOCK_MS = 20_000;
+/** A People page that unmounts and another that mounts within this is one
+ *  visit (a route change inside People), not leaving and coming back. */
+export const PEOPLE_SAME_VISIT_MS = 2_000;
+
+/**
+ * Does opening a People page need the PIN? Yes, unless this is a move
+ * INSIDE People (the previous People page closed a moment ago) and they've
+ * been active within the idle limit. Coming in from anywhere else always
+ * asks. Pure.
+ */
+export function peopleEntryNeedsPin(input: {
+  now: number; leftPeopleAt: number | null; lastActiveAt: number | null;
+  /** Another People page is still open — React builds the new page before
+   *  it closes the old one, so a move inside People looks like this. */
+  stillInside?: boolean;
+  idleMs?: number; sameVisitMs?: number;
+}): boolean {
+  const idle = input.idleMs ?? PEOPLE_IDLE_LOCK_MS;
+  const same = input.sameVisitMs ?? PEOPLE_SAME_VISIT_MS;
+  const movingInside = input.stillInside === true || (input.leftPeopleAt != null && input.now - input.leftPeopleAt <= same);
+  const activeRecently = input.lastActiveAt != null && input.now - input.lastActiveAt < idle;
+  return !(movingInside && activeRecently);
+}
+
+/** Has a People page sat idle long enough to lock? Pure. */
+export function peopleIdleExpired(lastActiveAt: number | null, now: number, idleMs = PEOPLE_IDLE_LOCK_MS): boolean {
+  return lastActiveAt != null && now - lastActiveAt >= idleMs;
+}
