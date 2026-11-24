@@ -38,10 +38,15 @@ export interface ReportEditing {
 /** Which card is which section. */
 const sectionOf = (c: { key: CardKey; id?: string }) => (c.id?.startsWith("speed-") ? `speed_${c.id.slice(6)}` : c.key);
 
-export function PerformanceReportView({ report, audience, editing }: { report: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing }) {
+export function PerformanceReportView({ report, audience, editing, onNotesCard }: {
+  report: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing;
+  /** When the notes are shown elsewhere on the page (beside the prep notes),
+   *  their card takes you there instead of opening underneath. */
+  onNotesCard?: () => void;
+}) {
   const [open, setOpen] = useState<CardKey | null>(null);
   const r = report;
-  const toggle = (k: CardKey) => setOpen(o => (o === k ? null : k));
+  const toggle = (k: CardKey) => (k === "notes" && onNotesCard ? onNotesCard() : setOpen(o => (o === k ? null : k)));
 
   const stationsWorked = r.training.stations.filter(s => s.worksThere);
   const sopsAtStations = stationsWorked.reduce((n, s) => n + s.sopCount, 0);
@@ -572,7 +577,9 @@ function NoteItem({ n, audience, editing, showEntry }: { n: ReportNote; audience
   );
 }
 
-function NotesDetail({ r, audience, editing }: { r: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing }) {
+/** The notes on their record — inside the report, or as the panel beside the
+ *  prep notes on the manager's page (`heading={false}`). */
+export function NotesDetail({ r, audience, editing, heading = true }: { r: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing; heading?: boolean }) {
   const n = editing?.original.notes ?? r.notes;
   if (!n) return <div><H>Notes on the record</H><Empty>This copy was saved before notes were part of the report.</Empty></div>;
   // Grouped by the meeting or entry they belong to, newest first.
@@ -587,10 +594,10 @@ function NotesDetail({ r, audience, editing }: { r: PerformanceReport; audience:
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <H>Notes on the record — {fmtShort(r.period.from)} to {fmtShort(r.period.to)}</H>
+        {heading && <H>Notes on the record — {fmtShort(r.period.from)} to {fmtShort(r.period.to)}</H>}
         {editing?.addToPrep && all.length > 0 && (
           <button type="button" onClick={() => editing.addToPrep!(all.map(noteAsText).join("\n\n"))}
-            className="h-10 px-3 rounded-lg border-2 border-primary/40 text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/5 -mt-3">
+            className={cn("h-10 px-3 rounded-lg border-2 border-primary/40 text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/5", heading && "-mt-3")}>
             <ClipboardPlus className="w-4 h-4" /> Add all to my prep notes
           </button>
         )}

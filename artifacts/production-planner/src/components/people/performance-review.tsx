@@ -9,13 +9,13 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Loader2, Lock, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, CheckCircle2, AlertTriangle, CalendarPlus,
+  ArrowLeft, Loader2, Lock, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, CheckCircle2, AlertTriangle, CalendarPlus, StickyNote, Plus,
 } from "lucide-react";
 import { applyExclusions, suggestions as suggestFor, type Exclusions, type PerformanceReport, type Suggestion } from "@workspace/performance-review";
 import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { MeetingWriteUpView, PerformanceReportView, periodLabel, type MeetingWriteUp } from "./performance-report-view";
+import { MeetingWriteUpView, NotesDetail, PerformanceReportView, periodLabel, type MeetingWriteUp, type ReportEditing } from "./performance-report-view";
 import { PeopleModal } from "@/components/people-modal";
 import { BookReviewForm } from "./book-review";
 import { useRecordFacts } from "./record-panel";
@@ -112,6 +112,15 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
   const leftOut = ex.sections.length + ex.items.length;
   const first = r.person.name.split(" ")[0] ?? r.person.name;
   const refresh = () => qc.invalidateQueries({ queryKey: ["people-performance", userId] });
+  const editing: ReportEditing = {
+    original, ex,
+    toggleSection: sec => updateEx({ ...ex, sections: flip(ex.sections, sec) }),
+    toggleItem: k => updateEx({ ...ex, items: flip(ex.items, k) }),
+    addToPrep: text => {
+      appendToPrep.current?.(text);
+      toast({ title: "Added to your prep notes", description: "It's at the bottom of your prep notes." });
+    },
+  };
 
   return (
     <div className="space-y-5 pb-10">
@@ -135,20 +144,18 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
           ? <><span className="font-semibold text-foreground">{leftOut} {leftOut === 1 ? "thing" : "things"} left out</span> — {leftOut === 1 ? "it won't" : "they won't"} be in the copy you save and share. <button type="button" onClick={() => updateEx({ sections: [], items: [] })} className="underline decoration-dotted underline-offset-2">Put everything back</button></>
           : "Untick a card, or anything inside one that isn't right, to leave it out of the copy you save and share."}
       </p>
-      <PerformanceReportView report={r} audience="manager" editing={{
-        original, ex,
-        toggleSection: sec => updateEx({ ...ex, sections: flip(ex.sections, sec) }),
-        toggleItem: k => updateEx({ ...ex, items: flip(ex.items, k) }),
-        addToPrep: text => {
-          appendToPrep.current?.(text);
-          toast({ title: "Added to your prep notes", description: "It's at the bottom of your prep notes, below the report." });
-        },
-      }} />
+      <PerformanceReportView report={r} audience="manager" editing={editing}
+        onNotesCard={() => document.getElementById("record-notes")?.scrollIntoView({ behavior: "smooth", block: "start" })} />
 
-      <div className="grid gap-4 xl:grid-cols-2 items-start">
-        <SuggestionsCard suggestions={leftOut > 0 ? suggestFor(r) : data.suggestions} />
+      {/* Prep notes and their record's notes side by side (Graeme, 24 Nov
+          2026: "I want them available here … just for me to read from during
+          the meeting"). */}
+      <div className="grid gap-4 lg:grid-cols-2 items-start">
         <PrepNotes userId={userId} first={first} initial={data.prep} appendRef={appendToPrep} />
+        <RecordNotesPanel userId={userId} first={first} report={r} editing={editing} onAdded={refresh} />
       </div>
+
+      <SuggestionsCard suggestions={leftOut > 0 ? suggestFor(r) : data.suggestions} />
 
       <SavedCopies
         userId={userId} first={first} report={r} meetings={data.meetings} saved={data.saved}
@@ -220,6 +227,57 @@ function SuggestionRow({ s }: { s: Suggestion }) {
   );
 }
 
+/**
+ * Their record's notes, beside the prep notes — to read from in the meeting,
+ * copy across, and add to there and then (Graeme, 24 Nov 2026). A note added
+ * here goes on their record, private to you, exactly like "Add a note" on the
+ * record; what's said about it in the meeting comes through the note taker.
+ */
+function RecordNotesPanel({ userId, first, report, editing, onAdded }: {
+  userId: number; first: string; report: PerformanceReport; editing: ReportEditing; onAdded: () => void;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const add = async () => {
+    const body = draft.trim();
+    if (!body) return;
+    setBusy(true);
+    try {
+      await peopleSend("POST", `/people-reviews/person/${userId}/notes`, { body, visibility: "private" });
+      setDraft("");
+      toast({ title: "Note added", description: `On ${first}'s record, private to you.` });
+      onAdded();
+    } catch (e) {
+      if (!(e instanceof PeopleLockedError)) toast({ title: "Couldn't add it", description: (e as Error).message, variant: "destructive" });
+    } finally { setBusy(false); }
+  };
+  return (
+    <section id="record-notes" className="rounded-2xl border-2 border-border bg-card p-4 sm:p-5 space-y-3 scroll-mt-4">
+      <div>
+        <h2 className="text-lg font-display font-bold flex items-center gap-2"><StickyNote className="w-5 h-5 text-primary" /> Notes on {first}'s record</h2>
+        <p className="text-xs text-muted-foreground">Everything written on their record for {periodLabel(report)}. Your private notes stay private.</p>
+      </div>
+      <div className="space-y-2">
+        <textarea value={draft} onChange={e => setDraft(e.target.value)} rows={3}
+          placeholder={`Add a note to ${first}'s record…`}
+          className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/30" />
+        {draft.trim() && (
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => void add()} disabled={busy}
+              className="h-10 px-4 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
+              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />} Add to their record — private
+            </button>
+            <span className="text-xs text-amber-700 dark:text-amber-400">Not added yet</span>
+          </div>
+        )}
+      </div>
+      <div className="max-h-[75dvh] overflow-y-auto pr-1">
+        <NotesDetail r={report} audience="manager" editing={editing} heading={false} />
+      </div>
+    </section>
+  );
+}
+
 /** Private prep notes — saves itself; only you ever see your own. */
 function PrepNotes({ userId, first, initial, appendRef }: {
   userId: number; first: string; initial: { body: string; updatedAt: string | null };
@@ -274,7 +332,7 @@ function PrepNotes({ userId, first, initial, appendRef }: {
         value={text}
         onChange={e => change(e.target.value)}
         onBlur={() => void save()}
-        rows={10}
+        rows={16}
         placeholder={`What to say to ${first}, things that aren't in the system, questions to ask…`}
         className="w-full rounded-xl border border-border bg-background px-3 py-2 text-sm resize-y focus:outline-none focus:ring-2 focus:ring-primary/30"
       />
