@@ -1,4 +1,5 @@
 import { formatBatches } from "../shared/format-batches";
+import { perTrayGrams } from "@/lib/tray-split";
 import { formatPrepWeight } from "@workspace/units";
 import React from "react";
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
@@ -780,7 +781,7 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                         row keeps the tray maths explainable. */}
                     {meatMarinades.filter(m => !m.addAtCooking).map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
-                      const perTrayG = breakdown && ingTrays && ingTrays > 0 ? Math.round(m.totalGrams / ingTrays) : null;
+                      const perTrayG = perTrayGrams(m.totalGrams, ingTrays, !!breakdown);
                       return (
                         <div key={mi} className="flex items-center justify-between px-4 py-2 border-t border-rose-100 dark:border-rose-900/40 text-sm text-muted-foreground bg-white dark:bg-background/50">
                           <span className="flex items-center gap-2">
@@ -833,6 +834,11 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
 
                     {meatMarinades.filter(m => m.addAtCooking).map((m, mi) => {
                       const name = m.marinadeIngredientName ?? m.marinadeSubRecipeName ?? "Unknown";
+                      // Weighed out tray by tray like everything else (Graeme,
+                      // 24 Nov 2026: "the quantity should be broken down into
+                      // trays … because we have to weigh it out separately") —
+                      // same split as the rows above: this meat's total ÷ its trays.
+                      const perTrayG = perTrayGrams(m.totalGrams, ingTrays, !!breakdown);
                       return (
                         <div key={`aac-${mi}`} className="flex items-center justify-between px-4 py-2 border-t border-amber-300/60 dark:border-amber-700/60 text-sm bg-amber-50 dark:bg-amber-950/30">
                           <span className="flex items-center gap-2 font-semibold text-amber-800 dark:text-amber-300">
@@ -852,10 +858,17 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                               <span>{name} — do NOT add today</span>
                             )}
                           </span>
-                          <span className="text-right text-amber-800/80 dark:text-amber-300/80">
-                            goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")} (counted in trays)
+                          <div className="text-right text-amber-800/80 dark:text-amber-300/80">
+                            {perTrayG != null ? (
+                              <>
+                                <span className="tabular-nums font-semibold text-amber-900 dark:text-amber-200">{formatPrepWeight(perTrayG, "g")} / {one}</span>
+                                <p className="text-sm">goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")} total</p>
+                              </>
+                            ) : (
+                              <span>goes in at cooking tomorrow · {formatPrepWeight(m.totalGrams, "g")}</span>
+                            )}
                             <MixExtraNote qty={m.mixExtraGrams} unit="g" />
-                          </span>
+                          </div>
                         </div>
                       );
                     })}
