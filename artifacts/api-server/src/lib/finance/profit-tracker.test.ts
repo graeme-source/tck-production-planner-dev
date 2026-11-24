@@ -207,6 +207,8 @@ describe("periodPnl", () => {
     expect(net).toBeCloseTo(p.netProfit, 1);
     // Gross margin leaves out the shared ads and overheads
     for (const r of rows) expect(r.grossMargin).toBe(round((r.grossProfit / r.revenue) * 100));
+    // Contribution margin is before labour as well
+    for (const r of rows) expect(r.contributionMargin).toBe(round((r.orderProfit / r.revenue) * 100));
   });
 
   it("summarises by order size and by product", () => {

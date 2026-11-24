@@ -11,6 +11,10 @@
 // (as costed in the app), "Box" is the outer box, insulation and ice; an
 // order with an item we have no cost for says so; and the Margin cell is
 // shaded against a target margin on the Numbers/Ads colour scale.
+//
+// Then: "let's take labour out". Labour is a shared period cost, so the
+// table stops at Contribution — revenue less product cost, box, courier and
+// fees — and Margin is contribution ÷ revenue.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, ArrowDown, ArrowUp } from "lucide-react";
@@ -23,7 +27,7 @@ import { fetchTrackerSettings, gbp, gbp0, pct, dayLabel, saveTrackerSetting, typ
 
 type SortKey =
   | "name" | "day" | "items" | "revenue" | "shippingCharged" | "discounts" | "productCost" | "boxCost" | "courier"
-  | "paymentFees" | "labour" | "grossProfit" | "grossMargin";
+  | "paymentFees" | "orderProfit" | "contributionMargin";
 
 const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "name", label: "Order" },
@@ -36,17 +40,16 @@ const COLUMNS: Array<{ key: SortKey; label: string }> = [
   { key: "boxCost", label: "Box" },
   { key: "courier", label: "Courier" },
   { key: "paymentFees", label: "Fees" },
-  { key: "labour", label: "Labour" },
-  { key: "grossProfit", label: "Gross profit" },
-  { key: "grossMargin", label: "Margin" },
+  { key: "orderProfit", label: "Contribution" },
+  { key: "contributionMargin", label: "Margin" },
 ];
 
-const MONEY = ["revenue", "shippingCharged", "discounts", "productCost", "boxCost", "courier", "paymentFees", "labour", "grossProfit"] as const;
+const MONEY = ["revenue", "shippingCharged", "discounts", "productCost", "boxCost", "courier", "paymentFees", "orderProfit"] as const;
 
 /** Sort value: "Placed" sorts by the exact time, so the same day's orders stay in order. */
 function sortValue(o: OrderRow, key: SortKey): string | number {
   if (key === "day") return o.createdAt;
-  if (key === "grossMargin") return o.grossMargin ?? -Infinity;
+  if (key === "contributionMargin") return o.contributionMargin ?? -Infinity;
   return o[key];
 }
 
@@ -159,7 +162,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
           <div>
             <h3 className="text-base font-display font-bold">Every order</h3>
             <p className="text-sm text-muted-foreground">
-              {rows.length.toLocaleString("en-GB")} orders, newest first · labour {gbp.format(data.pnl.labourPerPack)} a pack · gross profit is before ads and overheads
+              {rows.length.toLocaleString("en-GB")} orders, newest first · contribution is before labour, ads and overheads
             </p>
           </div>
           <div className="flex flex-wrap items-end gap-2">
@@ -229,11 +232,11 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
                     </button>
                   </td>
                   {MONEY.map(k => (
-                    <td key={k} className={`px-3 py-2 text-right whitespace-nowrap ${k === "grossProfit" ? "font-semibold" : ""} ${k === "grossProfit" && o[k] < 0 && !resend ? "text-red-600" : ""}`}>
+                    <td key={k} className={`px-3 py-2 text-right whitespace-nowrap ${k === "orderProfit" ? "font-semibold" : ""} ${k === "orderProfit" && o[k] < 0 && !resend ? "text-red-600" : ""}`}>
                       {gbp.format(o[k])}
                     </td>
                   ))}
-                  <MarginCell margin={resend ? null : o.grossMargin} target={target} />
+                  <MarginCell margin={resend ? null : o.contributionMargin} target={target} />
                 </tr>
                 );
               })}
@@ -248,7 +251,7 @@ export function OrderAnalysis({ data }: { data: Prediction }) {
           </div>
         )}
         <p className="px-5 pb-4 text-xs text-muted-foreground">
-          Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.pnl.grossProfit)} gross profit.
+          Totals for the period: {gbp0.format(data.pnl.income)} revenue, {gbp0.format(data.orders.reduce((t, o) => t + o.orderProfit, 0))} contribution.
           {" "}Product cost is each item's recipe ingredients plus its own packaging (tray, film, label), or Shopify's cost for bought-in items; Box is the outer box, insulation and ice.
         </p>
       </div>
@@ -295,12 +298,12 @@ function OrderContents({ order, onClose }: { order: OrderRow | null; onClose: ()
                 <dd className="font-semibold">{gbp.format(order.revenue)}</dd>
               </div>
               <div className="rounded-xl bg-secondary/40 p-2">
-                <dt className="text-xs text-muted-foreground">Gross profit</dt>
-                <dd className={`font-semibold ${order.grossProfit < 0 ? "text-red-600" : ""}`}>{gbp.format(order.grossProfit)}</dd>
+                <dt className="text-xs text-muted-foreground">Contribution</dt>
+                <dd className={`font-semibold ${order.orderProfit < 0 ? "text-red-600" : ""}`}>{gbp.format(order.orderProfit)}</dd>
               </div>
               <div className="rounded-xl bg-secondary/40 p-2">
                 <dt className="text-xs text-muted-foreground">Margin</dt>
-                <dd className={`font-semibold ${(order.grossMargin ?? 0) < 0 ? "text-red-600" : ""}`}>{pct(order.grossMargin)}</dd>
+                <dd className={`font-semibold ${(order.contributionMargin ?? 0) < 0 ? "text-red-600" : ""}`}>{pct(order.contributionMargin)}</dd>
               </div>
             </dl>
             {order.uncostedItems > 0 && (

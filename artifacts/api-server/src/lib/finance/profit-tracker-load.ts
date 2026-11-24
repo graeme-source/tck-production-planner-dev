@@ -24,9 +24,9 @@ export const TRACKER_SETTINGS = {
   small_box_courier: 4.72,
   large_box_courier: 5.72,
   overhead_average_months: 3,
-  // Gross margin an order should make (%), for the order table's colours
-  // (Graeme, 24 Nov 2026).
-  target_order_margin: 40,
+  // Contribution margin an order should make (%), before labour, for the
+  // order table's colours (Graeme, 24 Nov 2026).
+  target_order_margin: 60,
   // Employer on-costs Planday's wages are grossed up by (services/planday.ts
   // reads the same keys) — moved here from the old P&L settings panel.
   employer_ni_rate: 15,
