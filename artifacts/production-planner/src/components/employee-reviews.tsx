@@ -20,7 +20,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { BarChart3, CalendarDays, Loader2, MessageSquare, Target } from "lucide-react";
 import type { PerformanceReport } from "@workspace/performance-review";
-import { PerformanceReportView } from "@/components/people/performance-report-view";
+import { MeetingWriteUpView, PerformanceReportView, type MeetingWriteUp } from "@/components/people/performance-report-view";
 import { fmtDayIso, NOTE_KIND_LABEL, MEETING_STATUS_LABEL, type MeetingStatus, type NoteKind } from "@workspace/people-reviews";
 import { AgreementBullets } from "@/components/people/review-notes";
 
@@ -173,7 +173,7 @@ export function EmployeeReviewsSection() {
 /** Performance review data reports your manager has shared with you (24 Nov
  *  2026) — read-only; tap one to open it. Never their prep notes. */
 function MyPerformanceReports() {
-  const { data } = useQuery<{ reports: Array<{ id: number; sharedAt: string; from: string; to: string; report: PerformanceReport }> }>({
+  const { data } = useQuery<{ reports: Array<{ id: number; sharedAt: string; from: string; to: string; report: PerformanceReport; writeUp: MeetingWriteUp | null }> }>({
     queryKey: ["employee-review-record", "performance-reports"],
     queryFn: () => api("/employee-reviews/performance-reports"),
   });
@@ -191,7 +191,7 @@ function MyPerformanceReports() {
             <span className="text-lg font-bold">{fmtDayIso(r.from)} – {fmtDayIso(r.to)}</span>
             <span className="text-sm text-muted-foreground">{open === r.id ? "Hide" : "Open"}</span>
           </button>
-          {open === r.id && <div className="px-4 pb-4"><PerformanceReportView report={r.report} audience="employee" /></div>}
+          {open === r.id && <div className="px-4 pb-4"><MeetingWriteUpView writeUp={r.writeUp} audience="employee" /><PerformanceReportView report={r.report} audience="employee" /></div>}
         </div>
       ))}
     </section>

@@ -161,12 +161,53 @@ export interface PerformanceReport {
     sopsWritten: number;
     todos: { assigned: number; done: number; onTime: number; late: number; open: number };
   };
+
+  /**
+   * The notes on their record for the period (Graeme, 24 Nov 2026: "bring in
+   * all of the notes that have happened since the last performance review").
+   * Built per viewer with the record's own reading rule — private notes are
+   * their author's alone — and a saved copy keeps only the ones already
+   * shared with the person (forSavedCopy). Optional: older saved reports
+   * don't have it.
+   */
+  notes?: {
+    /** Their last performance appraisal before the end of the period. */
+    lastReview: { entryId: number; date: string; title: string } | null;
+    /** The objectives and agreements set at that appraisal, to go through. */
+    fromLastReview: ReportNote[];
+    /** Everything else written in the period (or on a meeting in it), newest first. */
+    list: ReportNote[];
+  };
 }
+
+/** One note from their employment record. */
+export interface ReportNote {
+  id: number;
+  /** The meeting or entry it belongs to; null for a loose note. */
+  entryId: number | null;
+  entryTitle: string | null;
+  entryDate: string | null;
+  /** note | feedback | objective | agreement */
+  kind: string;
+  title: string | null;
+  body: string;
+  /** The day it was written. */
+  date: string;
+  /** Shared with them — on their own record. Only these go into a saved copy. */
+  shared: boolean;
+  /** Private, but the author let named HR colleagues read it. */
+  sharedWithHr: boolean;
+  author: string | null;
+  dueDate: string | null;
+  done: boolean;
+}
+
+export const NOTE_KIND_LABELS: Record<string, string> = { note: "Note", feedback: "Feedback", objective: "Objective", agreement: "What was agreed" };
 
 export interface RecordItem { entryId: number; date: string; title: string; detail: string | null }
 
 /** Sections that can be left out of a shared report as a whole. */
-export const REPORT_SECTIONS = ["improvements", "training", "lean", "speed_building", "speed_wrapping", "speed_packing", "checklists", "attendance", "records", "contributions"] as const;
+export const REPORT_SECTIONS = ["improvements", "training", "lean", "speed_building", "speed_wrapping", "speed_packing", "checklists", "attendance", "records", "contributions", "notes"] as const;
 export type ReportSection = (typeof REPORT_SECTIONS)[number];
 
 /** What's been unticked: whole sections, and single items by key (itemKey). */
@@ -464,6 +505,7 @@ export const itemKey = {
   leanWeek: (weekStart: string) => `lean:${weekStart}`,
   sop: (station: string, sopId: number) => `sop:${station}:${sopId}`,
   record: (entryId: number) => `rec:${entryId}`,
+  note: (noteId: number) => `note:${noteId}`,
 };
 
 /**
@@ -531,5 +573,53 @@ export function applyExclusions(report: PerformanceReport, ex: Exclusions | null
   out.records.disciplinary = keep(out.records.disciplinary);
   out.records.attendanceOrTimekeeping = keep(out.records.attendanceOrTimekeeping);
   out.records.praise = keep(out.records.praise);
+
+  // Notes
+  if (out.notes) {
+    out.notes.fromLastReview = out.notes.fromLastReview.filter(n => !drop.has(itemKey.note(n.id)));
+    out.notes.list = out.notes.list.filter(n => !drop.has(itemKey.note(n.id)));
+  }
   return out;
+}
+
+/**
+ * What a saved copy may hold of the notes: only those already shared with
+ * the person. A saved copy can be opened by anyone with People access and,
+ * once shared, by the person — so a private note (its author's alone) must
+ * never be frozen into one. Notes on the meeting the copy is attached to are
+ * left out too: the copy shows that meeting's write-up live, under its own
+ * sharing, so it isn't there twice. Pure.
+ */
+export function forSavedCopy(report: PerformanceReport, attachedEntryId: number | null): PerformanceReport {
+  if (!report.notes) return report;
+  const keep = (n: ReportNote) => n.shared && (attachedEntryId == null || n.entryId !== attachedEntryId);
+  return {
+    ...report,
+    notes: {
+      ...report.notes,
+      fromLastReview: report.notes.fromLastReview.filter(keep).map(n => ({ ...n, sharedWithHr: false })),
+      list: report.notes.list.filter(keep).map(n => ({ ...n, sharedWithHr: false })),
+    },
+  };
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "2026-10-29" → "29 Oct 2026" */
+export function dayLabel(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  return y && m && d ? `${d} ${MONTHS[m - 1]} ${y}` : iso;
+}
+
+/** A note's own title, or null when it only repeats its kind ("What was agreed"). */
+export function noteTitle(n: Pick<ReportNote, "kind" | "title">): string | null {
+  const t = n.title?.trim();
+  return t && t.toLowerCase() !== (NOTE_KIND_LABELS[n.kind] ?? "").toLowerCase() ? t : null;
+}
+
+/** A note as plain text, for copying into prep notes. */
+export function noteAsText(n: ReportNote): string {
+  const where = n.entryTitle ? ` — ${n.entryTitle}` : "";
+  const title = noteTitle(n);
+  const head = `${NOTE_KIND_LABELS[n.kind] ?? "Note"} (${dayLabel(n.date)}${where})${title ? `: ${title}` : ""}`;
+  return `${head}\n${n.body.trim()}`;
 }

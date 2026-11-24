@@ -14,23 +14,25 @@
  *   PUT  /api/people-performance/person/:userId/prep        my prep note (autosave)
  *   POST /api/people-performance/person/:userId/reports     save a copy {from,to,entryId}
  *   GET  /api/people-performance/reports/:id                a saved copy
- *   POST /api/people-performance/reports/:id/share          {shared} — show it to them, or stop
+ *   POST /api/people-performance/reports/:id/share          {shared, shareWriteUp?} — show it to them
+ *        (and, when attached to a meeting, my own write-up of it too), or stop
  *   DELETE /api/people-performance/reports/:id              remove an unshared copy
  */
 import { Router, type IRouter, type Request, type Response, type NextFunction } from "express";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import {
   db, usersTable, peopleRecordAuditTable, peopleRecordEntriesTable,
   peoplePerformancePrepTable, peoplePerformanceReportsTable,
 } from "@workspace/db";
-import { applyExclusions, defaultPeriod, suggestions, type PerformanceReport } from "@workspace/performance-review";
+import { applyExclusions, defaultPeriod, forSavedCopy, suggestions, type PerformanceReport } from "@workspace/performance-review";
 import { validate, validateQuery } from "../middleware/validate";
 import { loadRecordActor, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { isFounderEmail } from "../lib/founder-email";
 import { londonDateString } from "../lib/london-time";
-import { lastAppraisalDate, loadPerformanceReport } from "../services/performance-review-data";
+import { lastAppraisalDate, loadMeetingWriteUp, loadPerformanceReport, type ReportViewer } from "../services/performance-review-data";
+import { shareMyWriteUp } from "../services/share-write-up";
 
 const router: IRouter = Router();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
@@ -53,6 +55,9 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
 });
 
 const viewerOf = (res: Response) => res.locals["viewer"] as Viewer;
+/** The viewer as the notes' reading rule sees them. Everyone past the gate
+ *  above has People access (or is Graeme) — the same as routes/people-reviews.ts. */
+const noteReader = (viewer: Viewer): ReportViewer => ({ id: viewer.actor.id, role: "", hasPeopleAccess: true });
 
 /** The shared rule: People access, and never your own record. */
 async function mayOpen(viewer: Viewer, subjectUserId: number): Promise<boolean> {
@@ -85,7 +90,7 @@ router.get("/person/:userId", validateQuery(periodQuery), async (req: Request, r
   try {
     const period = await periodFor(userId.data, res.locals["query"] as z.infer<typeof periodQuery>);
     const [report, prep, saved, meetings] = await Promise.all([
-      loadPerformanceReport(userId.data, period.from, period.to),
+      loadPerformanceReport(userId.data, period.from, period.to, noteReader(viewer)),
       db.select({ body: peoplePerformancePrepTable.body, updatedAt: peoplePerformancePrepTable.updatedAt })
         .from(peoplePerformancePrepTable)
         .where(and(eq(peoplePerformancePrepTable.subjectUserId, userId.data), eq(peoplePerformancePrepTable.authorUserId, viewer.actor.id))),
@@ -94,6 +99,12 @@ router.get("/person/:userId", validateQuery(periodQuery), async (req: Request, r
         entryId: peoplePerformanceReportsTable.entryId, entryTitle: peopleRecordEntriesTable.title,
         createdAt: peoplePerformanceReportsTable.createdAt, createdByName: peoplePerformanceReportsTable.createdByName,
         sharedAt: peoplePerformanceReportsTable.sharedAt,
+        // The attached meeting's write-up: my own notes still private (they
+        // can go out with the report), and what's already shared with them.
+        writeUpMine: sql<number>`(SELECT COUNT(*)::int FROM people_review_notes n WHERE n.entry_id = ${peoplePerformanceReportsTable.entryId}
+          AND n.deleted_at IS NULL AND n.visibility <> 'shared' AND n.author_id = ${viewer.actor.id})`,
+        writeUpShared: sql<number>`(SELECT COUNT(*)::int FROM people_review_notes n WHERE n.entry_id = ${peoplePerformanceReportsTable.entryId}
+          AND n.deleted_at IS NULL AND n.visibility = 'shared')`,
       }).from(peoplePerformanceReportsTable)
         .leftJoin(peopleRecordEntriesTable, eq(peopleRecordEntriesTable.id, peoplePerformanceReportsTable.entryId))
         .where(eq(peoplePerformanceReportsTable.subjectUserId, userId.data))
@@ -152,9 +163,11 @@ router.post("/person/:userId/reports", validate(saveBody), async (req: Request, 
     if (!e || e.userId !== userId.data) { res.status(400).json({ error: "That meeting isn't on this person's record" }); return; }
   }
   try {
-    // Rebuilt here, not taken from the screen: the saved copy is what the data said.
-    const built = await loadPerformanceReport(userId.data, b.from <= b.to ? b.from : b.to, b.from <= b.to ? b.to : b.from);
-    const report = applyExclusions(built, b.exclusions);
+    // Rebuilt here, not taken from the screen: the saved copy is what the data
+    // said. Only notes already shared with them can be frozen into it; the
+    // attached meeting's write-up is read live when the copy is opened.
+    const built = await loadPerformanceReport(userId.data, b.from <= b.to ? b.from : b.to, b.from <= b.to ? b.to : b.from, noteReader(viewer));
+    const report = forSavedCopy(applyExclusions(built, b.exclusions), b.entryId);
     const [row] = await db.insert(peoplePerformanceReportsTable).values({
       subjectUserId: userId.data, entryId: b.entryId, periodFrom: report.period.from, periodTo: report.period.to,
       data: report, createdBy: viewer.actor.id, createdByName: viewer.name,
@@ -181,10 +194,15 @@ router.get("/reports/:id", async (req: Request, res: Response) => {
   if (!r || !(await mayOpen(viewer, r.subjectUserId))) { res.status(404).json({ error: "Not found" }); return; }
   await audit(viewer, r.subjectUserId, "viewed saved performance report", `#${r.id}`);
   const report = r.data as PerformanceReport;
-  res.json({ id: r.id, sharedAt: r.sharedAt, createdAt: r.createdAt, createdByName: r.createdByName, report, suggestions: suggestions(report) });
+  const writeUp = r.entryId != null ? await loadMeetingWriteUp(r.entryId, r.subjectUserId, noteReader(viewer)) : null;
+  res.json({ id: r.id, sharedAt: r.sharedAt, createdAt: r.createdAt, createdByName: r.createdByName, report, writeUp, suggestions: suggestions(report) });
 });
 
-const shareBody = z.object({ shared: z.boolean() });
+const shareBody = z.object({
+  shared: z.boolean(),
+  /** Also share my own private write-up of the attached meeting (24 Nov 2026). */
+  shareWriteUp: z.boolean().optional(),
+});
 
 router.post("/reports/:id/share", validate(shareBody), async (req: Request, res: Response) => {
   const id = Id.safeParse(req.params.id);
@@ -192,12 +210,18 @@ router.post("/reports/:id/share", validate(shareBody), async (req: Request, res:
   const viewer = viewerOf(res);
   const r = await loadSaved(id.data);
   if (!r || !(await mayOpen(viewer, r.subjectUserId))) { res.status(404).json({ error: "Not found" }); return; }
-  const { shared } = req.body as z.infer<typeof shareBody>;
+  const { shared, shareWriteUp } = req.body as z.infer<typeof shareBody>;
   await db.update(peoplePerformanceReportsTable)
     .set(shared ? { sharedAt: new Date(), sharedBy: viewer.actor.id } : { sharedAt: null, sharedBy: null })
     .where(eq(peoplePerformanceReportsTable.id, r.id));
   await audit(viewer, r.subjectUserId, shared ? "shared performance report" : "unshared performance report", `#${r.id}`);
-  res.json({ ok: true });
+  // The final report carries the meeting's write-up (Graeme, 24 Nov 2026) —
+  // my own private notes on it go out with it when I say so. Others'
+  // private notes are theirs to share.
+  const writeUpShared = shared && shareWriteUp && r.entryId != null
+    ? await shareMyWriteUp({ id: viewer.actor.id, name: viewer.name }, { id: r.entryId, userId: r.subjectUserId })
+    : 0;
+  res.json({ ok: true, writeUpShared });
 });
 
 router.delete("/reports/:id", async (req: Request, res: Response) => {

@@ -12,9 +12,9 @@
  *  - attendance: their Planday shifts (mirror), so nothing when unlinked.
  */
 import { sql } from "drizzle-orm";
-import { db } from "@workspace/db";
+import { db, visibleNotes, type ReviewViewer } from "@workspace/db";
 import {
-  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, minutesLate, rateStat, type PerformanceReport, type RecordItem,
+  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, minutesLate, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
 } from "@workspace/performance-review";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { improvementScorePct } from "../lib/improvement-score";
@@ -50,7 +50,31 @@ export async function lastAppraisalDate(userId: number, today: string): Promise<
   return r.rows?.[0]?.d ?? null;
 }
 
-export async function loadPerformanceReport(userId: number, from: string, to: string): Promise<PerformanceReport> {
+/** Their last performance appraisal dated before `before` (not cancelled). */
+export async function lastAppraisalEntry(userId: number, before: string): Promise<{ entryId: number; date: string; title: string } | null> {
+  const r = await db.execute<{ id: number; d: string; title: string }>(sql`
+    SELECT e.id, COALESCE(e.meeting_date, e.entry_date)::text AS d, e.title
+      FROM people_record_entries e
+     WHERE e.user_id = ${userId}
+       AND COALESCE(e.meeting_date, e.entry_date) < ${before}::date
+       AND (e.meeting_status IS NULL OR e.meeting_status <> 'cancelled')
+       AND EXISTS (SELECT 1 FROM people_record_classifications c
+                    WHERE c.label = 'Performance appraisal'
+                      AND (c.id = e.classification_id
+                           OR c.id IN (SELECT ec.classification_id FROM people_record_entry_classifications ec WHERE ec.entry_id = e.id)))
+     ORDER BY 2 DESC, e.id DESC LIMIT 1
+  `);
+  const row = r.rows?.[0];
+  return row ? { entryId: Number(row.id), date: iso(row.d)!, title: row.title } : null;
+}
+
+/**
+ * Who is reading the report — decides which notes it carries. Without one,
+ * only notes already shared with the person (fail closed).
+ */
+export type ReportViewer = ReviewViewer;
+
+export async function loadPerformanceReport(userId: number, from: string, to: string, viewer?: ReportViewer): Promise<PerformanceReport> {
   const today = londonDateString(new Date());
   const [person] = (await db.execute<{ id: number; name: string; job_title: string | null; planday_employee_id: number | null }>(sql`
     SELECT id, name, job_title, planday_employee_id FROM app_users WHERE id = ${userId}
@@ -77,7 +101,7 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
   const stationDays = plandayId != null
     ? await stationDaysWorked(plandayId, from, to).catch(() => new Map<string, Set<string>>())
     : new Map<string, Set<string>>();
-  const [improvements, training, lean, speed, records, contributions, checklists] = await Promise.all([
+  const [improvements, training, lean, speed, records, contributions, checklists, notes] = await Promise.all([
     loadImprovements(userId, from, to, myShifts, plandayId != null),
     loadTraining(userId, stationDays),
     loadLean(userId, from, to, today),
@@ -85,6 +109,7 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     loadRecords(userId, from, to),
     loadContributions(userId, from, to),
     loadChecklists(userId, from, to, stationDays, plandayId != null),
+    loadNotes(userId, from, to, viewer),
   ]);
 
   const attendance = attendanceFrom(myShifts, plandayId != null);
@@ -103,6 +128,7 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     attendance,
     records,
     contributions,
+    notes,
   };
 }
 
@@ -448,6 +474,83 @@ async function loadRecords(userId: number, from: string, to: string): Promise<Pe
     praise: rows.filter(r => has(r, "Praise / recognition")).map(r => item(r, null)),
     returnToWorkForms: Number(rtw),
   };
+}
+
+// ── Notes on the record (Graeme, 24 Nov 2026) ───────────────────────────
+// "Bring in all of the notes that have happened since the last performance
+// review … so I can then include that in the notes for the meeting."
+
+type NoteRow = {
+  id: number; entry_id: number | null; kind: string; title: string | null; body: string; visibility: string;
+  shared_with_user_ids: number[] | null; author_id: number | null; author_name: string | null;
+  due_date: string | null; done_at: string | null; created_at: string;
+  entry_title: string | null; entry_date: string | null;
+};
+const NOTE_COLUMNS = sql`
+  n.id, n.entry_id, n.kind, n.title, n.body, n.visibility, n.shared_with_user_ids, n.author_id, n.author_name,
+  n.due_date::text AS due_date, n.done_at, n.created_at,
+  e.title AS entry_title, COALESCE(e.meeting_date, e.entry_date)::text AS entry_date`;
+
+/** The record's own reading rule, on the server, before anything leaves it:
+ *  a private note is its author's (and the HR colleagues they picked).
+ *  No viewer → only what's shared with the person (fail closed). */
+function readableNotes(rows: NoteRow[], userId: number, viewer: ReportViewer | null | undefined): NoteRow[] {
+  return viewer
+    ? visibleNotes(rows.map(r => ({ ...r, authorId: r.author_id, sharedWithUserIds: r.shared_with_user_ids })), viewer, userId)
+    : rows.filter(r => r.visibility === "shared");
+}
+
+function noteFromRow(r: NoteRow): ReportNote {
+  return {
+    id: Number(r.id), entryId: r.entry_id != null ? Number(r.entry_id) : null, entryTitle: r.entry_title, entryDate: iso(r.entry_date),
+    kind: r.kind, title: r.title, body: r.body, date: toDay(r.created_at),
+    shared: r.visibility === "shared",
+    sharedWithHr: r.visibility !== "shared" && (r.shared_with_user_ids ?? []).length > 0,
+    author: r.author_name, dueDate: iso(r.due_date), done: r.done_at != null,
+  };
+}
+
+async function loadNotes(userId: number, from: string, to: string, viewer: ReportViewer | undefined): Promise<NonNullable<PerformanceReport["notes"]>> {
+  const lastReview = await lastAppraisalEntry(userId, to);
+  const rows = (await db.execute<NoteRow>(sql`
+    SELECT ${NOTE_COLUMNS}
+      FROM people_review_notes n
+      LEFT JOIN people_record_entries e ON e.id = n.entry_id
+     WHERE n.user_id = ${userId} AND n.deleted_at IS NULL
+       AND (e.id IS NULL OR e.meeting_status IS NULL OR e.meeting_status <> 'cancelled')
+       AND (n.created_at::date BETWEEN ${from}::date - 1 AND ${to}::date + 1
+            OR COALESCE(e.meeting_date, e.entry_date) BETWEEN ${from}::date AND ${to}::date
+            OR n.entry_id = ${lastReview?.entryId ?? -1})
+     ORDER BY n.created_at DESC, n.id DESC
+  `)).rows ?? [];
+  const readable = readableNotes(rows, userId, viewer);
+  const fromLastReview = readable
+    .filter(r => lastReview != null && r.entry_id != null && Number(r.entry_id) === lastReview.entryId && (r.kind === "objective" || r.kind === "agreement"))
+    .map(noteFromRow);
+  const shown = new Set(fromLastReview.map(n => n.id));
+  const list = readable.map(noteFromRow).filter(n => !shown.has(n.id)
+    && ((n.date >= from && n.date <= to) || (n.entryDate != null && n.entryDate >= from && n.entryDate <= to)));
+  return { lastReview, fromLastReview, list };
+}
+
+/**
+ * The write-up of the meeting a saved report is attached to — read live, so
+ * notes written after the copy was saved still come through, and each reader
+ * sees only what they may (the person: only what's been shared with them).
+ */
+export async function loadMeetingWriteUp(entryId: number, userId: number, viewer: ReportViewer | null): Promise<{ entryId: number; title: string; date: string | null; notes: ReportNote[] } | null> {
+  const [entry] = (await db.execute<{ title: string; d: string | null }>(sql`
+    SELECT title, COALESCE(meeting_date, entry_date)::text AS d FROM people_record_entries WHERE id = ${entryId} AND user_id = ${userId}
+  `)).rows ?? [];
+  if (!entry) return null;
+  const rows = (await db.execute<NoteRow>(sql`
+    SELECT ${NOTE_COLUMNS}
+      FROM people_review_notes n
+      JOIN people_record_entries e ON e.id = n.entry_id
+     WHERE n.entry_id = ${entryId} AND n.user_id = ${userId} AND n.deleted_at IS NULL
+     ORDER BY n.created_at, n.id
+  `)).rows ?? [];
+  return { entryId, title: entry.title, date: iso(entry.d), notes: readableNotes(rows, userId, viewer).map(noteFromRow) };
 }
 
 // ── Contributions ───────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import { applyExclusions, suggestions as suggestFor, type Exclusions, type Perfo
 import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { PerformanceReportView, periodLabel } from "./performance-report-view";
+import { MeetingWriteUpView, PerformanceReportView, periodLabel, type MeetingWriteUp } from "./performance-report-view";
 import { PeopleModal } from "@/components/people-modal";
 import { BookReviewForm } from "./book-review";
 import { useRecordFacts } from "./record-panel";
@@ -28,7 +28,11 @@ interface ReviewResponse {
   report: PerformanceReport;
   suggestions: Suggestion[];
   prep: { body: string; updatedAt: string | null };
-  saved: Array<{ id: number; from: string; to: string; entryId: number | null; entryTitle: string | null; createdAt: string; createdByName: string | null; sharedAt: string | null }>;
+  saved: Array<{
+    id: number; from: string; to: string; entryId: number | null; entryTitle: string | null; createdAt: string; createdByName: string | null; sharedAt: string | null;
+    /** The attached meeting's write-up: my own parts still private, and parts already shared with them. */
+    writeUpMine: number; writeUpShared: number;
+  }>;
   meetings: Array<{ id: number; title: string; date: string; meetingStatus: string | null }>;
 }
 
@@ -88,6 +92,9 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
     try { if (exKey) localStorage.setItem(exKey, JSON.stringify(next)); } catch { /* private window: keep in memory */ }
   };
   const flip = (xs: string[], x: string) => (xs.includes(x) ? xs.filter(y => y !== x) : [...xs, x]);
+  // "Add to my prep notes" from the notes card (Graeme, 24 Nov 2026: "so I
+  // can then include that in the notes for the meeting").
+  const appendToPrep = useRef<((text: string) => void) | null>(null);
 
   if (!ready || isLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   if (error) {
@@ -132,11 +139,15 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
         original, ex,
         toggleSection: sec => updateEx({ ...ex, sections: flip(ex.sections, sec) }),
         toggleItem: k => updateEx({ ...ex, items: flip(ex.items, k) }),
+        addToPrep: text => {
+          appendToPrep.current?.(text);
+          toast({ title: "Added to your prep notes", description: "It's at the bottom of your prep notes, below the report." });
+        },
       }} />
 
       <div className="grid gap-4 xl:grid-cols-2 items-start">
         <SuggestionsCard suggestions={leftOut > 0 ? suggestFor(r) : data.suggestions} />
-        <PrepNotes userId={userId} first={first} initial={data.prep} />
+        <PrepNotes userId={userId} first={first} initial={data.prep} appendRef={appendToPrep} />
       </div>
 
       <SavedCopies
@@ -210,8 +221,13 @@ function SuggestionRow({ s }: { s: Suggestion }) {
 }
 
 /** Private prep notes — saves itself; only you ever see your own. */
-function PrepNotes({ userId, first, initial }: { userId: number; first: string; initial: { body: string; updatedAt: string | null } }) {
+function PrepNotes({ userId, first, initial, appendRef }: {
+  userId: number; first: string; initial: { body: string; updatedAt: string | null };
+  appendRef: React.MutableRefObject<((text: string) => void) | null>;
+}) {
   const [text, setText] = useState(initial.body);
+  const textRef = useRef(text);
+  textRef.current = text;
   const [state, setState] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef<string | null>(null);
@@ -227,6 +243,21 @@ function PrepNotes({ userId, first, initial }: { userId: number; first: string; 
     } catch { setState("error"); }
   };
   useEffect(() => () => { if (pending.current != null) void save(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const change = (next: string) => {
+    setText(next);
+    pending.current = next;
+    setState("idle");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => void save(), 800);
+  };
+  // Notes copied in from the report land at the bottom and save like typing.
+  useEffect(() => {
+    appendRef.current = (add: string) => {
+      const cur = textRef.current.replace(/\s+$/, "");
+      change(cur ? `${cur}\n\n${add}` : add);
+    };
+    return () => { appendRef.current = null; };
+  }); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <section className="rounded-2xl border-2 border-border bg-card p-4 sm:p-5">
       <div className="flex items-center justify-between gap-2 mb-1">
@@ -241,13 +272,7 @@ function PrepNotes({ userId, first, initial }: { userId: number; first: string; 
       <p className="text-xs text-muted-foreground mb-2">Private to you — {first} never sees these, and they're never part of a shared report.</p>
       <textarea
         value={text}
-        onChange={e => {
-          setText(e.target.value);
-          pending.current = e.target.value;
-          setState("idle");
-          if (timer.current) clearTimeout(timer.current);
-          timer.current = setTimeout(() => void save(), 800);
-        }}
+        onChange={e => change(e.target.value)}
         onBlur={() => void save()}
         rows={10}
         placeholder={`What to say to ${first}, things that aren't in the system, questions to ask…`}
@@ -277,6 +302,9 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
   }, [justBooked, meetings]);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<{ id: number; action: "share" | "unshare" | "delete" } | null>(null);
+  // Sharing a report attached to the meeting also shares my write-up of it
+  // (ticked by default — the final report is the figures plus what was agreed).
+  const [withWriteUp, setWithWriteUp] = useState(true);
 
   const saveCopy = async () => {
     setBusy(true);
@@ -293,7 +321,10 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
     setBusy(true);
     try {
       if (confirm.action === "delete") await peopleSend("DELETE", `/people-performance/reports/${confirm.id}`);
-      else await peopleSend("POST", `/people-performance/reports/${confirm.id}/share`, { shared: confirm.action === "share" });
+      else {
+        const out = await peopleSend<{ writeUpShared?: number }>("POST", `/people-performance/reports/${confirm.id}/share`, { shared: confirm.action === "share", shareWriteUp: confirm.action === "share" && withWriteUp });
+        if (out.writeUpShared) toast({ title: "Shared", description: `The report and your write-up of the meeting are now on ${first}'s record.` });
+      }
       setConfirm(null);
       onChanged();
     } catch (e) {
@@ -306,7 +337,7 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
       <div>
         <h2 className="text-lg font-display font-bold">Use it in the meeting</h2>
         <p className="text-sm text-muted-foreground">
-          Save a copy of this report ({periodLabel(report)}) to the review meeting. It's frozen as it is now, and {first} only sees it once you share it — alongside the written-up notes from the meeting.
+          Save a copy of this report ({periodLabel(report)}) to the review meeting. The figures are frozen as they are now; the meeting's write-up is added as it's written. {first} only sees it once you share it.
         </p>
       </div>
       <div className="flex flex-wrap items-end gap-2">
@@ -363,14 +394,24 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
                 {s.sharedAt
                   ? <button type="button" onClick={() => setConfirm({ id: s.id, action: "unshare" })} className="h-10 px-3 rounded-lg border border-border text-sm flex items-center gap-1 hover:bg-secondary"><EyeOff className="w-4 h-4" /> Stop sharing</button>
                   : <>
-                      <button type="button" onClick={() => setConfirm({ id: s.id, action: "share" })} className="h-10 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1"><Share2 className="w-4 h-4" /> Share with {first}</button>
+                      <button type="button" onClick={() => { setWithWriteUp(true); setConfirm({ id: s.id, action: "share" }); }} className="h-10 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1"><Share2 className="w-4 h-4" /> Share with {first}</button>
                       <button type="button" onClick={() => setConfirm({ id: s.id, action: "delete" })} aria-label="Delete this copy" className="h-10 w-10 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-destructive hover:border-destructive"><Trash2 className="w-4 h-4" /></button>
                     </>}
               </span>
               {confirm?.id === s.id && (
                 <div className="w-full rounded-xl bg-secondary/50 px-3 py-2 flex flex-wrap items-center gap-2 text-sm">
                   <span className="flex-1">
-                    {confirm.action === "share" && `${first} will see this report in their own record (not your prep notes or the suggestions).`}
+                    {confirm.action === "share" && <>
+                      {first} will see this report in their own record (not your prep notes or the suggestions).
+                      {s.entryId != null && s.writeUpMine > 0 && (
+                        <label className="mt-1.5 flex items-start gap-2 cursor-pointer">
+                          <input type="checkbox" checked={withWriteUp} onChange={e => setWithWriteUp(e.target.checked)} className="w-4 h-4 mt-0.5 accent-[#7cb342]" />
+                          <span>Also share your write-up of <span className="font-semibold">{s.entryTitle ?? "the meeting"}</span> ({s.writeUpMine} {s.writeUpMine === 1 ? "part" : "parts"} still private) — it shows with the report.</span>
+                        </label>
+                      )}
+                      {s.entryId != null && s.writeUpMine === 0 && s.writeUpShared > 0 && <span className="block mt-1">The meeting's write-up is already shared and shows with the report.</span>}
+                      {s.entryId != null && s.writeUpMine === 0 && s.writeUpShared === 0 && <span className="block mt-1">Nothing's written up for the meeting yet — once it is, and shared, it shows with the report.</span>}
+                    </>}
                     {confirm.action === "unshare" && `${first} will no longer see this report.`}
                     {confirm.action === "delete" && "Delete this saved copy? The live report is unaffected."}
                   </span>
@@ -391,7 +432,7 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
 }
 
 function SavedViewer({ id, onClose }: { id: number | null; onClose: () => void }) {
-  const { data, isLoading } = useQuery<{ report: PerformanceReport; sharedAt: string | null }>({
+  const { data, isLoading } = useQuery<{ report: PerformanceReport; sharedAt: string | null; writeUp: MeetingWriteUp | null }>({
     queryKey: ["people-performance-saved", id],
     enabled: id != null,
     retry: peopleRetry,
@@ -405,7 +446,10 @@ function SavedViewer({ id, onClose }: { id: number | null; onClose: () => void }
             {data ? `${data.report.person.name} — ${periodLabel(data.report)}` : "Saved report"}
           </DialogTitle>
         </DialogHeader>
-        {isLoading || !data ? <Loader2 className="w-6 h-6 animate-spin text-muted-foreground mx-auto my-10" /> : <PerformanceReportView report={data.report} audience="manager" />}
+        {isLoading || !data ? <Loader2 className="w-6 h-6 animate-spin text-muted-foreground mx-auto my-10" /> : <>
+          <MeetingWriteUpView writeUp={data.writeUp} audience="manager" />
+          <PerformanceReportView report={data.report} audience="manager" />
+        </>}
       </DialogContent>
     </Dialog>
   );

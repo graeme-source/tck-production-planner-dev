@@ -22,6 +22,7 @@ import {
 } from "@workspace/db";
 import { ownRecordView, type MeetingStatus } from "@workspace/people-reviews";
 import { hasPeopleAccess } from "../lib/people-access";
+import { loadMeetingWriteUp } from "../services/performance-review-data";
 
 const router: IRouter = Router();
 
@@ -74,11 +75,16 @@ router.get("/performance-reports", async (req: Request, res: Response) => {
   const rows = await db.select({
     id: peoplePerformanceReportsTable.id, sharedAt: peoplePerformanceReportsTable.sharedAt,
     from: peoplePerformanceReportsTable.periodFrom, to: peoplePerformanceReportsTable.periodTo,
-    data: peoplePerformanceReportsTable.data,
+    data: peoplePerformanceReportsTable.data, entryId: peoplePerformanceReportsTable.entryId,
   }).from(peoplePerformanceReportsTable)
     .where(and(eq(peoplePerformanceReportsTable.subjectUserId, id), isNotNull(peoplePerformanceReportsTable.sharedAt)))
     .orderBy(desc(peoplePerformanceReportsTable.sharedAt));
-  res.json({ reports: rows.map(r => ({ id: r.id, sharedAt: r.sharedAt, from: r.from, to: r.to, report: r.data })) });
+  // The meeting's write-up, live and only what's been shared with them.
+  const out = await Promise.all(rows.map(async r => ({
+    id: r.id, sharedAt: r.sharedAt, from: r.from, to: r.to, report: r.data,
+    writeUp: r.entryId != null ? await loadMeetingWriteUp(r.entryId, id, null) : null,
+  })));
+  res.json({ reports: out });
 });
 
 export default router;

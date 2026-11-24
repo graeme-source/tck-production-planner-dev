@@ -7,12 +7,12 @@
  */
 import { useState, type ReactNode } from "react";
 import {
-  Lightbulb, GraduationCap, BookOpen, Gauge, CalendarCheck, FileText, Users, ChevronDown, ChevronUp, Info, ListChecks,
+  Lightbulb, GraduationCap, BookOpen, Gauge, CalendarCheck, FileText, Users, ChevronDown, ChevronUp, Info, ListChecks, StickyNote, Lock, ClipboardPlus,
 } from "lucide-react";
-import { itemKey, type Exclusions, type PerformanceReport, type RateStat } from "@workspace/performance-review";
+import { itemKey, noteAsText, noteTitle, NOTE_KIND_LABELS, type Exclusions, type PerformanceReport, type RateStat, type ReportNote } from "@workspace/performance-review";
 import { cn } from "@/lib/utils";
 
-type CardKey = "improvements" | "training" | "lean" | "speed" | "checklists" | "attendance" | "records" | "contributions";
+type CardKey = "improvements" | "training" | "lean" | "speed" | "checklists" | "attendance" | "records" | "contributions" | "notes";
 
 const fmtDay = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const fmtShort = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
@@ -31,6 +31,8 @@ export interface ReportEditing {
   ex: Exclusions;
   toggleSection: (section: string) => void;
   toggleItem: (key: string) => void;
+  /** Copy text into the manager's private prep notes. */
+  addToPrep?: (text: string) => void;
 }
 
 /** Which card is which section. */
@@ -116,6 +118,16 @@ export function PerformanceReportView({ report, audience, editing }: { report: P
       big: String(r.contributions.factoryReports + r.contributions.appReports + r.contributions.sopsWritten),
       sub: `${pl(r.contributions.factoryReports + r.contributions.appReports, "problem reported", "problems reported")} · ${pl(r.contributions.sopsWritten, "SOP")} written`,
     },
+    // Notes on their record for the period (Graeme, 24 Nov 2026). Older
+    // saved copies don't have them.
+    ...(r.notes ? [{
+      key: "notes" as CardKey, icon: StickyNote, title: "Notes on the record",
+      big: String(r.notes.fromLastReview.length + r.notes.list.length),
+      sub: [
+        r.notes.lastReview ? `${pl(r.notes.fromLastReview.length, "objective or agreement", "objectives and agreements")} from the last review` : null,
+        `${pl(r.notes.list.length, "note")} in the period`,
+      ].filter(Boolean).join(" · "),
+    }] : []),
   ];
 
   return (
@@ -165,6 +177,7 @@ export function PerformanceReportView({ report, audience, editing }: { report: P
           {open === "attendance" && <AttendanceDetail r={r} editing={editing} />}
           {open === "records" && <RecordsDetail r={r} audience={audience} editing={editing} />}
           {open === "contributions" && <ContributionsDetail r={r} />}
+          {open === "notes" && <NotesDetail r={r} audience={audience} editing={editing} />}
         </section>
       )}
     </div>
@@ -515,6 +528,136 @@ function ContributionsDetail({ r }: { r: PerformanceReport }) {
       </p>
       <Note>Reporting problems counts in their favour — it's how things get fixed. To-dos they set themselves and weekly Lean lessons aren't counted here.</Note>
     </div>
+  );
+}
+
+const KIND_TONE: Record<string, string> = {
+  objective: "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200",
+  agreement: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200",
+  feedback: "bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200",
+  note: "bg-secondary text-foreground",
+};
+
+/** One note, in full. The tick and the prep button only while going through
+ *  the live report; the privacy badge only for the manager. */
+function NoteItem({ n, audience, editing, showEntry }: { n: ReportNote; audience: "manager" | "employee"; editing?: ReportEditing; showEntry?: boolean }) {
+  const left = isLeft(editing, itemKey.note(n.id));
+  return (
+    <li className={cn("px-3 py-2.5 text-sm flex items-start gap-3", leftClass(left))}>
+      {editing && (n.shared ? <span className="pt-0.5"><ItemTick editing={editing} k={itemKey.note(n.id)} /></span> : <Lock className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-label="Private" />)}
+      <div className="flex-1 min-w-0">
+        <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+          <span className={cn("text-xs font-semibold rounded-full px-2 py-0.5", KIND_TONE[n.kind] ?? KIND_TONE.note)}>{NOTE_KIND_LABELS[n.kind] ?? "Note"}</span>
+          {noteTitle(n) && <span className="font-semibold">{noteTitle(n)}</span>}
+          {n.kind === "objective" && (n.done
+            ? <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">Done</span>
+            : n.dueDate ? <span className="text-xs text-muted-foreground">due {fmtShort(n.dueDate)}</span> : null)}
+          {audience === "manager" && editing && (
+            n.shared ? <span className="text-xs text-muted-foreground">Shared with them</span>
+              : <span className="text-xs font-semibold text-muted-foreground">{n.sharedWithHr ? "Private — shared with HR" : "Private — only you"} · not in the saved copy</span>
+          )}
+        </p>
+        <p className="mt-1 whitespace-pre-wrap break-words">{n.body}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {fmtShort(n.date)}{n.author ? ` · ${n.author}` : ""}{showEntry && n.entryTitle ? ` · ${n.entryTitle}` : ""}
+        </p>
+      </div>
+      {editing?.addToPrep && (
+        <button type="button" onClick={() => editing.addToPrep!(noteAsText(n))} title="Add to your prep notes"
+          className="shrink-0 h-9 px-2.5 rounded-lg border border-border text-xs flex items-center gap-1 hover:bg-secondary">
+          <ClipboardPlus className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Prep notes</span>
+        </button>
+      )}
+    </li>
+  );
+}
+
+function NotesDetail({ r, audience, editing }: { r: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing }) {
+  const n = editing?.original.notes ?? r.notes;
+  if (!n) return <div><H>Notes on the record</H><Empty>This copy was saved before notes were part of the report.</Empty></div>;
+  // Grouped by the meeting or entry they belong to, newest first.
+  const groups: Array<{ key: string; title: string; date: string | null; notes: ReportNote[] }> = [];
+  for (const note of n.list) {
+    const key = note.entryId != null ? `e${note.entryId}` : "loose";
+    let g = groups.find(x => x.key === key);
+    if (!g) { g = { key, title: note.entryTitle ?? "Notes not on a meeting", date: note.entryDate, notes: [] }; groups.push(g); }
+    g.notes.push(note);
+  }
+  const all = [...n.fromLastReview, ...n.list];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <H>Notes on the record — {fmtShort(r.period.from)} to {fmtShort(r.period.to)}</H>
+        {editing?.addToPrep && all.length > 0 && (
+          <button type="button" onClick={() => editing.addToPrep!(all.map(noteAsText).join("\n\n"))}
+            className="h-10 px-3 rounded-lg border-2 border-primary/40 text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/5 -mt-3">
+            <ClipboardPlus className="w-4 h-4" /> Add all to my prep notes
+          </button>
+        )}
+      </div>
+      {n.lastReview && (
+        <div>
+          <p className="font-semibold mb-1">From their last review — {n.lastReview.title}, {fmtDay(n.lastReview.date)}</p>
+          {n.fromLastReview.length === 0 ? <Empty>No objectives or agreements written up on it{audience === "manager" ? " that you can see" : ""}.</Empty> : (
+            <ul className="divide-y divide-border rounded-xl border border-border">
+              {n.fromLastReview.map(x => <NoteItem key={x.id} n={x} audience={audience} editing={editing} />)}
+            </ul>
+          )}
+        </div>
+      )}
+      <div className="space-y-3">
+        <p className="font-semibold">Written in this period</p>
+        {groups.length === 0 ? <Empty>Nothing written on their record in this period{audience === "manager" ? " that you can see" : ""}.</Empty> : groups.map(g => (
+          <div key={g.key}>
+            <p className="text-sm text-muted-foreground mb-1">{g.title}{g.date ? ` · ${fmtDay(g.date)}` : ""}</p>
+            <ul className="divide-y divide-border rounded-xl border border-border">
+              {g.notes.map(x => <NoteItem key={x.id} n={x} audience={audience} editing={editing} />)}
+            </ul>
+          </div>
+        ))}
+      </div>
+      {audience === "manager" && editing && (
+        <Note>Private notes — yours, or ones shared with you as HR — show here for you only, with a padlock. They're never in a saved or shared copy: to include one, share it on their record first.</Note>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The write-up of the meeting a saved report is attached to, read live
+ * (Graeme, 24 Nov 2026: what the note taker recorded "all come[s] through
+ * to the final report that gets published"). The person only ever gets what
+ * has been shared with them.
+ */
+export interface MeetingWriteUp { entryId: number; title: string; date: string | null; notes: ReportNote[] }
+
+const WRITE_UP_ORDER = ["feedback", "agreement", "objective", "note"];
+
+export function MeetingWriteUpView({ writeUp, audience }: { writeUp: MeetingWriteUp | null | undefined; audience: "manager" | "employee" }) {
+  if (!writeUp) return null;
+  if (audience === "employee" && writeUp.notes.length === 0) return null;
+  const notes = [...writeUp.notes].sort((a, b) => WRITE_UP_ORDER.indexOf(a.kind) - WRITE_UP_ORDER.indexOf(b.kind));
+  const privateCount = notes.filter(x => !x.shared).length;
+  return (
+    <section className="rounded-2xl border-2 border-primary/30 bg-card p-4 sm:p-5 mb-4">
+      <h3 className="text-lg font-display font-bold">The review meeting — {writeUp.title}{writeUp.date ? `, ${fmtDay(writeUp.date)}` : ""}</h3>
+      {notes.length === 0 ? <Empty>Nothing written up for this meeting yet. Add the meeting notes on their record and they'll show here.</Empty> : (
+        <ul className="mt-2 divide-y divide-border rounded-xl border border-border">
+          {notes.map(x => (
+            <li key={x.id} className="px-3 py-2.5 text-sm">
+              <p className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span className={cn("text-xs font-semibold rounded-full px-2 py-0.5", KIND_TONE[x.kind] ?? KIND_TONE.note)}>{NOTE_KIND_LABELS[x.kind] ?? "Note"}</span>
+                {noteTitle(x) && <span className="font-semibold">{noteTitle(x)}</span>}
+                {x.kind === "objective" && x.dueDate && <span className="text-xs text-muted-foreground">due {fmtShort(x.dueDate)}</span>}
+                {audience === "manager" && !x.shared && <span className="text-xs font-semibold text-muted-foreground flex items-center gap-1"><Lock className="w-3 h-3" /> Private — they don't see this yet</span>}
+              </p>
+              <p className="mt-1 whitespace-pre-wrap break-words">{x.body}</p>
+            </li>
+          ))}
+        </ul>
+      )}
+      {audience === "manager" && privateCount > 0 && <Note>{pl(privateCount, "part")} of the write-up {privateCount === 1 ? "is" : "are"} still private. Sharing the report lets you share your own write-up with it.</Note>}
+    </section>
   );
 }
 

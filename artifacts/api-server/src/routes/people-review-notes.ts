@@ -44,6 +44,7 @@ import { employmentRecordWrite, fromParam, fromRow, ownerOf, loadRecordSubject }
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
 import { resyncAttentionSoon } from "../lib/hr-attention";
 import { recordReaders } from "../lib/record-readers";
+import { shareMyWriteUp, notifyShared as notifyEmployee } from "../services/share-write-up";
 
 const router: IRouter = Router();
 
@@ -81,19 +82,9 @@ async function audit(exec: Exec, viewer: Viewer, row: { subjectUserId: number; e
   });
 }
 
-/** Tell the employee something was shared with them. A missed bell must
- *  never fail the share itself. Says nothing about what's in it. */
-async function notifyShared(subjectUserId: number, viewer: Viewer, what: string) {
-  if (subjectUserId === viewer.actor.id) return;
-  try {
-    await db.execute(sql`
-      INSERT INTO notifications (user_id, type, message, read)
-      VALUES (${subjectUserId}, ${"review"}, ${`${viewer.name} shared ${what} on your record`.slice(0, 500)}, false)
-    `);
-  } catch (err) {
-    console.warn("[people-review-notes] notification insert failed:", err instanceof Error ? err.message : err);
-  }
-}
+/** Tell the employee something was shared with them (services/share-write-up.ts). */
+const notifyShared = (subjectUserId: number, viewer: Viewer, what: string) =>
+  notifyEmployee(subjectUserId, { id: viewer.actor.id, name: viewer.name }, what);
 
 /** The HR viewers a request names, checked against who can open this
  *  record right now. Never the colleague, never anyone without People
@@ -309,24 +300,8 @@ router.post("/entries/:id/share-write-up", onEntry, validate(ShareWriteUpBody), 
       res.json({ shared: out.length });
       return;
     }
-    const shared = await db.transaction(async tx => {
-      const out = await tx.update(peopleReviewNotesTable)
-        .set({ visibility: "shared", sharedAt: new Date(), updatedAt: new Date() })
-        .where(and(
-          eq(peopleReviewNotesTable.entryId, entry.id),
-          eq(peopleReviewNotesTable.authorId, viewer.actor.id),
-          eq(peopleReviewNotesTable.visibility, "private"),
-          isNull(peopleReviewNotesTable.deletedAt),
-        ))
-        .returning({ id: peopleReviewNotesTable.id });
-      if (out.length > 0) {
-        await audit(tx, viewer, { subjectUserId: entry.userId, entryId: entry.id, action: "note_share",
-          detail: `Write-up shared with them (${out.length} part${out.length === 1 ? "" : "s"})` });
-      }
-      return out;
-    });
-    if (shared.length > 0) await notifyShared(entry.userId, viewer, "a review write-up");
-    res.json({ shared: shared.length });
+    const shared = await shareMyWriteUp({ id: viewer.actor.id, name: viewer.name }, entry);
+    res.json({ shared });
   } catch (err) {
     fail(res, "share write-up", err, "Couldn't share the write-up");
   }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyExclusions, itemKey, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
+import { applyExclusions, forSavedCopy, noteAsText, itemKey, type ReportNote, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
 
 function base(): PerformanceReport {
   return {
@@ -169,5 +169,54 @@ describe("applyExclusions", () => {
   it("is the same report when nothing is unticked", () => {
     const r = base();
     expect(applyExclusions(r, { sections: [], items: [] })).toBe(r);
+  });
+});
+
+describe("notes on the record", () => {
+  const note = (id: number, o: Partial<ReportNote> = {}): ReportNote => ({
+    id, entryId: 10, entryTitle: "1:1", entryDate: "2026-11-01", kind: "note", title: null, body: `note ${id}`,
+    date: "2026-11-01", shared: true, sharedWithHr: false, author: "Graeme", dueDate: null, done: false, ...o,
+  });
+  const withNotes = (): PerformanceReport => ({
+    ...base(),
+    notes: {
+      lastReview: { entryId: 5, date: "2026-10-29", title: "Appraisal" },
+      fromLastReview: [note(1, { entryId: 5, kind: "objective" }), note(2, { entryId: 5, kind: "agreement", shared: false })],
+      list: [note(3), note(4, { shared: false, sharedWithHr: true }), note(5, { entryId: 99 })],
+    },
+  });
+
+  it("a saved copy never holds a private note, even one shared with HR", () => {
+    const saved = forSavedCopy(withNotes(), null);
+    expect(saved.notes!.fromLastReview.map(n => n.id)).toEqual([1]);
+    expect(saved.notes!.list.map(n => n.id)).toEqual([3, 5]);
+    expect(saved.notes!.list.every(n => n.shared && !n.sharedWithHr)).toBe(true);
+  });
+
+  it("a saved copy leaves out the attached meeting's notes (shown live instead)", () => {
+    expect(forSavedCopy(withNotes(), 99).notes!.list.map(n => n.id)).toEqual([3]);
+  });
+
+  it("an older report without notes is unchanged", () => {
+    const r = base();
+    expect(forSavedCopy(r, null)).toBe(r);
+  });
+
+  it("unticked notes come out", () => {
+    const out = applyExclusions(withNotes(), { sections: [], items: [itemKey.note(1), itemKey.note(3)] });
+    expect(out.notes!.fromLastReview.map(n => n.id)).toEqual([2]);
+    expect(out.notes!.list.map(n => n.id)).toEqual([4, 5]);
+  });
+
+  it("the whole notes card can be left out", () => {
+    expect(applyExclusions(withNotes(), { sections: ["notes"], items: [] }).hiddenSections).toEqual(["notes"]);
+  });
+
+  it("a title that only repeats the kind isn't shown twice", () => {
+    expect(noteAsText(note(8, { kind: "agreement", title: "What was agreed", body: "• Pay up" }))).toBe("What was agreed (1 Nov 2026 — 1:1)\n• Pay up");
+  });
+
+  it("reads as plain text for prep notes", () => {
+    expect(noteAsText(note(7, { kind: "objective", title: "Faster wrapping", body: "Reach 120/hr " }))).toBe("Objective (1 Nov 2026 — 1:1): Faster wrapping\nReach 120/hr");
   });
 });
