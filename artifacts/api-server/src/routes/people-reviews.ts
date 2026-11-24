@@ -356,7 +356,7 @@ async function attendanceWithTriggers(userId: number, today: string): Promise<{
 }
 
 /** History lines worth showing on an entry (not every autosave). */
-const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "trigger_link", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack", "ai_draft"];
+const HISTORY_ACTIONS = ["entry_add", "reclassify", "stage", "meeting_status", "trigger_link", "write_up", "note_share", "open", "close", "extend", "escalate", "warning_withdraw", "letter_draft", "letter_file", "letter_send", "letter_email", "letter_read", "letter_ack", "ai_draft", "review_email"];
 
 router.get("/person/:userId", async (req: Request, res: Response) => {
   const viewer = viewerOf(res);

@@ -34,6 +34,8 @@ interface ReviewResponse {
     writeUpMine: number; writeUpShared: number;
   }>;
   meetings: Array<{ id: number; title: string; date: string; meetingStatus: string | null }>;
+  /** Where the "ready to read" email would go; null = no address. */
+  contact?: { email: string | null };
 }
 
 type Period = { kind: "auto" } | { kind: "since"; from: string } | { kind: "months"; months: 6 | 12 } | { kind: "custom"; from: string; to: string };
@@ -159,7 +161,7 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
 
       <SavedCopies
         userId={userId} first={first} report={r} meetings={data.meetings} saved={data.saved}
-        onChanged={refresh} onView={setViewing} ready={ready} exclusions={ex}
+        onChanged={refresh} onView={setViewing} ready={ready} exclusions={ex} personEmail={data.contact?.email ?? null}
       />
 
       <SavedViewer id={viewing} onClose={() => setViewing(null)} />
@@ -343,10 +345,11 @@ function PrepNotes({ userId, first, initial, appendRef }: {
   );
 }
 
-function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView, ready, exclusions }: {
+function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView, ready, exclusions, personEmail }: {
   userId: number; first: string; report: PerformanceReport;
   meetings: ReviewResponse["meetings"]; saved: ReviewResponse["saved"];
   onChanged: () => void; onView: (id: number) => void; ready: boolean; exclusions: Exclusions;
+  personEmail: string | null;
 }) {
   const [entryId, setEntryId] = useState<string>(meetings[0] ? String(meetings[0].id) : "");
   // Book the review meeting right here (Graeme, 24 Nov 2026: "I don't want
@@ -363,6 +366,8 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
   // Sharing a report attached to the meeting also shares my write-up of it
   // (ticked by default — the final report is the figures plus what was agreed).
   const [withWriteUp, setWithWriteUp] = useState(true);
+  // Email them it's ready to read — ticked by default for a performance review (24 Nov 2026).
+  const [withEmail, setWithEmail] = useState(true);
 
   const saveCopy = async () => {
     setBusy(true);
@@ -380,8 +385,13 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
     try {
       if (confirm.action === "delete") await peopleSend("DELETE", `/people-performance/reports/${confirm.id}`);
       else {
-        const out = await peopleSend<{ writeUpShared?: number }>("POST", `/people-performance/reports/${confirm.id}/share`, { shared: confirm.action === "share", shareWriteUp: confirm.action === "share" && withWriteUp });
-        if (out.writeUpShared) toast({ title: "Shared", description: `The report and your write-up of the meeting are now on ${first}'s record.` });
+        const out = await peopleSend<{ writeUpShared?: number; emailed?: { to: string } | null; emailError?: string | null }>("POST", `/people-performance/reports/${confirm.id}/share`, {
+          shared: confirm.action === "share", shareWriteUp: confirm.action === "share" && withWriteUp, email: confirm.action === "share" && withEmail && !!personEmail,
+        });
+        if (out.emailError) toast({ title: "Shared, but the email didn't go", description: out.emailError, variant: "destructive" });
+        if (confirm.action === "share") {
+          toast({ title: "Shared", description: `${out.writeUpShared ? `The report and your write-up of the meeting are now on ${first}'s record.` : `The report is now on ${first}'s record.`}${out.emailed ? ` Emailed ${out.emailed.to}.` : ""}` });
+        }
       }
       setConfirm(null);
       onChanged();
@@ -452,7 +462,7 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
                 {s.sharedAt
                   ? <button type="button" onClick={() => setConfirm({ id: s.id, action: "unshare" })} className="h-10 px-3 rounded-lg border border-border text-sm flex items-center gap-1 hover:bg-secondary"><EyeOff className="w-4 h-4" /> Stop sharing</button>
                   : <>
-                      <button type="button" onClick={() => { setWithWriteUp(true); setConfirm({ id: s.id, action: "share" }); }} className="h-10 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1"><Share2 className="w-4 h-4" /> Share with {first}</button>
+                      <button type="button" onClick={() => { setWithWriteUp(true); setWithEmail(true); setConfirm({ id: s.id, action: "share" }); }} className="h-10 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1"><Share2 className="w-4 h-4" /> Share with {first}</button>
                       <button type="button" onClick={() => setConfirm({ id: s.id, action: "delete" })} aria-label="Delete this copy" className="h-10 w-10 rounded-lg border border-border flex items-center justify-center text-muted-foreground hover:text-destructive hover:border-destructive"><Trash2 className="w-4 h-4" /></button>
                     </>}
               </span>
@@ -469,6 +479,12 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
                       )}
                       {s.entryId != null && s.writeUpMine === 0 && s.writeUpShared > 0 && <span className="block mt-1">The meeting's write-up is already shared and shows with the report.</span>}
                       {s.entryId != null && s.writeUpMine === 0 && s.writeUpShared === 0 && <span className="block mt-1">Nothing's written up for the meeting yet — once it is, and shared, it shows with the report.</span>}
+                      {personEmail ? (
+                        <label className="mt-1.5 flex items-start gap-2 cursor-pointer">
+                          <input type="checkbox" checked={withEmail} onChange={e => setWithEmail(e.target.checked)} className="w-4 h-4 mt-0.5 accent-[#7cb342]" />
+                          <span>Email {first} that their performance review is ready to read, with a link <span className="text-muted-foreground">({personEmail})</span>.</span>
+                        </label>
+                      ) : <span className="block mt-1 text-muted-foreground">No email address on {first}'s account, so they'll only be told in the app.</span>}
                     </>}
                     {confirm.action === "unshare" && `${first} will no longer see this report.`}
                     {confirm.action === "delete" && "Delete this saved copy? The live report is unaffected."}

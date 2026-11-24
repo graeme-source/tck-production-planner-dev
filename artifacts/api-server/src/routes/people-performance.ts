@@ -33,6 +33,7 @@ import { isFounderEmail } from "../lib/founder-email";
 import { londonDateString } from "../lib/london-time";
 import { lastAppraisalDate, loadMeetingWriteUp, loadPerformanceReport, type ReportViewer } from "../services/performance-review-data";
 import { shareMyWriteUp } from "../services/share-write-up";
+import { emailRecordPublished } from "../services/record-published-email";
 
 const router: IRouter = Router();
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD");
@@ -118,7 +119,10 @@ router.get("/person/:userId", validateQuery(periodQuery), async (req: Request, r
         .orderBy(desc(peopleRecordEntriesTable.entryDate)).limit(25),
     ]);
     await audit(viewer, userId.data, "viewed performance report", `${period.from} to ${period.to}`);
+    const [contact] = await db.select({ email: usersTable.email, isActive: usersTable.isActive }).from(usersTable).where(eq(usersTable.id, userId.data));
     res.json({
+      // Where the "it's ready to read" email would go.
+      contact: { email: contact?.isActive ? contact.email ?? null : null },
       report,
       suggestions: suggestions(report),
       prep: { body: prep[0]?.body ?? "", updatedAt: prep[0]?.updatedAt ?? null },
@@ -202,6 +206,8 @@ const shareBody = z.object({
   shared: z.boolean(),
   /** Also share my own private write-up of the attached meeting (24 Nov 2026). */
   shareWriteUp: z.boolean().optional(),
+  /** Email them that their performance review is ready to read (24 Nov 2026). */
+  email: z.boolean().optional(),
 });
 
 router.post("/reports/:id/share", validate(shareBody), async (req: Request, res: Response) => {
@@ -210,7 +216,7 @@ router.post("/reports/:id/share", validate(shareBody), async (req: Request, res:
   const viewer = viewerOf(res);
   const r = await loadSaved(id.data);
   if (!r || !(await mayOpen(viewer, r.subjectUserId))) { res.status(404).json({ error: "Not found" }); return; }
-  const { shared, shareWriteUp } = req.body as z.infer<typeof shareBody>;
+  const { shared, shareWriteUp, email } = req.body as z.infer<typeof shareBody>;
   await db.update(peoplePerformanceReportsTable)
     .set(shared ? { sharedAt: new Date(), sharedBy: viewer.actor.id } : { sharedAt: null, sharedBy: null })
     .where(eq(peoplePerformanceReportsTable.id, r.id));
@@ -221,7 +227,10 @@ router.post("/reports/:id/share", validate(shareBody), async (req: Request, res:
   const writeUpShared = shared && shareWriteUp && r.entryId != null
     ? await shareMyWriteUp({ id: viewer.actor.id, name: viewer.name }, { id: r.entryId, userId: r.subjectUserId })
     : 0;
-  res.json({ ok: true, writeUpShared });
+  const mail = shared && email
+    ? await emailRecordPublished({ id: viewer.actor.id, name: viewer.name }, r.subjectUserId, r.entryId, "performance")
+    : { emailed: null, emailError: null };
+  res.json({ ok: true, writeUpShared, ...mail });
 });
 
 router.delete("/reports/:id", async (req: Request, res: Response) => {

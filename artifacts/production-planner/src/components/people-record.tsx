@@ -810,6 +810,7 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
               <div key={e.key} id={`person-meeting-${e.meeting.id}`} className="scroll-mt-4">
                 <ReviewTimelineCard entry={e.meeting.entry} classifications={recordEntries.data?.classifications ?? []}
                   stages={recordEntries.data?.stages ?? []} viewerId={viewerId} canWrite={canManage} personName={p.name}
+                  personEmail={recordEntries.data?.person.isActive ? recordEntries.data.person.email : null}
                   onOpen={() => openEntryInPanel(e.meeting.id)} onChanged={refreshReviews} />
               </div>
             );

@@ -45,6 +45,7 @@ import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-
 import { resyncAttentionSoon } from "../lib/hr-attention";
 import { recordReaders } from "../lib/record-readers";
 import { shareMyWriteUp, shareMeetingReports, withdrawFromTimeline, notifyShared as notifyEmployee } from "../services/share-write-up";
+import { emailRecordPublished } from "../services/record-published-email";
 
 const router: IRouter = Router();
 
@@ -316,11 +317,15 @@ router.post("/entries/:id/share-write-up", onEntry, validate(ShareWriteUpBody), 
  *                      their author can change them) and the reply says so.
  * The screen asks twice before either.
  */
-const TimelineBody = z.object({ shown: z.boolean() });
+const TimelineBody = z.object({
+  shown: z.boolean(),
+  /** Also email them that it's there (24 Nov 2026) — only when publishing. */
+  email: z.boolean().optional(),
+});
 
 router.post("/entries/:id/timeline", onEntry, validate(TimelineBody), async (req: Request, res: Response) => {
   const viewer = viewerOf(res);
-  const { shown } = req.body as z.infer<typeof TimelineBody>;
+  const { shown, email } = req.body as z.infer<typeof TimelineBody>;
   try {
     const entry = await loadEntry(viewer, req.params["id"]);
     if (!entry) { res.status(404).json({ error: "No such review" }); return; }
@@ -329,7 +334,8 @@ router.post("/entries/:id/timeline", onEntry, validate(TimelineBody), async (req
       const notes = await shareMyWriteUp(me, entry);
       const reports = await shareMeetingReports(me, entry);
       if (notes === 0 && reports > 0) await notifyShared(entry.userId, viewer, "a performance report");
-      res.json({ shown: true, notes, reports });
+      const mail = email ? await emailRecordPublished(me, entry.userId, entry.id) : { emailed: null, emailError: null };
+      res.json({ shown: true, notes, reports, ...mail });
     } else {
       const out = await withdrawFromTimeline(me, entry);
       res.json({ shown: out.othersStillShared > 0, ...out });

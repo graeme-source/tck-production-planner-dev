@@ -487,3 +487,40 @@ export function timelineState(parts: readonly TimelinePart[], reports: readonly 
     empty: parts.length === 0 && reports.length === 0,
   };
 }
+
+// ── "It's on your record" email (Graeme, 24 Nov 2026) ────────────────────────
+// "For performance reviews and disciplinaries … email them, saying, 'You've
+// got a new performance review published. You can review it here and read
+// it, see your objectives and feedback.'" Optional for any meeting; ticked by
+// default for those two. The email only says something is there — never
+// what's in it — and links to My Record in the app.
+
+export type PublishedKind = "performance" | "disciplinary" | "other";
+
+export function publishedKind(labels: readonly string[], meetingType: string | null | undefined): PublishedKind {
+  if (labels.includes("Disciplinary") || meetingType === "disciplinary") return "disciplinary";
+  if (labels.includes("Performance appraisal")) return "performance";
+  return "other";
+}
+
+/** Whether the email box starts ticked. */
+export const emailByDefault = (kind: PublishedKind): boolean => kind !== "other";
+
+/** The link to the person's own record in the app. */
+export const myRecordLink = (appUrl: string): string => `${appUrl.replace(/\/+$/, "")}/hub?section=reviews&own=1`;
+
+export function recordPublishedEmail(personName: string, kind: PublishedKind, appUrl: string): { subject: string; text: string; html: string } {
+  const first = personName.trim().split(/\s+/)[0] || "there";
+  const link = myRecordLink(appUrl);
+  const { subject, line, cta } = kind === "performance"
+    ? { subject: "Your performance review is ready to read", line: "You've got a new performance review published on your record in the TCK app. You can read it there, and see your objectives and feedback.", cta: "Read my performance review" }
+    : kind === "disciplinary"
+      ? { subject: "There's something new on your record in the TCK app", line: "A record of your recent meeting has been published on your record in the TCK app. Please sign in and read it.", cta: "Open my record" }
+      : { subject: "There's something new on your record in the TCK app", line: "Something new has been shared with you on your record in the TCK app. Please sign in to read it.", cta: "Open my record" };
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return {
+    subject,
+    text: `Hi ${first},\n\n${line}\n\n${link}\n\nThe Calzone Kitchen`,
+    html: `<p>Hi ${esc(first)},</p><p>${esc(line)}</p><p><a href="${esc(link)}">${esc(cta)}</a></p><p>The Calzone Kitchen</p>`,
+  };
+}

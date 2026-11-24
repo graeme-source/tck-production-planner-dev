@@ -25,7 +25,7 @@ import {
 } from "lucide-react";
 import {
   NOTE_KIND_LABEL, MEETING_STATUS_LABEL, MEETING_TYPE_LABEL, fmtDayIso, entryHeadline, entryLevel, whatHappened, entryClassLabels, agreementBullets,
-  noteLevel, levelLabel, patchForLevel, timelineState,
+  noteLevel, levelLabel, patchForLevel, timelineState, publishedKind, emailByDefault,
   type Classification, type Stage, type ShareLevel,
 } from "@workspace/people-reviews";
 import { cn } from "@/lib/utils";
@@ -473,8 +473,10 @@ export function WriteUpSection({ entry, viewerId, canWrite, personName, onChange
 /** One review (or any record entry) on the timeline: what it's classified
  *  as, when, its status, and its write-up nested underneath. "Open" edits
  *  everything about it — classification, date, time, status, the rest. */
-export function ReviewTimelineCard({ entry, classifications, stages, viewerId, canWrite, personName, onOpen, onChanged }: {
+export function ReviewTimelineCard({ entry, classifications, stages, viewerId, canWrite, personName, personEmail = null, onOpen, onChanged }: {
   entry: RecordEntry;
+  /** Where "it's on your record" emails go; null = no address / no active account. */
+  personEmail?: string | null;
   classifications: Classification[];
   stages: Stage[];
   viewerId: number | null;
@@ -549,7 +551,8 @@ export function ReviewTimelineCard({ entry, classifications, stages, viewerId, c
 
       {/* Up top, so whether they can see it is never below the fold. */}
       {canWrite && status !== "cancelled" && (
-        <TimelineSwitch entry={entry} viewerId={viewerId} personName={personName} onChanged={onChanged} />
+        <TimelineSwitch entry={entry} viewerId={viewerId} personName={personName} personEmail={personEmail}
+          kind={publishedKind(labels, entry.meetingType)} onChanged={onChanged} />
       )}
 
       <WriteUpSection entry={entry} viewerId={viewerId} canWrite={canWrite} personName={personName} onChanged={onChanged} onAdd={onOpen} />
@@ -565,16 +568,21 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * not on their employee timeline"). Publishing shares MY write-up of it and
  * any performance report saved to it; taking it off undoes both. Asks twice.
  */
-function TimelineSwitch({ entry, viewerId, personName, onChanged }: {
+function TimelineSwitch({ entry, viewerId, personName, personEmail, kind, onChanged }: {
   entry: Pick<RecordEntry, "id" | "writeUp" | "reports">;
   viewerId: number | null;
   personName: string;
+  personEmail: string | null;
+  kind: ReturnType<typeof publishedKind>;
   onChanged: () => void;
 }) {
   const first = personName.split(" ")[0] ?? personName;
   const st = timelineState(entry.writeUp, entry.reports ?? [], viewerId);
   const [confirm, setConfirm] = useState<"publish" | "withdraw" | null>(null);
   const [busy, setBusy] = useState(false);
+  // "Email them it's there" — ticked by default for performance reviews and
+  // disciplinaries (Graeme, 24 Nov 2026), optional for any other meeting.
+  const [email, setEmail] = useState(false);
   const canPublish = st.toPublish.parts + st.toPublish.reports > 0;
   const canWithdraw = st.toWithdraw.parts + st.toWithdraw.reports > 0;
   const what = (x: { parts: number; reports: number }) => [
@@ -586,10 +594,12 @@ function TimelineSwitch({ entry, viewerId, personName, onChanged }: {
     if (!confirm) return;
     setBusy(true);
     try {
-      const r = await recordSend<{ shown: boolean; othersStillShared?: number }>("POST", `/entries/${entry.id}/timeline`, { shown: confirm === "publish" });
+      const r = await recordSend<{ shown: boolean; othersStillShared?: number; emailed?: { to: string } | null; emailError?: string | null }>(
+        "POST", `/entries/${entry.id}/timeline`, { shown: confirm === "publish", email: confirm === "publish" && email && !!personEmail });
+      if (r.emailError) toast({ title: "Published, but the email didn't go", description: r.emailError, variant: "destructive" });
       toast({
         title: confirm === "publish" ? `On ${first}'s timeline` : r.shown ? "Your parts taken off" : `Off ${first}'s timeline`,
-        description: confirm === "publish" ? `${first} has been told.` : r.othersStillShared ? `${plural(r.othersStillShared, "part")} shared by someone else ${r.othersStillShared === 1 ? "stays" : "stay"} — only they can take ${r.othersStillShared === 1 ? "it" : "them"} down.` : undefined,
+        description: confirm === "publish" ? (r.emailed ? `${first} has been told in the app and by email (${r.emailed.to}).` : `${first} has been told in the app.`) : r.othersStillShared ? `${plural(r.othersStillShared, "part")} shared by someone else ${r.othersStillShared === 1 ? "stays" : "stay"} — only they can take ${r.othersStillShared === 1 ? "it" : "them"} down.` : undefined,
       });
       setConfirm(null);
       onChanged();
@@ -613,7 +623,7 @@ function TimelineSwitch({ entry, viewerId, personName, onChanged }: {
           </span>
         </p>
         {canPublish && !confirm && (
-          <button type="button" onClick={() => setConfirm("publish")}
+          <button type="button" onClick={() => { setEmail(emailByDefault(kind) && !!personEmail); setConfirm("publish"); }}
             className="h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-1.5">
             <Eye className="w-4 h-4" /> {st.shown ? "Publish the rest…" : `Publish to ${first}'s timeline…`}
           </button>
@@ -632,6 +642,14 @@ function TimelineSwitch({ entry, viewerId, personName, onChanged }: {
               ? <>{first} will see {what(st.toPublish)} of this meeting on their own record, and gets a notification. You can take it off again.</>
               : <>{first} will no longer see {what(st.toWithdraw)} of this meeting.{st.othersShared ? ` ${plural(st.othersShared, "part")} shared by someone else ${st.othersShared === 1 ? "stays" : "stay"} — only they can take ${st.othersShared === 1 ? "it" : "them"} down.` : ""}</>}
           </p>
+          {confirm === "publish" && (personEmail ? (
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={email} onChange={e => setEmail(e.target.checked)} className="w-5 h-5 mt-0.5 accent-[#7cb342]" />
+              <span>Also email {first} to say it's there, with a link to read it <span className="text-muted-foreground">({personEmail})</span>. The email doesn't include what's written.</span>
+            </label>
+          ) : (
+            <p className="text-sm text-muted-foreground">No email address on {first}'s account, so they'll only be told in the app.</p>
+          ))}
           <div className="flex flex-wrap gap-2">
             <button type="button" onClick={() => void go()} disabled={busy}
               className="h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-bold flex items-center gap-1.5 disabled:opacity-50">
