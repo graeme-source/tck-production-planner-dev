@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft, Loader2, Lock, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, CheckCircle2, AlertTriangle, CalendarPlus,
 } from "lucide-react";
-import type { PerformanceReport, Suggestion } from "@workspace/performance-review";
+import { applyExclusions, suggestions as suggestFor, type Exclusions, type PerformanceReport, type Suggestion } from "@workspace/performance-review";
 import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -32,7 +32,7 @@ interface ReviewResponse {
   meetings: Array<{ id: number; title: string; date: string; meetingStatus: string | null }>;
 }
 
-type Period = { kind: "auto" } | { kind: "months"; months: 6 | 12 } | { kind: "custom"; from: string; to: string };
+type Period = { kind: "auto" } | { kind: "since"; from: string } | { kind: "months"; months: 6 | 12 } | { kind: "custom"; from: string; to: string };
 
 const londonToday = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/London" }).format(new Date());
 function monthsBack(iso: string, n: number): string {
@@ -64,6 +64,7 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
   const qc = useQueryClient();
   const [period, setPeriod] = useState<Period>({ kind: "auto" });
   const range = period.kind === "auto" ? null
+    : period.kind === "since" ? { from: period.from, to: londonToday() }
     : period.kind === "months" ? { from: monthsBack(londonToday(), period.months), to: londonToday() }
     : { from: period.from, to: period.to };
   const key = ["people-performance", userId, range?.from ?? "auto", range?.to ?? "auto"];
@@ -74,6 +75,19 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
     queryFn: () => peopleFetch(`/people-performance/person/${userId}${range ? `?from=${range.from}&to=${range.to}` : ""}`),
   });
   const [viewing, setViewing] = useState<number | null>(null);
+  // What's been unticked while going through it (Graeme, 24 Nov 2026) —
+  // kept per person and period in this browser, so a refresh doesn't lose it.
+  const exKey = data ? `perf-review-ex:${userId}:${data.report.period.from}:${data.report.period.to}` : null;
+  const [ex, setEx] = useState<Exclusions>({ sections: [], items: [] });
+  useEffect(() => {
+    if (!exKey) return;
+    try { const raw = localStorage.getItem(exKey); setEx(raw ? JSON.parse(raw) as Exclusions : { sections: [], items: [] }); } catch { setEx({ sections: [], items: [] }); }
+  }, [exKey]);
+  const updateEx = (next: Exclusions) => {
+    setEx(next);
+    try { if (exKey) localStorage.setItem(exKey, JSON.stringify(next)); } catch { /* private window: keep in memory */ }
+  };
+  const flip = (xs: string[], x: string) => (xs.includes(x) ? xs.filter(y => y !== x) : [...xs, x]);
 
   if (!ready || isLoading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>;
   if (error) {
@@ -86,7 +100,9 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
     );
   }
   if (!data) return null;
-  const r = data.report;
+  const original = data.report;
+  const r = applyExclusions(original, ex);
+  const leftOut = ex.sections.length + ex.items.length;
   const first = r.person.name.split(" ")[0] ?? r.person.name;
   const refresh = () => qc.invalidateQueries({ queryKey: ["people-performance", userId] });
 
@@ -107,16 +123,25 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
         <PeriodPicker period={period} onChange={setPeriod} lastReview={r.period.lastReviewDate} />
       </div>
 
-      <PerformanceReportView report={r} audience="manager" />
+      <p className="text-sm text-muted-foreground -mb-2">
+        {leftOut > 0
+          ? <><span className="font-semibold text-foreground">{leftOut} {leftOut === 1 ? "thing" : "things"} left out</span> — {leftOut === 1 ? "it won't" : "they won't"} be in the copy you save and share. <button type="button" onClick={() => updateEx({ sections: [], items: [] })} className="underline decoration-dotted underline-offset-2">Put everything back</button></>
+          : "Untick a card, or anything inside one that isn't right, to leave it out of the copy you save and share."}
+      </p>
+      <PerformanceReportView report={r} audience="manager" editing={{
+        original, ex,
+        toggleSection: sec => updateEx({ ...ex, sections: flip(ex.sections, sec) }),
+        toggleItem: k => updateEx({ ...ex, items: flip(ex.items, k) }),
+      }} />
 
       <div className="grid gap-4 xl:grid-cols-2 items-start">
-        <SuggestionsCard suggestions={data.suggestions} />
+        <SuggestionsCard suggestions={leftOut > 0 ? suggestFor(r) : data.suggestions} />
         <PrepNotes userId={userId} first={first} initial={data.prep} />
       </div>
 
       <SavedCopies
         userId={userId} first={first} report={r} meetings={data.meetings} saved={data.saved}
-        onChanged={refresh} onView={setViewing} ready={ready}
+        onChanged={refresh} onView={setViewing} ready={ready} exclusions={ex}
       />
 
       <SavedViewer id={viewing} onClose={() => setViewing(null)} />
@@ -131,8 +156,15 @@ function PeriodPicker({ period, onChange, lastReview }: { period: Period; onChan
   const chip = (active: boolean) => cn("h-11 px-4 rounded-xl text-sm font-medium border", active ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border hover:bg-secondary");
   return (
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" className={chip(period.kind === "auto")} onClick={() => onChange({ kind: "auto" })}>{lastReview ? "Since last review" : "Last 6 months"}</button>
-      <button type="button" className={chip(period.kind === "months" && period.months === 6)} onClick={() => onChange({ kind: "months", months: 6 })}>6 months</button>
+      {/* Always offered (Graeme, 24 Nov 2026): from their last performance
+          appraisal on the record to today. The page opens on it when there is one. */}
+      <button type="button" disabled={!lastReview}
+        title={lastReview ? `From ${fmtDay(lastReview)} to today` : "No performance appraisal on their record yet"}
+        className={cn(chip(period.kind === "since" || (period.kind === "auto" && !!lastReview)), "disabled:opacity-50 disabled:cursor-not-allowed")}
+        onClick={() => lastReview && onChange({ kind: "since", from: lastReview })}>
+        Since last review{lastReview ? ` · ${fmtDay(lastReview)}` : ""}
+      </button>
+      <button type="button" className={chip((period.kind === "months" && period.months === 6) || (period.kind === "auto" && !lastReview))} onClick={() => onChange({ kind: "months", months: 6 })}>6 months</button>
       <button type="button" className={chip(period.kind === "months" && period.months === 12)} onClick={() => onChange({ kind: "months", months: 12 })}>12 months</button>
       <span className="flex items-center gap-1.5">
         <input type="date" value={from} max={to} onChange={e => setFrom(e.target.value)} className="h-11 rounded-xl border border-border bg-background px-2 text-sm" aria-label="From" />
@@ -228,10 +260,10 @@ function PrepNotes({ userId, first, initial }: { userId: number; first: string; 
   );
 }
 
-function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView, ready }: {
+function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView, ready, exclusions }: {
   userId: number; first: string; report: PerformanceReport;
   meetings: ReviewResponse["meetings"]; saved: ReviewResponse["saved"];
-  onChanged: () => void; onView: (id: number) => void; ready: boolean;
+  onChanged: () => void; onView: (id: number) => void; ready: boolean; exclusions: Exclusions;
 }) {
   const [entryId, setEntryId] = useState<string>(meetings[0] ? String(meetings[0].id) : "");
   // Book the review meeting right here (Graeme, 24 Nov 2026: "I don't want
@@ -249,7 +281,7 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
   const saveCopy = async () => {
     setBusy(true);
     try {
-      await peopleSend("POST", `/people-performance/person/${userId}/reports`, { from: report.period.from, to: report.period.to, entryId: entryId ? Number(entryId) : null });
+      await peopleSend("POST", `/people-performance/person/${userId}/reports`, { from: report.period.from, to: report.period.to, entryId: entryId ? Number(entryId) : null, exclusions });
       toast({ title: "Report saved", description: entryId ? "Attached to the meeting. Share it with them when you're ready." : "Saved to their record. Share it with them when you're ready." });
       onChanged();
     } catch (e) {

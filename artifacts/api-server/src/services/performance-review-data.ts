@@ -394,6 +394,7 @@ function attendanceFrom(shifts: Array<{ date: string; typeName: string | null }>
     lates: lateDates.length,
     otherAbsence: otherAbsent.length,
     attendancePct: attendancePct(workedDates.length, absentDays),
+    absentDays,
     sickSpells: sickRuns(sickDates, workedDates),
     lateDates,
   };

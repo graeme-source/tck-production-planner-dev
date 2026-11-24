@@ -9,7 +9,7 @@ import { useState, type ReactNode } from "react";
 import {
   Lightbulb, GraduationCap, BookOpen, Gauge, CalendarCheck, FileText, Users, ChevronDown, ChevronUp, Info, ListChecks,
 } from "lucide-react";
-import type { PerformanceReport, RateStat } from "@workspace/performance-review";
+import { itemKey, type Exclusions, type PerformanceReport, type RateStat } from "@workspace/performance-review";
 import { cn } from "@/lib/utils";
 
 type CardKey = "improvements" | "training" | "lean" | "speed" | "checklists" | "attendance" | "records" | "contributions";
@@ -24,7 +24,19 @@ const STATION_NAMES: Record<string, string> = {
 };
 const stationName = (s: string) => STATION_NAMES[s] ?? s.replace(/_/g, " ").replace(/^./, c => c.toUpperCase());
 
-export function PerformanceReportView({ report, audience }: { report: PerformanceReport; audience: "manager" | "employee" }) {
+/** Unticking things while going through the report together (24 Nov 2026):
+ *  `original` is the full report, `report` the one with them left out. */
+export interface ReportEditing {
+  original: PerformanceReport;
+  ex: Exclusions;
+  toggleSection: (section: string) => void;
+  toggleItem: (key: string) => void;
+}
+
+/** Which card is which section. */
+const sectionOf = (c: { key: CardKey; id?: string }) => (c.id?.startsWith("speed-") ? `speed_${c.id.slice(6)}` : c.key);
+
+export function PerformanceReportView({ report, audience, editing }: { report: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing }) {
   const [open, setOpen] = useState<CardKey | null>(null);
   const r = report;
   const toggle = (k: CardKey) => setOpen(o => (o === k ? null : k));
@@ -109,43 +121,69 @@ export function PerformanceReportView({ report, audience }: { report: Performanc
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map(c => (
+        {cards.filter(c => editing || !(r.hiddenSections ?? []).includes(sectionOf(c))).map(c => {
+          const section = sectionOf(c);
+          const left = editing ? editing.ex.sections.includes(section) : false;
+          return (
+          <div key={c.id ?? c.key} className={cn(
+            "rounded-2xl border-2 flex flex-col transition-colors",
+            open === c.key ? "border-primary bg-primary/5" : "border-border bg-card",
+            left && "opacity-50",
+          )}>
           <button
-            key={c.id ?? c.key}
             type="button"
             onClick={() => toggle(c.key)}
             aria-expanded={open === c.key}
-            className={cn(
-              "text-left rounded-2xl border-2 p-4 min-h-[8.5rem] flex flex-col gap-1 transition-colors",
-              open === c.key ? "border-primary bg-primary/5" : "border-border bg-card hover:bg-secondary/40",
-            )}
+            className="text-left rounded-2xl p-4 min-h-[8.5rem] flex flex-col gap-1 hover:bg-secondary/40 flex-1"
           >
             <span className="flex items-center justify-between gap-2 text-sm font-semibold text-muted-foreground">
               <span className="flex items-center gap-1.5"><c.icon className="w-4 h-4" /> {c.title}</span>
               {open === c.key ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             </span>
-            <span className={cn("text-3xl font-display font-bold tabular-nums",
+            <span className={cn("text-3xl font-display font-bold tabular-nums", left && "line-through",
               c.tone === "good" && "text-emerald-700 dark:text-emerald-400", c.tone === "warn" && "text-amber-700 dark:text-amber-400")}>{c.big}</span>
             <span className="text-sm text-muted-foreground leading-snug">{c.sub}</span>
           </button>
-        ))}
+          {editing && (
+            <label className="flex items-center gap-2 px-4 pb-3 -mt-1 text-xs font-medium text-muted-foreground cursor-pointer min-h-8">
+              <input type="checkbox" checked={!left} onChange={() => editing.toggleSection(section)} className="w-4 h-4 accent-[#7cb342]" />
+              {left ? "Left out of the report" : "In the report"}
+            </label>
+          )}
+          </div>
+          );
+        })}
       </div>
 
       {open && (
         <section className="rounded-2xl border-2 border-primary/30 bg-card p-4 sm:p-5">
           {open === "improvements" && <ImprovementsDetail r={r} />}
-          {open === "training" && <TrainingDetail r={r} />}
-          {open === "lean" && <LeanDetail r={r} />}
+          {open === "training" && <TrainingDetail r={r} editing={editing} />}
+          {open === "lean" && <LeanDetail r={r} editing={editing} />}
           {open === "speed" && <SpeedDetail r={r} />}
-          {open === "checklists" && <ChecklistsDetail r={r} />}
-          {open === "attendance" && <AttendanceDetail r={r} />}
-          {open === "records" && <RecordsDetail r={r} audience={audience} />}
+          {open === "checklists" && <ChecklistsDetail r={r} editing={editing} />}
+          {open === "attendance" && <AttendanceDetail r={r} editing={editing} />}
+          {open === "records" && <RecordsDetail r={r} audience={audience} editing={editing} />}
           {open === "contributions" && <ContributionsDetail r={r} />}
         </section>
       )}
     </div>
   );
 }
+
+/** The tick beside an item that can be left out (manager, live report only). */
+function ItemTick({ editing, k }: { editing?: ReportEditing; k: string }) {
+  if (!editing) return null;
+  const left = editing.ex.items.includes(k);
+  return (
+    <label className="shrink-0 flex items-center gap-1 text-xs text-muted-foreground cursor-pointer" title={left ? "Left out — tick to put it back" : "Untick to leave it out of the report"}>
+      <input type="checkbox" checked={!left} onChange={() => editing.toggleItem(k)} className="w-4 h-4 accent-[#7cb342]" />
+      <span className="sr-only">{left ? "Left out" : "In the report"}</span>
+    </label>
+  );
+}
+const isLeft = (editing: ReportEditing | undefined, k: string) => !!editing?.ex.items.includes(k);
+const leftClass = (on: boolean) => (on ? "line-through opacity-50" : "");
 
 function H({ children }: { children: ReactNode }) {
   return <h3 className="text-lg font-display font-bold mb-3">{children}</h3>;
@@ -209,7 +247,7 @@ function ImprovementsDetail({ r }: { r: PerformanceReport }) {
   );
 }
 
-function TrainingDetail({ r }: { r: PerformanceReport }) {
+function TrainingDetail({ r, editing }: { r: PerformanceReport; editing?: ReportEditing }) {
   return (
     <div className="space-y-4">
       <H>Training</H>
@@ -221,10 +259,13 @@ function TrainingDetail({ r }: { r: PerformanceReport }) {
                 <span>{stationName(s.station)}{!s.worksThere && <span className="ml-2 text-xs font-normal text-muted-foreground">not on their rota this period</span>}</span>
                 <span className={cn("tabular-nums text-sm", s.trained === s.sopCount ? "text-emerald-700 dark:text-emerald-400" : "text-amber-700 dark:text-amber-400")}>{s.trained}/{s.sopCount} trained</span>
               </p>
-              {s.missing.length > 0 && (
+              {(() => {
+                const list = editing?.original.training.stations.find(o => o.station === s.station)?.missing ?? s.missing;
+                return list.length > 0 && (
                 <ul className="mt-2 space-y-1 text-sm">
-                  {s.missing.map(m => (
-                    <li key={m.sopId} className="flex items-center gap-2">
+                  {list.map(m => (
+                    <li key={m.sopId} className={cn("flex items-center gap-2", leftClass(isLeft(editing, itemKey.sop(s.station, m.sopId))))}>
+                      <ItemTick editing={editing} k={itemKey.sop(s.station, m.sopId)} />
                       <span className={cn("text-xs font-semibold rounded-full px-2 py-0.5 shrink-0", m.status === "untrained" ? "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200" : "bg-sky-100 text-sky-900 dark:bg-sky-950/50 dark:text-sky-200")}>
                         {m.status === "untrained" ? "Not trained" : "Refresher"}
                       </span>
@@ -232,7 +273,8 @@ function TrainingDetail({ r }: { r: PerformanceReport }) {
                     </li>
                   ))}
                 </ul>
-              )}
+                );
+              })()}
             </div>
           ))}
         </div>
@@ -250,13 +292,15 @@ function TrainingDetail({ r }: { r: PerformanceReport }) {
           </ul>
         </div>
       )}
+      {editing && <Note>Untick an SOP that shows as not trained when they are — it then counts as trained in the report.</Note>}
       <Note>Station SOPs come from the stations Planday put them on in this period. "Refresher" means the SOP changed since they last confirmed it.</Note>
     </div>
   );
 }
 
-function LeanDetail({ r }: { r: PerformanceReport }) {
-  const weeks = [...r.lean.completed.map(w => ({ ...w, done: true })), ...r.lean.missed.map(w => ({ ...w, quiz: null as string | null, done: false }))]
+function LeanDetail({ r, editing }: { r: PerformanceReport; editing?: ReportEditing }) {
+  const missedList = editing ? editing.original.lean.missed : r.lean.missed;
+  const weeks = [...r.lean.completed.map(w => ({ ...w, done: true })), ...missedList.map(w => ({ ...w, quiz: null as string | null, done: false }))]
     .sort((a, b) => b.weekStart.localeCompare(a.weekStart));
   return (
     <div>
@@ -264,7 +308,8 @@ function LeanDetail({ r }: { r: PerformanceReport }) {
       {weeks.length === 0 ? <Empty>No weekly lessons were set for them in this period.</Empty> : (
         <ul className="divide-y divide-border rounded-xl border border-border">
           {weeks.map(w => (
-            <li key={w.weekStart} className="px-3 py-2 flex items-center gap-3 text-sm">
+            <li key={w.weekStart} className={cn("px-3 py-2 flex items-center gap-3 text-sm", !w.done && leftClass(isLeft(editing, itemKey.leanWeek(w.weekStart))))}>
+              {!w.done ? <ItemTick editing={editing} k={itemKey.leanWeek(w.weekStart)} /> : editing ? <span className="w-4 shrink-0" /> : null}
               <span className="text-muted-foreground tabular-nums w-28 shrink-0">w/c {fmtShort(w.weekStart)}</span>
               <span className="flex-1 min-w-0">{w.title ?? "Weekly lesson"}</span>
               <span className={cn("text-xs font-semibold rounded-full px-2 py-0.5 shrink-0", w.done ? "bg-emerald-100 text-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-200" : "bg-amber-100 text-amber-900 dark:bg-amber-950/50 dark:text-amber-200")}>
@@ -327,7 +372,7 @@ function SpeedDetail({ r }: { r: PerformanceReport }) {
   );
 }
 
-function ChecklistsDetail({ r }: { r: PerformanceReport }) {
+function ChecklistsDetail({ r, editing }: { r: PerformanceReport; editing?: ReportEditing }) {
   const c = r.checklists;
   if (!c?.known) return <div><H>Checklists</H><Empty>No days rostered on a station with a checklist in this period (or they aren't linked to Planday), so there's nothing to check against.</Empty></div>;
   return (
@@ -350,10 +395,11 @@ function ChecklistsDetail({ r }: { r: PerformanceReport }) {
           ))}
         </div>
       )}
-      {c.missedList.length === 0 ? <Empty>Every checklist item was ticked or marked can't-do on the days they were on the station.</Empty> : (
+      {(editing?.original.checklists?.missedList ?? c.missedList).length === 0 ? <Empty>Every checklist item was ticked or marked can't-do on the days they were on the station.</Empty> : (
         <ul className="divide-y divide-border rounded-xl border border-border max-h-80 overflow-y-auto">
-          {c.missedList.map((m, i) => (
-            <li key={`${m.date}-${m.station}-${i}`} className="px-3 py-2 text-sm flex gap-3">
+          {(editing?.original.checklists?.missedList ?? c.missedList).map((m, i) => (
+            <li key={`${m.date}-${m.station}-${i}`} className={cn("px-3 py-2 text-sm flex items-center gap-3", leftClass(isLeft(editing, itemKey.checklist(m))))}>
+              <ItemTick editing={editing} k={itemKey.checklist(m)} />
               <span className="text-muted-foreground tabular-nums w-20 shrink-0">{fmtShort(m.date)}</span>
               <span className="w-24 shrink-0 text-muted-foreground">{stationName(m.station)}</span>
               <span className="flex-1">{m.title} <span className="text-xs text-muted-foreground">({m.category})</span></span>
@@ -368,8 +414,9 @@ function ChecklistsDetail({ r }: { r: PerformanceReport }) {
   );
 }
 
-function AttendanceDetail({ r }: { r: PerformanceReport }) {
+function AttendanceDetail({ r, editing }: { r: PerformanceReport; editing?: ReportEditing }) {
   const a = r.attendance;
+  const o = editing?.original.attendance ?? a;
   if (!a.known) return <div><H>Attendance</H><Empty>They aren't linked to Planday, so there's no attendance record to show.</Empty></div>;
   return (
     <div>
@@ -385,17 +432,23 @@ function AttendanceDetail({ r }: { r: PerformanceReport }) {
       <div className="grid gap-3 sm:grid-cols-2 text-sm">
         <div>
           <p className="font-semibold mb-1">Sickness</p>
-          {a.sickSpells.length === 0 ? <Empty>No sickness recorded in Planday this period.</Empty> : (
-            <ul className="space-y-1">{a.sickSpells.map(s => <li key={s.start}>{fmtShort(s.start)}{s.end !== s.start ? ` – ${fmtShort(s.end)}` : ""} · {pl(s.days, "day")}</li>)}</ul>
+          {o.sickSpells.length === 0 ? <Empty>No sickness recorded in Planday this period.</Empty> : (
+            <ul className="space-y-1">{o.sickSpells.map(s => (
+              <li key={s.start} className={cn("flex items-center gap-2", leftClass(isLeft(editing, itemKey.sick(s.start))))}>
+                <ItemTick editing={editing} k={itemKey.sick(s.start)} />
+                <span>{fmtShort(s.start)}{s.end !== s.start ? ` – ${fmtShort(s.end)}` : ""} · {pl(s.days, "day")}</span>
+              </li>
+            ))}</ul>
           )}
         </div>
         <div>
           <p className="font-semibold mb-1">Lates</p>
-          {a.lateDates.length === 0 ? <Empty>No lates recorded in Planday this period.</Empty>
-            : a.lateDetails && a.lateDetails.length > 0 ? (
+          {o.lateDates.length === 0 ? <Empty>No lates recorded in Planday this period.</Empty>
+            : o.lateDetails && o.lateDetails.length > 0 ? (
               <ul className="space-y-1">
-                {a.lateDetails.map(l => (
-                  <li key={l.date} className="flex flex-wrap items-baseline gap-x-2">
+                {o.lateDetails.map(l => (
+                  <li key={l.date} className={cn("flex flex-wrap items-center gap-x-2", leftClass(isLeft(editing, itemKey.late(l.date))))}>
+                    <ItemTick editing={editing} k={itemKey.late(l.date)} />
                     <span className="tabular-nums w-16">{fmtShort(l.date)}</span>
                     {l.minutesLate != null
                       ? <span className="font-semibold">{l.minutesLate === 0 ? "on time by the clock" : `${l.minutesLate} min late`}</span>
@@ -404,7 +457,13 @@ function AttendanceDetail({ r }: { r: PerformanceReport }) {
                   </li>
                 ))}
               </ul>
-            ) : <p>{a.lateDates.map(fmtShort).join(", ")}</p>}
+            ) : (
+              <ul className="space-y-1">{o.lateDates.map(d => (
+                <li key={d} className={cn("flex items-center gap-2", leftClass(isLeft(editing, itemKey.late(d))))}>
+                  <ItemTick editing={editing} k={itemKey.late(d)} /><span>{fmtShort(d)}</span>
+                </li>
+              ))}</ul>
+            )}
         </div>
       </div>
       <Note>Attendance % = shifts worked ÷ (shifts worked + absence shifts). Holiday doesn't count against it. {a.otherAbsence > 0 && `${pl(a.otherAbsence, "other absence day")} (not sickness) recorded.`}</Note>
@@ -412,12 +471,13 @@ function AttendanceDetail({ r }: { r: PerformanceReport }) {
   );
 }
 
-function RecordsDetail({ r, audience }: { r: PerformanceReport; audience: "manager" | "employee" }) {
-  const rec = r.records;
+function RecordsDetail({ r, audience, editing }: { r: PerformanceReport; audience: "manager" | "employee"; editing?: ReportEditing }) {
+  const rec = editing?.original.records ?? r.records;
   const list = (items: typeof rec.praise, none: string) => items.length === 0 ? <Empty>{none}</Empty> : (
     <ul className="divide-y divide-border rounded-xl border border-border">
       {items.map(i => (
-        <li key={i.entryId} className="px-3 py-2 text-sm flex gap-3">
+        <li key={i.entryId} className={cn("px-3 py-2 text-sm flex items-center gap-3", leftClass(isLeft(editing, itemKey.record(i.entryId))))}>
+          <ItemTick editing={editing} k={itemKey.record(i.entryId)} />
           <span className="text-muted-foreground tabular-nums w-24 shrink-0">{fmtShort(i.date)}</span>
           <span className="flex-1">{i.title}{i.detail && <span className="text-muted-foreground"> · {i.detail}</span>}</span>
         </li>

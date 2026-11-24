@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
+import { applyExclusions, itemKey, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
 
 function base(): PerformanceReport {
   return {
@@ -140,5 +140,34 @@ describe("minutesLate", () => {
   });
   it("is unknown without a rostered start", () => {
     expect(minutesLate({ startDateTime: "2026-11-02T07:04:00", shiftStartDateTime: null })).toEqual({ minutes: null, clockedIn: "07:04", rostered: null });
+  });
+});
+
+describe("applyExclusions", () => {
+  it("takes unticked items out and redoes the figures", () => {
+    const r = base();
+    r.checklists = { known: true, stationDays: 10, missed: 2, missedDays: 2, ticked: 0, cantDo: 0,
+      byStation: [{ station: "prep", days: 10, missed: 2 }],
+      missedList: [{ date: "2026-11-03", station: "prep", title: "A", category: "opening" }, { date: "2026-11-02", station: "prep", title: "B", category: "opening" }] };
+    r.attendance = { ...r.attendance, known: true, shiftsWorked: 18, sickDays: 2, sickInstances: 1, absentDays: 2, attendancePct: 90, lates: 2,
+      lateDates: ["2026-11-04", "2026-11-05"], sickSpells: [{ start: "2026-11-10", end: "2026-11-11", days: 2 }] };
+    r.lean = { weeksAssigned: 4, weeksCompleted: 2, completed: [], missed: [{ weekStart: "2026-11-02", title: null }, { weekStart: "2026-11-09", title: null }], selfPaced: 0 };
+    r.training.stations = [{ station: "prep", worksThere: true, sopCount: 3, trained: 1, refresher: 1, untrained: 1, missing: [{ sopId: 7, title: "X", status: "untrained" }, { sopId: 8, title: "Y", status: "refresher" }] }];
+    r.records.praise = [{ entryId: 5, date: "2026-11-01", title: "Thanks", detail: null }];
+    const out = applyExclusions(r, { sections: ["contributions"], items: [
+      itemKey.checklist(r.checklists.missedList[0]!), itemKey.late("2026-11-04"), itemKey.sick("2026-11-10"),
+      itemKey.leanWeek("2026-11-02"), itemKey.sop("prep", 7), itemKey.record(5),
+    ] });
+    expect([out.checklists!.missed, out.checklists!.byStation[0]!.missed]).toEqual([1, 1]);
+    expect([out.attendance.lates, out.attendance.sickInstances, out.attendance.sickDays, out.attendance.attendancePct]).toEqual([1, 0, 0, 100]);
+    expect([out.lean.weeksAssigned, out.lean.missed.length]).toEqual([3, 1]);
+    expect([out.training.stations[0]!.trained, out.training.stations[0]!.untrained, out.training.stations[0]!.missing.length]).toEqual([2, 0, 1]);
+    expect(out.records.praise).toEqual([]);
+    expect(out.hiddenSections).toEqual(["contributions"]);
+    expect(r.attendance.lates).toBe(2); // the original is untouched
+  });
+  it("is the same report when nothing is unticked", () => {
+    const r = base();
+    expect(applyExclusions(r, { sections: [], items: [] })).toBe(r);
   });
 });

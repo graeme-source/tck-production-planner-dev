@@ -48,6 +48,8 @@ export interface RateStat {
 
 export interface PerformanceReport {
   version: number;
+  /** Sections left out of a saved copy (the screen hides them). */
+  hiddenSections?: string[];
   person: { userId: number; name: string; jobTitle: string | null; plandayLinked: boolean };
   period: { from: string; to: string; lastReviewDate: string | null };
   generatedAt: string;
@@ -135,6 +137,8 @@ export interface PerformanceReport {
     lates: number;
     otherAbsence: number;
     attendancePct: number | null;
+    /** Absence days behind attendancePct (so taking a spell out can recompute it). */
+    absentDays?: number;
     sickSpells: Array<{ start: string; end: string; days: number }>;
     lateDates: string[];
     /** How late, per late day, from Planday's punch clock: clocked in vs the
@@ -160,6 +164,13 @@ export interface PerformanceReport {
 }
 
 export interface RecordItem { entryId: number; date: string; title: string; detail: string | null }
+
+/** Sections that can be left out of a shared report as a whole. */
+export const REPORT_SECTIONS = ["improvements", "training", "lean", "speed_building", "speed_wrapping", "speed_packing", "checklists", "attendance", "records", "contributions"] as const;
+export type ReportSection = (typeof REPORT_SECTIONS)[number];
+
+/** What's been unticked: whole sections, and single items by key (itemKey). */
+export interface Exclusions { sections: string[]; items: string[] }
 
 export interface Suggestion {
   tone: "strength" | "focus";
@@ -439,4 +450,86 @@ export function minutesLate(punch: { startDateTime?: string | null; shiftStartDa
   if (!inAt || !due) return { minutes: null, clockedIn: inAt?.hhmm ?? null, rostered: due?.hhmm ?? null };
   const dayGap = inAt.date === due.date ? 0 : (Date.parse(`${inAt.date}T00:00:00Z`) - Date.parse(`${due.date}T00:00:00Z`)) / 60000;
   return { minutes: Math.max(0, Math.round(dayGap + inAt.minutes - due.minutes)), clockedIn: inAt.hhmm, rostered: due.hhmm };
+}
+
+// ── Leaving things out (Graeme, 24 Nov 2026) ────────────────────────────
+// "The option to not include certain items that I feel were inaccurate …
+// untick them from inclusion whilst I'm going through it with them."
+
+/** The key a single item is unticked by. */
+export const itemKey = {
+  checklist: (m: { date: string; station: string; title: string }) => `cl:${m.date}|${m.station}|${m.title}`,
+  late: (date: string) => `late:${date}`,
+  sick: (start: string) => `sick:${start}`,
+  leanWeek: (weekStart: string) => `lean:${weekStart}`,
+  sop: (station: string, sopId: number) => `sop:${station}:${sopId}`,
+  record: (entryId: number) => `rec:${entryId}`,
+};
+
+/**
+ * The report with what's been unticked taken out and the figures redone:
+ * a checklist miss, a late or a sickness spell comes off the counts; a
+ * missed Lean week comes off the weeks set; an SOP shown as untrained counts
+ * as trained (it's unticked because they are); a record entry is dropped.
+ * Whole sections are listed in hiddenSections. Pure — the screen shows it
+ * live and the server applies the same thing to the saved copy.
+ */
+export function applyExclusions(report: PerformanceReport, ex: Exclusions | null | undefined): PerformanceReport {
+  if (!ex || (ex.sections.length === 0 && ex.items.length === 0)) return report;
+  const out: PerformanceReport = JSON.parse(JSON.stringify(report));
+  const drop = new Set(ex.items);
+  out.hiddenSections = [...new Set([...(report.hiddenSections ?? []), ...ex.sections.filter(x => (REPORT_SECTIONS as readonly string[]).includes(x))])];
+
+  // Checklists
+  if (out.checklists) {
+    const c = out.checklists;
+    const kept = c.missedList.filter(m => !drop.has(itemKey.checklist(m)));
+    if (kept.length !== c.missedList.length) {
+      c.missedList = kept;
+      c.missed = kept.length;
+      c.missedDays = new Set(kept.map(m => m.date)).size;
+      for (const b of c.byStation) b.missed = kept.filter(m => m.station === b.station).length;
+    }
+  }
+
+  // Attendance: lates and sickness spells
+  const a = out.attendance;
+  if (a.lateDates.some(d => drop.has(itemKey.late(d)))) {
+    a.lateDates = a.lateDates.filter(d => !drop.has(itemKey.late(d)));
+    if (a.lateDetails) a.lateDetails = a.lateDetails.filter(l => !drop.has(itemKey.late(l.date)));
+    a.lates = a.lateDates.length;
+  }
+  const goneSpells = a.sickSpells.filter(sp => drop.has(itemKey.sick(sp.start)));
+  if (goneSpells.length > 0) {
+    a.sickSpells = a.sickSpells.filter(sp => !drop.has(itemKey.sick(sp.start)));
+    const goneDays = goneSpells.reduce((n, sp) => n + sp.days, 0);
+    a.sickDays = Math.max(0, a.sickDays - goneDays);
+    a.sickInstances = Math.max(0, a.sickInstances - goneSpells.length);
+    if (a.absentDays != null) {
+      a.absentDays = Math.max(0, a.absentDays - goneDays);
+      a.attendancePct = attendancePct(a.shiftsWorked, a.absentDays);
+    }
+  }
+
+  // Lean: a missed week taken out isn't counted as set
+  const goneWeeks = out.lean.missed.filter(w => drop.has(itemKey.leanWeek(w.weekStart)));
+  if (goneWeeks.length > 0) {
+    out.lean.missed = out.lean.missed.filter(w => !drop.has(itemKey.leanWeek(w.weekStart)));
+    out.lean.weeksAssigned = Math.max(out.lean.weeksCompleted, out.lean.weeksAssigned - goneWeeks.length);
+  }
+
+  // Training: an SOP unticked as "not trained" counts as trained
+  for (const st of out.training.stations) {
+    const gone = st.missing.filter(m => drop.has(itemKey.sop(st.station, m.sopId)));
+    if (gone.length === 0) continue;
+    st.missing = st.missing.filter(m => !drop.has(itemKey.sop(st.station, m.sopId)));
+    for (const g of gone) { st[g.status] = Math.max(0, st[g.status] - 1); st.trained++; }
+  }
+
+  // Records
+  const keep = (xs: RecordItem[]) => xs.filter(i => !drop.has(itemKey.record(i.entryId)));
+  out.records.disciplinary = keep(out.records.disciplinary);
+  out.records.attendanceOrTimekeeping = keep(out.records.attendanceOrTimekeeping);
+  out.records.praise = keep(out.records.praise);
+  return out;
 }

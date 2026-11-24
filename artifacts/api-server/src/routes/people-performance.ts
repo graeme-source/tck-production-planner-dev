@@ -24,7 +24,7 @@ import {
   db, usersTable, peopleRecordAuditTable, peopleRecordEntriesTable,
   peoplePerformancePrepTable, peoplePerformanceReportsTable,
 } from "@workspace/db";
-import { defaultPeriod, suggestions, type PerformanceReport } from "@workspace/performance-review";
+import { applyExclusions, defaultPeriod, suggestions, type PerformanceReport } from "@workspace/performance-review";
 import { validate, validateQuery } from "../middleware/validate";
 import { loadRecordActor, loadRecordSubject } from "../middleware/employment-record-write";
 import { canWriteEmploymentRecord, type RecordActor } from "../lib/people-write-access";
@@ -135,7 +135,11 @@ router.put("/person/:userId/prep", validate(prepBody), async (req: Request, res:
   res.json({ updatedAt: now.toISOString() });
 });
 
-const saveBody = z.object({ from: isoDate, to: isoDate, entryId: z.number().int().positive().nullable() });
+const saveBody = z.object({
+  from: isoDate, to: isoDate, entryId: z.number().int().positive().nullable(),
+  /** What was unticked on screen — left out of the saved copy (24 Nov 2026). */
+  exclusions: z.object({ sections: z.array(z.string().max(40)).max(20), items: z.array(z.string().max(300)).max(1000) }).optional(),
+});
 
 router.post("/person/:userId/reports", validate(saveBody), async (req: Request, res: Response) => {
   const userId = Id.safeParse(req.params.userId);
@@ -149,12 +153,14 @@ router.post("/person/:userId/reports", validate(saveBody), async (req: Request, 
   }
   try {
     // Rebuilt here, not taken from the screen: the saved copy is what the data said.
-    const report = await loadPerformanceReport(userId.data, b.from <= b.to ? b.from : b.to, b.from <= b.to ? b.to : b.from);
+    const built = await loadPerformanceReport(userId.data, b.from <= b.to ? b.from : b.to, b.from <= b.to ? b.to : b.from);
+    const report = applyExclusions(built, b.exclusions);
     const [row] = await db.insert(peoplePerformanceReportsTable).values({
       subjectUserId: userId.data, entryId: b.entryId, periodFrom: report.period.from, periodTo: report.period.to,
       data: report, createdBy: viewer.actor.id, createdByName: viewer.name,
     }).returning({ id: peoplePerformanceReportsTable.id });
-    await audit(viewer, userId.data, "saved performance report", `#${row!.id} ${report.period.from} to ${report.period.to}${b.entryId ? ` on entry ${b.entryId}` : ""}`);
+    const left = b.exclusions ? b.exclusions.sections.length + b.exclusions.items.length : 0;
+    await audit(viewer, userId.data, "saved performance report", `#${row!.id} ${report.period.from} to ${report.period.to}${b.entryId ? ` on entry ${b.entryId}` : ""}${left ? `; ${left} item(s) left out` : ""}`);
     res.status(201).json({ id: row!.id });
   } catch (err) {
     console.error("[people-performance] save failed:", err);
