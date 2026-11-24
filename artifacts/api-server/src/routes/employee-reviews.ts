@@ -16,9 +16,9 @@
  * record of what was said, not a conversation: nothing here writes.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, isNull } from "drizzle-orm";
 import {
-  db, usersTable, peopleRecordEntriesTable, peopleReviewNotesTable, visibleNotes,
+  db, usersTable, peopleRecordEntriesTable, peopleReviewNotesTable, visibleNotes, peoplePerformanceReportsTable,
 } from "@workspace/db";
 import { ownRecordView, type MeetingStatus } from "@workspace/people-reviews";
 import { hasPeopleAccess } from "../lib/people-access";
@@ -60,6 +60,25 @@ router.get("/me", async (req: Request, res: Response) => {
     console.error("[EmployeeReviews] my record error:", err);
     res.status(500).json({ error: "Failed to load your record" });
   }
+});
+
+/**
+ * Your performance reports — the data report from a performance review,
+ * once a manager has shared it with you (routes/people-performance.ts).
+ * Only shared copies, only your own; the manager's prep notes and the
+ * suggestions are never part of it.
+ */
+router.get("/performance-reports", async (req: Request, res: Response) => {
+  const id = req.session.userId;
+  if (!id) { res.status(401).json({ error: "Not authenticated" }); return; }
+  const rows = await db.select({
+    id: peoplePerformanceReportsTable.id, sharedAt: peoplePerformanceReportsTable.sharedAt,
+    from: peoplePerformanceReportsTable.periodFrom, to: peoplePerformanceReportsTable.periodTo,
+    data: peoplePerformanceReportsTable.data,
+  }).from(peoplePerformanceReportsTable)
+    .where(and(eq(peoplePerformanceReportsTable.subjectUserId, id), isNotNull(peoplePerformanceReportsTable.sharedAt)))
+    .orderBy(desc(peoplePerformanceReportsTable.sharedAt));
+  res.json({ reports: rows.map(r => ({ id: r.id, sharedAt: r.sharedAt, from: r.from, to: r.to, report: r.data })) });
 });
 
 export default router;

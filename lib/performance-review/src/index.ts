@@ -1,0 +1,384 @@
+/**
+ * Performance pay review report — its shape and the analysis rules (Graeme,
+ * 24 Nov 2026: "an automatic report that I can load up for any given person
+ * at any given time" for the six-monthly performance pay reviews). Shared by
+ * the server (which builds it) and the People page (which shows it), and
+ * frozen as JSON when attached to a meeting. Pure.
+ *
+ * Rules that matter:
+ *  - Only what the system actually records is reported. Where nothing is
+ *    recorded, the report says "nothing recorded" — never "none" — because
+ *    verbal conversations aren't in the system (Graeme: a report that "clearly
+ *    said no disciplinarys" can be used against us later).
+ *  - A figure is per person only where the data names the person (signed in
+ *    at the station). Shared-crew totals are never passed off as one person's.
+ */
+
+export const REPORT_VERSION = 1;
+
+/** Active minutes a day needs before it gives a rate. */
+export const MIN_RATE_MINUTES = 30;
+
+/** One rate (building batches/hr, wrapping packs/hr, packing orders/hr). */
+export interface RateStat {
+  unit: string;
+  /** Days with enough work to give a rate. */
+  days: number;
+  /** Their whole-period rate: total work ÷ total active time. */
+  overall: number | null;
+  /** Typical day, and their usual slow and fast day — the 10th and 90th
+   *  percentile once there are 5+ days (one odd day, e.g. a batch logged
+   *  in one go, doesn't set the range), else the plain lowest and highest. */
+  median: number | null;
+  min: number | null;
+  max: number | null;
+  total: number;
+  activeMinutes: number;
+  /** Everyone else on the same work over the same period. */
+  teamOverall: number | null;
+  standard: number | null;
+  stretch: number | null;
+  perDay: Array<{ date: string; amount: number; minutes: number; rate: number | null }>;
+  /** How it's measured, in a sentence (and any caveat). */
+  how: string;
+}
+
+export interface PerformanceReport {
+  version: number;
+  person: { userId: number; name: string; jobTitle: string | null; plandayLinked: boolean };
+  period: { from: string; to: string; lastReviewDate: string | null };
+  generatedAt: string;
+
+  improvements: {
+    completed: number;
+    credits: number;
+    /** Average completed improvements per active team member, same period. */
+    teamAverage: number | null;
+    shiftsKnown: boolean;
+    monthly: Array<{ month: string; completed: number; credits: number; shifts: number | null; scorePct: number | null }>;
+    list: Array<{ id: number; title: string; date: string; credits: number }>;
+  };
+
+  training: {
+    stations: Array<{
+      station: string;
+      worksThere: boolean;
+      sopCount: number;
+      trained: number;
+      refresher: number;
+      untrained: number;
+      missing: Array<{ sopId: number; title: string; status: "refresher" | "untrained" }>;
+    }>;
+    matrices: Array<{ matrixId: number; name: string; items: number; trained: number; missing: string[] }>;
+  };
+
+  lean: {
+    weeksAssigned: number;
+    weeksCompleted: number;
+    completed: Array<{ weekStart: string; title: string | null; quiz: string | null }>;
+    missed: Array<{ weekStart: string; title: string | null }>;
+    selfPaced: number;
+  };
+
+  speed: { building: RateStat | null; wrapping: RateStat | null; packing: RateStat | null };
+
+  /**
+   * Checklists at the stations they were rostered on (Graeme, 24 Nov 2026):
+   * an item left unticked — rather than ticked, or marked "can't do" with a
+   * reason, which is the instruction — counts against everyone on that
+   * station that day. Optional only so older saved reports still open.
+   */
+  checklists?: {
+    known: boolean;
+    /** (day, station) pairs they were rostered on a station with a checklist. */
+    stationDays: number;
+    /** Items left unticked on those days, and on how many days. */
+    missed: number;
+    missedDays: number;
+    /** What they did themselves: ticked, and marked can't-do with a reason. */
+    ticked: number;
+    cantDo: number;
+    byStation: Array<{ station: string; days: number; missed: number }>;
+    missedList: Array<{ date: string; station: string; title: string; category: string }>;
+  };
+
+  attendance: {
+    known: boolean;
+    shiftsWorked: number;
+    sickDays: number;
+    sickInstances: number;
+    lates: number;
+    otherAbsence: number;
+    attendancePct: number | null;
+    sickSpells: Array<{ start: string; end: string; days: number }>;
+    lateDates: string[];
+  };
+
+  records: {
+    /** Disciplinary entries on the record in the period (stage when set). */
+    disciplinary: RecordItem[];
+    attendanceOrTimekeeping: RecordItem[];
+    praise: RecordItem[];
+    returnToWorkForms: number;
+  };
+
+  contributions: {
+    factoryReports: number;
+    appReports: number;
+    sopsWritten: number;
+    todos: { assigned: number; done: number; onTime: number; late: number; open: number };
+  };
+}
+
+export interface RecordItem { entryId: number; date: string; title: string; detail: string | null }
+
+export interface Suggestion {
+  tone: "strength" | "focus";
+  area: "improvements" | "training" | "lean" | "speed" | "checklists" | "attendance" | "records" | "contributions";
+  headline: string;
+  detail: string;
+}
+
+// ── Small maths ─────────────────────────────────────────────────────────
+
+const round1 = (n: number) => Math.round(n * 10) / 10;
+
+/** Median of some numbers; null when there are none. */
+export function median(xs: readonly number[]): number | null {
+  if (xs.length === 0) return null;
+  const s = [...xs].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m]! : (s[m - 1]! + s[m]!) / 2;
+}
+
+/** Linear-interpolated percentile (0–1) of some numbers. */
+export function percentile(xs: readonly number[], p: number): number {
+  const s = [...xs].sort((a, b) => a - b);
+  if (s.length === 1) return s[0]!;
+  const i = (s.length - 1) * p;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return s[lo]! + (s[hi]! - s[lo]!) * (i - lo);
+}
+
+/** A person's days of work → their rate summary. A day needs half an hour
+ *  of active time to set a rate — a few minutes of taps isn't a pace, and
+ *  gave silly highs and lows. */
+export function rateStat(args: {
+  unit: string;
+  how: string;
+  days: Array<{ date: string; amount: number; minutes: number }>;
+  teamOverall: number | null;
+  standard: number | null;
+  stretch: number | null;
+}): RateStat | null {
+  const days = args.days.filter(d => d.amount > 0).sort((a, b) => a.date.localeCompare(b.date));
+  if (days.length === 0) return null;
+  const perDay = days.map(d => ({ ...d, rate: d.minutes >= MIN_RATE_MINUTES ? round1(d.amount / (d.minutes / 60)) : null }));
+  const rates = perDay.map(d => d.rate).filter((r): r is number => r != null);
+  const total = days.reduce((s, d) => s + d.amount, 0);
+  const activeMinutes = days.reduce((s, d) => s + d.minutes, 0);
+  const counted = perDay.filter(d => d.rate != null);
+  const cTotal = counted.reduce((s, d) => s + d.amount, 0);
+  const cMin = counted.reduce((s, d) => s + d.minutes, 0);
+  const med = median(rates);
+  return {
+    unit: args.unit,
+    how: args.how,
+    days: rates.length,
+    overall: cMin > 0 ? round1(cTotal / (cMin / 60)) : null,
+    median: med == null ? null : round1(med),
+    min: rates.length ? round1(percentile(rates, rates.length >= 5 ? 0.1 : 0)) : null,
+    max: rates.length ? round1(percentile(rates, rates.length >= 5 ? 0.9 : 1)) : null,
+    total: round1(total),
+    activeMinutes: Math.round(activeMinutes),
+    teamOverall: args.teamOverall == null ? null : round1(args.teamOverall),
+    standard: args.standard,
+    stretch: args.stretch,
+    perDay,
+  };
+}
+
+/** Worked shifts ÷ (worked + absence shifts), whole %. Holiday isn't absence. */
+export function attendancePct(worked: number, absent: number): number | null {
+  const all = worked + absent;
+  return all > 0 ? Math.round((worked / all) * 100) : null;
+}
+
+/** "Since 24 May" style default: the last review if within a year, else 6 months back. */
+export function defaultPeriod(today: string, lastReviewDate: string | null): { from: string; to: string } {
+  const sixBack = shiftMonths(today, -6);
+  const yearBack = shiftMonths(today, -12);
+  const from = lastReviewDate && lastReviewDate >= yearBack && lastReviewDate < today ? lastReviewDate : sixBack;
+  return { from, to: today };
+}
+
+export function shiftMonths(iso: string, months: number): string {
+  const [y, m, d] = iso.split("-").map(Number) as [number, number, number];
+  const t = new Date(Date.UTC(y, m - 1 + months, 1));
+  const last = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth() + 1, 0)).getUTCDate();
+  t.setUTCDate(Math.min(d, last));
+  return t.toISOString().slice(0, 10);
+}
+
+// ── Suggestions ─────────────────────────────────────────────────────────
+
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
+/**
+ * What the data says to talk about: strengths to recognise and areas to set
+ * objectives on. Rules, not guesses — every line points at a figure in the
+ * report, so it can be checked. Attendance and records are worded neutrally
+ * (they're conversations, not verdicts) and never claim something didn't
+ * happen.
+ */
+export function suggestions(r: PerformanceReport): Suggestion[] {
+  const out: Suggestion[] = [];
+
+  // Improvements
+  const imp = r.improvements;
+  if (imp.teamAverage != null && imp.teamAverage > 0) {
+    if (imp.completed >= imp.teamAverage * 1.5 && imp.completed >= 3) {
+      out.push({ tone: "strength", area: "improvements", headline: `Strong on improvements — ${plural(imp.completed, "improvement")}`, detail: `Well above the team average of ${round1(imp.teamAverage)} for the same period.` });
+    } else if (imp.completed < imp.teamAverage * 0.5) {
+      out.push({ tone: "focus", area: "improvements", headline: imp.completed === 0 ? "No improvements completed this period" : `Fewer improvements than most — ${imp.completed}`, detail: `The team averaged ${round1(imp.teamAverage)}. Objective idea: one small improvement a week — leave every station better than you found it.` });
+    }
+  }
+
+  // Training
+  const gaps = r.training.stations.filter(s => s.worksThere && s.untrained + s.refresher > 0);
+  if (gaps.length > 0) {
+    const n = gaps.reduce((s, g) => s + g.untrained + g.refresher, 0);
+    out.push({ tone: "focus", area: "training", headline: `${plural(n, "SOP")} to train or refresh where they work`, detail: `At ${gaps.map(g => g.station).join(", ")}. Objective idea: be signed off on every SOP at their own stations by the next review.` });
+  } else if (r.training.stations.some(s => s.worksThere && s.sopCount > 0)) {
+    out.push({ tone: "strength", area: "training", headline: "Trained on every SOP at their stations", detail: "No untrained or out-of-date SOPs where they work." });
+  }
+  const matrixGaps = r.training.matrices.filter(m => m.missing.length > 0);
+  if (matrixGaps.length > 0) {
+    out.push({ tone: "focus", area: "training", headline: `Training matrix items still to do`, detail: matrixGaps.map(m => `${m.name}: ${m.missing.length} left`).join("; ") + "." });
+  }
+
+  // Lean curriculum
+  const l = r.lean;
+  if (l.weeksAssigned > 0) {
+    const pct = Math.round((l.weeksCompleted / l.weeksAssigned) * 100);
+    if (pct >= 90) out.push({ tone: "strength", area: "lean", headline: `Lean curriculum: ${l.weeksCompleted} of ${l.weeksAssigned} weeks done`, detail: "Keeping up with the weekly lessons." });
+    else out.push({ tone: "focus", area: "lean", headline: `Lean curriculum: ${l.weeksCompleted} of ${l.weeksAssigned} weeks done (${pct}%)`, detail: `${plural(l.missed.length, "week")} missed. Objective idea: complete every weekly lesson review by Friday${l.missed.length > 0 ? ", and catch up the missed weeks self-paced" : ""}.` });
+  }
+
+  // Speed
+  for (const [key, label] of [["building", "Building"], ["wrapping", "Wrapping"], ["packing", "Packing"]] as const) {
+    const s = r.speed[key];
+    if (!s || s.overall == null || s.days < 3) continue;
+    const vs = s.standard ?? s.teamOverall;
+    if (vs == null || vs <= 0) continue;
+    const ratio = s.overall / vs;
+    const against = s.standard != null ? `the standard of ${s.standard}` : `the team's ${s.teamOverall}`;
+    if (ratio >= 1.05) out.push({ tone: "strength", area: "speed", headline: `${label}: ${s.overall} ${s.unit}`, detail: `Above ${against} over ${plural(s.days, "day")}.` });
+    else if (ratio < 0.9) out.push({ tone: "focus", area: "speed", headline: `${label}: ${s.overall} ${s.unit}`, detail: `Below ${against} over ${plural(s.days, "day")} (range ${s.min}–${s.max}). Objective idea: reach ${vs} ${s.unit}, checked on the station KPI strip.` });
+
+  }
+
+  // Checklists — unticked items on days they were on the station.
+  const cl = r.checklists;
+  if (cl && cl.known && cl.stationDays > 0) {
+    if (cl.missed > 0) {
+      out.push({ tone: "focus", area: "checklists", headline: `Checklist items left unticked — ${plural(cl.missed, "item")} on ${plural(cl.missedDays, "day")}`, detail: `On days they were on the station. The rule: tick every item, or mark it "can't do" with a reason — never leave it blank. Objective idea: no blank checklist items by the next review.` });
+    } else if (cl.stationDays >= 10) {
+      out.push({ tone: "strength", area: "checklists", headline: "Checklists complete", detail: `No items left unticked across ${plural(cl.stationDays, "station day")}.` });
+    }
+  }
+
+  // Attendance — neutral wording; these are conversations.
+  const a = r.attendance;
+  if (a.known) {
+    if (a.sickInstances >= 3 || a.lates >= 4) {
+      out.push({ tone: "focus", area: "attendance", headline: "Attendance to talk about", detail: `${plural(a.sickInstances, "sickness absence")} (${plural(a.sickDays, "day")}) and ${plural(a.lates, "late")} recorded in Planday this period.` });
+    } else if (a.attendancePct != null && a.attendancePct >= 98 && a.lates === 0 && a.shiftsWorked >= 20) {
+      out.push({ tone: "strength", area: "attendance", headline: `Reliable attendance — ${a.attendancePct}%`, detail: "No lates recorded in Planday this period." });
+    }
+  }
+
+  // Records — only what's recorded.
+  if (r.records.praise.length > 0) {
+    out.push({ tone: "strength", area: "records", headline: `${plural(r.records.praise.length, "praise entry", "praise entries")} on their record`, detail: r.records.praise.map(p => p.title).join("; ") + "." });
+  }
+
+  // Contributions
+  const c = r.contributions;
+  if (c.factoryReports + c.appReports >= 3) {
+    out.push({ tone: "strength", area: "contributions", headline: `Raises problems — ${plural(c.factoryReports + c.appReports, "report")}`, detail: "Spotting and reporting problems is exactly the behaviour we want." });
+  }
+  if (c.sopsWritten > 0) {
+    out.push({ tone: "strength", area: "contributions", headline: `Wrote ${plural(c.sopsWritten, "SOP")}`, detail: "Capturing the standard for everyone." });
+  }
+  if (c.todos.assigned >= 5) {
+    const onTimePct = c.todos.done > 0 ? Math.round((c.todos.onTime / c.todos.done) * 100) : 0;
+    if (c.todos.open > 3 || (c.todos.done >= 5 && onTimePct < 60)) {
+      out.push({ tone: "focus", area: "contributions", headline: "To-dos slipping", detail: `${c.todos.open} still open; ${onTimePct}% of finished ones done by their due date.` });
+    }
+  }
+
+  return out;
+}
+
+// ── Checklists ──────────────────────────────────────────────────────────
+
+/**
+ * Items left unticked at the stations someone was rostered on, day by day.
+ * A rostered station covers its own checklist and the shared one it reads
+ * (`resolve`: building_2 → building_1, prep_meat → prep) — never the other
+ * way, so Building 2's own items don't count against a Building 1 builder.
+ * Shared responsibility: an unticked item counts for everyone on that
+ * station that day.
+ */
+export function attributeChecklistMisses(args: {
+  known: boolean;
+  from: string;
+  to: string;
+  stationDays: ReadonlyMap<string, ReadonlySet<string>>;
+  templateStations: ReadonlySet<string>;
+  resolve: (station: string) => string;
+  missing: ReadonlyArray<{ planDate: string; stationType: string; title: string; category: string }>;
+  ticked: number;
+  cantDo: number;
+}): NonNullable<PerformanceReport["checklists"]> {
+  const { from, to, resolve } = args;
+  const covers = (station: string) => [...new Set([station, resolve(station)])].filter(st => args.templateStations.has(st));
+  const onDay = new Map<string, Set<string>>();
+  for (const [day, set] of args.stationDays) {
+    if (day < from || day > to) continue;
+    const cs = new Set<string>();
+    for (const st of set) for (const t of covers(st)) cs.add(t);
+    if (cs.size > 0) onDay.set(day, cs);
+  }
+  const byStation = new Map<string, { station: string; days: number; missed: number }>();
+  const seen = new Set<string>();
+  for (const [day, set] of onDay) for (const t of set) {
+    const name = resolve(t);
+    if (seen.has(`${day}|${name}`)) continue;
+    seen.add(`${day}|${name}`);
+    const b = byStation.get(name) ?? { station: name, days: 0, missed: 0 };
+    b.days++;
+    byStation.set(name, b);
+  }
+  const missedList: Array<{ date: string; station: string; title: string; category: string }> = [];
+  const missedDays = new Set<string>();
+  for (const m of args.missing) {
+    if (!onDay.get(m.planDate)?.has(m.stationType)) continue;
+    const name = resolve(m.stationType);
+    missedList.push({ date: m.planDate, station: name, title: m.title, category: m.category });
+    missedDays.add(m.planDate);
+    byStation.get(name)!.missed++;
+  }
+  missedList.sort((a, b) => b.date.localeCompare(a.date) || a.station.localeCompare(b.station));
+  return {
+    known: args.known && onDay.size > 0,
+    stationDays: seen.size,
+    missed: missedList.length,
+    missedDays: missedDays.size,
+    ticked: args.ticked,
+    cantDo: args.cantDo,
+    byStation: [...byStation.values()].sort((a, b) => b.missed - a.missed || b.days - a.days),
+    missedList: missedList.slice(0, 200),
+  };
+}

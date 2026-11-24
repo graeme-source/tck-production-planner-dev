@@ -214,6 +214,7 @@ import issuePipelineRouter from "./issue-pipeline";
 import peopleAccessRouter from "./people-access";
 import personDocumentsRouter from "./person-documents";
 import peopleReviewsRouter from "./people-reviews";
+import peoplePerformanceRouter from "./people-performance";
 import peopleLettersMineRouter from "./people-letters-mine";
 import { requireHubUnlock } from "../middleware/hub-unlock";
 import productLabelsRouter from "./product-labels";
@@ -636,6 +637,10 @@ router.use("/person-documents", personDocumentsRouter);
 // private People PIN set + unlocked, founder or People access checked inside,
 // never your own record; every read and write audited.
 router.use("/people-reviews", requirePeopleUnlock, peopleReviewsRouter);
+// Performance pay review reports (routes/people-performance.ts): same guard
+// as the employment record — People PIN unlocked, People access checked
+// inside, never your own record, every view audited.
+router.use("/people-performance", requirePeopleUnlock, peoplePerformanceRouter);
 // Letters sent to ME (routes/people-letters-mine.ts): session only, not
 // behind the People PIN — the employee reads and acknowledges their own.
 router.use("/people-letters", requireHubUnlock, peopleLettersMineRouter);

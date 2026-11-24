@@ -21,7 +21,7 @@ import { Link, useSearch } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   CalendarDays, CheckCircle2, ChevronLeft, ChevronRight, Clock, Clock3, FilePlus2, FileSignature, FolderOpen,
-  HeartPulse, Loader2, Lock, PenLine, RefreshCw, Sun, Target, History, ClipboardList, StickyNote,
+  HeartPulse, Loader2, Lock, PenLine, RefreshCw, Sun, Target, History, ClipboardList, StickyNote, BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
@@ -708,6 +708,14 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             <CalendarDays className="w-6 h-6 shrink-0" /> Schedule a meeting
           </button>
         </div>
+        {/* The performance pay review report (24 Nov 2026) — their data for
+            any period, prep notes, and a copy for the review meeting. */}
+        {canManage && (
+          <Link href={`/people/${p.id}/review`}
+            className="min-h-14 px-4 py-2 rounded-2xl border-2 border-primary/40 bg-primary/5 text-base @3xl/main:text-lg font-bold leading-tight flex items-center justify-center gap-2 hover:bg-primary/10">
+            <BarChart3 className="w-6 h-6 shrink-0 text-primary" /> Performance review report
+          </Link>
+        )}
       </section>
 
       {/* Phone and iPad portrait: the side panels as a grid of buttons,

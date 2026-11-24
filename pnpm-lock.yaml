@@ -144,6 +144,9 @@ importers:
       '@workspace/people-reviews':
         specifier: workspace:*
         version: link:../../lib/people-reviews
+      '@workspace/performance-review':
+        specifier: workspace:*
+        version: link:../../lib/performance-review
       '@workspace/plan-margin':
         specifier: workspace:*
         version: link:../../lib/plan-margin
@@ -502,6 +505,9 @@ importers:
       '@workspace/lean-quiz':
         specifier: workspace:*
         version: link:../../lib/lean-quiz
+      '@workspace/performance-review':
+        specifier: workspace:*
+        version: link:../../lib/performance-review
       '@workspace/product-labels':
         specifier: workspace:*
         version: link:../../lib/product-labels
@@ -831,6 +837,8 @@ importers:
   lib/messages: {}
 
   lib/people-reviews: {}
+
+  lib/performance-review: {}
 
   lib/plan-margin: {}
 

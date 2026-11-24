@@ -36,7 +36,7 @@ const MAC_CHEESE_CATEGORY = "Macaroni Cheese";
 
 // ── Facts ──────────────────────────────────────────────────────────────────
 
-interface StationSop {
+export interface StationSop {
   sopId: number;
   title: string;
   stepCount: number;
@@ -48,7 +48,7 @@ interface StationSop {
  *  station's front screen, or attached to a recipe, ingredient, sub-recipe
  *  or checklist item that shows there (lib/station-sop-scope.ts). SOPs with
  *  no steps yet aren't training. One query set for all stations. */
-async function stationSopMap(): Promise<Map<string, StationSop[]>> {
+export async function stationSopMap(): Promise<Map<string, StationSop[]>> {
   const links = await db.execute<{
     sop_id: number; target_type: string; target_a: number | null; target_b: number | null; target_text: string | null;
     title: string; content_version: number; changed_at: string; step_count: number;
@@ -116,7 +116,7 @@ async function stationSops(station: string): Promise<StationSop[]> {
 interface LatestReview { version: number; reviewedAt: string; source: string }
 
 /** Each user's newest review of each SOP: userId → sopId → review. */
-async function latestReviews(sopIds: number[], userId?: number): Promise<Map<number, Map<number, LatestReview>>> {
+export async function latestReviews(sopIds: number[], userId?: number): Promise<Map<number, Map<number, LatestReview>>> {
   const out = new Map<number, Map<number, LatestReview>>();
   if (sopIds.length === 0) return out;
   const r = await db.execute<{ user_id: number; sop_id: number; content_version: number; reviewed_at: string; source: string }>(sql`
@@ -304,6 +304,48 @@ router.post("/reviews", validate(reviewBody), async (req: Request, res: Response
   if (upToDate) await db.execute(sql`DELETE FROM sop_review_windows WHERE sop_id = ${sopId} AND user_id = ${userId}`);
   res.status(201).json({ status: upToDate ? "trained" : "refresher" });
 });
+
+/** The stations one person was rostered on each day between two dates, from
+ *  the Planday shift mirror's positions (rota mapping in Settings): day →
+ *  stations. Used by the performance review report (which stations' SOPs
+ *  they need, and whose checklists they were on). Empty without Planday. */
+export async function stationDaysWorked(plandayEmployeeId: number, fromIso: string, toIso: string): Promise<Map<string, Set<string>>> {
+  const out = new Map<string, Set<string>>();
+  const mapping = await rotaMapping();
+  const { getPlandayPositions, isPlandayConfigured } = await import("../services/planday");
+  if (!isPlandayConfigured()) return out;
+  const positions = await getPlandayPositions();
+  const stationsByPosition = new Map<number, string[]>();
+  for (const e of mapping.stations ?? []) {
+    const titles = new Set((e.positions ?? []).map(p => p.trim().toLowerCase()));
+    const stations = [...rosteredStations(e.positions ?? [], { stations: [e] })];
+    for (const p of positions) {
+      if (!titles.has(p.name.trim().toLowerCase())) continue;
+      stationsByPosition.set(p.id, [...(stationsByPosition.get(p.id) ?? []), ...stations]);
+    }
+  }
+  if (stationsByPosition.size === 0) return out;
+  const r = await db.execute<{ day: string; position_id: string }>(sql`
+    SELECT DISTINCT date::text AS day, position_id::text FROM planday_shifts_cache
+    WHERE employee_id = ${plandayEmployeeId} AND position_id IS NOT NULL AND date BETWEEN ${fromIso} AND ${toIso}
+  `);
+  for (const row of r.rows ?? []) {
+    const day = row.day.slice(0, 10);
+    for (const st of stationsByPosition.get(Number(row.position_id)) ?? []) {
+      const set = out.get(day) ?? new Set<string>();
+      set.add(st);
+      out.set(day, set);
+    }
+  }
+  return out;
+}
+
+/** Every station they were rostered on between two dates. */
+export async function stationsWorkedBetween(plandayEmployeeId: number, fromIso: string, toIso: string): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const set of (await stationDaysWorked(plandayEmployeeId, fromIso, toIso)).values()) for (const s of set) out.add(s);
+  return out;
+}
 
 // ── Matrices ───────────────────────────────────────────────────────────────
 

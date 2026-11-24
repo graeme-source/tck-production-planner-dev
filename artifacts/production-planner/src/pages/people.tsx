@@ -38,6 +38,7 @@ import { NeedsAttention } from "@/components/people/needs-attention";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { UserAvatar } from "@/components/user-avatar";
 import { PersonRecord } from "@/components/people-record";
+import { PerformanceReview } from "@/components/people/performance-review";
 import { PeopleLockedCard } from "@/components/people-locked-card";
 import { JobTitlesBulk } from "@/components/job-titles-bulk";
 import { TeamHoursView } from "@/components/team-hours-view";
@@ -53,6 +54,7 @@ export default function PeopleSection() {
   const isPeople = useIsRtwManager();
   const [onRecord, params] = useRoute<{ userId: string }>("/people/:userId");
   const [onJobTitles] = useRoute("/people/job-titles");
+  const [onReview, reviewParams] = useRoute<{ userId: string }>("/people/:userId/review");
   // The private HR queue — where the generic "Your attention is required in
   // HR" to-do lands, behind the same PIN gate as everything else here.
   const [onAttention] = useRoute("/people/attention");
@@ -94,6 +96,11 @@ export default function PeopleSection() {
 
   if (onJobTitles) return <JobTitlesBulk ready={ready} />;
   if (onAttention) return <NeedsAttention ready={ready} />;
+  // Performance pay review report (24 Nov 2026) — inside this section so the
+  // People PIN gate above stays in charge.
+  if (onReview && reviewParams && Number(reviewParams.userId) > 0) {
+    return <PerformanceReview userId={Number(reviewParams.userId)} ready={ready} />;
+  }
 
   const userId = onRecord && params ? Number(params.userId) : null;
   if (userId != null && Number.isInteger(userId) && userId > 0) {

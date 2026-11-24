@@ -16,8 +16,11 @@
  * Also home to api(): the People-section fetch that turns a timed-out
  * private PIN into a "enter your PIN" prompt instead of lost typing.
  */
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CalendarDays, Loader2, MessageSquare, Target } from "lucide-react";
+import { BarChart3, CalendarDays, Loader2, MessageSquare, Target } from "lucide-react";
+import type { PerformanceReport } from "@workspace/performance-review";
+import { PerformanceReportView } from "@/components/people/performance-report-view";
 import { fmtDayIso, NOTE_KIND_LABEL, MEETING_STATUS_LABEL, type MeetingStatus, type NoteKind } from "@workspace/people-reviews";
 import { AgreementBullets } from "@/components/people/review-notes";
 
@@ -137,6 +140,8 @@ export function EmployeeReviewsSection() {
         </section>
       )}
 
+      <MyPerformanceReports />
+
       <section className="space-y-3">
         <h3 className="text-lg font-bold">Your reviews</h3>
         {empty ? (
@@ -162,5 +167,33 @@ export function EmployeeReviewsSection() {
         )}
       </section>
     </div>
+  );
+}
+
+/** Performance review data reports your manager has shared with you (24 Nov
+ *  2026) — read-only; tap one to open it. Never their prep notes. */
+function MyPerformanceReports() {
+  const { data } = useQuery<{ reports: Array<{ id: number; sharedAt: string; from: string; to: string; report: PerformanceReport }> }>({
+    queryKey: ["employee-review-record", "performance-reports"],
+    queryFn: () => api("/employee-reviews/performance-reports"),
+  });
+  const [open, setOpen] = useState<number | null>(null);
+  const reports = data?.reports ?? [];
+  if (reports.length === 0) return null;
+  return (
+    <section className="space-y-3">
+      <h3 className="text-lg font-bold flex items-center gap-2"><BarChart3 className="w-5 h-5 text-primary" /> Your performance reports</h3>
+      <p className="text-sm text-muted-foreground -mt-1">What the system recorded about your work for each review. Tap a card for the detail.</p>
+      {reports.map(r => (
+        <div key={r.id} className="rounded-2xl border-2 border-border bg-card">
+          <button type="button" onClick={() => setOpen(o => (o === r.id ? null : r.id))} aria-expanded={open === r.id}
+            className="w-full min-h-14 px-4 py-3 text-left flex items-center justify-between gap-3">
+            <span className="text-lg font-bold">{fmtDayIso(r.from)} – {fmtDayIso(r.to)}</span>
+            <span className="text-sm text-muted-foreground">{open === r.id ? "Hide" : "Open"}</span>
+          </button>
+          {open === r.id && <div className="px-4 pb-4"><PerformanceReportView report={r.report} audience="employee" /></div>}
+        </div>
+      ))}
+    </section>
   );
 }

@@ -352,6 +352,7 @@ function Router() {
                   page and every /api/contracts route check the account). Must
                   come before /people/:userId. */}
               <Route path="/people/contracts" component={FounderContracts} />
+              <Route path="/people/:userId/review" component={PeopleSection} />
               <Route path="/people/:userId" component={PeopleSection} />
               <Route path="/hub" component={EmployeeHub} />
               <Route path="/documents/:id" component={DocumentViewer} />
