@@ -114,11 +114,12 @@ describe("monthRangeDates", () => {
 });
 
 describe("default months", () => {
-  it("is January to the last complete month", () => {
-    expect(defaultPnlMonths("2026-11-18")).toEqual({ fromMonth: "2026-01", toMonth: "2026-10" });
+  it("is the last 12 months, up to and including this one", () => {
+    expect(defaultPnlMonths("2026-11-24")).toEqual({ fromMonth: "2025-12", toMonth: "2026-11" });
   });
-  it("in January, shows the whole of last year", () => {
-    expect(defaultPnlMonths("2027-01-05")).toEqual({ fromMonth: "2026-01", toMonth: "2026-12" });
+  it("crosses the year end", () => {
+    expect(defaultPnlMonths("2027-01-05")).toEqual({ fromMonth: "2026-02", toMonth: "2027-01" });
+    expect(defaultPnlMonths("2026-12-31")).toEqual({ fromMonth: "2026-01", toMonth: "2026-12" });
   });
   it("counts months inclusively", () => {
     expect(monthsBetween("2026-01", "2026-10")).toBe(10);

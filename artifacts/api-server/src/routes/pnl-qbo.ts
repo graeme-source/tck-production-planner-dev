@@ -4,8 +4,8 @@
  *
  *   GET /by-month?fromMonth=YYYY-MM&toMonth=YYYY-MM[&fresh=1]
  *       Profit and Loss by Month, accrual basis — his custom QuickBooks
- *       report. Defaults to January of the last complete month's year
- *       through the last complete month.
+ *       report. Defaults to the last 12 months, up to and including the
+ *       current one.
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import * as z from "zod";

@@ -184,12 +184,13 @@ export function monthRangeDates(fromMonth: string, toMonth: string): { start: st
   return { start: `${fromMonth}-01`, end };
 }
 
-/** The default view: January of the last complete month's year through
- *  that month — Jan–Oct on 18 Nov, as his report is usually run. */
+/** The default view: the last 12 months up to and including the current one
+ *  — Dec 2025 to Nov 2026 on 24 Nov 2026. */
 export function defaultPnlMonths(today: string): { fromMonth: string; toMonth: string } {
+  // The month in progress always on screen (Graeme, 24 Nov 2026).
   const [y, m] = today.split("-").map(Number) as [number, number];
-  const last = new Date(Date.UTC(y, m - 2, 1)).toISOString().slice(0, 7);
-  return { fromMonth: `${last.slice(0, 4)}-01`, toMonth: last };
+  const ym = (offset: number) => new Date(Date.UTC(y, m - 1 + offset, 1)).toISOString().slice(0, 7);
+  return { fromMonth: ym(-11), toMonth: ym(0) };
 }
 
 /** Months from a to b inclusive (YYYY-MM). */

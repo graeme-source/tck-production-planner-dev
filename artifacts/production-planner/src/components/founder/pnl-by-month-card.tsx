@@ -62,6 +62,14 @@ function cell(n: number): string {
   return n === 0 ? "" : num2.format(n);
 }
 
+// The lines that tell the story are bold, and their losses strong red; the
+// rest — Cost of Sales, Expenses, Other Income/Expenses, Net Other Income and
+// every account — are plain, with losses in a light red (Graeme, 24 Nov 2026).
+const KEY_LINES = new Set(["Income", "GrossProfit", "NetOperatingIncome", "NetIncome"]);
+const isKeyLine = (l: PnlLine) => l.depth === 0 && l.group != null && KEY_LINES.has(l.group);
+const lossClass = (n: number, key: boolean) =>
+  n >= 0 ? "" : key ? "text-red-600 dark:text-red-400" : "text-red-400 dark:text-red-300/70";
+
 function findGroup(lines: PnlLine[], group: string): PnlLine | undefined {
   return lines.find(l => l.group === group && l.depth === 0);
 }
@@ -223,11 +231,11 @@ export function PnlByMonthCard() {
               </thead>
               <tbody>
                 {rows.map(l => {
-                  const bold = l.kind !== "account";
+                  const bold = isKeyLine(l);
                   const isTotal = l.kind === "total";
                   return (
                     <tr key={l.key} className={`border-t border-border ${isTotal ? "bg-secondary/30" : ""}`}>
-                      <td className={`sticky left-0 z-10 px-3 py-2 ${isTotal ? "bg-secondary" : "bg-background"} ${bold ? "font-semibold" : ""}`}>
+                      <td className={`sticky left-0 z-10 px-3 py-2 ${isTotal ? "bg-secondary" : "bg-background"} ${bold ? "font-bold" : ""}`}>
                         <div className="flex items-center gap-1" style={{ paddingLeft: `${l.depth * 1.1}rem` }}>
                           {l.children.length > 0 ? (
                             <button onClick={() => toggle(l.key)} className="flex items-center gap-1 text-left hover:text-primary">
@@ -240,9 +248,9 @@ export function PnlByMonthCard() {
                         </div>
                       </td>
                       {l.amounts.map((a, i) => (
-                        <td key={i} className={`text-right px-3 py-2 whitespace-nowrap ${bold ? "font-semibold" : ""} ${a < 0 && isTotal ? "text-red-600" : ""}`}>{cell(a)}</td>
+                        <td key={i} className={`text-right px-3 py-2 whitespace-nowrap ${bold ? "font-bold" : ""} ${lossClass(a, bold)}`}>{cell(a)}</td>
                       ))}
-                      <td className={`text-right px-3 py-2 whitespace-nowrap font-semibold ${l.total < 0 && isTotal ? "text-red-600" : ""}`}>
+                      <td className={`text-right px-3 py-2 whitespace-nowrap ${bold ? "font-bold" : ""} ${lossClass(l.total, bold)}`}>
                         {l.total === 0 ? "" : gbp0.format(l.total)}
                       </td>
                     </tr>
