@@ -61,6 +61,22 @@ export interface PerformanceReport {
     daysWorked?: number | null;
     /** The team's score over the same period (all credits ÷ all days worked). */
     teamScorePct?: number | null;
+    /**
+     * Their CURRENT score — the last 30 days, exactly as the improvements
+     * leaderboard shows it (same function: services/improvement-score.ts).
+     * This is the headline (Graeme, 24 Nov 2026): a strong recent month
+     * shouldn't be buried under a slow start to the period.
+     */
+    current?: {
+      from: string;
+      to: string;
+      scorePct: number | null;
+      credits: number;
+      improvements: number;
+      shifts: number | null;
+      /** Average of the team's own current scores (leaderboard people with shifts). */
+      teamAveragePct: number | null;
+    } | null;
     /** Average completed improvements per active team member, same period. */
     teamAverage: number | null;
     shiftsKnown: boolean;
@@ -248,14 +264,19 @@ export function suggestions(r: PerformanceReport): Suggestion[] {
   const out: Suggestion[] = [];
 
   // Improvements — the aim is a score of 100%: one improvement for every
-  // shift worked (Graeme, 24 Nov 2026). Judged on the score when shifts are
-  // known; otherwise on the count against the team.
+  // shift worked (Graeme, 24 Nov 2026). Judged on the CURRENT score (last
+  // 30 days, as on the leaderboard); the period score if that's missing;
+  // otherwise on the count against the team.
   const imp = r.improvements;
-  if (imp.scorePct != null) {
-    if (imp.scorePct >= IMPROVEMENT_TARGET_PCT) {
-      out.push({ tone: "strength", area: "improvements", headline: `Improvement score ${imp.scorePct}% — at or above the 100% aim`, detail: `${plural(imp.completed, "improvement")} over ${plural(imp.daysWorked ?? 0, "day")} worked.` });
+  const cur = imp.current?.scorePct != null ? imp.current : null;
+  const score = cur ? cur.scorePct! : imp.scorePct ?? null;
+  if (score != null) {
+    const when = cur ? "current score (last 30 days)" : "score over the period";
+    const extra = cur && imp.scorePct != null ? ` Over the whole period: ${imp.scorePct}%.` : "";
+    if (score >= IMPROVEMENT_TARGET_PCT) {
+      out.push({ tone: "strength", area: "improvements", headline: `Improvement ${when}: ${score}% — at or above the 100% aim`, detail: `${cur ? `${plural(cur.improvements, "improvement")} in the last 30 days.` : `${plural(imp.completed, "improvement")} this period.`}${extra}` });
     } else {
-      out.push({ tone: "focus", area: "improvements", headline: `Improvement score ${imp.scorePct}% — the aim is 100%`, detail: `${plural(imp.completed, "improvement")} over ${plural(imp.daysWorked ?? 0, "day")} worked${imp.teamScorePct != null ? ` (team ${imp.teamScorePct}%)` : ""}. Objective: one improvement every shift — leave every station better than you found it.` });
+      out.push({ tone: "focus", area: "improvements", headline: `Improvement ${when}: ${score}% — the aim is 100%`, detail: `${cur ? `${plural(cur.improvements, "improvement")} over ${plural(cur.shifts ?? 0, "shift")} in the last 30 days${cur.teamAveragePct != null ? ` (team average ${cur.teamAveragePct}%)` : ""}.` : `${plural(imp.completed, "improvement")} this period.`}${extra} Objective: one improvement every shift — leave every station better than you found it.` });
     }
   } else if (imp.teamAverage != null && imp.teamAverage > 0 && imp.completed < imp.teamAverage) {
     out.push({ tone: "focus", area: "improvements", headline: imp.completed === 0 ? "No improvements completed this period" : `Fewer improvements than most — ${imp.completed}`, detail: `The team averaged ${round1(imp.teamAverage)}. Objective: one improvement every shift — leave every station better than you found it.` });

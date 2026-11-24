@@ -81,10 +81,18 @@ describe("suggestions", () => {
     r.checklists = { ...r.checklists, missed: 0, missedDays: 0 };
     expect(suggestions(r).find(x => x.area === "checklists")?.tone).toBe("strength");
   });
+  it("leads with the current 30-day score, not the whole period", () => {
+    const r = base();
+    r.improvements = { ...r.improvements, completed: 20, scorePct: 40, current: { from: "2026-10-26", to: "2026-11-24", scorePct: 105, credits: 21, improvements: 20, shifts: 20, teamAveragePct: 60 } };
+    const s = suggestions(r).find(x => x.area === "improvements")!;
+    expect(s.tone).toBe("strength");
+    expect(s.headline).toContain("current score (last 30 days): 105%");
+    expect(s.detail).toContain("Over the whole period: 40%");
+  });
   it("judges improvements on the score when it's known", () => {
     const r = base();
     r.improvements = { ...r.improvements, completed: 2, credits: 2, scorePct: 5, teamScorePct: 20, teamAverage: 2 };
-    expect(suggestions(r).find(x => x.area === "improvements")).toMatchObject({ tone: "focus", headline: "Improvement score 5% — the aim is 100%", detail: expect.stringContaining("one improvement every shift") });
+    expect(suggestions(r).find(x => x.area === "improvements")).toMatchObject({ tone: "focus", headline: "Improvement score over the period: 5% — the aim is 100%", detail: expect.stringContaining("one improvement every shift") });
     r.improvements = { ...r.improvements, scorePct: 110 };
     expect(suggestions(r).find(x => x.area === "improvements")?.tone).toBe("strength");
   });

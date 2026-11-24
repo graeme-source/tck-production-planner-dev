@@ -35,18 +35,27 @@ export function PerformanceReportView({ report, audience }: { report: Performanc
   const leanPct = r.lean.weeksAssigned > 0 ? Math.round((r.lean.weeksCompleted / r.lean.weeksAssigned) * 100) : null;
 
   const cards: Array<{ key: CardKey; id?: string; icon: typeof Users; title: string; big: string; sub: string; tone?: "good" | "warn" | null }> = [
-    {
-      // The score leads — it's the measure that matters most — with the
-      // number of improvements beside it (Graeme, 24 Nov 2026).
-      key: "improvements", icon: Lightbulb, title: r.improvements.scorePct != null ? "Improvement score" : "Improvements",
-      big: r.improvements.scorePct != null ? `${r.improvements.scorePct}%` : String(r.improvements.completed),
-      sub: r.improvements.scorePct != null
-        ? `aim 100% · ${pl(r.improvements.completed, "improvement")} · ${pl(r.improvements.credits, "credit")}${r.improvements.teamScorePct != null ? ` · team ${r.improvements.teamScorePct}%` : ""}`
-        : `${pl(r.improvements.completed, "improvement")}${r.improvements.teamAverage != null ? ` · team average ${r.improvements.teamAverage}` : ""}`,
-      tone: r.improvements.scorePct != null
-        ? (r.improvements.scorePct >= 100 ? "good" : "warn")
-        : r.improvements.teamAverage == null ? null : r.improvements.completed >= r.improvements.teamAverage ? "good" : "warn",
-    },
+    (() => {
+      // The CURRENT score leads — last 30 days, exactly as the improvements
+      // leaderboard shows it — then the whole period and the count (Graeme,
+      // 24 Nov 2026: "the important thing is to look at the current score").
+      const imp = r.improvements;
+      const cur = imp.current?.scorePct != null ? imp.current : null;
+      const headline = cur ? cur.scorePct : imp.scorePct ?? null;
+      return {
+        key: "improvements" as CardKey, icon: Lightbulb, title: headline != null ? "Improvement score" : "Improvements",
+        big: headline != null ? `${headline}%` : String(imp.completed),
+        sub: headline != null
+          ? [cur ? "last 30 days · aim 100%" : "this period · aim 100%",
+             cur && imp.scorePct != null ? `period ${imp.scorePct}%` : null,
+             pl(imp.completed, "improvement") + " in the period",
+             cur?.teamAveragePct != null ? `team avg ${cur.teamAveragePct}%` : imp.teamScorePct != null ? `team ${imp.teamScorePct}%` : null,
+            ].filter(Boolean).join(" · ")
+          : `${pl(imp.completed, "improvement")}${imp.teamAverage != null ? ` · team average ${imp.teamAverage}` : ""}`,
+        tone: headline == null ? (imp.teamAverage == null ? null : imp.completed >= imp.teamAverage ? "good" as const : "warn" as const)
+          : headline >= 100 ? "good" as const : "warn" as const,
+      };
+    })(),
     {
       key: "training", icon: GraduationCap, title: "Training",
       big: sopsAtStations > 0 ? `${sopsTrained}/${sopsAtStations}` : "—",
@@ -153,11 +162,18 @@ function ImprovementsDetail({ r }: { r: PerformanceReport }) {
   return (
     <div>
       <H>
-        Improvements — {r.improvements.scorePct != null ? `score ${r.improvements.scorePct}%, ` : ""}{r.improvements.completed} completed, {pl(r.improvements.credits, "credit")}
+        Improvements — {r.improvements.current?.scorePct != null ? `current score ${r.improvements.current.scorePct}%, ` : r.improvements.scorePct != null ? `score ${r.improvements.scorePct}%, ` : ""}{r.improvements.completed} completed in the period, {pl(r.improvements.credits, "credit")}
       </H>
+      {r.improvements.current?.scorePct != null && (
+        <div className="rounded-xl bg-secondary/40 px-3 py-2 mb-3 text-sm">
+          <span className="font-semibold">Current score: {r.improvements.current.scorePct}%</span>
+          <span className="text-muted-foreground"> — last 30 days ({fmtShort(r.improvements.current.from)} – {fmtShort(r.improvements.current.to)}), the same figure as the improvements leaderboard: {r.improvements.current.credits} credits ÷ {r.improvements.current.shifts ?? "—"} shifts{r.improvements.current.teamAveragePct != null ? `; team average ${r.improvements.current.teamAveragePct}%` : ""}.</span>
+        </div>
+      )}
       {r.improvements.scorePct != null && (
         <p className="text-sm text-muted-foreground mb-3">
-          Score = credits ÷ days worked ({r.improvements.credits} ÷ {r.improvements.daysWorked}). The aim is 100% — one improvement every shift.{r.improvements.teamScorePct != null ? ` The team's is ${r.improvements.teamScorePct}% over the same period.` : ""}
+          Over the whole period: 
+{r.improvements.scorePct}% ({r.improvements.credits} credits ÷ {r.improvements.daysWorked} days worked). The aim is 100% — one improvement every shift.{r.improvements.teamScorePct != null ? ` The team's is ${r.improvements.teamScorePct}% over the same period.` : ""}
         </p>
       )}
       <div className="flex items-end gap-2 h-32 mb-1" aria-label="Improvements by month">

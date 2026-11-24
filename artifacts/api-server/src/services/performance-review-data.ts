@@ -18,6 +18,7 @@ import {
 } from "@workspace/performance-review";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { improvementScorePct } from "../lib/improvement-score";
+import { loadImprovementScores } from "./improvement-score";
 import { londonDateString } from "../lib/london-time";
 import { loadClassifiedShifts } from "../lib/rtw-detect";
 import { isWorkedShift } from "../lib/absence-spells";
@@ -151,6 +152,23 @@ async function loadImprovements(userId: number, from: string, to: string, shifts
     return { month, completed: done.length, credits, shifts: shiftDays, scorePct: shiftDays != null ? improvementScorePct(credits, shiftDays) : null };
   });
 
+  // Their current score — the leaderboard's own calculation, so the two
+  // always match (rolling 30 London days to today).
+  let current: NonNullable<PerformanceReport["improvements"]["current"]> | null = null;
+  try {
+    const sc = await loadImprovementScores([userId, ...teamIds]);
+    const me = sc.byUser.get(userId);
+    const teamScores = [...teamIds].filter(id => id !== userId).map(id => sc.byUser.get(id)?.scorePct).filter((x): x is number => x != null);
+    current = {
+      from: sc.window.from, to: sc.window.to,
+      scorePct: sc.shiftsKnown ? me?.scorePct ?? null : null,
+      credits: me?.credits ?? 0, improvements: me?.improvements ?? 0, shifts: me?.shifts ?? null,
+      teamAveragePct: teamScores.length > 0 ? Math.round(teamScores.reduce((a, b) => a + b, 0) / teamScores.length) : null,
+    };
+  } catch (err) {
+    console.warn("[performance-review] current improvement score unavailable:", err instanceof Error ? err.message : err);
+  }
+
   const myCredits = mine.reduce((n, r) => n + Number(r.credit_weight || 1), 0);
   const daysWorked = shiftsKnown ? new Set(worked.filter(s => s.date >= from && s.date <= to).map(s => s.date)).size : null;
   return {
@@ -159,6 +177,7 @@ async function loadImprovements(userId: number, from: string, to: string, shifts
     scorePct: daysWorked != null && daysWorked > 0 ? improvementScorePct(myCredits, daysWorked) : null,
     daysWorked,
     teamScorePct,
+    current,
     teamAverage: teamAverage == null ? null : Math.round(teamAverage * 10) / 10,
     shiftsKnown,
     monthly,
