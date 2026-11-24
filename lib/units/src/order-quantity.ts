@@ -147,7 +147,9 @@ export interface KanbanPacks {
 /**
  * One kanban card's order amount → whole supplier packs.
  *  - pallet: amount × pallet_size packs (1 pallet of 50-box pallets = 50);
- *  - weight: the amount is in base units, so ceil(amount ÷ pack weight);
+ *  - unit (the item's own unit — pieces, kg, g…; Graeme 24 Nov 2026) and
+ *    the older "weight": the amount is in base units, so ceil(amount ÷ pack
+ *    size) — 10,000 pieces on a 10,000-piece pack is 1 pack;
  *  - pack / bottle (and anything else): the amount already counts packs.
  * Case rounding is not applied here — it's a separate step on the line.
  */
@@ -163,7 +165,7 @@ export function kanbanOrderPacks(
     if (palletSize == null) return { packs: ceilPacks(amt), warning: "pallet-size-missing" };
     return { packs: ceilPacks(amt * palletSize), warning: null };
   }
-  if (kanbanUnit === "weight") {
+  if (kanbanUnit === "weight" || kanbanUnit === "unit") {
     const pw = Number(item.packWeight);
     return { packs: Number.isFinite(pw) && pw > 0 ? ceilPacks(amt / pw) : ceilPacks(amt), warning: null };
   }

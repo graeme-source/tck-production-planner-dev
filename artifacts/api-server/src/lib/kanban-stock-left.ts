@@ -23,11 +23,15 @@ export function kanbanLeftQty(i: {
   // in and how the Orders page has always ordered them (routes/orders.ts,
   // kanban-only lines — e.g. 6 on a 450 g spice pack means 6 packs).
   switch (i.kanbanUnit) {
+    // The item's own unit (pieces, kg…): the card already says how much is left.
+    case "unit": native = q; break;
     case "pallet": native = pack && i.palletSize && i.palletSize > 0 ? q * i.palletSize * pack : null; break;
     default: native = pack ? q * pack : null;
   }
   if (native == null) return null;
-  const left = native - (pack ?? 0);
+  // Counted in packs, one is already open; counted in the item's own unit,
+  // the card's figure is what's left.
+  const left = i.kanbanUnit === "unit" ? native : native - (pack ?? 0);
   return Math.max(0, Math.round(left * 10000) / 10000);
 }
 

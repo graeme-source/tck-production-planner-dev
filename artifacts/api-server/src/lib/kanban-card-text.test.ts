@@ -17,6 +17,9 @@ describe("kanbanCardText", () => {
 
   it("uses a named pack, bottles, pallets and the native unit for weight", () => {
     expect(kanbanCardText({ ...base, packName: "box", kanbanOrderAmount: 2 }).orderAmount).toBe("2 boxes");
+    // The item's own unit: "Pull at 1000 pieces, order 10000 pieces"
+    const own = kanbanCardText({ ...base, unit: "pieces", kanbanUnit: "unit", kanbanQuantity: 1000, kanbanOrderAmount: 10000 });
+    expect([own.pullWhen, own.orderAmount]).toEqual(["1000 pieces", "10000 pieces"]);
     expect(kanbanCardText({ ...base, kanbanUnit: "bottle", kanbanQuantity: 1 }).pullWhen).toBe("1 bottle");
     expect(kanbanCardText({ ...base, kanbanUnit: "pallet", kanbanOrderAmount: 2 }).orderAmount).toBe("2 pallets");
     expect(kanbanCardText({ ...base, kanbanUnit: "weight", kanbanQuantity: 2.5 }).pullWhen).toBe("2.5 kg");

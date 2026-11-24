@@ -93,7 +93,9 @@ export const ingredientFormSchema = z.object({
   // Kanban
   kanbanEnabled: z.boolean().optional(),
   kanbanQuantity: z.coerce.number().min(0).optional(),
-  kanbanUnit: z.enum(["weight", "pack", "bottle", "pallet"]).optional(),
+  // "unit" = the item's own unit (pieces, kg…), 24 Nov 2026; "weight" is the
+  // older setting the Orders page reads as packs (lib/kanban-unit-options).
+  kanbanUnit: z.enum(["unit", "weight", "pack", "bottle", "pallet"]).optional(),
   kanbanOrderAmount: nullableNumber((n) => n.min(0)),
   // Shopify inventory link — goods-in pushes received stock to this variant.
   shopifyVariantId: z.string().optional(),
@@ -191,7 +193,7 @@ export function emptyIngredientFormDefaults(
     caseSizePacks: null,
     kanbanEnabled: false,
     kanbanQuantity: 0,
-    kanbanUnit: "weight" as const,
+    kanbanUnit: "unit" as const,
     kanbanOrderAmount: null,
     shopifyVariantId: "",
     shopifyProductTitle: "",
@@ -279,7 +281,7 @@ export function ingredientToFormValues(
     caseSizePacks: num(it.caseSizePacks),
     kanbanEnabled: bool(it.kanbanEnabled),
     kanbanQuantity: num(it.kanbanQuantity) ?? 0,
-    kanbanUnit: (it.kanbanUnit as "weight" | "pack" | "bottle" | undefined) ?? "weight",
+    kanbanUnit: (it.kanbanUnit as "unit" | "weight" | "pack" | "bottle" | "pallet" | undefined) ?? "weight",
     kanbanOrderAmount: num(it.kanbanOrderAmount),
     shopifyVariantId: str(it.shopifyVariantId),
     shopifyProductTitle: str(it.shopifyProductTitle),
@@ -354,7 +356,7 @@ export function buildIngredientPayload(data: IngredientFormValues) {
     caseSizePacks: data.caseSizePacks ?? null,
     kanbanEnabled: data.kanbanEnabled ?? false,
     kanbanQuantity: data.kanbanQuantity ?? 0,
-    kanbanUnit: data.kanbanUnit ?? "weight",
+    kanbanUnit: data.kanbanUnit ?? "unit",
     kanbanOrderAmount: data.kanbanOrderAmount ?? null,
     shopifyVariantId: data.shopifyVariantId || null,
     shopifyProductTitle: data.shopifyProductTitle || null,

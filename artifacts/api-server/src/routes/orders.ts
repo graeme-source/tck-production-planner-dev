@@ -782,6 +782,8 @@ router.get("/calculate", async (req, res) => {
       // live cards are filled in that way (e.g. 6 on a 450 g spice pack).
       // Switching it to amount ÷ pack size would quietly cut those orders
       // to 1 pack — a decision for Graeme, not a side effect of this fix.
+      // The newer "unit" setting (the item's own unit, 24 Nov 2026) passes
+      // straight through: amount ÷ pack size, as the setting says.
       const kanbanPacks = kanbanOrderPacks(d.kanbanOrderAmount ?? d.kanbanQuantity, kanbanUnitVal === "weight" ? "pack" : kanbanUnitVal, {
         packWeight,
         palletSize: d.palletSize,

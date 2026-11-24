@@ -25,6 +25,7 @@ import { PinnedBody, PinnedFooter } from "@/components/ui/pinned-save-bar";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { cn } from "@/lib/utils";
+import { useBackToClose } from "@/hooks/use-back-to-close";
 
 export function EditorDialog({
   open, onClose, title, dirty, onSaveRequest, entityLabel, widthClassName, noAutoFocus, onCloseAutoFocus, fullHeight, children,
@@ -57,6 +58,8 @@ export function EditorDialog({
     if (dirty) setConfirmOpen(true);
     else onClose();
   }
+  // The Back swipe asks too, instead of leaving the page (24 Nov 2026).
+  useBackToClose(open, () => handleOpenChange(false));
 
   return (
     <>

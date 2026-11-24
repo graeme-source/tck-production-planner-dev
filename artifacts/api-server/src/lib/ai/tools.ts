@@ -276,6 +276,7 @@ async function getKanbansDueToday(): Promise<string> {
       ingredientName: ingredientsTable.name,
       kanbanQuantity: ingredientsTable.kanbanQuantity,
       kanbanUnit: ingredientsTable.kanbanUnit,
+      unit: ingredientsTable.unit,
       supplierName: suppliersTable.name,
       orderFrequency: suppliersTable.orderFrequency,
       orderDayTarget: kanbanItemsTable.orderDayTarget,
@@ -293,7 +294,9 @@ async function getKanbansDueToday(): Promise<string> {
   }
 
   const lines = due.map(k => {
-    const qty = k.kanbanQuantity != null ? `${Number(k.kanbanQuantity)} ${k.kanbanUnit ?? ""}`.trim() : "?";
+    // "unit" = the item's own unit (pieces, kg…) — say that, not the setting's name.
+    const unitWord = k.kanbanUnit === "unit" ? (k.unit ?? "") : (k.kanbanUnit ?? "");
+    const qty = k.kanbanQuantity != null ? `${Number(k.kanbanQuantity)} ${unitWord}`.trim() : "?";
     const supplier = k.supplierName ?? "(no supplier)";
     const label = getOrderDayLabel(k.orderDayTarget, k.orderFrequency ?? "daily");
     return `  - ${k.ingredientName ?? "Unknown"}: ${qty} — ${supplier} (${label})`;

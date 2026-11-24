@@ -7,6 +7,8 @@ describe("kanbanLeftQty", () => {
     expect(kanbanLeftQty({ kanbanQuantity: 6, kanbanUnit: "bottle", packWeight: 1 })).toBe(5);
     // A "weight" card holds a pack count on the live cards: 6 × 450 g − one pack.
     expect(kanbanLeftQty({ kanbanQuantity: 6, kanbanUnit: "weight", packWeight: 450 })).toBe(2250);
+    // In the item's own unit the card's figure is what's left: pull at 1,000 leaflets
+    expect(kanbanLeftQty({ kanbanQuantity: 1000, kanbanUnit: "unit", packWeight: 10000 })).toBe(1000);
     expect(kanbanLeftQty({ kanbanQuantity: 1, kanbanUnit: "pallet", packWeight: 1, palletSize: 720 })).toBe(719);
   });
   it("never goes below nothing, and says nothing without a safety stock", () => {

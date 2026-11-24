@@ -34,6 +34,12 @@ describe("kanbanOrderPacks — a pallet is a real pallet", () => {
       .toEqual({ packs: 2, warning: "pallet-size-missing" });
   });
 
+  it("an item's own unit (e.g. pieces) is base units ÷ pack size, rounded up", () => {
+    // 10,000 leaflets a pack: order 10,000 pieces = 1 pack; 12,000 = 2
+    expect(kanbanOrderPacks(10000, "unit", { packWeight: 10000 })).toEqual({ packs: 1, warning: null });
+    expect(kanbanOrderPacks(12000, "unit", { packWeight: 10000 }).packs).toBe(2);
+  });
+
   it("weight kanbans are unchanged: base units ÷ pack weight, rounded up", () => {
     expect(kanbanOrderPacks(10, "weight", { packWeight: 2.5 })).toEqual({ packs: 4, warning: null });
     expect(kanbanOrderPacks(11, "weight", { packWeight: 2.5 }).packs).toBe(5);

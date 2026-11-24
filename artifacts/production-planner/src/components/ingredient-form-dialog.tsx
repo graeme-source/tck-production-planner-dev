@@ -12,14 +12,18 @@
 import { MeatPortioningFields } from "@/components/meat-portioning/meat-portioning-fields";
 import { unitsPerPackMismatch } from "@workspace/goods-in";
 import { ConnectedInventoryFields } from "@/components/connected-inventory/connected-inventory-fields";
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode, type ChangeEvent } from "react";
 import { useForm, type UseFormRegister, type UseFormWatch, type UseFormSetValue } from "react-hook-form";
 import { detectAllergens, ALLERGEN_DISPLAY, declarationNeedsWrapper, labelNameFor, wrapDeclaration } from "@workspace/allergens";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useDebouncedValue } from "@/hooks/use-debounced-value";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Carrot, Box, Camera, Images, Sparkles, ShoppingBag, X, Loader2, BookOpenText, Truck, Boxes, CalendarClock, ChefHat, Tag } from "lucide-react";
+import { Carrot, Box, Camera, Images, Sparkles, ShoppingBag, X, Loader2, BookOpenText, Truck, Boxes, CalendarClock, ChefHat, Tag, ExternalLink } from "lucide-react";
+import { NewSupplierDialog } from "@/components/suppliers/supplier-form";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
+import { formIsDirty } from "@/lib/editor-dirty";
+import { useBackToClose } from "@/hooks/use-back-to-close";
 import { EditorSection } from "@/components/recipe-editor/editor-shell";
 import { INGREDIENT_TABS, tabsFor, ingredientErrorCounts, firstIngredientErrorTab, type IngredientTabId } from "@/lib/ingredient-editor-tabs";
 
@@ -57,6 +61,7 @@ import {
   type NutritionField,
 } from "@/lib/nutrition-entry";
 import { summariseScrape, SCRAPE_FIELD_LABELS, type FieldSource, type ScrapeUpf } from "@/lib/scrape-summary";
+import { kanbanAmountWord, kanbanUnitOptions, unitWord } from "@/lib/kanban-unit-options";
 import {
   UPF_PREVIEW_DEBOUNCE_MS,
   displayedNovaClass,
@@ -119,6 +124,9 @@ export function categoryLabel(value: string | null | undefined, isPerishable: bo
  *  just calls `onSave(data, editingItem?.id ?? null)` after Zod
  *  validation — the caller decides whether to fire a create or update
  *  mutation, what the success toast says, etc. */
+/** The supplier dropdowns' "＋ New supplier…" entry. */
+const NEW_SUPPLIER = "new";
+
 export function IngredientFormDialog({
   open, onClose, editingItem, defaultMode, suppliers, onSave, lockMode, focusDeclaration, declarationNotice,
 }: {
@@ -150,17 +158,45 @@ export function IngredientFormDialog({
   const watchedCostPerPack = watch("costPerPack");
   const watchedSecondarySupplierId = Number(watch("secondarySupplierId") ?? 0);
   const secondarySupplierName = suppliers.find(s => s.id === watchedSecondarySupplierId)?.name ?? null;
+  // "＋ New supplier…" in either supplier dropdown opens the full supplier
+  // form over this one; the new supplier is selected straight away (Graeme,
+  // 24 Nov 2026 — no more closing this to add a supplier and coming back).
+  const [newSupplierFor, setNewSupplierFor] = useState<"supplierId" | "secondarySupplierId" | null>(null);
+  const [addedSuppliers, setAddedSuppliers] = useState<{ id: number; name: string }[]>([]);
+  const supplierOptions = useMemo(() => {
+    const seen = new Set(suppliers.map(s => s.id));
+    return [...suppliers, ...addedSuppliers.filter(s => !seen.has(s.id))];
+  }, [suppliers, addedSuppliers]);
+  const supplierSelect = (field: "supplierId" | "secondarySupplierId") => {
+    const r = register(field);
+    return {
+      ...r,
+      onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+        if (e.target.value === NEW_SUPPLIER) {
+          // Put the dropdown back on what it was; the pop-up sets the new one.
+          e.target.value = String(watch(field) ?? 0);
+          setNewSupplierFor(field);
+          return Promise.resolve();
+        }
+        return r.onChange(e);
+      },
+    };
+  };
   const watchedProcessingRatioPct = watch("processingRatioPct");
   const watchedStockCheckEnabled = watch("stockCheckEnabled");
   const watchedStockCheckFrequency = watch("stockCheckFrequency");
   const watchedCategory = watch("category");
   const watchedKanbanEnabled = watch("kanbanEnabled");
+  const watchedKanbanUnit = watch("kanbanUnit");
   const liveCostPerUnit = watchedPackWeight > 0 ? watchedCostPerPack / watchedPackWeight : null;
   const showRawMeatTray = isIngredient && watchedCategory === "raw_meat";
 
+  // What the form opened with, to tell when there are unsaved changes.
+  const [baseline, setBaseline] = useState<Record<string, unknown> | null>(null);
   const populateForm = (item: Ingredient | null, mode: IngredientFormMode) => {
-    if (!item) { reset(emptyIngredientFormDefaults(mode)); return; }
-    reset(ingredientToFormValues(item, mode));
+    const values = item ? ingredientToFormValues(item, mode) : emptyIngredientFormDefaults(mode);
+    reset(values);
+    setBaseline(JSON.parse(JSON.stringify(values)) as Record<string, unknown>);
   };
 
   const [initialized, setInitialized] = useState(false);
@@ -169,6 +205,13 @@ export function IngredientFormDialog({
   const [tab, setTab] = useState<IngredientTabId>("basics");
   if (open && !initialized) { populateForm(editingItem, defaultMode); setInitialized(true); setTab(focusDeclaration ? "label" : "basics"); }
   if (!open && initialized) { setInitialized(false); }
+  // Unsaved-changes guard (Graeme, 24 Nov 2026): X, Cancel, Escape, tapping
+  // outside and the Back swipe all ask first — Keep editing / Discard / Save.
+  const allValues = watch();
+  const dirty = open && baseline != null && formIsDirty(baseline, JSON.parse(JSON.stringify(allValues)) as Record<string, unknown>);
+  const [confirmClose, setConfirmClose] = useState(false);
+  const requestClose = () => { if (dirty) setConfirmClose(true); else onClose(); };
+  useBackToClose(open, requestClose);
   const shownTabs = tabsFor(isIngredient);
   const activeTab: IngredientTabId = shownTabs.includes(tab) ? tab : "basics";
   const tabErrorCounts = ingredientErrorCounts(errors as Record<string, unknown>);
@@ -772,7 +815,34 @@ export function IngredientFormDialog({
     : [];
 
   return (
-    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+    <>
+    <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
+      <AlertDialogContent className="bg-card border-border rounded-2xl z-[260]">
+        <AlertDialogHeader>
+          <AlertDialogTitle>You have unsaved changes</AlertDialogTitle>
+          <AlertDialogDescription>
+            Your changes to {watchedName.trim() || (isIngredient ? "this ingredient" : "this supply")} aren't saved yet. What would you like to do?
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter className="flex-col sm:flex-row gap-2">
+          <AlertDialogCancel className="sm:mr-auto min-h-11">Keep editing</AlertDialogCancel>
+          <button
+            type="button"
+            onClick={() => { setConfirmClose(false); onClose(); }}
+            className="inline-flex min-h-11 items-center justify-center rounded-md text-sm font-medium px-4 py-2 border border-destructive text-destructive hover:bg-destructive/10 transition-colors"
+          >
+            Discard changes
+          </button>
+          <AlertDialogAction
+            onClick={() => { setConfirmClose(false); (document.getElementById("ingredient-form") as HTMLFormElement | null)?.requestSubmit(); }}
+            className="min-h-11 bg-[#7cb342] text-white hover:bg-[#6a9c37]"
+          >
+            Save changes
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    <Dialog open={open} onOpenChange={(v) => { if (!v) requestClose(); }}>
       {/* Tabbed and full width, like the recipe editor (Graeme, 11 Nov 2026):
           the tab bar and the save buttons stay in view, the body scrolls. */}
       <DialogContent className="p-0 gap-0 flex flex-col w-[calc(100vw-1rem)] sm:max-w-[min(96vw,1400px)] h-[92dvh] max-h-[92dvh] overflow-hidden bg-card border-border rounded-2xl z-[200] [&>button:last-child]:p-2 [&>button:last-child]:right-3 [&>button:last-child]:top-3 [&>button:last-child>svg]:h-5 [&>button:last-child>svg]:w-5">
@@ -1122,17 +1192,41 @@ export function IngredientFormDialog({
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-sm font-medium mb-1 block">Primary Supplier</label>
-              <select {...register("supplierId")} className={inputClass}>
+              <select {...supplierSelect("supplierId")} className={inputClass}>
                 <option value="0">— No supplier —</option>
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {supplierOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value={NEW_SUPPLIER}>＋ New supplier…</option>
               </select>
             </div>
             <div>
               <label className="text-sm font-medium mb-1 block">Secondary Supplier</label>
-              <select {...register("secondarySupplierId")} className={inputClass}>
+              <select {...supplierSelect("secondarySupplierId")} className={inputClass}>
                 <option value="0">— None —</option>
-                {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                {supplierOptions.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                <option value={NEW_SUPPLIER}>＋ New supplier…</option>
               </select>
+            </div>
+          </div>
+          {/* Where it's ordered — the same link as the "Fill in from a
+              supplier page" box (folded away when editing, so it looked
+              missing; Graeme 24 Nov 2026). */}
+          <div>
+            <label className="text-sm font-medium mb-1 block" htmlFor="ordering-url-buying">Ordering link</label>
+            <div className="flex gap-2">
+              <input
+                id="ordering-url-buying"
+                type="url"
+                value={orderingUrlValue}
+                onChange={e => setValue("orderingUrl", e.target.value, { shouldDirty: true })}
+                placeholder="https://… the page you order it from"
+                className={cn(inputClass, "flex-1")}
+              />
+              {/^https?:\/\//i.test(orderingUrlValue.trim()) && (
+                <a href={orderingUrlValue.trim()} target="_blank" rel="noopener noreferrer"
+                  className="h-10 px-3 rounded-lg border border-border text-sm font-medium flex items-center gap-1 hover:bg-secondary shrink-0">
+                  Open <ExternalLink className="w-3.5 h-3.5" />
+                </a>
+              )}
             </div>
           </div>
           {/* Price at the secondary supplier (Graeme, 2026-10-01). Optional —
@@ -1177,11 +1271,15 @@ export function IngredientFormDialog({
               {errors.packWeight && <span className="text-destructive text-xs">{errors.packWeight.message}</span>}
             </div>
             <div>
-              <label className="text-sm font-medium mb-1 block">Cost per pack (£) *</label>
+              <label className="text-sm font-medium mb-1 block">Cost per pack (£, before VAT) *</label>
               <div className="relative">
                 <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm font-medium">£</span>
                 <input type="number" step="0.01" {...register("costPerPack")} className="w-full pl-7 pr-3 py-2 bg-background border border-border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-primary/30" placeholder="0.00" />
               </div>
+              {/* Invoices are checked against this BEFORE VAT (invoice lines are
+                  read ex-VAT — lib/finance/invoice-lines-read.ts), so packaging
+                  and other VAT-able items go in without VAT (Graeme, 24 Nov 2026). */}
+              <p className="text-xs text-muted-foreground mt-1">Without VAT — invoices are checked against the price before VAT.</p>
               {errors.costPerPack && <span className="text-destructive text-xs">{errors.costPerPack.message}</span>}
             </div>
           </div>
@@ -1310,22 +1408,34 @@ export function IngredientFormDialog({
                 <div>
                   <label className="text-sm font-medium mb-1 block">Kanban Unit</label>
                   <select {...register("kanbanUnit")} className={inputClass}>
-                    <option value="weight">Weight (kg/g/L)</option>
-                    <option value="pack">Pack</option>
-                    <option value="bottle">Bottle</option>
-                    <option value="pallet">Pallet</option>
+                    {kanbanUnitOptions({ unit: watchedUnit, packWeight: watchedPackWeight, current: (baseline?.kanbanUnit as string | undefined) }).map(o => (
+                      <option key={o.value} value={o.value}>{o.label}</option>
+                    ))}
                   </select>
+                  {watchedKanbanUnit === "weight" && (
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">
+                      Old setting: the card reads this in {unitWord(watchedUnit)} but the Orders page reads it as packs. Pick {unitWord(watchedUnit)} or Packs so they agree.
+                    </p>
+                  )}
                 </div>
                 <div>
                   <label className="text-sm font-medium mb-1 block">Trigger Quantity</label>
-                  <input type="number" step="0.1" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
-                  <p className="text-xs text-muted-foreground mt-1">Pull card when stock reaches this level.</p>
+                  <AmountWithUnit word={kanbanAmountWord(watchedKanbanUnit, watchedUnit)}>
+                    <input type="number" step="any" min="0" {...register("kanbanQuantity")} className={numInputClass} placeholder="e.g. 10" />
+                  </AmountWithUnit>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Pull the card when you're down to this many{kanbanAmountWord(watchedKanbanUnit, watchedUnit) ? ` ${kanbanAmountWord(watchedKanbanUnit, watchedUnit)}` : ""}.
+                  </p>
                 </div>
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">Order Amount</label>
-                <input type="number" step="0.1" min="0" {...register("kanbanOrderAmount")} className={cn(numInputClass, "max-w-[160px]")} placeholder="e.g. 50" />
-                <p className="text-xs text-muted-foreground mt-1">Quantity to order when card is pulled.</p>
+                <AmountWithUnit word={kanbanAmountWord(watchedKanbanUnit, watchedUnit)} className="max-w-[220px]">
+                  <input type="number" step="any" min="0" {...register("kanbanOrderAmount")} className={numInputClass} placeholder="e.g. 50" />
+                </AmountWithUnit>
+                <p className="text-xs text-muted-foreground mt-1">
+                  How much to order when the card is pulled{watchedKanbanUnit === "unit" && Number(watchedPackWeight) > 0 ? ` — rounded up to whole packs of ${Number(watchedPackWeight).toLocaleString("en-GB")} ${unitWord(watchedUnit)}` : ""}.
+                </p>
               </div>
               {/* Standing weekly order (#348) — autosaves on its own
                   endpoint, so it needs a saved ingredient. */}
@@ -1840,13 +1950,25 @@ export function IngredientFormDialog({
         </div>
 
         <div className="shrink-0 border-t border-border px-5 sm:px-6 py-3 flex justify-end gap-3 bg-card">
-          <button type="button" onClick={onClose} className="min-h-11 px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
+          <button type="button" onClick={requestClose} className="min-h-11 px-4 py-2 text-sm rounded-xl border border-border hover:bg-secondary/50 transition-colors">Cancel</button>
           <button type="submit" form="ingredient-form" className="min-h-11 px-5 py-2.5 bg-primary text-primary-foreground rounded-xl text-sm font-medium hover:bg-primary/90 transition-colors shadow-sm shadow-primary/20">
             {editingItem ? "Save Changes" : formMode === "ingredient" ? "Add Ingredient" : "Add Supply"}
           </button>
         </div>
+        <NewSupplierDialog
+          open={newSupplierFor != null}
+          onClose={() => setNewSupplierFor(null)}
+          zIndexClass="z-[250]"
+          onCreated={sup => {
+            setAddedSuppliers(a => [...a, sup]);
+            const field = newSupplierFor;
+            // After the option exists in the list, select it.
+            if (field) setTimeout(() => setValue(field, sup.id as never, { shouldDirty: true }), 0);
+          }}
+        />
       </DialogContent>
     </Dialog>
+    </>
   );
 }
 
@@ -1862,6 +1984,17 @@ interface ShopifyVariantOption {
   display: string;
   productTitle: string;
   variantTitle: string | null;
+}
+
+/** A number box with what it counts written inside it on the right ("pieces",
+ *  "packs") — so nobody has to guess whether 500 means grams or packs. */
+function AmountWithUnit({ word, className, children }: { word: string | null; className?: string; children: ReactNode }) {
+  return (
+    <div className={cn("relative", className)}>
+      {children}
+      {word && <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">{word}</span>}
+    </div>
+  );
 }
 
 function ShopifyLinkSection({ watch, setValue, register, inputClass }: {
