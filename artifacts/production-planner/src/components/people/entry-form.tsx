@@ -21,7 +21,7 @@
  * PIN instead of losing what was typed.
  */
 import { useState } from "react";
-import { AlertTriangle, CalendarDays, ChevronDown, History, Info, ListTodo, Undo2 } from "lucide-react";
+import { AlertTriangle, CalendarDays, ChevronDown, History, Info, ListTodo, Loader2, Trash2, Undo2 } from "lucide-react";
 import {
   usesField, entryWarning, periodEnd, PERIOD_MONTHS, warningStatusLabel, evidenceLine, meetingChecklist, isFormalHearing, fmtDayIso,
   sortClassifications, sortStages, showTriggerChoice, entryClassification, entryClassIds, RATING_LABEL, RATINGS, PROBATION_OUTCOME_LABEL, PROBATION_OUTCOMES,
@@ -31,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { AutoText, AutoDate, AutoTime, AutoChoice, AutoChecklist, FieldLabel } from "./review-fields";
-import { recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
+import { recordDelete, recordSend, type PersonRecordEntries, type RecordEntry } from "./reviews-api";
 import { LettersBlock } from "./letter-editor";
 import { WhatHappened } from "./what-happened";
 import { TriggerLinkField } from "./trigger-link";
@@ -261,6 +261,7 @@ export function EntryEditor({ entry, data, onChanged, person }: {
           </ul>
         </Block>
       )}
+      <DeleteEntry entryId={entry.id} title={entry.title} date={entry.meetingDate ?? entry.entryDate} onDone={onChanged} />
     </>
   );
 
@@ -369,6 +370,46 @@ function ReviewPeriod({ entry, save, onChanged }: { entry: RecordEntry; save: (p
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Delete an entry made by mistake — e.g. a meeting booked twice (Graeme,
+ * 24 Nov 2026). Asked twice: first "Delete this entry…", then a red
+ * "Yes, delete it for good". The server refuses warnings, entries with a
+ * letter, and ones whose write-up has been shared, and audits the deletion.
+ */
+function DeleteEntry({ entryId, title, date, onDone }: { entryId: number; title: string; date: string; onDone: () => void }) {
+  const [step, setStep] = useState<0 | 1>(0);
+  const [busy, setBusy] = useState(false);
+  if (step === 0) {
+    return (
+      <button type="button" onClick={() => setStep(1)}
+        className="h-12 px-4 rounded-xl border-2 border-border text-destructive font-bold flex items-center gap-2 hover:bg-destructive/5">
+        <Trash2 className="w-5 h-5" /> Delete this entry…
+      </button>
+    );
+  }
+  return (
+    <div className="rounded-2xl border-2 border-destructive/60 bg-destructive/5 p-4 space-y-3">
+      <p className="text-lg font-bold">Delete “{title || "Untitled"}” ({fmtDayIso(date)}) for good?</p>
+      <p className="text-base text-muted-foreground">
+        It comes off their record with its notes and can't be brought back. The deletion itself is kept in the audit log. Use this for mistakes, like a meeting booked twice.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-2">
+        <button type="button" disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            try { await recordDelete(`/entries/${entryId}`); toast({ title: "Entry deleted" }); onDone(); }
+            catch (e) { toast({ title: "Couldn't delete it", description: e instanceof Error ? e.message : "Try again", variant: "destructive" }); setStep(0); }
+            finally { setBusy(false); }
+          }}
+          className="h-14 rounded-2xl bg-destructive text-destructive-foreground text-lg font-bold disabled:opacity-50 flex items-center justify-center gap-2">
+          {busy && <Loader2 className="w-5 h-5 animate-spin" />} Yes, delete it for good
+        </button>
+        <button type="button" onClick={() => setStep(0)} className="h-14 rounded-2xl border-2 border-border text-lg font-bold">Keep it</button>
+      </div>
     </div>
   );
 }

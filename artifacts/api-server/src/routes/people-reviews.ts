@@ -756,6 +756,56 @@ router.post(
   },
 );
 
+// DELETE /entries/:id — remove an entry made by mistake (Graeme, 24 Nov
+// 2026: "I accidentally put two in today … I need to delete one"). The screen
+// asks twice. Refused for anything that must stay on the record: a warning
+// (withdraw it instead), an entry with a letter, or one whose write-up has
+// been shared. Its open to-dos are cancelled; the deletion is audited with
+// what was deleted (the audit row outlives the entry).
+router.delete(
+  "/entries/:id",
+  employmentRecordWrite({ subject: fromRow("id", entryOwner), refuseAs404: true }),
+  async (req: Request, res: Response) => {
+    const viewer = viewerOf(res);
+    const id = parseId(req.params["id"]);
+    try {
+      const [row] = id == null ? [] : await db.select().from(peopleRecordEntriesTable).where(eq(peopleRecordEntriesTable.id, id));
+      if (!row || !(await mayOpen(viewer, row.userId))) { res.status(404).json({ error: "No such entry" }); return; }
+      const [classifications, stages] = await Promise.all([loadClassifications(), loadStages()]);
+      const classIds = (await loadEntryClassIds(db, [row.id])).get(row.id);
+      if (entryWarning(asEntryLike(row, classIds), classifications, stages)) {
+        res.status(409).json({ error: "A warning can't be deleted — withdraw it instead, so the record shows it was withdrawn." }); return;
+      }
+      const blockers = await db.execute<{ letters: number; shared: number }>(sql`
+        SELECT (SELECT COUNT(*)::int FROM people_letters WHERE entry_id = ${row.id}) AS letters,
+               (SELECT COUNT(*)::int FROM people_review_notes WHERE entry_id = ${row.id} AND deleted_at IS NULL
+                  AND (visibility = 'shared' OR shared_at IS NOT NULL)) AS shared
+      `);
+      const b = blockers.rows?.[0];
+      if (Number(b?.letters ?? 0) > 0) { res.status(409).json({ error: "This entry has a letter, so it has to stay on the record." }); return; }
+      if (Number(b?.shared ?? 0) > 0) { res.status(409).json({ error: "Its write-up has been shared, so it has to stay on the record." }); return; }
+      await db.transaction(async tx => {
+        const todoIds = [row.meetingTodoId, row.reviewTodoId].filter((x): x is number => x != null);
+        if (todoIds.length > 0) {
+          await tx.execute(sql`
+            UPDATE todo_tasks SET status = 'done', completed_at = NOW(), updated_at = NOW(), title = 'Cancelled — ' || title
+             WHERE id IN (${sql.join(todoIds.map(t => sql`${t}`), sql`, `)}) AND status = 'open'
+          `);
+        }
+        await audit(tx, viewer, {
+          subjectUserId: row.userId, entryId: row.id, action: "entry_delete",
+          detail: `Deleted entry #${row.id}: "${row.title}" (${row.meetingDate ?? row.entryDate})`,
+        });
+        await tx.delete(peopleRecordEntriesTable).where(eq(peopleRecordEntriesTable.id, row.id));
+      });
+      resyncAttentionSoon();
+      res.json({ ok: true });
+    } catch (err) {
+      fail(res, "delete entry", err, "Couldn't delete the entry");
+    }
+  },
+);
+
 // ── Letters ────────────────────────────────────────────────────────────────
 //
 //   GET   /letter-templates                 the templates (+ merge fields)
