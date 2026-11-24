@@ -9,13 +9,16 @@ import { useEffect, useRef, useState } from "react";
 import { Link } from "wouter";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, Loader2, Lock, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, CheckCircle2, AlertTriangle,
+  ArrowLeft, Loader2, Lock, Sparkles, ThumbsUp, Target, Save, Share2, EyeOff, Trash2, Eye, X, CheckCircle2, AlertTriangle, CalendarPlus,
 } from "lucide-react";
 import type { PerformanceReport, Suggestion } from "@workspace/performance-review";
 import { peopleFetch, peopleRetry, PeopleLockedError } from "@/hooks/use-people-gate";
 import { PEOPLE_PIN_NEEDED_EVENT } from "@/components/employee-reviews";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PerformanceReportView, periodLabel } from "./performance-report-view";
+import { PeopleModal } from "@/components/people-modal";
+import { BookReviewForm } from "./book-review";
+import { useRecordFacts } from "./record-panel";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 
@@ -113,7 +116,7 @@ export function PerformanceReview({ userId, ready }: { userId: number; ready: bo
 
       <SavedCopies
         userId={userId} first={first} report={r} meetings={data.meetings} saved={data.saved}
-        onChanged={refresh} onView={setViewing}
+        onChanged={refresh} onView={setViewing} ready={ready}
       />
 
       <SavedViewer id={viewing} onClose={() => setViewing(null)} />
@@ -225,12 +228,21 @@ function PrepNotes({ userId, first, initial }: { userId: number; first: string; 
   );
 }
 
-function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView }: {
+function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView, ready }: {
   userId: number; first: string; report: PerformanceReport;
   meetings: ReviewResponse["meetings"]; saved: ReviewResponse["saved"];
-  onChanged: () => void; onView: (id: number) => void;
+  onChanged: () => void; onView: (id: number) => void; ready: boolean;
 }) {
   const [entryId, setEntryId] = useState<string>(meetings[0] ? String(meetings[0].id) : "");
+  // Book the review meeting right here (Graeme, 24 Nov 2026: "I don't want
+  // to have to create the meeting first and then go and select it").
+  const [booking, setBooking] = useState(false);
+  const facts = useRecordFacts(userId, ready && booking);
+  const [justBooked, setJustBooked] = useState<number | null>(null);
+  useEffect(() => {
+    // Once the new meeting is in the list, select it.
+    if (justBooked != null && meetings.some(m => m.id === justBooked)) { setEntryId(String(justBooked)); setJustBooked(null); }
+  }, [justBooked, meetings]);
   const [busy, setBusy] = useState(false);
   const [confirm, setConfirm] = useState<{ id: number; action: "share" | "unshare" | "delete" } | null>(null);
 
@@ -273,12 +285,36 @@ function SavedCopies({ userId, first, report, meetings, saved, onChanged, onView
             {meetings.map(m => <option key={m.id} value={m.id}>{fmtDay(m.date)} · {m.title}{m.meetingStatus === "booked" ? " (booked)" : ""}</option>)}
           </select>
         </label>
+        <button type="button" onClick={() => setBooking(true)}
+          className="h-11 px-4 rounded-xl border-2 border-primary/40 text-sm font-semibold flex items-center gap-1.5 hover:bg-primary/5">
+          <CalendarPlus className="w-4 h-4" /> Book the review meeting
+        </button>
         <button type="button" onClick={() => void saveCopy()} disabled={busy}
           className="h-11 px-4 rounded-xl bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1.5 disabled:opacity-50">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save a copy
         </button>
       </div>
-      {meetings.length === 0 && <p className="text-xs text-muted-foreground">No meetings on their record yet — book the review from <Link href={`/people/${userId}`} className="underline decoration-dotted underline-offset-2">their record</Link> first to attach it to one.</p>}
+      {meetings.length === 0 && <p className="text-xs text-muted-foreground">No meetings on their record yet — book the review here, then save a copy to it.</p>}
+      {booking && (
+        <PeopleModal title={`Book the review meeting — ${report.person.name}`} onClose={() => setBooking(false)} wide>
+          {facts.data ? (
+            <BookReviewForm
+              data={facts.data}
+              startAsLabel="Performance appraisal"
+              initialTitle="Performance review"
+              onCancel={() => setBooking(false)}
+              onCreated={id => {
+                setBooking(false);
+                setJustBooked(id);
+                onChanged();
+                toast({ title: "Review meeting booked", description: "It's selected below — save a copy of the report to it when you're ready." });
+              }}
+            />
+          ) : (
+            <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+          )}
+        </PeopleModal>
+      )}
 
       {saved.length > 0 && (
         <ul className="divide-y divide-border rounded-xl border border-border">

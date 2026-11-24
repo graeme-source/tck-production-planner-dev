@@ -14,7 +14,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import {
-  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, rateStat, type PerformanceReport, type RecordItem,
+  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, minutesLate, rateStat, type PerformanceReport, type RecordItem,
 } from "@workspace/performance-review";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { improvementScorePct } from "../lib/improvement-score";
@@ -86,6 +86,9 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     loadChecklists(userId, from, to, stationDays, plandayId != null),
   ]);
 
+  const attendance = attendanceFrom(myShifts, plandayId != null);
+  if (plandayId != null && attendance.lateDates.length > 0) attendance.lateDetails = await lateDetails(plandayId, attendance.lateDates);
+
   return {
     version: REPORT_VERSION,
     person: { userId, name: person.name.trim(), jobTitle: person.job_title, plandayLinked: plandayId != null },
@@ -96,7 +99,7 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     lean,
     speed,
     checklists,
-    attendance: attendanceFrom(myShifts, plandayId != null),
+    attendance,
     records,
     contributions,
   };
@@ -120,10 +123,19 @@ async function loadImprovements(userId: number, from: string, to: string, shifts
   const team = (await db.execute<{ id: number }>(sql`
     SELECT DISTINCT u.id FROM app_users u JOIN planday_shifts_cache s ON s.employee_id = u.planday_employee_id
      WHERE u.is_active AND s.date BETWEEN ${from} AND ${to}
-  `).catch(() => ({ rows: [] }))).rows ?? [];
+  `).catch(() => ({ rows: [] as Array<{ id: number }> }))).rows ?? [];
   const teamIds = new Set(team.map(t => Number(t.id)));
-  const teamCounts = inRange.filter(r => teamIds.has(Number(r.user_id))).length;
-  const teamAverage = teamIds.size > 0 ? teamCounts / teamIds.size : null;
+  const teamRows = inRange.filter(r => teamIds.has(Number(r.user_id)));
+  const teamAverage = teamIds.size > 0 ? teamRows.length / teamIds.size : null;
+  // Team score: every team member's credits ÷ every team member's days worked.
+  let teamScorePct: number | null = null;
+  if (shiftsKnown && teamIds.size > 0) {
+    const teamShifts = await loadClassifiedShifts([...teamIds], from).catch(() => new Map<number, Array<{ date: string; typeName: string | null }>>());
+    let days = 0;
+    for (const list of teamShifts.values()) days += new Set(list.filter(x => x.date <= to && isWorkedShift(x)).map(x => x.date)).size;
+    const credits = teamRows.reduce((n, r) => n + Number(r.credit_weight || 1), 0);
+    teamScorePct = days > 0 ? improvementScorePct(credits, days) : null;
+  }
 
   const worked = shifts.filter(isWorkedShift);
   const months: string[] = [];
@@ -139,9 +151,14 @@ async function loadImprovements(userId: number, from: string, to: string, shifts
     return { month, completed: done.length, credits, shifts: shiftDays, scorePct: shiftDays != null ? improvementScorePct(credits, shiftDays) : null };
   });
 
+  const myCredits = mine.reduce((n, r) => n + Number(r.credit_weight || 1), 0);
+  const daysWorked = shiftsKnown ? new Set(worked.filter(s => s.date >= from && s.date <= to).map(s => s.date)).size : null;
   return {
     completed: mine.length,
-    credits: mine.reduce((s, r) => s + Number(r.credit_weight || 1), 0),
+    credits: myCredits,
+    scorePct: daysWorked != null && daysWorked > 0 ? improvementScorePct(myCredits, daysWorked) : null,
+    daysWorked,
+    teamScorePct,
     teamAverage: teamAverage == null ? null : Math.round(teamAverage * 10) / 10,
     shiftsKnown,
     monthly,
@@ -361,6 +378,26 @@ function attendanceFrom(shifts: Array<{ date: string; typeName: string | null }>
     sickSpells: sickRuns(sickDates, workedDates),
     lateDates,
   };
+}
+
+/** How late on each late day: their punch-in against the rostered start,
+ *  read from Planday's punch clock one day at a time (only the late days).
+ *  Minutes are null when Planday can't be reached or has no rostered start. */
+async function lateDetails(plandayId: number, dates: string[]): Promise<NonNullable<PerformanceReport["attendance"]["lateDetails"]>> {
+  const { getPlandayPunchClockShifts, isPlandayConfigured } = await import("./planday");
+  if (!isPlandayConfigured()) return dates.map(date => ({ date, minutesLate: null, clockedIn: null, rostered: null }));
+  return Promise.all(dates.slice(0, 60).map(async date => {
+    try {
+      const punches = (await getPlandayPunchClockShifts(date, date)).filter(p => Number(p.employeeId) === plandayId)
+        .sort((a, b) => String(a.startDateTime).localeCompare(String(b.startDateTime)));
+      const first = punches[0];
+      if (!first) return { date, minutesLate: null, clockedIn: null, rostered: null };
+      const m = minutesLate(first);
+      return { date, minutesLate: m.minutes, clockedIn: m.clockedIn, rostered: m.rostered };
+    } catch {
+      return { date, minutesLate: null, clockedIn: null, rostered: null };
+    }
+  }));
 }
 
 // ── Records (only what's recorded) ──────────────────────────────────────

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { attributeChecklistMisses, attendancePct, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
+import { attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
 
 function base(): PerformanceReport {
   return {
@@ -69,7 +69,7 @@ describe("suggestions", () => {
   });
   it("recognises strengths: above-standard speed and lots of improvements", () => {
     const r = base();
-    r.improvements = { ...r.improvements, completed: 6, teamAverage: 2 };
+    r.improvements = { ...r.improvements, completed: 6, teamAverage: 2, scorePct: 105 };
     r.speed.wrapping = rateStat({ unit: "packs an hour", how: "x", teamOverall: 110, standard: 115, stretch: 135, days: [1, 2, 3].map(d => ({ date: `2026-11-0${d}`, amount: 260, minutes: 120 })) });
     const s = suggestions(r);
     expect(s.filter(x => x.tone === "strength").map(x => x.area).sort()).toEqual(["improvements", "speed"]);
@@ -80,6 +80,13 @@ describe("suggestions", () => {
     expect(suggestions(r).find(x => x.area === "checklists")).toMatchObject({ tone: "focus", headline: expect.stringContaining("3 items on 2 days") });
     r.checklists = { ...r.checklists, missed: 0, missedDays: 0 };
     expect(suggestions(r).find(x => x.area === "checklists")?.tone).toBe("strength");
+  });
+  it("judges improvements on the score when it's known", () => {
+    const r = base();
+    r.improvements = { ...r.improvements, completed: 2, credits: 2, scorePct: 5, teamScorePct: 20, teamAverage: 2 };
+    expect(suggestions(r).find(x => x.area === "improvements")).toMatchObject({ tone: "focus", headline: "Improvement score 5% — the aim is 100%", detail: expect.stringContaining("one improvement every shift") });
+    r.improvements = { ...r.improvements, scorePct: 110 };
+    expect(suggestions(r).find(x => x.area === "improvements")?.tone).toBe("strength");
   });
   it("never says anything about disciplinary records being absent", () => {
     const s = suggestions(base());
@@ -115,5 +122,15 @@ describe("attributeChecklistMisses", () => {
   });
   it("isn't known without rostered station days", () => {
     expect(attributeChecklistMisses({ known: true, from: "2026-11-01", to: "2026-11-30", templateStations, resolve, missing, ticked: 0, cantDo: 0, stationDays: new Map() }).known).toBe(false);
+  });
+});
+
+describe("minutesLate", () => {
+  it("is clocked-in minus rostered start, never below zero", () => {
+    expect(minutesLate({ startDateTime: "2026-11-02T07:04:00", shiftStartDateTime: "2026-11-02T07:00:00" })).toEqual({ minutes: 4, clockedIn: "07:04", rostered: "07:00" });
+    expect(minutesLate({ startDateTime: "2026-11-02T06:55:00", shiftStartDateTime: "2026-11-02T07:00:00" }).minutes).toBe(0);
+  });
+  it("is unknown without a rostered start", () => {
+    expect(minutesLate({ startDateTime: "2026-11-02T07:04:00", shiftStartDateTime: null })).toEqual({ minutes: null, clockedIn: "07:04", rostered: null });
   });
 });

@@ -16,6 +16,9 @@
 
 export const REPORT_VERSION = 1;
 
+/** The improvement score everyone aims for: one improvement every shift. */
+export const IMPROVEMENT_TARGET_PCT = 100;
+
 /** Active minutes a day needs before it gives a rate. */
 export const MIN_RATE_MINUTES = 30;
 
@@ -52,6 +55,12 @@ export interface PerformanceReport {
   improvements: {
     completed: number;
     credits: number;
+    /** Improvement score over the period: credits ÷ days worked, as a % —
+     *  the same rule as the daily score. Null when shifts aren't known. */
+    scorePct?: number | null;
+    daysWorked?: number | null;
+    /** The team's score over the same period (all credits ÷ all days worked). */
+    teamScorePct?: number | null;
     /** Average completed improvements per active team member, same period. */
     teamAverage: number | null;
     shiftsKnown: boolean;
@@ -112,6 +121,10 @@ export interface PerformanceReport {
     attendancePct: number | null;
     sickSpells: Array<{ start: string; end: string; days: number }>;
     lateDates: string[];
+    /** How late, per late day, from Planday's punch clock: clocked in vs the
+     *  rostered start (Graeme, 24 Nov 2026). Optional — older saved reports
+     *  don't have it, and it's empty when Planday can't be reached. */
+    lateDetails?: Array<{ date: string; minutesLate: number | null; clockedIn: string | null; rostered: string | null }>;
   };
 
   records: {
@@ -234,14 +247,18 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 export function suggestions(r: PerformanceReport): Suggestion[] {
   const out: Suggestion[] = [];
 
-  // Improvements
+  // Improvements — the aim is a score of 100%: one improvement for every
+  // shift worked (Graeme, 24 Nov 2026). Judged on the score when shifts are
+  // known; otherwise on the count against the team.
   const imp = r.improvements;
-  if (imp.teamAverage != null && imp.teamAverage > 0) {
-    if (imp.completed >= imp.teamAverage * 1.5 && imp.completed >= 3) {
-      out.push({ tone: "strength", area: "improvements", headline: `Strong on improvements — ${plural(imp.completed, "improvement")}`, detail: `Well above the team average of ${round1(imp.teamAverage)} for the same period.` });
-    } else if (imp.completed < imp.teamAverage * 0.5) {
-      out.push({ tone: "focus", area: "improvements", headline: imp.completed === 0 ? "No improvements completed this period" : `Fewer improvements than most — ${imp.completed}`, detail: `The team averaged ${round1(imp.teamAverage)}. Objective idea: one small improvement a week — leave every station better than you found it.` });
+  if (imp.scorePct != null) {
+    if (imp.scorePct >= IMPROVEMENT_TARGET_PCT) {
+      out.push({ tone: "strength", area: "improvements", headline: `Improvement score ${imp.scorePct}% — at or above the 100% aim`, detail: `${plural(imp.completed, "improvement")} over ${plural(imp.daysWorked ?? 0, "day")} worked.` });
+    } else {
+      out.push({ tone: "focus", area: "improvements", headline: `Improvement score ${imp.scorePct}% — the aim is 100%`, detail: `${plural(imp.completed, "improvement")} over ${plural(imp.daysWorked ?? 0, "day")} worked${imp.teamScorePct != null ? ` (team ${imp.teamScorePct}%)` : ""}. Objective: one improvement every shift — leave every station better than you found it.` });
     }
+  } else if (imp.teamAverage != null && imp.teamAverage > 0 && imp.completed < imp.teamAverage) {
+    out.push({ tone: "focus", area: "improvements", headline: imp.completed === 0 ? "No improvements completed this period" : `Fewer improvements than most — ${imp.completed}`, detail: `The team averaged ${round1(imp.teamAverage)}. Objective: one improvement every shift — leave every station better than you found it.` });
   }
 
   // Training
@@ -381,4 +398,24 @@ export function attributeChecklistMisses(args: {
     byStation: [...byStation.values()].sort((a, b) => b.missed - a.missed || b.days - a.days),
     missedList: missedList.slice(0, 200),
   };
+}
+
+// ── Lateness ────────────────────────────────────────────────────────────
+
+/** "2026-11-02T07:04:00" (Planday's local date-time) → minutes since midnight
+ *  plus the date, compared as written — both times are in the same zone. */
+function localParts(dt: string | null | undefined): { date: string; minutes: number; hhmm: string } | null {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})/.exec(dt ?? "");
+  if (!m) return null;
+  return { date: m[1]!, minutes: Number(m[2]) * 60 + Number(m[3]), hhmm: `${m[2]}:${m[3]}` };
+}
+
+/** How late one punch-in was against its rostered start; 0 when on time or
+ *  early; null when either time is missing. */
+export function minutesLate(punch: { startDateTime?: string | null; shiftStartDateTime?: string | null }): { minutes: number | null; clockedIn: string | null; rostered: string | null } {
+  const inAt = localParts(punch.startDateTime);
+  const due = localParts(punch.shiftStartDateTime);
+  if (!inAt || !due) return { minutes: null, clockedIn: inAt?.hhmm ?? null, rostered: due?.hhmm ?? null };
+  const dayGap = inAt.date === due.date ? 0 : (Date.parse(`${inAt.date}T00:00:00Z`) - Date.parse(`${due.date}T00:00:00Z`)) / 60000;
+  return { minutes: Math.max(0, Math.round(dayGap + inAt.minutes - due.minutes)), clockedIn: inAt.hhmm, rostered: due.hhmm };
 }

@@ -33,14 +33,19 @@ export function PerformanceReportView({ report, audience }: { report: Performanc
   const sopsAtStations = stationsWorked.reduce((n, s) => n + s.sopCount, 0);
   const sopsTrained = stationsWorked.reduce((n, s) => n + s.trained, 0);
   const leanPct = r.lean.weeksAssigned > 0 ? Math.round((r.lean.weeksCompleted / r.lean.weeksAssigned) * 100) : null;
-  const speeds = (["building", "wrapping", "packing"] as const).filter(k => r.speed[k]);
 
-  const cards: Array<{ key: CardKey; icon: typeof Users; title: string; big: string; sub: string; tone?: "good" | "warn" | null }> = [
+  const cards: Array<{ key: CardKey; id?: string; icon: typeof Users; title: string; big: string; sub: string; tone?: "good" | "warn" | null }> = [
     {
-      key: "improvements", icon: Lightbulb, title: "Improvements",
-      big: String(r.improvements.completed),
-      sub: `${pl(r.improvements.credits, "credit")}${r.improvements.teamAverage != null ? ` · team average ${r.improvements.teamAverage}` : ""}`,
-      tone: r.improvements.teamAverage == null ? null : r.improvements.completed >= r.improvements.teamAverage ? "good" : "warn",
+      // The score leads — it's the measure that matters most — with the
+      // number of improvements beside it (Graeme, 24 Nov 2026).
+      key: "improvements", icon: Lightbulb, title: r.improvements.scorePct != null ? "Improvement score" : "Improvements",
+      big: r.improvements.scorePct != null ? `${r.improvements.scorePct}%` : String(r.improvements.completed),
+      sub: r.improvements.scorePct != null
+        ? `aim 100% · ${pl(r.improvements.completed, "improvement")} · ${pl(r.improvements.credits, "credit")}${r.improvements.teamScorePct != null ? ` · team ${r.improvements.teamScorePct}%` : ""}`
+        : `${pl(r.improvements.completed, "improvement")}${r.improvements.teamAverage != null ? ` · team average ${r.improvements.teamAverage}` : ""}`,
+      tone: r.improvements.scorePct != null
+        ? (r.improvements.scorePct >= 100 ? "good" : "warn")
+        : r.improvements.teamAverage == null ? null : r.improvements.completed >= r.improvements.teamAverage ? "good" : "warn",
     },
     {
       key: "training", icon: GraduationCap, title: "Training",
@@ -54,11 +59,18 @@ export function PerformanceReportView({ report, audience }: { report: Performanc
       sub: leanPct != null ? `weeks completed (${leanPct}%)` : "No weekly lessons set in this period",
       tone: leanPct == null ? null : leanPct >= 90 ? "good" : "warn",
     },
-    {
-      key: "speed", icon: Gauge, title: "Station speed",
-      big: speeds.length ? speeds.map(k => r.speed[k]!.overall ?? "—").join(" · ") : "—",
-      sub: speeds.length ? speeds.map(k => `${k} ${r.speed[k]!.unit.replace(" an hour", "/h")}`).join(" · ") : "Nothing recorded against them at building, wrapping or packing",
-    },
+    // Three speeds, three cards — one figure each (Graeme: "separate them
+    // into three distinct KPIs"). Each opens the same speed detail.
+    ...(([["building", "Building speed"], ["wrapping", "Wrapping speed"], ["packing", "Packing speed"]] as const).map(([k, title]) => {
+      const sp = r.speed[k];
+      const vs = sp?.standard ?? null;
+      return {
+        key: "speed" as CardKey, id: `speed-${k}`, icon: Gauge, title,
+        big: sp?.overall != null ? String(sp.overall) : "—",
+        sub: sp ? `${sp.unit} · ${pl(sp.days, "day")}${vs != null ? ` · standard ${vs}` : ""}` : "Nothing recorded against them",
+        tone: sp?.overall == null || vs == null ? null : sp.overall >= vs ? "good" as const : sp.overall < vs * 0.9 ? "warn" as const : null,
+      };
+    })),
     {
       key: "checklists", icon: ListChecks, title: "Checklists",
       big: r.checklists?.known ? String(r.checklists.missed) : "—",
@@ -90,7 +102,7 @@ export function PerformanceReportView({ report, audience }: { report: Performanc
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {cards.map(c => (
           <button
-            key={c.key}
+            key={c.id ?? c.key}
             type="button"
             onClick={() => toggle(c.key)}
             aria-expanded={open === c.key}
@@ -140,7 +152,14 @@ function ImprovementsDetail({ r }: { r: PerformanceReport }) {
   const max = Math.max(1, ...r.improvements.monthly.map(m => m.completed));
   return (
     <div>
-      <H>Improvements — {r.improvements.completed} completed, {pl(r.improvements.credits, "credit")}</H>
+      <H>
+        Improvements — {r.improvements.scorePct != null ? `score ${r.improvements.scorePct}%, ` : ""}{r.improvements.completed} completed, {pl(r.improvements.credits, "credit")}
+      </H>
+      {r.improvements.scorePct != null && (
+        <p className="text-sm text-muted-foreground mb-3">
+          Score = credits ÷ days worked ({r.improvements.credits} ÷ {r.improvements.daysWorked}). The aim is 100% — one improvement every shift.{r.improvements.teamScorePct != null ? ` The team's is ${r.improvements.teamScorePct}% over the same period.` : ""}
+        </p>
+      )}
       <div className="flex items-end gap-2 h-32 mb-1" aria-label="Improvements by month">
         {r.improvements.monthly.map(m => (
           <div key={m.month} className="flex-1 flex flex-col items-center justify-end gap-1 min-w-0">
@@ -356,7 +375,20 @@ function AttendanceDetail({ r }: { r: PerformanceReport }) {
         </div>
         <div>
           <p className="font-semibold mb-1">Lates</p>
-          {a.lateDates.length === 0 ? <Empty>No lates recorded in Planday this period.</Empty> : <p>{a.lateDates.map(fmtShort).join(", ")}</p>}
+          {a.lateDates.length === 0 ? <Empty>No lates recorded in Planday this period.</Empty>
+            : a.lateDetails && a.lateDetails.length > 0 ? (
+              <ul className="space-y-1">
+                {a.lateDetails.map(l => (
+                  <li key={l.date} className="flex flex-wrap items-baseline gap-x-2">
+                    <span className="tabular-nums w-16">{fmtShort(l.date)}</span>
+                    {l.minutesLate != null
+                      ? <span className="font-semibold">{l.minutesLate === 0 ? "on time by the clock" : `${l.minutesLate} min late`}</span>
+                      : <span className="text-muted-foreground">minutes not known</span>}
+                    {l.clockedIn && l.rostered && <span className="text-xs text-muted-foreground">clocked in {l.clockedIn}, due {l.rostered}</span>}
+                  </li>
+                ))}
+              </ul>
+            ) : <p>{a.lateDates.map(fmtShort).join(", ")}</p>}
         </div>
       </div>
       <Note>Attendance % = shifts worked ÷ (shifts worked + absence shifts). Holiday doesn't count against it. {a.otherAbsence > 0 && `${pl(a.otherAbsence, "other absence day")} (not sickness) recorded.`}</Note>

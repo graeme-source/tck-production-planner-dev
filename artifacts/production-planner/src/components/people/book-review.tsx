@@ -38,18 +38,23 @@ import { PinnedFooter, pinnedPrimaryClass } from "@/components/ui/pinned-save-ba
 /** Enough pasted to be worth reading (the AI read needs 20 characters). */
 const MIN_NOTES = 20;
 
-export function BookReviewForm({ data, onCreated, onCancel, answersTrigger = null }: {
+export function BookReviewForm({ data, onCreated, onCancel, answersTrigger = null, startAsLabel, initialTitle = "" }: {
   data: PersonRecordEntries;
+  /** Start as this classification (e.g. "Performance appraisal" when booked
+   *  from the performance review report), else the usual meeting default. */
+  startAsLabel?: string;
+  initialTitle?: string;
   /** Booked from a trigger banner: the review answers that trigger (0183). */
   answersTrigger?: AnswersTrigger | null;
   onCreated: (id: number) => void;
   onCancel: () => void;
 }) {
   const classifications = sortClassifications(data.classifications).filter(c => c.active);
-  const startAs = defaultMeetingClassification(classifications) ?? classifications[0] ?? null;
+  const startAs = (startAsLabel ? classifications.find(c => c.label === startAsLabel) : null)
+    ?? defaultMeetingClassification(classifications) ?? classifications[0] ?? null;
   const [date, setDate] = useState(data.today);
   const [time, setTime] = useState("");
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
   const [notes, setNotes] = useState("");
   const [todo, setTodo] = useState(false);
   const [busy, setBusy] = useState(false);
