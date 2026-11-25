@@ -21,7 +21,8 @@ import { createShipment, addParcel, cancelShipment, fetchLabel, isConfigured as 
 import { decrementFridgeForShopifyOrder } from "../lib/inventory-sync";
 import { declaredParcelWeightKg, isLargeBox } from "../lib/parcel-weight";
 import { APC_NO_SERVICE_TAG, isNoServiceFailure, isDataFixableFailure } from "../lib/apc-failure-tags";
-import { settledOrders, settlingOrders } from "../lib/order-age";
+import { settledOrders } from "../lib/order-age";
+import { dispatchProgressForTag } from "../services/dispatch-progress";
 import { isDispatchTagged, isCollectionOrder, isLocalDeliveryTag, isPartOfDespatchWave, isCancelledOrder, bulkTagCandidates, packQueueOrders, cancelledOrderMessage } from "../lib/dispatch-tag";
 import { sql } from "drizzle-orm";
 import { resolveRole, requireFulfilmentAccess } from "../lib/fulfilment-access";
@@ -3721,53 +3722,9 @@ router.get("/dispatch-progress", async (req: Request, res: Response) => {
   }
 
   try {
-    // Collections are excluded from every number here. This is the packing
-    // station's progress readout and the fulfilment header's count, and it
-    // measures ONE thing: the courier wave for this delivery date, packed the
-    // day before. A collection carrying the same date tag is handed over on
-    // the date itself, so counting it here put orders nobody was packing
-    // today into today's totals (Graeme, 2026-09-03).
-    // An unfulfilled order held for an open chargeback isn't work for the
-    // bench, so it isn't counted as still to pack (Graeme, 19 Oct 2026).
-    const held = await heldOrderIdSet();
-    const allOrders = (await getOrdersByTag(tag))
-      .filter(o => isPartOfDespatchWave(o.tags))
-      .filter(o => o.fulfillment_status === "fulfilled" || !isHeldForChargeback(o, held));
-
-    const categories = {
-      smallBox: { total: 0, fulfilled: 0 },
-      largeBox: { total: 0, fulfilled: 0 },
-      wholesale: { total: 0, fulfilled: 0 },
-      other: { total: 0, fulfilled: 0 },
-    };
-
-    for (const order of allOrders) {
-      const tags = order.tags.split(",").map(t => t.trim().toLowerCase());
-      const isFulfilled = order.fulfillment_status === "fulfilled";
-
-      if (tags.includes("wholesale")) {
-        categories.wholesale.total += 1;
-        if (isFulfilled) categories.wholesale.fulfilled += 1;
-      } else if (tags.includes("large box")) {
-        categories.largeBox.total += 1;
-        if (isFulfilled) categories.largeBox.fulfilled += 1;
-      } else if (tags.includes("small box")) {
-        categories.smallBox.total += 1;
-        if (isFulfilled) categories.smallBox.fulfilled += 1;
-      } else {
-        categories.other.total += 1;
-        if (isFulfilled) categories.other.fulfilled += 1;
-      }
-    }
-
-    const totalOrders = allOrders.length;
-    const totalFulfilled = allOrders.filter(o => o.fulfillment_status === "fulfilled").length;
-
-    // Counted above but not yet on the pack list (under 15 minutes old —
-    // lib/order-age.ts): the screen says so, with when each comes on.
-    const settling = settlingOrders(allOrders);
-
-    res.json({ tag, totalOrders, totalFulfilled, categories, settling });
+    // The counting (collections and chargeback holds left out) lives in
+    // services/dispatch-progress.ts, shared with the shift close-down check.
+    res.json(await dispatchProgressForTag(tag));
   } catch (err: any) {
     console.error("[Fulfilment] dispatch-progress error:", err.message);
     res.status(502).json({ error: err.message });
