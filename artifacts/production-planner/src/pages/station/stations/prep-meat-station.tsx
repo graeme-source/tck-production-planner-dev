@@ -35,7 +35,7 @@ import { rawMeatProgress, progressPct, tasksLine } from "@/lib/prep-progress";
 import { usePrepSessionCapture, type PrepSessionItem } from "@/hooks/use-prep-session-capture";
 import { prepItemKey } from "@/lib/prep-session-capture";
 import { useMeatPortioning } from "@/components/meat-portioning/api";
-import { displayUnits, portionWord, sharedContainer, wholeLotToggle } from "@/lib/meat-portioning";
+import { displayUnits, portionWord, wholeLotToggle } from "@/lib/meat-portioning";
 
 interface PrepTrayCompletion {
   id: number;
@@ -383,9 +383,6 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
   // Linked-ingredient stock checks belong to THIS recipe's meat panels only —
   // another recipe's links never render here (Graeme, 2026-09-24).
   const selLinkedChecks = linkedStockChecksForRecipe(selRawMeat.map(i => i.ingredientId), selMarinades);
-  const selTotalRawKg = selRawMeat.reduce((sum, i) => sum + toKg(i.rawQty, i.unit), 0);
-  const selTotalMarinadeG = selMarinades.reduce((sum, m) => sum + m.totalGrams, 0);
-  const selTrayCapKg = selRawMeat.find(i => i.rawMeatTrayCapacityKg)?.rawMeatTrayCapacityKg ?? null;
 
   // Per-recipe completion count, in what the station shows: trays or bags,
   // and an unsplit meat as one lot (Fix queue #396).
@@ -590,53 +587,10 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
               </div>
             </div>
 
-            {/* Summary bar — total trays */}
-            {selTotalTrays > 0 && (
-              <div className="flex items-center gap-4 bg-rose-50 dark:bg-rose-900/20 rounded-xl px-5 py-3 mb-5">
-                <div className="text-center min-w-[56px]">
-                  <p className="text-4xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400 leading-none">
-                    {selCompletedTrays}<span className="text-2xl text-muted-foreground font-normal">/{selTotalTrays}</span>
-                  </p>
-                  <p className="text-sm font-medium text-rose-700 dark:text-rose-300 mt-0.5">{portionWord(sharedContainer(selRawMeat.map(i => portioning.of(i.ingredientId).container)), selTotalTrays)} done</p>
-                </div>
-                <div className="h-8 w-px bg-rose-200 dark:bg-rose-700" />
-                <div>
-                  <p className="text-base font-semibold tabular-nums">{selTotalRawKg.toFixed(3)} kg raw meat</p>
-                  {selTotalMarinadeG > 0 && (
-                    <p className="text-sm text-muted-foreground">+ {formatPrepWeight(selTotalMarinadeG, "g")} linked</p>
-                  )}
-                  {selRawMeat.length > 1 && <p className="text-sm text-rose-600 dark:text-rose-400 font-medium mt-0.5">across {selRawMeat.length} meat types</p>}
-                </div>
-              </div>
-            )}
-
-            {/* No tray capacity warning */}
-            {selTotalTrays === 0 && (
-              <div className="mb-5 space-y-3">
-                <div className="flex items-center gap-8">
-                  <div className="text-center">
-                    <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Raw Meat</p>
-                    <p className="text-5xl font-bold font-display tabular-nums text-rose-600 dark:text-rose-400">
-                      {selTotalRawKg.toFixed(3)}
-                      <span className="text-2xl font-normal ml-1 text-muted-foreground">kg</span>
-                    </p>
-                  </div>
-                  {selTotalMarinadeG > 0 && (
-                    <div className="text-center">
-                      <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-1">Linked</p>
-                      <p className="text-3xl font-bold font-display tabular-nums text-orange-500">
-                        {selTotalMarinadeG >= 1000 ? `${(Math.round(selTotalMarinadeG) / 1000).toFixed(3)}` : Math.round(selTotalMarinadeG)}
-                        <span className="text-xl font-normal ml-1 text-muted-foreground">{selTotalMarinadeG >= 1000 ? "kg" : "g"}</span>
-                      </p>
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-start gap-2 px-3 py-2 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-400">
-                  <span className="mt-0.5">⚠️</span>
-                  <span>Tray count not set — add a <strong>Tray Capacity (kg)</strong> to this recipe's raw meat ingredients in the Ingredients Library to see per-tray breakdown.</span>
-                </div>
-              </div>
-            )}
+            {/* No recipe-level summary panel: it repeated each meat's own
+                panel below, and the "+ … kg linked" total isn't a number
+                anyone weighs (Graeme, 25 Nov 2026). Each meat's panel carries
+                its own total, trays and any "tray count not set" note. */}
 
             {/* Per-ingredient tray task cards */}
             <div className="space-y-4">
@@ -709,16 +663,18 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                               {ingAllDone && <CheckCircle2 className="w-5 h-5 text-rose-500" />}
                               <p className={cn("font-bold text-2xl leading-tight", ingAllDone && "line-through text-muted-foreground")}>{ing.ingredientName}</p>
                             </div>
+                            {/* The meat's total is the number to get out —
+                                prominent; the tray cap is a side note (25 Nov). */}
                             {usePieces ? (
-                              <p className="text-sm text-muted-foreground tabular-nums">
+                              <p className="text-xl font-bold tabular-nums text-foreground leading-snug">
                                 {ing.pieceCount} pieces total
-                                <span className="opacity-70"> · {ingKgTotal.toFixed(3)} kg</span>
-                                {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
+                                <span className="text-sm font-normal text-muted-foreground"> · {ingKgTotal.toFixed(3)} kg</span>
+                                {ing.rawMeatTrayCapacityKg && <span className="text-sm font-normal text-muted-foreground"> · {ing.rawMeatTrayCapacityKg} kg cap</span>}
                               </p>
                             ) : (
-                              <p className="text-sm text-muted-foreground tabular-nums">
+                              <p className="text-xl font-bold tabular-nums text-foreground leading-snug">
                                 {ingKgTotal.toFixed(3)} kg total
-                                {ing.rawMeatTrayCapacityKg && ` · ${ing.rawMeatTrayCapacityKg} kg cap`}
+                                {ing.rawMeatTrayCapacityKg && <span className="text-sm font-normal text-muted-foreground"> · {ing.rawMeatTrayCapacityKg} kg cap</span>}
                               </p>
                             )}
                             {!usePieces && <MixExtraNote qty={ing.mixExtraQty} unit={ing.unit} />}
@@ -738,19 +694,27 @@ export function PrepMeatStation({ plan, isOnBreak = false }: { plan: ProductionP
                           </div>
                         </>
                       ) : (
-                        <div className="flex-1 flex items-center justify-between">
+                        <div className="flex-1 flex items-center justify-between gap-3">
                           <p className="font-bold text-2xl leading-tight">{ing.ingredientName}</p>
                           {usePieces ? (
-                            <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ing.pieceCount} pieces</p>
+                            <p className="tabular-nums font-bold text-xl text-rose-600 dark:text-rose-400 whitespace-nowrap">{ing.pieceCount} pieces</p>
                           ) : (
                             <div className="text-right">
-                              <p className="tabular-nums font-bold text-base text-rose-600 dark:text-rose-400">{ingKgTotal.toFixed(3)} kg</p>
+                              <p className="tabular-nums font-bold text-xl text-rose-600 dark:text-rose-400 whitespace-nowrap">{ingKgTotal.toFixed(3)} kg</p>
                               <MixExtraNote qty={ing.mixExtraQty} unit={ing.unit} />
                             </div>
                           )}
                         </div>
                       )}
                     </div>
+                    {/* No tray count for this meat — said in its own panel
+                        (it used to sit in the recipe summary, which is gone). */}
+                    {!(ingTrays != null && ingTrays > 0) && (
+                      <div className="flex items-start gap-2 px-4 py-2 bg-amber-50 dark:bg-amber-900/20 border-t border-amber-200 dark:border-amber-800 text-sm text-amber-700 dark:text-amber-400">
+                        <span className="mt-0.5">⚠️</span>
+                        <span>Tray count not set — add a <strong>Tray Capacity (kg)</strong> to {ing.ingredientName} in the Ingredients Library to see the per-tray breakdown.</span>
+                      </div>
+                    )}
 
                     {/* SOPs for this meat — "Show me how" at the point of
                         prep — and the one-tap ingredient label: opening the
