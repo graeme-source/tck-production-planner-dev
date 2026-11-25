@@ -19,6 +19,8 @@
  *   POST  /api/people-reviews/entries/:id/withdraw-warning  { reason }
  *   …/entries/:id/write-up, /review-notes/:id         a review's write-up
  *                                                     (routes/people-review-notes.ts)
+ *   GET   /api/people-reviews/review-due               last review dates + No review required
+ *   …/person/:userId/review-due, /no-review-required  (routes/people-review-due.ts)
  *
  * A REVIEW is an entry with a meeting status — booked, held or cancelled
  * (migration 0178; Graeme, 2026-10-12: "one review that we then classify").
@@ -78,6 +80,7 @@ import {
 } from "../lib/hr-attention";
 import reviewNotesRouter from "./people-review-notes";
 import meetingNotesRouter from "./people-meeting-notes";
+import reviewDueRouter from "./people-review-due";
 
 const router: IRouter = Router();
 
@@ -123,6 +126,8 @@ router.use(async (req: Request, res: Response, next: NextFunction) => {
 router.use(reviewNotesRouter);
 // "Add meeting notes (AI)" — read notes into a draft, save the checked draft.
 router.use(meetingNotesRouter);
+// Last review dates + "No review required" (25 Nov 2026).
+router.use(reviewDueRouter);
 
 /** May this viewer open (and change) this person's record? The shared rule. */
 async function mayOpen(viewer: Viewer, subjectUserId: number): Promise<boolean> {
