@@ -42,6 +42,11 @@ import {
 } from "lucide-react";
 
 import { SmartAddBox } from "@/components/smart-add/smart-add-box";
+import type { ParentTickChoice } from "@workspace/subtasks";
+import { sourceLabel } from "@workspace/subtasks";
+import {
+  ParentTickInline, ParentTickPrompt, SubtaskEditor, SubtaskList, SubtaskProgressChip, useParentTickGuard, type SubtaskView,
+} from "@/components/subtasks/subtask-ui";
 import { MorningReviewBanner, useSetTodoReviewEnabled, useTodoReview } from "@/components/todo-morning-review";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
@@ -72,6 +77,30 @@ export interface TodoTask {
   /** Set on the auto-created weekly lean lesson task — the interstitial
    *  softens into "get it done by Friday" rather than "do this now". */
   lean_week_start: string | null;
+  /** Its sub-tasks, in order, each with its own tick (Graeme, 25 Nov 2026).
+   *  Never counted as to-dos of their own. */
+  subtasks?: TodoSubtask[];
+  /** Started from a team-list "When needed" process. */
+  source_team_list_item_id?: number | null;
+  source_item_title?: string | null;
+  source_list_id?: number | null;
+  source_list_name?: string | null;
+}
+
+export interface TodoSubtask {
+  id: number;
+  task_id: number;
+  title: string;
+  notes: string | null;
+  url: string | null;
+  sort_order: number;
+  done_at: string | null;
+  done_by: number | null;
+  done_by_name: string | null;
+}
+
+function subtaskViews(task: Pick<TodoTask, "subtasks">): SubtaskView[] {
+  return (task.subtasks ?? []).map(s => ({ id: s.id, title: s.title, notes: s.notes, url: s.url, doneAt: s.done_at, doneByName: s.done_by_name }));
 }
 
 interface TodoAttachment {
@@ -190,15 +219,65 @@ export function useMyTodos() {
   });
 }
 
-/** Tick a to-do off, with the same visible failure everywhere it's offered. */
+/** Tick a to-do off, with the same visible failure everywhere it's offered.
+ *  `subtasks` = the answer to "Tick the N left as well?" (useParentTickGuard);
+ *  the server refuses a to-do with unticked sub-tasks without one. */
 export function useCompleteTodo() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => post(`/api/todos/${id}/complete`),
+    mutationFn: ({ id, subtasks }: { id: number; subtasks?: ParentTickChoice }) =>
+      post(`/api/todos/${id}/complete`, subtasks ? { subtasks } : undefined),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["todos"] }),
     onError: (e: Error) => toast({ title: "Couldn't mark it done", description: e.message, variant: "destructive" }),
   });
 }
+
+/** Tick a to-do off from a list row: asks first when sub-tasks are left
+ *  ("Tick the 4 left as well?"). Render `prompt` once in the component. */
+export function useGuardedCompleteTodo() {
+  const completeMut = useCompleteTodo();
+  const guard = useParentTickGuard();
+  async function complete(task: TodoTask) {
+    const choice = await guard.choose(task.subtasks, task.title);
+    if (choice === null) return;
+    completeMut.mutate({ id: task.id, subtasks: choice });
+  }
+  return {
+    complete,
+    isPending: completeMut.isPending,
+    pendingId: completeMut.isPending ? completeMut.variables?.id ?? null : null,
+    prompt: <ParentTickPrompt asking={guard.asking} answer={guard.answer} />,
+  };
+}
+
+/** Tick or untick one sub-task of a to-do. */
+export function useTickTodoSubtask() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, done }: { id: number; done: boolean }) => post(`/api/todo-subtasks/${id}/tick`, { done }),
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: ["todos"] });
+      void qc.invalidateQueries({ queryKey: ["todo"] });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't tick it", description: e.message, variant: "destructive" }),
+  });
+}
+
+function send(path: string, method: string, body?: unknown) {
+  return fetch(`${BASE}${path}`, {
+    method,
+    credentials: "include",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  }).then(jsonOrThrow);
+}
+
+const todoSubtaskApi = (taskId: number) => ({
+  add: (title: string) => send(`/api/todo-subtasks/task/${taskId}`, "POST", { title }),
+  patch: (id: number, data: { title: string; notes: string | null; url: string | null }) => send(`/api/todo-subtasks/${id}`, "PATCH", data),
+  remove: (id: number) => send(`/api/todo-subtasks/${id}`, "DELETE"),
+  reorder: (ids: number[]) => send(`/api/todo-subtasks/task/${taskId}/reorder`, "POST", { subtaskIds: ids }),
+});
 
 /** Open-task count for the current user — feeds button badges. */
 export function useMyOpenTodoCount(): number {
@@ -480,7 +559,8 @@ function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quick
   // (Graeme, 2026-10-08). Moves the card to "done" at once; Undo reopens.
   const qc = useQueryClient();
   const quickTick = useMutation({
-    mutationFn: ({ id, done }: { id: number; done: boolean }) => post(`/api/todos/${id}/${done ? "complete" : "reopen"}`),
+    mutationFn: ({ id, done, subtasks }: { id: number; done: boolean; subtasks?: ParentTickChoice }) =>
+      post(`/api/todos/${id}/${done ? "complete" : "reopen"}`, done && subtasks ? { subtasks } : undefined),
     onMutate: async ({ id, done }) => {
       await qc.cancelQueries({ queryKey: listKey });
       const prev = qc.getQueryData<{ open: TodoTask[]; done: TodoTask[] }>(listKey);
@@ -502,8 +582,13 @@ function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quick
     },
     onSettled: () => qc.invalidateQueries({ queryKey: ["todos"] }),
   });
-  const tickTask = (task: TodoTask) => {
-    quickTick.mutate({ id: task.id, done: true });
+  // Sub-tasks still unticked: "Tick the 4 left as well?" first.
+  const guard = useParentTickGuard();
+  const subtaskTick = useTickTodoSubtask();
+  const tickTask = async (task: TodoTask) => {
+    const choice = await guard.choose(task.subtasks, task.title);
+    if (choice === null) return;
+    quickTick.mutate({ id: task.id, done: true, subtasks: choice });
     toast({
       title: "Done ✓",
       description: task.title,
@@ -581,10 +666,13 @@ function TodoList({ meId, canManage, viewUserId, justAddedId, quickAddRef, quick
             task={task}
             highlight={task.id === justAddedId}
             onOpen={() => onOpenTask(task.id)}
-            onTick={() => tickTask(task)}
+            onTick={() => void tickTask(task)}
+            onTickSubtask={(s, done) => subtaskTick.mutate({ id: s.id, done })}
+            subtaskBusyId={subtaskTick.isPending ? subtaskTick.variables?.id ?? null : null}
           />
         ))}
       </div>
+      <ParentTickPrompt asking={guard.asking} answer={guard.answer} />
 
       {data && data.done.length > 0 && (
         <div className="pt-2">
@@ -645,11 +733,18 @@ function QuickAdd({ inputRef, title, setTitle, assigneeId, isMine, onAdded, onMo
   );
 }
 
-function TodoCard({ task, onOpen, onTick, highlight }: { task: TodoTask; onOpen: () => void; onTick?: () => void; highlight?: boolean }) {
+function TodoCard({ task, onOpen, onTick, highlight, onTickSubtask, subtaskBusyId }: {
+  task: TodoTask; onOpen: () => void; onTick?: () => void; highlight?: boolean;
+  /** Tick a sub-task straight from the list, when the card is opened up. */
+  onTickSubtask?: (s: SubtaskView, done: boolean) => void;
+  subtaskBusyId?: number | null;
+}) {
   const meta = PRIORITY_META[task.priority];
   const overdue = isOverdue(task);
   const done = task.status === "done";
   const ref = useRef<HTMLDivElement>(null);
+  const subs = subtaskViews(task);
+  const [subsOpen, setSubsOpen] = useState(false);
   // Just added: bring it into view (under the sticky add box) so you can see
   // it landed, without moving the cursor out of the add box.
   useEffect(() => {
@@ -678,6 +773,7 @@ function TodoCard({ task, onOpen, onTick, highlight }: { task: TodoTask; onOpen:
             : <Circle className="w-9 h-9 text-muted-foreground/60" />}
         </button>
       )}
+      <div className="flex-1 min-w-0 flex flex-col">
       <button
         type="button"
         onClick={onOpen}
@@ -705,8 +801,19 @@ function TodoCard({ task, onOpen, onTick, highlight }: { task: TodoTask; onOpen:
           {task.created_by_name && task.created_by !== task.assignee_id && (
             <span className="text-sm text-muted-foreground font-medium">from {task.created_by_name}</span>
           )}
+          {task.source_team_list_item_id && (
+            <span className="text-sm text-muted-foreground font-medium">{sourceLabel(task.source_list_name, task.source_item_title)}</span>
+          )}
         </div>
       </button>
+      {/* Sub-tasks: "3 of 7" opens them up to tick off right here. */}
+      {subs.length > 0 && (
+        <div className="px-1 pr-4 pb-4 -mt-2 space-y-2">
+          <SubtaskProgressChip subtasks={subs} ticks open={subsOpen} onToggle={() => setSubsOpen(o => !o)} />
+          {subsOpen && <SubtaskList subtasks={subs} onTick={!done ? onTickSubtask : undefined} busyId={subtaskBusyId} />}
+        </div>
+      )}
+      </div>
     </div>
   );
 }
@@ -784,7 +891,10 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
     onError: (e: Error) => toast({ title: "Couldn't save the task", description: `${e.message} — your changes are still here.`, variant: "destructive" }),
   });
   const completeMut = useMutation({
-    mutationFn: (done: boolean) => post(`/api/todos/${taskId}/${done ? "complete" : "reopen"}`),
+    mutationFn: (v: boolean | { done: boolean; subtasks?: ParentTickChoice }) => {
+      const { done, subtasks } = typeof v === "boolean" ? { done: v, subtasks: undefined } : v;
+      return post(`/api/todos/${taskId}/${done ? "complete" : "reopen"}`, done && subtasks ? { subtasks } : undefined);
+    },
     onSuccess: invalidate,
     onError: (e: Error) => toast({ title: "Couldn't update the task", description: e.message, variant: "destructive" }),
   });
@@ -845,12 +955,19 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
     onClose();
   }
 
+  // Sub-tasks: ticked here; "Tick the N left as well?" asked in the footer.
+  const guard = useParentTickGuard();
+  const subtaskTick = useTickTodoSubtask();
+  const [editingSubs, setEditingSubs] = useState(false);
+
   /** Mark as done from the pop-up: keep any edits, tick it, back to the list. */
   async function markDone() {
     if (!task) return;
+    const choice = await guard.choose(task.subtasks, task.title);
+    if (choice === null) return;
     try {
       if (patch && valid) await saveMut.mutateAsync(patch);
-      await completeMut.mutateAsync(true);
+      await completeMut.mutateAsync({ done: true, subtasks: choice });
     } catch { return; }
     onClose();
     toast({
@@ -871,13 +988,17 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
    * later. With media already on the task it just completes and files it;
    * without, it opens the camera first and files it once the shot is in.
    */
+  const improvementSubtaskChoice = useRef<ParentTickChoice | undefined>(undefined);
   const completeAsImprovement = async () => {
+    const choice = await guard.choose(task?.subtasks, task?.title ?? "");
+    if (choice === null) return;
+    improvementSubtaskChoice.current = choice;
     if ((task?.attachments?.length ?? 0) === 0) {
       setPendingImprovement(true);
       improvementCameraRef.current?.click();
       return;
     }
-    await completeMut.mutateAsync(true);
+    await completeMut.mutateAsync({ done: true, subtasks: choice });
     await tagImprovementMut.mutateAsync();
   };
 
@@ -912,6 +1033,18 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
             {task.acknowledged_at ? <> · <span className="text-primary font-semibold">seen ✓</span></> : null}
             {isDone ? <> · <span className="text-primary font-semibold">done ✓</span></> : null}
           </p>
+          {/* Started from a team list: the name links back to the master
+              (a plain anchor — a full load closes this sheet). */}
+          {task.source_team_list_item_id && (
+            task.source_list_id ? (
+              <a href={`${BASE}/lists/${task.source_list_id}`}
+                className="inline-flex items-center gap-2 min-h-[44px] text-base font-semibold text-primary underline decoration-2 underline-offset-4">
+                <ListChecks className="w-5 h-5" /> {sourceLabel(task.source_list_name, task.source_item_title)}
+              </a>
+            ) : (
+              <p className="text-base text-muted-foreground font-medium">{sourceLabel(null, null)}</p>
+            )
+          )}
 
           {canEdit ? (
             <TodoFields form={form} onChange={setForm} onEnter={() => void saveAndClose()} />
@@ -928,6 +1061,32 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
                 {task.notes && <p className="text-xl leading-relaxed whitespace-pre-wrap">{task.notes}</p>}
               </div>
             </div>
+          )}
+
+          {/* Sub-tasks (Graeme, 25 Nov 2026): tick each one off here; change
+              them (this to-do's own copy) with "Change the sub-tasks". */}
+          {(subtaskViews(task).length > 0 || canEdit) && (
+            <section className="space-y-2" aria-label="Sub-tasks">
+              <div className="flex items-center gap-3 flex-wrap">
+                <h3 className="text-lg font-bold">Sub-tasks</h3>
+                <SubtaskProgressChip subtasks={subtaskViews(task)} ticks />
+                <span className="flex-1" />
+                {canEdit && (
+                  <button type="button" onClick={() => setEditingSubs(e => !e)} aria-pressed={editingSubs}
+                    className={cn("min-h-[44px] px-4 rounded-xl border-2 font-semibold inline-flex items-center gap-2",
+                      editingSubs ? "border-primary bg-primary/10 text-primary" : "border-border bg-card hover:bg-secondary/60")}>
+                    {editingSubs ? <><Check className="w-4 h-4" /> Done changing</> : <><Pencil className="w-4 h-4" /> {subtaskViews(task).length ? "Change the sub-tasks" : "Add sub-tasks"}</>}
+                  </button>
+                )}
+              </div>
+              {editingSubs && canEdit ? (
+                <SubtaskEditor subtasks={subtaskViews(task)} api={todoSubtaskApi(task.id)} onChanged={invalidate}
+                  hint="Saved as you type. Ticks are kept." />
+              ) : (
+                <SubtaskList subtasks={subtaskViews(task)} busyId={subtaskTick.isPending ? subtaskTick.variables?.id ?? null : null}
+                  onTick={canEdit && !isDone ? (s, done) => subtaskTick.mutate({ id: s.id, done }) : undefined} />
+              )}
+            </section>
           )}
 
           {taskLink(task) && <LinkButton url={taskLink(task)!} big />}
@@ -1012,7 +1171,7 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
               if (!file) { setPendingImprovement(false); return; }
               try {
                 await uploadMut.mutateAsync(file);
-                await completeMut.mutateAsync(true);
+                await completeMut.mutateAsync({ done: true, subtasks: improvementSubtaskChoice.current });
                 await tagImprovementMut.mutateAsync();
               } finally {
                 setPendingImprovement(false);
@@ -1138,6 +1297,7 @@ function TodoTaskDialog({ taskId, meId, canManage, onClose }: {
               <span className="w-2 h-2 rounded-full bg-amber-500" aria-hidden /> Unsaved changes
             </p>
           )}
+          <ParentTickInline asking={guard.asking} answer={guard.answer} />
           <div className="flex gap-3">
             {task && (
               isDone ? (
@@ -1396,7 +1556,8 @@ export function PersonalTodosStrip() {
   const todayIso = format(new Date(), "yyyy-MM-dd");
   const todays = sortTodos((data?.open ?? []).filter(t => !t.scheduled_for || t.scheduled_for <= todayIso), sort, isOverdue);
 
-  const completeMut = useCompleteTodo();
+  // Asks "Tick the N left as well?" when a to-do still has sub-tasks open.
+  const completeMut = useGuardedCompleteTodo();
 
   if (!me || todays.length === 0) {
     // Even with nothing due, managers/users may want the sheet from here —
@@ -1426,13 +1587,13 @@ export function PersonalTodosStrip() {
               <div className={cn("w-2 flex-shrink-0", meta.bar)} />
               <button
                 type="button"
-                onClick={() => completeMut.mutate(task.id)}
+                onClick={() => void completeMut.complete(task)}
                 disabled={completeMut.isPending}
                 className="flex-shrink-0 w-14 flex items-center justify-center text-muted-foreground hover:text-primary transition-colors disabled:opacity-50"
                 title="Mark it done"
                 aria-label={`Mark "${task.title}" done`}
               >
-                {completeMut.isPending && completeMut.variables === task.id
+                {completeMut.pendingId === task.id
                   ? <Loader2 className="w-7 h-7 animate-spin" />
                   : <Circle className="w-8 h-8" strokeWidth={2.5} />}
               </button>
@@ -1451,12 +1612,15 @@ export function PersonalTodosStrip() {
                   {!task.acknowledged_at && task.created_by !== task.assignee_id && (
                     <span className="text-sm font-bold text-amber-600 dark:text-amber-400">new</span>
                   )}
+                  {/* Progress only — tap the row to tick them off in the sheet. */}
+                  <SubtaskProgressChip subtasks={subtaskViews(task)} ticks size="sm" />
                 </div>
               </button>
             </div>
           );
         })}
       </div>
+      {completeMut.prompt}
       <TodoSheet open={sheet.open} initialTaskId={sheet.taskId} onClose={() => setSheet({ open: false, taskId: null })} />
     </div>
   );

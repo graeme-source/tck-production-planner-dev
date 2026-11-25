@@ -8,10 +8,11 @@ import { useState } from "react";
 import { format } from "date-fns";
 import { ClipboardList, Circle, Loader2, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { SubtaskProgressChip } from "@/components/subtasks/subtask-ui";
 import {
   TodoSheet,
   useMyTodos,
-  useCompleteTodo,
+  useGuardedCompleteTodo,
   dayLabel,
   isOverdue,
   PRIORITY_META,
@@ -25,7 +26,7 @@ export function FounderTodos() {
   // taskId set = the sheet opens straight onto that task's notes/comments.
   const [sheet, setSheet] = useState<{ open: boolean; taskId: number | null }>({ open: false, taskId: null });
   const { data, isLoading } = useMyTodos();
-  const completeMut = useCompleteTodo();
+  const completeMut = useGuardedCompleteTodo(); // asks first when sub-tasks are left
   const { state } = useAuth();
   // The same choice as on My To-dos — it's the same list.
   const [sort, setSort] = useTaskSort(todoSortListKey(state.status === "authenticated" ? state.user.id : 0), TODO_DEFAULT_SORT);
@@ -60,9 +61,9 @@ export function FounderTodos() {
           <TodoRow
             key={task.id}
             task={task}
-            completing={completeMut.isPending && completeMut.variables === task.id}
+            completing={completeMut.pendingId === task.id}
             disabled={completeMut.isPending}
-            onComplete={() => completeMut.mutate(task.id)}
+            onComplete={() => void completeMut.complete(task)}
             onOpen={() => setSheet({ open: true, taskId: task.id })}
           />
         ))}
@@ -97,6 +98,7 @@ export function FounderTodos() {
         )}
       </div>
 
+      {completeMut.prompt}
       <TodoSheet
         open={sheet.open}
         initialTaskId={sheet.taskId}
@@ -148,6 +150,7 @@ function TodoRow({ task, completing, disabled, onComplete, onOpen }: {
             <span>from {task.created_by_name}</span>
           )}
           {unseen && <span className="font-semibold text-amber-600 dark:text-amber-400">new</span>}
+          <SubtaskProgressChip subtasks={(task.subtasks ?? []).map(s => ({ id: s.id, title: s.title, notes: s.notes, url: s.url, doneAt: s.done_at }))} ticks size="sm" />
         </div>
       </button>
     </div>
