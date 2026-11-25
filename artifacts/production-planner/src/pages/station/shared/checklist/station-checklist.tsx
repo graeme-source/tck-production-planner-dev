@@ -25,6 +25,8 @@ import { useRecipeColourLookup } from "@/components/recipe-swatch";
 import { ImprovementPromptCard } from "@/components/improvement-prompt-card";
 import { IMPROVEMENT_PROMPT_TYPE } from "@/lib/improvement-prompt";
 
+import { reportF2fResult, useF2fConfirm, type F2fMoveResult } from "@/components/f2f/f2f-freezer";
+import { newWrapEventId } from "../shopify-wrap-status";
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
 const CATEGORY_ORDER = ["opening", "cleaning", "closing"] as const;
@@ -1463,6 +1465,9 @@ function ClosingFridgeCheck({ data }: { data: unknown[] }) {
   const [confirming, setConfirming] = useState<Record<number, string>>({});
   const [saving, setSaving] = useState<Record<number, boolean>>({});
   const [done, setDone] = useState<Record<number, number>>({});
+  // Freezer moves → the recipe's F2F product in Shopify (25 Nov 2026): asks
+  // first when switched on; a no-op when off.
+  const f2f = useF2fConfirm();
 
   const fmtDate = (d: string) =>
     new Date(d + "T00:00:00").toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
@@ -1470,13 +1475,18 @@ function ClosingFridgeCheck({ data }: { data: unknown[] }) {
   const freeze = async (row: ClosingFridgeRow) => {
     const packs = parseInt(confirming[row.recipeId] ?? "");
     if (!packs || isNaN(packs) || packs <= 0) return;
+    if (saving[row.recipeId]) return;
     setSaving(s => ({ ...s, [row.recipeId]: true }));
     try {
+      const answer = await f2f.ask("closing_check", [{ recipeId: row.recipeId, packs }]);
+      if (!answer.proceed) return;
+      // One id per tap: a repeat of this request moves nothing twice.
+      const eventId = newWrapEventId();
       const res = await fetch(`${BASE}/api/checklists/closing-fridge-freeze`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ recipeId: row.recipeId, packs }),
+        body: JSON.stringify({ recipeId: row.recipeId, packs, eventId, f2fConfirmed: answer.confirmed }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.error ?? "Failed to freeze packs");
@@ -1484,8 +1494,9 @@ function ClosingFridgeCheck({ data }: { data: unknown[] }) {
       setConfirming(c => { const n = { ...c }; delete n[row.recipeId]; return n; });
       toast({
         title: `Frozen: ${packs} × ${row.recipeName}`,
-        description: `Fridge now ${body.newFridgeQty}, freezer (Wonky) now ${body.newFreezerQty}.`,
+        description: body.alreadyDone ? "Already done — nothing moved twice." : `Fridge now ${body.newFridgeQty}, freezer (Wonky) now ${body.newFreezerQty}.`,
       });
+      reportF2fResult(body.f2f as F2fMoveResult | null | undefined);
     } catch (err) {
       toast({
         title: "Couldn't freeze packs",
@@ -1510,6 +1521,7 @@ function ClosingFridgeCheck({ data }: { data: unknown[] }) {
 
   return (
     <div className="mb-4 space-y-2">
+      {f2f.dialog}
       <p className="text-sm font-semibold text-foreground">
         These packs can no longer be dispatched with enough shelf life — freeze them into Wonky stock now.
       </p>
