@@ -69,6 +69,7 @@ export * from "./short_delivery_reports";
 export * from "./delivery_shelf_life_reports";
 export * from "./delivery_issue_reports";
 export * from "./shopify_wrap_pushes";
+export * from "./f2f_freezer_pushes";
 export * from "./sales_drivers";
 export * from "./upf_shopify_sync";
 export * from "./order_line_splits";
