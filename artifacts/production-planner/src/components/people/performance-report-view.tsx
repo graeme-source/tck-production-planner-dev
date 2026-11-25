@@ -12,7 +12,7 @@ import {
 import { itemKey, noteAsText, noteTitle, NOTE_KIND_LABELS, type Exclusions, type PerformanceReport, type RateStat, type ReportNote } from "@workspace/performance-review";
 import { cn } from "@/lib/utils";
 
-type CardKey = "improvements" | "training" | "lean" | "speed" | "checklists" | "attendance" | "records" | "contributions" | "notes";
+type CardKey = "improvements" | "training" | "lean" | "speed" | "room" | "checklists" | "attendance" | "records" | "contributions" | "notes";
 
 const fmtDay = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const fmtShort = (iso: string) => new Date(`${iso}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
@@ -89,7 +89,9 @@ export function PerformanceReportView({ report, audience, editing, onNotesCard }
     },
     // Three speeds, three cards — one figure each (Graeme: "separate them
     // into three distinct KPIs"). Each opens the same speed detail.
-    ...(([["building", "Building speed"], ["wrapping", "Wrapping speed"], ["packing", "Packing speed"]] as const).map(([k, title]) => {
+    // Packing: the whole room's score on their room days (25 Nov 2026), in
+    // place of the per-person orders/hr; older saved copies keep their card.
+    ...(([["building", "Building speed"], ["wrapping", "Wrapping speed"], ["packing", "Packing speed"]] as const).filter(([k]) => !(k === "packing" && r.room !== undefined)).map(([k, title]) => {
       const sp = r.speed[k];
       const vs = sp?.standard ?? null;
       return {
@@ -99,6 +101,14 @@ export function PerformanceReportView({ report, audience, editing, onNotesCard }
         tone: sp?.overall == null || vs == null ? null : sp.overall >= vs ? "good" as const : sp.overall < vs * 0.9 ? "warn" as const : null,
       };
     })),
+    ...(r.room !== undefined ? [{
+      key: "room" as CardKey, icon: Gauge, title: "Packing & wrapping room",
+      big: r.room?.averagePct != null ? `${r.room.averagePct}%` : "—",
+      sub: r.room && r.room.days > 0
+        ? `room score, average of ${pl(r.room.days, "day")} they worked there${r.room.estimates ? ` (${r.room.estimates} estimated)` : ""}`
+        : "No packing or wrapping shifts in this period",
+      tone: r.room?.averagePct == null ? null : r.room.averagePct >= 100 ? "good" as const : r.room.averagePct < 90 ? "warn" as const : null,
+    }] : []),
     {
       key: "checklists", icon: ListChecks, title: "Checklists",
       big: r.checklists?.known ? String(r.checklists.missed) : "—",
@@ -178,6 +188,7 @@ export function PerformanceReportView({ report, audience, editing, onNotesCard }
           {open === "training" && <TrainingDetail r={r} editing={editing} />}
           {open === "lean" && <LeanDetail r={r} editing={editing} />}
           {open === "speed" && <SpeedDetail r={r} />}
+          {open === "room" && <RoomDetail r={r} editing={editing} />}
           {open === "checklists" && <ChecklistsDetail r={r} editing={editing} />}
           {open === "attendance" && <AttendanceDetail r={r} editing={editing} />}
           {open === "records" && <RecordsDetail r={r} audience={audience} editing={editing} />}
@@ -375,8 +386,33 @@ function RateBlock({ label, s }: { label: string; s: RateStat }) {
   );
 }
 
+function RoomDetail({ r, editing }: { r: PerformanceReport; editing?: ReportEditing }) {
+  const room = r.room;
+  const days = editing?.original.room?.perDay ?? room?.perDay ?? [];
+  return (
+    <div>
+      <H>Packing &amp; wrapping room score — {room?.averagePct != null ? `${room.averagePct}% on average` : "no score"}</H>
+      {days.length === 0 ? <Empty>No packing or wrapping shifts in this period.</Empty> : (
+        <ul className="divide-y divide-border rounded-xl border border-border max-h-80 overflow-y-auto">
+          {[...days].reverse().map(d => (
+            <li key={d.date} className={cn("px-3 py-2 text-sm flex items-center gap-3", leftClass(isLeft(editing, itemKey.roomDay(d.date))))}>
+              <ItemTick editing={editing} k={itemKey.roomDay(d.date)} />
+              <span className="text-muted-foreground tabular-nums w-24 shrink-0">{fmtShort(d.date)}</span>
+              <span className={cn("font-semibold tabular-nums", d.scorePct == null ? "text-muted-foreground" : d.scorePct >= 100 ? "text-emerald-700 dark:text-emerald-400" : d.scorePct < 90 ? "text-amber-700 dark:text-amber-400" : "")}>
+                {d.scorePct != null ? `${d.scorePct}%` : "no score"}
+              </span>
+              {d.estimate && <span className="text-xs text-muted-foreground">estimate — shifts not yet approved</span>}
+            </li>
+          ))}
+        </ul>
+      )}
+      <Note>The whole packing &amp; wrapping room's score for each day they had a Packer or Wrapper shift — the same figure as Analytics → KPIs, not split per person — and the plain average of those days. Days with no score (nothing recorded for the room) aren't counted.</Note>
+    </div>
+  );
+}
+
 function SpeedDetail({ r }: { r: PerformanceReport }) {
-  const blocks = ([["building", "Building"], ["wrapping", "Wrapping"], ["packing", "Packing"]] as const).filter(([k]) => r.speed[k]);
+  const blocks = ([["building", "Building"], ["wrapping", "Wrapping"], ["packing", "Packing"]] as const).filter(([k]) => r.speed[k] && !(k === "packing" && r.room !== undefined));
   return (
     <div>
       <H>Station speed</H>

@@ -110,6 +110,17 @@ export interface PerformanceReport {
   speed: { building: RateStat | null; wrapping: RateStat | null; packing: RateStat | null };
 
   /**
+   * The packing & wrapping ROOM score on the days they worked in the room
+   * (Graeme, 25 Nov 2026: "record the overall KPI for that day and just
+   * assign that to that person for that day … their average KPI over all of
+   * their packing and wrapping shifts. 110% and 90% across two shifts, their
+   * average would be 100%"). The whole room's score, never split per person;
+   * replaces the per-person packing orders/hr card. Optional: older saved
+   * reports don't have it.
+   */
+  room?: RoomScoreSummary | null;
+
+  /**
    * Checklists at the stations they were rostered on (Graeme, 24 Nov 2026):
    * an item left unticked — rather than ticked, or marked "can't do" with a
    * reason, which is the instruction — counts against everyone on that
@@ -206,8 +217,30 @@ export const NOTE_KIND_LABELS: Record<string, string> = { note: "Note", feedback
 
 export interface RecordItem { entryId: number; date: string; title: string; detail: string | null }
 
+export interface RoomScoreSummary {
+  /** Days in the room with a score. */
+  days: number;
+  /** Plain average of those days' scores, whole %. */
+  averagePct: number | null;
+  /** Of those, days still estimated (shifts not yet approved in Planday). */
+  estimates: number;
+  /** Room days with no score (nothing stored for that day). */
+  unscored: number;
+  perDay: Array<{ date: string; scorePct: number | null; estimate: boolean }>;
+}
+
+/** The average of the days' room scores (days with no score left out). Pure. */
+export function roomSummary(perDay: RoomScoreSummary["perDay"]): RoomScoreSummary {
+  const scored = perDay.filter(d => d.scorePct != null);
+  const avg = scored.length ? Math.round(scored.reduce((s, d) => s + d.scorePct!, 0) / scored.length) : null;
+  return {
+    days: scored.length, averagePct: avg, estimates: scored.filter(d => d.estimate).length,
+    unscored: perDay.length - scored.length, perDay: [...perDay].sort((a, b) => a.date.localeCompare(b.date)),
+  };
+}
+
 /** Sections that can be left out of a shared report as a whole. */
-export const REPORT_SECTIONS = ["improvements", "training", "lean", "speed_building", "speed_wrapping", "speed_packing", "checklists", "attendance", "records", "contributions", "notes"] as const;
+export const REPORT_SECTIONS = ["improvements", "training", "lean", "speed_building", "speed_wrapping", "speed_packing", "room", "checklists", "attendance", "records", "contributions", "notes"] as const;
 export type ReportSection = (typeof REPORT_SECTIONS)[number];
 
 /** What's been unticked: whole sections, and single items by key (itemKey). */
@@ -357,6 +390,7 @@ export function suggestions(r: PerformanceReport): Suggestion[] {
 
   // Speed
   for (const [key, label] of [["building", "Building"], ["wrapping", "Wrapping"], ["packing", "Packing"]] as const) {
+    if (key === "packing" && r.room) continue; // the room score replaces it
     const s = r.speed[key];
     if (!s || s.overall == null || s.days < 3) continue;
     const vs = s.standard ?? s.teamOverall;
@@ -366,6 +400,13 @@ export function suggestions(r: PerformanceReport): Suggestion[] {
     if (ratio >= 1.05) out.push({ tone: "strength", area: "speed", headline: `${label}: ${s.overall} ${s.unit}`, detail: `Above ${against} over ${plural(s.days, "day")}.` });
     else if (ratio < 0.9) out.push({ tone: "focus", area: "speed", headline: `${label}: ${s.overall} ${s.unit}`, detail: `Below ${against} over ${plural(s.days, "day")} (range ${s.min}–${s.max}). Objective idea: reach ${vs} ${s.unit}, checked on the station KPI strip.` });
 
+  }
+
+  // Packing & wrapping room score — the whole room's, on their room days.
+  const room = r.room;
+  if (room && room.averagePct != null && room.days >= 3) {
+    if (room.averagePct >= 100) out.push({ tone: "strength", area: "speed", headline: `Packing & wrapping room score: ${room.averagePct}% on average`, detail: `Across ${plural(room.days, "day")} they worked in the room — at or above the standard.` });
+    else if (room.averagePct < 90) out.push({ tone: "focus", area: "speed", headline: `Packing & wrapping room score: ${room.averagePct}% on average`, detail: `Across ${plural(room.days, "day")} they worked in the room. Objective idea: help the room reach 100% — finish packing and wrapping sooner.` });
   }
 
   // Checklists — unticked items on days they were on the station.
@@ -556,6 +597,7 @@ export const itemKey = {
   sop: (station: string, sopId: number) => `sop:${station}:${sopId}`,
   record: (entryId: number) => `rec:${entryId}`,
   note: (noteId: number) => `note:${noteId}`,
+  roomDay: (date: string) => `room:${date}`,
 };
 
 /**
@@ -623,6 +665,11 @@ export function applyExclusions(report: PerformanceReport, ex: Exclusions | null
   out.records.disciplinary = keep(out.records.disciplinary);
   out.records.attendanceOrTimekeeping = keep(out.records.attendanceOrTimekeeping);
   out.records.praise = keep(out.records.praise);
+
+  // Room score: a day taken out comes off the average
+  if (out.room && out.room.perDay.some(d => drop.has(itemKey.roomDay(d.date)))) {
+    out.room = roomSummary(out.room.perDay.filter(d => !drop.has(itemKey.roomDay(d.date))));
+  }
 
   // Notes
   if (out.notes) {

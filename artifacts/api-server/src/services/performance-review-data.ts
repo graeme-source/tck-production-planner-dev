@@ -14,7 +14,7 @@
 import { sql } from "drizzle-orm";
 import { db, visibleNotes, type ReviewViewer } from "@workspace/db";
 import {
-  REPORT_VERSION, MIN_RATE_MINUTES, attendancePct, attributeChecklistMisses, minutesLate, minutesLateAgainst, rosteredStartFromHistory, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
+  REPORT_VERSION, MIN_RATE_MINUTES, roomSummary, attendancePct, attributeChecklistMisses, minutesLate, minutesLateAgainst, rosteredStartFromHistory, rateStat, type PerformanceReport, type RecordItem, type ReportNote,
 } from "@workspace/performance-review";
 import { CREDIT_PAIRS } from "../lib/improvement-credits-data";
 import { improvementScorePct } from "../lib/improvement-score";
@@ -112,6 +112,11 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     loadNotes(userId, from, to, viewer),
   ]);
 
+  const room = plandayId != null ? await loadRoomForPerson(plandayId, from, to).catch(err => {
+    console.error("[performance-review] room score failed:", err instanceof Error ? err.message : err);
+    return null;
+  }) : null;
+
   const attendance = attendanceFrom(myShifts, plandayId != null);
   if (plandayId != null && attendance.lateDates.length > 0) attendance.lateDetails = await lateDetails(plandayId, attendance.lateDates);
 
@@ -124,6 +129,7 @@ export async function loadPerformanceReport(userId: number, from: string, to: st
     training,
     lean,
     speed,
+    room,
     checklists,
     attendance,
     records,
@@ -448,6 +454,34 @@ async function lateDetails(plandayId: number, dates: string[]): Promise<NonNulla
     } catch {
       return { date, minutesLate: null, clockedIn: null, rostered: null };
     }
+  }));
+}
+
+// ── Packing & wrapping room score (Graeme, 25 Nov 2026) ──────────────────
+// The whole room's score for each day they had a room shift (the room's own
+// positions — Packer, Wrapper — from its settings), averaged. Same stored
+// days, standards and 100% line as Analytics → KPIs (lib/room-kpi.ts), so
+// the two always agree. Never split per person.
+
+async function loadRoomForPerson(plandayId: number, from: string, to: string): Promise<PerformanceReport["room"]> {
+  const [{ loadRoomConfig, loadRoomDays }, { getPlandayPositions }, { roomRatio, roomScore }] = await Promise.all([
+    import("./room-kpi-job"), import("./planday"), import("../lib/room-kpi"),
+  ]);
+  const config = await loadRoomConfig();
+  const names = new Set(config.positions.map(p => p.trim().toLowerCase()));
+  const positionIds = (await getPlandayPositions()).filter(p => names.has(p.name.trim().toLowerCase())).map(p => p.id);
+  if (positionIds.length === 0) return null;
+  const days = (await db.execute<{ day: string }>(sql`
+    SELECT DISTINCT date::text AS day FROM planday_shifts_cache
+     WHERE employee_id = ${plandayId} AND date BETWEEN ${from} AND ${to}
+       AND position_id IN (${sql.join(positionIds.map(id => sql`${id}`), sql`, `)})
+  `)).rows?.map(r => r.day.slice(0, 10)) ?? [];
+  if (days.length === 0) return null;
+  const stored = new Map((await loadRoomDays(from, to)).map(d => [d.date, d]));
+  return roomSummary(days.map(date => {
+    const d = stored.get(date);
+    const scorePct = d ? roomScore(roomRatio(d, config.weights), config.standardRatio) : null;
+    return { date, scorePct, estimate: !!d && d.status !== "ok" };
   }));
 }
 

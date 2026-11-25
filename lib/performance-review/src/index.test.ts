@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyExclusions, forSavedCopy, rosteredStartFromHistory, minutesLateAgainst, noteAsText, itemKey, type ReportNote, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
+import { applyExclusions, roomSummary, forSavedCopy, rosteredStartFromHistory, minutesLateAgainst, noteAsText, itemKey, type ReportNote, attributeChecklistMisses, attendancePct, minutesLate, defaultPeriod, median, rateStat, shiftMonths, suggestions, REPORT_VERSION, type PerformanceReport } from "./index";
 
 function base(): PerformanceReport {
   return {
@@ -268,5 +268,20 @@ describe("lateness against the rostered start", () => {
 
   it("pads a one-digit hour", () => {
     expect(rosteredStartFromHistory([{ modifiedAt: "2026-11-11T09:00:00Z", changes: ["Start time changed from 7:00 to 7:12."] }], "2026-11-11T07:12", "07:12")).toBe("07:00");
+  });
+});
+
+describe("packing & wrapping room score on their room days", () => {
+  it("averages the days' room scores — 110% and 90% make 100%", () => {
+    const s = roomSummary([{ date: "2026-11-02", scorePct: 110, estimate: false }, { date: "2026-11-03", scorePct: 90, estimate: false }]);
+    expect(s).toMatchObject({ days: 2, averagePct: 100, estimates: 0, unscored: 0 });
+  });
+  it("leaves out days with no score, and counts estimates", () => {
+    const s = roomSummary([{ date: "2026-11-04", scorePct: 95, estimate: true }, { date: "2026-11-05", scorePct: null, estimate: false }]);
+    expect(s).toMatchObject({ days: 1, averagePct: 95, estimates: 1, unscored: 1 });
+  });
+  it("a day unticked comes off the average", () => {
+    const r: PerformanceReport = { ...base(), room: roomSummary([{ date: "2026-11-02", scorePct: 110, estimate: false }, { date: "2026-11-03", scorePct: 70, estimate: false }]) };
+    expect(applyExclusions(r, { sections: [], items: [itemKey.roomDay("2026-11-03")] }).room!.averagePct).toBe(110);
   });
 });
