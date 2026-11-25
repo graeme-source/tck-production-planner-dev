@@ -8,8 +8,8 @@
  * damaged packs, complaints…). Packs made is the same figure Team efficiency
  * uses. Waste (anything binned — an ingredient, a sub-recipe, finished packs)
  * is shown in £: ingredients, the time to make it again, and the two
- * together, for today, yesterday, this week, this month or any range (the
- * custom card also takes the shared period presets). Costs are
+ * together, for any period from the standard period picker (as on Numbers),
+ * with Today, Yesterday, Last 7 days and Month to date side by side. Costs are
  * snapshot when each entry is saved (api-server lib/waste-cost.ts).
  * The API does the maths (lib/defects-kpi.ts); this page only shows it.
  */
@@ -19,7 +19,8 @@ import { useAuth } from "@/contexts/auth-context";
 import { PageHeader } from "@/components/page-header";
 import { cn } from "@/lib/utils";
 import { londonDay } from "@/lib/day-rollover";
-import { addDays, PERIOD_PRESETS, periodWindow, type PeriodPresetId } from "@/lib/roas";
+import { PERIOD_PRESETS, periodWindow, type PeriodPresetId } from "@/lib/roas";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 import { RecordDefectModal, DEFECT_STATION_LABELS, REPORT_DEFECT_LABEL } from "@/components/record-defect-modal";
 import { DefectsTrendChart } from "@/components/kpis/kpi-trends";
 import {
@@ -30,17 +31,9 @@ import {
   type DefectRecord, type DefectSummary, type DefectType,
 } from "@/lib/defects-view";
 
-type PeriodKey = "today" | "yesterday" | "week" | "month" | "custom";
-
-const PERIOD_LABEL: Record<PeriodKey, string> = {
-  today: "Today", yesterday: "Yesterday", week: "This week", month: "This month", custom: "Custom range",
-};
-
-const PERIOD_KEYS: PeriodKey[] = ["today", "yesterday", "week", "month", "custom"];
-
-// The shared period presets (as on Numbers, Ads and P&L) fill the custom
-// card's dates. Today and Yesterday are left out there — they have cards.
-const QUICK_PICKS = PERIOD_PRESETS.filter(p => p.id !== "today" && p.id !== "yesterday");
+// The four at-a-glance cards: standard periods, side by side. Tapping one
+// picks it in the period picker above them.
+const GLANCE: PeriodPresetId[] = ["today", "yesterday", "last7", "monthToDate"];
 
 /** `embedded`: shown inside Analytics → KPIs (17 Nov 2026), which has the page title. */
 export default function DefectsPage({ embedded = false }: { embedded?: boolean } = {}) {
@@ -49,44 +42,32 @@ export default function DefectsPage({ embedded = false }: { embedded?: boolean }
   const isAdmin = role === "admin";
   const today = londonDay(Date.now());
 
-  const [selected, setSelected] = useState<PeriodKey>("week");
-  const [custom, setCustom] = useState({ from: `${today.slice(0, 7)}-01`, to: today });
-  // Which shared preset filled the custom dates; null once a date is typed.
-  const [quickPick, setQuickPick] = useState<PeriodPresetId | null>(null);
+  // The standard period picker, as on Numbers (Graeme, 25 Nov 2026). It used
+  // to open on "This week" (Monday to today); the nearest standard period is
+  // Last 7 days (seven finished days ending yesterday).
+  const picker = usePeriodChoice("last7");
+  const { period, periodId } = picker;
   const [recordOpen, setRecordOpen] = useState(false);
   const [editing, setEditing] = useState<DefectRecord | null>(null);
 
-  const customValid = custom.from <= custom.to && custom.to <= today && /^\d{4}-\d{2}-\d{2}$/.test(custom.from);
-  const yesterday = addDays(today, -1);
-  const ranges: Record<PeriodKey, DefectRange> = {
-    today: { period: "today" },
-    yesterday: { from: yesterday, to: yesterday },
-    week: { period: "week" },
-    month: { period: "month" },
-    custom: custom,
+  const now = Date.now();
+  const glanceRange = (id: PeriodPresetId): DefectRange => {
+    const w = periodWindow(id, now);
+    return { from: w.from, to: w.to };
   };
-  const label = (key: PeriodKey) =>
-    key === "custom" && quickPick ? PERIOD_PRESETS.find(p => p.id === quickPick)?.label ?? PERIOD_LABEL.custom : PERIOD_LABEL[key];
-  const editCustom = (field: "from" | "to", value: string) => {
-    setCustom(c => ({ ...c, [field]: value }));
-    setQuickPick(null);
-    setSelected("custom");
-  };
-  const pickQuick = (id: PeriodPresetId) => {
-    const win = periodWindow(id, Date.now());
-    setCustom({ from: win.from, to: win.to });
-    setQuickPick(id);
-    setSelected("custom");
-  };
+  const todayQ = useDefectSummary(glanceRange("today"));
+  const yesterdayQ = useDefectSummary(glanceRange("yesterday"));
+  const last7Q = useDefectSummary(glanceRange("last7"));
+  const mtdQ = useDefectSummary(glanceRange("monthToDate"));
+  const glanceQ: Partial<Record<PeriodPresetId, typeof todayQ>> = { today: todayQ, yesterday: yesterdayQ, last7: last7Q, monthToDate: mtdQ };
 
-  const todayQ = useDefectSummary(ranges.today);
-  const yesterdayQ = useDefectSummary(ranges.yesterday);
-  const weekQ = useDefectSummary(ranges.week);
-  const monthQ = useDefectSummary(ranges.month);
-  const customQ = useDefectSummary(ranges.custom, customValid);
-  const byPeriod = { today: todayQ, yesterday: yesterdayQ, week: weekQ, month: monthQ, custom: customQ };
-  const current = byPeriod[selected];
-  const listQ = useDefectList(ranges[selected], selected !== "custom" || customValid);
+  const chosenValid = !period.empty && period.to <= today;
+  const chosen: DefectRange = { from: period.from, to: period.to };
+  // Same query key as a glance card when the period is one of them, so it's fetched once.
+  const current = useDefectSummary(chosen, chosenValid);
+  const listQ = useDefectList(chosen, chosenValid);
+  const chosenIsGlance = periodId !== "custom" && GLANCE.includes(periodId);
+  const chosenLabel = periodId === "custom" ? "Custom range" : period.label;
 
   return (
     <div className={cn(!embedded && "p-4 sm:p-8", "space-y-6")}>
@@ -105,42 +86,38 @@ export default function DefectsPage({ embedded = false }: { embedded?: boolean }
         </button>
       </div>
 
+      <PeriodPicker {...picker} />
+
       {/* Columns follow the panel's width: five across on a wide screen,
-          wrapping on an iPad. */}
+          wrapping on an iPad. The fifth card is the picked period when it
+          isn't one of the four. */}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,15rem),1fr))] gap-3">
-        {PERIOD_KEYS.map(key => (
+        {GLANCE.map(id => {
+          const q = glanceQ[id]!;
+          return (
+            <KpiCard
+              key={id}
+              label={PERIOD_PRESETS.find(p => p.id === id)?.label ?? id}
+              active={periodId === id}
+              onSelect={() => picker.onPreset(id)}
+              summary={q.data}
+              loading={q.isLoading}
+              error={q.isError ? (q.error as Error).message : null}
+              today={today}
+            />
+          );
+        })}
+        {!chosenIsGlance && (
           <KpiCard
-            key={key}
-            label={label(key)}
-            active={selected === key}
-            onSelect={() => setSelected(key)}
-            summary={byPeriod[key].data}
-            loading={byPeriod[key].isLoading && (key !== "custom" || customValid)}
-            error={byPeriod[key].isError ? (byPeriod[key].error as Error).message : null}
+            label={chosenLabel}
+            active
+            onSelect={() => {}}
+            summary={current.data}
+            loading={current.isLoading && chosenValid}
+            error={current.isError ? (current.error as Error).message : null}
             today={today}
-          >
-            {key === "custom" && (
-              <div className="mt-3 grid grid-cols-2 gap-2" onClick={e => e.stopPropagation()}>
-                <select
-                  aria-label="Quick pick a period"
-                  value={quickPick ?? ""}
-                  onChange={e => { if (e.target.value) pickQuick(e.target.value as PeriodPresetId); }}
-                  className="col-span-2 h-11 px-2 rounded-xl border-2 border-border bg-background text-sm min-w-0"
-                >
-                  <option value="">Pick dates…</option>
-                  {QUICK_PICKS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                </select>
-                <input type="date" value={custom.from} max={today} aria-label="From"
-                  onChange={e => editCustom("from", e.target.value)}
-                  className="h-11 px-2 rounded-xl border-2 border-border bg-background text-sm min-w-0" />
-                <input type="date" value={custom.to} max={today} aria-label="To"
-                  onChange={e => editCustom("to", e.target.value)}
-                  className="h-11 px-2 rounded-xl border-2 border-border bg-background text-sm min-w-0" />
-                {!customValid && <p className="col-span-2 text-sm text-destructive">Pick a start on or before the end, up to today.</p>}
-              </div>
-            )}
-          </KpiCard>
-        ))}
+          />
+        )}
       </div>
 
       {current.data && (
@@ -173,7 +150,7 @@ export default function DefectsPage({ embedded = false }: { embedded?: boolean }
         <div className="flex items-baseline justify-between gap-3 flex-wrap">
           <h2 className="text-2xl font-bold">Recorded defects & waste</h2>
           {current.data && (
-            <span className="text-base text-muted-foreground">{label(selected)} · {rangeText(current.data.from, current.data.to, today)}</span>
+            <span className="text-base text-muted-foreground">{chosenLabel} · {rangeText(current.data.from, current.data.to, today)}</span>
           )}
         </div>
         {listQ.isLoading && <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />}
