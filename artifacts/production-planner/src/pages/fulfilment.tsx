@@ -58,6 +58,7 @@ import { BARCODES_API, useScanMap, type ScanMap as ScanMapData } from "@/compone
 import { NoBarcodePanel, SetBarcodeDialog } from "@/components/barcodes/packer-set-barcode";
 import { recipeColourStyle } from "@/lib/recipe-colour-style";
 import { settlingMessage, nextReleaseAt, type SettlingOrder } from "@/lib/settling-orders";
+import { ShiftCloseDownCard } from "@/components/shift-close-down-card";
 import {
   usablePreload, shouldRefreshPreload, nextOrderToPrepare, labelPreloadUrl,
   LABEL_PRELOAD_REFRESH_MS, type PreloadedLabel,
@@ -4499,6 +4500,11 @@ export default function Fulfilment() {
           </button>
         </div>
       )}
+
+      {/* The packing station lands here (station/index.tsx redirects), so
+          the close-down card lives here too (Graeme, 24 Nov 2026). Today
+          only — the day the room's shifts are on. */}
+      {stationPlanId && <ShiftCloseDownCard date={today} />}
 
 
       {/* Collections instruction banner — the orders themselves ride the
