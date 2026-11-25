@@ -61,6 +61,7 @@ import { PersonEmergencyContactPanel } from "@/components/emergency-contacts/per
 import { PeopleSheet } from "@/components/people-sheet";
 import { RecordPanel, RecordTimelineCard, useRecordFacts } from "@/components/people/record-panel";
 import { ReviewStatusBadge } from "@/components/people/review-status-badge";
+import { ReviewDueCard } from "@/components/people/review-due";
 import { PolicyTriggerBanner } from "@/components/people/policy-trigger-banner";
 import { needsPolicyReview, bookingLinkFor, latestAgreements, agreementBullets, type AnswersTrigger, type PolicyReviewRef } from "@workspace/people-reviews";
 import { defaultHoursRange } from "@/components/hours-range-picker";
@@ -688,6 +689,10 @@ export function PersonRecord({ userId, ready }: { userId: number; ready: boolean
             <Lock className="w-5 h-5 shrink-0" /> {p.readOnlyNote}
           </p>
         )}
+        {/* Last performance review + the "No review required" switch
+            (Graeme, 25 Nov 2026) — directors, owners, contractors. */}
+        <ReviewDueCard userId={p.id} ready={ready} canWrite={canWrite} onOpenEntry={showRecord ? openEntryInPanel : undefined} />
+
         {/* ONE button for every kind of review — classified as it's booked,
             and re-classifiable afterwards (Graeme, 2026-10-12) — plus a
             plain note or observation, private until shared (2026-10-14).

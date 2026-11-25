@@ -153,6 +153,9 @@ export interface BadgeRow { userId: number; badge: ReviewBadge | null; liveWarni
 export const personEntriesKey = (userId: number) => ["people-record-entries", "person", userId] as const;
 export const recordBadgesKey = ["people-record-entries", "badges"] as const;
 export const letterTemplatesKey = ["people-record-entries", "letter-templates"] as const;
+/** Last review dates + "No review required" (routes/people-review-due.ts). */
+export const reviewDueListKey = ["people-record-entries", "review-due"] as const;
+export const personReviewDueKey = (userId: number) => ["people-record-entries", "review-due", userId] as const;
 
 /** One person's entries. `ready` from usePeopleReady (the PIN gate has asked). */
 export function usePersonEntries(userId: number, ready: boolean) {
@@ -177,6 +180,46 @@ export function useRecordBadges(ready: boolean) {
     refetchOnWindowFocus: false,
     staleTime: 60_000,
   });
+}
+
+/** One person's last review facts — classified on screen by reviewDue()
+ *  (@workspace/people-reviews). Never your own (the server leaves you out). */
+export interface ReviewDueRow {
+  userId: number;
+  lastReviewDate: string | null;
+  lastReviewEntryId: number | null;
+  noReviewRequired: boolean;
+  setByName: string | null;
+  setAt: string | null;
+}
+
+/** Everyone's, for the People list's Last review column. */
+export function useReviewDueList(ready: boolean) {
+  return useQuery<{ today: string; people: ReviewDueRow[] }>({
+    queryKey: reviewDueListKey,
+    queryFn: () => peopleFetch<{ today: string; people: ReviewDueRow[] }>("/people-reviews/review-due"),
+    enabled: ready,
+    retry: peopleRetry,
+    // Every load is audited — don't refetch just because the tab regained focus.
+    refetchOnWindowFocus: false,
+    staleTime: 60_000,
+  });
+}
+
+/** One person's, for the review card on their record. */
+export function usePersonReviewDue(userId: number, ready: boolean) {
+  return useQuery<ReviewDueRow & { today: string }>({
+    queryKey: personReviewDueKey(userId),
+    queryFn: () => peopleFetch<ReviewDueRow & { today: string }>(`/people-reviews/person/${userId}/review-due`),
+    enabled: ready,
+    retry: peopleRetry,
+    refetchOnWindowFocus: false,
+  });
+}
+
+/** Switch "No review required" for one person. */
+export function saveNoReviewRequired(userId: number, noReviewRequired: boolean): Promise<{ userId: number; noReviewRequired: boolean; setByName: string | null; setAt: string | null }> {
+  return api(`/people-reviews/person/${userId}/no-review-required`, { method: "PUT", body: JSON.stringify({ noReviewRequired }) });
 }
 
 export function useLetterTemplates(ready: boolean) {
@@ -205,6 +248,8 @@ export function useRefreshEntries(userId: number) {
   return () => {
     void qc.invalidateQueries({ queryKey: personEntriesKey(userId) });
     void qc.invalidateQueries({ queryKey: recordBadgesKey });
+    // A new or re-dated Performance appraisal moves their Last review.
+    void qc.invalidateQueries({ queryKey: reviewDueListKey });
     // A Timekeeping / Attendance entry can answer a policy trigger.
     void qc.invalidateQueries({ queryKey: ["people-record", userId] });
     void qc.invalidateQueries({ queryKey: ["people-list"] });
