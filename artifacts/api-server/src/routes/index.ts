@@ -126,6 +126,7 @@ import prepCompletionsRouter from "./prep-completions";
 import wrappingStorageUndoRouter from "./wrapping-storage-undo";
 import wrappingFreezerRouter from "./wrapping-freezer";
 import shopifyWrapPushesRouter from "./shopify-wrap-pushes";
+import f2fFreezerRouter from "./f2f-freezer";
 import buildingEditRouter from "./building-edit";
 import extraPacksRouter from "./extra-packs";
 import defectsRouter from "./defects";
@@ -362,6 +363,9 @@ router.use("/production-plans", wrappingStorageUndoRouter);
 router.use("/production-plans", wrappingFreezerRouter);
 // Wrap-to-Shopify ledger: per-plan status, retry, pinned location.
 router.use(shopifyWrapPushesRouter);
+// Freezer moves → F2F stock in Shopify: switch, confirm preview, failed
+// pushes + Retry (25 Nov 2026; roles checked inside).
+router.use(f2fFreezerRouter);
 // Building station "Edit production numbers" (batches + extra packs for one
 // recipe, staged and saved in one transaction) — ahead of the frozen router.
 router.use("/production-plans", buildingEditRouter);
