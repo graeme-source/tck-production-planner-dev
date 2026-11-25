@@ -9,6 +9,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle, Truck } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PeriodPicker, usePeriodChoice } from "@/components/period-picker";
 
 const BASE = import.meta.env.BASE_URL.replace(/\/$/, "");
 
@@ -82,9 +83,12 @@ export function SoldVsDispatchedCard() {
   const months = useMemo(() => monthOptions(today), [today]);
   const [mode, setMode] = useState<"months" | "dates">("months");
   const [range, setRange] = useState(() => defaultRange(today));
-  const [dates, setDates] = useState(() => ({ from: `${today.slice(0, 7)}-01`, to: today }));
+  // Custom dates use the standard period picker, as on Numbers (Graeme,
+  // 25 Nov 2026); it opens on Month to date, as the old date boxes did.
+  const picker = usePeriodChoice("monthToDate");
+  const dates = picker.period;
 
-  const datesValid = dates.from !== "" && dates.to !== "" && dates.from <= dates.to;
+  const datesValid = !dates.empty;
   const params = new URLSearchParams(
     mode === "months" ? { fromMonth: range.fromMonth, toMonth: range.toMonth } : { from: dates.from, to: dates.to },
   );
@@ -142,19 +146,7 @@ export function SoldVsDispatchedCard() {
             </label>
           </div>
         ) : (
-          <div className="flex flex-wrap items-center gap-3">
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              From
-              <input type="date" className={selectClass} min={`${EARLIEST_MONTH}-01`} max={today} value={dates.from}
-                onChange={e => setDates(d => ({ ...d, from: e.target.value }))} />
-            </label>
-            <label className="flex items-center gap-2 text-sm text-muted-foreground">
-              To
-              <input type="date" className={selectClass} min={`${EARLIEST_MONTH}-01`} value={dates.to}
-                onChange={e => setDates(d => ({ ...d, to: e.target.value }))} />
-            </label>
-            {!datesValid && <span className="text-sm text-destructive">The start date must be on or before the end date.</span>}
-          </div>
+          <PeriodPicker {...picker} minDate={`${EARLIEST_MONTH}-01`} />
         )}
       </div>
 
