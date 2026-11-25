@@ -20,6 +20,19 @@
  *                                a carried-over one, or one in Coming up —
  *                                ticked early, Graeme 2026-10-14)
  *   POST   /items/:itemId/untick
+ *   POST   /items/:itemId/subtasks          add a sub-task (Graeme, 25 Nov 2026)
+ *   POST   /items/:itemId/subtasks/reorder  set the sub-tasks' order
+ *   PATCH  /subtasks/:subId                 edit a sub-task
+ *   DELETE /subtasks/:subId                 remove a sub-task
+ *   POST   /items/:itemId/start             "Start now": copy a When-needed
+ *                                            process and its sub-tasks onto a
+ *                                            to-do list for today (a snapshot)
+ *
+ * Sub-tasks on a team list belong to the master task and have no ticks of
+ * their own; they're ticked on the to-do a Start now makes. Changing them is
+ * "changing the list" (everyone who can open it). Starting a process is
+ * "ticking" (everyone who can open it) — onto your own list; managers and
+ * admins may start it onto anyone's, as with to-dos.
  *
  * Access (lib/team-lists-day.ts, Graeme 2026-10-14 — "if I tick, you've got
  * access"): admins always; anyone else, any role, only when ticked on the
@@ -31,12 +44,13 @@
  */
 import { Router, type IRouter, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
-import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql, type SQL } from "drizzle-orm";
 import {
-  db, usersTable, teamListsTable, teamListItemsTable, teamListCompletionsTable,
-  type TeamList, type TeamListItem,
+  db, usersTable, teamListsTable, teamListItemsTable, teamListCompletionsTable, teamListSubtasksTable,
+  type TeamList, type TeamListItem, type TeamListSubtask,
 } from "@workspace/db";
-import { isDailyRhythm, normaliseRule, sameRule, type RecurrenceRule } from "@workspace/recurrence";
+import { isDailyRhythm, isOnDemand, normaliseRule, sameRule, type RecurrenceRule } from "@workspace/recurrence";
+import { isSameIdSet, processRuns, snapshotFromMaster, type ProcessCopy } from "@workspace/subtasks";
 import { rawBody, validate } from "../middleware/validate";
 import { resolveRole } from "../middleware/roles";
 import { londonDateString } from "../lib/london-time";
@@ -137,6 +151,24 @@ const tickBody = z.object({ dueDate: isoDate, status: z.enum(["done", "skipped"]
 const untickBody = z.object({ dueDate: isoDate });
 const reorderBody = z.object({ itemIds: z.array(z.number().int().positive()).min(1).max(500) });
 const importBody = z.object({ csv: z.string().min(1).max(1_000_000) });
+const subtaskBody = z.object({
+  title: z.string().trim().min(1, "A sub-task needs a title").max(300),
+  notes: optionalText(2000),
+  url: urlField,
+});
+const subtaskPatch = z.object({
+  title: z.string().trim().min(1, "A sub-task needs a title").max(300).optional(),
+  notes: optionalText(2000),
+  url: urlField,
+});
+const subtaskReorderBody = z.object({ subtaskIds: z.array(z.number().int().positive()).min(1).max(200) });
+const startBody = z.object({
+  /** Whose to-do list; default the starter's own. Others: managers/admins. */
+  assigneeId: z.number().int().positive().optional(),
+  /** Start another even though that person already has one open. */
+  confirmDuplicate: z.boolean().optional(),
+});
+const MAX_SUBTASKS = 100;
 
 // ── Loading ────────────────────────────────────────────────────────────────
 function toDayItem(i: TeamListItem): DayItem {
@@ -173,8 +205,8 @@ async function listFor(req: Request, res: Response, id: number | null, need: Nee
   return list;
 }
 
-async function itemFor(req: Request, res: Response, need: Need): Promise<{ item: TeamListItem; list: TeamList } | null> {
-  const id = intParam(req.params.itemId);
+async function itemFor(req: Request, res: Response, need: Need, itemId?: number): Promise<{ item: TeamListItem; list: TeamList } | null> {
+  const id = itemId ?? intParam(req.params.itemId);
   if (!id) { res.status(404).json({ error: "Task not found" }); return null; }
   const [item] = await db.select().from(teamListItemsTable).where(eq(teamListItemsTable.id, id));
   if (!item) { res.status(404).json({ error: "Task not found" }); return null; }
@@ -202,6 +234,50 @@ function serialiseItem(i: TeamListItem) {
     recurrence: i.recurrence as RecurrenceRule, timeOfDay: i.timeOfDay, carryOver: i.carryOver,
     startDate: i.startDate, sortOrder: i.sortOrder, active: i.active,
   };
+}
+
+function serialiseSubtask(s: TeamListSubtask) {
+  return { id: s.id, itemId: s.itemId, title: s.title, notes: s.notes, url: s.url, sortOrder: s.sortOrder };
+}
+
+async function loadSubtasks(itemIds: number[]): Promise<Map<number, TeamListSubtask[]>> {
+  const out = new Map<number, TeamListSubtask[]>();
+  if (!itemIds.length) return out;
+  const rows = await db.select().from(teamListSubtasksTable)
+    .where(inArray(teamListSubtasksTable.itemId, itemIds))
+    .orderBy(asc(teamListSubtasksTable.sortOrder), asc(teamListSubtasksTable.id));
+  for (const r of rows) {
+    const list = out.get(r.itemId) ?? [];
+    list.push(r);
+    out.set(r.itemId, list);
+  }
+  return out;
+}
+
+/** todo_tasks timestamps are TIMESTAMP without a zone, in the database's own
+ *  zone — as an ISO UTC string, whatever that zone is. */
+function isoTs(col: SQL) {
+  return sql`to_char((${col} AT TIME ZONE current_setting('TimeZone')) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')`;
+}
+
+/** Every to-do started from these processes, for "Last run … by …". */
+async function loadCopies(itemIds: number[]): Promise<Map<number, ProcessCopy[]>> {
+  const out = new Map<number, ProcessCopy[]>();
+  if (!itemIds.length) return out;
+  const rows = await db.execute<{ item_id: number; assignee_id: number; assignee_name: string | null; status: "open" | "done"; created_at: string; completed_at: string | null }>(sql`
+    SELECT t.source_team_list_item_id AS item_id, t.assignee_id, au.name AS assignee_name, t.status,
+           ${isoTs(sql.raw("t.created_at"))} AS created_at,
+           ${isoTs(sql.raw("t.completed_at"))} AS completed_at
+    FROM todo_tasks t
+    LEFT JOIN app_users au ON au.id = t.assignee_id
+    WHERE t.source_team_list_item_id IN (${sql.join(itemIds.map(id => sql`${id}`), sql`, `)})
+  `);
+  for (const r of rows.rows) {
+    const list = out.get(r.item_id) ?? [];
+    list.push({ assigneeId: r.assignee_id, assigneeName: r.assignee_name, status: r.status, createdAt: r.created_at, completedAt: r.completed_at });
+    out.set(r.item_id, list);
+  }
+  return out;
 }
 
 // ── Lists ───────────────────────────────────────────────────────────────────
@@ -270,10 +346,17 @@ router.get("/:id", async (req: Request, res: Response) => {
     ...upcomingOccurrencesToLoad(dayItems, today, UPCOMING_DAYS),
   ]);
   const day = buildDay(dayItems, completions, today);
+  const subtasks = await loadSubtasks(items.map(i => i.id));
+  // "When needed" processes: who ran them last, and who has one open.
+  const copies = await loadCopies(items.filter(i => isOnDemand(i.recurrence as RecurrenceRule)).map(i => i.id));
   res.json({
     today,
     list: serialiseList(list, me(req)),
-    items: items.map(serialiseItem),
+    items: items.map(i => ({
+      ...serialiseItem(i),
+      subtasks: (subtasks.get(i.id) ?? []).map(serialiseSubtask),
+      runs: isOnDemand(i.recurrence as RecurrenceRule) ? processRuns(copies.get(i.id) ?? [], req.session.userId) : null,
+    })),
     entries: day.entries,
     progress: day.progress,
     comingUp: comingUp(dayItems, today, UPCOMING_DAYS, completions),
@@ -419,6 +502,159 @@ router.post("/items/:itemId/untick", validate(untickBody), async (req: Request, 
   await db.delete(teamListCompletionsTable)
     .where(and(eq(teamListCompletionsTable.itemId, found.item.id), eq(teamListCompletionsTable.dueDate, dueDate)));
   res.json({ ok: true });
+});
+
+// ── Sub-tasks (the master copy) ─────────────────────────────────────────────
+async function subtaskFor(req: Request, res: Response): Promise<{ sub: TeamListSubtask; item: TeamListItem } | null> {
+  const id = intParam(req.params.subId);
+  if (!id) { res.status(404).json({ error: "Sub-task not found" }); return null; }
+  const [sub] = await db.select().from(teamListSubtasksTable).where(eq(teamListSubtasksTable.id, id));
+  if (!sub) { res.status(404).json({ error: "Sub-task not found" }); return null; }
+  const found = await itemFor(req, res, "edit", sub.itemId);
+  return found ? { sub, item: found.item } : null;
+}
+
+router.post("/items/:itemId/subtasks", validate(subtaskBody), async (req: Request, res: Response) => {
+  const found = await itemFor(req, res, "edit");
+  if (!found) return;
+  const body = req.body as z.infer<typeof subtaskBody>;
+  const [{ n, next }] = (await db.execute<{ n: number; next: number }>(
+    sql`SELECT COUNT(*)::int AS n, COALESCE(MAX(sort_order), 0) + 1 AS next FROM team_list_subtasks WHERE item_id = ${found.item.id}`,
+  )).rows;
+  if (Number(n) >= MAX_SUBTASKS) { res.status(400).json({ error: `A task can have up to ${MAX_SUBTASKS} sub-tasks` }); return; }
+  const [row] = await db.insert(teamListSubtasksTable).values({
+    itemId: found.item.id, title: body.title, notes: body.notes, url: body.url,
+    sortOrder: Number(next) || 1, createdById: req.session.userId!,
+  }).returning();
+  res.status(201).json(serialiseSubtask(row));
+});
+
+router.post("/items/:itemId/subtasks/reorder", validate(subtaskReorderBody), async (req: Request, res: Response) => {
+  const found = await itemFor(req, res, "edit");
+  if (!found) return;
+  const { subtaskIds } = req.body as z.infer<typeof subtaskReorderBody>;
+  const current = await db.select({ id: teamListSubtasksTable.id }).from(teamListSubtasksTable)
+    .where(eq(teamListSubtasksTable.itemId, found.item.id));
+  if (!isSameIdSet(current.map(c => c.id), subtaskIds)) {
+    res.status(409).json({ error: "The sub-tasks have changed since you opened this — refresh and try again" });
+    return;
+  }
+  await db.transaction(async tx => {
+    for (const [i, id] of subtaskIds.entries()) {
+      await tx.update(teamListSubtasksTable).set({ sortOrder: i + 1, updatedAt: new Date() })
+        .where(and(eq(teamListSubtasksTable.id, id), eq(teamListSubtasksTable.itemId, found.item.id)));
+    }
+  });
+  res.json({ ok: true });
+});
+
+router.patch("/subtasks/:subId", validate(subtaskPatch), async (req: Request, res: Response) => {
+  const found = await subtaskFor(req, res);
+  if (!found) return;
+  const body = req.body as z.infer<typeof subtaskPatch>;
+  const sent = rawBody<Record<string, unknown>>(req);
+  const updates: Partial<typeof teamListSubtasksTable.$inferInsert> = { updatedAt: new Date() };
+  if (body.title !== undefined) updates.title = body.title;
+  if ("notes" in sent) updates.notes = body.notes ?? null;
+  if ("url" in sent) updates.url = body.url ?? null;
+  const [row] = await db.update(teamListSubtasksTable).set(updates).where(eq(teamListSubtasksTable.id, found.sub.id)).returning();
+  res.json(serialiseSubtask(row));
+});
+
+router.delete("/subtasks/:subId", async (req: Request, res: Response) => {
+  const found = await subtaskFor(req, res);
+  if (!found) return;
+  // Only the master's step goes; copies already started keep theirs.
+  await db.delete(teamListSubtasksTable).where(eq(teamListSubtasksTable.id, found.sub.id));
+  res.json({ ok: true });
+});
+
+// ── Start now ───────────────────────────────────────────────────────────────
+// "Choose one of these top-level processes and start it for use today. That
+// adds the top-level item to the person who started it's personal to-do
+// list" (Graeme, 25 Nov 2026). A snapshot: editing the master afterwards
+// never changes a copy that's been started.
+router.post("/items/:itemId/start", validate(startBody), async (req: Request, res: Response) => {
+  const found = await itemFor(req, res, "open");
+  if (!found) return;
+  const { item, list } = found;
+  if (!item.active) { res.status(404).json({ error: "That task has been removed from the list" }); return; }
+  if (list.archivedAt) { res.status(409).json({ error: "This list is archived — restore it to start its processes" }); return; }
+  if (!isOnDemand(item.recurrence as RecurrenceRule)) {
+    res.status(409).json({ error: "Only \"When needed\" tasks can be started — this one comes round by itself" });
+    return;
+  }
+  const { assigneeId: wanted, confirmDuplicate } = req.body as z.infer<typeof startBody>;
+  const starterId = req.session.userId!;
+  const assigneeId = wanted ?? starterId;
+  if (assigneeId !== starterId && !canCreateList(me(req))) {
+    res.status(403).json({ error: "Only managers can start it on someone else's list" });
+    return;
+  }
+  const [assignee] = await db.select({ id: usersTable.id, name: usersTable.name, isActive: usersTable.isActive })
+    .from(usersTable).where(eq(usersTable.id, assigneeId));
+  if (!assignee || !assignee.isActive) { res.status(400).json({ error: "That person isn't active" }); return; }
+
+  const [{ open }] = (await db.execute<{ open: number }>(sql`
+    SELECT COUNT(*)::int AS open FROM todo_tasks
+    WHERE source_team_list_item_id = ${item.id} AND assignee_id = ${assigneeId} AND status = 'open'
+  `)).rows;
+  if (Number(open) > 0 && !confirmDuplicate) {
+    res.status(409).json({
+      code: "ALREADY_OPEN",
+      openCount: Number(open),
+      error: assigneeId === starterId
+        ? "You already have one open — start another?"
+        : `${assignee.name.split(" ")[0]} already has one open — start another?`,
+    });
+    return;
+  }
+
+  const today = londonDateString();
+  const subtasks = (await loadSubtasks([item.id])).get(item.id) ?? [];
+  const snap = snapshotFromMaster(
+    { id: item.id, title: item.title, notes: item.notes, url: item.url, priority: item.priority, timeOfDay: item.timeOfDay },
+    subtasks, today,
+  );
+  const starterName = (await myName(req)) ?? "Someone";
+  const forSelf = assigneeId === starterId;
+  const todoId = await db.transaction(async tx => {
+    const rows = await tx.execute<{ id: number }>(sql`
+      INSERT INTO todo_tasks (assignee_id, created_by, created_by_name, title, notes, url, priority, scheduled_for, due_date,
+                              recurrence, time_of_day, acknowledged_at, source_team_list_item_id)
+      VALUES (${assigneeId}, ${starterId}, ${starterName}, ${snap.title}, ${snap.notes}, ${snap.url}, ${snap.priority},
+              ${snap.scheduledFor}, ${snap.dueDate}, NULL, ${snap.timeOfDay}, ${forSelf ? sql`NOW()` : null}, ${snap.sourceTeamListItemId})
+      RETURNING id
+    `);
+    const id = rows.rows[0].id;
+    for (const s of snap.subtasks) {
+      await tx.execute(sql`
+        INSERT INTO todo_subtasks (task_id, title, notes, url, sort_order)
+        VALUES (${id}, ${s.title}, ${s.notes}, ${s.url}, ${s.sortOrder})
+      `);
+    }
+    const event = forSelf
+      ? `Started from the team list (${list.name} → ${item.title}) by ${starterName}`
+      : `Started from the team list (${list.name} → ${item.title}) by ${starterName}, for ${assignee.name}`;
+    await tx.execute(sql`
+      INSERT INTO todo_task_comments (task_id, user_id, user_name, kind, body)
+      VALUES (${id}, ${starterId}, ${starterName}, 'event', ${event})
+    `);
+    return id;
+  });
+  if (!forSelf) {
+    // Like any to-do put on someone else's list: a bell, and the "you've been
+    // asked to…" takeover until they've seen it (acknowledged_at is NULL).
+    try {
+      await db.execute(sql`
+        INSERT INTO notifications (user_id, type, message, read)
+        VALUES (${assigneeId}, 'todo', ${`New to-do from ${starterName}: ${snap.title}`.slice(0, 500)}, false)
+      `);
+    } catch (err) {
+      console.warn("[TeamLists] start notification failed:", err instanceof Error ? err.message : err);
+    }
+  }
+  res.status(201).json({ todoId, subtaskCount: snap.subtasks.length, assigneeId, assigneeName: assignee.name });
 });
 
 export default router;
