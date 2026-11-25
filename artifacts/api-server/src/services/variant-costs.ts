@@ -16,7 +16,7 @@ import { linkVariantToRecipe } from "../lib/recipe-shopify-mapping";
 import { setRecipeF2fLink } from "../lib/recipe-f2f-link";
 import { forgetRecipeMappings } from "../lib/pnl-calculator";
 import { afterListingLinked, type Actor } from "../lib/barcode-store";
-import { shopifyCostString, supplyLinkCost, wonkyTarget, type MainMappingRow } from "../lib/variant-cost-rules";
+import { shopifyCostString, shopifyCostTickDefault, supplyLinkCost, wonkyTarget, type MainMappingRow } from "../lib/variant-cost-rules";
 import { getVariantCosts, getVariantSkus, setVariantUnitCost, shopifyCostWritesAllowed, ShopifyWritesBlockedError } from "./shopify";
 
 export type Fail = { ok: false; status: 400 | 404 | 409; error: string; reason?: string };
@@ -67,6 +67,8 @@ export async function variantCostStatus(variantId: string) {
     manual,
     shopifyCost,
     shopifyReadFailed,
+    /** Tick "also set it in Shopify" by default only when Shopify has none. */
+    shopifyTickDefault: !shopifyReadFailed && shopifyCostTickDefault(shopifyCost),
     shopifyWritesAllowed: shopifyCostWritesAllowed(),
   };
 }
