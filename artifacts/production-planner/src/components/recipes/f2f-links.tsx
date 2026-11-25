@@ -3,13 +3,20 @@
  * its "F2F - …" Shopify product linked, so F2F sales cost exactly what the
  * recipe costs and the fridge → freezer move knows where the stock goes.
  * Missing links are flagged. Server: routes/recipe-f2f.ts.
+ *
+ * Also here (25 Nov 2026): "Create F2F product" for a recipe with no link
+ * (f2f-create-card.tsx), the switch that sends freezer packs to the F2F
+ * products in Shopify (admins; it refuses until every core recipe is
+ * linked), and any F2F Shopify update that failed, with Retry.
  */
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Link2, Loader2, Snowflake, Unlink, AlertTriangle } from "lucide-react";
+import { CheckCircle2, Link2, Loader2, Snowflake, Unlink, AlertTriangle, Plus } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
+import { F2fCreateCard } from "./f2f-create-card";
+import { F2fPushFailures, F2fPushSwitch } from "@/components/f2f/f2f-freezer";
 
 interface F2fProduct { variantId: string; title: string; variantTitle: string | null }
 interface F2fRow { recipeId: number; name: string; isCoreMenu: boolean; f2f: F2fProduct | null; suggestion: F2fProduct | null }
@@ -42,6 +49,7 @@ export function F2fLinksButton() {
 function F2fLinksDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   const qc = useQueryClient();
   const q = useQuery({ queryKey: KEY, queryFn: fetchF2f, enabled: open });
+  const [creating, setCreating] = useState<{ recipeId: number; name: string } | null>(null);
   const save = useMutation({
     mutationFn: async ({ recipeId, product }: { recipeId: number; product: F2fProduct | null }) => {
       const res = await fetch(`/api/recipe-f2f/${recipeId}`, {
@@ -52,7 +60,7 @@ function F2fLinksDialog({ open, onClose }: { open: boolean; onClose: () => void 
       if (!res.ok) throw new Error(j?.error ?? "Couldn't save");
       return j;
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: KEY }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: KEY }); qc.invalidateQueries({ queryKey: ["f2f-freezer-setting"] }); },
     onError: (e: Error) => toast({ title: "Couldn't save the link", description: e.message, variant: "destructive" }),
   });
   const data = q.data;
@@ -88,7 +96,7 @@ function F2fLinksDialog({ open, onClose }: { open: boolean; onClose: () => void 
                       ? <p className="text-sm text-emerald-700 dark:text-emerald-400 flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> {r.f2f.title}{r.f2f.variantTitle ? ` · ${r.f2f.variantTitle}` : ""}</p>
                       : r.suggestion
                         ? <p className="text-sm text-muted-foreground">Suggested: <span className="text-foreground">{r.suggestion.title}</span></p>
-                        : <p className="text-sm text-amber-700 dark:text-amber-400">No F2F product found — pick one, or create it in Shopify first.</p>}
+                        : <p className="text-sm text-amber-700 dark:text-amber-400">No F2F product found — pick one, or create it.</p>}
                   </div>
                   {r.f2f ? (
                     <button onClick={() => save.mutate({ recipeId: r.recipeId, product: null })} disabled={save.isPending}
@@ -99,6 +107,8 @@ function F2fLinksDialog({ open, onClose }: { open: boolean; onClose: () => void 
                         <button onClick={() => save.mutate({ recipeId: r.recipeId, product: r.suggestion })} disabled={save.isPending}
                           className="h-10 px-3 rounded-lg bg-primary text-primary-foreground text-sm font-semibold flex items-center gap-1 disabled:opacity-50"><Link2 className="w-4 h-4" /> Link</button>
                       )}
+                      <button onClick={() => setCreating({ recipeId: r.recipeId, name: r.name })} disabled={save.isPending}
+                        className="h-10 px-3 rounded-lg border-2 border-sky-400 text-sky-800 dark:text-sky-200 text-sm font-semibold flex items-center gap-1 hover:bg-sky-50 dark:hover:bg-sky-950/30 disabled:opacity-50"><Plus className="w-4 h-4" /> Create F2F product</button>
                       <select aria-label={`Pick the F2F product for ${r.name}`} value="" disabled={save.isPending}
                         onChange={e => { const p = data.products.find(x => x.variantId === e.target.value); if (p) save.mutate({ recipeId: r.recipeId, product: p }); }}
                         className="h-10 rounded-lg border border-border bg-background px-2 text-sm max-w-[16rem]">
@@ -110,9 +120,12 @@ function F2fLinksDialog({ open, onClose }: { open: boolean; onClose: () => void 
                 </li>
               ))}
             </ul>
-            <p className="text-xs text-muted-foreground">The list of F2F products is everything titled "F2F …" sold in the last year. A brand-new F2F product shows here once it has sold.</p>
+            <p className="text-xs text-muted-foreground">The list of F2F products is everything titled "F2F …" sold in the last year. A brand-new F2F product shows here once it has sold — or make one with "Create F2F product", which links it straight away.</p>
+            <F2fPushSwitch />
+            <F2fPushFailures />
           </div>
         )}
+        {creating && <F2fCreateCard recipeId={creating.recipeId} recipeName={creating.name} onClose={() => setCreating(null)} />}
       </DialogContent>
     </Dialog>
   );
