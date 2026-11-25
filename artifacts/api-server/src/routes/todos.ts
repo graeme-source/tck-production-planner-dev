@@ -8,6 +8,7 @@ import { isDueOn, isOnDemand, isRecurrenceRule, nextOccurrenceAfter, normaliseRu
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { reviewDue } from "../lib/todo-review";
+import { EDIT_SITTING_MINUTES, editAlreadyLogged, type LastTimelineRow } from "../lib/todo-timeline";
 import { freshSubtasksFrom, resolveParentTick } from "@workspace/subtasks";
 
 // ── Per-user to-do lists ────────────────────────────────────────────────────
@@ -421,7 +422,14 @@ router.patch("/:id", async (req: Request, res: Response) => {
       WHERE id = ${task.id}
     `);
     const editorName = await userName(user.id);
-    await addTimeline(task.id, user.id, editorName, "event", `${editorName} edited the task`);
+    // The panel saves as you type: one line per sitting, not one per save.
+    const edited = `${editorName} edited the task`;
+    const last = await db.execute<LastTimelineRow & Record<string, unknown>>(sql`
+      SELECT kind, user_id, body, created_at > NOW() - make_interval(mins => ${EDIT_SITTING_MINUTES}) AS recent
+      FROM todo_task_comments WHERE task_id = ${task.id}
+      ORDER BY created_at DESC, id DESC LIMIT 1
+    `);
+    if (!editAlreadyLogged(last.rows[0], user.id, edited)) await addTimeline(task.id, user.id, editorName, "event", edited);
     res.json(await taskWithSubtasks(task.id));
   } catch (err) {
     console.error("[Todos] edit error:", err);
