@@ -4,8 +4,15 @@
  * (Graeme, 2026-10-08). The same component on Numbers (Month to Date tile)
  * and Sales & Marketing (Revenue pace), fed by the same hook, so the two
  * pages can't show different numbers. Objective I.
+ *
+ * 25 Nov 2026 (Graeme): projected month-end first (under the orders), then
+ * the bar, the two targets, and where we are against today's mark. One
+ * colour throughout — the header's shade (lib/targets-progress-colour.ts) —
+ * and no "£301 short of minimum / £60k short of stretch" chips: the bar
+ * already shows that.
  */
-import { daysInMonth, formatGbp, formatGbpShort, paceAgainstTargets, type TargetPace } from "@workspace/revenue-targets";
+import { daysInMonth, formatGbp, paceAgainstTargets } from "@workspace/revenue-targets";
+import { targetsProgressColour } from "@/lib/targets-progress-colour";
 import { cn } from "@/lib/utils";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useThisMonthTargets } from "./api";
@@ -36,15 +43,18 @@ export function TargetsProgress({
     thisMonth.stretch,
   );
   const { bar } = pace;
-  const fill = pace.tone === "stretch" ? "bg-primary" : pace.tone === "minimum" ? "bg-amber-500" : "bg-red-500";
+  const colour = targetsProgressColour(projected, thisMonth.minimum, thisMonth.stretch);
 
   return (
     <div className={cn(compact ? "space-y-2" : "space-y-3", className)}>
+      <p className={cn("tabular-nums text-muted-foreground", compact ? "text-sm" : "text-base")}>
+        Projected <b className="text-foreground">{formatGbp(projected)}</b>
+      </p>
       {/* Bar: filled to month-to-date, a marker at the minimum and at the
           stretch, and a faint tick where we should be today for the minimum. */}
       <div className="relative pt-5 pb-5">
         <div className={cn("relative rounded-full bg-secondary overflow-hidden", compact ? "h-3" : "h-4")}>
-          <div className={cn("absolute inset-y-0 left-0 rounded-full", fill)} style={{ width: `${bar.fillPct}%` }} />
+          <div className="absolute inset-y-0 left-0 rounded-full" style={{ width: `${bar.fillPct}%`, backgroundColor: colour.barHex }} />
           <div
             className="absolute inset-y-0 w-0.5 bg-foreground/30"
             title="Where sales should be by today to reach the minimum"
@@ -55,22 +65,16 @@ export function TargetsProgress({
         {bar.stretchPct != null && <Marker pct={bar.stretchPct} label="Stretch" position="above" />}
       </div>
 
-      <p className={cn("tabular-nums", compact ? "text-sm" : "text-base")}>
-        <b>{formatGbp(monthToDate)}</b> of {formatGbp(thisMonth.minimum)} minimum
+      <p className={cn("tabular-nums text-muted-foreground", compact ? "text-sm" : "text-base")}>
+        {formatGbp(thisMonth.minimum)} minimum
         {thisMonth.stretch != null && <> · {formatGbp(thisMonth.stretch)} stretch</>}
       </p>
-      {/* Against today's tick first (Graeme, 2026-10-11), then where the
-          month ends up at this pace (the chips below). */}
-      <p className={cn("font-semibold", compact ? "text-sm" : "text-base",
-        pace.today.ahead ? "text-primary" : "text-red-600 dark:text-red-400")}>
+      {/* Against today's tick (Graeme, 2026-10-11), in the card's colour. */}
+      <p className={cn("font-semibold", compact ? "text-sm" : "text-base", !colour.textHex && "text-foreground")}
+        style={colour.textHex ? { color: colour.textHex } : undefined}>
         {pace.today.headline}
         <span className="font-normal text-muted-foreground"> · {formatGbp(Math.round(pace.today.expected))} by today</span>
       </p>
-      <div className={cn("flex flex-wrap gap-1.5", compact ? "text-xs" : "text-sm")}>
-        <span className="text-muted-foreground self-center">Projected {formatGbp(projected)}:</span>
-        <GapChip label="minimum" pace={pace.minimum} />
-        {pace.stretch && <GapChip label="stretch" pace={pace.stretch} />}
-      </div>
     </div>
   );
 }
@@ -93,15 +97,5 @@ function Marker({ pct, label, position }: { pct: number; label: string; position
         {label}
       </span>
     </>
-  );
-}
-
-function GapChip({ label, pace }: { label: string; pace: TargetPace }) {
-  const over = pace.projectedGap >= 0;
-  return (
-    <span className={cn("rounded-full px-2 py-0.5 font-medium tabular-nums",
-      over ? "bg-primary/10 text-primary" : "bg-red-500/10 text-red-600 dark:text-red-400")}>
-      {over ? `${formatGbpShort(pace.projectedGap)} over` : `${formatGbpShort(-pace.projectedGap)} short of`} {label}
-    </span>
   );
 }
