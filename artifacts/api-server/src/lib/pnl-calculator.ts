@@ -4,7 +4,10 @@ import { inArray } from "drizzle-orm";
 import { computeCosts } from "../routes/recipes";
 import type { ShopifyOrder } from "../services/shopify";
 import { getVariantCosts } from "../services/shopify";
-import { boxSizeFor, isDigitalLine, isDigitalOnlyOrder, supplyUnitCosting, type VariantCosting } from "./finance/profit-tracker";
+import {
+  boxSizeFor, isDigitalLine, isDigitalOnlyOrder, manualUnitCosting, pickVariantCosting, supplyUnitCosting,
+  type CostSource, type VariantCosting,
+} from "./finance/profit-tracker";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -220,12 +223,13 @@ export async function calculateCogs(orders: ShopifyOrder[]): Promise<CogsResult>
   let shopifyCostTotal = 0;
 
   if (unmappedVariantItems.length > 0) {
-    const uniqueVariantIds = [...new Set(unmappedVariantItems.map(i => i.variantId))];
+    const titles = new Map<string, string>();
+    for (const i of unmappedVariantItems) if (!titles.has(i.variantId)) titles.set(i.variantId, i.title);
     try {
-      // Supplies mapped to the Shopify product first (25 Nov 2026), then Shopify's cost.
-      const supplies = await loadSupplyCostsByVariant(uniqueVariantIds);
-      const variantCosts = await getVariantCosts(uniqueVariantIds.filter(v => !supplies.has(v)));
-      for (const [vid, c] of supplies) variantCosts.set(vid, c.food + c.packaging);
+      // Supply link, then a cost set in the app, then Shopify's (pickVariantCosting).
+      const resolved = await loadNonRecipeCosting([...titles].map(([variantId, title]) => ({ variantId, title })));
+      const variantCosts = new Map<string, number>();
+      for (const [vid, r] of resolved) variantCosts.set(vid, r.costing.food + r.costing.packaging);
       for (const item of unmappedVariantItems) {
         const cost = variantCosts.get(item.variantId);
         if (cost != null && cost > 0) {
@@ -325,9 +329,10 @@ async function loadSupplyCostsByVariant(variantIds: readonly string[]): Promise<
 
 /**
  * What one unit of each variant costs, split the way QuickBooks splits it:
- * food (recipe ingredients, or Shopify's cost for bought-in items) and the
- * recipe's own packaging. The same recipe mapping and costings as
- * calculateCogs. Variants with neither are left out (uncosted).
+ * food (recipe ingredients, or the cost of a bought-in item) and packaging.
+ * The same order as calculateCogs: recipe (main, F2F or wonky) → linked
+ * supply → cost set in the app → Shopify's cost per item. Variants with
+ * none are left out (uncosted).
  */
 export async function loadVariantCosting(
   items: ReadonlyArray<{ variantId: string; title: string }>,
@@ -351,22 +356,62 @@ export async function loadVariantCosting(
     const perPortion = c.servings > 0 ? c.rawMaterialCostPerBatch / c.servings : 0;
     out.set(vid, { name: c.name, food: perPortion * c.packSize, packaging: c.packagingCost, isPack: true });
   }
-  // A supply mapped to the Shopify product (Stock → the supply's Shopify
-  // link) is costed from the app — pack cost ÷ units per pack — before
-  // Shopify's own "cost per item" (Graeme, 25 Nov 2026: the order insert).
-  const supplies = unmapped.length > 0 ? await loadSupplyCostsByVariant(unmapped) : new Map<string, VariantCosting>();
-  for (const [vid, c] of supplies) out.set(vid, c);
-  const stillUnmapped = unmapped.filter(v => !supplies.has(v));
-  if (stillUnmapped.length > 0) {
+  // No recipe: a supply linked to the Shopify product (pack cost ÷ units per
+  // pack, 25 Nov 2026: the order insert), then a cost set by hand in the app,
+  // then Shopify's own "cost per item" — pickVariantCosting's order.
+  const rest = await loadNonRecipeCosting(unmapped.map(v => ({ variantId: v, title: wanted.get(v) ?? "" })));
+  for (const [vid, r] of rest) out.set(vid, r.costing);
+  return out;
+}
+
+/** Costs typed in from the order pop-up (shopify_variant_costs, migration 0398). */
+async function loadManualCostsByVariant(variantIds: readonly string[]): Promise<Map<string, VariantCosting>> {
+  const out = new Map<string, VariantCosting>();
+  if (variantIds.length === 0) return out;
+  try {
+    const r = await db.execute<{ variant_id: string; title: string | null; cost: string | null; category: string | null }>(sql`
+      SELECT variant_id, title, cost::text, category FROM shopify_variant_costs
+       WHERE variant_id IN (${sql.join(variantIds.map(v => sql`${v}`), sql`, `)})
+    `);
+    for (const row of r.rows ?? []) {
+      const c = manualUnitCosting({ title: row.title ?? "", cost: row.cost != null ? Number(row.cost) : null, category: row.category });
+      if (c) out.set(String(row.variant_id), c);
+    }
+  } catch (err) {
+    // Before migration 0398 has run the table isn't there: carry on without.
+    console.warn("[pnl-calculator] shopify_variant_costs read failed:", err instanceof Error ? err.message : err);
+  }
+  return out;
+}
+
+/**
+ * Variants with no recipe: costed from a linked supply, else a cost set in
+ * the app, else Shopify's cost per item (pickVariantCosting). Shopify is only
+ * asked about the ones the app can't cost. Variants with none are left out.
+ */
+export async function loadNonRecipeCosting(
+  items: ReadonlyArray<{ variantId: string; title: string }>,
+): Promise<Map<string, { costing: VariantCosting; source: CostSource }>> {
+  const out = new Map<string, { costing: VariantCosting; source: CostSource }>();
+  if (items.length === 0) return out;
+  const ids = [...new Set(items.map(i => i.variantId))];
+  const titles = new Map(items.map(i => [i.variantId, i.title]));
+  const [supplies, manual] = await Promise.all([loadSupplyCostsByVariant(ids), loadManualCostsByVariant(ids)]);
+  const needShopify = ids.filter(v => !supplies.has(v) && !manual.has(v));
+  let shopify = new Map<string, number>();
+  if (needShopify.length > 0) {
     try {
-      const costs = await getVariantCosts(stillUnmapped);
-      for (const vid of stillUnmapped) {
-        const cost = costs.get(vid);
-        if (cost != null && cost > 0) out.set(vid, { name: wanted.get(vid) || "Unknown item", food: cost, packaging: 0, isPack: false });
-      }
+      shopify = await getVariantCosts(needShopify);
     } catch (err) {
       console.warn("[pnl-calculator] Shopify cost lookup failed:", err instanceof Error ? err.message : err);
     }
+  }
+  for (const vid of ids) {
+    const picked = pickVariantCosting({
+      title: titles.get(vid) || "Unknown item",
+      supply: supplies.get(vid), manual: manual.get(vid), shopifyCost: shopify.get(vid),
+    });
+    if (picked) out.set(vid, picked);
   }
   return out;
 }

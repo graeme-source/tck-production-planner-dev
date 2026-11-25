@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  isDigitalOnlyOrder, supplyUnitCosting,
+  isDigitalOnlyOrder, manualUnitCosting, pickVariantCosting, supplyUnitCosting,
   accountKey, boxSizeFor, bucketTotals, byProduct, bySize, calibrate, compareMonth, costOrder, orderRows, periodPnl,
   resolveBuckets, type Bucket, type Calibration, type CostRates, type TrackerOrder, type VariantCosting,
 } from "./profit-tracker";
@@ -296,5 +296,39 @@ describe("supplyUnitCosting — a supply sold through Shopify", () => {
   it("no cost on the supply → not costed from it", () => {
     expect(supplyUnitCosting({ name: "x", costPerPack: 0, unitsPerPack: 10, category: null })).toBeNull();
     expect(supplyUnitCosting({ name: "x", costPerPack: null, unitsPerPack: null, category: null })).toBeNull();
+  });
+});
+
+describe("manualUnitCosting — a cost set by hand from the order pop-up (25 Nov 2026)", () => {
+  it("food by default, packaging when it says so", () => {
+    expect(manualUnitCosting({ title: "Hot Sauce", cost: 1.2, category: "food" })).toEqual({ name: "Hot Sauce", food: 1.2, packaging: 0, isPack: false });
+    expect(manualUnitCosting({ title: "Gift bag", cost: 0.35, category: "packaging" })).toEqual({ name: "Gift bag", food: 0, packaging: 0.35, isPack: false });
+    expect(manualUnitCosting({ title: "x", cost: 1, category: null })!.food).toBe(1);
+  });
+  it("no positive cost → nothing", () => {
+    expect(manualUnitCosting({ title: "x", cost: 0, category: "food" })).toBeNull();
+    expect(manualUnitCosting({ title: "x", cost: null, category: "food" })).toBeNull();
+  });
+});
+
+describe("pickVariantCosting — recipe → supply → set in the app → Shopify", () => {
+  const recipe: VariantCosting = { name: "Pepperoni", food: 3, packaging: 0.5, isPack: true };
+  const supply: VariantCosting = { name: "Brownie", food: 1.5, packaging: 0, isPack: false };
+  const manual: VariantCosting = { name: "Hot Sauce", food: 1.2, packaging: 0, isPack: false };
+  it("a recipe wins over everything", () => {
+    expect(pickVariantCosting({ title: "t", recipe, supply, manual, shopifyCost: 9 })).toEqual({ costing: recipe, source: "recipe" });
+  });
+  it("then a linked supply", () => {
+    expect(pickVariantCosting({ title: "t", supply, manual, shopifyCost: 9 })).toEqual({ costing: supply, source: "supply" });
+  });
+  it("then the cost set in the app, over Shopify's", () => {
+    expect(pickVariantCosting({ title: "t", manual, shopifyCost: 9 })).toEqual({ costing: manual, source: "manual" });
+  });
+  it("then Shopify's cost per item, as food", () => {
+    expect(pickVariantCosting({ title: "Dip", shopifyCost: 0.8 })).toEqual({ costing: { name: "Dip", food: 0.8, packaging: 0, isPack: false }, source: "shopify" });
+  });
+  it("none (or a £0 Shopify cost) → uncosted", () => {
+    expect(pickVariantCosting({ title: "t" })).toBeNull();
+    expect(pickVariantCosting({ title: "t", shopifyCost: 0, supply: null, manual: null })).toBeNull();
   });
 });

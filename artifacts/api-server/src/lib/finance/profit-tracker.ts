@@ -203,6 +203,44 @@ export function supplyUnitCosting(s: { name: string; costPerPack: number | null;
   return { name: s.name, food: packaging ? 0 : per, packaging: packaging ? per : 0, isPack: false };
 }
 
+/**
+ * A cost typed in for a Shopify variant from the order pop-up (Graeme,
+ * 25 Nov 2026; shopify_variant_costs, migration 0398): £ per item sold,
+ * counted as packaging or food. Null when there's no positive cost. Pure.
+ */
+export function manualUnitCosting(m: { title: string; cost: number | null; category: string | null }): VariantCosting | null {
+  const cost = Number(m.cost);
+  if (!(cost > 0)) return null;
+  const packaging = (m.category ?? "").toLowerCase() === "packaging";
+  return { name: m.title || "Unknown item", food: packaging ? 0 : cost, packaging: packaging ? cost : 0, isPack: false };
+}
+
+export type CostSource = "recipe" | "supply" | "manual" | "shopify";
+
+/**
+ * Where one Shopify variant's cost comes from, first that has one:
+ *   1. a recipe (its main, F2F or wonky product),
+ *   2. a supply linked to it (pack cost ÷ Shopify units per pack),
+ *   3. a cost set by hand in the app (shopify_variant_costs),
+ *   4. Shopify's own "cost per item".
+ * Null when none does — the item shows "No cost". Pure; used by
+ * Order Analysis and the P&L (lib/pnl-calculator.ts) alike.
+ */
+export function pickVariantCosting(s: {
+  title: string;
+  recipe?: VariantCosting | null;
+  supply?: VariantCosting | null;
+  manual?: VariantCosting | null;
+  shopifyCost?: number | null;
+}): { costing: VariantCosting; source: CostSource } | null {
+  if (s.recipe) return { costing: s.recipe, source: "recipe" };
+  if (s.supply) return { costing: s.supply, source: "supply" };
+  if (s.manual) return { costing: s.manual, source: "manual" };
+  const shop = Number(s.shopifyCost);
+  if (shop > 0) return { costing: { name: s.title || "Unknown item", food: shop, packaging: 0, isPack: false }, source: "shopify" };
+  return null;
+}
+
 /** Every line with a quantity is digital (and there is at least one). */
 export function isDigitalOnlyOrder(lines: ReadonlyArray<{ quantity: number; requiresShipping?: boolean | null; giftCard?: boolean | null }>): boolean {
   const real = lines.filter(l => (Number(l.quantity) || 0) > 0);
