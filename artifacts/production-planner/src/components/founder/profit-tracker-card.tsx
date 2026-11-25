@@ -2,56 +2,30 @@
 // Objective I). "In the last 2 weeks, we're pretty sure this is the profit
 // we're making": the predicted P&L for any days, laid out like QuickBooks,
 // then every order costed under the same rules.
-import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { fetchPrediction, gbp0, pct, dayLabel } from "./profit-tracker-api";
+import { PeriodPicker, describePeriod, usePeriodChoice } from "@/components/period-picker";
+import { fetchPrediction, gbp0, pct } from "./profit-tracker-api";
 import { OrderAnalysis } from "./order-analysis";
 
-function londonToday(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Europe/London" });
-}
-function addDays(d: string, n: number): string {
-  const x = new Date(`${d}T00:00:00Z`);
-  x.setUTCDate(x.getUTCDate() + n);
-  return x.toISOString().slice(0, 10);
-}
-
-type Preset = "7" | "14" | "mtd" | "last" | "custom";
-
-function presetRange(p: Preset, today: string): { from: string; to: string } {
-  switch (p) {
-    case "7": return { from: addDays(today, -6), to: today };
-    case "mtd": return { from: `${today.slice(0, 7)}-01`, to: today };
-    case "last": {
-      const first = `${today.slice(0, 7)}-01`;
-      const end = addDays(first, -1);
-      return { from: `${end.slice(0, 7)}-01`, to: end };
-    }
-    default: return { from: addDays(today, -13), to: today };
-  }
-}
-
-const PRESETS: Array<{ id: Preset; label: string }> = [
-  { id: "7", label: "Last 7 days" },
-  { id: "14", label: "Last 14 days" },
-  { id: "mtd", label: "This month so far" },
-  { id: "last", label: "Last month" },
-  { id: "custom", label: "Pick dates" },
-];
+// Every order in the period is costed one by one, so the server works out at
+// most 93 days at a time (Last 3 months always fits).
+const TOO_LONG = "up to 3 months at a time";
+const LONG_PERIODS_OFF = { last6Months: TOO_LONG, last12Months: TOO_LONG } as const;
 
 export function ProfitTrackerCard() {
-  const today = useMemo(londonToday, []);
-  const [preset, setPreset] = useState<Preset>("14");
-  const [custom, setCustom] = useState(() => presetRange("14", today));
-  const range = preset === "custom" ? custom : presetRange(preset, today);
+  // The standard period picker, as on Numbers (Graeme, 25 Nov 2026). It
+  // used to open on its own "Last 14 days"; the nearest standard period is
+  // Last 7 days (seven finished days ending yesterday).
+  const picker = usePeriodChoice("last7");
+  const { period } = picker;
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ["pnl-tracker-predict", range.from, range.to],
-    queryFn: () => fetchPrediction(range.from, range.to),
+    queryKey: ["pnl-tracker-predict", period.from, period.to],
+    queryFn: () => fetchPrediction(period.from, period.to),
     staleTime: 5 * 60 * 1000,
-    enabled: range.from <= range.to,
+    enabled: !period.empty,
   });
 
   const amount = (k: string) => data?.pnl.lines.find(l => l.key === k)?.amount ?? 0;
@@ -61,33 +35,15 @@ export function ProfitTrackerCard() {
   return (
     <section className="space-y-4">
       <div className="glass-panel rounded-2xl overflow-hidden">
-        <div className="p-5 flex flex-wrap items-end justify-between gap-4 border-b border-border">
+        <div className="p-5 space-y-4 border-b border-border">
           <div>
             <h2 className="text-lg font-display font-bold">Profit tracker</h2>
             <p className="text-sm text-muted-foreground">
-              Predicted from our costings · {dayLabel(range.from)} – {dayLabel(range.to)}
+              Predicted from our costings · {describePeriod(period)}
               {data ? ` · ${data.pnl.orders.toLocaleString("en-GB")} orders, ${data.pnl.packs.toLocaleString("en-GB")} packs` : ""}
             </p>
           </div>
-          <div className="flex flex-wrap items-end gap-2">
-            {PRESETS.map(p => (
-              <button
-                key={p.id}
-                onClick={() => setPreset(p.id)}
-                className={`h-11 px-4 rounded-lg text-sm font-medium border ${preset === p.id ? "bg-primary text-primary-foreground border-primary" : "bg-background border-border hover:bg-secondary"}`}
-              >
-                {p.label}
-              </button>
-            ))}
-            {preset === "custom" && (
-              <>
-                <input type="date" value={custom.from} max={custom.to} onChange={e => setCustom(c => ({ ...c, from: e.target.value }))}
-                  className="h-11 rounded-lg border border-border bg-background px-3 text-sm" />
-                <input type="date" value={custom.to} min={custom.from} max={today} onChange={e => setCustom(c => ({ ...c, to: e.target.value }))}
-                  className="h-11 rounded-lg border border-border bg-background px-3 text-sm" />
-              </>
-            )}
-          </div>
+          <PeriodPicker {...picker} disabled={LONG_PERIODS_OFF} />
         </div>
 
         {error && (

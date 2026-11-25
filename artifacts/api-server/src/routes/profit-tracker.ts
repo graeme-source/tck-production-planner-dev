@@ -32,7 +32,10 @@ const router: IRouter = Router();
 router.use(requireFounder);
 
 const DATE = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
-const MAX_DAYS = 92;
+// Every order in the range is costed, so the range is capped. 93 so the
+// standard picker's "Last 3 months" always fits (three months back from
+// yesterday is at most 93 days, both ends counted).
+const MAX_DAYS = 93;
 
 function qboError(res: Response, where: string, err: unknown) {
   const msg = err instanceof Error ? err.message : String(err);
