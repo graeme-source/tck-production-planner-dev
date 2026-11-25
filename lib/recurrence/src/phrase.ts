@@ -110,6 +110,7 @@ export function ruleStartingOn(rule: RecurrenceRule, start: string): RecurrenceR
     case "weekly":
       return (rule.interval ?? 1) > 1 ? { ...rule, anchor: start, from: start } : { ...rule, from: start };
     case "once":
+    case "on_demand":
       return rule;
     default:
       return { ...rule, from: start };

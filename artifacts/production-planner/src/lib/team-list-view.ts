@@ -10,7 +10,7 @@ import type { SortSpec, TaskSortFields } from "./task-sort";
 
 /** "once" = a one-off item made by the app (a short-delivery report). It has
  *  no button of its own: picking any preset turns it into a repeating task. */
-export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly" | "every_n_months" | "once";
+export type Preset = "daily" | "weekdays" | "days" | "weekly" | "every_n" | "monthly" | "every_n_months" | "once" | "on_demand";
 
 export const PRESETS: Array<{ key: Preset; label: string }> = [
   { key: "daily", label: "Every day" },
@@ -20,6 +20,9 @@ export const PRESETS: Array<{ key: Preset; label: string }> = [
   { key: "every_n", label: "Every 2+ weeks" },
   { key: "monthly", label: "Monthly" },
   { key: "every_n_months", label: "Every 2+ months" },
+  // "Ad hoc recurring process" (Graeme, 25 Nov 2026): never due by itself;
+  // started from the list onto someone's to-do list.
+  { key: "on_demand", label: "When needed" },
 ];
 
 /** Every-N-months choices (Graeme, 2026-10-15: maintenance every 3, 4 or 6 months). */
@@ -37,6 +40,7 @@ export function presetOf(rule: RecurrenceRule): Preset {
     case "weekdays": return "weekdays";
     case "monthly": return (rule.interval ?? 1) > 1 ? "every_n_months" : "monthly";
     case "once": return "once";
+    case "on_demand": return "on_demand";
     case "weekly":
       if ((rule.interval ?? 1) > 1) return "every_n";
       return rule.days.length === 1 ? "weekly" : "days";
@@ -77,6 +81,7 @@ export function ruleForPreset(preset: Preset, current: RecurrenceRule, today: st
       return { kind: "monthly", dayOfMonth, interval: 3, anchor: firstMonthFrom(dayOfMonth, today) };
     }
     case "once": return current.kind === "once" ? current : { kind: "once", date: today };
+    case "on_demand": return { kind: "on_demand" };
   }
 }
 

@@ -19,6 +19,22 @@ function done(itemId: number, dueDate: string, status = "done"): DayCompletion {
   return { itemId, dueDate, status, byName: "Lorna", at: `${dueDate}T08:00:00.000Z` };
 }
 
+describe("'when needed' processes (on_demand, Graeme 25 Nov 2026)", () => {
+  const process = item({ id: 9, recurrence: { kind: "on_demand" }, carryOver: true });
+  const daily = item({ id: 1 });
+  it("never shows in today's view, never overdue, never counts in progress", () => {
+    const day = buildDay([process, daily], [], TUE);
+    expect(day.entries.map(e => e.itemId)).toEqual([1]);
+    expect(day.progress).toEqual({ total: 1, done: 0, overdue: 0 });
+  });
+  it("never shows in Coming up and can't be ticked on the list (it's started instead)", () => {
+    expect(comingUp([process], TUE)).toEqual([]);
+    expect(upcomingOccurrencesToLoad([process], TUE)).toEqual([]);
+    expect(canTickOccurrence(process, TUE, TUE)).toBe(false);
+    expect(canTickOccurrence(process, WED, TUE)).toBe(false);
+  });
+});
+
 describe("access (Graeme, 2026-10-14: if I tick you, you've got access)", () => {
   const admin = { id: 1, role: "admin" }, manager = { id: 2, role: "manager" }, viewer = { id: 3, role: "viewer" };
   it("admins can always open every list, even with nobody ticked", () => {

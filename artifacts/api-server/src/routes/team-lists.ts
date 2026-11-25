@@ -94,6 +94,9 @@ const recurrenceSchema = z.discriminatedUnion("kind", [
   // One-off items the app adds (short-delivery reports, lib/short-delivery-report.ts).
   // Accepted here so editing such an item (title, priority…) still saves.
   z.object({ kind: z.literal("once"), date: isoDate }),
+  // "Start when needed" processes (Graeme, 25 Nov 2026): never due by
+  // themselves — started from the list onto someone's to-do list.
+  z.object({ kind: z.literal("on_demand") }),
 ]).and(z.object({ from: isoDate.nullish() })); // optional start date (2026-10-15)
 const optionalText = (max: number) => z.string().trim().max(max).nullish().transform(v => (v ? v : null));
 const urlField = z.string().trim().max(500).nullish()

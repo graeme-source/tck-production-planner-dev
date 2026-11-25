@@ -9,6 +9,8 @@ const TUE = "2026-10-13";
 describe("presets", () => {
   it("maps rules to the preset buttons", () => {
     expect(presetOf({ kind: "daily" })).toBe("daily");
+    expect(presetOf({ kind: "on_demand" })).toBe("on_demand");
+    expect(ruleForPreset("on_demand", { kind: "weekly", days: [1, 4] }, TUE)).toEqual({ kind: "on_demand" });
     expect(presetOf({ kind: "weekly", days: [2] })).toBe("weekly");
     expect(presetOf({ kind: "weekly", days: [1, 4] })).toBe("days");
     expect(presetOf({ kind: "weekly", days: [5], interval: 2, anchor: TUE })).toBe("every_n");

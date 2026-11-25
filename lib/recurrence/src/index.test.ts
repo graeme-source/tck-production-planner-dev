@@ -1,8 +1,38 @@
 import { describe, expect, it } from "vitest";
 import {
   addDays, describeRule, isDailyRhythm, normaliseRule, sameRule, isDueOn, isRecurrenceRule, lastOccurrenceOnOrBefore, mondayOf,
-  monthsBetween, nextOccurrenceAfter, occurrencesBetween, weekdayFromName, weekdayOf, type RecurrenceRule,
+  monthsBetween, nextOccurrenceAfter, occurrencesBetween, weekdayFromName, weekdayOf, isOnDemand, type RecurrenceRule,
 } from "./index";
+import { ruleStartingOn } from "./phrase";
+
+describe("on_demand (started by hand — 'when needed' processes)", () => {
+  const rule: RecurrenceRule = { kind: "on_demand" };
+  it("is never due on any day, so it can't show as due or overdue", () => {
+    for (let i = 0; i < 400; i++) expect(isDueOn(rule, addDays("2026-01-01", i))).toBe(false);
+    expect(isDueOn({ kind: "on_demand", from: "2026-01-01" }, "2026-06-01")).toBe(false);
+  });
+  it("has no last or next occurrence and none in a range", () => {
+    expect(lastOccurrenceOnOrBefore(rule, "2026-11-25")).toBeNull();
+    expect(lastOccurrenceOnOrBefore(rule, "2026-11-25", "2020-01-01")).toBeNull();
+    expect(nextOccurrenceAfter(rule, "2026-11-25")).toBeNull();
+    expect(occurrencesBetween(rule, "2026-11-01", "2026-12-31")).toEqual([]);
+  });
+  it("describes, validates and normalises", () => {
+    expect(describeRule(rule)).toBe("When needed");
+    expect(describeRule({ kind: "on_demand", from: "2026-12-01" })).toBe("When needed");
+    expect(isRecurrenceRule(rule)).toBe(true);
+    expect(isRecurrenceRule({ kind: "on_demand", from: "not a date" })).toBe(false);
+    expect(normaliseRule({ kind: "on_demand", from: "2026-12-01" })).toEqual({ kind: "on_demand" });
+    expect(sameRule(rule, { kind: "on_demand", from: "2026-12-01" })).toBe(true);
+    expect(isDailyRhythm(rule)).toBe(false);
+    expect(isOnDemand(rule)).toBe(true);
+    expect(isOnDemand({ kind: "daily" })).toBe(false);
+    expect(isOnDemand(null)).toBe(false);
+  });
+  it("a start date doesn't attach to it", () => {
+    expect(ruleStartingOn(rule, "2026-12-01")).toEqual({ kind: "on_demand" });
+  });
+});
 
 // 2026-10-12 is a Monday.
 const MON = "2026-10-12", TUE = "2026-10-13", THU = "2026-10-15", SAT = "2026-10-17", SUN = "2026-10-18";

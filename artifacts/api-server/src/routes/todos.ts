@@ -4,7 +4,7 @@ import { db } from "@workspace/db";
 import { sql } from "drizzle-orm";
 import { z } from "zod";
 import { onTodoDoneChanged } from "../lib/test-box-todos";
-import { isDueOn, isRecurrenceRule, nextOccurrenceAfter, normaliseRule, type RecurrenceRule } from "@workspace/recurrence";
+import { isDueOn, isOnDemand, isRecurrenceRule, nextOccurrenceAfter, normaliseRule, type RecurrenceRule } from "@workspace/recurrence";
 import { validate } from "../middleware/validate";
 import { londonDateString } from "../lib/london-time";
 import { reviewDue } from "../lib/todo-review";
@@ -296,7 +296,9 @@ const CreateBody = z.object({
   scheduledFor: z.string().regex(DATE_RE).nullish(),
   dueDate: z.string().regex(DATE_RE).nullish(),
   // Repeating to-dos (smart add, 2026-10-24): ticking one off creates the next.
-  recurrence: z.custom<RecurrenceRule>(isRecurrenceRule, "Not a repeat rule").nullish(),
+  // "When needed" (on_demand) is for team-list processes only: a to-do with
+  // it would never come round again, so it's refused here.
+  recurrence: z.custom<RecurrenceRule>(v => isRecurrenceRule(v) && !isOnDemand(v), "Not a repeat rule").nullish(),
   timeOfDay: z.string().regex(/^\d{2}:\d{2}$/).nullish(),
 });
 

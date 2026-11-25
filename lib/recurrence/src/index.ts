@@ -45,7 +45,13 @@ export type RecurrenceRule = RecurrenceStart & (
   /** One day only — a one-off item, e.g. a short-delivery report put on a
    *  team list for the day it happened (Graeme, 2026-10-15). With carry-over
    *  on it stays "Overdue" until someone ticks it. */
-  | { kind: "once"; date: string });
+  | { kind: "once"; date: string }
+  /** Never due by itself — an "ad hoc recurring process" (Graeme, 25 Nov
+   *  2026): a checklist run through every time something happens (a new
+   *  product launch, a test box, an ad or email going out). Someone starts
+   *  it from the team list when it's needed, which puts a copy on their own
+   *  to-do list; the master stays on the list for next time. */
+  | { kind: "on_demand" });
 
 export const WEEKDAY_SHORT = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 export const WEEKDAY_LONG = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] as const;
@@ -108,6 +114,7 @@ export function monthsOfYear(interval: number, anchor: string): number[] {
 
 /** Is the rule due on this London date? */
 export function isDueOn(rule: RecurrenceRule, date: string): boolean {
+  if (rule.kind === "on_demand") return false;
   if (rule.from && isIsoDate(rule.from) && date < rule.from) return false;
   const wd = weekdayOf(date);
   switch (rule.kind) {
@@ -137,6 +144,11 @@ export function isDueOn(rule: RecurrenceRule, date: string): boolean {
   }
 }
 
+/** Started by hand, never due on a day (the on_demand rule). */
+export function isOnDemand(rule: RecurrenceRule | null | undefined): boolean {
+  return rule?.kind === "on_demand";
+}
+
 /** Longest gap between two occurrences of any rule this module accepts
  *  (52-week or 12-month interval), plus slack. Searches stop here so a rule
  *  that never fires (weekly with no days) can't loop forever. */
@@ -145,6 +157,7 @@ const SEARCH_LIMIT_DAYS = 7 * 54;
 /** The latest date on or before `date` that the rule is due, no earlier
  *  than `notBefore` (e.g. the day the item was created). Null if none. */
 export function lastOccurrenceOnOrBefore(rule: RecurrenceRule, date: string, notBefore?: string | null): string | null {
+  if (rule.kind === "on_demand") return null;
   for (let i = 0; i <= SEARCH_LIMIT_DAYS; i++) {
     const d = addDays(date, -i);
     if (notBefore && d < notBefore) return null;
@@ -155,6 +168,7 @@ export function lastOccurrenceOnOrBefore(rule: RecurrenceRule, date: string, not
 
 /** The first date strictly after `date` that the rule is due. */
 export function nextOccurrenceAfter(rule: RecurrenceRule, date: string): string | null {
+  if (rule.kind === "on_demand") return null;
   for (let i = 1; i <= SEARCH_LIMIT_DAYS; i++) {
     const d = addDays(date, i);
     if (isDueOn(rule, d)) return d;
@@ -165,6 +179,7 @@ export function nextOccurrenceAfter(rule: RecurrenceRule, date: string): string 
 /** Due dates in [from, to], inclusive. */
 export function occurrencesBetween(rule: RecurrenceRule, from: string, to: string): string[] {
   const out: string[] = [];
+  if (rule.kind === "on_demand") return out;
   const span = daysBetween(from, to);
   for (let i = 0; i <= span && i <= SEARCH_LIMIT_DAYS; i++) {
     const d = addDays(from, i);
@@ -188,7 +203,7 @@ function dayList(days: Weekday[]): string {
  *  "Every 2 weeks on Fri", "Monthly on the 15th". */
 export function describeRule(rule: RecurrenceRule): string {
   const base = describeRuleBase(rule);
-  if (!rule.from || !isIsoDate(rule.from) || rule.kind === "once") return base;
+  if (!rule.from || !isIsoDate(rule.from) || rule.kind === "once" || rule.kind === "on_demand") return base;
   const d = noon(rule.from);
   return `${base}, starting ${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${d.toLocaleString("en-GB", { month: "short", timeZone: "UTC" })}`;
 }
@@ -218,6 +233,7 @@ function describeRuleBase(rule: RecurrenceRule): string {
       const d = noon(rule.date);
       return `Once, on ${WEEKDAY_SHORT[d.getUTCDay()]} ${d.getUTCDate()} ${d.toLocaleString("en-GB", { month: "short", timeZone: "UTC" })}`;
     }
+    case "on_demand": return "When needed";
     default: return "Unknown";
   }
 }
@@ -228,7 +244,7 @@ function describeRuleBase(rule: RecurrenceRule): string {
  *  (Postgres jsonb reorders keys). */
 export function normaliseRule(rule: RecurrenceRule): RecurrenceRule {
   const base = normaliseRuleBase(rule);
-  return rule.from && isIsoDate(rule.from) && rule.kind !== "once" ? { ...base, from: rule.from } : base;
+  return rule.from && isIsoDate(rule.from) && rule.kind !== "once" && rule.kind !== "on_demand" ? { ...base, from: rule.from } : base;
 }
 
 function normaliseRuleBase(rule: RecurrenceRule): RecurrenceRule {
@@ -282,6 +298,8 @@ export function isRecurrenceRule(value: unknown): value is RecurrenceRule {
         && (r.anchor === undefined || r.anchor === null || isIsoDate(r.anchor));
     case "once":
       return isIsoDate(r.date);
+    case "on_demand":
+      return true;
     default:
       return false;
   }
