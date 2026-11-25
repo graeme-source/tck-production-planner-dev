@@ -216,7 +216,17 @@ describe("alternatives", () => {
   it("moves to the Friday tag (Thursday dispatch) and the Tuesday tag (Monday dispatch)", () => {
     const r = checkOrder(order("#403", "EX7 0EA"), serviceFor()("EX7 0EA"), [], DATES, TODAY);
     expect(r.thursday).toMatchObject({ deliveryDate: "2026-11-13", label: "Thursday 12 November" });
-    expect(r.nextWeek).toMatchObject({ deliveryDate: "2026-11-17", label: "Monday 16 November" });
+    expect(r.nextWeek).toMatchObject({ deliveryDate: "2026-11-17", label: "Monday 16 November", dispatchDate: "2026-11-16" });
+  });
+
+  it("Tuesday delivery closed: Tuesday dispatch for Wednesday delivery, never 'Monday' (25 Nov 2026)", () => {
+    // What the route does when the calendar closes Tuesday: next week = Wed delivery, Tue dispatch.
+    const closedTue = { ...DATES, nextWeekDispatch: "2026-11-17", nextWeekDelivery: "2026-11-18" };
+    const r = checkOrder(order("#404", "GL2 9RA"), serviceFor()("GL2 9RA"), [], closedTue, TODAY);
+    expect(r.nextWeek).toMatchObject({ deliveryDate: "2026-11-18", dispatchDate: "2026-11-17", label: "Tuesday 17 November" });
+    const e = noSaturdayThisWeekEmail({ customerFirstName: "Jo", senderFirstName: "Graeme", orderName: "#140369", dates: closedTue, offerThursday: false });
+    expect(e.body).toContain("send it out on Tuesday instead, for delivery on Wednesday 18 November");
+    expect(e.body).not.toContain("Monday");
   });
 });
 

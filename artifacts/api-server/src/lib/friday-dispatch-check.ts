@@ -63,7 +63,8 @@ export interface FridayDates {
   /** The tag an order moved to Thursday's dispatch carries (the Friday). */
   thursdayDelivery: string;
   nextWeekDispatch: string;
-  /** The tag an order moved to next Monday's dispatch carries (Tuesday). */
+  /** The tag an order moved to next week's first dispatch carries — normally
+   *  Tuesday (Monday's dispatch); the first open delivery day when that's closed. */
   nextWeekDelivery: string;
 }
 
@@ -169,6 +170,9 @@ export interface Alternative {
   deliveryDate: string;
   /** "Thursday 13 November" etc — the dispatch day, for the button. */
   label: string;
+  /** The dispatch date (YYYY-MM-DD). Next week's is the day before the first
+   *  open delivery day — Tuesday when Tuesday delivery is closed (25 Nov 2026). */
+  dispatchDate: string;
   /** Why not, when it isn't possible; a caution when it is. */
   note: string | null;
 }
@@ -181,7 +185,7 @@ export interface FridayCheckResult extends FridayCheckOrder {
   depot: string | null;
   /** Thursday dispatch → Friday delivery. */
   thursday: Alternative;
-  /** Next Monday dispatch → Tuesday delivery. */
+  /** Next week's first dispatch → delivery (normally Monday → Tuesday). */
   nextWeek: Alternative;
   /** The customer can still be offered Thursday by email (before replyBy ends). */
   canOfferThursday: boolean;
@@ -205,11 +209,11 @@ export function checkOrder(
     const reason = !order.postcode
       ? "No postcode on the order — fix the address in Shopify."
       : `${outward || order.postcode} isn't in APC's postcode table — check the postcode is right, then ask APC.`;
-    const no = (deliveryDate: string, label: string): Alternative => ({ possible: false, deliveryDate, label, note: "Postcode not in APC's table — check it first." });
+    const no = (deliveryDate: string, label: string): Omit<Alternative, "dispatchDate"> => ({ possible: false, deliveryDate, label, note: "Postcode not in APC's table — check it first." });
     return {
       ...order, status: "unknown", reason, outward, depot: null,
-      thursday: no(dates.thursdayDelivery, thursdayLabel),
-      nextWeek: no(dates.nextWeekDelivery, nextWeekLabel),
+      thursday: { ...no(dates.thursdayDelivery, thursdayLabel), dispatchDate: dates.thursdayDispatch },
+      nextWeek: { ...no(dates.nextWeekDelivery, nextWeekLabel), dispatchDate: dates.nextWeekDispatch },
       canOfferThursday: false, canEmail: false, emailNote: "Check the postcode before emailing.",
     };
   }
@@ -246,12 +250,14 @@ export function checkOrder(
     possible: thursdayPossible,
     deliveryDate: dates.thursdayDelivery,
     label: thursdayLabel,
+    dispatchDate: dates.thursdayDispatch,
     note: !service.nextDay ? noNextDay : !thursdayPossible ? "Thursday's dispatch has gone." : weekdayNote,
   };
   const nextWeek: Alternative = {
     possible: service.nextDay,
     deliveryDate: dates.nextWeekDelivery,
     label: nextWeekLabel,
+    dispatchDate: dates.nextWeekDispatch,
     note: !service.nextDay ? noNextDay : weekdayNote,
   };
   const canOfferThursday = service.nextDay && today <= dates.replyBy;

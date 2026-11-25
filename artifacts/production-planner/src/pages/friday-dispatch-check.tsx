@@ -19,7 +19,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/hooks/use-toast";
 import { ConfirmSheet } from "@/components/apc-booking-issues/confirm-sheet";
 import {
-  useFridayCheck, useNoSaturdayEmailDraft, useSendNoSaturdayEmail, useSetDateChangeSafe, addDays, fridayOnOrAfter, londonToday, shortDay, when,
+  useFridayCheck, useNoSaturdayEmailDraft, useSendNoSaturdayEmail, useSetDateChangeSafe, addDays, fridayOnOrAfter, londonToday, shortDay, weekdayName, when,
   type FridayCheck, type FridayCheckRow, type FridayStatus, type Alternative,
 } from "@/components/friday-dispatch-check/api";
 
@@ -142,7 +142,9 @@ function OrderCard({ row, check, onEmail }: {
 
         <div className="space-y-1.5">
           <AltLine alt={row.thursday} dispatchWord="Thursday" />
-          <AltLine alt={row.nextWeek} dispatchWord="Next Monday" />
+          {/* The real dispatch day — Tuesday when Tuesday delivery is
+              closed and the order goes for Wednesday (25 Nov 2026). */}
+          <AltLine alt={row.nextWeek} dispatchWord={`Next ${row.nextWeek.dispatchDate ? weekdayName(row.nextWeek.dispatchDate) : "week's"}`} />
         </div>
 
         <div className="space-y-2 pt-1">
@@ -268,7 +270,7 @@ function EmailSheet({ row, dispatchDate, onClose }: { row: FridayCheckRow; dispa
           )}
           {!d.to && <p className="rounded-xl border border-destructive/30 bg-destructive/10 p-3 text-destructive">No email address on this order.</p>}
           <p className="rounded-xl border border-border bg-secondary/30 px-3 py-2 text-sm">
-            This moves the order to <span className="font-semibold">{d.newDeliveryLabel}</span> in Shopify straight away (Monday's dispatch), then sends this email.
+            This moves the order to <span className="font-semibold">{d.newDeliveryLabel}</span> in Shopify straight away ({d.newDispatchDay ?? "next week"}'s dispatch), then sends this email.
           </p>
           <p className="text-sm"><span className="font-semibold">To:</span> {d.to ?? "—"}</p>
           <p className="text-sm"><span className="font-semibold">Subject:</span> {d.subject}</p>

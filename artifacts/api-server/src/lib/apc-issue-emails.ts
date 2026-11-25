@@ -15,7 +15,7 @@
  * Nothing here sends anything. Sending is always a person's confirmed
  * button press (routes/apc-booking-issues.ts, routes/fulfilment.ts).
  */
-import { friendlyDate, plainEmailHtml, rescheduleEmailText } from "./order-reschedule";
+import { dayNameFor, friendlyDate, plainEmailHtml, rescheduleEmailText } from "./order-reschedule";
 import type { RescheduleEmailVariant } from "./apc-booking-issues";
 import type { FridayDates } from "./friday-dispatch-check";
 
@@ -83,7 +83,7 @@ export function rescheduleEmailFor(variant: RescheduleEmailVariant, opts: {
 /** (d) Sent days ahead from the Friday dispatch check (Graeme, 11 Nov 2026):
  *  APC won't deliver to this postcode this Saturday. Offers Thursday's
  *  dispatch (Friday delivery) when there's still time to reply, otherwise
- *  it goes out on Monday for Tuesday delivery. Nothing is moved by the
+ *  it goes out on next week's first dispatch (normally Monday for Tuesday). Nothing is moved by the
  *  email itself — the order is moved by hand once the customer has replied
  *  (or hasn't). */
 export function noSaturdayThisWeekEmail(opts: {
@@ -97,8 +97,8 @@ export function noSaturdayThisWeekEmail(opts: {
   const offer = opts.offerThursday
     ? `If you'd like it a day early instead, just reply to this email by the end of ${friendlyDate(d.replyBy)} and we'll send it out on Thursday for delivery on ${friendlyDate(d.thursdayDelivery)}.
 
-Otherwise, we'll send it out on Monday for delivery on ${friendlyDate(d.nextWeekDelivery)}.`
-    : `We'll send it out on Monday instead, for delivery on ${friendlyDate(d.nextWeekDelivery)}. If another weekday suits you better, just reply to this email.`;
+Otherwise, we'll send it out on ${dayNameFor(d.nextWeekDispatch)} for delivery on ${friendlyDate(d.nextWeekDelivery)}.`
+    : `We'll send it out on ${dayNameFor(d.nextWeekDispatch)} instead, for delivery on ${friendlyDate(d.nextWeekDelivery)}. If another weekday suits you better, just reply to this email.`;
   const body = `Hi ${opts.customerFirstName}
 
 I'm sorry to let you know that our courier can't deliver to your postcode this Saturday (${friendlyDate(d.deliveryDate)}), so your order ${opts.orderName} can't arrive that day.

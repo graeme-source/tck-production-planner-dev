@@ -10,7 +10,11 @@ export const FRIDAY_CHECK_KEY = ["friday-dispatch-check"] as const;
 
 export type FridayStatus = "ok" | "no_saturday" | "at_risk" | "unknown";
 
-export interface Alternative { possible: boolean; deliveryDate: string; label: string; note: string | null }
+export interface Alternative {
+  possible: boolean; deliveryDate: string; label: string; note: string | null;
+  /** The real dispatch date (older servers didn't send it). */
+  dispatchDate?: string;
+}
 
 export interface DoneState {
   emailedAt: string | null; emailedBy: string | null; emailedTo: string | null;
@@ -88,7 +92,7 @@ export interface EmailDraft {
   orderName: string; customerName: string | null; to: string | null; subject: string; body: string;
   offerThursday: boolean; alreadyEmailedAt: string | null; alreadyEmailedBy: string | null;
   /** Where "Reschedule & email" moves it: the Tuesday after (Monday's dispatch). */
-  newDelivery: string; newDeliveryLabel: string;
+  newDelivery: string; newDeliveryLabel: string; newDispatchDay?: string;
   /** The real choose-a-day link (null when the assistant couldn't make one). */
   link: string | null; linkError: string | null;
 }
@@ -159,6 +163,11 @@ export function fridayOnOrAfter(date: string): string {
 }
 
 /** "Fri 13 Nov" */
+/** "Tuesday" for a YYYY-MM-DD date. */
+export function weekdayName(date: string): string {
+  return new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: "UTC" }).format(new Date(`${date}T12:00:00Z`));
+}
+
 export function shortDay(date: string): string {
   return new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", timeZone: "UTC" })
     .format(new Date(`${date}T12:00:00Z`));

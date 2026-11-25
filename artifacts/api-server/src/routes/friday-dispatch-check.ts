@@ -30,7 +30,7 @@ import { requireFeature, userCan } from "../lib/feature-access";
 import { requireFulfilmentAccess, resolveRole } from "../lib/fulfilment-access";
 import { londonDateString } from "../lib/london-time";
 import { sendEmail } from "../lib/email";
-import { firstNameOf, greetingNameOf, friendlyDate, rescheduleTags, withDeliveryDate } from "../lib/order-reschedule";
+import { dayNameFor, firstNameOf, greetingNameOf, friendlyDate, rescheduleTags, withDeliveryDate } from "../lib/order-reschedule";
 import { rescheduledWithLinkEmail, CUSTOMER_EMAIL_BCC } from "../lib/apc-issue-emails";
 import { lockedLines, lockedReason, safeToMoveCandidates } from "../lib/date-locked-products-rules";
 import { clearDateLockedProductsCache, loadDateLockedProducts, loadSafeToMoveProducts } from "../lib/date-locked-products";
@@ -266,6 +266,7 @@ router.get("/friday-check/orders/:orderId/email", requireCourier, validateQuery(
       offerThursday: plan.result.canOfferThursday,
       newDelivery: plan.dates.nextWeekDelivery,
       newDeliveryLabel: friendlyDate(plan.dates.nextWeekDelivery),
+      newDispatchDay: dayNameFor(plan.dates.nextWeekDispatch),
       alreadyEmailedAt: plan.done?.emailedAt ?? null,
       alreadyEmailedBy: plan.done?.emailedBy ?? null,
     });
